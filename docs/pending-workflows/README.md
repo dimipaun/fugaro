@@ -68,10 +68,24 @@ git add .github/workflows/shared-tests.yml
 #    in place would freeze those assertions on its bytes and hide a later edit
 #    or deletion of the real file's job.
 git rm docs/pending-workflows/shared-tests.yml
+# 3. Say so where the site says what this directory holds -- the last section
+#    of website/README.md ends with "... docs/pending-workflows/ holds one
+#    pending workflow today, docs/pending-workflows/shared-tests.yml -- the
+#    shared package's test job (mobile plan Task P4.3), which is not this
+#    site's -- and nothing else." With the staged copy gone, the directory is
+#    empty and that sentence is false; website/test/readme.mjs holds it to the
+#    directory in both directions, so BOTH the count word and the file name
+#    have to go: "docs/pending-workflows/ holds no pending workflow today, and
+#    nothing else." (A name the README keeps while the directory no longer
+#    holds it fails the check even with the word corrected.)
+$EDITOR website/README.md
+git add website/README.md
 git commit -m "shared: run the shared package's tests"
 ```
 
-There is no timing constraint, unlike `images.yml` below: the job is not part of any release path, and nothing else reads it.
+**Step 3 is not decoration, and it is the one step someone copying `images.yml` before did not have to take.** `website/test/readme.mjs`'s last-but-one test reads that sentence out of `website/README.md` and compares it with `docs/pending-workflows/`: the file names the sentence prints must be exactly the `*.yml` files the directory holds (in both directions — a staged file nobody named, and a name with nothing staged, both fail), and its count word (`no`/`one`/`two`/`three`) must be that number. Copying this file in and `git rm`-ing it without step 3 leaves the sentence naming a file that is no longer there, and the site's own `npm run check` goes red on `main`. The test reads the count as a word and compares it as a number, so the sentence is the only thing to update — but it is the sentence, name and count together, that has to match.
+
+There is no timing constraint, unlike `images.yml` below: the job is not part of any release path, nothing else reads it, and step 3 can land in the same commit as the copy.
 
 **Before copying: check the pins.** Dependabot does not watch this directory, so the two pins here can lag `main`'s. The file uses the SHAs `main` had on 2026-10-18 — `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1, `ci.yml`'s pin) and `actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1` (v7.1.0, `ci.yml`'s pin) — both verified against their tags with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` when the file was staged. Compare them with `grep -h 'uses:' docs/pending-workflows/shared-tests.yml .github/workflows/*.yml | sort -u` and keep the newer SHA. Once the staged copy is gone, `internal/cli/docs_shared_tests_workflow_test.go`'s `TestSharedTestsWorkflowPinsAgreeWithTheOtherWorkflows` enforces that agreement itself; while it is pending, that test skips and says so.
 
@@ -85,7 +99,20 @@ $ node -e 'try { console.log("ok", new URL("https://xn--github-9d0c.com/a").host
 # node 26.12.0:  ok xn--github-9d0c.com
 ```
 
-That failure is **pre-existing and already recorded** — `shared/mailbox/README.md` and `shared/mailbox-sim/README.md` both name it, and it is the stated reason their mutation proofs run their own module's suite rather than the package's. It has a second consequence the job inherits: the mutation proofs of `shared/mailbox-schema/` and `shared/lease/` run the **whole package's** `npm test` as their positive control, so on Node 22 they refuse (exit 2, "the suite does not pass on the pristine …") rather than reporting mutations they never ran. On Node 26 all four scripts pass and kill 197 guards between them (109 + 45 + 19 + 24); on Node 22 two pass (109 + 45) and two refuse.
+That failure is **pre-existing and already recorded** — `shared/mailbox/README.md` and `shared/mailbox-sim/README.md` both name it, and it is the stated reason their mutation proofs run their own module's suite rather than the package's. It has a second consequence, one step later in the job: the mutation proofs of `shared/mailbox-schema/` and `shared/lease/` run the **whole package's** `npm test` as their positive control, so on Node 22 they refuse (exit 2, "the suite does not pass on the pristine …") rather than reporting mutations they never ran.
+
+**What the Node 22 leg actually reports, step by step:** in every case the leg stops at the first failing step and GitHub skips the rest, so on Node 22 the job reports **one red step — "the shared package's tests"** — and its **mutation-proofs step is skipped, not red**. The proofs are never reached on that line, because `npm test` fails before them. The numbers below are therefore measurements of the scripts **run by hand** on each line, not of what the two legs print:
+
+| | Node 22.23.3 | Node 26.12.0 |
+|---|---|---|
+| `npm test` (the step that decides the leg) | 288 pass / **1 fail** | 289 pass / 0 fail |
+| `mailbox/mutation-proof.sh` | passes, 109 guards | passes, 109 guards |
+| `mailbox-sim/mutation-proof.sh` | passes, 45 guards | passes, 45 guards |
+| `mailbox-schema/mutation-proof.sh` | **refuses**, exit 2 | passes, 19 guards |
+| `lease/mutation-proof.sh` | **refuses**, exit 2 | passes, 24 guards |
+| what the job shows | red at the test step; the proofs step skipped | green throughout |
+
+On Node 26 all four scripts pass and kill 197 guards between them (109 + 45 + 19 + 24); on Node 22 two would pass and two would refuse, if the leg ever reached them — which it does not.
 
 **Nothing in the workflow hides this**, and it must not be edited to: skipping the failing file, softening the step or dropping the Node 22 leg would delete the evidence rather than the defect. The fix belongs to P0.3's module (`shared/url/`, and the expectation in `index.test.js`), which is a different task with its own review tier; the owner's two live options are to fix `shared/url` first, or to copy the job in with its Node 22 leg red — which is the honest state, and the point of running both lines.
 

@@ -118,7 +118,7 @@ type sharedTestsStep struct {
 // copy-in.
 func readSharedTestsWorkflow(t *testing.T) (sharedTestsWorkflow, []byte, string) {
 	t.Helper()
-	raw, problems, err := readSharedTestsWorkflowAt(
+	raw, source, problems, err := readSharedTestsWorkflowAt(
 		"../../"+stagedSharedTestsWorkflowPath, "../../"+realSharedTestsWorkflowPath)
 	for _, p := range problems {
 		t.Error(p)
@@ -130,9 +130,9 @@ func readSharedTestsWorkflow(t *testing.T) (sharedTestsWorkflow, []byte, string)
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true)
 	if err := dec.Decode(&wf); err != nil {
-		t.Fatalf("decode %s: %v", sharedTestsWorkflowSource(raw), err)
+		t.Fatalf("decode %s: %v", source, err)
 	}
-	return wf, raw, sharedTestsWorkflowSource(raw)
+	return wf, raw, source
 }
 
 // readSharedTestsWorkflowAt is the read the test above uses, with its two
@@ -158,40 +158,35 @@ func readSharedTestsWorkflow(t *testing.T) (sharedTestsWorkflow, []byte, string)
 //     procedure removes the staged copy: left in place, it would freeze these
 //     assertions on its own bytes and hide every later edit to the real file.
 //
+// source is which of the two copies was read, so that a red run says which file
+// it judged. It is the path the bytes actually came from and never a property
+// of their content: the two copies are byte-identical by requirement, so no
+// banner or other marker inside the file could tell them apart.
+//
 // problems are reported and the read continues; err is fatal, because there
 // is then no document to judge.
-func readSharedTestsWorkflowAt(stagedPath, realPath string) (raw []byte, problems []string, err error) {
+func readSharedTestsWorkflowAt(stagedPath, realPath string) (raw []byte, source string, problems []string, err error) {
 	staged, stagedErr := os.ReadFile(stagedPath)
 	real, realErr := os.ReadFile(realPath)
 	switch {
 	case stagedErr == nil && realErr == nil:
-		raw = staged
+		raw, source = staged, stagedPath
 		if !bytes.Equal(staged, real) {
 			problems = append(problems, fmt.Sprintf(
 				"%s and %s both exist and differ: the copied-in file is not the reviewed staged one (copy the file in and `git rm` the staged copy, as docs/pending-workflows/README.md says -- until it is removed, nothing here can see an edit to the real file)",
 				realPath, stagedPath))
 		}
 	case stagedErr == nil:
-		raw = staged
+		raw, source = staged, stagedPath
 	case os.IsNotExist(stagedErr) && realErr == nil:
-		raw = real
+		raw, source = real, realPath
 		if !strings.Contains(string(real), sharedTestsWorkflowMarker) {
-			return nil, problems, fmt.Errorf("%s does not contain %q and %s no longer exists: was the staged file removed without its content reaching the real file?", realPath, sharedTestsWorkflowMarker, stagedPath)
+			return nil, "", problems, fmt.Errorf("%s does not contain %q and %s no longer exists: was the staged file removed without its content reaching the real file?", realPath, sharedTestsWorkflowMarker, stagedPath)
 		}
 	default:
-		return nil, problems, fmt.Errorf("neither %s nor %s is readable: %v", stagedPath, realPath, stagedErr)
+		return nil, "", problems, fmt.Errorf("neither %s nor %s is readable: %v", stagedPath, realPath, stagedErr)
 	}
-	return raw, problems, nil
-}
-
-// sharedTestsWorkflowSource names which copy is in hand, from the bytes: the
-// staged file carries its `STAGED, NOT INSTALLED` banner and the copied-in one
-// does not, so a red run says which of the two files it judged.
-func sharedTestsWorkflowSource(raw []byte) string {
-	if strings.Contains(string(raw), "STAGED, NOT INSTALLED") {
-		return stagedSharedTestsWorkflowPath
-	}
-	return realSharedTestsWorkflowPath
+	return raw, source, problems, nil
 }
 
 // usesRE and shaRE are the pin check's whole vocabulary: a `uses:` line -- the
@@ -418,28 +413,38 @@ func TestReadSharedTestsWorkflowFallsBackOnlyWhilePending(t *testing.T) {
 	staged := filepath.Join(dir, "pending.yml")
 	real := filepath.Join(dir, "real.yml")
 
-	pending := "name: shared-tests\n# STAGED, NOT INSTALLED\n"
-	copiedIn := "name: shared-tests\non:\n  push:\n"
+	// The two fixtures are deliberately written so that nothing inside them
+	// could say which copy it is: the requirement is that the staged file and
+	// the copied-in one are byte-identical, so a marker in the text -- a
+	// "staged, not installed" banner, say -- would either be false once it was
+	// copied in or make the byte-identity assertion unsatisfiable. Which file
+	// was read is therefore reported as a path, and the identical case below is
+	// what pins that.
+	pending := "name: shared-tests\non:\n  push:\n"
+	copiedIn := "name: shared-tests\non:\n  pull_request:\n"
 	if err := os.WriteFile(staged, []byte(pending), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	// Pending alone: the staged bytes are what is judged, and there is nothing
-	// to report.
-	raw, problems, err := readSharedTestsWorkflowAt(staged, real)
+	// Pending alone: the staged bytes are what is judged, there is nothing to
+	// report, and the source names the staged file.
+	raw, source, problems, err := readSharedTestsWorkflowAt(staged, real)
 	if err != nil || len(problems) != 0 {
 		t.Fatalf("staged alone: want no problems and no error, got %q and %v", problems, err)
 	}
-	if string(raw) != pending {
-		t.Fatalf("staged alone: read %q, not the staged bytes", raw)
+	if string(raw) != pending || source != staged {
+		t.Fatalf("staged alone: want the staged bytes from %s, got %q from %s", staged, raw, source)
 	}
 
-	// Both, identical: the staged copy still wins and the pair is consistent.
+	// Both, identical: the staged copy still wins, the pair is consistent, and
+	// the source is still the staged path -- which is the case no in-file
+	// marker could answer, because the two files are the same bytes.
 	if err := os.WriteFile(real, []byte(pending), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if raw, problems, err := readSharedTestsWorkflowAt(staged, real); err != nil || len(problems) != 0 || string(raw) != pending {
-		t.Fatalf("both, identical: want the staged bytes and no problems, got %q, %q, %v", raw, problems, err)
+	raw, source, problems, err = readSharedTestsWorkflowAt(staged, real)
+	if err != nil || len(problems) != 0 || string(raw) != pending || source != staged {
+		t.Fatalf("both, identical: want the staged bytes from %s and no problems, got %q from %s, %q, %v", staged, raw, source, problems, err)
 	}
 
 	// Both, differing: the copy-in was edited after review, which is the one
@@ -447,37 +452,37 @@ func TestReadSharedTestsWorkflowFallsBackOnlyWhilePending(t *testing.T) {
 	if err := os.WriteFile(real, []byte("name: not-the-staged-file\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	raw, problems, err = readSharedTestsWorkflowAt(staged, real)
+	raw, source, problems, err = readSharedTestsWorkflowAt(staged, real)
 	if err != nil {
 		t.Fatalf("both, differing: the staged copy is still readable, so this is a problem and not an error: %v", err)
 	}
 	if len(problems) != 1 || !strings.Contains(problems[0], "both exist and differ") {
 		t.Fatalf("both, differing: want the byte-identity problem, got %q", problems)
 	}
-	if string(raw) != pending {
-		t.Fatalf("both, differing: the staged copy must still be what is judged, read %q", raw)
+	if string(raw) != pending || source != staged {
+		t.Fatalf("both, differing: the staged copy must still be what is judged, got %q from %s", raw, source)
 	}
 
-	// Copied in and the staged copy removed: the real file is read alone, and
-	// must carry the marker.
+	// Copied in and the staged copy removed: the real file is read alone, its
+	// source is the real path, and it must carry the marker.
 	if err := os.WriteFile(real, []byte(copiedIn), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(staged); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readSharedTestsWorkflowAt(staged, real); err == nil {
+	if _, _, _, err := readSharedTestsWorkflowAt(staged, real); err == nil {
 		t.Fatal("copied in, marker missing: want an error, got none: this is the read that refuses a copy which lost the job")
 	}
 	if err := os.WriteFile(real, []byte(copiedIn+sharedTestsWorkflowMarker+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	raw, problems, err = readSharedTestsWorkflowAt(staged, real)
+	raw, source, problems, err = readSharedTestsWorkflowAt(staged, real)
 	if err != nil || len(problems) != 0 {
 		t.Fatalf("copied in, marker present: want the real bytes and no problems, got %q, %q, %v", raw, problems, err)
 	}
-	if string(raw) != copiedIn+sharedTestsWorkflowMarker+"\n" {
-		t.Fatalf("copied in, marker present: read %q, not the real file's bytes", raw)
+	if string(raw) != copiedIn+sharedTestsWorkflowMarker+"\n" || source != real {
+		t.Fatalf("copied in, marker present: want the real file's bytes from %s, got %q from %s", real, raw, source)
 	}
 
 	// Neither: there is no document to judge, and that is fatal rather than a
@@ -485,7 +490,7 @@ func TestReadSharedTestsWorkflowFallsBackOnlyWhilePending(t *testing.T) {
 	if err := os.Remove(real); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readSharedTestsWorkflowAt(staged, real); err == nil {
+	if _, _, _, err := readSharedTestsWorkflowAt(staged, real); err == nil {
 		t.Fatal("neither file: want an error, got none")
 	}
 }

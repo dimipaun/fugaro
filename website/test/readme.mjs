@@ -555,15 +555,26 @@ test('the README claims about docs/pending-workflows/, firebase.json and the dep
   // pending change nobody was told about, and a name in the README that is not staged is an
   // instruction to copy in a file that is not there. The count is asserted too, so that
   // "holds one pending workflow today" cannot survive a second file arriving beside it.
+  //
+  // The count is written as a word and read back as a number, so that the sentence is the
+  // only thing a copy-in has to update: copying a staged file in and `git rm`-ing it leaves
+  // this directory empty, and "holds no pending workflow today" is then a one-word edit
+  // here rather than an edit to this test as well.
   const flat = text.replace(/\s+/g, ' ')
-  assert.ok(/holds no pending workflow today|holds one pending workflow today/.test(flat), 'the README no longer says how many workflows docs/pending-workflows/ holds today')
+  const words = { no: 0, one: 1, two: 2, three: 3 }
+  const said = flat.match(/holds (no|one|two|three) pending workflows? today/)
+  assert.ok(said, 'the README no longer says how many workflows docs/pending-workflows/ holds today, as "holds <no|one|two|three> pending workflow(s) today"')
   const pending = (existsSync(staged) ? readdirSync(staged).filter((n) => /\.ya?ml$/i.test(n)) : []).sort()
   const claimed = [...flat.matchAll(/`docs\/pending-workflows\/([\w.-]+\.ya?ml)`/g)].map((m) => m[1])
   assert.deepEqual([...new Set(claimed)].sort(), pending, 'the README and docs/pending-workflows/ disagree: the README names exactly the staged workflows and no others (a staged file it does not name, or a named file that is not staged)')
   assert.equal(
-    /holds one pending workflow today/.test(flat) ? 1 : 0,
+    words[said[1]],
     pending.length,
-    'the README says how many workflows are pending under docs/pending-workflows/ and the directory holds a different number: update the sentence',
+    `the README says "${said[0]}" and docs/pending-workflows/ holds ${pending.length} workflow file(s) (${pending.join(', ') || 'none'}): update the sentence`,
+  )
+  assert.ok(
+    (said[1] === 'no') === (pending.length === 0),
+    'the README says "no" where files are staged, or names a count where none is: the sentence and the directory must agree',
   )
   // firebase.json landed ahead of W2.1 with scripts/deploy-website.sh, and the README says so.
   assert.ok(existsSync(path.join(REPO_ROOT, 'firebase.json')), 'firebase.json is missing: the README says the hosting configuration is at the repository root')

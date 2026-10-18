@@ -1,15 +1,10 @@
 # The shared package's tests (mobile plan, Task P4.3).
 #
-# STAGED, NOT INSTALLED. Fugaro cannot push a change under .github/workflows/
-# (GitHub rejects it), so this file waits here for the owner to copy it in as
-# .github/workflows/shared-tests.yml. The steps are in the README beside it; no
-# agent wrote or edited anything under .github/workflows/ to produce this.
-#
 # Why the job is needed at all: shared/ (P0.1-P1.5) is a second artifact
 # outside the Go module, like console/ and website/. `go test ./...`, `go vet`
 # and `gofmt -l .` take no notice of it, and no job in ci.yml names it, so
-# without this file the package's tests run only where someone runs them --
-# a real gap in the plan's coverage, recorded as one in
+# without this file the package's tests run only where someone runs them -- a
+# real gap in the plan's coverage, recorded as one in
 # docs/mobile/implementation-plan.md (open item 4) and in shared/README.md.
 #
 # The package has no dependencies at all, so `npm ci` here fetches nothing: it
@@ -23,6 +18,13 @@
 # the trigger or drops a version fails it. (That test scans these bytes for the
 # names of the dangerous events and permissions, so this comment does not spell
 # them out: a comment naming one would be refused exactly as a trigger would.)
+#
+# This file is the same file wherever it lives: it is staged under
+# docs/pending-workflows/ for the owner to `cp` into .github/workflows/, with
+# no edit in between and no staging banner to strip, because the test above
+# requires the two copies to be byte-identical while both exist and to read the
+# real one alone once the staged copy is gone. What staging means, and the
+# owner's steps, are in the README beside this file.
 name: shared-tests
 
 # `shared/**` and this workflow's own path, and nothing else: the package, and
