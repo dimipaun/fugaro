@@ -65,7 +65,7 @@ asserts the same over the built HTML's script, link, iframe and image origins.
 
 ## The gates
 
-Five checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Six checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network:
 
 - `test/linkcheck.mjs` — every internal link and asset resolves to a built file, every
@@ -107,15 +107,22 @@ with fixtures that keep its refusals running, and none of them needs the network
     the page's `h1` and its first `h2` — the paragraph a page opens with before its first
     section — and it is a lead and not an introduction: 40 words at most, on every page,
     the three reference pages included, because a lead is the page's own whichever page it
-    is. A page whose first `h2` is not in the `h1`'s own container (the homepage: the hero's
-    section holds the `h1`, and the first `h2` is a step of the flow under it) or that has
-    no `h2` at all has no such region, and its lead is the paragraphs that follow its `h1`. A page
-    whose `h1` is followed straight by its first `h2` has no lead region either, and 0 words
-    is inside the ceiling: `/security/` is shaped that way (its `h1` is the rendered
-    document's own title, and the page's lead line comes before it) and so is `/changelog/`
-    (whose summary is its first section, under the heading that names it). The ceiling is a
-    ceiling, not a floor — a page with no lead region is a page D188's definition does not
-    describe, and this gate says nothing about how much a page's first section should say.
+    is. **The region between the two headings is the whole of the definition, wherever each
+    heading sits** (P5; P4's reviewer read the homepage's lead two ways, 24 words from the
+    `h1`'s own container and 134 from the plan's region, and the stricter one is the one
+    enforced). A page that carries blocks between its `h1` and its first `h2` is a page
+    whose lead those blocks are part of — which is why the homepage opens its install
+    section with the `h2` above the commands rather than putting the commands under the
+    promise — so the fix for a long lead is a shorter lead or an earlier first `h2`, never
+    a reader that looks somewhere else. A page
+    with no `h2` at all has no such region, and its lead is the paragraphs that follow its
+    `h1`. A page whose `h1` is followed straight by its first `h2` has no lead region
+    either, and 0 words is inside the ceiling: `/security/` is shaped that way (its `h1` is
+    the rendered document's own title, and the page's lead line comes before it) and so is
+    `/changelog/` (whose summary is its first section, under the heading that names it).
+    The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
+    definition does not describe, and this gate says nothing about how much a page's first
+    section should say.
   - **Words per page:** 250 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
@@ -130,6 +137,18 @@ with fixtures that keep its refusals running, and none of them needs the network
     The ceiling is set against the site as it was measured before the redesign
     (`docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
     getting-started 431, privacy 277, community 268 — every one of them over it).
+- `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
+  the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
+  word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
+  is a statement about the built pages, though, and it is this file's rules: the homepage's lead
+  region holds one element and it is the promise, so the install block and the terminal are the
+  section the heading opens; Getting Started's install section opens with its commands, with the
+  sentence about them still there after the paths; and on every route that prints a command —
+  three of the eleven today, and the other eight are skipped rather than asserted about — the
+  first `h2` precedes the first `pre`. The whole gate is one function over one `dist`, so its
+  refusals are kept the way the other gates keep theirs: a case writes a synthetic `dist` with
+  each defect planted beside a page that keeps every rule, and each rule was mutation-proved by
+  removing it from the function and watching that case fail.
 - `test/meta.mjs` — the provenance-phrase gate (D186): a page must not explain why its own
   text exists, so D186's phrase list (`rendered from`, `generated rather than written`, …) is
   refused in the text a reader reads, on every built page. It is the one defect the other

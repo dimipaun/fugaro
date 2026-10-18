@@ -188,12 +188,23 @@ function within(node, ancestor) {
   return false
 }
 
-/** The visible text of `main` between two of its elements, in document order. */
+/** True when `node` comes after `other` in `main`'s document order. */
+function comesAfter(main, node, other) {
+  const items = flatten(main)
+  return items.indexOf(node) > items.indexOf(other)
+}
+
+/**
+ * The visible text of `main` between two of its elements, in document order. The caller
+ * checks the two are in that order before calling — a page's headings can be the other way
+ * round, and that is a shape a reader measures rather than one it refuses — so a call that
+ * cannot find them is a defect in the reader and not in the page.
+ */
 function textBetween(main, from, to) {
   const items = flatten(main)
   const start = items.indexOf(from)
   const end = items.indexOf(to)
-  assert.ok(start !== -1 && end > start, 'the lead reader could not find the headings it reads between: this is a defect in the reader, not in the page')
+  assert.ok(start !== -1 && end > start, 'the lead reader could not find the headings it reads between, which it checks for before this call: this is a defect in the reader, not in the page')
   return items
     .slice(start + 1, end)
     .filter((item) => !within(item, from))
@@ -206,13 +217,27 @@ function textBetween(main, from, to) {
  *
  * The lead is the visible text between the page's `h1` and its first `h2` — the paragraph a
  * page opens with before its first section, which is the text D188's 40-word ceiling is
- * about. A page whose `main` carries no `h2` in the `h1`'s own container (the homepage: the
- * hero's section holds the `h1`, and the first `h2` is a step of the flow under it) has no
- * such region; its lead is the paragraphs that follow the `h1`, which is the
- * same text read from the other end, rather than the hero's install block and terminal. The
- * whitespace a template leaves between the `h1` and the paragraph under it is a text node and
- * not a paragraph: it is skipped, because reading it as the end of the opening would measure
- * the lead of every indented page — every built page — as zero words.
+ * about. That is the whole of the definition, and it is the plan's own: **the region between
+ * the two headings in document order**, wherever either heading sits. It used to be read
+ * from the `h1`'s container instead when the first `h2` was outside it — the shape the
+ * homepage had, where the hero's section held the `h1` and the flow's step names were the
+ * first `h2`s under it — and that reading measured the homepage's lead as 24 words where the
+ * plan's measures 134: the promise, the install commands, the terminal and everything up to
+ * the flow. A gate whose number depends on which end it is read from is two gates (P4's
+ * reviewer asked which one this is, and P5 answered it). The homepage now carries its
+ * install section's own `h2` above those blocks, so both readings agree on every built page
+ * — 24 words — and the strict one is the one enforced, on this page and on any page that
+ * grows blocks between its `h1` and its first `h2` later.
+ *
+ * A page with no `h2` at all has no such region, and its lead is the paragraph run under the
+ * `h1` — the text D188's ceiling is about, read from the other end. A page whose first `h2`
+ * comes *before* its `h1` has no such region either — the region would have to be read
+ * backwards, and the text in front of a page's `h1` is not the page's lead — so it is
+ * measured the same way, as the paragraph run under the `h1`, rather than refused. The
+ * whitespace a
+ * template leaves between the `h1` and the paragraph under it is a text node and not a
+ * paragraph: it is skipped, because reading it as the end of the opening would measure the
+ * lead of every indented page — every built page — as zero words.
  *
  * A page with no `main` is not measured here: `a11y.mjs` is the gate that refuses a page
  * without the landmark, and this one says nothing about a region it cannot find.
@@ -223,12 +248,11 @@ export function pageWords(html) {
   const h1 = find(main, 'h1')
   if (h1 === null) return { words: words(visibleText(main)), lead: 0 }
   const firstH2 = find(main, 'h2')
-  // The h1 -> first h2 region is the lead when the `h2` sits in the same container as the
-  // `h1`. When it does not — the homepage's hero holds its `h1` in a section of its own and
-  // the flow's step names, further down, are the first `h2`s — the region would be the hero's
-  // install block and terminal and everything after, so the lead is the paragraph run under
-  // the `h1`, as on a page with no `h2` at all.
-  if (firstH2 !== null && within(firstH2, h1.parent)) {
+  // The region between the headings exists only when the `h2` comes after the `h1`: a page
+  // whose `h2` comes first is a page with no such region rather than a page this reader
+  // refuses, and `textBetween` measures forwards, so the order is checked here and the
+  // paragraph run under the `h1` answers for the rest.
+  if (firstH2 !== null && comesAfter(main, firstH2, h1)) {
     return { words: words(visibleText(main)), lead: words(textBetween(main, h1, firstH2)) }
   }
   const siblings = h1.parent.children
@@ -518,8 +542,9 @@ test('a lead one word over the lead ceiling is refused, and one word under it is
 })
 
 test('a page with no h2 measures the paragraph under its h1, through the newline between them', (t) => {
-  // The homepage's shape, and the one page whose lead is its whole gist: a hero with an `h1`
-  // and a paragraph under it, and no `h2` anywhere. Astro indents the template it compiles,
+  // A page whose `main` has no `h2` at all has no region between two headings, so its lead is
+  // the run of paragraphs under its `h1` — the same text D188's ceiling is about, read from
+  // the other end. Astro indents the template it compiles,
   // so the `h1` and the paragraph are separated by a text node holding a newline and spaces —
   // which is not a paragraph, and not the end of the opening run. A reader that stopped at it
   // would measure the lead as zero words and the lead ceiling would pass on this page without
@@ -539,26 +564,60 @@ test('a page with no h2 measures the paragraph under its h1, through the newline
   assert.match(f[0], new RegExp(`^over/index\\.html opens with a ${budgets.lead + 1}-word lead`))
 })
 
-test('a hero whose section holds the h1 has the paragraph run under the h1 as its lead, and not the sections after it', (t) => {
-  // The homepage since the flow went under the hero: the flow's step names are `h2`s, so the
-  // first `h2` of `main` is no longer the end of the hero but the start of a figure that sits
-  // outside the hero's section. Reading h1 -> first h2 would measure the hero's install block
-  // and terminal as the lead (85 words on the built page). The hero's own paragraph run is
-  // the lead, and a lead one word over the ceiling still fails.
+test('the lead is the h1 -> first h2 region wherever the first h2 sits, and what follows it is not the lead', (t) => {
+  // The homepage's shape before P5 put an `h2` above its install block: the hero's section
+  // holds the `h1`, and the first `h2` of `main` is a step of a figure that sits outside that
+  // section. The whole region between the two headings is the lead — the hero's own paragraph
+  // and the blocks that follow it, which is where a page's install commands and terminal were —
+  // because that is the region the plan defines the lead as, and a page that puts its commands
+  // between its `h1` and its first `h2` is a page whose lead they are part of. The run of
+  // paragraphs under the `h1` is not the answer here: it is shorter than the region — 38 words
+  // where the region is 40 on the `under/` fixture, 39 where it is 41 on `over/` — so a
+  // reader that stopped at the hero's own container would pass this fixture and
+  // let the page's whole gist through unmeasured (the reading P5 replaced, which measured the
+  // built homepage's 134-word lead as 24).
   const budgets = { ...readmeBudgets(), words: 100000 }
+  const x = (n) => Array.from({ length: n }, () => 'x').join(' ')
   const page = (n) =>
     shell(
       '',
-      `<main>\n <section class="hero">\n  <h1>t</h1>\n  <p>${Array.from({ length: n }, () => 'w').join(' ')}</p>\n` +
-        `  <div><p>${Array.from({ length: 200 }, () => 'x').join(' ')}</p></div>\n </section>\n` +
-        '<ol><li><h2>step</h2></li></ol>\n</main>',
+      `<main>\n <section class="hero">\n  <h1>t</h1>\n  <p>${x(n - 2)}</p>\n </section>\n` +
+        ` <div class="hero-install"><p>${x(2)}</p></div>\n` +
+        ` <ol><li><h2>step</h2></li><li><p>${x(200)}</p></li></ol>\n</main>`,
     )
-  assert.equal(pageWords(page(3)).lead, 3)
+  // The lead is the region between the headings — the hero's paragraph and the block that
+  // follows the hero's section — and the 200 words after the `h2` are a section of their own
+  // and are not part of it.
+  assert.deepEqual(pageWords(page(6)), { words: 1 + 6 + 1 + 200, lead: 6 })
+
   const dist = distOf(t, { 'over/index.html': page(budgets.lead + 1), 'under/index.html': page(budgets.lead) })
   const f = wordFailures(dist, budgets)
   assert.equal(f.length, 1, f.join('\n'))
   assert.match(f[0], new RegExp(`^over/index\\.html opens with a ${budgets.lead + 1}-word lead`))
 })
+
+test('a page whose first h2 comes before its h1 is measured, not refused', (t) => {
+  // The two headings can be the other way round — a page whose `main` opens with a section
+  // heading and puts its `h1` under it, which is a shape a template can produce and the
+  // reader has no business about. There is no region between them to read (the text in front
+  // of a page's `h1` is not its lead), so the lead is the paragraph run under the `h1`, the
+  // same answer as a page with no `h2` — the point being that this case measures rather than
+  // aborts. A reader that routed every page with an `h2` into the region reader would assert
+  // here and take the whole run down with a message about the reader, which is the failure
+  // this case is about.
+  const budgets = { ...readmeBudgets(), words: 100000 }
+  const x = (n) => Array.from({ length: n }, () => 'x').join(' ')
+  const page = (n) =>
+    shell('', `<main>\n <section>\n  <h2>a section</h2>\n  <h1>t</h1>\n  <p>${x(n - 1)}</p>\n </section>\n</main>`)
+
+  assert.deepEqual(pageWords(page(11)), { words: 2 + 1 + 10, lead: 10 })
+
+  const dist = distOf(t, { 'over/index.html': page(42), 'under/index.html': page(41) })
+  const f = wordFailures(dist, budgets)
+  assert.equal(f.length, 1, f.join('\n'))
+  assert.match(f[0], new RegExp(`^over/index\\.html opens with a ${budgets.lead + 1}-word lead`))
+})
+
 
 test('the three reference pages are exempt from the page ceiling, and their leads are not', (t) => {
   const budgets = readmeBudgets()
