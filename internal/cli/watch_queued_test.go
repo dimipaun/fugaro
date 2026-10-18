@@ -592,7 +592,11 @@ func TestWatchJSONCarriesProfileAndAccount(t *testing.T) {
 	seedCaps(f, 100, 20)
 	// The published policy is where the triple comes from: the same document
 	// the launcher resolves the job from and the runner matches CLOUD_RUN_JOB
-	// against.
+	// against, read under the same rules — projectpolicy.Read honours a
+	// policy only once the rules deployed to the project are this Fugaro's
+	// generation (a policy on older rules is one nothing enforces), so the
+	// marker is part of publishing it.
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
 		"version": projectpolicy.Version,
 		"profiles": map[string]any{
