@@ -369,6 +369,7 @@ reads:
 | `run`, `run_id`, `repo` | string | no | |
 | `slug` | — | — | **not a field**: `Row` has no `slug`; the slug is the row's own bucket key |
 | `workflow` | string | **yes** | |
+| `title` | string | **yes** | the run's own job title (`task.Spec.TitleLine`: the title flag of `fugaro run`, else the task's first line) — the field `fugaro watch` names a run by, absent when the task has neither |
 | `oauth_account` | string | **yes** | the named Claude account |
 | `recipe`, `config_sha256` | string | **yes** | |
 | `project_layer` | `*runstore.ProjectLayerRecord` | **yes** | absent before 0.6.0 |

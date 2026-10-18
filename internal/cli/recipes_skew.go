@@ -191,7 +191,7 @@ const namedTokensSince = "0.6.5"
 // for a named Claude account (namedTokensSince) and for mode: artifact
 // (artifactsSince); a launch with no --title writes no such field and is
 // never gated.
-const titlesSince = "0.9.0"
+const titlesSince = "0.8.5"
 
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets

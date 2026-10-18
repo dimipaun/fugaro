@@ -10,18 +10,22 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// release090 is a job image new enough to read a task's title (titlesSince).
-const release090 = "ghcr.io/dimipaun/fugaro-base:0.9.0"
+// release085 is a job image new enough to read a task's title
+// (titlesSince): this branch's own release, so the feature is usable on the
+// images it ships with.
+const release085 = "ghcr.io/dimipaun/fugaro-base:0.8.5"
 
-// runTitle launches one run of acme/app under run id id, with the given
+// runWithTitle launches one run of acme/app under run id id, with the given
 // extra flags, and returns its stored task.
-func runTitle(t *testing.T, f *cloudFixture, id string, extra []string, text string) *task.Spec {
+func runWithTitle(t *testing.T, f *cloudFixture, id string, extra []string, text string) *task.Spec {
 	t.Helper()
-	writeBuildRecord(t, f, appSlug, "web", release090)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	args := append([]string{"run", "--repo", "acme/app", "--run-id", id}, extra...)
 	args = append(args, text)
 	if _, _, err := execute(t, args...); err != nil {
@@ -53,7 +57,7 @@ func taskJSON(t *testing.T, f *cloudFixture, id string) string {
 // and this test fails on its first assertion.
 func TestRunTitleIsStoredInTheTask(t *testing.T) {
 	f := newCloudFixture(t)
-	spec := runTitle(t, f, "20261018-120000-abcd",
+	spec := runWithTitle(t, f, "20261018-120000-abcd",
 		[]string{"--title", "Ship the flaky-test fix"},
 		"Read CLAUDE.md and the plan first.\n\nThen fix the flaky test.")
 	if spec.Title != "Ship the flaky-test fix" {
@@ -82,7 +86,7 @@ func TestRunTitleIsStoredInTheTask(t *testing.T) {
 // that does not know the field can still read it.
 func TestRunWithoutTitleWritesNoTitleField(t *testing.T) {
 	f := newCloudFixture(t)
-	spec := runTitle(t, f, "20261018-120000-abcd", nil, "Add a feature\nand more")
+	spec := runWithTitle(t, f, "20261018-120000-abcd", nil, "Add a feature\nand more")
 	if spec.Title != "" {
 		t.Fatalf("title = %q, want none", spec.Title)
 	}
@@ -129,7 +133,7 @@ func TestRunTitleValidation(t *testing.T) {
 	// bytes: 100 three-byte characters are 300 bytes and 100 runes.
 	f := newCloudFixture(t)
 	long := strings.Repeat("日", task.MaxTitleRunes)
-	if spec := runTitle(t, f, "20261018-120000-abcd", []string{"--title", long}, "Add a feature"); spec.Title != long {
+	if spec := runWithTitle(t, f, "20261018-120000-abcd", []string{"--title", long}, "Add a feature"); spec.Title != long {
 		t.Fatalf("title = %q", spec.Title)
 	}
 }
@@ -145,7 +149,7 @@ func TestRunTitleValidation(t *testing.T) {
 // in, and this test fails.
 func TestRunTitleIsSanitised(t *testing.T) {
 	f := newCloudFixture(t)
-	spec := runTitle(t, f, "20261018-120000-abcd",
+	spec := runWithTitle(t, f, "20261018-120000-abcd",
 		[]string{"--title", "Fix  the flaky‮test​  here"},
 		"Add a feature")
 	// The override and the zero-width space are dropped (so "flaky" and
@@ -170,7 +174,7 @@ func TestRunTitleRefusedWithRetry(t *testing.T) {
 // each falls back to the task's first line, which is the shared preamble.
 func TestRunAttemptsCarryTheTitleOnEveryAttempt(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release090)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--title", "Ship the flaky-test fix", "--json",
 		"Read the plan first.\n\nThen fix it.")
 	if err != nil {
@@ -194,7 +198,7 @@ func TestRunAttemptsCarryTheTitleOnEveryAttempt(t *testing.T) {
 // way: the label groups runs, and the title still names this one.
 func TestRunBatchCarriesTheTitle(t *testing.T) {
 	f := newCloudFixture(t)
-	spec := runTitle(t, f, "20261018-120000-abcd",
+	spec := runWithTitle(t, f, "20261018-120000-abcd",
 		[]string{"--batch", "nightly", "--title", "Ship the flaky-test fix"},
 		"Read the plan first.\n\nThen fix it.")
 	if spec.Title != "Ship the flaky-test fix" || spec.Batch != "nightly" {
@@ -211,7 +215,7 @@ func TestRunBatchCarriesTheTitle(t *testing.T) {
 // no title and this test fails.
 func TestReviewLaunchCarriesTheTitle(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release090)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261018-120000-abcd",
 		"--recipe", "review-only", "--pr", "7", "--title", "Review the flaky-test PRs"); err != nil {
 		t.Fatal(err)
@@ -237,7 +241,7 @@ func TestFollowUpInheritsTheRunsTitle(t *testing.T) {
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
 	writeRecord(t, f, rootID, rec)
 
-	writeBuildRecord(t, f, appSlug, "web", release090)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x"); err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +260,7 @@ func TestFollowUpTitleFlagOverridesTheInheritedOne(t *testing.T) {
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
 	writeRecord(t, f, rootID, rec)
 
-	writeBuildRecord(t, f, appSlug, "web", release090)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--title", "Rename it properly", "also rename x"); err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +275,7 @@ func TestFollowUpTitleFlagOverridesTheInheritedOne(t *testing.T) {
 func TestFollowUpWithoutATitleToInherit(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
-	writeBuildRecord(t, f, appSlug, "web", release090)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x"); err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +295,7 @@ func TestFollowUpWithoutATitleToInherit(t *testing.T) {
 func TestStoredFollowUpRefusesADifferentTitle(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
-	writeBuildRecord(t, f, appSlug, "web", release090)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--title", "First title", "also rename x"); err != nil {
 		t.Fatal(err)
 	}
@@ -357,6 +361,40 @@ func TestRunTitleGatesOnACloneWorkflow(t *testing.T) {
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// fugaro watch names a QUEUED run by its title too, not by its workflow:
+// runTitle is the one rule, and a --batch/--attempts launch would otherwise
+// read alike on every queued row and only come apart once each run goes
+// live. built from the run's task.json, which is what the scan holds.
+//
+// Mutation (queuedResult leaving Title empty): the queued row shows the
+// workflow and this test fails.
+func TestQueuedRowCarriesTheJobTitle(t *testing.T) {
+	now := time.Now()
+	at := now.Add(-2 * time.Minute)
+	got := queuedResult(runview.Input{
+		Slug: appSlug, RunID: "20261018-120000-abcd",
+		Task:   &task.Spec{Repo: "acme/app", Task: "Read the plan first.\n\nThen fix it.", Title: "Ship the flaky-test fix"},
+		Launch: &runstore.Launch{Version: 1, RunID: "20261018-120000-abcd", LaunchedAt: at},
+	}, now.Add(-time.Hour), time.Time{}, now)
+	if !got.IsQueued {
+		t.Fatalf("want a queued row, got %+v", got)
+	}
+	if got.Queued.Title != "Ship the flaky-test fix" {
+		t.Fatalf("title = %q, want the run's own title", got.Queued.Title)
+	}
+	// No title in the task: the task's first line, as a queued row always
+	// showed (the workflow fallback in watch is for a task that did not
+	// parse at all).
+	untitled := queuedResult(runview.Input{
+		Slug: appSlug, RunID: "20261018-120000-abcd",
+		Task:   &task.Spec{Repo: "acme/app", Task: "Add a feature\nand more"},
+		Launch: &runstore.Launch{Version: 1, RunID: "20261018-120000-abcd", LaunchedAt: at},
+	}, now.Add(-time.Hour), time.Time{}, now)
+	if untitled.Queued.Title != "Add a feature" {
+		t.Fatalf("title = %q, want the task's first line", untitled.Queued.Title)
 	}
 }
 

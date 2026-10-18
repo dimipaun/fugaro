@@ -167,9 +167,10 @@ func newRunCmd() *cobra.Command {
 			"batch, under one batch label (bestof-<first run id> unless --batch is given); once\n" +
 			"they have all opened a pull request, compare them with fugaro run --recipe pick.\n" +
 			"It takes no --pr, --run-id or --retry.\n\n" +
-			"--title TEXT names the run: one line, at most 100 characters, shown in fugaro\n" +
-			"watch and runs ls and used as the pull request's title and its body's first\n" +
-			"heading. Without it the run is named by the task's first line, so briefs that\n" +
+			"--title TEXT names the run: one line, at most 100 characters. It is what\n" +
+			"fugaro watch and runs ls list the run by, and the title (with the body's first\n" +
+			"heading) of the pull request the run opens when the agent writes no pr.md of\n" +
+			"its own. Without it the run is named by the task's first line, so briefs that\n" +
 			"start with the same preamble all read alike. A follow-up (--pr) keeps its run's\n" +
 			"title unless --title is given, and --retry takes none (the stored task keeps its\n" +
 			"own).",
@@ -182,7 +183,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
 	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro runs ls")
-	f.StringVar(&o.title, "title", "", "the run's title, one line: shown in fugaro watch and runs ls, and used as the pull request's title (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given")
+	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
 	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
@@ -642,7 +643,12 @@ func taskText(cmd *cobra.Command, file string, args []string, optional bool) (st
 // surface then falls back to the task's first line, exactly as before the
 // flag existed. Its PRESENCE with nothing in it is a mistake and is
 // refused: --title "" would otherwise be silently the same as no --title at
-// all, which is the one reading nobody meant.
+// all, which is the one reading nobody meant. The emptiness check runs
+// again on the sanitised value, because the characters safetext.Field drops
+// (zero-width spaces and joiners, bidi embeddings and overrides, word
+// joiners, soft hyphens, the BOM) are not whitespace: a title made only of
+// them passes the trim and the check, and would otherwise be stored as no
+// title at all — the same silent no-op, one layer down.
 func titleFlag(cmd *cobra.Command, o *runOptions) error {
 	if !cmd.Flags().Changed("title") {
 		return nil
@@ -651,7 +657,9 @@ func titleFlag(cmd *cobra.Command, o *runOptions) error {
 	if p := task.TitleProblem(title); p != "" {
 		return userErr("--title: %s", p)
 	}
-	o.title = safetext.Field(title)
+	if o.title = safetext.Field(title); strings.TrimSpace(o.title) == "" {
+		return userErr("--title: %s", "is empty (or nothing but whitespace and invisible characters)")
+	}
 	return nil
 }
 

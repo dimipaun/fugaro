@@ -533,23 +533,23 @@ func TestFinishedResultFallsBackToStartedAt(t *testing.T) {
 	}
 }
 
-// finishedTitle stops at the task prompt's first line: a second line (a
+// runTitle stops at the task prompt's first line: a second line (a
 // fuller description) never leaks into the one-line title.
 func TestFinishedTitleStopsAtFirstLine(t *testing.T) {
-	got := finishedTitle(&task.Spec{Task: "first line\nsecond line"})
+	got := runTitle(&task.Spec{Task: "first line\nsecond line"})
 	if got != "first line" {
 		t.Fatalf("title = %q, want just the first line", got)
 	}
 }
 
-// finishedTitle lists a run by its own job title when fugaro run --title gave
+// runTitle lists a run by its own job title when fugaro run --title gave
 // it one: the row is the title the launcher stored, not the brief's first
 // line, which a shared preamble makes identical across every run of it.
 //
 // Mutation (read the task's first line instead of Spec.TitleLine): the row
 // shows "Read CLAUDE.md and the plan first." and this test fails.
 func TestFinishedTitlePrefersTheStoredTitle(t *testing.T) {
-	got := finishedTitle(&task.Spec{
+	got := runTitle(&task.Spec{
 		Task:  "Read CLAUDE.md and the plan first.\n\nThen fix the flaky test.",
 		Title: "Ship the flaky-test fix",
 	})
@@ -558,11 +558,11 @@ func TestFinishedTitlePrefersTheStoredTitle(t *testing.T) {
 	}
 }
 
-// finishedTitle clips a long first line to 80 runes, like the runner's own
+// runTitle clips a long first line to 80 runes, like the runner's own
 // registry entry title.
 func TestFinishedTitleClipsAt80Runes(t *testing.T) {
 	long := strings.Repeat("x", 90)
-	got := finishedTitle(&task.Spec{Task: long})
+	got := runTitle(&task.Spec{Task: long})
 	if got != long[:80] {
 		t.Fatalf("title = %q (%d runes), want the first 80", got, len([]rune(got)))
 	}

@@ -2029,9 +2029,10 @@ batch, under one batch label (bestof-<first run id> unless --batch is given); on
 they have all opened a pull request, compare them with fugaro run --recipe pick.
 It takes no --pr, --run-id or --retry.
 
---title TEXT names the run: one line, at most 100 characters, shown in fugaro
-watch and runs ls and used as the pull request's title and its body's first
-heading. Without it the run is named by the task's first line, so briefs that
+--title TEXT names the run: one line, at most 100 characters. It is what
+fugaro watch and runs ls list the run by, and the title (with the body's first
+heading) of the pull request the run opens when the agent writes no pr.md of
+its own. Without it the run is named by the task's first line, so briefs that
 start with the same preamble all read alike. A follow-up (--pr) keeps its run's
 title unless --title is given, and --retry takes none (the stored task keeps its
 own).
@@ -2059,7 +2060,7 @@ Flags:
 | `--retry` | string | "" | no | launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
-| `--title` | string | "" | no | the run's title, one line: shown in fugaro watch and runs ls, and used as the pull request's title (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given |
+| `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given |
 | `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's) |
 | `--total-timeout` | string | "" | no | override the workflow's timeouts.total for this run, such as 45m |
 | `--workflow` | string | "" | no | workflow to run (default: the repo's only workflow) |

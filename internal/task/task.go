@@ -52,9 +52,10 @@ type Spec struct {
 	Workflow string `json:"workflow,omitempty"`
 	Task     string `json:"task,omitempty"`
 	// Title is the run's own job title, from fugaro run --title: the one
-	// line every surface that names a run shows — fugaro watch's live and
-	// finished rows, the budget registry's entry, the pull request's title
-	// and its body's first heading, runs ls --json's row. Empty (the
+	// line every surface that names a run shows — fugaro watch's live,
+	// queued and finished rows, the budget registry's entry, the title and
+	// the body's first heading of the pull request the run opens when the
+	// agent wrote no pr.md of its own, runs ls --json's row. Empty (the
 	// common case, and every spec written before this release) means "the
 	// task prompt's own first line", exactly the rule those surfaces
 	// followed before the flag existed; TitleLine is that one rule, and no
