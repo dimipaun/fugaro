@@ -616,11 +616,11 @@ var managedCaller = func(ctx context.Context, lc *localcfg.Config) (string, oaut
 		if errors.Is(err, errServiceAccount) {
 			return "", nil, userErr("a managed apply runs as a person: the deployer account's impersonation grant is on the project's operators, and this run's credentials are a service account's")
 		}
-		return "", nil, userErr("fugaro managed apply cannot tell who you are: %v", err)
+		return "", nil, userErr("fugaro managed apply cannot tell who you are: %v", safetext.FieldErr(err))
 	}
 	ts, err := google.DefaultTokenSource(ctx, cloudPlatformScope)
 	if err != nil {
-		return "", nil, userErr("no Google credentials to assume the deployer account with: run gcloud auth application-default login (%v)", err)
+		return "", nil, userErr("no Google credentials to assume the deployer account with: run gcloud auth application-default login (%v)", safetext.FieldErr(err))
 	}
 	return "user:" + email, ts, nil
 }

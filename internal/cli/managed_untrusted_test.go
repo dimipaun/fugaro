@@ -382,3 +382,28 @@ func TestTheImpersonationsOwnWordsAreBounded(t *testing.T) {
 		})
 	}
 }
+
+// TestTheCallersOwnRefusalIsBounded: who the run is comes from a userinfo
+// endpoint's answer — the status line included, which is that server's own
+// text — and the error chain carrying it is printed by this command's
+// refusal. The read itself is a package variable (its own comment: so tests
+// never reach the network), which is what lets the chain be hostile here.
+func TestTheCallersOwnRefusalIsBounded(t *testing.T) {
+	for name, v := range hostileCLIValues() {
+		t.Run(name, func(t *testing.T) {
+			old := authenticatedUser
+			t.Cleanup(func() { authenticatedUser = old })
+			authenticatedUser = func(context.Context, *localcfg.Config) (string, error) {
+				return "", fmt.Errorf("asking who you are: 403 %s", v)
+			}
+			_, _, err := managedCaller(context.Background(), &localcfg.Config{Name: initProjectName, GCPProject: initProject})
+			if err == nil {
+				t.Fatal("a caller that could not be read was accepted")
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+			}
+			noRawHostile(t, name+" in the caller's refusal", err.Error(), 1)
+		})
+	}
+}
