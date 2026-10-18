@@ -3,11 +3,13 @@
  * website/src/pages/console.astro — the console page (website plan, Task W1.6).
  *
  * The spec's section 4 asks for *"Console downloads: per-OS download links (placeholder
- * until the console ships)"*, and the console is designed and not shipped. This page is
- * that placeholder, and it is built so that the placeholder is honest in the way the
- * reconciliation asks for: it says what the console is, that it is not released yet and
- * what it will be, and it renders **no link and no button** a reader could follow
- * (finding 23, finding 25, D95).
+ * until the console ships)"*, and the console is built and **not released**: `console/` holds
+ * the application and the workflow that signs, notarises and staples its macOS artifacts, that
+ * workflow creates the release as a draft the owner publishes, and `features.console_downloads`
+ * is false until then. This page is that placeholder, and it is built so that the placeholder
+ * is honest in the way the reconciliation asks for: it says what the console is, that it is not
+ * released yet and what it will be, and it renders **no link and no button** a reader could
+ * follow (finding 23, finding 25, D95).
  *
  * Where its facts come from, and why nothing here is typed into the markup:
  *
