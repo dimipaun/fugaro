@@ -125,7 +125,8 @@ func allowListRefusal(p *projectpolicy.Policy, provider, repo string) error {
 // launchPolicyGates refuses a launch with it before the execution is created.
 //
 // The release it names is the one that introduced the version on the node when
-// the node is ahead of this binary, from policyVersionSince — the release the
+// the node is ahead of this binary, from projectpolicy.VersionSince (through
+// SkewSentence, the sentence every too-new reader prints) — the release the
 // operator has to reach — and never policySince: that constant names the
 // release the policy *model* ships in, and quoting it beside a version-2 node
 // told the operator of an 0.8.1 binary to upgrade to >= 0.8.0, which they
@@ -136,13 +137,10 @@ func allowListRefusal(p *projectpolicy.Policy, provider, repo string) error {
 // binary, keeps the model's release, which is what wrote a node of a version
 // below projectpolicy.Version.
 func policySkewRefusal(ve *projectpolicy.VersionError) error {
-	skew := fmt.Sprintf(projectpolicy.Skew, ve.Found, ve.Understood)
-	remedy := projectpolicy.SkewRemedy(ve, projectpolicy.ReaderCLI)
 	if ve.Found > ve.Understood {
-		if rel, ok := policyVersionSince[ve.Found]; ok {
-			return userErr("%s (policy version %d arrived in fugaro %s): %s", skew, ve.Found, rel, remedy)
-		}
-		return userErr("%s: %s", skew, remedy)
+		return userErr("%s", projectpolicy.SkewSentence(ve, projectpolicy.ReaderCLI))
 	}
-	return userErr("%s (the policy model is fugaro %s's): %s", skew, policySince, remedy)
+	return userErr("%s (the policy model is fugaro %s's): %s",
+		fmt.Sprintf(projectpolicy.Skew, ve.Found, ve.Understood), policySince,
+		projectpolicy.SkewRemedy(ve, projectpolicy.ReaderCLI))
 }

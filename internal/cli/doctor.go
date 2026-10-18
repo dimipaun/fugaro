@@ -1513,7 +1513,7 @@ func sharedConfigChecks(ctx context.Context, sel localcfg.Selection, lc *localcf
 // It is a function of the version error alone, which is what lets the line be
 // tested for a node this binary cannot meet through its own read — a version
 // above the one it understands is refused by Decode before doctor sees a
-// node, so the rig can only write Version+1, a version policyVersionSince
+// node, so the rig can only write Version+1, a version projectpolicy.VersionSince
 // deliberately has no row for.
 //
 // The fix names the release that introduced the version on the node when the
