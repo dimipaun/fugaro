@@ -219,6 +219,16 @@ func WriteFlag(ctx context.Context, s *storage.Service, bucket, project string, 
 	}
 	b, err := s.Buckets.Get(bucket).Context(ctx).Do()
 	if err != nil {
+		// A 404 and a 403 are answers rather than failures, the way the read
+		// of this object treats them (readFact): Google answers a bucket the
+		// caller may not read the same way it answers one that is not there,
+		// so the refusal says which name was looked for instead of guessing
+		// which of the two it was.
+		var ge *googleapi.Error
+		if errors.As(err, &ge) && (ge.Code == http.StatusForbidden || ge.Code == http.StatusNotFound) {
+			return refusedf("gs://%s is not there, or cannot be read, so %s has no runs bucket for a marker to go into (an installation that never made its runs bucket has none)",
+				bucket, project)
+		}
 		return fmt.Errorf("reading gs://%s before writing %s for %s: %w", bucket, MarkerObject, project, err)
 	}
 	if b.ProjectNumber != number || b.Labels[gcp.LabelManaged] != gcp.ManagedValue {
