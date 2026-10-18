@@ -27,6 +27,8 @@ approved, and this directory is not evidence that one is.
 
 `mailbox-sim/` (P1.5) is the deterministic mailbox simulator: built, with its own tests and its own mutation proof; see `mailbox-sim/README.md`.
 
+`confirm/` (P6.2) is the spoken-confirmation state machine — the read-back, the fixed phrase, the timeout, the replay ledger and D128's refusals — with its own tests, its own mutation proof and `vectors.json` for P6.7's Go parity test; see `confirm/README.md`. It is the first module of the mobile plan rather than of phase 0-2, and it reuses `lease/`'s timestamp bound.
+
 ## The runner, and the glob
 
 `npm test` runs `node --test "**/*.test.js"` — Node's own test runner, so the package has
