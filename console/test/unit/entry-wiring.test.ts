@@ -403,6 +403,117 @@ describe('the dashboard the entry mounts', () => {
       await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
       expect(calls.filter((call) => call.name === 'subscribeLive')).toHaveLength(2)
     })
+
+    it('stops polling while a run is on screen, and starts again on the way back', async () => {
+      // Run detail is reached from a run row rather than offered in the
+      // navigation, and it is still a view: a poll that kept running under it
+      // would replace the run the operator opened with the Live screen a second
+      // later.
+      const { bridge, calls } = fakeBridge({
+        replies: {
+          subscribeLive: () => snapshotReply(syntheticDocuments()[0] as Readonly<Record<string, unknown>>),
+          diagnoseRun: () => ({ ok: true, data: { document: {} } }),
+          readRunLogs: () => ({ ok: true, data: { document: {} } }),
+          runLogLink: () => ({ ok: false, reason: 'this run has no transcript link' }),
+        },
+      })
+      const document = await boot(bridge, new FakeDocument())
+      const panel = panelOf(document)
+      ;(classed(panel, 'live-run')[0] as FakeNode).click()
+      await flush()
+      expect(panel.children[0]?.attributes.get('class')).toBe('run')
+
+      const afterRun = calls.length
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS * 3)
+      expect(calls.length, 'the Live poll kept running under the run screen').toBe(afterRun)
+
+      // And leaving it, by any of the offered views, puts the interval back.
+      buttonFor(document, 'live').click()
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+      expect(calls.filter((call) => call.name === 'subscribeLive')).toHaveLength(2)
+    })
+  })
+
+  describe('a read that lands after the operator moved on', () => {
+    // Every read is a message round, and `spend.report` is a whole report: an
+    // answer can arrive after the operator has chosen another view. The panel is
+    // *their* view, so a drawing that lands late must not replace it -- a screen
+    // that names Projects and holds Spend is worse than one that names Spend.
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('does not draw a spend report over the view the operator moved to', async () => {
+      const held: (() => void)[] = []
+      const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+      const { bridge } = fakeBridge({
+        replies: {
+          subscribeLive: () => snapshotReply(frame),
+          showBudget: () => ({ ok: true, data: {} }),
+          runReport: () =>
+            new Promise((resolve) => {
+              held.push(() => resolve({ ok: true, data: {} }))
+            }),
+        },
+      })
+      const document = await boot(bridge, new FakeDocument())
+      const panel = panelOf(document)
+      expect(panel.children[0]?.attributes.get('class')).toBe('live')
+
+      // Spend is entered and its report does not answer; the operator goes back
+      // to Live, which puts the last poll's own drawing back at once.
+      buttonFor(document, 'spend').click()
+      await flush()
+      buttonFor(document, 'live').click()
+      expect(panel.children[0]?.attributes.get('class')).toBe('live')
+
+      // The spend report answers last. The panel is Live -- the view on screen
+      // -- and not the Spend screen the report was read for.
+      expect(held, 'the spend report answered before the operator moved: the case proves nothing').toHaveLength(1)
+      held[0]?.()
+      await flush()
+      expect(panel.children[0]?.attributes.get('class')).toBe('live')
+    })
+
+    it('does not draw a live frame over the view the operator moved to', async () => {
+      const held: (() => void)[] = []
+      let made = 0
+      const frames = syntheticDocuments()
+      const { bridge } = fakeBridge({
+        replies: {
+          subscribeLive: () => {
+            made += 1
+            const frame = frames[made === 1 ? 0 : frames.length - 1] as Readonly<Record<string, unknown>>
+            if (made === 1) return snapshotReply(frame)
+            return new Promise((resolve) => {
+              held.push(() => resolve(snapshotReply(frame)))
+            })
+          },
+          showBudget: () => ({ ok: true, data: {} }),
+          runReport: () => ({ ok: true, data: {} }),
+        },
+      })
+      const document = await boot(bridge, new FakeDocument())
+      const panel = panelOf(document)
+
+      // A poll is in flight and does not answer; the operator leaves Live for
+      // Spend, which draws something of its own.
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+      buttonFor(document, 'spend').click()
+      await flush()
+      const chosen = panel.children[0]?.attributes.get('class')
+      expect(chosen, 'the operator never left Live: the case would prove nothing').not.toBe('live')
+
+      // The poll answers last, with a frame the console *can* read -- so a
+      // drawing that landed would be the Live screen, and the panel is not it.
+      expect(held, 'the poll answered before the operator moved: the case proves nothing').toHaveLength(1)
+      held[0]?.()
+      await flush()
+      expect(panel.children[0]?.attributes.get('class')).toBe(chosen)
+    })
   })
 })
 

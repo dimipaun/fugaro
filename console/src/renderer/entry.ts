@@ -701,15 +701,46 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     return state === undefined || state === 'visible'
   }
 
-  /** show switches the panel to one view. The Live screen is not re-read here --
-   * its model is the one the last poll drew, which is the point of a live
-   * screen -- and the other two read on entry. */
-  const show = (id: string): void => {
+  /**
+   * generation is what "the operator has moved on" is written as. Every screen
+   * is drawn from a read, and a read is a message round -- `spend.report` is a
+   * whole report -- so an answer can land after the operator has chosen another
+   * view. The panel is *their* view: a drawing that landed late would replace
+   * what they chose with what they left, which is a screen naming one thing and
+   * holding another.
+   *
+   * `claim` takes the next generation and answers it; a drawer keeps what it was
+   * given and asks `stale` before it draws anything. Every door that changes the
+   * view claims, so an answer for a view nobody is looking at cannot be drawn.
+   */
+  let generation = 0
+  const claim = (): number => {
+    generation += 1
+    return generation
+  }
+  const stale = (mine: number): boolean => mine !== generation
+
+  /**
+   * markCurrent is the navigation's one writer: it records which view is on
+   * screen, marks its button, and invalidates whatever was in flight for the
+   * view before it. Run detail is a view without a button -- it is reached from
+   * a run row -- so every button is unmarked while it is up, which is the truth
+   * about the navigation: none of the offered views is the one on screen.
+   */
+  const markCurrent = (id: string): void => {
+    claim()
     for (const [key, button] of buttons) {
       button.setAttribute('aria-current', key === id ? 'true' : 'false')
     }
     currentView = id
     syncPolling()
+  }
+
+  /** show switches the panel to one view. The Live screen is not re-read here --
+   * its model is the one the last poll drew, which is the point of a live
+   * screen -- and the other two read on entry. */
+  const show = (id: string): void => {
+    markCurrent(id)
     if (id === 'live') {
       if (live.drawn !== null) replace(live.drawn)
       return
@@ -773,6 +804,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * which is written in the console's words), and a feed that answered nothing.
    */
   const drawLive = (reply: unknown): void => {
+    // The Live screen is the poll's own view. A frame that lands while another
+    // view is on screen -- the operator opened a run, or moved to Spend while
+    // this read was outstanding -- is a drawing nobody is looking at, and it
+    // would replace the screen they did open. The interval is stopped by
+    // `syncPolling`; this is the read that was already on its way.
+    if (currentView !== 'live') return
     const answer = replyData(reply)
     if (!answer.ok) {
       refuse('live.watch', answer.sentence)
@@ -830,9 +867,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * it.
    */
   const showSpend = async (): Promise<void> => {
+    const mine = claim()
     let controls: SpendControls = SPEND_DEFAULT_CONTROLS
     let caps: Readonly<Record<string, unknown>> | null = null
     const capsReply = documentOf(await bridge.showBudget({}))
+    if (stale(mine)) return
     if (capsReply.ok) caps = capsReply.data
 
     const reader: SpendReader = async (args) => {
@@ -843,6 +882,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
     const draw = async (): Promise<void> => {
       const outcome = await readSpend(reader, controls, caps)
+      // The report was read for a view that is no longer the one on screen. A
+      // control change re-runs `draw` under the *same* generation, so this is
+      // the operator leaving Spend and nothing else.
+      if (stale(mine)) return
       if (!outcome.ok) {
         refuse('spend.report', outcome.reason)
         return
@@ -906,6 +949,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * did not make -- and is not a zero.
    */
   const showProjects = async (): Promise<void> => {
+    const mine = claim()
     const sentences: Record<string, string> = {}
     const read = async (operation: string, go: () => Promise<unknown>): Promise<unknown> => {
       const answer = documentOf(await go())
@@ -914,6 +958,8 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
     const budget = await read('budget.show', () => bridge.showBudget({}))
     const runs = await read('runs.list', () => bridge.listRuns({}))
+    // Both reads are in, and the operator may have moved on while they were.
+    if (stale(mine)) return
     const model = buildProjectsModel({ budget, runs, accounts: null, secrets: null, sentences })
     replace(renderProjects(factory, model, theme))
   }
@@ -939,6 +985,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * sentence for a link that did not arrive.
    */
   const showRun = async (run: string): Promise<void> => {
+    // A run is a view like any other: the navigation marks none of its buttons
+    // while it is up, and the Live poll stops -- a poll that kept running under
+    // it would replace the run the operator opened a second later.
+    markCurrent('run')
+    const mine = claim()
     const sentences: Record<string, string> = {}
     const read = async (operation: string, go: () => Promise<unknown>): Promise<unknown> => {
       const answer = documentOf(await go())
@@ -947,6 +998,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
     const diagnosis = await read('run.diagnose', () => bridge.diagnoseRun({ run }))
     const logs = await read('run.logs', () => bridge.readRunLogs({ run }))
+    if (stale(mine)) return
     const refused = (['run.diagnose', 'run.logs'] as const)
       .map((operation) => ({ operation, sentence: sentences[operation] }))
       .find((each) => each.sentence !== undefined)
@@ -957,6 +1009,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
     let logLink: string | null = null
     const link = replyData(await bridge.runLogLink({ run }))
+    if (stale(mine)) return
     if (link.ok && typeof link.data === 'string') logLink = link.data
     else if (!link.ok) sentences['run.logLink'] = link.sentence
 
