@@ -816,6 +816,68 @@ func TestRestoreGCPProjectLine(t *testing.T) {
 		}
 	})
 
+	// The line's value is the only thing this editor owns. A rewrite that
+	// rebuilt the whole line would drop the quoting the value carried and any
+	// trailing comment, and the read-back check would not see it — comments
+	// and quotes are not part of the parsed value — so the file would come
+	// back shorter than the one the operator reviewed, in a committed file the
+	// restore only ever edits one value of. Mutation-checked: the line
+	// rebuilt as "gcp_project: <id>" passes the read-back and fails here.
+	t.Run("the value's quoting and its trailing comment are the file's", func(t *testing.T) {
+		const anchored = "version: 1\nproject: " + initProjectName +
+			"\ngcp_project: \"" + initProject + "\"\t# the sandbox's own project\n" + yamlRest
+		out, changed, err := restoreGCPProjectLine([]byte(anchored), initProject, restoreNewProj)
+		if err != nil {
+			t.Fatalf("a quoted gcp_project: line naming the old project: %v", err)
+		}
+		if !changed {
+			t.Fatal("the line naming the old project was not moved")
+		}
+		want := strings.Replace(anchored, "\""+initProject+"\"", "\""+restoreNewProj+"\"", 1)
+		if string(out) != want {
+			t.Errorf("fugaro.yaml is\n%q\nwant\n%q", out, want)
+		}
+	})
+
+	t.Run("an unquoted value keeps its own spacing and comment", func(t *testing.T) {
+		const anchored = "version: 1\nproject: " + initProjectName +
+			"\ngcp_project:" + "   " + initProject + "   # moved by the restore\n" + yamlRest
+		out, changed, err := restoreGCPProjectLine([]byte(anchored), initProject, restoreNewProj)
+		if err != nil || !changed {
+			t.Fatalf("an unquoted gcp_project: line: changed=%v err=%v", changed, err)
+		}
+		want := strings.Replace(anchored, " "+initProject+"   ", " "+restoreNewProj+"   ", 1)
+		if string(out) != want {
+			t.Errorf("fugaro.yaml is\n%q\nwant\n%q", out, want)
+		}
+	})
+
+	// A tag or an anchor before the value is YAML this editor does not
+	// understand: it would replace the "!!str" or "&a" word and keep the old
+	// ID behind it, writing a line that means something else. Only the
+	// read-back check refuses it. Mutation-checked: removing that check
+	// fails these.
+	t.Run("a tagged or anchored value is refused by the read-back, not rewritten", func(t *testing.T) {
+		for name, value := range map[string]string{
+			"tag":    "!!str " + initProject,
+			"anchor": "&a " + initProject,
+		} {
+			t.Run(name, func(t *testing.T) {
+				doc := "version: 1\nproject: " + initProjectName + "\ngcp_project: " + value + "\n" + yamlRest
+				out, changed, err := restoreGCPProjectLine([]byte(doc), initProject, restoreNewProj)
+				if err == nil {
+					t.Fatalf("a %s before the value was rewritten:\n%s", name, out)
+				}
+				if changed || out != nil {
+					t.Errorf("a refused edit returned bytes: %q", out)
+				}
+				if !strings.Contains(err.Error(), "would not read back as intended") {
+					t.Errorf("not refused by the read-back: %v", err)
+				}
+			})
+		}
+	})
+
 	t.Run("the no-op is the file already naming the new project", func(t *testing.T) {
 		moved := strings.Replace(third, "someone-elses-99", restoreNewProj, 1)
 		out, changed, err := restoreGCPProjectLine([]byte(moved), initProject, restoreNewProj)
@@ -1473,6 +1535,16 @@ func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "is back as it was") {
 				t.Errorf("the refusal says the config was put back:\n%v", err)
+			}
+			// #588: a budget CAN be added to an existing project, with
+			// managed flag, and the refusal must say so. Telling the owner it
+			// cannot, and to delete the project, is false and destructive (the
+			// ID stays reserved ~30 days); docs/gcp-setup.md says the same.
+			if want := "fugaro managed flag " + newProj + " --budget N --budget-currency CCC"; !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not give the way to add a budget %q:\n%v", want, err)
+			}
+			if strings.Contains(err.Error(), "cannot add one") {
+				t.Errorf("the refusal says a budget cannot be added:\n%v", err)
 			}
 			if len(r.crm.Creates()) != 1 {
 				t.Errorf("%d creation(s), want 1", len(r.crm.Creates()))

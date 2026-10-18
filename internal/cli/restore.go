@@ -994,9 +994,13 @@ func restoreGCPProjectLine(data []byte, oldID, newID string) ([]byte, bool, erro
 	if at < 0 {
 		return nil, false, byHand("fugaro.yaml's gcp_project: is not a one-line top-level key")
 	}
-	body := bytes.TrimRight(lines[at], "\r\n")
-	eol := lines[at][len(body):]
-	lines[at] = append([]byte("gcp_project: "+newID), eol...)
+	line := bytes.TrimRight(lines[at], "\r\n")
+	eol := lines[at][len(line):]
+	rewritten, err := rewriteGCPProjectValue(line, newID)
+	if err != nil {
+		return nil, false, byHand("%v", err)
+	}
+	lines[at] = append(rewritten, eol...)
 	out := bytes.Join(lines, nil)
 
 	// Read it back, as setGCPProjectLine does: the file must mean what it
@@ -1010,6 +1014,81 @@ func restoreGCPProjectLine(data []byte, oldID, newID string) ([]byte, bool, erro
 		return nil, false, byHand("the edited file would not read back as intended")
 	}
 	return out, true, nil
+}
+
+// rewriteGCPProjectValue replaces the VALUE of a gcp_project: line and nothing
+// else — the key's own spelling, the spacing after the colon, the quoting the
+// value carried and any trailing comment are the file's, because the restore
+// edits one value of a committed file and every other byte of it is the
+// operator's. It is the difference between "the line now names the new
+// project" and "the line is now what this program would have written": the
+// second drops a comment that said why the value was what it was, and the
+// read-back check cannot see it, because a comment and a pair of quotes are
+// not part of the parsed value.
+//
+// The value is read with the quoting YAML gives it — a double-quoted scalar
+// (with the backslash escapes it may hold), a single-quoted one, or a bare
+// scalar that ends at the first blank or "#" — and written back in the same
+// quoting. A project ID needs no escaping, so the two forms cannot differ in
+// what they mean; what is kept is the file's.
+func rewriteGCPProjectValue(line []byte, id string) ([]byte, error) {
+	colon := bytes.IndexByte(line, ':')
+	if colon < 0 {
+		return nil, errors.New("the gcp_project: line has no colon")
+	}
+	// head is the key and the colon with the spacing after it, as written.
+	end := colon + 1
+	for end < len(line) && (line[end] == ' ' || line[end] == '\t') {
+		end++
+	}
+	head, rest := line[:end], line[end:]
+	tail, quote, err := valueTailAndQuote(rest)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, len(line)+len(id))
+	out = append(out, head...)
+	out = append(out, quote...)
+	out = append(out, id...)
+	out = append(out, quote...)
+	out = append(out, tail...)
+	return out, nil
+}
+
+// valueTailAndQuote reads the YAML scalar a gcp_project: line drops after the
+// colon — a double-quoted one (with the backslash escapes it may hold), a
+// single-quoted one, or a bare one that ends at the first blank or "#" — and
+// returns what follows it on the line (the spacing before a trailing comment,
+// and the comment) together with the quote character the scalar opened with,
+// "" for a bare one. Its two errors are shapes the read above has in practice
+// already refused — a line with no value at all parses as no value, and an
+// unclosed quote does not parse — and they are kept so that the editor refuses
+// a line it cannot read rather than rebuilding it: the rule here is that every
+// shape this function does not understand is the operator's, not this
+// program's to write.
+func valueTailAndQuote(rest []byte) (tail []byte, quote string, err error) {
+	if len(rest) == 0 {
+		return nil, "", errors.New("the gcp_project: line has no value")
+	}
+	if q := rest[0]; q == '"' || q == '\'' {
+		for i := 1; i < len(rest); i++ {
+			if q == '"' && rest[i] == '\\' {
+				// The escape and what it escapes are inside the scalar whatever
+				// the next byte is, so a quoted \" does not close it.
+				i++
+				continue
+			}
+			if rest[i] == q {
+				return rest[i+1:], string(rune(q)), nil
+			}
+		}
+		return nil, "", errors.New("the gcp_project: value's quote is never closed")
+	}
+	i := 0
+	for i < len(rest) && rest[i] != ' ' && rest[i] != '\t' && rest[i] != '#' {
+		i++
+	}
+	return rest[i:], "", nil
 }
 
 // notRestored is D66's list: what the new project does NOT have, as a list
