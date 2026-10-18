@@ -46,6 +46,13 @@
 //     images are committed: `docs/website/redesign/{current,after}/*.jpg` are in
 //     the root .gitignore, and this script is how they are made again.
 //
+//   * The measurements are part of the output, not a by-product: header height and
+//     nav rows (Check 70a), the `h1`'s bottom, the lead paragraph's bottom and the
+//     first command's bottom (Check 70b — P5's fold claim), the word count of `main`
+//     and the count of command blocks and copy controls. P5's verification is read
+//     out of the JSON this script writes, at 390 × 844: every route's `h1Bottom`, the
+//     homepage's `leadBottom` and `firstCommandBottom`, and Getting Started's.
+//
 // Two things the set records honestly rather than hiding:
 //
 //   * Three pages are taller than Chromium can capture in one image — /docs/ is
@@ -139,6 +146,16 @@ for (const vp of VIEWPORTS) {
         scrollWidth: document.documentElement.scrollWidth,
         h1: h1?.innerText ?? null,
         h1Bottom: h1 ? Math.round(box(h1).bottom + window.scrollY) : null,
+        // The two numbers P5's fold claim is about, beside the `h1`'s: the bottom of the
+        // page's lead paragraph and the bottom of the first command it prints. The claim is
+        // that the `h1`, the one-line promise and the first command are inside a 390 × 844
+        // first screen — on the homepage, where the promise is the first paragraph and the
+        // first command is the first `pre` — and that Getting Started's first screen is its
+        // first command. `null` where the page prints no command at all (eight of the
+        // eleven routes). Both are measured from the top of the document, so they are read
+        // against the viewport's height the same way `h1Bottom` is.
+        leadBottom: q('main p') ? Math.round(box(q('main p')).bottom + window.scrollY) : null,
+        firstCommandBottom: q('main pre') ? Math.round(box(q('main pre')).bottom + window.scrollY) : null,
         words: (q('main')?.innerText ?? '').trim().split(/\s+/).filter(Boolean).length,
         preCount: document.querySelectorAll('pre').length,
         copyButtons: document.querySelectorAll('[data-copy], .copy-button, button.copy').length,
@@ -179,7 +196,8 @@ const out = process.argv[3] ?? '/tmp/website-screenshots.json'
 writeFileSync(out, `${JSON.stringify(measured, null, 1)}\n`)
 for (const r of measured) {
   console.log(`${r.route} ${r.viewport} w=${r.scrollWidth} h=${r.height} header=${r.headerHeight} `
-    + `navRows=${r.navRows} h1Bottom=${r.h1Bottom} words=${r.words} pre=${r.preCount} `
+    + `navRows=${r.navRows} h1Bottom=${r.h1Bottom} leadBottom=${r.leadBottom} `
+    + `firstCommandBottom=${r.firstCommandBottom} words=${r.words} pre=${r.preCount} `
     + `copyButtons=${r.copyButtons} inlineJs=${r.inlineScriptBytes}`)
 }
 console.log(`measurements written to ${out}`)
