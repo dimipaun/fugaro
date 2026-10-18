@@ -306,8 +306,15 @@
     // The parent domain the tag may have written a cookie to instead of the host: the host
     // without its leftmost label — the registrable domain of a `www.` host, which is the case
     // the tag's own `auto` setting picks — and only where there is a label to spare. An apex
-    // host has none (what is left of it is a public suffix and not a domain), and nothing
-    // below the parent is tried: no wildcard, no guessed suffix.
+    // host has none, and nothing below the parent is tried: no wildcard, no suffix guessed
+    // from a list this file does not carry.
+    //
+    // One label means one label, and the result is not always a domain a cookie may be set
+    // on: a preview host like `foo--bar.web.app` has `web.app` for a parent, and that is a
+    // public suffix. The write is then refused by the browser (this file consults no
+    // public-suffix list, and a list is not worth the bytes here), so the attempt costs a
+    // rejected assignment and nothing else — and the host this site ships on is an apex, with
+    // no parent at all, so the attempt is never made there.
     function parentDomain(host) {
       var labels = String(host || '').split('.')
       return labels.length > 2 ? labels.slice(1).join('.') : ''

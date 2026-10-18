@@ -553,6 +553,12 @@ test('site.js names nothing that evaluates, writes markup or fetches', () => {
       /EXPIRED/.test(write),
       `site.js writes document.cookie without the expiry that removes it (${write.trim()}): a withdrawal deletes the cookies GA4 set and sets none of its own`,
     )
+    // A write with no `Path` lands on the page's own directory rather than on `/`, so it would
+    // not match a cookie the tag set at `/` and the deletion would silently remove nothing.
+    assert.ok(
+      /path=\//i.test(write),
+      `site.js writes document.cookie without Path=/ (${write.trim()}): the tag's cookies are set at /, and an expiry on another path removes none of them`,
+    )
   }
 
   // The storage this file touches beyond that is the consent decision, and it names no key of

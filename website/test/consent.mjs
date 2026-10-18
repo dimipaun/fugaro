@@ -28,8 +28,11 @@
 //
 //   1. **No analytics request before consent** — and none after a refusal.
 //   2. **Consent is withdrawable** — the privacy page always offers the choice again,
-//      declining overwrites a stored grant, and the next page view requests nothing.
-//   3. **No cookie**, before consent or after it: the scripts this site ships write none.
+//      declining overwrites a stored grant, the next page view requests nothing, and the
+//      withdrawal deletes the cookies the accepted tag set (owner's ruling, 2026-10-18).
+//   3. **No cookie the site set**, before consent or after it: the site writes no cookie of
+//      its own, and the one thing it does with cookies is delete GA4's after a withdrawal —
+//      which is what the section below runs the shipped file against a jar to prove.
 //   4. **The banner is accessible and keyboard-operable** — an accessible name, two equally
 //      prominent native buttons, Escape declining, focus that lands somewhere real when the
 //      banner goes, and no interception of the keyboard.
@@ -165,28 +168,53 @@ function parentOf(host) {
 }
 
 /**
- * One `Set-Cookie` string, as the jar below reads it: the name, the value it carries, the
- * domain it lands on (`null` for the host itself) and whether it is an expiry in the past —
- * which is how a cookie is DELETED, and the only kind of write a withdrawal may make.
+ * The path a cookie with no `Path` attribute lands on, which RFC 6265 calls the default-path:
+ * the request's own directory, and `/` when there is no directory to name. It is not a
+ * footnote — a write of `name=; expires=…` with no `Path` lands HERE, not on `/`, so a
+ * deletion that forgets `Path=/` does not match a cookie Google set at `/`, and the jar below
+ * is keyed on the path so that the case can see it.
  */
-function parseCookie(raw, host) {
+function defaultPathOf(pathname) {
+  const path = String(pathname ?? '')
+  if (!path.startsWith('/')) return '/'
+  const rightmost = path.lastIndexOf('/')
+  return rightmost <= 0 ? '/' : path.slice(0, rightmost)
+}
+
+/** Whether a cookie on `cookiePath` is sent with a request for `requestPath` (RFC 6265 §5.4). */
+function pathMatches(cookiePath, requestPath) {
+  if (cookiePath === requestPath) return true
+  if (!requestPath.startsWith(cookiePath)) return false
+  if (cookiePath.endsWith('/')) return true
+  return requestPath.charAt(cookiePath.length) === '/'
+}
+
+/**
+ * One `Set-Cookie` string, as the jar below reads it: the name, the value it carries, the
+ * domain it lands on (the host by default), the path it lands on (`Path`, or the request's own
+ * directory when the write names none) and whether it is an expiry in the past — which is how
+ * a cookie is DELETED, and the only kind of write a withdrawal may make.
+ */
+function parseCookie(raw, host, defaultPath) {
   const [pair, ...attrs] = String(raw).split(';')
   const at = pair.indexOf('=')
   const name = (at === -1 ? pair : pair.slice(0, at)).trim()
   if (!name) return null
   const value = at === -1 ? '' : pair.slice(at + 1).trim()
   let domain = host
+  let path = defaultPath
   let expires = null
   for (const attr of attrs) {
     const eq = attr.indexOf('=')
     const key = (eq === -1 ? attr : attr.slice(0, eq)).trim().toLowerCase()
     const val = eq === -1 ? '' : attr.slice(eq + 1).trim()
     if (key === 'domain') domain = val.replace(/^\./, '').toLowerCase()
+    if (key === 'path') path = val.startsWith('/') ? val : defaultPath
     if (key === 'expires') expires = val
     if (key === 'max-age') expires = Number(val) <= 0 ? 'past' : null
   }
   const past = expires === 'past' || (expires !== null && Date.parse(expires) <= Date.now())
-  return { name, value, domain, expired: past }
+  return { name, value, domain, path, expired: past }
 }
 
 /** The element tree of a page, as the objects the scripts above see. */
@@ -289,9 +317,13 @@ function stubDOM(html, location = PAGE_LOCATION) {
   // cookies, which is a write in the first list and nothing at all in the second.
   const host = hostOf(location)
   const parent = parentOf(host)
+  const requestPath = location.pathname ?? '/'
+  const defaultPath = defaultPathOf(requestPath)
   const cookies = [] // every `Set-Cookie` string a script wrote, in order
   const reads = [] // every read of `document.cookie`, which is work a refusal owes nobody
-  const jar = [] // the cookies in force: { name, value, domain }, domain === host or parent
+  // The cookies in force: { name, value, domain, path }. A cookie is a (name, domain, path)
+  // triple, which is why a delete that names the wrong path does not remove one.
+  const jar = []
 
   /** Put one parsed cookie into the jar, as a browser applies a `Set-Cookie` string. */
   const applyCookie = (parsed) => {
@@ -299,30 +331,39 @@ function stubDOM(html, location = PAGE_LOCATION) {
     // A page may only set a cookie on its own host or on a domain it is under. Anything else
     // is what a browser ignores, and the jar ignores it the same way.
     if (parsed.domain !== host && parsed.domain !== parent) return
-    const at = jar.findIndex((c) => c.name === parsed.name && c.domain === parsed.domain)
+    const at = jar.findIndex((c) => c.name === parsed.name && c.domain === parsed.domain && c.path === parsed.path)
     if (parsed.expired) {
       if (at !== -1) jar.splice(at, 1)
       return
     }
-    if (at === -1) jar.push({ name: parsed.name, value: parsed.value, domain: parsed.domain })
+    if (at === -1) jar.push({ name: parsed.name, value: parsed.value, domain: parsed.domain, path: parsed.path })
     else jar[at].value = parsed.value
   }
+
+  /** The cookies this page can read: the host's and the parent's, on a path it is under. */
+  const visible = () => jar.filter((c) => pathMatches(c.path, requestPath))
 
   Object.defineProperty(document, 'cookie', {
     get: () => {
       reads.push(true)
-      return jar.map((c) => `${c.name}=${c.value}`).join('; ')
+      return visible()
+        .map((c) => `${c.name}=${c.value}`)
+        .join('; ')
     },
     set: (value) => {
       cookies.push(String(value))
-      applyCookie(parseCookie(value, host))
+      applyCookie(parseCookie(value, host, defaultPath))
     },
   })
   document.cookies = cookies
   document.cookieReads = reads
   document.jar = jar
-  /** The names the page is holding, which is what a reader of `document.cookie` would see. */
-  document.held = () => jar.map((c) => c.name)
+  /**
+   * The names the page is holding, which is what a reader of `document.cookie` would see — so
+   * a cookie set at `/` that a delete matched at `/privacy` is still named here, which is the
+   * defect the path-keyed jar exists to catch.
+   */
+  document.held = () => visible().map((c) => c.name)
   /**
    * The names a script WROTE that the browser is still holding: a cookie the page set and did
    * not remove. A deletion is a write and leaves nothing, which is the whole difference
@@ -331,9 +372,9 @@ function stubDOM(html, location = PAGE_LOCATION) {
   document.survivingWrites = () => {
     const out = []
     for (const raw of cookies) {
-      const parsed = parseCookie(raw, host)
+      const parsed = parseCookie(raw, host, defaultPath)
       if (parsed === null || parsed.expired) continue
-      if (jar.some((c) => c.name === parsed.name && c.domain === parsed.domain)) out.push(parsed.name)
+      if (jar.some((c) => c.name === parsed.name && c.domain === parsed.domain && c.path === parsed.path)) out.push(parsed.name)
     }
     return [...new Set(out)]
   }
@@ -921,9 +962,13 @@ const GA_CLIENT = '_ga'
 const GA_CONTAINER = `_ga_${MEASUREMENT_ID.replace(/^G-/, '')}`
 const GA_THROTTLE = `_gat_gtag_${MEASUREMENT_ID}`
 
-/** What GA4 leaves in a consented visitor's browser, and one cookie that is not Google's. */
+/**
+ * What GA4 leaves in a consented visitor's browser, and two cookies that are not Google's.
+ * Every one names `Path=/`, which is the path the tag sets its own at: the deletion has to
+ * match it, and a cookie planted at the page's own directory would not prove that it does.
+ */
 function plantedCookies({ domain = null } = {}) {
-  const suffix = domain ? `; domain=${domain}` : ''
+  const suffix = domain ? `; path=/; domain=${domain}` : '; path=/'
   return [
     `${GA_CLIENT}=GA1.1.111.222${suffix}`,
     `${GA_CONTAINER}=GS1.1.333${suffix}`,
@@ -973,6 +1018,13 @@ test('withdrawing deletes every cookie GA4 set, on the host and on the parent do
 
   page.click('denied')
   assertForgotten(page, 'on the host')
+
+  // And the attribute the deletion depends on, read off the writes themselves: a write of
+  // `name=; expires=…` with no `Path` lands on the page's own directory, not on `/`, and would
+  // match no cookie GA4 set — so every write names the path, beside the expiry.
+  for (const write of page.cookies) {
+    assert.match(write, /;\s*path=\//i, `the withdrawal wrote "${write.trim()}" without Path=/, which in a browser lands on the page's own directory and deletes nothing`)
+  }
 })
 
 test('a cookie GA4 set on the registrable parent domain is deleted there too', () => {
@@ -1005,7 +1057,7 @@ test('the container cookie name is derived from the measurement id the banner ca
 
   const page = runPage(html, {
     storage: { [CONSENT_KEY]: 'granted' },
-    cookies: ['_ga_OTHERTEST9=GS1.1.1', `${GA_CONTAINER}=GS1.1.2`, 'theme=dark'],
+    cookies: ['_ga_OTHERTEST9=GS1.1.1; path=/', `${GA_CONTAINER}=GS1.1.2; path=/`, 'theme=dark; path=/'],
   })
   page.click('denied')
   const left = page.held()
