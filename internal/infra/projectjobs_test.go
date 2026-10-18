@@ -1,8 +1,13 @@
 package infra
 
 import (
+	"bytes"
 	"encoding/json"
+	"io/fs"
 	"maps"
+	"os"
+	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -600,6 +605,363 @@ func TestProjectJobAccountIsWhatTheRunnerRecomputes(t *testing.T) {
 		}
 		if recomputed := gcp.ProjectJobName(j.Profile, j.Provider, j.Account); recomputed != name {
 			t.Errorf("the runner computes the job name %s for the job the deployer built as %s (profile %s, account %q)", recomputed, name, j.Profile, j.Account)
+		}
+	}
+}
+
+// projectAccountAxisLC is the account axis's fixture: one named account and
+// the default one, both stored project-wide for the repository the config
+// records, and one profile serving them both beside the no-account job every
+// profile keeps. github-app-key rides along, so an account job's secret_env
+// holds a secret that is not a token: the account's token is added beside the
+// profile's own mounts, never instead of them.
+//
+// The profile writes its own allow_repos because it lists accounts (D3): a
+// profile that serves accounts must name the repositories it admits exactly,
+// and every account it serves must cover them.
+const projectAccountAxisLC = `claude_accounts:
+  acme-personal: { allow_data_to: [acme/webapp] }
+project_secrets:
+  claude-oauth-token: { allow_data_to: [acme/webapp] }
+  github-app-key: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [acme-personal, default], secrets: [github-app-key] }
+`
+
+// TestProjectJobAccountAxis: a profile that serves Claude accounts gets one
+// job per account beside the no-account job every profile keeps (design §4.1,
+// D5 and D9). The axis is the profile's own claude_accounts field, computed by
+// config.ProjectJobAccounts — the one function the deployer, the launcher and
+// the runner share — and every entry names a job and a job service account of
+// its own, so no two accounts ever share one.
+//
+// Mutation (run, restore): build the no-account job alone (the pre-task code,
+// `const account = ""`), which leaves the account's job undeployed while the
+// launcher targets it and the runner recomputes its name.
+func TestProjectJobAccountAxis(t *testing.T) {
+	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountAxisLC)
+	want := map[string]string{
+		gcp.ProjectJobName("standard", "github", ""):              "",
+		gcp.ProjectJobName("standard", "github", "acme-personal"): "acme-personal",
+	}
+	if !slices.Equal(sortedJobNames(jobs), slices.Sorted(maps.Keys(want))) {
+		t.Fatalf("jobs = %v, want one per (profile, provider, account) of %v", sortedJobNames(jobs), want)
+	}
+	seenSA := map[string]string{}
+	for name, account := range want {
+		j := jobs[name]
+		if j.Profile != "standard" || j.Provider != "github" || j.Account != account || j.Job != name {
+			t.Errorf("job %s = profile %s, provider %s, account %q, job %q; want standard, github, %q, %s",
+				name, j.Profile, j.Provider, j.Account, j.Job, account, name)
+		}
+		if got := gcp.ProjectServiceAccountID("standard", "github", account); j.ServiceAccount.AccountID != got {
+			t.Errorf("job %s runs as %s, want %s", name, j.ServiceAccount.AccountID, got)
+		}
+		if prev, dup := seenSA[j.ServiceAccount.AccountID]; dup {
+			t.Errorf("jobs %s and %s share the service account %s: the whole point of the account axis is that one job's credential is readable by that job alone", prev, name, j.ServiceAccount.AccountID)
+		}
+		seenSA[j.ServiceAccount.AccountID] = name
+	}
+}
+
+// TestProjectJobNoAccountJobUnchanged: a profile taking an account on does not
+// move the job it already had. The no-account job's name, service account,
+// env, resources and mounts are what they were before the profile listed
+// anything (D9) — which is why a rollout adds jobs and replaces none, and why
+// RefuseProjectJobDeletes never fires on it.
+//
+// Mutation (run, restore): derive the job's name from the profile's mounts or
+// from its accounts (projectStem with any account but the empty one), which
+// renames every existing job the moment its profile gains an account.
+func TestProjectJobNoAccountJobUnchanged(t *testing.T) {
+	const before = `project_secrets:
+  github-app-key: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [github-app-key] }
+`
+	// The same profile, serving one named account: allow_repos and
+	// claude_accounts are the only lines that differ, and neither is part of
+	// the job a profile deploys.
+	const after = `claude_accounts:
+  acme-personal: { allow_data_to: [acme/webapp] }
+project_secrets:
+  github-app-key: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [acme-personal], secrets: [github-app-key] }
+`
+	name := gcp.ProjectJobName("standard", "github", "")
+	one := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+before)
+	two := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+after)
+	if len(one) != 1 || one[name].Account != "" {
+		t.Fatalf("the profile with no account deployed %v, want the no-account job %s alone", sortedJobNames(one), name)
+	}
+	if !reflect.DeepEqual(one[name], two[name]) {
+		t.Errorf("the no-account job changed when the profile took an account on:\nbefore %+v\nafter  %+v", one[name], two[name])
+	}
+	if _, ok := two[gcp.ProjectJobName("standard", "github", "acme-personal")]; !ok {
+		t.Errorf("the profile serving acme-personal deployed %v, want its account job beside the no-account one", sortedJobNames(two))
+	}
+}
+
+// TestAccountJobMountsOnlyItsOwnToken is this task's security property on the
+// deployer's side: each account's token is named in exactly one job's
+// secret_env — the job of that account — and in no other job's. The grant
+// follows the mount (modules/project/sa.tf's
+// google_secret_manager_secret_iam_member.job iterates the job's own
+// secret_env), so the one job service account that may read an account's token
+// is that account's job's: one token, one job, one service account.
+//
+// Mutation (run, restore): have projectAccountMount mount every account the
+// profile lists on every account job (the plan's red step) — each token then
+// rides on its neighbour's job, and with it its secretAccessor member.
+func TestAccountJobMountsOnlyItsOwnToken(t *testing.T) {
+	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountAxisLC)
+	v := config.ReservedSecrets[config.ClaudeOAuthToken]
+	noAccount := gcp.ProjectJobName("standard", "github", "")
+	account := gcp.ProjectJobName("standard", "github", "acme-personal")
+	want := map[string]string{
+		config.ClaudeAccountSecret(config.DefaultClaudeAccount): noAccount,
+		config.ClaudeAccountSecret("acme-personal"):             account,
+	}
+	holders := map[string][]string{}
+	for name, j := range jobs {
+		for env, secret := range j.SecretEnv {
+			if config.ClaudeOAuthSecret(secret) {
+				holders[secret] = append(holders[secret], name+" as "+env)
+			}
+		}
+	}
+	for secret, job := range want {
+		if got := holders[secret]; !slices.Equal(got, []string{job + " as " + v}) {
+			t.Errorf("the token %s is mounted on %v, want on the job %s alone (as %s): the secretAccessor member follows secret_env, so a second job naming it is a second service account that can read it",
+				secret, got, job, v)
+		}
+	}
+	for secret, got := range holders {
+		if _, ok := want[secret]; !ok {
+			t.Errorf("the token %s is mounted on %v, and no account of this installation is %q", secret, got, secret)
+		}
+	}
+	// Each job's token variable names its own account's secret, and the
+	// profile's own mount rides beside it rather than being replaced by it.
+	for name, wantSecret := range map[string]string{noAccount: config.ClaudeAccountSecret(config.DefaultClaudeAccount), account: config.ClaudeAccountSecret("acme-personal")} {
+		j := jobs[name]
+		if got := j.SecretEnv[v]; got != wantSecret {
+			t.Errorf("job %s mounts %s = %q, want %q", name, v, got, wantSecret)
+		}
+		if got := j.SecretEnv[config.ReservedSecrets["github-app-key"]]; got != "github-app-key" {
+			t.Errorf("job %s mounts github-app-key = %q, want the profile's own mount beside its account's token", name, got)
+		}
+	}
+}
+
+// TestDefaultAccountOnNoAccountJob: the default account is not a job of its
+// own (D5). A profile that lists it serves it on the no-account job every
+// profile keeps, so listing it adds no job and moves no name — and no job of
+// any profile is named for it, which is the shape the runner must never
+// compute (the account segment of that job is empty).
+//
+// Mutation (run, restore): give the default account an entry of its own in
+// config.ProjectJobAccounts, which deploys a second job whose name spells
+// "default" while the launcher and the runner keep targeting the no-account
+// one.
+func TestDefaultAccountOnNoAccountJob(t *testing.T) {
+	const lc = `project_secrets:
+  claude-oauth-token: { allow_data_to: [acme/webapp] }
+  github-app-key: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [default], secrets: [github-app-key] }
+`
+	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+lc)
+	name := gcp.ProjectJobName("standard", "github", "")
+	if !slices.Equal(sortedJobNames(jobs), []string{name}) {
+		t.Fatalf("a profile listing the default account deployed %v, want its no-account job %s alone", sortedJobNames(jobs), name)
+	}
+	if got := jobs[name].Account; got != "" {
+		t.Errorf("the no-account job runs as %q, want the empty account", got)
+	}
+	if got := jobs[name].SecretEnv[config.ReservedSecrets[config.ClaudeOAuthToken]]; got != config.ClaudeAccountSecret(config.DefaultClaudeAccount) {
+		t.Errorf("the no-account job mounts %s = %q, want the default account's token %q", config.ReservedSecrets[config.ClaudeOAuthToken], got, config.ClaudeAccountSecret(config.DefaultClaudeAccount))
+	}
+	for jobName := range jobs {
+		if strings.Contains(jobName, "-"+config.DefaultClaudeAccount+"-") {
+			t.Errorf("the job %s is named for the default account, and the default account rides the no-account job", jobName)
+		}
+	}
+	// The axis says the same thing: the default account is spelled as the
+	// empty one, once.
+	if got := config.ProjectJobAccounts(config.JobProfile{ClaudeAccounts: []string{config.DefaultClaudeAccount}}); !slices.Equal(got, []string{""}) {
+		t.Errorf("config.ProjectJobAccounts(default) = %v, want the empty account alone", got)
+	}
+}
+
+// TestAccountJobRefusedWithoutContainer: projectAccountMount refuses to name a
+// container the installation does not create. A job whose secret_env names a
+// secret nothing creates plans nothing and then fails at run time, in the
+// credential, which is the one place a shared job must not fail.
+//
+// The configs here never reach ProjectJobs: publish and init derive the
+// accounts block through projectpolicy.DeriveAccounts, which refuses an
+// account no repository may use before any job is built. This pins the
+// backstop itself — the rule that keeps the mount and the container from
+// drifting apart — and it names the block the operator has to edit, which
+// differs by account: claude_accounts for a named one, project_secrets for the
+// default account (whose name is reserved in claude_accounts).
+//
+// Mutation (run, restore): drop the container check, which mounts a token the
+// root creates no container for.
+func TestAccountJobRefusedWithoutContainer(t *testing.T) {
+	for _, c := range []struct {
+		name, lc, account, block string
+		// drop is the project-wide entry taken back out of the parsed config
+		// after it validated, for the case whose config the local config's own
+		// rules refuse to read at all (a profile listing the default account
+		// with no project-wide copy of its token): the drift this backstop
+		// catches is an entry that existed when the profile was written and is
+		// gone by the time the jobs are built, which is a config no reader
+		// sees whole.
+		drop string
+	}{
+		{
+			"a named account nobody may use",
+			`claude_accounts:
+  acme-personal: {}
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [acme-personal] }
+`,
+			"acme-personal", "claude_accounts.acme-personal.allow_data_to", "",
+		},
+		{
+			"the default account whose project-wide copy is gone",
+			`project_secrets:
+  claude-oauth-token: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [default] }
+`,
+			"", "project_secrets.claude-oauth-token.allow_data_to", config.ClaudeOAuthToken,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+c.lc)
+			if c.drop != "" {
+				delete(lc.ProjectSecrets, c.drop)
+			}
+			err := projectAccountMount(lc, "standard", lc.Profiles["standard"], c.account, map[string]string{}, map[string]string{})
+			if err == nil {
+				t.Fatalf("the account %q was mounted with no project-wide copy to mount", c.account)
+			}
+			for _, want := range []string{c.block, config.ClaudeAccountSecret(c.account)} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %v, want it to name %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestJobNameIndependentOfSecretEnv: a job's name and its service account are
+// functions of its (profile, provider, account) triple and of no mount, which
+// is what makes the credentials service a clean swap: it removes one
+// secret_env entry and nothing is renamed, replaced or deleted (design §4.6).
+//
+// Mutation (run, restore): fold a secret name into projectStem, which moves
+// every job the moment a profile's mounts change.
+func TestJobNameIndependentOfSecretEnv(t *testing.T) {
+	// The same profile and the same accounts, mounted differently: the second
+	// config mounts no github-app-key at all, so the two deploy jobs whose
+	// secret_env differs and whose names must not.
+	const bare = `claude_accounts:
+  acme-personal: { allow_data_to: [acme/webapp] }
+project_secrets:
+  claude-oauth-token: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [acme-personal, default] }
+`
+	one := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountAxisLC)
+	two := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+bare)
+	if !slices.Equal(sortedJobNames(one), sortedJobNames(two)) {
+		t.Fatalf("the jobs moved with the mounts: %v with github-app-key mounted, %v without", sortedJobNames(one), sortedJobNames(two))
+	}
+	for name, a := range one {
+		b := two[name]
+		if a.ServiceAccount != b.ServiceAccount {
+			t.Errorf("the job %s runs as %s with github-app-key mounted and as %s without", name, a.ServiceAccount.AccountID, b.ServiceAccount.AccountID)
+		}
+		if _, mounted := a.SecretEnv[config.ReservedSecrets["github-app-key"]]; !mounted {
+			t.Errorf("the fixture no longer mounts github-app-key, so the two jobs' secret_env no longer differ")
+		}
+		if _, mounted := b.SecretEnv[config.ReservedSecrets["github-app-key"]]; mounted {
+			t.Errorf("the second fixture mounts github-app-key too, so this test compares nothing")
+		}
+		// No secret's name is part of the job's name or its service account:
+		// removing the token entry later cannot move either.
+		for _, secret := range a.SecretEnv {
+			if strings.Contains(name, secret) || strings.Contains(a.ServiceAccount.AccountID, secret) {
+				t.Errorf("the job %s (%s) is named after the secret %s it mounts", name, a.ServiceAccount.AccountID, secret)
+			}
+		}
+	}
+}
+
+// TestNoSecretValueReadUnderInternal: no code under internal/ reads a secret
+// *value* except the GitHub App key's pre-check, which signs a JWT in memory
+// to ask GitHub what the App grants (internal/backend/gcp's Secrets.Access and
+// its one caller, internal/cli/githubapp.go). The Claude OAuth token reaches a
+// run by the platform's own mount and never through Fugaro: the deployer names
+// the secret, the module mounts it, and no Fugaro process ever holds the value
+// — which is the property the credentials service will keep when it replaces
+// the mount, and the one a read added on this path would break.
+//
+// Mutation (run, restore): read the account's token in the deployer or the
+// launcher (any `sm.Access(...)` outside the two files below) — the scan fails
+// with the file that did it.
+func TestNoSecretValueReadUnderInternal(t *testing.T) {
+	// The files allowed to name a secret-value read, and what each one is.
+	allowed := map[string]string{
+		"backend/gcp/secrets.go": "the Secret Manager client: Access is the GitHub App key pre-check's one read, Set writes values",
+		"cli/githubapp.go":       "the GitHub App key pre-check of init and doctor",
+	}
+	// The reads, by the API each one is spelled with: the google-api client's
+	// Versions.Access, the cloud.google.com/go client's AccessSecretVersion,
+	// and a secretmanager.SecretPayload built or read.
+	reads := []string{".Access(", "AccessSecretVersion", "SecretPayload"}
+	var found []string
+	root := ".." // internal/
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		for _, r := range reads {
+			if bytes.Contains(b, []byte(r)) {
+				rel, err := filepath.Rel(root, p)
+				if err != nil {
+					return err
+				}
+				found = append(found, filepath.ToSlash(rel))
+				return nil
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range found {
+		if _, ok := allowed[f]; !ok {
+			t.Errorf("internal/%s names a secret-value read (%v), and only these files may: %v. A Claude OAuth token reaches a run by the platform's mount, never through Fugaro", f, reads, slices.Sorted(maps.Keys(allowed)))
+		}
+	}
+	// And every allowed file is still one, so a removal is noticed too.
+	for f := range allowed {
+		if !slices.Contains(found, f) {
+			t.Errorf("internal/%s no longer reads a secret value, and it is on the allow-list for %s: update the list rather than letting it drift", f, allowed[f])
 		}
 	}
 }

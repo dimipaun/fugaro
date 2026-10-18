@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
@@ -154,6 +155,48 @@ func TestJobIdentityMatchesAComputedProjectJobName(t *testing.T) {
 	}
 }
 
+// TestRunnerCandidatesIncludeAccountJobs: the set of names the run matches
+// CLOUD_RUN_JOB against holds one entry per (profile, provider, account) the
+// policy defines, computed by config.ProjectJobAccounts — the same function
+// internal/infra deployed the jobs with and internal/cli picks the job to
+// launch with. A profile serving accounts therefore contributes its
+// no-account job and one per account; a profile serving none contributes the
+// one job it always had; and the default account contributes no entry of its
+// own, because it rides the no-account job (D5).
+//
+// Mutation (run, restore): compute one candidate per profile with an empty
+// account (the pre-task code), which leaves every account job's name
+// uncomputed: a run in one halts with cannotPlaceJob, blaming a stale module
+// version for a job the deployer built.
+func TestRunnerCandidatesIncludeAccountJobs(t *testing.T) {
+	p := policyOf(map[string]config.JobProfile{
+		"plain":    profileOf("github"),
+		"standard": profileOf("github", "acme-personal", config.DefaultClaudeAccount),
+		"other":    profileOf("bitbucket", "acme-work"),
+	})
+	want := []jobTriple{
+		{Profile: "other", Provider: "bitbucket", Account: ""},
+		{Profile: "other", Provider: "bitbucket", Account: "acme-work"},
+		{Profile: "plain", Provider: "github", Account: ""},
+		{Profile: "standard", Provider: "github", Account: ""},
+		{Profile: "standard", Provider: "github", Account: "acme-personal"},
+	}
+	if got := projectJobCandidates(p); !slices.Equal(got, want) {
+		t.Fatalf("projectJobCandidates = %+v, want %+v", got, want)
+	}
+	// Every candidate's name is one the run places, and none is named for the
+	// default account: that name is not one any side computes.
+	for _, c := range projectJobCandidates(p) {
+		if c.Account == config.DefaultClaudeAccount {
+			t.Errorf("the candidate %+v carries the default account: it rides the no-account job, whose account segment is empty", c)
+		}
+		job := gcp.ProjectJobName(c.Profile, c.Provider, c.Account)
+		if got, project, err := matchJobName(job, p, true, identitySlug(t, "github", "other/repo"), identityWorkflow, ""); err != nil || !project || got != c {
+			t.Errorf("matchJobName(%s) = %+v, project %v, %v; want the candidate %+v", job, got, project, err, c)
+		}
+	}
+}
+
 // TestJobIdentityIsNotAParser is the R2-5 regression test: a name is matched
 // against the names the policy *computes*, never read as a shape. Each case
 // gives a name a shape test would misread and asserts both directions — under
@@ -163,11 +206,13 @@ func TestJobIdentityMatchesAComputedProjectJobName(t *testing.T) {
 //
 // The four names are the plan's, and each is a way the name's readable part
 // lies about the triple: a hyphenated profile ("standard-bitbucket" reads as
-// profile "standard", provider "bitbucket"), an api-key job with no account
-// segment (a parser cannot tell "no account" from a truncated one), a profile
-// long enough that derive truncates the readable part, and a per-repository job
-// of a repository whose owner is "p" — stem() builds "fugaro-p-<name>-<wf>",
-// which is ProjectJobName's own prefix for a profile named after the owner.
+// profile "standard", provider "bitbucket"), an account job whose account
+// segment is a named account's (a parser cannot tell which side of the last
+// hyphen the account begins, and the near miss is the same profile serving a
+// different account), a profile long enough that derive truncates the readable
+// part, and a per-repository job of a repository whose owner is "p" — stem()
+// builds "fugaro-p-<name>-<wf>", which is ProjectJobName's own prefix for a
+// profile named after the owner.
 //
 // Mutation (run, restored): replace the loop over projectJobCandidates with a
 // parse of the stem (split on "-", take the second segment as the profile and
