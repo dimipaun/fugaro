@@ -61,10 +61,15 @@
 // anything -- and neither is this spec's subject: the reading tests above take
 // every reading *inside* the mount for the same reason. The screen under test is
 // drawn from the fixture and from nothing else, and every time-derived label on
-// it is measured against the fixture's own clock (`document.now`: `buildLiveModel`
-// measures each run's age from it, and `BurnHistory.window` windows at the stamp
-// its caller names), so its frame is the same pixels on every run and on every
-// machine that draws the same fonts.
+// it is measured against the fixture's own clock (the document's `now`): the
+// burn history is observed at that stamp (`history.observe` is given
+// `at: document.now`) and the burn window is drawn at the stamp
+// `buildLiveModel` names for it (`let at = document.now`), which is the
+// document's own `now` so long as the feed is not stale -- and this spec's mount
+// passes no feed at all, so `at` is always the document's own. A run's age is
+// the wire's own `age_seconds`, not a subtraction from `now`. Its frame is
+// therefore the same pixels on every run and on every machine that draws the
+// same fonts.
 //
 // Nothing here reaches the network or the CLI: the document is the committed
 // synthetic fixture, read from disk, and every string it holds was already
@@ -432,19 +437,21 @@ test.describe('the Live screen', () => {
   test('windows the burn sparkline at the document\'s own clock', async () => {
     // The clock seam, proved in the window rather than read for. What this
     // screen draws from a clock is the burn window: `sparkline` is a rate over
-    // the last `BurnWindow` **ending at the stamp its caller names**, and the one
-    // this screen names is the document's own `now` (`screens/live.ts`:
-    // `sparkline(history, repo.slug, document.now)`, with the history observed at
-    // the same stamp). So two frames observed through one history and drawn at
-    // their own clock are the fixture's picture of that window; the same two
-    // frames with the last document's clock moved an hour on are drawn at a
-    // window that has lost the earlier of the two samples and still holds that
-    // last document's own.
+    // the last `BurnWindow` **ending at the stamp its caller names**, and the
+    // stamp this screen names is `at` (`screens/live.ts`:
+    // `sparkline(history, repo.slug, at)`), which is the document's own `now`
+    // (`let at = document.now`) except for a stale feed, where it moves to the
+    // gap's stamp -- and this spec's mount passes no feed, so `at` is the
+    // document's `now` throughout. The history is observed at that same stamp,
+    // so two frames observed through one history and drawn at their own clock
+    // are the fixture's picture of that window; the same two frames with the
+    // last document's clock moved an hour on are drawn at a window that has lost
+    // the earlier of the two samples and still holds that last document's own.
     //
     // Mutation: a window cut at the renderer's wall clock instead (a `Date.now()`
     // in `BurnHistory.window` or at its call site) fails the FIRST assertion
     // below. The fixture's stamps are three days old, so both mounts window to
-    // nothing, and a window with no samples is not an empty chart: `burnLine`
+    // nothing, and a window with no samples is not an empty chart: `spark`
     // draws the one mark it draws when no document has been seen at all
     // (`screens/live.ts`, the `line.bars.length === 0` branch), which carries no
     // `data-height`. So `asRecorded.sparkBars` is 1, not 2, and the
