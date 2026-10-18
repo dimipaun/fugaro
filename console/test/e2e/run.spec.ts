@@ -64,6 +64,8 @@ import type { ElectronApplication, Page } from '@playwright/test'
 import type { JSONDoc } from '../../src/source/source'
 import { RUN_LOG_CAP, RUN_THEMES } from '../../src/renderer/screens/run'
 import { githubToken } from '../support/fakeSecrets'
+import { inRangeCliStub } from '../support/cliStub'
+import type { CliStub } from '../support/cliStub'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
 // is two levels below it.
@@ -91,6 +93,7 @@ const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/version.js',
   'shared/stringify.js',
   'shared/replay.js',
   'renderer/app.js',
@@ -400,15 +403,21 @@ test.describe('the Run detail screen', () => {
 
   let app: ElectronApplication
   let page: Page
+  let cli: CliStub
 
   test.beforeAll(async () => {
-    app = await electron.launch({ args: [consoleDir] })
+    // The app reads a `fugaro` before it opens a window (plan Task 3.3): without
+    // an in-range one it opens the refusal document, and the dashboard document
+    // this spec mounts into would never be loaded.
+    cli = inRangeCliStub()
+    app = await electron.launch({ args: [consoleDir], env: cli.env })
     page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
   })
 
   test.afterAll(async () => {
     await app.close()
+    cli.remove()
   })
 
   /** mount draws the run and fails with the window's own words if the bundle

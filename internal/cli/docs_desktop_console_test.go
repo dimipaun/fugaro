@@ -1572,8 +1572,7 @@ func TestConsoleTestsWorkflowIsStagedAndPinned(t *testing.T) {
 // Each check below is a separate way the `console` check stops existing on a
 // commit the gate asks about, and the two mutations to try first are the ones
 // that are invisible until a tag is refused: rename the job to `console-tests`,
-// and add `paths: ['console/**']` to its trigger -- either trigger, since the
-// filter guard below reads both.
+// and add `paths: ['console/**']` to its trigger.
 func TestConsoleWorkflowJobIsGateable(t *testing.T) {
 	_, wf, on, rawJobs := readConsoleTestsWorkflow(t)
 
@@ -1631,33 +1630,87 @@ func TestConsoleWorkflowJobIsGateable(t *testing.T) {
 		t.Errorf("%s's console job carries `if: %s`: a guarded job is a check that can be skipped, and a skipped check is not a success", consoleTestsWorkflowPath, job.If)
 	}
 
-	// No `paths:`/`paths-ignore:` at the trigger level or on the job. This is the
-	// failure that refuses every release, including the ones that ship none of
-	// the console: once Task 4.6's `names="test terraform rules console"` is in
-	// place, the gate would require a check this filter skipped.
-	//
-	// **Every trigger is read, not just `push`.** This loop used to `continue`
-	// on anything that was not `push`, so `pull_request: paths: ['console/**']`
-	// went unnoticed -- a filter that skips the check for exactly the pull
-	// requests a console-tests workflow exists for, and one the gate then looks
-	// for on the head commit of the pull request it was skipped on. A trigger
-	// written with no value (`pull_request:`) is every event of that kind and
-	// carries no filter by construction; one written as a mapping is read here.
-	for key, value := range on {
-		trigger, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
-		for _, filter := range []string{"paths", "paths-ignore"} {
-			if _, ok := trigger[filter]; ok {
-				t.Errorf("%s's %s trigger carries `%s:`: the console job must run unconditionally or the release gate refuses the commits it is skipped on", consoleTestsWorkflowPath, key, filter)
-			}
-		}
+	// No `paths:`/`paths-ignore:` at the trigger level or on the job -- **every
+	// trigger**, not just `push`. This is the failure that refuses every release,
+	// including the ones that ship none of the console: once Task 4.6's
+	// `names="test terraform rules console"` is in place, the gate would require
+	// a check this filter skipped. The check is a function over the parsed `on:`
+	// map rather than a loop here, because the file has no such filter anywhere:
+	// a loop passes whether or not it looks at the trigger it is about, and an
+	// earlier revision skipped every key but `push`, so a filter under
+	// `pull_request` -- the trigger that decides whether the console job runs on
+	// a pull request at all -- was never inspected.
+	if offences := triggerFilterOffences(on); len(offences) > 0 {
+		t.Errorf("%s's %s the console job must run unconditionally or the release gate refuses every tag",
+			consoleTestsWorkflowPath, strings.Join(offences, "; "))
 	}
 	for _, filter := range []string{"paths", "paths-ignore", "if"} {
 		if _, ok := rawJobs["console"][filter]; ok {
 			t.Errorf("%s's console job carries `%s:`, and the job that produces the gate's `console` check has neither", consoleTestsWorkflowPath, filter)
 		}
+	}
+}
+
+// triggerFilterOffences reports every trigger-level `paths:`/`paths-ignore:` in
+// a parsed `on:` block: the filters that would stop the console job running for
+// a change, which is the failure Task 4.6's release gate refuses every tag over.
+//
+// It is a function over the parsed map rather than a loop inside the test that
+// calls it, because the staged workflow carries no such filter at any trigger --
+// so a loop there passes by not being reached, which is exactly what an earlier
+// revision did: it skipped every key but `push`, and a `paths:` under
+// `pull_request:` (the trigger that decides whether the console job runs on a
+// pull request at all) was never looked at.
+// TestConsoleTriggerFilterOffencesSeesEveryTrigger hands this function the map
+// that has one, so the check cannot go back to passing vacuously.
+func triggerFilterOffences(on map[string]any) []string {
+	keys := make([]string, 0, len(on))
+	for key := range on {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	var offences []string
+	for _, key := range keys {
+		trigger, ok := on[key].(map[string]any)
+		if !ok {
+			// A bare `pull_request:` is YAML null: the trigger with no filters at
+			// all, which is the state this check wants. Anything that is not a
+			// mapping carries no `paths:` either.
+			continue
+		}
+		for _, filter := range []string{"paths", "paths-ignore"} {
+			if _, ok := trigger[filter]; ok {
+				offences = append(offences, key+" trigger carries `"+filter+"`:")
+			}
+		}
+	}
+	return offences
+}
+
+// TestConsoleTriggerFilterOffencesSeesEveryTrigger is the mutation-proof half of
+// the trigger-filter check: it hands that check a map with a filter on the
+// trigger the earlier revision skipped, and one on a trigger that does not exist
+// today, and requires both to be reported -- and the shape the staged workflow
+// actually has to report nothing, so the check is not passing by refusing
+// everything.
+func TestConsoleTriggerFilterOffencesSeesEveryTrigger(t *testing.T) {
+	hostile := map[string]any{
+		"push":              map[string]any{"branches": []any{"main"}},
+		"pull_request":      map[string]any{"paths": []any{"console/**"}},
+		"workflow_dispatch": map[string]any{"paths-ignore": []any{"docs/**"}},
+	}
+	want := []string{
+		"pull_request trigger carries `paths`:",
+		"workflow_dispatch trigger carries `paths-ignore`:",
+	}
+	if got := triggerFilterOffences(hostile); !slices.Equal(got, want) {
+		t.Errorf("triggerFilterOffences(%v) = %v, want %v", hostile, got, want)
+	}
+	// The staged file's own `on:` block: `push:` with branches, and a bare
+	// `pull_request:` (YAML null).
+	clean := map[string]any{"push": map[string]any{"branches": []any{"main"}}, "pull_request": nil}
+	if got := triggerFilterOffences(clean); len(got) != 0 {
+		t.Errorf("triggerFilterOffences(%v) = %v, want no offences: a filter on a bare trigger is nil, not an offence", clean, got)
 	}
 }
 
@@ -2824,7 +2877,11 @@ func TestConsoleMVPRequiresTheStartupHandshake(t *testing.T) {
 		t.Error("Global Constraints rule 9's list of security-sensitive tasks does not include 3.3")
 	}
 	task := section("### Task 3.3:", "\n## Phase 4")
-	for _, want := range []string{"**Depends on:** Task 3.2", "startup.compatibility", "Red step", "NOT APPROVED TO IMPLEMENT"} {
+	// "approved by the owner 2026-10-17" replaced "NOT APPROVED TO IMPLEMENT" on
+	// 2026-10-17, when the owner gave the go for this task; the rest of the list
+	// is unchanged, and the gate itself (this function's reason to exist) is
+	// asserted below and by Task 4.6.
+	for _, want := range []string{"**Depends on:** Task 3.2", "startup.compatibility", "Red step", "approved by the owner 2026-10-17"} {
 		if !strings.Contains(task, want) {
 			t.Errorf("Task 3.3 lost %q", want)
 		}
@@ -2834,5 +2891,78 @@ func TestConsoleMVPRequiresTheStartupHandshake(t *testing.T) {
 	}
 	if ships := section("**What ships with the MVP.**", "\n\n"); !strings.Contains(ships, "Tasks 3.2 and 3.3") {
 		t.Error(`"What ships with the MVP" does not name Task 3.3`)
+	}
+}
+
+// TestConsoleMVPRequiresTheRendererEntry is the sibling of
+// TestConsoleMVPRequiresTheStartupHandshake for the proposed Task 3.4 (added
+// 2026-10-17): the console cannot draw a real dashboard until a task sets the
+// preload, registers the handlers after the handshake, loads a script into the
+// document and chooses an installation, and no other task owns that. The plan
+// must carry the task as SECURITY-SENSITIVE, depending on Task 3.3, marked not
+// approved until the owner's go, split into 3.4a/3.4b/3.4c, and named as an MVP
+// gate in "What ships with the MVP", in Task 4.6, in the phase summary and in
+// the cross-task dependencies, and Task 3.3 must name it as the wiring's owner.
+// Removing Task 3.4 from any of those places fails a named check here.
+func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
+	plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
+	section := func(start, end string) string {
+		i := strings.Index(plan, start)
+		if i < 0 {
+			t.Fatalf("plan has no %q", start)
+		}
+		rest := plan[i:]
+		if j := strings.Index(rest[len(start):], end); j >= 0 {
+			return rest[:len(start)+j]
+		}
+		return rest
+	}
+	heading := regexp.MustCompile(`(?m)^### Task 3\.4: The renderer entry.*SECURITY-SENSITIVE, independent opus review$`)
+	if !heading.MatchString(plan) {
+		t.Error("the Task 3.4 heading is missing or does not itself carry `SECURITY-SENSITIVE, independent opus review`")
+	}
+	if rule := regexp.MustCompile(`(?m)^9\. \*\*Security-sensitive tasks.*$`).FindString(plan); !strings.Contains(rule, "plus 3.4") {
+		t.Error("Global Constraints rule 9's list of security-sensitive tasks does not include 3.4")
+	}
+
+	task := section("### Task 3.4:", "\n## Phase 4")
+	for _, want := range []string{
+		"NOT APPROVED TO IMPLEMENT — proposed 2026-10-17, awaiting the owner's go",
+		"**Depends on:** Task 3.3 (**hard**: #541 merged",
+		"#### 3.4a", "#### 3.4b", "#### 3.4c",
+		"registerConsoleHandlers",
+		"never in `refused`",
+		"script-src 'self'",
+		"The CSP delta of this task is none",
+		"Shared files",
+		"Red step",
+		"Owner-run additions",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("Task 3.4 lost %q", want)
+		}
+	}
+
+	// Task 3.3's own section, bounded by Task 3.4's heading so the text of 3.4
+	// cannot satisfy it, still carries its own facts and names 3.4 as the owner
+	// of the wiring it leaves out.
+	own := section("### Task 3.3:", "\n### Task 3.4:")
+	for _, want := range []string{"**Depends on:** Task 3.2", "startup.compatibility", "Red step", "**The renderer entry is Task 3.4's, not this task's"} {
+		if !strings.Contains(own, want) {
+			t.Errorf("Task 3.3's own section lost %q", want)
+		}
+	}
+
+	if gate := section("### Task 4.6:", "\n## Phase 5"); !strings.Contains(gate, "Task 3.4 must be merged before the console MVP is released") {
+		t.Error("Task 4.6's release gate does not require Task 3.4")
+	}
+	if ships := section("**What ships with the MVP.**", "\n\n"); !strings.Contains(ships, "the renderer entry (Task 3.4") || !strings.Contains(ships, "item 4 or item 5 does not ship") {
+		t.Error(`"What ships with the MVP" does not name Task 3.4 as a gate`)
+	}
+	if summary := section("## Phase summary", "\n## "); !strings.Contains(summary, "Task 3.4") {
+		t.Error("the phase summary does not name Task 3.4")
+	}
+	if deps := section("## Cross-task dependencies", "\n## "); !strings.Contains(deps, "Task 3.4 (the renderer entry") {
+		t.Error("the cross-task dependencies do not name Task 3.4")
 	}
 }

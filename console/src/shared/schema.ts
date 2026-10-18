@@ -683,17 +683,25 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * `runs[0].terminal`.
  *
  * The list is therefore derived from the struct rather than from the fields the
- * console happens to read -- and `schema.test.ts` derives it from the Go source
- * itself rather than from a second hand-written list, because a copy of a list
- * that is missing a key is missing the same key. A key the CLI adds in a later
- * version is *still* refused -- which is the point of closing the shape: a document the console
+ * console happens to read, and a key the CLI adds in a later version is *still*
+ * refused -- which is the point of closing the shape: a document the console
  * does not fully understand becomes Task 3.2's skew state, not a half-drawn
  * list. Keys accepted and not read (`project_layer`, `config_sha256`,
- * `image_age_s`, `task_pr`, `record_pr`, `pr`, `pushed_head`, `started_at`,
- * `draft_fallback`, `pr_status_at`, `stale_draft`, `execution`, `batch`,
- * `halt`, `previous_run`, `base_branch`) are the ones this screen has no use
- * for yet; they are listed so that a document carrying them is read rather
- * than thrown away.
+ * `image_age_s`, `artifact_count`, `artifact_bytes`, `task_pr`, `record_pr`,
+ * `pr`, `pushed_head`, `started_at`, `draft_fallback`, `pr_status_at`,
+ * `stale_draft`, `execution`, `batch`, `halt`, `previous_run`, `base_branch`)
+ * are the ones this screen has no use for yet; they are listed so that a
+ * document carrying them is read rather than thrown away.
+ *
+ * **`artifact_count` and `artifact_bytes` were missing, and a review found it.**
+ * They sit between `outcome` and `task_pr` in the struct, so every
+ * `runs ls --json` row for a run that delivered artifacts carried two keys this
+ * list did not have and `closed()` refused the whole document as
+ * `runs[0].artifact_count`. The pinning test could not catch it because the
+ * expected list in that test was a second hand-written copy of this one: the
+ * two agreed with each other and both were wrong. That test now reads the struct
+ * (`internal/runview/runview.go`) and derives both lists from its tags, so the
+ * next omission fails there.
  */
 export const RECORD_KEYS = [
   'run',
@@ -720,14 +728,6 @@ export const RECORD_KEYS = [
   'settled',
   'branch',
   'outcome',
-  // The artifact pair sits here because the struct puts it here, between
-  // `outcome` and `task_pr` (internal/runview/runview.go). Both are
-  // `omitempty`, so an artifactless run -- every run that opens a pull request
-  // -- writes neither; a run whose record reports artifacts writes both, and a
-  // list without them refused that whole document at `runs[0].artifact_count`.
-  // This is the same failure the docstring above records being fixed once
-  // before, which is why the list is now checked against the struct and not
-  // against a second copy of itself (schema.test.ts).
   'artifact_count',
   'artifact_bytes',
   'task_pr',

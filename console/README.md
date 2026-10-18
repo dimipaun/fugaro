@@ -1466,10 +1466,16 @@ the six a fact rather than an intention:
   compares the wire's length with the fuses `fuses.ts` decides about (six
   flipped, two left alone, one beyond the pin: nine) and stops the build if they
   differ, so an Electron bump that adds a fuse cannot reach the signer
-  unexamined. `fuses.test.ts` also reads the real binary's wire when
+  unexamined. The three fuses it leaves alone are checked **by value** too: the
+  two left-alone fuses must still be disabled and `WasmTrapHandlers` enabled,
+  the defaults the pinned Electron 44.7.2 ships, or the build stops.
+  `fuses.test.ts` also reads the real binary's wire when
   `node_modules/electron/dist` is installed, and on macOS runs the real hook over
   a copy of it in a temporary directory; without the binary those two tests skip
-  and say why.
+  and say why. **CI never runs those two**: the console job's unit step runs
+  after `npm ci --ignore-scripts` and before anything downloads Electron, so
+  there they skip. They are owner-run verification: step 2 of the owner's
+  commands below runs them by name, on the Mac, after the download.
 - **It is the only flipper.** `build.electronFuses` is deliberately unset, so
   electron-builder's own fuse support cannot run a second, untested
   configuration over the same binary.
@@ -1487,8 +1493,10 @@ Run from `console/` on the Mac that holds the Developer ID certificate. The
 variables are **names only** — no value of any of them appears in this
 repository, and `package.json` names no signing identity at all. The order is
 the point: everything that installs or downloads runs **first**, in a shell with
-no secret in it, and the signing material is exported only in the subshell that
-packages.
+no secret in it, and the signing material exists only in the environment of the
+one command that packages — an environment built from nothing (`env -i`), so an
+ambient `GH_TOKEN`, a cloud credential or anything else the owner's login shell
+carries is not in it.
 
 ```sh
 # 1. Install, with no secret in the environment. Lifecycle scripts stay off:
@@ -1498,28 +1506,81 @@ npm ci --ignore-scripts --no-audit --no-fund
 
 # 2. The one install step the tree needs, run explicitly: Electron's own
 #    download of its distribution, verified against the checksums.json in the
-#    pinned package. Packaging does not use it (see below); the tests do,
-#    including the real-binary fuse test.
+#    pinned package. Packaging does not use it (see below); the tests do.
 node node_modules/electron/install.js
 npm run test:unit
+# The two real-binary fuse tests, on their own: they need the distribution
+# step 2 downloaded, and CI never runs them (its unit job runs before anything
+# downloads Electron, so there they skip). The output must read
+# "2 passed", with neither skipped.
+npm run test:unit -- test/unit/fuses.test.ts -t 'the pinned Electron binary itself'
 
-# 3. Package, in a subshell that holds the signing material and nothing else
-#    runs in. electron-builder reads these names: CSC_LINK (the .p12, base64 or
-#    a path) with CSC_KEY_PASSWORD, or CSC_NAME with the identity already in the
-#    login keychain. Notarisation activates by itself when one of the credential
-#    triples is present (electron-builder 26 has no "turn it on" flag, only a
-#    disable switch); the App Store Connect API key is the recommended one --
-#    the alternatives are APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID,
-#    or APPLE_KEYCHAIN + APPLE_KEYCHAIN_PROFILE: one triple, not three.
+# 3. Package, in a subshell (so the `exit` below ends it, not your terminal),
+#    with an environment built from nothing. Only files and identifiers go on
+#    a command line: CSC_LINK is a FILE PATH to the exported .p12 (Developer ID
+#    Application), never its base64 inline, and APPLE_API_KEY is the path of the
+#    .p8. The one secret VALUE, the certificate's password, never touches argv:
+#    the inner shell reads it from the terminal and exports it to the packager.
+#    Notarisation activates by itself when one credential triple is present
+#    (electron-builder 26 has no "turn it on" flag, only a disable switch); the
+#    App Store Connect API key is the recommended one -- the alternatives are
+#    APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID, or APPLE_KEYCHAIN +
+#    APPLE_KEYCHAIN_PROFILE: one triple, not three.
 (
-  export CSC_LINK="${CSC_LINK:?the exported Developer ID Application certificate}"
-  export CSC_KEY_PASSWORD="${CSC_KEY_PASSWORD:?the certificate's password}"
-  export APPLE_API_KEY="${APPLE_API_KEY:?the App Store Connect API key file}"
-  export APPLE_API_KEY_ID="${APPLE_API_KEY_ID:?the key's id}"
-  export APPLE_API_ISSUER="${APPLE_API_ISSUER:?the issuer uuid}"
-  npm run package   # npm run build && electron-builder --mac --universal --publish never
+  test ! -e electron-builder.env || { echo 'remove console/electron-builder.env first' >&2; exit 1; }
+  env -i \
+    PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin" \
+    HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" \
+    NO_UPDATE_NOTIFIER=1 CI=1 \
+    CSC_LINK="$HOME/<private dir>/developer-id-application.p12" \
+    APPLE_API_KEY="$HOME/<private dir>/AuthKey_<key id>.p8" \
+    APPLE_API_KEY_ID="<key id>" \
+    APPLE_API_ISSUER="<issuer uuid>" \
+    /bin/bash --noprofile --norc -c '
+      IFS= read -rs -p "Developer ID certificate password: " CSC_KEY_PASSWORD </dev/tty
+      echo >&2
+      export CSC_KEY_PASSWORD
+      exec npm run package   # npm run build && electron-builder --mac --universal --publish never
+    '
 )
 ```
+
+Why each of the variables that are not secrets is there:
+
+- `NO_UPDATE_NOTIFIER=1` and `CI=1`: electron-builder's CLI (`cli-util.js`)
+  runs `simple-update-notifier`, which contacts `registry.npmjs.org` from the
+  shell holding the secrets, unless `NO_UPDATE_NOTIFIER` is set or `ci-info`
+  reports CI. Both are set; `CI` turns nothing on here that matters, because
+  publishing is off from both sides (below).
+- `PATH` is the Node that installed the tree plus the system directories
+  `codesign`, `xcrun` and `hdiutil` live in, and nothing from the owner's
+  profile.
+
+**`console/electron-builder.env` must not exist.** The same `cli-util.js` loads
+`electron-builder.env` from the working directory into the environment before
+it builds, so a file there would add variables the `env -i` above was written to
+keep out — and, if it held secrets, put them in a file in the checkout.
+`fuses.test.ts` asserts the file is absent and that `build.files` could not
+ship it.
+
+**The window that remains, said plainly.** The password is in the environment
+of the packaging processes (the inner shell, npm, `tsc`, electron-builder and
+what they start) for the length of the build, where any process running as the
+owner's user can read it (`ps eww`, for one); and electron-builder itself hands
+it to `/usr/bin/security import … -P <password>` on a command line for the
+moment it imports the certificate into its temporary keychain
+(`codeSign/macCodeSign.js`), which the pinned packer does and this repository
+cannot change. The `.p12` and the `.p8` are files whose paths, not contents,
+are passed; keep them `0600` in a directory only the owner can read.
+
+**What still runs with the secrets present**, said plainly: `npm run package`
+runs `tsc` (`npm run build`) and then the whole electron-builder tree, and every
+line of both can read the environment. The mitigation is the pins, not
+isolation: the tree is exactly the lockfile's (exact versions, integrity
+hashes, one registry host, installed with scripts off in step 1, before any
+secret existed), `npmRebuild` is off so no install script runs at pack time,
+the Electron archives are checked against the pinned hashes, and the toolsets
+the packer fetches are checked against hashes inside the locked packages.
 
 **The build is universal (arm64 + x64)**, by `--universal` in the script, so one
 DMG and one zip run on every Mac this release supports. electron-builder packs
@@ -1552,7 +1613,7 @@ merged asar's integrity hash, and `Contents/Resources` held no `app-update.yml`.
   Task 4.2's workflow step: `xcrun notarytool submit` the DMG `--wait`, then
   `xcrun stapler staple` it.
 
-**The certificate has to be in the packaging shell**: the fuses are flipped
+**The certificate has to be in the packaging command's environment**: the fuses are flipped
 before the packer signs, and a bundle left with the ad-hoc signature the fuse
 flip invalidated will not launch on arm64. A build with no signing material is a
 build with no signature and no notarisation — `spctl` refuses it, which is the
@@ -1680,9 +1741,9 @@ identity Gatekeeper and the notary record keep.
 
 ### What is deliberately not here
 
-- **A signing workflow.** Task 4.2 stages it under `docs/pending-workflows/`
-  (the section at the end of this file), and that task's file, not this one,
-  names the CI secrets. This section's commands are the owner's local run.
+- **A signing workflow.** Task 4.2 stages it under `docs/pending-workflows/`,
+  and that task's file, not this one, names the CI secrets. This section's
+  commands are the owner's local run.
 - **Automatic updates.** `build.publish` is `null`, the script passes
   `--publish never`, there is no feed, and `electron-updater` is not a
   dependency: Task 4.4 is the auto-update task and brings all of that with it.
@@ -1837,12 +1898,22 @@ cleanup's alone: a signing job that skipped its signing when a secret was
 absent would publish an **unsigned** console under a signed release's name —
 worse than publishing nothing.
 
-**Where it agrees with the owner's local commands above, and where it
-deliberately differs.** Both call the same script, `npm run package` (the
-pinned local electron-builder, `--mac --universal --publish never`), so the
-hardened runtime, the `.dmg` and `.zip` targets, `entitlements.mac.plist` and
-the fuse hook are one configuration and not two. The differences are on
-purpose:
+**Two signing paths, documented separately, and neither borrows the other's
+mechanism.** The **owner's manual packaging** is Task 4.1's "The owner's
+commands, exactly" above: on the owner's Mac, `npm run package` under `env -i`,
+`CSC_LINK` the *file path* of the `.p12`, and the certificate's password read
+from the terminal inside that `env -i` shell. The **CI workflow** is this
+section: on the `macos-15` runner, the `.p12` imported from the
+`APPLE_CERTIFICATE` secret into a temporary keychain, and the identity named
+with `CSC_NAME` + `CSC_KEYCHAIN`; `CSC_LINK` and `CSC_KEY_PASSWORD` are never
+set there. Nothing in this section changes the owner's commands, and they are
+not a fallback for the workflow.
+
+**Where the two agree, and where the workflow deliberately differs.** Both call
+the same script, `npm run package` (the pinned local electron-builder, `--mac
+--universal --publish never`), so the hardened runtime, the `.dmg` and `.zip`
+targets, `entitlements.mac.plist` and the fuse hook are one configuration and
+not two. The differences are on purpose:
 
 - **The certificate goes into a keychain the step creates**, never the runner's
   login keychain: a random password from `openssl rand`, `security

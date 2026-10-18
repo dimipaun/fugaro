@@ -113,6 +113,9 @@ export interface LeftAloneFuse {
   /** name, as `FlippedFuse.name`: the pinned package's own name for the fuse. */
   readonly name: string
   readonly option: FuseV1Options
+  /** upstreamDefault is the state the pinned Electron 44.7.2 ships the fuse
+   * in, read off the real binary; the hook refuses a wire that disagrees. */
+  readonly upstreamDefault: boolean
   readonly why: string
 }
 
@@ -170,11 +173,13 @@ export const LEFT_ALONE_FUSES: readonly LeftAloneFuse[] = [
   {
     name: 'EnableCookieEncryption',
     option: FuseV1Options.EnableCookieEncryption,
+    upstreamDefault: false,
     why: 'the console keeps no cookie store: no sign-in is stored, and upstream defaults stand.',
   },
   {
     name: 'LoadBrowserProcessSpecificV8Snapshot',
     option: FuseV1Options.LoadBrowserProcessSpecificV8Snapshot,
+    upstreamDefault: false,
     why: 'a startup optimisation for a browser process that loads web content; not this app.',
   },
 ]
@@ -360,8 +365,16 @@ export async function afterPack(
         'or listed beyond the pin, with its reason, before the binary is signed',
     )
   }
+  // "Left alone" is checked by value, not only by count: a left-alone fuse
+  // whose state is not the default this file records is a binary this file was
+  // not written against (an Electron bump that changed a default, or a
+  // distribution someone else flipped).
   const byIndex = wire as unknown as Record<number, FuseState | undefined>
-  for (const fuse of BEYOND_PIN_FUSES) {
+  const untouched = [
+    ...LEFT_ALONE_FUSES.map((fuse) => ({ name: fuse.name, index: fuse.option as number, upstreamDefault: fuse.upstreamDefault })),
+    ...BEYOND_PIN_FUSES,
+  ]
+  for (const fuse of untouched) {
     const expected = fuse.upstreamDefault ? FuseState.ENABLE : FuseState.DISABLE
     const actual = byIndex[fuse.index]
     if (actual !== expected) {

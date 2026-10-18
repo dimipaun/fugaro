@@ -4,6 +4,9 @@
 // (review round 2 of PR 494). Every credential-shaped value here is built at run
 // time by test/support/fakeSecrets.ts; none is written down.
 
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
 import { TOKEN_PLACEHOLDER, invisibleRe, sanitizeRefusal, sanitizeText } from '../../src/shared/sanitize'
@@ -207,5 +210,87 @@ describe('an invisible character between a letter and a token', () => {
         expect(text, `${textClass}: ${token}`).toBe(recorded)
       }
     }
+  })
+})
+
+describe('a split token beside a match the prepared form already has', () => {
+  // Review round 2 of PR 540. Both layers used to read the form as written only
+  // when the prepared form matched nothing, so once any other rule fired in the
+  // prepared form -- a token, a path, an address, a key id, a PEM block, a
+  // bearer header -- a token whose boundary came only from a zero-width split
+  // was drawn on screen and written into the fixture whole. The readings are now
+  // combined (`resolveReadings`, src/shared/sanitize.ts, one implementation both
+  // layers call): a character is redacted when the credential rules match it in
+  // any reading.
+  const SPLITS = ['​', '‎', '⁠', '͏', '﻿']
+
+  /** leads is one prepared-form match per rule class. */
+  function leads(): readonly (readonly [string, string])[] {
+    return [
+      ['token', `token ${fake.githubToken()} and`],
+      ['path', 'see /x/y and'],
+      ['email', 'mail a@b.example and'],
+      ['key id', `key ${fake.awsKeyId()} and`],
+      ['PEM', `${fake.pemBlock()} and`],
+      ['bearer', `${fake.bearerHeader()} and`],
+    ]
+  }
+
+  /** placeholders counts the token markers in a string: the redaction set the
+   * two layers must agree on. */
+  function placeholders(text: string): number {
+    return text.split(TOKEN_PLACEHOLDER).length - 1
+  }
+
+  it('is redacted by the sentence class, the label class, the refusal door and the recorder, for every rule class', () => {
+    const key = fake.awsKeyId()
+    for (const split of SPLITS) {
+      for (const [ruleClass, lead] of leads()) {
+        const value = `${lead} J${split}${key} was refused`
+        const where = `${ruleClass} ${JSON.stringify(split)}`
+        const recorded = createRedactor().redactText(value).replace(invisibleRe(), '')
+        expect(recorded, `recorder: ${where}`).not.toContain(key)
+        const sentence = drawn(sanitizeText(value, 'sentence'))
+        expect(sentence, `sentence: ${where}`).not.toContain(key)
+        expect(drawn(sanitizeText(value, 'label')), `label: ${where}`).not.toContain(key)
+        expect(drawn(sanitizeRefusal(value)), `refusal: ${where}`).not.toContain(key)
+        // Agreement: the same credentials redacted, counted by marker.
+        expect(placeholders(sentence), `agreement: ${where}`).toBe(placeholders(recorded))
+      }
+    }
+  })
+
+  it('redacts the three probes the review ran, in both layers', () => {
+    const key = fake.awsKeyId()
+    const token = fake.githubToken()
+    const cases: readonly [string, string][] = [
+      [`token ${token} and J​${key} was refused`, `token ${TOKEN_PLACEHOLDER} and J${TOKEN_PLACEHOLDER} was refused`],
+      [`see /x/y and J​${key} was refused`, `J${TOKEN_PLACEHOLDER} was refused`],
+      [`mail a@b.example and J​${key} was refused`, `J${TOKEN_PLACEHOLDER} was refused`],
+    ]
+    for (const [value, ending] of cases) {
+      const sentence = drawn(sanitizeText(value, 'sentence'))
+      expect(sentence, value).toMatch(new RegExp(`${ending.replace(/[[\]]/g, '\\$&')}$`))
+      expect(createRedactor().redactText(value).replace(invisibleRe(), ''), value).toMatch(
+        new RegExp(`${ending.replace(/[[\]]/g, '\\$&')}$`),
+      )
+    }
+  })
+
+  it('is one combining step: the recorder imports the display layer’s', () => {
+    const root = fileURLToPath(new URL('../../src/', import.meta.url))
+    const recorder = readFileSync(`${root}source/redact.ts`, 'utf8')
+    const display = readFileSync(`${root}shared/sanitize.ts`, 'utf8')
+    expect(recorder).toMatch(/import \{[^}]*\bresolveReadings\b[^}]*\} from '\.\.\/shared\/sanitize'/)
+    expect(recorder).toMatch(/= resolveReadings\(text\)/)
+    expect(display).toMatch(/export function resolveReadings\(/)
+    // and both free-text doors of the display layer call it
+    expect(display.match(/= resolveReadings\(raw\)/g) ?? []).toHaveLength(2)
+  })
+
+  it('still reads a token alone the way it did', () => {
+    const value = `J​${fake.awsKeyId()} was refused`
+    expect(drawn(sanitizeText(value, 'sentence'))).toBe(`J${TOKEN_PLACEHOLDER} was refused`)
+    expect(createRedactor().redactText(value).replace(invisibleRe(), '')).toBe(`J${TOKEN_PLACEHOLDER} was refused`)
   })
 })

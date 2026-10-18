@@ -22,7 +22,10 @@ import { join } from 'node:path'
 import { app, BrowserWindow, protocol, session } from 'electron'
 
 import { handleAppRequests, registerAppScheme } from './protocol'
-import { createConsoleWindow, installWebContentsSecurity } from './window'
+import { createConsoleLifecycle, installWebContentsSecurity, versionReadFrom } from './window'
+import type { ConsoleWindowDeps, VersionRead } from './window'
+import { privateWorkingDirectory, resolveBinary } from './spawn'
+import type { SpawnTarget } from './spawn'
 
 // Before `whenReady` resolves, which is the only window Electron gives for it:
 // a scheme registered later is not a standard or secure one.
@@ -56,29 +59,81 @@ function reportAndQuit(error: unknown): void {
  * these per process: `protocol.handle` refuses a scheme that is already
  * registered ("Failed to register protocol: app"), so a second call is not a
  * harmless no-op but a thrown error. It is therefore separate from
- * `openConsoleWindow` below, which is the half that may run again.
+ * `lifecycle.activate` below, which is the half that may run again.
  */
 function serveBundle(): void {
   handleAppRequests(protocol, rendererRoot())
 }
 
 /**
- * openConsoleWindow builds the window that draws the bundle, and is the
- * repeatable half: macOS's `activate` calls it again after the window has been
- * closed. `session.defaultSession` is read here rather than at module scope
- * because it does not exist until the app is ready.
+ * HANDSHAKE_TARGET is the target the startup version read runs with: no project
+ * and no config path, because `fugaro version` takes neither -- the spawn
+ * table's row for `cli.version` is the one with `takesProject: false`, and the
+ * CLI's own `newVersionCmd` has no flags at all (see `COMMANDS_WITHOUT_PROJECT`
+ * in `src/main/spawn.ts`). The installation the operator chooses is D13's, and
+ * it does not exist yet: inventing a project name here, or falling back to the
+ * ambient `FUGARO_PROJECT`, would be a target nobody chose (design section 3.4
+ * rule 1). The probe's child therefore sees `FUGARO_PROJECT` set to the empty
+ * string, which is what `childEnvironment` makes of a target with no project,
+ * and `version` is the one command that does not read it.
  */
-async function openConsoleWindow(): Promise<void> {
-  await createConsoleWindow({ BrowserWindow, session: session.defaultSession })
+const HANDSHAKE_TARGET: SpawnTarget = Object.freeze({ project: '' })
+
+/**
+ * readCliVersion is the handshake's reader: rule 4's resolution (Task 1.3) and
+ * the version line of the `fugaro` it finds.
+ *
+ * It reads the machine and nothing else -- no state from a previous run, no
+ * cached answer -- because the question the handshake asks is "which CLI is the
+ * console about to drive, right now". A resolution that fails crosses into the
+ * compatibility as a **category** (`versionReadFrom` in `window.ts`), never as
+ * `resolution.reason`, which embeds what the binary printed; and a resolution
+ * or a probe that *throws* is left to `runVersionHandshake`, which turns it into
+ * the refusal with the console's own sentence rather than a crash.
+ *
+ * The child runs in `privateWorkingDirectory()` -- the same owner-only 0700
+ * directory every spawn without a checkout uses (rule 5, `src/source/cli.ts`'s
+ * `verifyCandidate`), so the probe is not run from wherever the app happened to
+ * be launched.
+ */
+async function readCliVersion(): Promise<VersionRead> {
+  const resolution = await resolveBinary({
+    appEnv: process.env,
+    directory: privateWorkingDirectory(),
+    target: HANDSHAKE_TARGET,
+  })
+  return versionReadFrom(resolution)
+}
+
+/** windowDeps is the Electron surface the windows are built with.
+ * `session.defaultSession` is read here rather than at module scope because it
+ * does not exist until the app is ready. */
+function windowDeps(): ConsoleWindowDeps {
+  return { BrowserWindow, session: session.defaultSession }
 }
 
 /**
- * main is what `whenReady` resolves into: serve the bundle once, then build the
- * window. Everything a second call would repeat is in `openConsoleWindow`.
+ * lifecycle is the startup and the `activate` path (`createConsoleLifecycle` in
+ * `window.ts`, where it is unit-tested): the handshake runs once -- a stored
+ * promise, so an `activate` during the handshake waits for it rather than
+ * starting a second one -- and `activate` opens the window the stored answer
+ * allows, so a refused console comes back as a refusal screen and never as a
+ * dashboard, and a dock-icon click cannot change which console the operator is
+ * looking at.
+ */
+const lifecycle = createConsoleLifecycle({
+  windowDeps,
+  readVersion: readCliVersion,
+  openWindowCount: () => BrowserWindow.getAllWindows().length,
+})
+
+/**
+ * main is what `whenReady` resolves into: serve the bundle once, then run the
+ * startup. Everything a second call would repeat is in `lifecycle.activate`.
  */
 async function main(): Promise<void> {
   serveBundle()
-  await openConsoleWindow()
+  await lifecycle.start()
 }
 
 app.whenReady().then(main).catch(reportAndQuit)
@@ -96,7 +151,5 @@ app.on('window-all-closed', () => {
 // `reportAndQuit` would turn into `app.exit(1)`: the console would quit the
 // moment the user asked it to come back.
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    openConsoleWindow().catch(reportAndQuit)
-  }
+  lifecycle.activate().catch(reportAndQuit)
 })
