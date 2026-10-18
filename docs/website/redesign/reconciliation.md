@@ -19,8 +19,8 @@ The site the brief describes is **built**. On this branch's base (`85758e1`),
 `website/` holds an eleven-route Astro site whose hermetic gates are green:
 `npm run build` produces 11 pages, and `npm run check` — the site's own gate, run for
 this document on 2026-10-18 in a container with Node v22.22.0 and no browser — passes
-**179 tests out of 179 in 72.5 s**. The Go side (`internal/cli`, the site's pins) is
-run separately; §7 records both.
+**179 tests out of 179 in 72.5 s**. The Go side (`internal/cli`, the site's pins) is run
+separately, and §6 records its result beside the site's.
 
 Three documents in this repository say the opposite, in the present tense:
 `../README.md:3` and `:5` ("**Status: plan only; nothing is implemented**",
@@ -44,7 +44,7 @@ Three labels, and each finding carries exactly one:
 
 Findings are numbered **`RF<n>`** — "redesign finding" — because `F1`–`F63` belong to
 the first line of work and a re-used number is a false citation. Decisions are numbered
-**`D110` onward**; §9 says why that number and not another.
+**`D180` onward**; §9 says why that number and not another.
 
 Every finding cites the file and the symbol it was read from. Every measurement in this
 document was taken on 2026-10-18, on this branch's base, and the command that took it is
@@ -151,7 +151,7 @@ that test needs a definition, because several pages legitimately name repository
 `privacy.astro` describes the site's own posture, `security.astro:43` builds its contents
 from `SECURITY.md`'s headings, and the docs hub cites the document each guide lives in.
 The distinction the test can enforce is narrower and checkable: **a page must not tell a
-reader why its own text exists.** §9 (D116) puts the precise rule to the owner; §4 of the
+reader why its own text exists.** §9 (D186) puts the precise rule to the owner; part **P4** of the
 plan makes it a gate.
 
 ### RF9 — **Exists** — there is already a CSS-only terminal that types a real command
@@ -186,7 +186,7 @@ the animation is a fact about a run that did not happen. The same holds for a fa
 "spending" figure. So the run animation can only show **lines the repository already
 writes** — `README.md`'s `## How it works` numbered steps are the obvious source, exactly
 as the five diagram captions are today — or it must be labelled, on the page, as an
-illustration rather than a recording. §9 (D114) is this decision.
+illustration rather than a recording. §9 (D184) is this decision.
 
 ### RF12 — **Gap** — How It Works is a list of five, the brief asks for a flow of four
 
@@ -201,7 +201,7 @@ The two do not have the same number of steps and are not the same steps: the sit
 "cache" and its "security boundary" are not in the brief's four, and the brief's "agent
 runs" is not one of the site's five. Collapsing five into four is therefore not a layout
 change, it is a change to what the page claims, and every caption has to survive RF11's
-rule. §9 (D115) is this decision; the plan's part is written for either answer, and the
+rule. §9 (D185) is this decision; the plan's part is written for either answer, and the
 recommendation is to keep the five quoted stages and to make the *picture* the brief
 asks for out of them (a vertical flow with one line each), because the brief's four steps
 are a summary of the README's steps rather than a different set.
@@ -252,7 +252,7 @@ So a script has exactly two admissible shapes: **a first-party file** (for examp
 entry, counted by `budget.mjs` under `js`), or **an inline script whose sha256 is added
 to `INLINE_SCRIPTS`** and to the deployed policy. The plan recommends the file — one
 mechanism, no hash to maintain per page, and it keeps the CSP and the allow-list exactly
-as they are — and §9 (D113) records it as the owner's call because it is the CSP's shape
+as they are — and §9 (D183) records it as the owner's call because it is the CSP's shape
 that is being chosen.
 
 ### RF16 — **Rule** — the palette is pinned in four places at once
@@ -300,7 +300,7 @@ appearance: `palette-split.css` is a dark-ground palette and `base.css` carries 
 two readings — "the accent's contrast against a light background *and* against a dark
 one" (a property of the colour, which §5 computes) or "the site gains a light theme"
 (a second palette, a second set of pairs and a `prefers-color-scheme` branch, which is
-work the brief does not otherwise ask for). §9 (D119) asks which, recommending the first
+work the brief does not otherwise ask for). §9 (D189) asks which, recommending the first
 and recording the second as a later, separate line of work.
 
 ### RF20 — **Rule** — what an image may be, and where it may come from
@@ -340,7 +340,7 @@ them"). So the brief's central promise — "the gist above the fold on every pag
 be a hermetic gate in the shape the others have. It can be (a) a word ceiling per page,
 enforced hermetically, plus (b) a fold check, which needs a browser and therefore is
 either a new owner-run live check or the first browser-driven test in this repository.
-§9 (D117) is this decision, and §5 of the plan writes the word ceiling either way.
+§9 (D187) is this decision, and part **P4** of the plan writes the word ceiling either way.
 
 Measured today, the word count of the whole visible text of each page is: home 89,
 how-it-works 107, getting-started 431, caps-and-costs 487, console 200, **docs 18,282**,
@@ -380,7 +380,7 @@ and the two that will move are named in the part that moves them (RF4, RF14, RF1
 The brief's process is: screenshots → Claude Design → build → compare until they match.
 The repository can hold the spec, this reconciliation, the plan, the "before" set and a
 "after" set; it cannot hold a design tool's project file, and `D106`/RF20 keep the site
-free of third-party assets. §9 (D120) asks the owner where the approved design lives and
+free of third-party assets. §9 (D190) asks the owner where the approved design lives and
 what "match" is checked against, recommending: the design lives in the owner's design
 tool, the repository keeps the two screenshot sets and a short `design.md` that records
 the decisions the design fixed (type scale, spacing rhythm, accent usage), and the owner
@@ -398,15 +398,16 @@ did not know yet.
 | **D91** (Firebase Hosting, website-only project) | Unchanged | Untouched |
 | **D93** (Firebase Analytics behind a consent banner) | The one admitted third party, consent-gated | **Touched, in the tree:** `origins.mjs`'s `INLINE_SCRIPTS` currently holds exactly one sha256 — the banner controller — and RF15's copy script must not become a second inline entry by accident. If the file shape is chosen, the allow-list is untouched; if the inline shape is chosen, this Map and the deployed CSP comment grow by one entry, in the same commit |
 | **D94** (install facts rendered as written) | The install page's facts come from `website/data/install.yaml` | **Kept, but its expression moves:** RF5's meta paragraph is the page *saying* it renders facts; D94's rule is the page *rendering* them. Removing the paragraph keeps D94 and strengthens it |
-| **D104** (palette C: violet for structure and links, orange for warnings and cost) | The palette in force | **Contradicted by the brief, deliberately.** The brief says the accent must be sampled from the logo, and the logo is 198–204° while D104's violet is 258.3°. D104's *structure* (accent for structure and links, a second colour for warnings and cost) survives; its *hues* do not. §5 gives the new values, §9 (D110, D111) puts them to the owner, and the palette files, the manifest and the a11y pairs move together (RF16) |
+| **D104** (palette C: violet for structure and links, orange for warnings and cost) | The palette in force | **Contradicted by the brief, deliberately.** The brief says the accent must be sampled from the logo, and the logo is 198–204° while D104's violet is 258.3°. D104's *structure* (accent for structure and links, a second colour for warnings and cost) survives; its *hues* do not. §5 gives the new values, §9 (D180, D181) puts them to the owner, and the palette files, the manifest and the a11y pairs move together (RF16) |
 | **D105** (motion, accessibility, performance; "static-first with no client JavaScript except deliberate islands, with a JavaScript budget in kilobytes for the animated terminal and the architecture diagram") | Deliberate islands, with a byte budget | **This decision already anticipates the redesign.** The 0-byte derivation in `README.md` and `budget.mjs` went *further* than D105 and became the thing the brief pushes against. The budget in force (100,000 B/page) needs no change (RF14); the two prose statements that say "no script today" are updated in the commit that ships one |
 | **D106** (nothing third-party but D93's script) | Enforced by the origins gate | Untouched. Any new asset is first-party (RF20) |
 | **D107** (a video slot, empty until filled) | `features.video: false` | Untouched: the brief asks for "images or diagrams", and a video is neither, so the slot stays empty |
-| **D108** (four gates; the fourth is the owner's live checks) | Build, link check, drift tests, a11y/origins lint, plus live checks | **Extended, additively:** RF23's fold check and the "no internal text" gate are new gates, not a replacement. Whether the fold check is hermetic, browser-driven-in-repo or owner-run is D117 |
+| **D108** (four gates; the fourth is the owner's live checks) | Build, link check, drift tests, a11y/origins lint, plus live checks | **Extended, additively:** RF23's fold check and the "no internal text" gate are new gates, not a replacement. Whether the fold check is hermetic, browser-driven-in-repo or owner-run is D187 |
 
 ## 4. The CSP, the origins gate, and what the owner's ruling permits
 
-The ruling of 2026-10-18 is quoted verbatim in §2 of the plan and applied here:
+The ruling of 2026-10-18 is quoted verbatim in the plan's front matter, above its §1,
+and applied here:
 
 - `script-src 'self'` **stays**. No remote origin, no `unsafe-inline`, no `unsafe-eval`,
   nothing added to `firebase.json`'s policy.
@@ -472,7 +473,7 @@ One accent hue (198°, the sampled mean), one derivation, and the same token nam
 | `--accent` | `#17A8E6` | 198.0° | the logo's own hue, electric: structure, links, focus ring, filled controls |
 | `--accent-on-dark` | `#6FD8F5` | 193.0° | the accent's light tint for text on dark grounds (body-size text and links) |
 | `--accent-ink` | `#06121A` | 204° | the label on an accent-filled control (button text on `--accent`) |
-| `--accent-on-light` | `#0B6FA8` | 201.8° | the accent as text on a light ground, if the light reading of D119 is taken |
+| `--accent-on-light` | `#0B6FA8` | 201.8° | the accent as text on a light ground, if the light reading of D189 is taken |
 | `--warn` | `#F5A524` | 37.0° | warnings and cost — D104's second role kept, moved to a hue that sits beside cyan rather than against it |
 | `--ground` | `#0A0E16` | 220° | the page ground, a very dark blue-black taken from the accent's hue family |
 | `--surface` | `#121A26` | 216° | raised surfaces (cards, code blocks) |
@@ -481,7 +482,7 @@ One accent hue (198°, the sampled mean), one derivation, and the same token nam
 | `--border` | `#24303F` | 213° | decorative rules and card edges |
 | `--gradient-from` | `#08131F` | 211° | the soft glow at the top of a hero |
 | `--gradient-to` | `#0A2233` | 205° | the same glow at its other end |
-| `--light-ground` | `#FFFFFF` | — | only if D119's second reading is taken |
+| `--light-ground` | `#FFFFFF` | — | only if D189's second reading is taken |
 | `--light-surface` | `#F1F5F9` | — | idem |
 | `--light-text` | `#0B1220` | — | idem |
 
@@ -565,7 +566,15 @@ the brief's "layout renders fine today; keep it so" is confirmed as a fact to pr
 not a hope.
 
 The build itself: `npm run build` → 11 pages; `npm run check` → **179 pass, 0 fail,
-72.5 s**; `dist/` 695,920 bytes over every file. The Go suite is in §7.
+72.5 s**; `dist/` 695,920 bytes over every file.
+
+**The Go side, same base, same day:** `GOFLAGS=-p=2 go test ./internal/cli ./internal/clidoc
+-run 'Docs|Lint|Website|CliRef' -count=1` → `ok github.com/dimipaun/fugaro/internal/cli
+2.638s`, `ok github.com/dimipaun/fugaro/internal/clidoc 0.029s` — the eighteen
+`TestWebsite*` pins and the two `TestCliReference*` pins (RF25) all pass, so every fact the
+pages render is still held to the file it is derived from. `GOFLAGS=-p=2 go vet ./...`
+prints nothing and `gofmt -l .` prints nothing. The whole repository suite
+(`fugaro verify test`) passes on the same commit.
 
 ## 7. What could not be verified, and by whom
 
@@ -590,7 +599,7 @@ animation land.
 
 **RU5 — the mobile header on a real device.** The 177 px / three-row measurement is
 Chromium at 390 × 844. A real phone with a different font scale or a browser UI that
-changes the visual viewport can and will differ; D117 asks whether the acceptance check
+changes the visual viewport can and will differ; D187 asks whether the acceptance check
 is that measurement or a device the owner holds.
 
 ## 8. What this document does not decide
@@ -603,25 +612,36 @@ owner's — §9.
 
 ## 9. Owner decisions
 
-Numbering: the first line of work used `D90`–`D109` and nothing in this repository writes
-`D110` or above. These are therefore **`D110`–`D121`**, and this document is where they
-are put; if any other document is found to have written one of these numbers, the owner
-allocates and the plan follows (§8 of the plan). Each is written with the recommendation
+Numbering, read off the owner's allocation table before a number was written
+([`../mobile/README.md:20-42`](../mobile/README.md), the one table in this repository that
+lists every line of work's block): **`D1`–`D20`**, **`D21`–`D38`**, **`D39`–`D54` (plus
+`D54b`)**, **`D55`–`D78`**, **`D90`–`D109`** (the website work's first line), **`D110`–
+`D129`** (mobile), **`D130`–`D159`** (the credentials service, `D155`–`D159` reserved) and
+**`D160`–`D179`** (the mobile functional spec, `D174`–`D179` reserved) are taken, and the
+single number **`D79`** is the only gap between `D55`–`D78` and `D90` — unused without being
+a free block — the first line of work's own rule,
+"an unused number is not a free number" (`../reconciliation.md` §4). The redesign therefore
+takes the first block above the highest allocation: **`D180`–`D191`**, twelve numbers for
+the twelve rows below, and this document asks the owner to confirm the block in the same
+breath as answering the rows. A reserved number is never re-used and never re-numbered: if
+the owner allocates differently, the citations here and in
+[implementation-plan.md](implementation-plan.md) §8 follow the allocation rather than the
+other way round. Each is written with the recommendation
 first, in the shape `../reconciliation.md` §4 uses; the same list appears in the pull
 request body, because a decision this branch makes silently would be the one kind of
 change nobody can review.
 
 | # | question | recommendation | why | alternatives (cost) |
 | --- | --- | --- | --- | --- |
-| **D110** | **The accent and the palette** (§5) | Take the logo's own hue: accent `#17A8E6` (198°), with `--accent-on-dark #6FD8F5`, `--accent-ink #06121A`, and the ground moved to `#0A0E16` — the token set in §5.2, which passes every pair the site asserts | The brief says to sample the logo, and 198–204° is what the logo is; the site's own `--accent-on-dark` at 11.79:1 keeps body text and links comfortable | (a) keep `--accent #8B5CF6` and use the logo's hue only for the logo: cheapest, but the brief's complaint stands; (b) take the deep end of the sample (204°, `#0E7FC4`-class) for a calmer site: less electric, closer to the brief's "high-energy" only in name |
-| **D111** | **What happens to D104's warning colour** | Keep D104's *role* (a second colour for warnings and cost) and move it to `#F5A524` (37°), which reads as attention beside a cyan accent | Two hues 160° apart fight; D104's orange at 24.6° against a cyan accent is the loudest possible pair | (a) keep `#F97316` exactly: it still passes 6.89:1 on the new ground; (b) drop the second colour entirely: loses the caps-and-costs page's "attention" signal |
-| **D112** | **The navigation's shape** | Three top-level sections with dropdowns — *Product* (How it works, Caps and costs, Getting started), *Reference* (Docs, Console, Changelog), *Project* (Security, FAQ, Community, Privacy) — with Home as the logo, and a drawer on mobile | Ten flat items is what wraps to three rows; three groups of three or four is what fits one; the split follows the fold of the site's own contents, and Privacy belongs with the project's documents rather than under nothing | (a) five groups: more top-level than a 390 px row can hold; (b) two groups: the dropdowns get long and the menu stops being scannable; (c) leave the items flat and only shrink the type: the brief asks for a two-level menu |
-| **D113** | **How the JavaScript is delivered** (RF15) | **A first-party file** (`website/public/scripts/*.js`), no inline script, no new `INLINE_SCRIPTS` entry, no CSP edit | The CSP and the allow-list stay exactly as the owner's ruling keeps them; a file is counted by `budget.mjs` like any other asset, and it is cacheable across pages | (a) an inline script per page with a sha256 in `INLINE_SCRIPTS` and in the deployed policy: keeps the request count at zero, costs one hash per page and a policy edit; (b) both (inline for the fold-critical bits, file for the rest): two mechanisms to keep honest |
-| **D114** | **What the homepage run animation may show** (RF10, RF11) | Lines the repository already writes — the numbered steps of `README.md`'s `## How it works`, typed in order, ending at "Push and open the pull request" — with the page stating once, in the caption, that it is the documented sequence and not a recording | It is the only version that cannot go stale or lie: the captions are held to the file at build time exactly as the diagram's are, and a reader sees the real shape of a run | (a) a scripted illustration with an invented job id and elapsed time, labelled as an illustration: more "sizzle", one page that shows facts that are not facts; (b) no animation beyond the existing single command: cheapest, leaves the brief's item 5 half-answered |
-| **D115** | **How It Works: five stages or four steps** (RF12) | Keep the five quoted stages (they are the repository's own words, and `cache` and the security boundary are real stages) and rebuild the **picture** as a vertical flow with one line per stage | The brief asks for the flow's *shape* ("one line per step at most"); the five stages are what the repository actually claims, and collapsing them would make the page say something no document says | (a) four steps exactly as the brief lists them: a new claim, and each step's line has to come from somewhere; (b) five stages as four steps by merging `cache` into `cloud job`: one merge, one caption quoted from two halves of the README rather than one |
-| **D116** | **The "no internal text" rule** (RF5–RF8) | A new hermetic gate that refuses a small, explicit list of provenance phrases — "rendered from `website/data/…`", "Nothing here is typed into this page", "as it is generated", "generated rather than written", "rather than written here", "points at those documents rather than repeating them" — on every built page, and the rule stated in the plan as: **a page must not explain why its own text exists** | A phrase list is checkable, mutation-provable, and cannot misfire on `privacy.astro` or on the docs hub's legitimate citations of the documents it links | (a) a rule over "names any repository file": would fail on pages that legitimately link `SECURITY.md`, `docs/` pages and `README.md`; (b) no gate, a review habit: the brief's "Done when" line asks for the gate |
-| **D117** | **How "above the fold" is checked** (RF23) | A hermetic **word ceiling per page** (recommendation: 150 words of visible text for every page except the three reference pages, which get 400 for their summary and are allowed their detail below), plus **one owner-run live check** for the fold itself (the register's next free number, §5 of the plan) | Hermetic gates cannot see a viewport, and this repository has deliberately no browser in CI; the word ceiling catches the failure the brief cares about in a way that can be mutation-proven, and the fold is what the owner's eyes are for | (a) add the repository's first browser-driven test (Playwright in `website/test/`): a real fold assertion, at the cost of the site's browser-free gate posture and a new dependency; (b) word ceiling only: cheap, leaves "above the fold" as a promise nobody checks |
-| **D118** | **The word ceiling as a number** | 150 / 400 as above | The pages that read well today are already inside it (89–493 words); the ones that need the brief's treatment are the docs hub (18,282), changelog (6,191) and security (6,240), and those are reference pages the brief explicitly allows to stay long | (a) 200/600: more room, less punch; (b) per-page numbers in a table: more precise, one more table to maintain |
-| **D119** | **Is "light and dark" a light theme?** (RF19) | No: take the brief's words as "the accent's contrast against light *and* dark grounds", which §5.3 computes | The brief's own page list, its "accent colour" item and its mobile item are all about the dark site; a light theme is a second design, not a contrast check | (a) yes, a light theme: a second palette, a `prefers-color-scheme` branch and a second set of a11y pairs — a separate line of work, after this one |
-| **D120** | **Where the approved design lives** (RF26) | In the owner's design tool; the repository keeps the spec, this reconciliation, the plan, the "before" set, an "after" set, and a short `redesign/design.md` recording the numbers the design fixed (type scale, spacing, accent usage, the menu groups) | The repository's rules keep third-party assets out of the site and a design project file is not a document; the numbers the design fixes do belong in the tree, because every later change to a page has to keep them | (a) keep the design only in the tool: the "match" check has no record in the tree; (b) commit the design's exported images: 8 MB of images already arrived with the "before" set, and more binaries in `docs/` is the wrong direction |
-| **D121** | **Sequencing against the first line of work** | Redesign first, then the remaining `W2`/`W3` waves (the live checks, the deploy, analytics behind the banner) | The redesign changes `Base.astro`, `base.css`, the palette and several pages — the same files `W3` will deploy; doing it first means deploying the finished look once instead of twice | (a) finish `W3` first: the site goes live in its current look and the redesign follows as a second deploy; (b) interleave: two lines editing the same files |
+| **D180** | **The accent and the palette** (§5) | Take the logo's own hue: accent `#17A8E6` (198°), with `--accent-on-dark #6FD8F5`, `--accent-ink #06121A`, and the ground moved to `#0A0E16` — the token set in §5.2, which passes every pair the site asserts | The brief says to sample the logo, and 198–204° is what the logo is; the site's own `--accent-on-dark` at 11.79:1 keeps body text and links comfortable | (a) keep `--accent #8B5CF6` and use the logo's hue only for the logo: cheapest, but the brief's complaint stands; (b) take the deep end of the sample (204°, `#0E7FC4`-class) for a calmer site: less electric, closer to the brief's "high-energy" only in name |
+| **D181** | **What happens to D104's warning colour** | Keep D104's *role* (a second colour for warnings and cost) and move it to `#F5A524` (37°), which reads as attention beside a cyan accent | Two hues 160° apart fight; D104's orange at 24.6° against a cyan accent is the loudest possible pair | (a) keep `#F97316` exactly: it still passes 6.89:1 on the new ground; (b) drop the second colour entirely: loses the caps-and-costs page's "attention" signal |
+| **D182** | **The navigation's shape** | Three top-level sections with dropdowns — *Product* (How it works, Caps and costs, Getting started), *Reference* (Docs, Console, Changelog), *Project* (Security, FAQ, Community, Privacy) — with Home as the logo, and a drawer on mobile | Ten flat items is what wraps to three rows; three groups of three or four is what fits one; the split follows the fold of the site's own contents, and Privacy belongs with the project's documents rather than under nothing | (a) five groups: more top-level than a 390 px row can hold; (b) two groups: the dropdowns get long and the menu stops being scannable; (c) leave the items flat and only shrink the type: the brief asks for a two-level menu |
+| **D183** | **How the JavaScript is delivered** (RF15) | **A first-party file** (`website/public/scripts/*.js`), no inline script, no new `INLINE_SCRIPTS` entry, no CSP edit | The CSP and the allow-list stay exactly as the owner's ruling keeps them; a file is counted by `budget.mjs` like any other asset, and it is cacheable across pages | (a) an inline script per page with a sha256 in `INLINE_SCRIPTS` and in the deployed policy: keeps the request count at zero, costs one hash per page and a policy edit; (b) both (inline for the fold-critical bits, file for the rest): two mechanisms to keep honest |
+| **D184** | **What the homepage run animation may show** (RF10, RF11) | Lines the repository already writes — the numbered steps of `README.md`'s `## How it works`, typed in order, ending at "Push and open the pull request" — with the page stating once, in the caption, that it is the documented sequence and not a recording | It is the only version that cannot go stale or lie: the captions are held to the file at build time exactly as the diagram's are, and a reader sees the real shape of a run | (a) a scripted illustration with an invented job id and elapsed time, labelled as an illustration: more "sizzle", one page that shows facts that are not facts; (b) no animation beyond the existing single command: cheapest, leaves the brief's item 5 half-answered |
+| **D185** | **How It Works: five stages or four steps** (RF12) | Keep the five quoted stages (they are the repository's own words, and `cache` and the security boundary are real stages) and rebuild the **picture** as a vertical flow with one line per stage | The brief asks for the flow's *shape* ("one line per step at most"); the five stages are what the repository actually claims, and collapsing them would make the page say something no document says | (a) four steps exactly as the brief lists them: a new claim, and each step's line has to come from somewhere; (b) five stages as four steps by merging `cache` into `cloud job`: one merge, one caption quoted from two halves of the README rather than one |
+| **D186** | **The "no internal text" rule** (RF5–RF8) | A new hermetic gate that refuses a small, explicit list of provenance phrases — "rendered from `website/data/…`", "Nothing here is typed into this page", "as it is generated", "generated rather than written", "rather than written here", "points at those documents rather than repeating them" — on every built page, and the rule stated in the plan as: **a page must not explain why its own text exists** | A phrase list is checkable, mutation-provable, and cannot misfire on `privacy.astro` or on the docs hub's legitimate citations of the documents it links | (a) a rule over "names any repository file": would fail on pages that legitimately link `SECURITY.md`, `docs/` pages and `README.md`; (b) no gate, a review habit: the brief's "Done when" line asks for the gate |
+| **D187** | **How "above the fold" is checked** (RF23) | A hermetic **word ceiling per page** (recommendation: 150 words of visible text for every page except the three reference pages, which get 400 for their summary and are allowed their detail below), plus **one owner-run live check** for the fold itself (the register's number below, §4 of the plan) | Hermetic gates cannot see a viewport, and this repository has deliberately no browser in CI; the word ceiling catches the failure the brief cares about in a way that can be mutation-proven, and the fold is what the owner's eyes are for | (a) add the repository's first browser-driven test (Playwright in `website/test/`): a real fold assertion, at the cost of the site's browser-free gate posture and a new dependency; (b) word ceiling only: cheap, leaves "above the fold" as a promise nobody checks |
+| **D188** | **The word ceiling as a number** | 150 / 400 as above | The pages that read well today are already inside it (89–493 words); the ones that need the brief's treatment are the docs hub (18,282), changelog (6,191) and security (6,240), and those are reference pages the brief explicitly allows to stay long | (a) 200/600: more room, less punch; (b) per-page numbers in a table: more precise, one more table to maintain |
+| **D189** | **Is "light and dark" a light theme?** (RF19) | No: take the brief's words as "the accent's contrast against light *and* dark grounds", which §5.3 computes | The brief's own page list, its "accent colour" item and its mobile item are all about the dark site; a light theme is a second design, not a contrast check | (a) yes, a light theme: a second palette, a `prefers-color-scheme` branch and a second set of a11y pairs — a separate line of work, after this one |
+| **D190** | **Where the approved design lives** (RF26) | In the owner's design tool; the repository keeps the spec, this reconciliation, the plan, the "before" set, an "after" set, and a short `redesign/design.md` recording the numbers the design fixed (type scale, spacing, accent usage, the menu groups) | The repository's rules keep third-party assets out of the site and a design project file is not a document; the numbers the design fixes do belong in the tree, because every later change to a page has to keep them | (a) keep the design only in the tool: the "match" check has no record in the tree; (b) commit the design's exported images: 8 MB of images already arrived with the "before" set, and more binaries in `docs/` is the wrong direction |
+| **D191** | **Sequencing against the first line of work** | Redesign first, then the remaining `W2`/`W3` waves (the live checks, the deploy, analytics behind the banner) | The redesign changes `Base.astro`, `base.css`, the palette and several pages — the same files `W3` will deploy; doing it first means deploying the finished look once instead of twice | (a) finish `W3` first: the site goes live in its current look and the redesign follows as a second deploy; (b) interleave: two lines editing the same files |

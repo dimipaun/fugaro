@@ -29,7 +29,7 @@ The brief's "Done when" line, turned into nine parts and three live checks:
 | How It Works is visual | P8 |
 | the homepage has the terminal animation | P7 |
 | every command block has a copy button | P6, gated by `website/test/copy.mjs` |
-| final screenshots match the approved design | P9, and the owner's eyes (RF26, D120) |
+| final screenshots match the approved design | P9, and the owner's eyes (RF26, D190) |
 
 ## 2. What is new in this plan's constraints, on top of the first plan's §3
 
@@ -40,12 +40,12 @@ The brief's "Done when" line, turned into nine parts and three live checks:
    is proposed under `docs/pending-workflows/` for the owner to copy.
 3. **`firebase.json`'s policy stays as it is** (`script-src 'self'`, no nonce, no
    `unsafe-inline`, no `unsafe-eval`), and `website/test/origins.mjs`'s `INLINE_SCRIPTS`
-   allow-list is not added to unless D113 chooses the inline shape. The recommended
+   allow-list is not added to unless D183 chooses the inline shape. The recommended
    shape — a first-party file — changes neither (RF15).
 4. **One source of truth per fact.** A number a gate enforces lives in
    `website/README.md` and is read out of it (the pattern `budget.mjs` already uses).
    The word ceiling of P4 goes there too, beside the byte budgets.
-5. **The site's gates stay browser-free** unless D117 decides otherwise: `npm run check`
+5. **The site's gates stay browser-free** unless D187 decides otherwise: `npm run check`
    is hermetic and has no browser. A viewport claim is therefore either modelled
    (P4's word ceiling) or the owner's (Check 70).
 6. **Every part is independently mergeable and independently revertible**: it changes
@@ -83,12 +83,12 @@ the tests can be checked by running `npm run check` (179 pass on this base).
 **Why first.** A document that says the site does not exist is the one error that makes
 every later review of the redesign confusing, and it is the cheapest possible commit.
 
-### P2 — the accent, sampled from the logo (RF16, RF18, RF19; D110, D111, D119)
+### P2 — the accent, sampled from the logo (RF16, RF18, RF19; D180, D181, D189)
 
 **What.** `website/src/styles/palette-split.css` takes the token values of
 reconciliation §5.2 — `--accent: #17A8E6` (the logo's own hue, 198.0°),
 `--accent-on-dark: #6FD8F5`, the new `--accent-ink`, the ground moved to `#0A0E16`, the
-surfaces, borders and gradient ends with it, and `--warn` moved to `#F5A524` if D111
+surfaces, borders and gradient ends with it, and `--warn` moved to `#F5A524` if D181
 says so. `website/public/site.webmanifest`'s `theme_color`/`background_color` follow
 `--ground` (`brand.mjs` asserts the equality, so the two move in one commit).
 `website/src/styles/palette-violet.css` and `palette-orange.css` stay as they are: they
@@ -118,10 +118,10 @@ only by the owner, the logo beside the accent (RF19/RU3).
 nav, the copy and the pages are untouched, and a revert restores the violet palette
 exactly.
 
-### P3 — the two-level menu and the mobile drawer (RF3, RF4; D112)
+### P3 — the two-level menu and the mobile drawer (RF3, RF4; D182)
 
 **What.** `website/src/layouts/Base.astro`'s `NAV` becomes groups (recommendation in
-D112: *Product*, *Reference*, *Project*, with Home as the logo link), rendered as a
+D182: *Product*, *Reference*, *Project*, with Home as the logo link), rendered as a
 two-level menu on a wide viewport and as a drawer behind a single toggle on a narrow one.
 `website/src/styles/base.css`'s `.site-nav` rules are rewritten for it, and the comment
 at `base.css:117-118` — "at 360px the ten sections are three short lines" — is replaced
@@ -151,7 +151,7 @@ by eye.
 **Independently mergeable because** it is the only part that touches the nav: P4–P8
 change page bodies and one component each, not `Base.astro`'s menu.
 
-### P4 — cut the text, and gate it (RF5–RF8, RF23, RF24; D116, D117, D118)
+### P4 — cut the text, and gate it (RF5–RF8, RF23, RF24; D186, D187, D188)
 
 **What.**
 
@@ -176,12 +176,12 @@ change page bodies and one component each, not `Base.astro`'s menu.
 
 **Two new gates.**
 
-- **`website/test/meta.mjs`** — the phrase list of D116, refused on every built page,
+- **`website/test/meta.mjs`** — the phrase list of D186, refused on every built page,
   with a fixture page that carries one of the phrases so the test proves it fails. The
   rule it states in its header: *a page must not explain why its own text exists.*
 - **A word ceiling in `website/test/budget.mjs`** — the same test, the same
   `website/README.md`, one more number: **words of visible text per page**. The
-  recommendation is D118's 150 for every page except the three reference pages, which get
+  recommendation is D188's 150 for every page except the three reference pages, which get
   400 for what sits above their contents list. The ceiling is read out of
   `website/README.md` exactly as the three byte budgets are, so there is one source of
   truth, and the test carries the case that proves it fails.
@@ -196,7 +196,7 @@ set is the picture of it).
 **Independently mergeable because** it changes page bodies and two tests; the nav, the
 palette, the components and the script are untouched.
 
-### P5 — the gist above the fold (RF5, RF23; D117)
+### P5 — the gist above the fold (RF5, RF23; D187)
 
 **What.** The homepage hero is rebuilt so that the `h1`, the one-line promise and the
 first command are inside a 390 × 844 first screen (today the `h1` alone ends at 893 px,
@@ -206,7 +206,7 @@ first screen becomes its first command. This is a layout change in
 copy (P4).
 
 **Where a gate moves.** None hermetically: no browser-free test can see a fold, which is
-exactly D117's question. If the owner takes D117's second reading (a browser-driven test
+exactly D187's question. If the owner takes D187's second reading (a browser-driven test
 in `website/test/`), this part adds it and the repository's browser-free posture is a
 recorded decision rather than an accident.
 
@@ -217,7 +217,7 @@ recorded decision rather than an accident.
 **Independently mergeable because** it moves blocks within pages P4 has already
 rewritten, and neither part's tests assert the other's layout.
 
-### P6 — a copy button on every command block (RF13, RF14, RF15; D113)
+### P6 — a copy button on every command block (RF13, RF14, RF15; D183)
 
 **What.** One first-party script — recommended at
 `website/public/scripts/copy.js`, one file for the whole site — and one change to the
@@ -245,8 +245,8 @@ Measured today: 23 `<pre>` blocks (home 3, Getting Started 10, Docs 10) and zero
   a first-party script, proving `measurePage`'s `js = inlineJS + fileJS` accounting is
   real (today no page in the build has a script, so that half of the gate has no
   subject).
-- `website/test/origins.mjs` — **no change**, if D113 takes the file shape: the script is
-  a `'self'` file and `INLINE_SCRIPTS` keeps its single consent-banner entry. If D113
+- `website/test/origins.mjs` — **no change**, if D183 takes the file shape: the script is
+  a `'self'` file and `INLINE_SCRIPTS` keeps its single consent-banner entry. If D183
   takes the inline shape instead, this part adds one sha256 to that Map, keeps the case
   that proves an unlisted inline script is refused, and notes the same hash in the
   deployed policy's comment.
@@ -261,7 +261,7 @@ with the clipboard in hand); and the Lighthouse numbers of D105 re-run by the ow
 **Independently mergeable because** it is the first script the site ships and it touches
 one component and one public file, plus the budget test's prose and one new case.
 
-### P7 — the homepage run animation (RF9–RF11; D114)
+### P7 — the homepage run animation (RF9–RF11; D184)
 
 **What.** `website/src/components/Terminal.astro` grows from one typed command into the
 documented shape of a run: the dispatch line, the job starting, the sync of the target
@@ -288,14 +288,14 @@ and still).
 
 **Independently mergeable because** it touches one component on one page and one test.
 
-### P8 — How It Works, rebuilt as a flow (RF12, RF20, RF21; D115)
+### P8 — How It Works, rebuilt as a flow (RF12, RF20, RF21; D185)
 
 **What.** `website/src/pages/how-it-works.astro` and
 `website/src/components/ArchitectureDiagram.astro`: the five quoted stages become a
 vertical flow, one line each, with an arrow between them and the numbered rail replaced
 by something a reader follows top to bottom. Every caption stays a line of the document
 it cites (the component's own build-time check, unchanged), and the picture itself is
-first-party SVG/CSS — no image, no third-party asset, no player (RF20, RF21). If D115
+first-party SVG/CSS — no image, no third-party asset, no player (RF20, RF21). If D185
 chooses the brief's four steps instead, this part merges `cache` into `cloud job` and
 takes the merged caption from the same document rather than writing one.
 
@@ -310,15 +310,20 @@ reader reads in order.
 **Independently mergeable because** it is the only part that touches the diagram, and the
 page keeps its `h1` and its route throughout.
 
-### P9 — the design record and the "after" set (RF26; D120)
+### P9 — the design record and the "after" set (RF26; D190)
 
 **What.** `docs/website/redesign/design.md` — the numbers the approved design fixed
 (type scale, spacing rhythm, the accent's roles, the menu groups, the flow's shape),
 recorded so that a later page change has something to keep to — plus
 `docs/website/redesign/after/`, the same eleven routes at the same two viewports, taken
-by [`capture-screenshots.mjs`](capture-screenshots.mjs) with no argument changed. And the
-owner's comparison of the two sets: **that step is the owner's, not an agent's** — the
-model that takes these pictures cannot view one (RU1).
+by [`capture-screenshots.mjs`](capture-screenshots.mjs) with its **output directory as the
+argument** (`node capture-screenshots.mjs docs/website/redesign/after`): the script's
+output directory is an argument and not a constant for exactly this reason, because the
+"before" set is the baseline the "after" set is compared against and a script that wrote
+both to one directory would overwrite the baseline on the second run. Everything else about
+the run is unchanged, so the two sets are comparable picture for picture. And the owner's
+comparison of the two sets: **that step is the owner's, not an agent's** — the model that
+takes these pictures cannot view one (RU1).
 
 **Where a gate moves.** None. This part is documents and images; nothing in the build
 reads it.
@@ -355,7 +360,7 @@ they enforce:
 | "JavaScript per page: 0 bytes" derivation | `website/test/budget.mjs:16-17` | rewritten to the new derivation | P6 |
 | the JS accounting's own case | `website/test/budget.mjs` | **new case** (a fixture page that fetches a script) | P6 |
 | words per page | `website/README.md` (new line) + `website/test/budget.mjs` | new number, new reader, new case | P4 |
-| `INLINE_SCRIPTS` (sha256 allow-list) | `website/test/origins.mjs` | **unchanged** under D113's recommendation (a file script); one entry if the inline shape is chosen | P6 |
+| `INLINE_SCRIPTS` (sha256 allow-list) | `website/test/origins.mjs` | **unchanged** under D183's recommendation (a file script); one entry if the inline shape is chosen | P6 |
 | `script-src 'self'` | `firebase.json` | **unchanged** — no edit, either way | — |
 | manifest colours = `--ground` | `website/public/site.webmanifest` | follows `--ground`; `brand.mjs`'s equality assertion is unchanged | P2 |
 | `.site-nav ul{display:flex}` and the one-`aria-current` rule | `website/test/base-styles.mjs` | rewritten for the two-level menu, with the page's current marker still exactly one | P3 |
@@ -385,16 +390,23 @@ decisions, and the order above is a recommendation about sequence rather than a 
 ## 7. What this plan does not do
 
 It does not design the site: the type scale, the spacing rhythm, the copy itself and the
-menu's labels are the design step's (D120), constrained by the rules in RF11, RF12, RF20
+menu's labels are the design step's (D190), constrained by the rules in RF11, RF12, RF20
 and RF21. It does not add a dependency, a workflow, a hosting-policy change or a
 third-party asset. It does not touch `belong`, EdgeWeb or EdgeServer, reading or writing
 nothing outside this repository. And it does not deploy anything: D92's live checks and
-D121's sequencing are the owner's.
+D191's sequencing are the owner's.
 
 ## 8. Decision numbering
 
-The first line of work answered `D90`–`D109`. Nothing in this repository writes `D110` or
-above, so the redesign's decisions take **`D110`–`D121`**, in
-[reconciliation.md](reconciliation.md) §9. A reserved number is never re-used and never
-re-numbered: if another document is found to have written one of them, the owner
-allocates the block and this plan's citations follow the allocation.
+Decisions are allocated by the owner, block by block, and the allocation is recorded in
+[`../mobile/README.md:20-42`](../mobile/README.md) — the one table that lists every line of
+work's block. Reading it: `D1`–`D20` (console), `D21`–`D38` (console v2), `D39`–`D54` +
+`D54b` (voice), `D55`–`D78` (managed projects), `D90`–`D109` (this site's first line of
+work), `D110`–`D129` (mobile), `D130`–`D159` (the credentials service, `D155`–`D159`
+reserved) and `D160`–`D179` (the mobile functional spec, `D174`–`D179` reserved) are taken,
+and the one number between them, `D79`, is unused without being free. **The redesign therefore takes
+`D180`–`D191`**, the first block above the highest allocation — proposed for the owner's
+confirmation rather than assumed, in [reconciliation.md](reconciliation.md) §9. A reserved
+number is never re-used and never re-numbered: if the owner allocates the block
+differently, the citations here and in the reconciliation follow the allocation rather than
+the other way round.

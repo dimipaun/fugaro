@@ -49,8 +49,16 @@ regenerable by the script below, and nothing in the repository reads it.
 
 ## Reproducing it
 
-`../capture-screenshots.mjs`. It is committed because the screenshots are evidence
-and how they were taken should be re-runnable rather than remembered. It is not part
+`../capture-screenshots.mjs`, with its output directory as the argument:
+
+```sh
+node docs/website/redesign/capture-screenshots.mjs docs/website/redesign/current
+```
+
+(The same script writes the redesign's **"after"** set by being given
+`docs/website/redesign/after` instead — the directory is an argument precisely so that the
+second run cannot overwrite this baseline.) It is committed because the screenshots are
+evidence and how they were taken should be re-runnable rather than remembered. It is not part
 of the site's build: it installs nothing into `website/`, and `website/package.json`
 is untouched by it. Its header records the two things the container needed — Node
 unpacked to `/tmp`, and Chromium's shared libraries extracted from `.deb` files into

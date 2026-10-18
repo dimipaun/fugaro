@@ -29,6 +29,17 @@
 //     reduced-motion rules are the ones in the picture: this is a set of still
 //     images, and a still of an animation is a lie about the page.
 //
+//   * The output DIRECTORY is an argument, and that is the point of it:
+//
+//       node docs/website/redesign/capture-screenshots.mjs                      # -> current/
+//       node docs/website/redesign/capture-screenshots.mjs docs/website/redesign/after
+//
+//     The "before" set is the baseline the "after" set is compared against, so a
+//     script that wrote both to one hard-coded directory would overwrite the
+//     baseline on the second run — the redesign plan's part P9 asks for the
+//     "after" set, and this is the argument that makes that safe. The second
+//     argument is where its measurements are written as JSON.
+//
 // Two things the set records honestly rather than hiding:
 //
 //   * Three pages are taller than Chromium can capture in one image — /docs/ is
@@ -51,7 +62,10 @@ import path from 'node:path'
 
 const REPO = process.env.REPO_ROOT ?? '/work/repo'
 const DIST = path.join(REPO, 'website/dist')
-const OUT = path.join(REPO, 'docs/website/redesign/current')
+// Where the images go: the first argument, relative to the repository root. The
+// default is the "before" set, and `docs/website/redesign/after` is the "after"
+// set — two directories, never one, so neither run can overwrite the other.
+const OUT = path.resolve(REPO, process.argv[2] ?? 'docs/website/redesign/current')
 const BAND = 8000
 const QUALITY_FULL = 78
 const QUALITY_BAND = 62
@@ -151,7 +165,7 @@ for (const vp of VIEWPORTS) {
 await browser.close()
 server.close()
 
-const out = process.argv[2] ?? '/tmp/website-screenshots.json'
+const out = process.argv[3] ?? '/tmp/website-screenshots.json'
 writeFileSync(out, `${JSON.stringify(measured, null, 1)}\n`)
 for (const r of measured) {
   console.log(`${r.route} ${r.viewport} w=${r.scrollWidth} h=${r.height} header=${r.headerHeight} `

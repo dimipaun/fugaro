@@ -25,10 +25,14 @@ alone in this branch's first commit.
 
 ## The decisions
 
-The twenty decisions of the first line of work are `D90`–`D109` and are all answered.
-This line of work's twelve are **`D110`–`D121`**, listed with their recommendations in
-[reconciliation.md](reconciliation.md) §9 and repeated in the pull request body — a
-decision taken silently in this branch would be the one kind of change nobody can review.
+Decisions are allocated by the owner in blocks, and the allocation is recorded in
+[`../mobile/README.md`](../mobile/README.md): `D90`–`D109` is the site's first line of work,
+`D110`–`D129` mobile, `D130`–`D159` the credentials service, `D160`–`D179` the mobile
+functional spec. This line of work's twelve rows are therefore **`D180`–`D191`**, the first
+block above the highest allocation — proposed for the owner's confirmation, listed with
+their recommendations in [reconciliation.md](reconciliation.md) §9 and repeated in the pull
+request body, because a decision taken silently in this branch would be the one kind of
+change nobody can review.
 
 ## What this line of work may not do
 
