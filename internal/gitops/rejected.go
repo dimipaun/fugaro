@@ -133,10 +133,11 @@ const workflowRoot = ".github/workflows"
 //
 // WorkflowFiles lists, sorted, the files under .github/workflows/ that the
 // commits since changed: since...HEAD, the changes on HEAD's side of their
-// merge base. since is origin/<base> for a first run and the commit a
-// follow-up started from, so a workflow edit a person made earlier on the
-// branch is not this run's. It is what GitHub refuses to take from an App
-// without the `workflows` permission.
+// merge base. since is the commit the run was cut from — the task's ref as
+// bootstrap read it for a first run, the commit a follow-up started from —
+// so a workflow edit a person made earlier on the branch, or a workflow
+// file the branch already carried, is not this run's. It is what GitHub
+// refuses to take from an App without the `workflows` permission.
 func (r *Repo) WorkflowFiles(ctx context.Context, since string) ([]string, error) {
 	return r.workflowFilesIn(ctx, since, "HEAD")
 }

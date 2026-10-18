@@ -324,10 +324,11 @@ func TestCheckpointNeverPushesTheBaseCommit(t *testing.T) {
 }
 
 // TestCheckpointScansFromTheFetchedBase: the base branch moves on origin
-// right after bootstrap fetched it. Checkpoints scan from the commit
-// fetched, which the checkout has, so they still push; a base read with a
-// second ls-remote would name a commit the checkout lacks, and every scan
-// would fail for the whole run.
+// right after bootstrap fetched it. Checkpoints scan from a commit read
+// and frozen at bootstrap — the run's start commit, the base of everything
+// the push adds — which the checkout has, so they still push; a base read
+// with a second ls-remote would name a commit the checkout lacks, and
+// every scan would fail for the whole run.
 func TestCheckpointScansFromTheFetchedBase(t *testing.T) {
 	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
 	runner.SetFetchedBaseSeam(t, func() { bareCommit(t, g.remote, "main", "main") })

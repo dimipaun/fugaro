@@ -50,9 +50,10 @@ func (r *run) workBase() string {
 }
 
 // workflowGuard returns the refusal GitHub is certain to give, without the
-// network call: with the github provider, a run whose commits change files
-// under .github/workflows/ can't be pushed, because Fugaro's App never has
-// the `workflows` permission (a run able to edit CI could change the merge
+// network call: with the github provider, a run whose own commits — those
+// after workBase, the commit it was cut from — change files under
+// .github/workflows/ can't be pushed, because Fugaro's App never has the
+// `workflows` permission (a run able to edit CI could change the merge
 // gates or reach secrets). nil when the push may go ahead, or when git
 // can't tell (the push then decides).
 func (r *run) workflowGuard(ctx context.Context) *gitops.PushRejected {
