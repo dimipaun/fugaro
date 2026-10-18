@@ -27,6 +27,8 @@ approved, and this directory is not evidence that one is.
 
 `mailbox-sim/` (P1.5) is the deterministic mailbox simulator: built, with its own tests and its own mutation proof; see `mailbox-sim/README.md`.
 
+`command/` (P6.1) is the wake-word router and the app-command grammar: built, with its own tests and its own mutation proof; see `command/README.md`.
+
 ## The runner, and the glob
 
 `npm test` runs `node --test "**/*.test.js"` — Node's own test runner, so the package has

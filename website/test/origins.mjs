@@ -37,7 +37,11 @@
 //   3. Every absolute URL inside a shipped `.js` file is first-party.
 //   4. The analytics exception, in two states (D93, D106). With `site.yaml`'s
 //      `analytics.enabled` false — today — no page names an analytics origin or carries the
-//      loader at all, and no page carries a script of any kind. With it true (a build of a
+//      loader at all, and no page carries an inline script of any kind. The site's one script
+//      *file*, `/scripts/site.js`, ships either way: it is the copy control's (D183), point 3
+//      reads it for the origins it names, and the deployed policy admits it as
+//      `script-src 'self'` rather than by a hash, so it is deliberately not an entry in the
+//      allow-list below. With the flag true (a build of a
 //      temp copy with the flag flipped), the one admitted third-party origin is Google's tag
 //      origin, it appears ONLY inside the base layout's consent-gated inline loader (never as
 //      a `script[src]`, a preload or a preconnect), no second analytics origin appears, the
@@ -84,9 +88,10 @@ import { buildCopy } from './lib/build.mjs'
 // loader is NOT listed: it is admitted by the analytics contract below, which holds its shape
 // rather than its bytes, because W3.2 changes its measurement id.
 //
-// Nothing ships these digests today: with `analytics.enabled` false the site emits no script
-// at all, so the only build in which they appear is the flag-on one below. W3.2 is the task
-// that copies them into `firebase.json`'s `script-src`, in the commit that turns analytics on.
+// Nothing ships these digests today: with `analytics.enabled` false the site emits no inline
+// script at all, so the only build in which they appear is the flag-on one below. W3.2 is the
+// task that copies them into `firebase.json`'s `script-src`, in the commit that turns
+// analytics on.
 export const INLINE_SCRIPTS = new Map([
   [
     'sha256-7l2pFFWWCcUSll8vIeHQWoCNRK7+zMwiyv8DrPaFgVs=',
@@ -393,11 +398,24 @@ test('with analytics switched on, the one admitted third-party origin is loaded 
     assert.equal(loaders.length, 1, `${page.rel}: expected exactly one consent-gated analytics loader with the flag on, found ${loaders.length}`)
     assert.ok(!/<script[^>]*\bsrc=["']?https:\/\/www\.googletagmanager/i.test(page.html), `${page.rel}: emits the Google script as markup, which loads before any consent`)
 
-    // The page's scripts, all of them: the gated loader, and the consent banner's controller
-    // — which is the only thing that can write the decision the loader reads, so a page
-    // without it is a gate that can never open (W1.12).
-    assert.equal(scripts.length, 2, `${page.rel}: the site ships ${scripts.length} scripts with analytics on; it has two, the gated loader and the consent banner`)
-    const banner = scripts.find((token) => token !== loaders[0])
+    // The page's inline scripts, all of them: the gated loader, and the consent banner's
+    // controller — which is the only thing that can write the decision the loader reads, so a
+    // page without it is a gate that can never open (W1.12). The site's one script *file*,
+    // `/scripts/site.js` (D183), is counted above by `pageOriginFailures` as the first-party
+    // source it is and is not an inline script: nothing about it is on a hash allow-list,
+    // because a file is admitted by the policy's `script-src 'self'` and not by its bytes.
+    const inline = scripts.filter((t) => !t.attrs.has('src'))
+    assert.equal(inline.length, 2, `${page.rel}: the site ships ${inline.length} inline scripts with analytics on; it has two, the gated loader and the consent banner`)
+    const banner = inline.find((token) => token !== loaders[0])
+
+    // And the site's one script file, which is the same on every page and always the site's
+    // own (D183): a second file would be a script the policy's `script-src 'self'` admits and
+    // nothing in this file's allow-list accounts for.
+    assert.deepEqual(
+      scripts.filter((t) => t.attrs.has('src')).map((t) => t.attrs.get('src')),
+      ['/scripts/site.js'],
+      `${page.rel}: the site's one script file is /scripts/site.js, loaded once (D183)`,
+    )
     const body = banner.raw ?? ''
     // The key is written once — in the banner's own markup — and the script reads it from
     // there. These two assertions are the banner's half of the key: it carries the same
