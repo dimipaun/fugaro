@@ -1,8 +1,8 @@
 # The Fugaro website
 
-**Status: plan only; nothing is implemented.** Owner: **@Dimi**. Date: **2026-10-16**, the day **every decision (D90–D109) was answered**; **2026-10-17: the owner gave the go for wave 1 (W0.1, W0.3, W0.4, W0.5, W0.6), which is launched** — an answered decision is not an approved plan, and every other wave still starts only on the owner's go (the plan's §7.1).
+**Status: the site is built.** Owner: **@Dimi**. Date: **2026-10-16**, the day **every decision (D90–D109) was answered**; **2026-10-17: the owner gave the go for wave 1 (W0.1, W0.3, W0.4, W0.5, W0.6), which is launched** — an answered decision is not an approved plan, and every other wave still starts only on the owner's go (the plan's §7.1). **2026-10-17 is also the date the site became true: `website/` is the eleven-route Astro build, `npm run check` passes, and the redesign ([redesign/](redesign/README.md)) is the line of work now open against it.**
 
-This directory is the documentation of a **second artifact**: a public site for Fugaro. It is a directory rather than a pair of files under `docs/design/` and `docs/plans/` because the site is not a feature of the Go program — it is its own build, in its own language, deployed on its own schedule, which is what `console/` is (reconciliation F2). **No site code exists**: there is no `website/` directory, no hosting configuration, no domain and no web asset of any kind in this repository today (F1).
+This directory is the documentation of a **second artifact**: a public site for Fugaro. It is a directory rather than a pair of files under `docs/design/` and `docs/plans/` because the site is not a feature of the Go program — it is its own build, in its own language, deployed on its own schedule, which is what `console/` is (reconciliation F2). **The site code exists** (F1 was checked on 2026-10-16 and is no longer true): `website/` is that build, `firebase.json` is the hosting configuration, `website/data/site.yaml` names the canonical origin, and `brand/` holds the logo and the icons.
 
 ## The four documents, in reading order
 
