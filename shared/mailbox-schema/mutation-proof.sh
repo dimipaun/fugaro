@@ -2,15 +2,16 @@
 # Mutation-proves the mailbox-schema guards (mobile plan, Task P0.2; extended
 # by P6.3).
 #
-# Each mutation below disables exactly ONE guard in index.js, and every one of
-# them must make `npm test` fail. A guard whose mutation survives is a guard no
-# test defends, which for this module -- the protocol P1.1, P3.6 and P4.1 speak
-# -- is the difference between a fence and a comment.
+# Each mutation below disables exactly ONE guard in index.js — or, for the four
+# at the end, in mac.js, the tag's own module — and every one of them must make
+# `npm test` fail. A guard whose mutation survives is a guard no test defends,
+# which for this module -- the protocol P1.1, P3.6 and P4.1 speak -- is the
+# difference between a fence and a comment.
 #
 #   shared/mailbox-schema/mutation-proof.sh
 #
-# It restores index.js with `git checkout` after each mutation, so it refuses to
-# run against an uncommitted module: `git checkout` on an untracked file fails
+# It restores the module with `git checkout` after each mutation, so it refuses
+# to run against an uncommitted one: `git checkout` on an untracked file fails
 # and the mutations would stack. Run it from a clean tree.
 #
 # Three things keep it from lying, because "killed" is otherwise a claim about a
@@ -34,11 +35,18 @@
 # tag, and the canonical serialisation the tag covers. They are the ones a
 # reviewer should read twice, because they are the ones an impostor holding a
 # minted token (G13) but not the per-pairing key (D171) would attack.
+#
+# Two files, since P6.3's review: the tag lives in mac.js, which imports node's
+# crypto, and index.js imports NOTHING — a static import of a node builtin
+# there would make the schema unimportable by the phone (Metro resolves no
+# `node:` builtin, Hermes has no Buffer). The entry point's freedom from imports
+# is itself guarded below, because nothing else in the suite would notice it.
 set -u
 
 root=$(cd "$(dirname "$0")/../.." && pwd) || exit 1
 cd "$root" || exit 1
 F=shared/mailbox-schema/index.js
+M=shared/mailbox-schema/mac.js
 
 # runner_works asks the question that matters: not "is node on PATH" but "does
 # it run". A mise shim for a tool whose version was never set sits on PATH and
@@ -72,8 +80,12 @@ if ! git ls-files --error-unmatch "$F" >/dev/null 2>&1; then
   echo "REFUSING: $F is not committed; git checkout could not restore it" >&2
   exit 2
 fi
-if ! git diff --quiet -- "$F"; then
-  echo "REFUSING: $F has uncommitted changes; commit them first" >&2
+if ! git ls-files --error-unmatch "$M" >/dev/null 2>&1; then
+  echo "REFUSING: $M is not committed; git checkout could not restore it" >&2
+  exit 2
+fi
+if ! git diff --quiet -- "$F" "$M"; then
+  echo "REFUSING: $F or $M has uncommitted changes; commit them first" >&2
   exit 2
 fi
 
@@ -101,11 +113,12 @@ suite() {
 
 # mutate_test applies one mutation, judges the suite against it, and restores
 # the module. It counts only the guards it was asked to prove; the caller
-# decides what to do with last_outcome.
-mutate_test() { # name, old, [new]
-  local name="$1" old="$2" new="${3-}"
-  git checkout -- "$F"
-  if ! python3 - "$F" "$old" "$new" <<'PY'
+# decides what to do with last_outcome. The fourth argument is the file to
+# mutate: index.js by default, mac.js for the tag's own guards.
+mutate_test() { # name, old, [new], [file]
+  local name="$1" old="$2" new="${3-}" file="${4-$F}"
+  git checkout -- "$file"
+  if ! python3 - "$file" "$old" "$new" <<'PY'
 import sys
 p, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(p).read()
@@ -114,14 +127,14 @@ open(p, 'w').write(s.replace(old, new))
 PY
   then
     echo "APPLY-FAILED  $name"
-    git checkout -- "$F"
+    git checkout -- "$file"
     last_outcome=apply-failed
     unapplied=$((unapplied + 1))
     return
   fi
-  if git diff --quiet -- "$F"; then
+  if git diff --quiet -- "$file"; then
     echo "NO-OP         $name"
-    git checkout -- "$F"
+    git checkout -- "$file"
     last_outcome=no-op
     unapplied=$((unapplied + 1))
     return
@@ -135,18 +148,18 @@ PY
     last_outcome=killed
     killed=$((killed + 1))
   fi
-  git checkout -- "$F"
+  git checkout -- "$file"
 }
 
 # run proves one guard and counts it.
-run() { # name, old, [new]
+run() { # name, old, [new], [file]
   guards=$((guards + 1))
-  mutate_test "$@"
+  mutate_test "$1" "$2" "${3-}" "${4-$F}"
 }
 
 # 1. The positive control: the suite passes on the pristine module, over tests
 #    that actually ran. Nothing below is measured against anything otherwise.
-git checkout -- "$F"
+git checkout -- "$F" "$M"
 if ! suite; then
   echo "REFUSING: the suite does not pass on the pristine $F ($LAST_TESTS tests ran);" >&2
   echo "          a mutation's failure could not be told from the baseline's." >&2
@@ -363,18 +376,48 @@ run "canonicalBytes: the tag itself is not covered" \
   "    if (key === 'mac' || key === 'acked') continue;" "    if (key === 'acked') continue;"
 run "canonicalBytes: the ack is outside the bytes" \
   "    if (key === 'mac' || key === 'acked') continue;" "    if (key === 'mac') continue;"
-run "canonicalBytes: keys are sorted by code point" \
-  "    for (const key of Object.keys(value).sort()) {" "    for (const key of Object.keys(value)) {"
+run "canonicalBytes: keys are sorted at all" \
+  "    for (const key of Object.keys(value).sort(compareKeys)) {" "    for (const key of Object.keys(value)) {"
+run "canonicalBytes: the sort is by code point, not UTF-16 code unit" \
+  "    for (const key of Object.keys(value).sort(compareKeys)) {" "    for (const key of Object.keys(value).sort()) {"
+run "canonicalBytes: a string the two encoders spell differently is refused" \
+  "function canonicalString(value, where) {
+  if (hasLoneSurrogate(value)) {" "function canonicalString(value, where) {
+  if (false) {"
+run "canonicalBytes: the separators are refused inside a string too" \
+  "  for (let i = 0; i < value.length; i++) {
+    if (isSeparator(value, i)) {" "  for (let i = 0; i < 0; i++) {
+    if (isSeparator(value, i)) {"
 run "canonicalBytes: a null or undefined is refused, never dropped" \
   "  if (value === undefined || value === null) {" "  if (false) {"
 run "canonicalBytes: a number is an integer, because two languages spell floats differently" \
   "    if (!Number.isFinite(value) || !Number.isInteger(value)) {" "    if (!Number.isFinite(value)) {"
-run "canonicalBytes: the bytes are the canonical ones (macOf uses them)" \
-  "  const bytes = Buffer.from(canonicalBytes(record), 'utf8');" \
-  "  const bytes = Buffer.from(JSON.stringify(record), 'utf8');"
-run "verifyMac: a wrong length is a false, not a throw" \
-  "  if (got.length !== want.length) return false;" "  if (false) return false;"
 
-git checkout -- "$F"
+# ---------------------------------------------------------------------------
+# 6. mac.js, and the boundary that keeps the entry point loadable by the phone.
+#
+# macOf and verifyMac moved out of index.js in P6.3's review: a static import
+# of node's crypto in the entry point costs React Native far more than the tag
+# (validateMessage and canonicalBytes go with it), so the import lives in
+# mac.js, which index.js never imports. These first two guards protect that
+# boundary, and nothing but the entry-point test would notice it breaking.
+# ---------------------------------------------------------------------------
+run "the entry point stays importable: no import in index.js" \
+  "// The mailbox's message schema and its validation" \
+  "import { createHmac } from 'node:crypto';
+
+// The mailbox's message schema and its validation"
+run "the entry point carries no node-only buffer type" \
+  "const IDENTITY_PATTERN = /^[A-Za-z0-9._:-]+\$/;" \
+  "const NODE_ONLY = typeof Buffer;
+
+const IDENTITY_PATTERN = /^[A-Za-z0-9._:-]+\$/;"
+run "macOf: the bytes are the canonical ones, not the object's own order" \
+  "  const bytes = Buffer.from(canonicalBytes(record), 'utf8');" \
+  "  const bytes = Buffer.from(JSON.stringify(record), 'utf8');" "$M"
+run "verifyMac: a wrong length is a false, not a throw" \
+  "  if (got.length !== want.length) return false;" "  if (false) return false;" "$M"
+
+git checkout -- "$F" "$M"
 echo "--- control killed; $guards guards: $killed killed, $survivors survived, $unapplied not applied"
 [ "$survivors" -eq 0 ] && [ "$unapplied" -eq 0 ] && [ "$guards" -eq "$killed" ]

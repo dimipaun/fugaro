@@ -160,6 +160,23 @@
       "verdict": "verified"
     },
     {
+      "name": "keys are ordered by code point, not by UTF-16 code unit",
+      "why": "§3.5 sorts keys by code point at every depth; U+FFFF < U+1F600 by code point and after it by UTF-16 code unit",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "cd74a914f445f0795423f2612de74e85ff1782f19ea9a62eccf76f576064a724",
+        "kind": "prompt",
+        "￿": 1,
+        "😀": 2
+      },
+      "canonical": "{\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"prompt\",\"sender\":\"phone\",\"text\":\"run 42 finished\",\"￿\":1,\"😀\":2}",
+      "mac": "cd74a914f445f0795423f2612de74e85ff1782f19ea9a62eccf76f576064a724",
+      "verdict": "verified"
+    },
+    {
       "name": "an unknown field is inside the bytes",
       "why": "§3.5 covers a field added later by default, and omits an absent one rather than writing null",
       "message": {

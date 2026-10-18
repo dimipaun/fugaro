@@ -59,11 +59,15 @@ import {
   TEXT_MAX,
   canonicalBytes,
   isMessage,
-  macOf,
   validateHeartbeat,
   validateMessage,
-  verifyMac,
 } from './index.js';
+// The tag is a separate module on purpose: ./index.js imports nothing, so a
+// bundler that resolves no node builtin (React Native's) can still load the
+// validator and the canonical serialisation. The phone imports index.js and
+// implements HMAC-SHA-256 itself against the vectors; this file imports the
+// Node implementation of it, which is what the tests and the generator use.
+import { macOf, verifyMac } from './mac.js';
 
 // FAKE_MAC is mac-SHAPED and nothing more: 64 lowercase hex characters that no
 // key produces. The schema checks a mac's SHAPE and never its value — it has
@@ -769,6 +773,71 @@ test('canonicalBytes refuses a value JSON cannot carry, rather than dropping it'
   assert.throws(() => canonicalBytes(good({ at: Number.POSITIVE_INFINITY })), TypeError);
   // A nested one too: the walk is at every depth.
   assert.throws(() => canonicalBytes(withAction({ target: { repo: 'a/b', pr: 1.5 } })), TypeError);
+});
+
+test('keys are ordered by code point, which is not UTF-16 code-unit order', () => {
+  // §3.5 says "keys sorted by code point at every depth", and the Go consumer
+  // sorts map keys bytewise, which for UTF-8 is the same order. JavaScript's own
+  // `.sort()` is UTF-16 CODE UNIT order, and the two disagree for exactly one
+  // pair of ranges: an astral key — first code unit D800..DBFF — sorts BEFORE a
+  // key in U+E000..U+FFFF under `.sort()` and AFTER it by code point, so the two
+  // ends would emit the keys of one record in opposite orders and compute two
+  // different tags. Nothing validateMessage accepts can reach this (every field
+  // name is ASCII), but canonicalBytes is exported and its whole contract is
+  // that both languages emit the same bytes, so the order is pinned here and in
+  // the vectors rather than left to the reader.
+  const astral = '😀'; // U+1F600: encoded as the surrogate pair D83D DE00
+  const bmp = '￿'; // the last BMP code point: U+FFFF < U+1F600, but 0xFFFF > 0xD83D
+  assert.equal(canonicalBytes({ [astral]: 1, [bmp]: 2 }), `{"${bmp}":2,"${astral}":1}`);
+  assert.equal(
+    canonicalBytes({ [bmp]: 2, [astral]: 1 }),
+    `{"${bmp}":2,"${astral}":1}`,
+    'the caller\'s order is not the message\'s',
+  );
+  // A non-ASCII key that is not astral is unaffected: for the BMP, code-unit
+  // order IS code-point order, which is why the hazard is this narrow.
+  assert.equal(canonicalBytes({ é: 1, a: 2 }), '{"a":2,"é":1}');
+});
+
+test('a string the two encoders spell differently has no canonical form', () => {
+  // The same class of hazard as the U+2028 refusal above, one level down.
+  // canonicalBytes is exported and is a general serialisation, so it cannot lean
+  // on validateMessage having refused these values first: Go's encoder writes
+  // U+FFFD for a lone surrogate and escapes U+2028/U+2029, while JavaScript
+  // writes "\ud800" and leaves the separators as themselves. Two spellings, one
+  // record, no canonical form — so the call throws, at every depth, for a key
+  // exactly as for a value.
+  for (const key of ['x\ud800y', ' ', ' ']) {
+    assert.throws(() => canonicalBytes({ ...good(), [key]: 1 }), TypeError, `key ${JSON.stringify(key)}`);
+  }
+  for (const value of ['x\ud800y', 'x y', 'x y']) {
+    assert.throws(() => canonicalBytes(good({ text: value })), TypeError, `text ${JSON.stringify(value)}`);
+  }
+  assert.throws(
+    () => canonicalBytes(withAction({ target: { repo: 'a/\ud800', pr: 1 } })),
+    TypeError,
+    'the walk is at every depth',
+  );
+  // And what it does NOT refuse: an astral character, a non-ASCII letter and the
+  // characters JSON escapes identically to Go all have one canonical form.
+  assert.equal(canonicalBytes(good({ text: 'x😀é y' })), '{"at":1700000000000,"id":"m-0001","sender":"phone","text":"x😀é y"}');
+});
+
+test('the entry point imports nothing, so the phone can load it', () => {
+  // React Native is one of this package's two designated consumers (D119), and
+  // its bundler resolves no `node:` builtin while its engine has no buffer type.
+  // So a static import of Node's crypto — or a bare use of that buffer type —
+  // anywhere in this file would not merely cost the phone the tag: it would make
+  // the WHOLE schema unimportable there, validateMessage and canonicalBytes
+  // included, which are pure functions over values and the parts the phone needs
+  // most. The tag therefore lives in ./mac.js, which imports Node's crypto, and
+  // which this file never imports; the phone implements HMAC-SHA-256 itself and
+  // tests it against vectors.json. This is the one property of the module that a
+  // bundler, rather than the test runner, would otherwise be the first to find.
+  const source = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
+  assert.equal(/^\s*import\b/m.test(source), false, 'no import statement in index.js');
+  assert.equal(/\bfrom\s+['"]/.test(source), false, 'nothing is imported into index.js');
+  assert.equal(/\bBuffer\b/.test(source), false, 'no Node buffer type in index.js');
 });
 
 // TEST_KEY is an obviously fake key, built here rather than committed: every

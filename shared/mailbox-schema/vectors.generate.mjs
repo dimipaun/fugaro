@@ -22,7 +22,8 @@
 // artifact can be re-derived rather than hand-edited.
 
 import { writeFileSync } from 'node:fs';
-import { canonicalBytes, macOf } from './index.js';
+import { canonicalBytes } from './index.js';
+import { macOf } from './mac.js';
 
 const KEY = ['not', 'a', 'secret', 'test', 'key', '0001'].join('-');
 const AT = 1_700_000_000_000;
@@ -114,6 +115,20 @@ verified(
 );
 
 verified('non-ASCII is UTF-8', 'an emoji is its own characters, not a \\u escape, in both languages', message({ text: 'x😀y' }));
+
+// The key order, at the one pair of ranges where the two languages do not
+// already agree. Go sorts map keys bytewise, which for UTF-8 is code-point
+// order; JavaScript's default `.sort()` compares UTF-16 code units, which puts
+// an astral key (first unit D800..DBFF) BEFORE a key in U+E000..U+FFFF — the
+// opposite order, and therefore a different tag for the same record. The keys
+// below are U+FFFF and U+1F600 for that reason and no other: a port that sorts
+// with `.sort()` signs these bytes differently from the consumer, and this case
+// is what tells it so.
+verified(
+  'keys are ordered by code point, not by UTF-16 code unit',
+  '§3.5 sorts keys by code point at every depth; U+FFFF < U+1F600 by code point and after it by UTF-16 code unit',
+  { ...message({ kind: 'prompt' }), '￿': 1, '😀': 2 },
+);
 
 // Not a message the schema would accept — `landed_at` is an unknown field and
 // is refused — but a serialisation rule the tag depends on: §3.5 covers every

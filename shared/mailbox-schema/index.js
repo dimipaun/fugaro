@@ -89,14 +89,23 @@
 // byte string.
 //
 // This module validates a tag's SHAPE and never its value — it has no key —
-// and `verifyMac` is the separate, keyed question. `shared/presence` gets an
-// unsigned or wrongly signed heartbeat treated as offline (P3.6, §3.5).
+// and `verifyMac` is the separate, keyed question, in `./mac.js`.
+// `shared/presence` gets an unsigned or wrongly signed heartbeat treated as
+// offline (P3.6, §3.5).
 //
-// Pure functions over values. No network, no clock, no randomness, no
-// filesystem, no dependency: the only import is node's own HMAC-SHA-256, which
-// is deterministic and reads nothing.
-
-import { createHmac, timingSafeEqual } from 'node:crypto';
+// Pure functions over values, and — deliberately — **this file imports nothing
+// at all**. The tag needs HMAC-SHA-256, and the only implementation of it in a
+// runtime with no dependencies is a runtime builtin: Node has one, React
+// Native's bundler resolves neither it nor a buffer type. So the tag lives in
+// `./mac.js`, which imports Node's crypto and which this file never imports,
+// and the entry point stays loadable by both of this package's consumers — the
+// console and the phone (D119). A static import here would not cost the phone
+// the tag alone; it would cost it `validateMessage` and `canonicalBytes` too,
+// which are pure logic and which the phone needs most. So: no network, no
+// clock, no randomness, no filesystem, no dependency, no import. The phone
+// implements the tag itself, against `vectors.json`. `index.test.js` asserts
+// that this file has no import, so adding one is a failing test rather than a
+// discovery made by a bundler.
 
 /**
  * The permitted length of a message id, in UTF-16 code units: the tree's own
@@ -509,8 +518,8 @@ export function validateHeartbeat(value) {
  *
  * It is the protocol's most exact surface. The Go consumer reimplements it and
  * tests against `vectors.json`, so the bytes here are what both ends must
- * produce — and it refuses, by throwing, the two value classes the two
- * languages spell differently:
+ * produce — and it refuses, by throwing, the three classes the two languages
+ * spell differently:
  *
  *   - `undefined` and `null`. A dropped field is two different records with
  *     one canonical form, and one byte string with one tag is exactly what the
@@ -519,12 +528,22 @@ export function validateHeartbeat(value) {
  *     prints `1e-7` for the same double, so a float in a signed record is a
  *     tag that verifies on one side and not the other. The schema refuses a
  *     non-integer timestamp anyway, and every other number here is a count.
+ *   - a string Go escapes and JavaScript does not, or the other way round: an
+ *     **unpaired surrogate**, U+2028 and U+2029, in a key exactly as in a
+ *     value. The schema refuses all three in every string it validates, so a
+ *     caller that validated first cannot arrive here; this is the fence for the
+ *     caller that did not.
  *
- * A caller that has validated first cannot reach either: `validateMessage`
- * refuses an explicit `undefined`, never writes a `null`, and checks that
- * `at`, the confirmation time and a pull request number are integers. Throwing,
- * rather than coercing, is the fail-closed reading — signing bytes that differ
- * from the ones a reader will see is the failure mode that matters.
+ * A caller that has validated first cannot reach any of them: `validateMessage`
+ * refuses an explicit `undefined`, never writes a `null`, checks that `at`, the
+ * confirmation time and a pull request number are integers, and refuses those
+ * characters. Throwing, rather than coercing, is the fail-closed reading —
+ * signing bytes that differ from the ones a reader will see is the failure mode
+ * that matters.
+ *
+ * The keys are ordered by **code point**, at every depth, which is §3.5's words
+ * and the Go consumer's bytewise order — not JavaScript's default UTF-16 order
+ * (see `compareKeys`).
  *
  * @param {object} record a validated message or heartbeat
  * @returns {string} the bytes, as a string whose UTF-8 encoding is what is signed
@@ -545,53 +564,6 @@ export function canonicalBytes(record) {
   return JSON.stringify(canonicalValue(covered));
 }
 
-/**
- * macOf is the tag a record carries: HMAC-SHA-256 over canonicalBytes(record),
- * hex-encoded, lowercase (§3.5).
- *
- * @param {object} record a validated message or heartbeat
- * @param {string} key the per-pairing key (D171): the phone's from secure
- *   storage, the consumer's from the OS keychain. It is a string of UTF-8
- *   bytes; passing anything else is a programming error and throws.
- * @returns {string} MAC_MAX lowercase hex characters
- */
-export function macOf(record, key) {
-  if (typeof key !== 'string') {
-    throw new TypeError('macOf: the key must be a string');
-  }
-  const bytes = Buffer.from(canonicalBytes(record), 'utf8');
-  return createHmac('sha256', Buffer.from(key, 'utf8')).update(bytes).digest('hex');
-}
-
-/**
- * verifyMac decides whether a record carries the tag its own bytes produce
- * under key.
- *
- * It answers `false` — never throws — for anything that cannot carry one: a
- * value that is not a plain object, a `mac` that is not a string, a key that is
- * not a string, and a record holding a value canonicalBytes refuses. The
- * comparison is timing-safe, because a caller that verifies tags an attacker
- * can choose would otherwise leak the tag one byte at a time.
- *
- * @param {unknown} record a message or heartbeat as it arrived
- * @param {string} key the per-pairing key
- * @returns {boolean} true only when the record's `mac` is its own tag under key
- */
-export function verifyMac(record, key) {
-  if (typeof key !== 'string' || !isPlainObject(record) || typeof record.mac !== 'string') {
-    return false;
-  }
-  let expected;
-  try {
-    expected = macOf(record, key);
-  } catch {
-    return false;
-  }
-  const got = Buffer.from(record.mac, 'utf8');
-  const want = Buffer.from(expected, 'utf8');
-  if (got.length !== want.length) return false;
-  return timingSafeEqual(got, want);
-}
 
 // refuse builds a refusal verdict.
 function refuse(code, field) {
@@ -973,10 +945,67 @@ function canonicalValue(value) {
   if (Array.isArray(value)) return value.map(canonicalValue);
   if (typeof value === 'object') {
     const sorted = {};
-    for (const key of Object.keys(value).sort()) {
-      sorted[key] = canonicalValue(value[key]);
+    for (const key of Object.keys(value).sort(compareKeys)) {
+      sorted[canonicalString(key, 'a key')] = canonicalValue(value[key]);
     }
     return sorted;
+  }
+  return canonicalString(value, 'a string');
+}
+
+/**
+ * compareKeys orders two keys by **code point**, which is what §3.5 mandates and
+ * what the Go consumer's bytewise map-key order produces (UTF-8 byte order IS
+ * code-point order). JavaScript's own `Array.prototype.sort` compares UTF-16
+ * **code units**, and the two disagree for exactly one pair of ranges: a key
+ * above U+FFFF — an astral character, whose first code unit is a high surrogate
+ * in D800..DBFF — sorts BEFORE a key in U+E000..U+FFFF under `.sort()` and
+ * AFTER it by code point. The two ends would then emit the keys of one record in
+ * opposite orders and compute two different tags for it.
+ *
+ * Nothing `validateMessage` accepts can reach this — every field name is ASCII —
+ * but `canonicalBytes` is exported, its whole contract is byte-equality between
+ * the languages, and the hazard costs four lines to remove. For the BMP the two
+ * orders are the same, which is why this is narrow enough to have gone unnoticed.
+ */
+function compareKeys(a, b) {
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    const left = a.codePointAt(i);
+    const right = b.codePointAt(j);
+    if (left !== right) return left < right ? -1 : 1;
+    i += left > 0xffff ? 2 : 1;
+    j += right > 0xffff ? 2 : 1;
+  }
+  return a.length - i - (b.length - j);
+}
+
+/**
+ * canonicalString is the check a string has to pass to have a canonical form at
+ * all, for a key exactly as for a value: Go's encoder writes U+FFFD for a lone
+ * surrogate, escapes U+2028 and U+2029 even with `SetEscapeHTML(false)`, and
+ * writes every other code point as itself, while JavaScript writes "\ud800" for
+ * the surrogate and leaves the two separators alone.
+ *
+ * The schema refuses both classes in every string it validates
+ * (`bad-character`, `bad-key`), so a caller that validated first cannot arrive
+ * here. This is the second fence, for the caller that did not: `canonicalBytes`
+ * is exported and is a general serialisation, and a record whose strings the two
+ * languages spell differently has no canonical form to sign.
+ */
+function canonicalString(value, where) {
+  if (hasLoneSurrogate(value)) {
+    throw new TypeError(
+      `canonicalBytes: ${where} carries an unpaired surrogate, which the two encoders spell differently`,
+    );
+  }
+  for (let i = 0; i < value.length; i++) {
+    if (isSeparator(value, i)) {
+      throw new TypeError(
+        `canonicalBytes: ${where} carries U+2028 or U+2029, which Go's encoder escapes and JavaScript's does not`,
+      );
+    }
   }
   return value;
 }
