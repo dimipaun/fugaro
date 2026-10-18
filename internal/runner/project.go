@@ -143,23 +143,31 @@ func providerForSlug(slug, repo string) (kind string, ok bool) {
 // claim about a document that does not exist, and it is refused rather than
 // ignored.
 //
-// The name is the whole check this release can make: the profile's resources,
-// secrets and admission list describe the job the run is launched as, and the
-// job this run is in does not carry the selection yet — that is task 3.2's job
-// layout. So this is the plan's fail-closed half, and the enforcement half
-// arrives with the layout.
+// A run in a project job carries the selection: the job's own name was written
+// from a (profile, provider, account) triple of the policy (task 3.2's layout,
+// matched by jobIdentity), so the profile the run is *in* is read from the job
+// and compared with the one its workflow selects. They disagree when the
+// workflow was edited after the launch, when the job was chosen by hand, or
+// when the repository's workflow and the job it was launched as came from
+// different configs; the run stops rather than running the workflow's work on
+// a job nobody selected for it. A per-repository job carries no profile and
+// nothing is compared (R2-9).
 //
 // An older binary (0.8.0, which does not know the key) refuses a fugaro.yaml
 // that sets job_profile: the key is a config field, and the strict decoder
 // refuses a name it does not know. The skew is therefore a refusal at
 // validation, never a run on a profile nobody selected.
 func (r *run) checkJobProfile(ctx context.Context, workflow string, wf config.Workflow) error {
-	if wf.JobProfile == "" || wf.JobProfile == projectpolicy.DefaultProfileName {
-		return nil
-	}
 	p, found, err := r.projectPolicy(ctx)
 	if err != nil {
 		return err
+	}
+	if job, project := r.projectJob(); project && job.Profile != wf.JobProfileOrDefault() {
+		return fmt.Errorf("this run is in the Cloud Run job %s, which is the project job of the profile %q, and the workflow %s selects the job profile %q: the job a run is launched as is the one its workflow's selection built, so the two disagreeing means the selection changed after the launch, or the job was chosen by hand. The run stops rather than running the workflow's work on a job nobody selected for it",
+			gcp.ProjectJobName(job.Profile, job.Provider, job.Account), job.Profile, workflow, wf.JobProfileOrDefault())
+	}
+	if wf.JobProfile == "" || wf.JobProfile == projectpolicy.DefaultProfileName {
+		return nil
 	}
 	if !found {
 		return fmt.Errorf("workflow %s selects the job profile %q, and this project has published no policy: a job profile is a profile of the published policy, which names the job the run is launched as. Nothing published defines it, so the run stops rather than running on a job nobody selected",
@@ -214,6 +222,39 @@ func remoteOffTheKindsHost(derived, remote string) string {
 	return host
 }
 
+// scpLike splits the form git reads as ssh — a host, a colon and a path
+// ("git@github.com:acme/app.git", "github.com:acme/app.git") — into the host
+// and the path, and reports false for anything else.
+//
+// The form is recognised the way git recognises it and not by the "@": a colon
+// *before the first "/"* and not followed by the "//" of a URL's authority. Git
+// makes the userinfo optional — it ssh's to github.com and asks for the same
+// repository in "github.com:owner/name.git" and in "git@github.com:owner/name.git"
+// alike — and keying on the "@" read the first spelling as a URL whose scheme
+// is "github.com", with no host and no path, so both halves of the run's remote
+// binding skipped it (the review finding on this change). The userinfo is cut
+// at the *last* "@", which is where git ends it: "a@b@github.com:acme/app.git"
+// is ssh's user "a@b" and the host github.com, which a cut at the first "@"
+// read as the host "b@github.com".
+//
+// A remote whose text in front of the colon is the userinfo and nothing else
+// ("@:path", "git@:path") names no host: host comes back "" for it.
+//
+// origin/main's gitprov.SplitRemote/SplitRemoteRaw is this same rule, hardened
+// further (a URL whose parse fails but which git accepts, a second "@" in an
+// authority, a control character); it is the implementation the merge into main
+// must keep, and this is what this branch has until then.
+func scpLike(remote string) (host, path string, ok bool) {
+	h, rest, found := strings.Cut(remote, ":")
+	if !found || h == "" || strings.Contains(h, "/") || strings.HasPrefix(rest, "//") {
+		return "", "", false
+	}
+	if i := strings.LastIndex(h, "@"); i >= 0 {
+		h = h[i+1:]
+	}
+	return h, rest, true
+}
+
 // remoteHost is the host and port a remote names: a URL's, or the host of an
 // scp-like remote ("git@github.com:acme/app.git", which has no port). Both are
 // "" for a remote that names no host, such as a local path.
@@ -221,10 +262,8 @@ func remoteHost(remote string) (host, port string) {
 	if u, err := url.Parse(remote); err == nil && u.Host != "" {
 		return u.Hostname(), u.Port()
 	}
-	if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
-		if h, _, ok := strings.Cut(rest, ":"); ok {
-			return h, ""
-		}
+	if h, _, ok := scpLike(remote); ok {
+		return h, ""
 	}
 	return "", ""
 }
@@ -284,11 +323,9 @@ func remoteRepoPath(remote string) (string, bool) {
 		path := strings.Trim(u.Path, "/")
 		return path, path != ""
 	}
-	if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
-		if _, path, ok := strings.Cut(rest, ":"); ok {
-			path = strings.Trim(path, "/")
-			return path, path != ""
-		}
+	if host, path, ok := scpLike(remote); ok && host != "" {
+		path = strings.Trim(path, "/")
+		return path, path != ""
 	}
 	return "", false
 }
@@ -299,10 +336,8 @@ func remoteRepoPath(remote string) (string, bool) {
 // run never registers that one as a secret, so it is dropped here rather than
 // redacted later.
 func remoteDisplay(remote string) string {
-	if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
-		if host, _, ok := strings.Cut(rest, ":"); ok {
-			return host
-		}
+	if host, _, ok := scpLike(remote); ok && host != "" {
+		return host
 	}
 	u, err := url.Parse(remote)
 	if err != nil {

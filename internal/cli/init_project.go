@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 )
 
@@ -64,6 +65,14 @@ func (o *initOptions) checkCreateProject() error {
 	// and this is the one that says why the amount is being asked for.
 	case o.managed && (o.budget <= 0 || o.budgetCurrency == "" || o.billingAccount == ""):
 		return userErr("--managed creates a project Fugaro manages, and a managed project's monthly budget amount is required at creation — with no default, because an amount you did not choose reads as a promise and one that is too low is discovered by a bill. Pass all three: --budget <amount> --budget-currency <code> --billing-account <id>. For a first installation --budget 50 --budget-currency USD is a reasonable start (the alerts fire at 50%%, 90%% and 100%% of it); raise it once you have seen a month of spend. The amount and the currency are recorded in the project's creation fact, so a later run and a restore can read what was chosen")
+	// The figures a managed creation records are held to the rule the
+	// marker's write and read share (managed.Budget.Check: a whole amount
+	// from 1 to 10,000,000 units of the currency, and a three-letter
+	// uppercase ISO 4217 code), here, before anything is created: a value the
+	// marker would refuse refuses the run that would write it, rather than
+	// creating a project whose creation fact cannot then be recorded.
+	case o.managed && (managed.Budget{Amount: o.budget, Currency: o.budgetCurrency}).Check() != nil:
+		return userErr("--managed: %v. Pass --budget as a whole amount from %d to %d units of the currency and --budget-currency as the billing account's three-letter ISO 4217 code in upper case, such as USD", (managed.Budget{Amount: o.budget, Currency: o.budgetCurrency}).Check(), managed.MinBudgetAmount, managed.MaxBudgetAmount)
 	case o.forget || o.configOnly || o.printVars:
 		return userErr("--create-project creates a project; it excludes --forget, --config-only and --print-vars")
 	case o.cloud.gcpProject == "":
@@ -168,6 +177,14 @@ func (s *projectStage) read(ctx context.Context) error {
 	// from one that never reached the creation at all (see
 	// initRun.projectExisted).
 	s.e.r.projectExisted = info.Exists
+	// fugaro restore's child: a project that is already there is refused,
+	// never adopted (an adopted project gets no creation fact, and the
+	// installation would be applied into someone else's or a stale project).
+	// The project this run created itself is the one exception: the stage
+	// reads it again after the creation.
+	if info.Exists && s.o().strictCreate && s.e.r.res.Created != s.id {
+		return userErr("GCP project %s already exists, and this creation must make a new one (fugaro restore never adopts a project): nothing was created or applied", s.id)
+	}
 	s.create, s.addFirebase, s.link, s.guide = false, false, false, false
 	if !info.Exists {
 		s.create = true

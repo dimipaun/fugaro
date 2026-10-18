@@ -232,20 +232,30 @@ func TestEnsureManagedStateBucketRefusesWithNothingToWorkWith(t *testing.T) {
 }
 
 // The binding is a service account and nothing else: a bare address is a grant
-// to nobody, and a person is not the identity this step is about.
+// to nobody, and a person is not the identity this step is about. A member it
+// will not bind is an error rather than "nothing to do": the caller reads
+// changed=false as the grant being in place already, and a run that said so
+// about a member it never bound would report a grant that does not exist.
 func TestWithDeployerGrantBindsOnlyAServiceAccount(t *testing.T) {
 	want := deployerMember(gcpProject)
-	for _, member := range []string{"", "owner@example.com", "user:owner@example.com"} {
-		if got, changed := withDeployerGrant(nil, DeployerStateRole, member); changed {
-			t.Errorf("bound %q: %v", member, got)
+	for _, member := range []string{"", "serviceAccount:", "owner@example.com", "user:owner@example.com"} {
+		got, changed, err := withDeployerGrant(nil, DeployerStateRole, member)
+		if err == nil {
+			t.Errorf("bound %q: %v, %v", member, got, changed)
+		}
+		if changed || got != nil {
+			t.Errorf("refusing %q still returned a policy: %v, %v", member, got, changed)
 		}
 	}
-	got, changed := withDeployerGrant(nil, DeployerStateRole, want)
+	got, changed, err := withDeployerGrant(nil, DeployerStateRole, want)
+	if err != nil {
+		t.Fatalf("withDeployerGrant(%q) = %v", want, err)
+	}
 	if !changed || len(got) != 1 || got[0].Role != DeployerStateRole || !slices.Equal(got[0].Members, []string{want}) {
 		t.Errorf("withDeployerGrant = %v, %v", got, changed)
 	}
-	if got, changed := withDeployerGrant(got, DeployerStateRole, want); changed || len(got) != 1 {
-		t.Errorf("binding the same member twice changed the policy: %v, %v", got, changed)
+	if got, changed, err := withDeployerGrant(got, DeployerStateRole, want); err != nil || changed || len(got) != 1 {
+		t.Errorf("binding the same member twice changed the policy: %v, %v, %v", got, changed, err)
 	}
 }
 
@@ -269,7 +279,10 @@ func TestWithDeployerGrantSkipsConditionedBindings(t *testing.T) {
 			Condition: &storage.Expr{Title: "somebody-elses", Expression: "resource.name.startsWith(\"projects/_/buckets/y\")"}}
 	}
 	// Only a conditioned binding: a new unconditioned one is added.
-	got, changed := withDeployerGrant([]*storage.PolicyBindings{cond()}, DeployerStateRole, want)
+	got, changed, err := withDeployerGrant([]*storage.PolicyBindings{cond()}, DeployerStateRole, want)
+	if err != nil {
+		t.Fatalf("withDeployerGrant: %v", err)
+	}
 	if !changed || len(got) != 2 {
 		t.Fatalf("withDeployerGrant = %v, %v, want a second binding", got, changed)
 	}
@@ -282,7 +295,10 @@ func TestWithDeployerGrantSkipsConditionedBindings(t *testing.T) {
 	// A conditioned binding before the unconditioned one: the deployer joins
 	// the unconditioned one.
 	plain := &storage.PolicyBindings{Role: DeployerStateRole, Members: []string{"user:owner@example.com"}}
-	got, changed = withDeployerGrant([]*storage.PolicyBindings{cond(), plain}, DeployerStateRole, want)
+	got, changed, err = withDeployerGrant([]*storage.PolicyBindings{cond(), plain}, DeployerStateRole, want)
+	if err != nil {
+		t.Fatalf("withDeployerGrant: %v", err)
+	}
 	if !changed || len(got) != 2 || !slices.Equal(got[0].Members, []string{"user:else@example.com"}) ||
 		!slices.Equal(got[1].Members, []string{"user:owner@example.com", want}) {
 		t.Errorf("withDeployerGrant = %+v, %+v, %v", got[0], got[1], changed)
@@ -291,7 +307,10 @@ func TestWithDeployerGrantSkipsConditionedBindings(t *testing.T) {
 	// still bound unconditioned.
 	c := cond()
 	c.Members = append(c.Members, want)
-	got, changed = withDeployerGrant([]*storage.PolicyBindings{c}, DeployerStateRole, want)
+	got, changed, err = withDeployerGrant([]*storage.PolicyBindings{c}, DeployerStateRole, want)
+	if err != nil {
+		t.Fatalf("withDeployerGrant: %v", err)
+	}
 	if !changed || len(got) != 2 || got[1].Condition != nil {
 		t.Errorf("a conditioned membership counted as the grant: %v, %v", got, changed)
 	}

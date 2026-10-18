@@ -281,12 +281,26 @@ func DraftTitle(title string, draft bool) string {
 // KindForURL names the provider hosting a git remote URL: KindGitHub for
 // github.com, KindBitbucket for bitbucket.org, and "" for anything else
 // (a local path, or another host).
+//
+// The scp-like form is recognised by the colon git recognises it by — before
+// the first "/" and not the "//" of a URL's authority — and not by the "@":
+// git ssh's to github.com for "github.com:owner/name.git" and for
+// "git@github.com:owner/name.git" alike, and keying on the "@" answered "" for
+// the first, so a caller bounding a remote to its provider's host read it as
+// "another provider's, or nobody's" (the review finding on this change). The
+// userinfo is cut at the last "@", which is where git ends it.
+//
+// origin/main's gitprov.SplitRemote/SplitRemoteRaw is this rule hardened
+// further; it is the implementation the merge into main must keep.
 func KindForURL(remote string) string {
 	var host string
 	if u, err := url.Parse(remote); err == nil && u.Host != "" {
 		host = u.Hostname()
-	} else if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
-		host, _, _ = strings.Cut(rest, ":") // scp-like: git@host:owner/repo.git
+	} else if h, rest, ok := strings.Cut(remote, ":"); ok && h != "" && !strings.Contains(h, "/") && !strings.HasPrefix(rest, "//") {
+		if i := strings.LastIndex(h, "@"); i >= 0 {
+			h = h[i+1:]
+		}
+		host = h
 	}
 	switch strings.ToLower(host) {
 	case "github.com":

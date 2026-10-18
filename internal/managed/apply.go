@@ -44,6 +44,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The refusals this file's own rules make. They are values as well as
@@ -202,30 +203,85 @@ type Result struct {
 // RefusedError is the gate's refusal, carried out of Apply with the verdict
 // that made it: every refusal, each with the gate that made it, the address it
 // is about and the rule's own words. Nothing is applied when this is returned.
+//
+// Advice is the one sentence this refusal ends with, when the mode has one:
+// the managed sentence (DeleteAdvice), which names the owner's object and the
+// owner-run command that writes it rather than a flag of the applying command.
+// It is a field of the error and not of the Verdict because it is what the
+// caller says about the mode — a verdict is a judgement about a plan (plan.go)
+// and knows nothing about who is applying it — and it is rendered here, where
+// the refusal a person reads is rendered, so the sentence has one home.
 type RefusedError struct {
 	Verdict Verdict
+	Advice  string
 }
 
+// Error is the refusal as a person reads it: one line per refused change, each
+// with the gate that refused it and the address and rule's own words, and then
+// the mode's advice when there is one.
+//
+// Every part of it that can come from somewhere else is one bounded field
+// first (safetext.Field): an address and a rule's own words are read out of a
+// plan and out of objects other people wrote, and a newline, a C1 control or a
+// bidi override carried through them would be this program printing text of
+// someone else's choosing — in text the session that reads it acts on — and a
+// value of any length would push the rest out of sight. The advice is this
+// program's own and is rendered as it is.
 func (e *RefusedError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s, so nothing is applied (%d refusal(s))", ErrRefused, len(e.Verdict.Refusals))
 	for _, r := range e.Verdict.Refusals {
 		b.WriteString("\n  ")
-		b.WriteString(r.Gate)
+		// The gate's name is this program's own, but it is rendered the way
+		// the rest is: the shape of the line is the same whatever any of its
+		// parts holds.
+		b.WriteString(safetext.Field(r.Gate))
 		b.WriteString(": ")
 		if r.Address != "" {
-			b.WriteString(r.Address)
+			b.WriteString(safetext.Field(r.Address))
 			b.WriteString(": ")
 		}
-		b.WriteString(r.Why)
+		b.WriteString(safetext.Field(r.Why))
 	}
 	if len(e.Verdict.Refusals) == 0 {
 		b.WriteString(": the verdict refused and listed nothing, which is a refusal all the same")
+	}
+	if e.Advice != "" {
+		b.WriteString("\n")
+		b.WriteString(e.Advice)
 	}
 	return b.String()
 }
 
 func (e *RefusedError) Unwrap() error { return ErrRefused }
+
+// DeleteAdvice is the one sentence a managed project's deletion refusal ends
+// with, and the sentence a managed `fugaro init`'s guard refusal ends with too
+// (internal/cli passes it through tf.GuardWith): what to do, and who can do it.
+// The owner's own object is named by its whole address, the command that writes
+// it is named, and no address of an applying command's own is accepted — so the
+// loop a refusal starts is refusal → the owner copies the address → fugaro
+// allow-delete → the next plan passes (D74).
+//
+// It names no flag and no agent marker, and that is the rule rather than the
+// wording: a refusal is read by the session it refuses — in a managed project
+// that session may be a coding agent's — and a flag or a variable named here is
+// a recipe for getting past a check, which has no business in text an agent
+// reads (internal/initflow's IDEHint, and the plan's Task 3.2). The flag this
+// project's apply refuses is therefore described and never spelled, and the
+// test that holds it is the negative one over these strings.
+//
+// gcpProject is the GCP project the object is read from; with no project name
+// there is no bucket to name, and the sentence says only what to do and who
+// does it.
+func DeleteAdvice(gcpProject string) string {
+	where := "the owner's own list"
+	if gcpProject != "" {
+		where = "the owner's own list at gs://fugaro-runs-" + gcpProject + "/fugaro/allow-delete.json"
+	}
+	return "the addresses a managed project may delete or replace are " + where +
+		", which the owner writes with their own credentials and the owner-run command fugaro allow-delete, and no address named on the command line of an applying command approves one: an address the owner approves is listed there"
+}
 
 // Apply is the managed apply: the gate's verdict is the whole of the decision,
 // and every refusal below returns before anything is applied.
@@ -355,10 +411,10 @@ func (r Request) fact() error {
 		return fmt.Errorf("%w: reading the creation fact of %s: %w", ErrNotManaged, r.what(), r.Fact.Err)
 	case r.Fact.Managed:
 		return nil
-	case oneLine(r.Fact.Reason) == "":
+	case safetext.Field(r.Fact.Reason) == "":
 		return fmt.Errorf("%w: %s is not managed, and the read gave no reason a person could read, so nothing is applied: a read that answered nothing is not an answer", ErrNotManaged, r.what())
 	default:
-		return fmt.Errorf("%w: %s (%s), so nothing is applied here: the coding agent's refusal is removed only where the creation fact says the project is managed", ErrNotManaged, r.what(), oneLine(r.Fact.Reason))
+		return fmt.Errorf("%w: %s (%s), so nothing is applied here: the coding agent's refusal is removed only where the creation fact says the project is managed", ErrNotManaged, r.what(), safetext.Field(r.Fact.Reason))
 	}
 }
 
@@ -447,7 +503,10 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		// The refusal is a hard return: there is no "apply anyway" here, and
 		// the only action a false verdict permits is a confirmation, which in
 		// the session a managed apply runs in means the step does not proceed.
-		return res, &RefusedError{Verdict: v}
+		// Its sentence is the mode's own (advice): the refusal a person reads
+		// says what to do about it, and in a managed project that is the
+		// owner's object and not a flag of this command.
+		return res, &RefusedError{Verdict: v, Advice: r.advice(v)}
 	}
 	// The session's own leg of D55's rule, asked here because this is the one
 	// moment all three of its inputs exist: the fact was read before terraform
@@ -474,6 +533,27 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		return res, err
 	}
 	return res, nil
+}
+
+// advice is the sentence a refusal ends with, when the mode has one: a
+// refused plan whose guard refused a delete or replace the owner's list would
+// admit if it named the address (Verdict.Listable) ends with DeleteAdvice,
+// since that is the one thing its reader can act on. Nothing else gets it: a
+// refusal from the cover or the cost list alone says what the plan is, not who
+// may approve it, and a guard refusal made only of what no list clears — an
+// object moved here from another address, an action the guard does not know,
+// a change with no actions — would send the owner to list an address and the
+// next plan would be refused the same way. No advice rather than the wrong one.
+func (r Request) advice(v Verdict) string {
+	if len(v.Listable) == 0 {
+		return ""
+	}
+	for _, ref := range v.Refusals {
+		if ref.Gate == guardGate {
+			return DeleteAdvice(r.GCPProject)
+		}
+	}
+	return ""
 }
 
 // confirm is D55's rule, and this is the caller that reaches its managed case:
@@ -549,20 +629,6 @@ func planHash(planPath string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-// oneLine is a reason read as one line: the reason comes from an API answer or
-// from an object someone else may have written, so a newline or a control
-// character in it must not become a line of this program's own output.
-// (infra/managed's read already does this; this is the boundary for any caller
-// that hands Fact over directly.)
-func oneLine(s string) string {
-	return strings.Join(strings.Fields(strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return ' '
-		}
-		return r
-	}, s)), " ")
 }
 
 // TerraformEnv is the environment a managed apply runs terraform with: tf.Env's

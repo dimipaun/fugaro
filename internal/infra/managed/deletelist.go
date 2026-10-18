@@ -15,6 +15,7 @@ import (
 	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 const (
@@ -391,7 +392,15 @@ func strictFields(data []byte) error {
 // D74 leaves to the managed mode's own message — is Tasks 3.1 and 3.2.
 func GuardAllowList(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64, applied []string) ([]string, error) {
 	if len(applied) > 0 {
-		named := slices.Clone(applied)
+		// The addresses are repeated to the person they were given by, and
+		// they were given by a command line a coding agent may have written:
+		// each is one bounded field (safetext.Field), so none can add a line,
+		// a control or a bidi override to the refusal, or push its advice out
+		// of sight.
+		named := make([]string, len(applied))
+		for i, a := range applied {
+			named[i] = safetext.Field(a)
+		}
 		slices.Sort(named)
 		return nil, fmt.Errorf("refusing the addresses the applying command was given on its own command line (%s): in a managed project the addresses a run may delete or replace come from the owner's own list at gs://%s/%s, written with the operator's credentials by fugaro allow-delete, never from the arguments of the command that applies the plan; ask the owner to approve %s",
 			strings.Join(named, ", "), bucket, AllowDeleteObject, strings.Join(named, ", "))

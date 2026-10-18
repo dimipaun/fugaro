@@ -442,21 +442,21 @@ func TestGatePlanThatCannotBeReadIsAnError(t *testing.T) {
 // The refusals carry the address and the rule apart, and a gate that refused
 // without an address keeps its own words rather than being dropped.
 func TestPlanRefusalsCarryTheAddressAndTheRule(t *testing.T) {
-	got := refusals(coverGate, strings.Join([]string{
+	got := refusals(coverGate, []string{
 		`module.m.google_storage_bucket.x (runs the image "x", pinned (us-east5-docker.pkg.dev/p/r/fugaro-ghcr/o/fugaro-build:1.2.3@sha256:ab))`,
 		"",
-	}, "\n"))
+	})
 	want := Refusal{Gate: coverGate, Address: "module.m.google_storage_bucket.x",
 		Why: `runs the image "x", pinned (us-east5-docker.pkg.dev/p/r/fugaro-ghcr/o/fugaro-build:1.2.3@sha256:ab)`}
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("refusals %+v, want %+v", got, want)
 	}
-	got = refusals(guardGate, "the plan would delete or replace 1 resource(s):\n  module.m.x (delete)")
+	got = refusals(guardGate, guardLines("the plan would delete or replace 1 resource(s):\n  module.m.x (delete)"))
 	want = Refusal{Gate: guardGate, Address: "module.m.x", Why: "delete"}
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("refusals %+v, want the guard's address alone", got)
 	}
-	got = refusals(guardGate, "guard: no plan")
+	got = refusals(guardGate, guardLines("guard: no plan"))
 	want = Refusal{Gate: guardGate, Why: "guard: no plan"}
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("refusals %+v, want the refusal whole", got)
@@ -798,5 +798,20 @@ func TestGateCarriesAFlagOnlyFindingWithoutRefusing(t *testing.T) {
 	if len(v.Flags) != 1 || v.Flags[0].Gate != costGate || v.Flags[0].Address != addr ||
 		!strings.Contains(v.Flags[0].Why, "test-flag") {
 		t.Errorf("flags %+v, want the finding", v.Flags)
+	}
+}
+
+// The guard Gate calls carries no advice of its own (Task 3.2's review,
+// finding 1): tf.Guard's sentence names the flag a managed apply refuses, and
+// the sentence a managed refusal ends with is the apply's, chosen from the
+// verdict. guardLines drops the header as well; this holds the source.
+func TestGateGuardCarriesNoAdviceOfItsOwn(t *testing.T) {
+	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: planBucket, Change: tf.Change{Actions: []string{"delete"}}}}}
+	err := guard(p, nil)
+	if err == nil {
+		t.Fatal("the guard admitted an unlisted delete")
+	}
+	if strings.Contains(err.Error(), "allow-delete") || strings.Contains(err.Error(), tf.AllowDeleteAdvice) {
+		t.Errorf("the gate's guard carries tf.Guard's advice:\n%s", err)
 	}
 }

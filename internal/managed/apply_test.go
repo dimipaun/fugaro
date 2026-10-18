@@ -1004,3 +1004,326 @@ func TestTerraformEnvRefusesTheImpersonationVariable(t *testing.T) {
 		t.Errorf("refusal %v does not name the variable", err)
 	}
 }
+
+// Task 3.2: the refusals a person reads. A managed project's guard refusal
+// names what to do and who can do it — the owner's own list and the owner-run
+// command that writes it — and it names no flag at all: a flag name in a
+// refusal is an instruction the session it refuses will follow (D74, and
+// IDEHint's own reason in internal/initflow). The plan's own words are still
+// carried, per address, and nothing is applied.
+func TestManagedGuardRefusalNamesTheOwnersListAndNoFlag(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+	req := r.request(t)
+	_, err := Apply(context.Background(), req)
+	if !errors.Is(err, ErrRefused) {
+		t.Fatalf("%v, want the guard's refusal", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"gs://fugaro-runs-" + gcpProject + "/fugaro/allow-delete.json",
+		"fugaro allow-delete",
+		planBucket,
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not name %q:\n%s", want, msg)
+		}
+	}
+	noFlagName(t, msg)
+	noAgentMarker(t, msg)
+	if applied := r.applied(t); len(applied) != 0 {
+		t.Errorf("the refused apply applied something: %v", applied)
+	}
+}
+
+// The advice a guard refusal ends with is the caller's, and there is one
+// sentence per mode rather than a second refusal beside the first (Task 3.2):
+// the unmanaged sentence is today's, byte for byte, and the managed one is
+// managed.DeleteAdvice's — the single place a person reads what a managed
+// project's deletes need.
+func TestGuardAdviceIsTheCallersAndTheUnmanagedOneIsUnchanged(t *testing.T) {
+	plan := func() *tf.Plan {
+		return &tf.Plan{ResourceChanges: []tf.ResourceChange{{
+			Address: "google_storage_bucket.a", Type: "google_storage_bucket",
+			Change: tf.Change{Actions: []string{"delete"}},
+		}}}
+	}
+	const want = "the plan would delete or replace 1 resource(s), or do something the guard doesn't know; nothing was applied. " +
+		"Name an address with --allow-delete only if deleting it is intended:\n  google_storage_bucket.a (delete)"
+	got := tf.Guard(plan(), nil)
+	if got == nil {
+		t.Fatal("tf.Guard admitted a delete")
+	}
+	if got.Error() != want {
+		t.Errorf("tf.Guard's refusal is\n%q\nwant\n%q", got.Error(), want)
+	}
+	if !strings.Contains(got.Error(), tf.AllowDeleteAdvice) {
+		t.Errorf("tf.AllowDeleteAdvice is not the sentence tf.Guard ends its refusal with: %q", tf.AllowDeleteAdvice)
+	}
+	// The same function with this apply's own sentence: the plan's words are
+	// unchanged and the advice is the managed one.
+	mine := tf.GuardWith(plan(), nil, DeleteAdvice(gcpProject))
+	if mine == nil {
+		t.Fatal("tf.GuardWith admitted a delete")
+	}
+	if strings.Contains(mine.Error(), "--allow-delete") || strings.Contains(mine.Error(), tf.AllowDeleteAdvice) {
+		t.Errorf("the managed refusal carries the unmanaged advice:\n%s", mine.Error())
+	}
+	if !strings.Contains(mine.Error(), DeleteAdvice(gcpProject)) || !strings.Contains(mine.Error(), "google_storage_bucket.a (delete)") {
+		t.Errorf("the managed refusal is not the plan's words plus this apply's advice:\n%s", mine.Error())
+	}
+	// An empty advice is no advice: the refusal still says what it refused.
+	bare := tf.GuardWith(plan(), nil, "")
+	if bare == nil || strings.Contains(bare.Error(), "--allow-delete") {
+		t.Fatalf("an empty advice: %v", bare)
+	}
+	if want := "the plan would delete or replace 1 resource(s), or do something the guard doesn't know; nothing was applied:\n  google_storage_bucket.a (delete)"; bare.Error() != want {
+		t.Errorf("an empty advice gives\n%q\nwant\n%q", bare.Error(), want)
+	}
+}
+
+// DeleteAdvice is the one sentence a managed project's refusal ends with: it
+// names the owner's object, the owner-run command that writes it, and says no
+// address of the applying command's own is accepted — and it names no flag and
+// no marker, because the session that reads it is the one that would try one
+// (Task 3.2, D74).
+func TestDeleteAdviceNamesTheOwnersObjectAndNoFlag(t *testing.T) {
+	got := DeleteAdvice("proj-1234")
+	for _, want := range []string{"gs://fugaro-runs-proj-1234/fugaro/allow-delete.json", "fugaro allow-delete", "owner"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the managed advice does not name %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "\n") {
+		t.Errorf("the managed advice is not one line: %q", got)
+	}
+	noFlagName(t, got)
+	noAgentMarker(t, got)
+	if none := DeleteAdvice(""); strings.Contains(none, "gs://") {
+		t.Errorf("with no GCP project the advice still names a bucket: %q", none)
+	}
+}
+
+// The refusal is what a person reads, and the text inside it arrives from a
+// plan and from objects someone else wrote: a newline or a control character
+// in a resource address or in a cover's own words must not become a line of
+// this program's output (Task 3.2).
+func TestManagedRefusalKeepsUntrustedTextToOneLineAndEndsWithItsAdvice(t *testing.T) {
+	e := &RefusedError{
+		Verdict: Verdict{Refusals: []Refusal{{
+			Gate:    coverGate,
+			Address: "google_storage_bucket.a\n        forged line",
+			Why:     "an attribute the cover refused\r\n        and a second line",
+		}}},
+		Advice: DeleteAdvice(gcpProject),
+	}
+	out := e.Error()
+	if strings.Count(out, "\n") != 2 {
+		t.Errorf("the refusal is %d lines, want the one per change and the one advice:\n%s", strings.Count(out, "\n")+1, out)
+	}
+	for _, line := range strings.Split(out, "\n")[1:] {
+		if strings.HasPrefix(line, "         ") {
+			t.Errorf("a line of the refusal is indented like untrusted text carried through:\n%s", out)
+		}
+	}
+	if !strings.Contains(out, "google_storage_bucket.a forged line: an attribute the cover refused and a second line") {
+		t.Errorf("the refusal did not fold the untrusted text into one line:\n%s", out)
+	}
+	if !strings.HasSuffix(out, DeleteAdvice(gcpProject)) {
+		t.Errorf("the refusal does not end with this apply's own advice:\n%s", out)
+	}
+}
+
+// noFlagName fails when s names a command-line flag. Task 3.2's negative test:
+// a refusal that names one is read by the session it refuses as a thing to
+// pass, which is the one thing a deletion refusal in a managed project must
+// never suggest.
+func noFlagName(t *testing.T, s string) {
+	t.Helper()
+	for _, flag := range []string{
+		"--allow-delete", "--allow-job-delete", "--launcher", "--operator", "--alert-email",
+		"--budget", "--billing-account", "--yes", "--non-interactive", "--managed",
+	} {
+		if strings.Contains(s, flag) {
+			t.Errorf("the refusal names %s:\n%s", flag, s)
+		}
+	}
+	if i := strings.Index(s, "--"); i >= 0 {
+		tail := s[i:]
+		if len(tail) > 24 {
+			tail = tail[:24]
+		}
+		t.Errorf("the refusal names a flag (%q):\n%s", tail, s)
+	}
+}
+
+// noAgentMarker fails when s names a coding agent's marker variable: a refusal
+// that names one is a recipe for getting past the check, in text an agent
+// reads (the plan's Task 3.2, and IDEHint's reason).
+func noAgentMarker(t *testing.T, s string) {
+	t.Helper()
+	for _, marker := range []string{
+		"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT",
+	} {
+		if strings.Contains(s, marker) {
+			t.Errorf("the refusal names the marker %s:\n%s", marker, s)
+		}
+	}
+}
+
+// moved is a delete whose object was moved to addr from another address (a
+// moved block with no target): the guard refuses it whatever the owner's list
+// says, so no list is the way past it.
+func moved(addr, from string) map[string]any {
+	ch := change(addr, "google_storage_bucket", []string{"delete"}, nil)
+	ch["previous_address"] = from
+	ch["action_reason"] = "delete_because_no_move_target"
+	return ch
+}
+
+// Task 3.2's review, finding 1: a managed apply refused ONLY for what no list
+// clears names neither the flag nor the owner's list. The moved-object row is
+// the review's own probe (the address listed, the object moved there), and the
+// others are the guard's other refusals no address admits. Nothing is applied.
+func TestManagedRefusalOfWhatNoListClearsNamesNoListAndNoFlag(t *testing.T) {
+	for name, tc := range map[string]struct {
+		change map[string]any
+		allow  []string
+		says   string
+	}{
+		"moved, listed":   {moved(planBucket, "module.managed.google_storage_bucket.old"), []string{planBucket}, "moved here from module.managed.google_storage_bucket.old"},
+		"moved, unlisted": {moved(planBucket, "module.managed.google_storage_bucket.old"), nil, planBucket},
+		"unknown action":  {change(planBucket, "google_storage_bucket", []string{"delete", "obliterate"}, nil), []string{planBucket}, "obliterate"},
+		"no actions":      {change(planBucket, "google_storage_bucket", []string{}, nil), nil, "no actions"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newApplyRig(t, plainRoot())
+			r.planWithChanges(t, tc.change)
+			req := r.request(t)
+			req.AllowDelete = tc.allow
+			_, err := Apply(context.Background(), req)
+			if !errors.Is(err, ErrRefused) {
+				t.Fatalf("%v, want the guard's refusal", err)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, tc.says) {
+				t.Errorf("the refusal does not say %q:\n%s", tc.says, msg)
+			}
+			for _, never := range []string{"allow-delete", "Name an address", DeleteAdvice(gcpProject), "the owner's own list"} {
+				if strings.Contains(msg, never) {
+					t.Errorf("a refusal no list clears names %q:\n%s", never, msg)
+				}
+			}
+			noFlagName(t, msg)
+			if applied := r.applied(t); len(applied) != 0 {
+				t.Errorf("the refused apply applied something: %v", applied)
+			}
+		})
+	}
+	// And beside one the list does clear, the advice is back: it is true of
+	// that address.
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, moved(planBucket, "module.managed.google_storage_bucket.old"),
+		change("module.managed.google_storage_bucket.other", "google_storage_bucket", []string{"delete"}, nil))
+	_, err := Apply(context.Background(), r.request(t))
+	if err == nil || !strings.HasSuffix(err.Error(), DeleteAdvice(gcpProject)) {
+		t.Errorf("a refusal with an address the owner's list clears does not end with the advice:\n%v", err)
+	}
+}
+
+// advice never attaches DeleteAdvice to a refusal the guard did not make: a
+// cover's or the cost list's refusal says what the plan is, not who may approve
+// it — whatever else the verdict carries (Task 3.2's review, finding 6).
+func TestAdviceIsNeverTheOwnersListForACoverOrCostRefusal(t *testing.T) {
+	req := Request{GCPProject: gcpProject}
+	for name, v := range map[string]Verdict{
+		"cover only":         {Refusals: []Refusal{{Gate: coverGate, Address: planBucket, Why: "not in the allowlist"}}},
+		"cost only":          {Refusals: []Refusal{{Gate: costGate, Address: planBucket, Why: "a blocked attribute"}}},
+		"cover and cost":     {Refusals: []Refusal{{Gate: coverGate, Why: "x"}, {Gate: costGate, Why: "y"}}},
+		"cover, listable":    {Refusals: []Refusal{{Gate: coverGate, Address: planBucket, Why: "x"}}, Listable: []string{planBucket}},
+		"cost, listable":     {Refusals: []Refusal{{Gate: costGate, Address: planBucket, Why: "x"}}, Listable: []string{planBucket}},
+		"guard, no listable": {Refusals: []Refusal{{Gate: guardGate, Address: planBucket, Why: "delete: moved"}}},
+	} {
+		if got := req.advice(v); got != "" {
+			t.Errorf("%s: advice %q, want none", name, got)
+		}
+	}
+	if got := req.advice(Verdict{Refusals: []Refusal{{Gate: guardGate, Address: planBucket, Why: "delete"}}, Listable: []string{planBucket}}); got != DeleteAdvice(gcpProject) {
+		t.Errorf("a listable guard refusal gets %q, want DeleteAdvice", got)
+	}
+}
+
+// hostileValues are the untrusted values every refusal site is tested with
+// (Task 3.2's review, finding 4).
+func hostileValues() map[string]string {
+	return map[string]string{
+		"C1 CSI":        "module.managed.google_storage_bucket.a" + string(rune(0x9b)) + "31m",
+		"bidi override": "module.managed.google_storage_bucket.a" + string(rune(0x202e)) + "gnp.exe",
+		"newline":       "module.managed.google_storage_bucket.a\n  guard: forged.line (delete)",
+		"10k":           "module.managed.google_storage_bucket.a" + strings.Repeat("x", 10000),
+	}
+}
+
+// bounded fails when s carries a C1 control, a bidi override, a C0 control but
+// a newline, more than lines lines, or the 10k value unbounded.
+func bounded(t *testing.T, what, s string, lines int) {
+	t.Helper()
+	for _, r := range s {
+		if (r >= 0x80 && r <= 0x9f) || r == 0x202e || (r < 0x20 && r != '\n') {
+			t.Errorf("%s carries %U:\n%q", what, r, s)
+		}
+	}
+	if n := strings.Count(s, "\n") + 1; n > lines {
+		t.Errorf("%s is %d lines, want at most %d:\n%q", what, n, lines, s)
+	}
+	if strings.Contains(s, strings.Repeat("x", 600)) {
+		t.Errorf("%s carries the 10k value unbounded (%d bytes)", what, len(s))
+	}
+}
+
+// Every site in this package that prints an untrusted value bounds it: the
+// refusal's address, why and gate as rendered, the verdict's refusals as
+// parsed from a gate's own list, the unjudged-delete line, the creation
+// fact's reason, and the whole refusal Apply returns for a hostile plan.
+func TestEveryManagedRefusalSiteBoundsUntrustedText(t *testing.T) {
+	for name, v := range hostileValues() {
+		e := &RefusedError{Verdict: Verdict{Refusals: []Refusal{
+			{Gate: v, Address: v, Why: v},
+		}}}
+		bounded(t, name+" in RefusedError", e.Error(), 2)
+
+		for _, ref := range refusals(coverGate, []string{v + " (" + v + ")", v}) {
+			bounded(t, name+" in refusals' address", ref.Address, 1)
+			bounded(t, name+" in refusals' why", ref.Why, 1)
+		}
+
+		s := Spec{AllowDelete: []string{v}}
+		for _, line := range s.unjudgedDeletes(&tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: v, Change: tf.Change{Actions: []string{"delete"}}}}}) {
+			bounded(t, name+" in unjudgedDeletes", line, 1)
+		}
+
+		r := newApplyRig(t, plainRoot())
+		req := r.request(t)
+		req.Fact = Fact{Reason: v}
+		if _, err := Apply(context.Background(), req); err == nil {
+			t.Fatalf("%s: a fact that is not managed applied", name)
+		} else {
+			bounded(t, name+" in the creation fact's reason", err.Error(), 1)
+		}
+
+		r = newApplyRig(t, plainRoot())
+		r.planWithChanges(t, change(v, "google_storage_bucket", []string{"delete"}, nil), moved("module.managed.x.y", v))
+		req = r.request(t)
+		req.AllowDelete = []string{"module.managed.x.y"}
+		_, err := Apply(context.Background(), req)
+		if !errors.Is(err, ErrRefused) {
+			t.Fatalf("%s: %v, want the guard's refusal", name, err)
+		}
+		// The header, one line per refused change (two, each refused by the
+		// guard and possibly the cover), and the advice.
+		bounded(t, name+" in Apply's refusal", err.Error(), 6)
+		if applied := r.applied(t); len(applied) != 0 {
+			t.Errorf("%s: the refused apply applied something: %v", name, applied)
+		}
+	}
+}
