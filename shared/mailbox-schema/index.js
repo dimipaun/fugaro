@@ -375,7 +375,7 @@ export function validateMessage(value) {
   if (text.bad) return text.bad;
   const at = timestampField(value.at, 'at');
   if (at.bad) return at.bad;
-  const mac = macField(value.mac, 'mac');
+  const mac = macField(value.mac);
   if (mac.bad) return mac.bad;
 
   const message = {
@@ -488,7 +488,7 @@ export function validateHeartbeat(value) {
   if (at.bad) return at.bad;
   const boot = identityField(value.boot, 'boot', BOOT_MAX);
   if (boot.bad) return boot.bad;
-  const mac = macField(value.mac, 'mac');
+  const mac = macField(value.mac);
   if (mac.bad) return mac.bad;
 
   const heartbeat = { at: at.value, boot: boot.value, mac: mac.value };
@@ -656,11 +656,13 @@ function stringField(value, field, max, lineBreaks) {
 // question the control-character rule asks: can this string be what it claims
 // to be? A value that cannot be spoken as an agent's id is not one.
 function identityField(value, field, max) {
-  if (typeof value !== 'string') return { bad: refuse(REFUSALS.WRONG_TYPE, field) };
-  if (value === '') return { bad: refuse(REFUSALS.EMPTY_STRING, field) };
-  if (value.length > max) return { bad: refuse(REFUSALS.TOO_LONG, field) };
-  if (!IDENTITY_PATTERN.test(value)) return { bad: refuse(REFUSALS.BAD_CHARACTER, field) };
-  return { value };
+  // The shared checks come from stringField rather than a second copy of them:
+  // a type, a bound and a control character mean the same thing here as
+  // anywhere else, and a copy is a second place for them to drift.
+  const text = stringField(value, field, max, false);
+  if (text.bad) return { bad: text.bad };
+  if (!IDENTITY_PATTERN.test(text.value)) return { bad: refuse(REFUSALS.BAD_CHARACTER, field) };
+  return { value: text.value };
 }
 
 // optionsField validates a prompt's options: a present list is a non-empty
@@ -905,11 +907,11 @@ function shaField(value) {
 // message verify in two encodings and make the comparison depend on which end
 // wrote it. The value itself is not checked here; that needs a key, and it is
 // `verifyMac`'s question.
-function macField(value, field) {
-  if (typeof value !== 'string') return { bad: refuse(REFUSALS.WRONG_TYPE, field) };
-  if (value === '') return { bad: refuse(REFUSALS.EMPTY_STRING, field) };
+function macField(value) {
+  if (typeof value !== 'string') return { bad: refuse(REFUSALS.WRONG_TYPE, 'mac') };
+  if (value === '') return { bad: refuse(REFUSALS.EMPTY_STRING, 'mac') };
   if (value.length !== MAC_MAX || !HEX_PATTERN.test(value)) {
-    return { bad: refuse(REFUSALS.BAD_MAC, field) };
+    return { bad: refuse(REFUSALS.BAD_MAC, 'mac') };
   }
   return { value };
 }

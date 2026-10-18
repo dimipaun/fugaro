@@ -177,6 +177,37 @@ test('the accepted message is a copy, not the caller\'s object', () => {
   assert.equal(spaced.message.sender, ' phone ', 'sender is not trimmed');
 });
 
+test('the copy is deep: a nested record is copied and frozen too (P6.3)', () => {
+  // P6.3 put records INSIDE a message — an action, its target, its
+  // confirmation, a prompt's options, a heartbeat's agents — and a validated
+  // record that could still be edited after its tag was checked would be a
+  // record whose tag proves nothing. Copying the top level and freezing it is
+  // not enough: `message.action.verb` is the field the consumer EXECUTES.
+  const raw = withAction();
+  const { message } = validateMessage(raw);
+  assert.notEqual(message.action, raw.action, 'the action record is a copy');
+  assert.notEqual(message.action.target, raw.action.target, 'and so is its target');
+  assert.notEqual(message.action.confirmation, raw.action.confirmation, 'and its confirmation');
+  assert.deepEqual(message.action, raw.action, 'with the same fields');
+  for (const nested of [message.action, message.action.target, message.action.confirmation]) {
+    assert.equal(Object.isFrozen(nested), true, 'frozen at every depth');
+  }
+  // The proof, not the property: changing the caller's record after validation
+  // leaves the validated message saying what it said.
+  raw.action.verb = 'merge';
+  raw.action.target.run = '-x';
+  raw.text = 'something else';
+  assert.equal(message.action.verb, 'cancel');
+  assert.equal(message.action.target.run, '20261018-125859-d3c8');
+  assert.equal(message.text, 'cancel the run');
+  // The same for the two lists, and for each advertised agent.
+  const prompt = validateMessage(good({ kind: 'prompt', options: ['merge it'] }));
+  assert.equal(Object.isFrozen(prompt.message.options), true);
+  const beat = validateHeartbeat(aHeartbeat());
+  assert.equal(Object.isFrozen(beat.heartbeat.agents), true);
+  assert.equal(Object.isFrozen(beat.heartbeat.agents[0]), true);
+});
+
 test('an optional ack is accepted, present or absent, and absent means not acked', () => {
   assert.equal(validateMessage(good({ acked: true })).ok, true);
   assert.equal(validateMessage(good({ acked: false })).ok, true);
@@ -721,6 +752,17 @@ test('canonicalBytes refuses a value JSON cannot carry, rather than dropping it'
   assert.throws(() => canonicalBytes(null), TypeError);
   assert.throws(() => canonicalBytes('a message'), TypeError);
   assert.throws(() => canonicalBytes([]), TypeError);
+  // And a number that is not an integer, for the reason that has nothing to do
+  // with this module's taste: Go prints 1e-07 where JavaScript prints 1e-7
+  // for the same double, so a float inside a signed record is a tag that
+  // verifies on one end and not the other. Every number this schema accepts is
+  // an integer (`at`, a confirmation's `at`, a pull request number), so nothing
+  // valid is refused here.
+  assert.throws(() => canonicalBytes(good({ at: 1.5 })), TypeError);
+  assert.throws(() => canonicalBytes(good({ at: Number.NaN })), TypeError);
+  assert.throws(() => canonicalBytes(good({ at: Number.POSITIVE_INFINITY })), TypeError);
+  // A nested one too: the walk is at every depth.
+  assert.throws(() => canonicalBytes(withAction({ target: { repo: 'a/b', pr: 1.5 } })), TypeError);
 });
 
 // TEST_KEY is an obviously fake key, built here rather than committed: every
