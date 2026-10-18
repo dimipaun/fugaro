@@ -580,6 +580,19 @@ At any point before `fugaro-build` is retired:
 
 After `fugaro-build` is retired, a rollback also needs it re-enabled (`gcloud iam service-accounts enable`) and its bindings restored from the snapshot.
 
+## What makes a project managed: two marks, not one
+
+A project is managed when **both** of these are true, and it is not managed when either is not: its runs bucket holds Fugaro's creation fact (`fugaro/managed.json`, written by the run that created the project), **and the GCP project itself carries the label `fugaro_managed=true`**. Both are written by the same operator-run step — `fugaro init --create-project --managed`, in your own terminal, after you type the project's ID and the budget amount — and by nothing else: `fugaro managed apply` only reads them, and a coding agent's session can reach neither. **The label can only narrow:** a project with no label, with `fugaro_managed` set to anything but `true`, or that cannot be read at all is not managed whatever its creation fact says, and its runs keep the ordinary typed confirmations; a label alone never makes a project managed, because the creation fact is what records that Fugaro created it and what the budget is read from. The label needs `resourcemanager.projects.update`, which is a write on the project and not on the runs bucket — no bucket condition and no deployer prefix fence bounds it (design/managed-projects.md, finding 14), which is why the creating run writes it rather than anything a run reaches.
+
+**A project marked before this label existed is not managed until the label is written**, and the apply and the restore say so in one line. Write it once, in your own terminal, on the account that owns the project — and only where the creation fact is already right, because the label records the same fact and does not replace it:
+
+```bash
+gcloud projects update <gcp-project> --update-labels fugaro_managed=true
+gcloud projects describe <gcp-project>          # read the labels back
+```
+
+**Removing the label takes the project out of managed mode** — the read is fail-closed, so it is enough to unset it (`gcloud projects update <gcp-project> --remove-labels fugaro_managed`) — and the runs bucket's creation fact and its recorded budget stay where they are.
+
 ## Restoring a managed project
 
 `fugaro restore NEW_PROJECT_ID ROOT` rebuilds a lost managed project from zero into a **new** GCP project ID (a deleted project's ID stays reserved for about thirty days). The managed apply consults the whole-project inventory (a Cloud Asset read of the project, made with the operator's own credential, against what the installation's Terraform states account for): a resource created outside Fugaro in a managed project, or an inventory that cannot be read, keeps that run's confirmations, so a coding agent's session is refused and a person is asked; nothing is halted or deleted. It ends in `fugaro managed apply`, which is refused unless the project's creation fact (`fugaro/managed.json`, version 2) records a valid budget: an amount of 1 to 10,000,000 whole units and a three-letter uppercase currency code. That amount is the budget **alert** amount only; nothing compares it with Fugaro's recorded model spend. A project with no budget recorded (version 1, every `--create-project` without `--managed`) is refused, and this release cannot add a budget to an existing project (that is the managed-projects plan's Task 6.1, unscheduled): a managed project is created with `fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID`. The restore refuses a coding agent's session first, before any cloud call; a coding agent reads that refusal to the user and stops, and never assembles the same sequence by hand. It takes the project's name typed at a real terminal and has no `--yes`. What it does, in order:
