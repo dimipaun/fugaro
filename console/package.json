@@ -25,11 +25,13 @@
     "files": [
       "dist/main/**/*.js",
       "!dist/main/fuses.js",
-      "dist/preload/**/*.js",
+      "dist/preload/index.js",
       "dist/shared/**/*.js",
       "dist/source/**/*.js",
       "!dist/source/fixture.js",
-      "src/renderer/index.html"
+      "dist/bundle/console.js",
+      "dist/bundle/index.html",
+      "dist/bundle/refusal.html"
     ],
     "afterPack": "dist/main/fuses.js",
     "publish": null,

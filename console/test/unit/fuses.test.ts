@@ -66,6 +66,7 @@ import {
   type AfterPackContext,
   type FuseTools,
 } from '../../src/main/fuses'
+import { SERVED_FILES } from '../../src/main/protocol'
 
 const PACKAGE_JSON = fileURLToPath(new URL('../../package.json', import.meta.url))
 const BUILD_CONFIG = fileURLToPath(new URL('../../tsconfig.build.json', import.meta.url))
@@ -399,22 +400,27 @@ describe('the packaging configuration the fuses belong to', () => {
   })
 
   it('ships the compiled main process, the document the window loads, and nothing else', () => {
-    // The served root is `src/renderer` (see `rendererRoot` in
-    // src/main/index.ts) -- `tsc` emits JavaScript into dist/ and copies
-    // nothing, so the document has to be listed here by hand or a packaged
-    // console opens a window with no page in it. Only `.js` is shipped, so no
-    // source map is; `dist/renderer` is served by nothing yet, so it is not
-    // shipped; and the two compiled files the app never loads -- the packing
-    // hook (it needs a devDependency) and the fixture loader (tests and the
-    // recorder) -- are excluded by name.
+    // The served root is `dist/bundle` (see `rendererRoot` in
+    // src/main/index.ts, Task 3.4a): `npm run build` writes the one script and
+    // copies the two documents there, and those three files -- `SERVED_FILES`
+    // in src/main/protocol.ts -- are listed by name, or a packaged console
+    // opens a window with no page in it. The preload is named exactly: the
+    // dashboard window loads `dist/preload/index.js` and nothing else under
+    // that directory. Only `.js` and the two documents are shipped, so no
+    // source map is; `dist/renderer` is the bundler's input, not served, so it
+    // is not shipped; and the two compiled files the app never loads -- the
+    // packing hook (it needs a devDependency) and the fixture loader (tests and
+    // the recorder) -- are excluded by name.
     expect(build.files).toEqual([
       'dist/main/**/*.js',
       '!dist/main/fuses.js',
-      'dist/preload/**/*.js',
+      'dist/preload/index.js',
       'dist/shared/**/*.js',
       'dist/source/**/*.js',
       '!dist/source/fixture.js',
-      'src/renderer/index.html',
+      'dist/bundle/console.js',
+      'dist/bundle/index.html',
+      'dist/bundle/refusal.html',
     ])
   })
 
@@ -461,8 +467,11 @@ describe('the packaging configuration the fuses belong to', () => {
       .map((source) => source.replace(/^src\//, 'dist/').replace(/\.ts$/, '.js'))
       .filter((file) => !ships(file))
     expect(missing, `loaded at runtime but not shipped: ${missing.join(', ')}`).toEqual([])
-    expect(ships('src/renderer/index.html')).toBe(true)
+    for (const served of SERVED_FILES) {
+      expect(ships(`dist/bundle${served}`), `dist/bundle${served} is served but not shipped`).toBe(true)
+    }
     for (const dead of [
+      'src/renderer/index.html',
       'dist/main/fuses.js',
       'dist/source/fixture.js',
       'dist/renderer/app.js',
@@ -475,8 +484,8 @@ describe('the packaging configuration the fuses belong to', () => {
   it('ships no source map', () => {
     // The build emits them (tsconfig.build.json sets sourceMap), and a map in
     // the asar is a full copy of the sources with a pointer to it. Every
-    // include in the list ends in `.js` or names one `.html` file, so no map
-    // matches.
+    // include in the list ends in `.js` or names one of the two `.html`
+    // documents, so no map matches.
     for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html)$/)
   })
 
