@@ -323,7 +323,7 @@ func TestBuildEnvAuthModes(t *testing.T) {
 // BuildEnv. Both halves of this test fail: the agent authenticates as the
 // key, and the run with no token is admitted.
 func TestBuildEnvOAuthNeverFallsBackToTheAPIKey(t *testing.T) {
-	const key = "sk-ant-real-key-0123456789"
+	const key = "placeholder-api-key"
 	env, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=" + key, "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef"},
 		EnvSpec{Auth: "oauth"})
 	if err != nil {
@@ -629,7 +629,7 @@ func TestStageTokensTakesLarger(t *testing.T) {
 }
 
 func TestBuildEnvGatewayDropsRealKey(t *testing.T) {
-	const realKey = "sk-ant-real-key-123"
+	const realKey = "placeholder-api-key"
 	parent := []string{"PATH=/bin", "ANTHROPIC_API_KEY=" + realKey, "ANTHROPIC_BASE_URL=https://elsewhere.invalid", "NPM_TOKEN=npm-456"}
 	gw := &Gateway{BaseURL: "http://127.0.0.1:4000", Token: "tok-abc"}
 	env, secrets, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Gateway: gw, Secrets: []string{"NPM_TOKEN"}})
