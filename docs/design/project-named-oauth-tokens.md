@@ -95,8 +95,9 @@ shared job, not of the token:
    profile (§4.1 of [project-centric.md](project-centric.md)). With the token in the job's static
    environment, every execution of that job has it — including a run of a repository the account's
    allow-list does not cover. The gate could then only be enforced at launch, by the launcher, and
-   the launcher is trusted (D10, [budget-token-channel.md](budget-token-channel.md) §3 constraint
-   5): a run that started by any other route would still hold the token. The owner's clause "a
+   the launcher is trusted (the channel doc's D10 and its §3 constraint 5, in
+   [budget-token-channel.md](budget-token-channel.md)): a run that started by any other route would
+   still hold the token. The owner's clause "a
    policy gates which repositories may use which token" asks for a gate that is real at the point
    of use.
 2. **The job's whole environment is readable by every launcher and by the history account.**
@@ -181,13 +182,25 @@ The carrier, recommended:
   retry re-seal mirrored.
 - The runner takes it once, unseals it, registers the plaintext with its redactor
   (`internal/runner/runner.go:609-616`, `addSecret`), and puts it in the agent's environment as
-  `CLAUDE_CODE_OAUTH_TOKEN`. The key travels by the carrier the seal already built for it: as the
-  *value* of the `FUGARO_BUDGET_TOKEN` marker in `LaunchSpec.Env`. On this branch that marker still
-  carries one bit — `internal/cli/run.go`'s `lspec.Env = []string{runner.BudgetTokenEnv + "=1"}`
-  (`internal/runner/budget_session.go:50` is the variable's name) — and `next-0.9`'s Slice B
-  replaces the `"=1"` with the encoded key. **Nothing new is added to the carrier**: no new
-  variable, no new permission, no new resource, which is [budget-token-channel.md](budget-token-channel.md)
-  §7.1's own point.
+  `CLAUDE_CODE_OAUTH_TOKEN`. The key travels by the carrier the seal built for it, and it is **not**
+  a plain `LaunchSpec.Env` entry: `next-0.9`'s Slice B adds a second field, `LaunchSpec.SecretEnv`
+  (`origin/next-0.9:internal/backend/backend.go:80-90`), and writes the key as
+  `lspec.SecretEnv = []string{sealMarker(sealKey)}` (`origin/next-0.9:internal/cli/run.go:1623`).
+  The name is still `runner.BudgetTokenEnv` (`internal/runner/budget_session.go:50`); what changed
+  is which list it is in. On this branch there is no `SecretEnv` at all — the marker is a plain
+  `LaunchSpec.Env` entry carrying one bit, `internal/cli/run.go`'s
+  `lspec.Env = []string{runner.BudgetTokenEnv + "=1"}` — so the two must not be confused.
+
+  That second field is load-bearing rather than cosmetic, and Task 6 must use it.
+  `internal/backend/launchenv.go`'s `LaunchEnv` parses `Env` and then `SecretEnv`, marks a
+  `SecretEnv` entry `Secret`, and requires a backend whose only place for such an entry is readable
+  by a wider audience than the execution's override — Batch's job variables — to **refuse the
+  launch** rather than carry it. So the carrier is not reused unchanged: it is extended by one
+  field, and the extension is exactly what makes a backend that cannot keep the key private say so
+  instead of leaking it. What this design adds to the carrier is nothing beyond that field — no new
+  variable, no new permission and no new resource, which is
+  [budget-token-channel.md](budget-token-channel.md) §7.1's own point — but an implementation that
+  wrote the key into `LaunchSpec.Env` would undo Slice B's whole reason for the field.
 - A second object, **not** a second field in the existing envelope. The budget token's envelope is
   versioned, reviewed and mutation-tested (`seal.go`, `seal_aad_test.go`, `seal_test.go` on
   `next-0.9`), and its take is the consume. Widening its payload would couple the credential's
@@ -248,7 +261,7 @@ per-repository path gets it for free and the project path does not: `SecretMount
 on a per-repository job there is no API key present to fall back to. A shared job's environment is
 whatever the profile lists, so a profile that mounted an Anthropic key beside its account would
 leave `ANTHROPIC_API_KEY` set while `CLAUDE_CODE_OAUTH_TOKEN` was being delivered — and which one
-Claude Code prefers is not something this document claims to know (§7 U3). The design removes the
+Claude Code prefers is not something this document claims to know (§7 U2). The design removes the
 question instead of answering it: **a profile that names `claude_account` may not mount an
 Anthropic API key**, checked at publish and at `init`, and the runner refuses a run whose marker
 promises a token it did not get.
@@ -305,7 +318,7 @@ one-sided:
 | adversary | what stops it | what does not |
 | --- | --- | --- |
 | a **peer run** of the same shared job — the §4 adversary of the channel doc: it holds the job's bucket grant, so it can read the sealed object | the per-launch key: the object is ciphertext under a key delivered to one execution, and a sideways copy unseals under nothing | it can still *delete* the object (denial of service), and it can still read the object. The seal answers theft, not denial — the channel doc's §7.2 says so |
-| a **launcher** | nothing, by construction: it seals the object, so under the recommended carrier it must be able to read the token | this is D10 and it is unchanged; the widening is priced in §4.3 |
+| a **launcher** | nothing, by construction: it seals the object, so under the recommended carrier it must be able to read the token | this is the channel doc's D10 and it is unchanged; the widening is priced in §4.3 |
 | a **project log viewer** holding an override view | the key is not in the object, and the object's bytes are ciphertext | if such a principal holds *both* an execution's override and the object, it recovers the token — the channel doc's §7.1 prices this case in the same words |
 | the **agent process itself** | nothing | this is the residual §6.1 states, and it is the honest cost of an OAuth credential |
 | a repository admitted to the account's list but hostile | the account's blast radius is not per repository | it gets a credential that works for **every** repository in the list, for as long as the token is valid |
@@ -365,6 +378,13 @@ where they live; the seal's API and its AAD rule on `origin/next-0.9`.
 
 Each with a recommendation first. The plan's tasks are cut so that any of these can be answered the
 other way without rewriting the others.
+
+**Numbering.** D1 to D10 below are **this document's own** decisions. They are not
+[budget-token-channel.md](budget-token-channel.md)'s D14-D19, and in particular this document's
+**D10 is not that document's D10**: the channel doc's D10 is its "the launcher stays trusted"
+decision, and every reference in this document to *the channel doc's D10* means that one, not the
+inspection decision below. The plan restates these ten as its own Decisions section, so the same
+reading applies there.
 
 **D1. The carrier.** *Recommend:* a second sealed object, `tokens/<slug>/<run>/claude-oauth-token`,
 written by the launcher under the same per-launch key, taken once by the runner, unsealed into

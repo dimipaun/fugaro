@@ -36,7 +36,9 @@ this branch is cut from; no cloud call, no secret read):
   `runs/<slug>/<run>/budget-token` with no key. On `origin/next-0.9` it is `tokens/…` with
   `PutObject(…, key)` / `TakeObject(…, key)` / `ErrSealedNoKey` / `ErrNotSealed`
   (`internal/budget/token/object.go:14-175`, `seal.go`). The 24 commits' base is an ancestor of this
-  branch (`git rev-list --left-right --count HEAD...origin/next-0.9` → `231  24`).
+  branch (at this branch's head, `git rev-list --left-right --count HEAD...origin/next-0.9` →
+  `234  24`; `231` is the count at the fork point `13a5a48`, before this branch's own three commits,
+  which is the number the ancestor claim rests on).
 - `Shared()` strips `claude_accounts` (`internal/localcfg/shared.go:44`) and
   `sharedForbidden` refuses it by key and by value (`internal/cli/sharedcfg.go:180, 214-218,
   247-248`); the reasoning at `shared.go:22-27` is about the **runs bucket**, not the policy node —
@@ -79,16 +81,25 @@ the shape of the work**, and D8 is the one a user who never reads a design doc w
   changes shape.*
 - **D10 (inspection).** `fugaro project policy show` prints the `accounts` block; `fugaro accounts
   ls` stays local-only and unchanged.
+- **Numbering, not a decision.** D1-D10 here are the design's §8 decisions, which are this plan's
+  own numbering. The channel doc's D10 ("the launcher stays trusted") is a **different** decision;
+  where Review Focus or a task cites it, it says so explicitly.
 
 ## Global Constraints
 
 1. **Every task has a red step**, and every test this plan adds is mutation-proven: plant the bug,
    see the test fail, remove the bug. The red step is written as `Expected: FAIL` with the mutation
    it catches.
-2. **Never a secret value in an override, a log line, an error or a message.** The only thing that
-   travels in `LaunchSpec.Env` is the per-launch **key**, exactly as the budget token's does today,
-   and the key and the token are both registered with the runner's redactor
-   (`internal/runner/runner.go:609-616`) before anything can print them.
+2. **Never a secret value in an override, a log line, an error or a message.** The per-launch
+   **key** travels in `LaunchSpec.SecretEnv` — the field `next-0.9`'s Slice B adds for exactly this
+   (`origin/next-0.9:internal/backend/backend.go:80-90`,
+   `origin/next-0.9:internal/cli/run.go:1623`), whose entries `internal/backend/launchenv.go`'s
+   `LaunchEnv` marks `Secret` so that a backend which could only carry one where a wider audience
+   reads it refuses the launch. **Nothing of this feature's goes in `LaunchSpec.Env`**, which is the
+   plain list whose entries reach the `jobs.run` request body and the audit logs — the carrier
+   Slice B deliberately abandoned, and the one Task 6 must not reintroduce. The key and the token
+   are both registered with the runner's redactor (`internal/runner/runner.go:609-616`) before
+   anything can print them.
 3. **No silent fallback.** A run that cannot obtain the token stops. A profile that names an account
    may not mount an Anthropic API key (design §4.4), and the runner refuses a run whose marker
    promises a token it did not get.
@@ -133,8 +144,9 @@ Each is a claim a careless edit could silently reverse; the implementing PR prov
    `23b2fca gitops: the budget marker never reaches git's environment`) must exist.
 5. **The gate is at the point of use, not only at launch.** The runner refuses a run whose job's
    account is not the one the policy's `accounts` block covers for that repository — the launcher is
-   trusted (D10), so a launch-time check alone is a policy expression rather than a boundary, and
-   the design says so rather than pretending otherwise.
+   trusted ([budget-token-channel.md](../design/budget-token-channel.md)'s D10, not this plan's), so
+   a launch-time check alone is a policy expression rather than a boundary, and the design says so
+   rather than pretending otherwise.
 6. **No API key beside the account.** The publish-time and `init`-time refusal is the mechanism that
    keeps the no-fallback property true; a test must show both spellings of the Anthropic secret
    (`anthropic-api-key` as a profile mount, and any provider whose key variable is
@@ -142,6 +154,11 @@ Each is a claim a careless edit could silently reverse; the implementing PR prov
 7. **The launcher's grant is bounded.** The member resource is created per account a **published
    profile** names — not per account in the local config — and a tftest proves a local-config
    account no profile uses gets no member.
+7a. **The key is a `SecretEnv` entry, not an `Env` one.** `LaunchSpec.Env` is the plain list whose
+   entries reach the `jobs.run` request body and the audit logs; Slice B added
+   `LaunchSpec.SecretEnv` so that a backend which could only carry an entry where a wider audience
+   reads it refuses the launch. An implementation that writes the marker into `LaunchSpec.Env`
+   because it is the field that already exists is the regression this item exists to catch.
 8. **`ProjectSecretID` is unchanged.** No new secret-id helper, no new prefix, no rename: the
    container is `gcp.ProjectSecretID(project, config.ClaudeAccountSecret(name))` and a test pins it.
 9. **The default account still needs its explicit entry.** `ProjectScopeByDefault` keeps excluding
@@ -349,8 +366,8 @@ gets no member" test. **Expected: FAIL.** Narrow it back; the test passes.
 
 **Files:** `internal/budget/token/account.go` (new) + `account_test.go` (new),
 `internal/cli/launch_budget.go`, `internal/cli/run.go`, `internal/cli/run_test.go`,
-`internal/runner/budget_session.go`, `internal/runner/runner.go`,
-`internal/runner/*_test.go`.
+`internal/backend/backend.go` (only if Slice B's `LaunchSpec.SecretEnv` is not yet there),
+`internal/runner/budget_session.go`, `internal/runner/runner.go`, `internal/runner/*_test.go`.
 
 **What it does (D1, D7):** `token.AccountObjectKey(slug, run)` =
 `tokens/<slug>/<run>/claude-oauth-token`; the launcher seals the account's token into it under the
@@ -358,7 +375,9 @@ same per-launch key, create-if-absent, with the retry re-seal mirrored; the runn
 unseals it, registers the plaintext with `addSecret` (`internal/runner/runner.go:609-616`) **before
 anything else can see it**, sets `CLAUDE_CODE_OAUTH_TOKEN` in the agent's environment, and refuses
 the run when the marker promises a token that is absent, sealed-with-no-key, sealed under another
-key, or sealed under another name. It is written **only** when the run's job is a shared project
+key, or sealed under another name. The launcher's marker entry goes to `LaunchSpec.SecretEnv` and
+never to `LaunchSpec.Env` (Global Constraint 2), and `internal/backend/launchenv.go`'s `LaunchEnv`
+is what keeps that distinction honest. It is written **only** when the run's job is a shared project
 job whose profile names an account: the per-repository path keeps its static mount
 (`internal/infra/spec.go:585-586`) untouched.
 
@@ -371,8 +390,10 @@ token's; and does the create-if-absent/retry pair have the same failure mode as 
 **Tests:** `TestAccountObjectRoundTrip`, `TestAccountObjectSealedNoKeyRefused`,
 `TestAccountObjectWrongKeyRefused`, `TestAccountObjectWrongNameRefused`,
 `TestAccountObjectPlaintextRefused`, `TestAccountObjectRetryReseals`,
-`TestOAuthTokenRedactedFromRunOutput`, `TestOAuthTokenNeverInLaunchEnv` (the pattern of
-`next-0.9`'s `23b2fca`), `TestPerRepositoryOAuthPathUnchanged`.
+`TestOAuthTokenRedactedFromRunOutput`, `TestOAuthTokenNeverInPlainLaunchEnv` (the pattern of
+`next-0.9`'s `23b2fca` — the key and the token must be absent from `LaunchSpec.Env`, from git's
+environment and from anything the run publishes, and present only in `LaunchSpec.SecretEnv`),
+`TestPerRepositoryOAuthPathUnchanged`.
 
 **Red step:** make the take fall back to reading the object's bytes as the token when unsealing
 fails. **Expected: FAIL** — `TestAccountObjectWrongKeyRefused` and
