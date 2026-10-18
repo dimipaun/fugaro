@@ -1,0 +1,922 @@
+// Tests for the prompt queue and the interrupt policy (mobile plan, Task P6.5).
+//
+// The tests are organised by the plan's own verification line: prompts queue by
+// default; a natural pause announces the count across accounts; "what's
+// pending" lists them per installation; an unanswered prompt expires at D118's
+// mailbox TTL as a pure function of its `at`, the TTL and the consumer's clock
+// and yields its non-destructive answer or a stop; an answer is accepted within
+// its TTL except an answer to a destructive prompt, which takes the command
+// window (D173); reminder escalation; a hard cap per consumer; only D160's set
+// interrupts, narrowed or widened by D127's local switch; and the whole thing a
+// pure function of (queue, digest, presence, switch, now).
+//
+// Two of these tests reach into other modules on purpose, because the value
+// being tested is an AGREEMENT and not an arithmetic: the expiry boundary is
+// asserted against P1.1's own `step` (a prompt of age exactly the TTL is still
+// accepted there), and the reminder schedule against the clock rather than
+// against a copy of the schedule.
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  initialState,
+  KIND as MAILBOX_KIND,
+  step,
+} from '../mailbox/index.js';
+import { validateMessage } from '../mailbox-schema/index.js';
+import { SEVERITY } from '../digest/severity.js';
+import { STATE as PRESENCE } from '../presence/index.js';
+import {
+  announcement,
+  acceptanceKind,
+  announce,
+  answer,
+  DEFAULT_MAX_PENDING,
+  enqueue,
+  evaluateInterrupt,
+  expire,
+  EXPIRED_REPLY,
+  initialQueue,
+  INTERRUPT,
+  isExpired,
+  MAX_TTL_MS,
+  MAX_MAX_PENDING,
+  OUTCOME,
+  pending,
+  pendingAcross,
+  PROMPT_TTL_MS,
+  QUEUE_FULL_REPLY,
+  REFUSAL,
+  REMINDER_AFTER_MS,
+  REMINDER_INTERVAL_MS,
+  reminderStage,
+  SWITCH,
+  waitingSentence,
+} from './index.js';
+
+const T0 = 1_700_000_000_000;
+const MINUTE = 60 * 1_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+/** A well-formed `mac`: 32 bytes of hex, which is all P6.3's schema asks for. */
+const MAC = 'a'.repeat(64);
+
+function promptMessage(over = {}) {
+  return {
+    id: 'p1',
+    sender: 'agent-1',
+    text: 'Deploy the release?',
+    at: T0,
+    mac: MAC,
+    kind: 'prompt',
+    ...over,
+  };
+}
+
+function answerMessage(over = {}) {
+  return {
+    id: 'a1',
+    sender: 'phone',
+    text: 'yes',
+    at: T0,
+    mac: MAC,
+    kind: 'answer',
+    reply_to: 'p1',
+    ...over,
+  };
+}
+
+/** A queue for one installation, with the TTL pinned so the arithmetic is readable. */
+function makeQueue(over = {}) {
+  const built = initialQueue({ now: T0, account: 'acct-a', ...over });
+  assert.equal(built.ok, true, `initialQueue refused: ${JSON.stringify(built)}`);
+  return built.queue;
+}
+
+function enqueueOne(queue, over = {}, event = {}) {
+  const result = enqueue(queue, { now: queue.now, prompt: promptMessage(over), ...event });
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// The constructor
+// ---------------------------------------------------------------------------
+
+test('a new queue is empty, and its defaults are the owner rulings', () => {
+  const queue = makeQueue();
+  assert.equal(queue.account, 'acct-a');
+  assert.equal(queue.now, T0);
+  assert.equal(queue.promptTtlMs, PROMPT_TTL_MS);
+  // D118's mailbox TTL, as the owner set it on 2026-10-17: 72 hours, inside
+  // P1.1's 30-day ceiling. The number is checked, not the expression, because
+  // the number is the ruling.
+  assert.equal(PROMPT_TTL_MS, 72 * 60 * 60 * 1_000);
+  assert.ok(PROMPT_TTL_MS <= MAX_TTL_MS);
+  assert.equal(queue.prompts.length, 0);
+  assert.equal(queue.maxPending, DEFAULT_MAX_PENDING);
+  // Frozen at every level: a queue is a value, and a caller that mutates one
+  // is a caller whose next call this module would refuse.
+  assert.ok(Object.isFrozen(queue));
+  assert.ok(Object.isFrozen(queue.prompts));
+});
+
+test('a queue refuses what it cannot read, one code per fault', () => {
+  const cases = [
+    [{ now: T0, account: 'a', promptTtlMs: 1 }, REFUSAL.INVALID_TTL, 'promptTtlMs'],
+    [{ now: T0, account: 'a', promptTtlMs: MAX_TTL_MS + 1 }, REFUSAL.INVALID_TTL, 'promptTtlMs'],
+    [{ now: T0, account: 'a', windowMs: 0 }, REFUSAL.INVALID_WINDOW, 'windowMs'],
+    [{ now: T0, account: 'a', maxPending: 0 }, REFUSAL.INVALID_MAX_PENDING, 'maxPending'],
+    [{ now: T0, account: 'a', maxPending: MAX_MAX_PENDING + 1 }, REFUSAL.INVALID_MAX_PENDING, 'maxPending'],
+    [{ now: T0, account: 'a', futureToleranceMs: -1 }, REFUSAL.INVALID_FUTURE_TOLERANCE, 'futureToleranceMs'],
+    [{ now: T0, account: '' }, REFUSAL.INVALID_ACCOUNT, 'account'],
+    [{ now: T0, account: 7 }, REFUSAL.INVALID_ACCOUNT, 'account'],
+    [{ now: 0, account: 'a' }, REFUSAL.INVALID_NOW, 'now'],
+    [{ now: T0, account: 'a', prompts: [] }, REFUSAL.UNKNOWN_FIELD, 'options'],
+    [{ account: 'a' }, REFUSAL.UNKNOWN_FIELD, 'now'],
+    [{ now: T0 }, REFUSAL.UNKNOWN_FIELD, 'account'],
+  ];
+  for (const [options, code, field] of cases) {
+    const result = initialQueue(options);
+    assert.equal(result.ok, false, `expected a refusal for ${JSON.stringify(options)}`);
+    assert.equal(result.code, code);
+    assert.equal(result.field, field);
+  }
+  // A queue is not a bag: an unknown key is refused rather than dropped, and a
+  // value that is not an object at all is refused as such.
+  assert.equal(initialQueue({ now: T0, account: 'a', ttl: 1 }).code, REFUSAL.UNKNOWN_FIELD);
+  assert.equal(initialQueue(null).code, REFUSAL.INPUT_NOT_AN_OBJECT);
+  assert.equal(initialQueue([]).code, REFUSAL.INPUT_NOT_AN_OBJECT);
+  assert.equal(initialQueue().code, REFUSAL.UNKNOWN_FIELD);
+});
+
+test('a queue is not a bag: an accessor is refused without being called', () => {
+  let called = 0;
+  const options = { now: T0, account: 'a' };
+  Object.defineProperty(options, 'maxPending', {
+    enumerable: true,
+    get() {
+      called += 1;
+      return 4;
+    },
+  });
+  const result = initialQueue(options);
+  assert.equal(result.ok, false);
+  assert.equal(called, 0, 'the getter must not be called: a value read twice is not a value');
+});
+
+// ---------------------------------------------------------------------------
+// Expiry: a pure function of `at`, the TTL and `now` (D168 as amended)
+// ---------------------------------------------------------------------------
+
+test('isExpired is strictly-greater, and agrees with P1.1 at the boundary', () => {
+  const ttl = 6 * HOUR;
+  assert.equal(isExpired(T0, T0, ttl), false);
+  assert.equal(isExpired(T0, T0 + ttl - 1, ttl), false);
+  assert.equal(isExpired(T0, T0 + ttl, ttl), false, 'age exactly the TTL is still alive');
+  assert.equal(isExpired(T0, T0 + ttl + 1, ttl), true);
+
+  // The agreement that matters, asserted against P1.1's own step rather than
+  // against the same arithmetic written twice: the instant this module calls a
+  // prompt dead is the instant P1.1 stops accepting it, so an expiry and an
+  // accepted answer can never disagree about whether a prompt is alive.
+  const built = initialState({ now: T0, promptTtlMs: ttl });
+  assert.equal(built.ok, true);
+  for (const [age, alive] of [
+    [ttl - 1, true],
+    [ttl, true],
+    [ttl + 1, false],
+    [ttl + DAY, false],
+  ]) {
+    const delivered = step(built.state, {
+      type: 'deliver',
+      now: T0 + age,
+      kind: MAILBOX_KIND.PROMPT,
+      message: promptMessage({ at: T0 }),
+    });
+    assert.equal(
+      isExpired(T0, T0 + age, ttl),
+      !delivered.ok,
+      `P1.1 and P6.5 disagree at age ${age}: ${JSON.stringify(delivered)}`,
+    );
+    if (!delivered.ok) {
+      assert.equal(delivered.code, 'expired');
+      assert.equal(alive, false);
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Queueing by default
+// ---------------------------------------------------------------------------
+
+test('a prompt queues by default, and in canonical order', () => {
+  let queue = makeQueue();
+  // Delivered out of order on purpose: the queue's order is `at`, then the id,
+  // so two consumers that received the same prompts in different orders hold
+  // the same queue.
+  for (const message of [
+    promptMessage({ id: 'p3', at: T0 + 3_000 }),
+    promptMessage({ id: 'p1', at: T0 + 1_000 }),
+    promptMessage({ id: 'p2', at: T0 + 2_000 }),
+  ]) {
+    const result = enqueue(queue, { now: T0, prompt: message });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.outcome, OUTCOME.QUEUED);
+    queue = result.queue;
+  }
+  assert.deepEqual(queue.prompts.map((entry) => entry.prompt.id), ['p1', 'p2', 'p3']);
+  // Two prompts asked in the same millisecond are ordered by id, so the order
+  // is total: no two deliveries can leave two different queues.
+  const second = makeQueue();
+  let left = enqueue(second, { now: T0, prompt: promptMessage({ id: 'b', at: T0 }) }).queue;
+  left = enqueue(left, { now: T0, prompt: promptMessage({ id: 'a', at: T0 }) }).queue;
+  let right = enqueue(second, { now: T0, prompt: promptMessage({ id: 'a', at: T0 }) }).queue;
+  right = enqueue(right, { now: T0, prompt: promptMessage({ id: 'b', at: T0 }) }).queue;
+  assert.deepEqual(left, right);
+});
+
+test('a queued prompt keeps its local classification beside the message, not in it', () => {
+  const result = enqueue(makeQueue(), {
+    now: T0,
+    prompt: promptMessage({ options: ['ship it', 'hold'] }),
+    destructive: true,
+    safe: 'hold',
+  });
+  assert.equal(result.ok, true);
+  const entry = result.queue.prompts[0];
+  assert.equal(entry.destructive, true);
+  assert.equal(entry.safe, 'hold');
+  assert.equal(entry.announcedAt, null);
+  // D127's structural guarantee: the classification is not in the message, and
+  // the schema is what makes that true rather than a convention -- a message
+  // carrying a field the schema does not name is refused, so nothing local can
+  // reach the bytes the MAC covers. Asserted through the validator itself.
+  assert.equal(validateMessage({ ...promptMessage(), destructive: true }).ok, false);
+  assert.equal(validateMessage({ ...promptMessage(), safe: 'hold' }).ok, false);
+  // The message the queue holds is the schema's own frozen copy.
+  assert.ok(Object.isFrozen(entry.prompt));
+  assert.equal(entry.prompt.kind, 'prompt');
+});
+
+test('enqueue refuses what it cannot read, with the schema\'s own codes', () => {
+  const queue = makeQueue();
+  const now = T0;
+
+  assert.equal(enqueue(queue, { now, prompt: promptMessage({ kind: 'message' }) }).code, REFUSAL.NOT_A_PROMPT);
+  assert.equal(enqueue(queue, { now, prompt: promptMessage({ text: '' }) }).code, 'empty-string');
+  assert.equal(
+    enqueue(queue, { now, prompt: promptMessage({ nonsense: true }) }).code,
+    'unknown-field',
+  );
+  // The schema names the field at fault, and the code is the schema's: this
+  // module does not re-decide what a prompt is.
+  assert.equal(
+    enqueue(queue, { now, prompt: promptMessage({ at: 1.5 }) }).code,
+    'bad-timestamp',
+  );
+  // A queued prompt with no options cannot answer with one.
+  assert.equal(
+    enqueue(queue, { now, prompt: promptMessage({ options: ['a', 'b'] }), safe: 'c' }).code,
+    REFUSAL.SAFE_NOT_AN_OPTION,
+  );
+  assert.equal(
+    enqueue(queue, { now, prompt: promptMessage({ options: ['a', 'b'] }), safe: '' }).code,
+    REFUSAL.INVALID_SAFE,
+  );
+  assert.equal(
+    enqueue(queue, { now, prompt: promptMessage({ at: T0 - 1, destructive: 'yes' }) }).ok,
+    false,
+  );
+  assert.equal(
+    enqueue(queue, { now, prompt: promptMessage(), destructive: 'yes' }).code,
+    REFUSAL.INVALID_DESTRUCTIVE,
+  );
+  assert.equal(
+    enqueue(queue, { now, prompt: promptMessage({ at: 0 }) }).code,
+    REFUSAL.ZERO_TIMESTAMP,
+  );
+  assert.equal(
+    enqueue(queue, { now, prompt: promptMessage({ at: T0 + 10 * DAY }) }).code,
+    REFUSAL.FUTURE_TIMESTAMP,
+  );
+  assert.equal(enqueue(queue, { now: T0 - 1, prompt: promptMessage() }).code, REFUSAL.NOW_WENT_BACKWARDS);
+  assert.equal(enqueue(queue, { now, prompt: promptMessage(), extra: 1 }).code, REFUSAL.UNKNOWN_FIELD);
+  assert.equal(enqueue(queue, { prompt: promptMessage() }).code, REFUSAL.UNKNOWN_FIELD);
+});
+
+test('the same id under another sender or time is a conflict, not a duplicate', () => {
+  const queue = enqueueOne(makeQueue()).queue;
+  const again = enqueue(queue, { now: T0, prompt: promptMessage() });
+  assert.equal(again.ok, true);
+  assert.equal(again.outcome, OUTCOME.DUPLICATE);
+  assert.deepEqual(again.queue, queue, 'a duplicate leaves the queue exactly as it was');
+  assert.equal(
+    enqueue(queue, { now: T0, prompt: promptMessage({ sender: 'agent-2' }) }).code,
+    REFUSAL.ID_CONFLICT,
+  );
+  assert.equal(
+    enqueue(queue, { now: T0, prompt: promptMessage({ at: T0 + 1_000 }) }).code,
+    REFUSAL.ID_CONFLICT,
+  );
+});
+
+test('a redelivery does not re-arm an announcement or reset a clock', () => {
+  const first = enqueueOne(makeQueue());
+  const spoken = announce(first.queue, { now: T0 + 2 * MINUTE });
+  assert.equal(spoken.spoken.length, 1);
+  const redelivered = enqueue(spoken.queue, { now: T0 + 3 * MINUTE, prompt: promptMessage() });
+  assert.equal(redelivered.outcome, OUTCOME.DUPLICATE);
+  assert.equal(
+    redelivered.queue.prompts[0].announcedAt,
+    T0 + 2 * MINUTE,
+    'the announcement stands: the user has heard this question',
+  );
+});
+
+test('the hard cap refuses the prompt past it, with a defined answer', () => {
+  let queue = makeQueue({ maxPending: 2 });
+  for (const id of ['p1', 'p2']) {
+    const result = enqueue(queue, { now: T0, prompt: promptMessage({ id }) });
+    assert.equal(result.ok, true, `the cap of 2 must hold ${id}`);
+    queue = result.queue;
+  }
+  const refused = enqueue(queue, { now: T0, prompt: promptMessage({ id: 'p3' }) });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, REFUSAL.QUEUE_FULL);
+  assert.equal(refused.reply, QUEUE_FULL_REPLY);
+  assert.equal(refused.maxPending, 2);
+  // Refused, never evicted: the two held prompts are both still there, because
+  // dropping one to make room would answer nothing and lose the dropped one.
+  const listed = pending(queue, { now: T0 });
+  assert.equal(listed.pending.length, 2);
+});
+
+test('a prompt that arrives already expired yields its answer, or a stop', () => {
+  const queue = makeQueue();
+  const late = enqueue(queue, {
+    now: T0 + PROMPT_TTL_MS + 1,
+    prompt: promptMessage({ at: T0, options: ['ship it', 'hold'] }),
+    safe: 'hold',
+  });
+  assert.equal(late.ok, true, 'an expiry is an outcome, not a refusal');
+  assert.equal(late.outcome, OUTCOME.EXPIRED);
+  assert.equal(late.queue.prompts.length, 0, 'a dead prompt is not held');
+  assert.equal(late.expiry.safe, 'hold');
+  assert.equal(late.expiry.stop, false);
+  assert.equal(late.expiry.reply, 'hold');
+
+  // No non-destructive answer: the conversation stops, and it stops knowing
+  // why (D168's "no answer, expired").
+  const stopped = enqueue(queue, { now: T0 + PROMPT_TTL_MS + 1, prompt: promptMessage() });
+  assert.equal(stopped.outcome, OUTCOME.EXPIRED);
+  assert.equal(stopped.expiry.stop, true);
+  assert.equal(stopped.expiry.reply, EXPIRED_REPLY);
+
+  // The boundary the other way: a prompt of age exactly the TTL still queues.
+  const alive = enqueue(queue, { now: T0 + PROMPT_TTL_MS, prompt: promptMessage() });
+  assert.equal(alive.outcome, OUTCOME.QUEUED);
+});
+
+// ---------------------------------------------------------------------------
+// Expiry on the consumer's clock, not the sweeper's (D168 as amended)
+// ---------------------------------------------------------------------------
+
+test('expire is a pure function of each prompt\'s at, the TTL and now', () => {
+  const queue = enqueueOne(makeQueue()).queue;
+  const expired = expire(queue, { now: T0 + PROMPT_TTL_MS + 1 });
+  assert.equal(expired.ok, true);
+  assert.equal(expired.expired.length, 1);
+  assert.equal(expired.queue.prompts.length, 0);
+  // Still nothing at the boundary.
+  assert.equal(expire(queue, { now: T0 + PROMPT_TTL_MS }).expired.length, 0);
+});
+
+test('when the sweeper runs decides nothing: the consumer\'s own clock does', () => {
+  // The owner-run sweeper (D168) deletes the stored prompt; the consumer may
+  // be down while it runs and come back with nothing but its own copy. So the
+  // expiry is asserted to depend on `now` alone and not on any sweep having
+  // happened: a queue advanced by two earlier expiries at the same instant as
+  // one that was never swept must expire identically.
+  const queue = enqueueOne(makeQueue({ promptTtlMs: 2 * HOUR })).queue;
+  const sweptTwice = expire(expire(queue, { now: T0 + HOUR }).queue, { now: T0 + 2 * HOUR });
+  const never = expire(queue, { now: T0 + 2 * HOUR });
+  assert.deepEqual(sweptTwice.expired, never.expired);
+  assert.deepEqual(sweptTwice.queue, never.queue);
+  // And the expiry carries the answer the prompt's death is owed.
+  const late = expire(
+    enqueueOne(
+      makeQueue({ promptTtlMs: HOUR }),
+      { options: ['ship', 'hold'] },
+      { safe: 'hold' },
+    ).queue,
+    { now: T0 + HOUR + 1 },
+  );
+  assert.equal(late.expired[0].reply, 'hold');
+  assert.equal(late.expired[0].stop, false);
+});
+
+test('expire refuses a clock that went backwards and an unreadable queue', () => {
+  const queue = enqueueOne(makeQueue()).queue;
+  assert.equal(expire(queue, { now: T0 - 1 }).code, REFUSAL.NOW_WENT_BACKWARDS);
+  assert.equal(expire(queue, {}).code, REFUSAL.UNKNOWN_FIELD);
+  assert.equal(expire(queue, { now: T0, x: 1 }).code, REFUSAL.UNKNOWN_FIELD);
+});
+
+// ---------------------------------------------------------------------------
+// Answers: the TTL, except a destructive prompt's confirmation (D173)
+// ---------------------------------------------------------------------------
+
+test('an answer is accepted within the prompt\'s TTL, not P1.1\'s command window', () => {
+  // The headline of D173: a consumer offline longer than the six-hour command
+  // window but inside the 72-hour TTL still accepts a queued prompt's answer.
+  const queue = enqueueOne(makeQueue()).queue;
+  // The user answered as soon as they read the question (at T0) and the
+  // consumer only came back twenty hours later -- three times past the
+  // six-hour command window, well inside the 72-hour TTL.
+  const late = T0 + 20 * HOUR;
+  assert.ok(late - T0 > 6 * HOUR, 'the fixture must be past the command window');
+  const settled = answer(queue, { now: late, answer: answerMessage({ at: T0, text: 'ship it' }) });
+  assert.equal(settled.ok, true, JSON.stringify(settled));
+  assert.equal(settled.outcome, OUTCOME.ANSWERED);
+  assert.equal(settled.kind, MAILBOX_KIND.PROMPT);
+  assert.equal(settled.windowMs, PROMPT_TTL_MS);
+  assert.equal(settled.queue.prompts.length, 0, 'an answered prompt is not pending');
+
+  // P1.1's own machine classifies the very same delivery as a command and
+  // refuses it: that is the window an answer to a destructive prompt takes,
+  // and the difference between the two lines is the whole of D173. Asserted by
+  // running P1.1 rather than by restating its arithmetic here.
+  const mailbox = initialState({ now: T0, promptTtlMs: PROMPT_TTL_MS });
+  assert.equal(mailbox.ok, true);
+  const asCommand = step(mailbox.state, {
+    type: 'deliver',
+    now: late,
+    kind: MAILBOX_KIND.COMMAND,
+    message: answerMessage({ at: T0 }),
+  });
+  assert.equal(asCommand.ok, false);
+  assert.equal(asCommand.code, 'replay', 'a command of that age is a replay in P1.1');
+  const asPrompt = step(mailbox.state, {
+    type: 'deliver',
+    now: late,
+    kind: MAILBOX_KIND.PROMPT,
+    message: answerMessage({ at: T0 }),
+  });
+  assert.equal(asPrompt.ok, true, 'and the same delivery as a prompt is accepted');
+});
+
+test('an answer to a destructive prompt is a confirmation and takes the command window', () => {
+  const queue = enqueueOne(makeQueue(), {}, { destructive: true }).queue;
+  const written = T0 + HOUR;
+
+  // Confirmed five hours after the user tapped it: inside the command window,
+  // and judged as a command -- the kind P1.1 applies the six-hour window to.
+  const inside = answer(queue, { now: written + 5 * HOUR, answer: answerMessage({ at: written }) });
+  assert.equal(inside.ok, true, JSON.stringify(inside));
+  assert.equal(inside.kind, MAILBOX_KIND.COMMAND);
+  assert.equal(inside.windowMs, 6 * HOUR);
+  assert.equal(inside.destructive, true);
+
+  // Exactly at the window: still a confirmation, which is the same inclusive
+  // boundary P1.1's `now - at > window` draws.
+  assert.equal(
+    answer(queue, { now: written + 6 * HOUR, answer: answerMessage({ at: written }) }).ok,
+    true,
+  );
+
+  // One millisecond past it, while the PROMPT is still alive by days: refused.
+  // The answer's own age is what decides once the answer is a confirmation.
+  const refused = answer(queue, { now: written + 6 * HOUR + 1, answer: answerMessage({ at: written }) });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, REFUSAL.REPLAY);
+  assert.equal(refused.field, 'answer.at');
+  // The prompt is untouched by the refusal: still pending, and still answerable
+  // by a fresh confirmation.
+  const again = answer(queue, {
+    now: written + 6 * HOUR + 1,
+    answer: answerMessage({ at: written + 6 * HOUR }),
+  });
+  assert.equal(again.ok, true, 'a fresh confirmation is still accepted');
+});
+
+test('the window an answer is judged by is P1.1\'s own kind mapping', () => {
+  assert.equal(acceptanceKind(false), MAILBOX_KIND.PROMPT);
+  assert.equal(acceptanceKind(true), MAILBOX_KIND.COMMAND);
+  // The kinds are P1.1's vocabulary and not a second one written here.
+  assert.equal(MAILBOX_KIND.PROMPT, 'prompt');
+  assert.equal(MAILBOX_KIND.COMMAND, 'command');
+});
+
+test('an answer to a dead prompt is refused, with the expiry it is owed', () => {
+  const queue = enqueueOne(makeQueue(), {}, {}).queue;
+  const before = answer(queue, { now: T0 + PROMPT_TTL_MS, answer: answerMessage({ at: T0 + PROMPT_TTL_MS }) });
+  assert.equal(before.ok, true, 'the prompt is alive at the boundary');
+  const after = answer(queue, { now: T0 + PROMPT_TTL_MS + 1, answer: answerMessage({ at: T0 + PROMPT_TTL_MS + 1 }) });
+  assert.equal(after.ok, false);
+  assert.equal(after.code, REFUSAL.EXPIRED);
+  assert.equal(after.expiry.reply, EXPIRED_REPLY);
+  assert.equal(after.expiry.stop, true);
+  // The user's late answer is not what is handed over: the prompt expired, and
+  // an answer to an expired question is an answer to a changed world.
+  assert.equal(after.expiry.safe, null);
+});
+
+test('answer refuses an unreadable answer and an unknown prompt', () => {
+  const queue = enqueueOne(makeQueue()).queue;
+  // A prompt is a well-formed message, and it is not an answer: the two kinds
+  // are not interchangeable, and this module reads the kind off the validated
+  // message rather than assuming the caller sent what it meant to.
+  assert.equal(answer(queue, { now: T0, answer: promptMessage() }).code, REFUSAL.NOT_AN_ANSWER);
+  assert.equal(answer(queue, { now: T0, answer: answerMessage({ reply_to: 'nope' }) }).code, REFUSAL.UNKNOWN_PROMPT);
+  assert.equal(answer(queue, { now: T0, answer: answerMessage({ text: '' }) }).code, 'empty-string');
+  assert.equal(answer(queue, { now: T0, answer: answerMessage({ at: 0 }) }).code, REFUSAL.ZERO_TIMESTAMP);
+  assert.equal(
+    answer(queue, { now: T0, answer: answerMessage({ at: T0 + 30 * DAY }) }).code,
+    REFUSAL.FUTURE_TIMESTAMP,
+  );
+  assert.equal(answer(queue, { now: T0 - 1, answer: answerMessage() }).code, REFUSAL.NOW_WENT_BACKWARDS);
+  assert.equal(answer(queue, { now: T0, answer: answerMessage(), reply: 'x' }).code, REFUSAL.UNKNOWN_FIELD);
+});
+
+test('an answer removes exactly the prompt it answers', () => {
+  let queue = enqueueOne(makeQueue(), { id: 'p1' }).queue;
+  queue = enqueue(queue, { now: T0, prompt: promptMessage({ id: 'p2', at: T0 + 1_000 }) }).queue;
+  const settled = answer(queue, { now: T0, answer: answerMessage({ reply_to: 'p2', at: T0 + 1_000 }) });
+  assert.equal(settled.ok, true);
+  assert.deepEqual(settled.queue.prompts.map((entry) => entry.prompt.id), ['p1']);
+});
+
+// ---------------------------------------------------------------------------
+// Reminder escalation (§3.4)
+// ---------------------------------------------------------------------------
+
+test('reminderStage is a pure function of the clock: an hour, then a day', () => {
+  assert.equal(REMINDER_AFTER_MS, HOUR);
+  assert.equal(REMINDER_INTERVAL_MS, DAY);
+  assert.equal(reminderStage(T0, T0), 0);
+  assert.equal(reminderStage(T0, T0 + HOUR - 1), 0);
+  assert.equal(reminderStage(T0, T0 + HOUR), 1, 'an hour is the first reminder, inclusive');
+  assert.equal(reminderStage(T0, T0 + HOUR + DAY - 1), 1);
+  assert.equal(reminderStage(T0, T0 + HOUR + DAY), 2);
+  assert.equal(reminderStage(T0, T0 + HOUR + 3 * DAY), 4);
+});
+
+test('a pause speaks what is due, then the count alone, then escalates', () => {
+  let queue = enqueueOne(makeQueue()).queue;
+  queue = enqueue(queue, { now: T0, prompt: promptMessage({ id: 'p2', at: T0 + 1_000 }) }).queue;
+
+  // The first natural pause: both are due, and both are marked spoken.
+  const first = announce(queue, { now: T0 + 2 * MINUTE });
+  assert.equal(first.ok, true);
+  assert.equal(first.spoken.length, 2);
+  assert.deepEqual(first.spoken.map((entry) => entry.prompt.id), ['p1', 'p2']);
+  assert.equal(first.spoken[0].due, true);
+  assert.equal(first.spoken[0].stage, 0);
+  assert.equal(first.queue.prompts[0].announcedAt, T0 + 2 * MINUTE);
+
+  // The next pause a minute later: nothing is due -- the user has just heard
+  // these -- and the announcement is empty rather than repeating.
+  const second = announce(first.queue, { now: T0 + 3 * MINUTE });
+  assert.equal(second.spoken.length, 0);
+  assert.equal(second.queue.prompts[0].announcedAt, T0 + 2 * MINUTE, 'nothing is re-marked');
+
+  // An hour after the first prompt was asked, it escalates and is due again.
+  // Both are asked a second apart, so the pause is a second past the hour to
+  // cover both -- the schedule is anchored to each prompt's own `at`.
+  const third = announce(second.queue, { now: T0 + HOUR + 2_000 });
+  assert.deepEqual(third.spoken.map((entry) => entry.prompt.id), ['p1', 'p2']);
+  assert.equal(third.spoken[0].stage, 1);
+  assert.equal(third.queue.prompts[0].announcedAt, T0 + HOUR + 2_000);
+
+  // Announced late, a stage is not announced twice: the announcement at
+  // +2 days covers the day-one reminder and leaves the day-two one due.
+  const fourth = announce(third.queue, { now: T0 + 2 * DAY });
+  assert.equal(fourth.spoken.length, 2);
+  const fifth = announce(fourth.queue, { now: T0 + 2 * DAY + MINUTE });
+  assert.equal(fifth.spoken.length, 0);
+  const sixth = announce(fifth.queue, { now: T0 + 2 * HOUR + 2 * DAY });
+  assert.equal(sixth.spoken.length, 2);
+  assert.equal(sixth.spoken[0].stage, 3, 'the day-two reminder');
+});
+
+test('pending lists per installation, escalated first', () => {
+  // p1 was asked at the start and announced at the first pause, so by the
+  // listing its hour has passed and it has escalated; p2 and p3 were asked a
+  // minute later and were read out at the second pause.
+  let queue = enqueueOne(makeQueue(), { id: 'p1' }).queue;
+  queue = announce(queue, { now: T0 + MINUTE }).queue;
+  queue = enqueue(queue, { now: T0 + MINUTE, prompt: promptMessage({ id: 'p2', at: T0 + MINUTE }) }).queue;
+  queue = enqueue(queue, { now: T0 + MINUTE, prompt: promptMessage({ id: 'p3', at: T0 + MINUTE }) }).queue;
+  queue = announce(queue, { now: T0 + 2 * MINUTE }).queue;
+
+  const listed = pending(queue, { now: T0 + HOUR });
+  assert.equal(listed.ok, true, JSON.stringify(listed));
+  assert.deepEqual(listed.pending.map((entry) => entry.prompt.id), ['p1', 'p2', 'p3']);
+  // The escalated one is listed first, and is due to be read again.
+  assert.equal(listed.pending[0].stage, 1);
+  assert.equal(listed.pending[0].due, true);
+  assert.equal(listed.pending[0].announcedAt, T0 + MINUTE);
+  assert.equal(listed.pending[1].announcedAt, T0 + 2 * MINUTE);
+  // The two just read are still listed -- they are pending -- and are not due.
+  assert.equal(listed.pending[1].stage, 0);
+  assert.equal(listed.pending[1].due, false);
+  assert.deepEqual(listed.queue, queue, 'listing changes nothing');
+
+  // Within a stage, oldest first.
+  const two = enqueue(
+    enqueue(makeQueue(), { now: T0, prompt: promptMessage({ id: 'b', at: T0 + 1 }) }).queue,
+    { now: T0, prompt: promptMessage({ id: 'a', at: T0 + 2 }) },
+  ).queue;
+  assert.deepEqual(
+    pending(two, { now: T0 }).pending.map((entry) => entry.prompt.id),
+    ['b', 'a'],
+  );
+});
+
+// ---------------------------------------------------------------------------
+// The count across accounts (§3.2's "Two questions waiting")
+// ---------------------------------------------------------------------------
+
+test('waitingSentence says the count, and nothing at zero', () => {
+  assert.equal(waitingSentence(0), null, 'an announcement of nothing is noise');
+  assert.equal(waitingSentence(1), 'One question waiting');
+  assert.equal(waitingSentence(2), 'Two questions waiting');
+  assert.equal(waitingSentence(3), 'Three questions waiting');
+  assert.equal(waitingSentence(12), 'Twelve questions waiting');
+  assert.equal(waitingSentence(13), '13 questions waiting');
+  assert.equal(waitingSentence(-1), null);
+  assert.equal(waitingSentence(1.5), null);
+});
+
+function twoAccounts() {
+  const first = enqueue(
+    enqueue(makeQueue({ account: 'acct-a' }), { now: T0, prompt: promptMessage({ id: 'p1' }) }).queue,
+    { now: T0, prompt: promptMessage({ id: 'p2', at: T0 + 1 }) },
+  ).queue;
+  const second = enqueue(
+    makeQueue({ account: 'acct-b' }),
+    { now: T0, prompt: promptMessage({ id: 'q1', sender: 'agent-2' }) },
+  ).queue;
+  return [first, second];
+}
+
+test('a natural pause counts every account\'s waiting prompts in one sentence', () => {
+  const announced = announcement(twoAccounts(), { now: T0 + 2 * MINUTE });
+  assert.equal(announced.ok, true);
+  assert.equal(announced.count, 3);
+  assert.equal(announced.text, 'Three questions waiting');
+  // The due list keeps each prompt with its account, so the app can say which
+  // installation is asking before it reads the question out.
+  assert.deepEqual(announced.due.map((entry) => [entry.account, entry.prompt.id]), [
+    ['acct-a', 'p1'],
+    ['acct-a', 'p2'],
+    ['acct-b', 'q1'],
+  ]);
+});
+
+test('the two-question sentence of the spec, from two installations', () => {
+  const queues = [
+    enqueue(makeQueue({ account: 'acct-a' }), { now: T0, prompt: promptMessage() }).queue,
+    enqueue(makeQueue({ account: 'acct-b' }), {
+      now: T0,
+      prompt: promptMessage({ id: 'q1', sender: 'agent-2' }),
+    }).queue,
+  ];
+  assert.equal(announcement(queues, { now: T0 + MINUTE }).text, 'Two questions waiting');
+});
+
+test('what\'s pending is grouped per installation, and never summed', () => {
+  const across = pendingAcross(twoAccounts(), { now: T0 + 2 * MINUTE });
+  assert.equal(across.ok, true);
+  assert.equal(across.count, 3);
+  assert.deepEqual(across.accounts.map((group) => group.account), ['acct-a', 'acct-b']);
+  assert.deepEqual(across.accounts.map((group) => group.pending.length), [2, 1]);
+  assert.deepEqual(across.accounts[0].pending.map((entry) => entry.prompt.id), ['p1', 'p2']);
+  // No summed total per installation: D170 shows one row per installation and
+  // no total, and the grouping is what makes that expressible.
+  assert.equal(Object.hasOwn(across.accounts[0], 'count'), false);
+});
+
+test('the cross-account view refuses two queues for one installation', () => {
+  const queues = twoAccounts();
+  const duplicated = [queues[0], queues[0]];
+  assert.equal(announcement(duplicated, { now: T0 }).code, REFUSAL.INVALID_QUEUES);
+  assert.equal(pendingAcross(duplicated, { now: T0 }).code, REFUSAL.INVALID_QUEUES);
+  assert.equal(announcement('nope', { now: T0 }).code, REFUSAL.INVALID_QUEUES);
+  assert.equal(announcement(queues, { now: T0 - 1 }).code, REFUSAL.NOW_WENT_BACKWARDS);
+  assert.equal(announcement(queues, {}).code, REFUSAL.INVALID_NOW);
+  assert.equal(announcement([], { now: T0 }).text, null, 'no installations is no questions');
+});
+
+// ---------------------------------------------------------------------------
+// The interrupt policy (D160, D127)
+// ---------------------------------------------------------------------------
+
+const digestOf = (severity) => ({ severity, items: [] });
+
+function policy(over = {}) {
+  return evaluateInterrupt({ queue: makeQueue(), now: T0, ...over });
+}
+
+test('only D160\'s set interrupts, and the switch decides which part of it', () => {
+  // The whole table, cell by cell: every event under every switch setting, so
+  // no cell is left undecided for a caller to interpret.
+  const events = [
+    ['nothing', {}, null],
+    ['kill', { digest: digestOf(SEVERITY.kill) }, INTERRUPT.KILL],
+    ['cap reached', { caps: { reached: true } }, INTERRUPT.CAP_REACHED],
+    ['cap near', { caps: { near: true } }, INTERRUPT.CAP_NEAR],
+    [
+      'going offline',
+      { presence: { state: PRESENCE.OFFLINE, previous: PRESENCE.LIVE } },
+      INTERRUPT.OFFLINE,
+    ],
+  ];
+  const expected = {
+    [SWITCH.NARROW]: {
+      nothing: null,
+      kill: INTERRUPT.KILL,
+      'cap reached': INTERRUPT.CAP_REACHED,
+      'cap near': null,
+      'going offline': null,
+    },
+    [SWITCH.DEFAULT]: {
+      nothing: null,
+      kill: INTERRUPT.KILL,
+      'cap reached': INTERRUPT.CAP_REACHED,
+      'cap near': INTERRUPT.CAP_NEAR,
+      'going offline': INTERRUPT.OFFLINE,
+    },
+    [SWITCH.WIDEN]: {
+      nothing: null,
+      kill: INTERRUPT.KILL,
+      'cap reached': INTERRUPT.CAP_REACHED,
+      'cap near': INTERRUPT.CAP_NEAR,
+      'going offline': INTERRUPT.OFFLINE,
+    },
+  };
+  for (const [name, input, reason] of events) {
+    for (const setting of [SWITCH.NARROW, SWITCH.DEFAULT, SWITCH.WIDEN]) {
+      const result = policy({ ...input, switch: setting });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.equal(
+        result.reason,
+        expected[setting][name],
+        `${name} under ${setting} should answer ${expected[setting][name]}`,
+      );
+      assert.equal(result.interrupt, reason !== null && expected[setting][name] !== null);
+    }
+  }
+});
+
+test('widening adds "any prompt", and only when one is due', () => {
+  let queue = enqueueOne(makeQueue()).queue;
+  assert.equal(policy({ queue, switch: SWITCH.WIDEN }).reason, INTERRUPT.PROMPT);
+  assert.equal(policy({ queue, switch: SWITCH.WIDEN, switch2: 1 }).ok, false);
+
+  // A prompt already spoken is not a reason to speak over the user again: what
+  // widening adds is a question the user has not heard.
+  queue = announce(queue, { now: T0 + MINUTE }).queue;
+  const spoken = policy({ queue, switch: SWITCH.WIDEN, now: T0 + MINUTE });
+  assert.equal(spoken.ok, true);
+  assert.equal(spoken.reason, null);
+  assert.equal(policy({ queue, switch: SWITCH.DEFAULT, now: T0 + MINUTE }).reason, null);
+});
+
+test('the loudest event is the one reported', () => {
+  const all = policy({
+    digest: digestOf(SEVERITY.kill),
+    caps: { reached: true, near: true },
+    presence: { state: PRESENCE.OFFLINE, previous: PRESENCE.LIVE },
+    switch: SWITCH.WIDEN,
+  });
+  assert.equal(all.reason, INTERRUPT.KILL);
+  assert.equal(
+    policy({ caps: { reached: true, near: true }, switch: SWITCH.WIDEN }).reason,
+    INTERRUPT.CAP_REACHED,
+  );
+  assert.equal(
+    policy({ caps: { near: true }, presence: { state: PRESENCE.OFFLINE, previous: PRESENCE.LIVE } })
+      .reason,
+    INTERRUPT.CAP_NEAR,
+  );
+});
+
+test('an offline first sighting is not a transition, and does not interrupt', () => {
+  // D160's event is "going from live to offline". A consumer the app has never
+  // seen alive has not gone anywhere, and interrupting on it would make the
+  // app speak over the user for an installation that was never up.
+  for (const presence of [
+    { state: PRESENCE.OFFLINE },
+    { state: PRESENCE.OFFLINE, previous: null },
+    { state: PRESENCE.STALE, previous: PRESENCE.LIVE },
+    { state: PRESENCE.CLOCK_DIFFERS, previous: PRESENCE.LIVE },
+  ]) {
+    const result = policy({ presence });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.reason, null, `${JSON.stringify(presence)} must not interrupt`);
+  }
+  // Any other state to offline is a transition, including leaving clock-differs.
+  assert.equal(
+    policy({ presence: { state: PRESENCE.OFFLINE, previous: PRESENCE.CLOCK_DIFFERS } }).reason,
+    INTERRUPT.OFFLINE,
+  );
+  // Already offline is not a new transition.
+  assert.equal(
+    policy({ presence: { state: PRESENCE.OFFLINE, previous: PRESENCE.OFFLINE } }).reason,
+    null,
+  );
+});
+
+test('the policy refuses what it cannot read, and never guesses a severity', () => {
+  assert.equal(policy({ switch: 'loud' }).code, REFUSAL.INVALID_SWITCH);
+  assert.equal(policy({ digest: digestOf('catastrophic') }).code, REFUSAL.INVALID_SEVERITY);
+  assert.equal(policy({ digest: digestOf('catastrophic') }).field, 'digest.severity');
+  assert.equal(policy({ digest: {} }).code, REFUSAL.INVALID_SEVERITY);
+  assert.equal(policy({ digest: 'kill' }).code, REFUSAL.INVALID_SEVERITY);
+  assert.equal(policy({ presence: { state: 'fine' } }).code, REFUSAL.INVALID_PRESENCE);
+  assert.equal(policy({ presence: { state: PRESENCE.LIVE, previous: 'fine' } }).code, REFUSAL.INVALID_PRESENCE);
+  assert.equal(policy({ caps: { reached: 'yes' } }).code, REFUSAL.INVALID_CAPS);
+  assert.equal(policy({ caps: { plenty: true } }).code, REFUSAL.INVALID_CAPS);
+  assert.equal(policy({ now: T0 - 1 }).code, REFUSAL.NOW_WENT_BACKWARDS);
+  assert.equal(policy({ now: 0 }).code, REFUSAL.INVALID_NOW);
+  assert.equal(policy({ extra: 1 }).code, REFUSAL.UNKNOWN_FIELD);
+  // A severity below the top rung is not an interruption, and every rung of
+  // P1.3's ladder is readable.
+  for (const severity of Object.values(SEVERITY)) {
+    const result = policy({ digest: digestOf(severity) });
+    assert.equal(result.ok, true, `${severity} must be readable`);
+    assert.equal(result.reason, severity === SEVERITY.kill ? INTERRUPT.KILL : null);
+  }
+});
+
+test('the policy is a pure function of its inputs', () => {
+  const queue = enqueueOne(makeQueue()).queue;
+  const input = {
+    queue,
+    digest: digestOf(SEVERITY.failed),
+    presence: { state: PRESENCE.LIVE, previous: PRESENCE.LIVE },
+    caps: { reached: false, near: false },
+    switch: SWITCH.DEFAULT,
+    now: T0 + MINUTE,
+  };
+  const first = evaluateInterrupt(input);
+  const second = evaluateInterrupt({ ...input, queue: { ...queue } });
+  assert.deepEqual(first, second);
+  assert.equal(first.pending, 1);
+  assert.equal(first.interrupt, false);
+  // The reason is null when nothing interrupts, and a string when it does:
+  // a caller that renders an unlisted reason is rendering something this
+  // module never returns.
+  assert.equal(Object.values(INTERRUPT).includes('loud'), false);
+});
+
+test('the queue module holds no clock: an unchanged input is unchanged output', () => {
+  // Every entry point takes its `now`, so two identical calls are identical
+  // without a frozen clock anywhere. This is what makes P6.7's consumer able
+  // to replay a decision and D126's purity auditable.
+  const queue = enqueueOne(makeQueue()).queue;
+  const first = announcement([queue], { now: T0 + HOUR });
+  const second = announcement([queue], { now: T0 + HOUR });
+  assert.deepEqual(first, second);
+});
+
+test('a queue handed back mutated is refused, not trusted', () => {
+  const queue = enqueueOne(makeQueue()).queue;
+  // A queue is read field by field and its prompts re-validated: a caller that
+  // hands one back with a field removed, an extra key, a bad TTL, an
+  // out-of-order list or a duplicated id is refused rather than answered from.
+  const broken = [
+    [{ ...queue, prompts: 'nope' }, REFUSAL.INVALID_PROMPTS],
+    [{ ...queue, promptTtlMs: 1 }, REFUSAL.INVALID_QUEUE],
+    [{ ...queue, maxPending: 0 }, REFUSAL.INVALID_QUEUE],
+    [{ ...queue, account: '' }, REFUSAL.INVALID_QUEUE],
+    [{ ...queue, nope: 1 }, REFUSAL.UNKNOWN_FIELD],
+    [{ ...queue, prompts: [queue.prompts[0], queue.prompts[0]] }, REFUSAL.DUPLICATE_ENTRY],
+    [{ ...queue, prompts: [{ ...queue.prompts[0], prompt: { ...queue.prompts[0].prompt, mac: 'zz' } }] }, REFUSAL.INVALID_ENTRY],
+    [{ ...queue, prompts: [{ ...queue.prompts[0], destructive: 'yes' }] }, REFUSAL.INVALID_ENTRY],
+    [{ ...queue, prompts: [{ ...queue.prompts[0], extra: 1 }] }, REFUSAL.INVALID_ENTRY],
+  ];
+  for (const [value, code] of broken) {
+    const result = expire(value, { now: queue.now });
+    assert.equal(result.ok, false, `expected a refusal for ${JSON.stringify(value)}`);
+    assert.equal(result.code, code);
+  }
+  // Two entries out of canonical order are refused: the order is part of what
+  // a queue is, exactly as P1.1's ledger order is.
+  const two = enqueue(
+    enqueue(makeQueue(), { now: T0, prompt: promptMessage({ id: 'a', at: T0 }) }).queue,
+    { now: T0, prompt: promptMessage({ id: 'b', at: T0 + 1 }) },
+  ).queue;
+  assert.equal(
+    expire({ ...two, prompts: [two.prompts[1], two.prompts[0]] }, { now: T0 }).code,
+    REFUSAL.UNSORTED_PROMPTS,
+  );
+  // More prompts than the cap allows is a queue no producer could have made.
+  assert.equal(
+    expire({ ...queue, maxPending: 0 }, { now: T0 }).code,
+    REFUSAL.INVALID_QUEUE,
+  );
+});
