@@ -139,7 +139,7 @@ only checked the refusal, and fails this one.
 | --- | --- |
 | 1. a line that is not JSON is skipped | `document.js`'s `decode` (the phone's analogue of a line is a node's value: a value that is not an object is not a counter, and reads as `unavailable` — never a throw, and never a `0`) |
 | 2. the newest document, never accumulated | `view.js`: one document, replaced on every ingest; there is no arithmetic in the file, so nothing *can* accumulate |
-| 3. silence is not death | `view.js`'s `livenessOf`, from the four inputs the rule names: the phone's clock, the document's `now`, its `connection.state` and its `connection.age_seconds`. The vocabulary (`LIVENESS`) has no word for a dead process |
+| 3. silence is not death | `view.js`'s `livenessOf`, from the four inputs the rule names: the phone's clock, the document's `now`, its `connection.state` and its `connection.age_seconds`. The vocabulary (`LIVENESS`) has no word for a dead process, and silence reaches **`stale` and stops there** — that is as far as `State.conn` goes (`watch.LostAfter` is a *run*'s threshold, and the phone reads no run) |
 | 4. a changed `day` is a break | `view.js`: `broken` is `!measured`, and a broken view's `drawable` is **`null`** — so the zero a rollover document carries (§10.7: "must not draw the zero") cannot be drawn by a screen that forgot to check |
 | 5. a missing field is `unavailable`, never `0` | `availability.js` (the figure) and `document.js` (every number in a document comes out of it as one). Both kinds of the tree's "absent" are honoured: a **cap** is a pointer (`nil` = unset = `unavailable`, never a cap of zero, which would be a project allowed to spend nothing) and a **counter** is `omitempty` (absent = the zero the CLI's own document carries) |
 | 6. `--repo` | not the phone's: its repository list is the owner's, and `len(repos)` is that list |
@@ -159,9 +159,14 @@ here because a reviewer has to be able to disagree with them:
    constants and formulas (`internal/watch/build.go`'s `bar`, `internal/watch/state.go`'s
    `State.Burn` and `burnOf`): a 5-minute window that needs a 60-second span
    before it says anything, `perMin*60 > daily/8` for `fast`, and `100%` when
-   the cap is zero. A rate with no window is **unknown, not zero** — and so is
-   one whose counter went backwards. A missing input makes the figure
-   `unavailable`, never `0`.
+   the cap is zero. The two figures are over **two different totals**, and that
+   is the CLI's own split rather than an accident here: the fraction is over
+   **counted** ("only counted feeds it; notional counts toward no cap") while the
+   rate is the slope of **spent + notional**, which is what `State.observe`
+   records. A rate with no window is **unknown, not zero**; so is one whose
+   window was just cleared, which is what a counter that went **backwards** does
+   (`State.record`: "a reset, not negative spend"). A missing input makes the
+   figure `unavailable`, never `0`.
 2. **The repository list is the owner's**, typed in, and never discovered:
    `config/caps/repos` carries no grant, so the database cannot be asked which
    repositories exist. The list is bounded (`MAX_PATHS`) because every entry is
@@ -171,14 +176,31 @@ here because a reviewer has to be able to disagree with them:
 ### The connection the phone reports
 
 The CLI's `State.conn` is "the worst of the four streams". The phone's streams
-are its granted paths, so the same rule applies to them: the **oldest node that
-has delivered** decides, a **refused read outranks** the silence it causes, and
-`polling` is a way to read rather than a fault. `age_seconds` is the CLI's own
-measure, and it is what `view.js` reads as silence. The reasons are **static
+are its granted paths, so the same rule applies to them, **in the same order**:
+a **refused** read outranks everything (a permission error is the diagnosis, and
+the silence that follows it is its consequence), then a read that **failed** for
+any other reason, then the paths that have not answered yet, then the **oldest
+node that has delivered**. `age_seconds` is the CLI's own measure, and it is
+what `view.js` reads as silence.
+
+**A permission error and a dropped socket are different facts**, and the phone
+keeps them apart (`isPermissionError`, the phone's side of `errors.Is(err,
+rtdb.ErrPermission)`): only a `PERMISSION_DENIED` code is `refused`/"access
+refused"; a timeout, a network failure or a client that has not authenticated is
+`offline`/"the read failed". Calling the second one a credential problem would
+send the owner to check a token that is fine. The reasons are **static
 sentences** (`CONNECTION_REASONS`): an error message from the database is not
-something this app puts on a screen, and the reader drops it rather than
-echoing it. Before anything has arrived the state is `offline`/`connecting` —
-the CLI's own word for a stream that has not spoken yet, and not a death.
+something this app puts on a screen, and the reader drops it rather than echoing
+it. Before anything has arrived the state is `offline`/`connecting` — the CLI's
+own word for a stream that has not spoken yet, and not a death.
+
+**Silence never leaves `stale`.** `State.conn` has exactly one silence
+threshold (`StaleAfter`, 45 s), and §10.9's `LostAfter` (180 s) is not a
+connection's: the table calls it a property of a **run** (`State.health` calls a
+run `lost`), and the phone is subscribed to no run — it reads no stage, no
+deadline and no agent. A feed that has been quiet for half an hour is a feed
+that has been quiet for half an hour; the app says so, and it keeps the last
+measurement on screen.
 
 ### The feed's mutations
 
@@ -195,7 +217,7 @@ Each was planted, the run went red, the bug was removed:
 | a closed account can subscribe anyway | `…not one socket is opened for a closed account` |
 | the project's cap is read as the repository default | `the granted nodes add up to a document…` |
 | an unset cap becomes a cap of zero | `a missing node is unavailable, never a zero…` |
-| a counter reading is not sampled | `the rate is the phone's own…` |
+| a counter reading is not sampled | `the burn window is fed spent + notional…` |
 | a rollover does not move the reader to the new day | `a changed day is a break…` |
 | the day is measured before its counter has been heard | `a changed day is a break…` |
 | a refused read is not a connection state | `the connection is the worst of the granted paths…` |
@@ -208,6 +230,24 @@ Each was planted, the run went red, the bug was removed:
 | the recording ignores the day it is asked for | the door's end-to-end test and `the granted nodes add up to a document…` |
 | the door re-exports a path composer | `the door carries no port and no path composer` |
 
+The eight below are the ones a **code review** of this task found (see "The
+review" under them):
+
+| Mutation | Went red |
+| --- | --- |
+| the burn window is fed `counted` instead of `spent + notional` | `the burn window is fed spent + notional…` |
+| a counter that goes backwards keeps the window it went back from | `a counter that goes backwards clears the window…` |
+| every port error is a refusal | `a permission error is refused, and a failure to connect is not` |
+| a failed read is not a connection state | `a permission error is refused…` |
+| silence goes `offline` again at ten minutes | `a feed that stops arriving is a silence, not a death` |
+| an instant past what a JS `Date` renders is rendered anyway | `an instant past what a JS Date can render…`, `a kill switch whose instant this app cannot render…` |
+| the uid is composed without being judged | `the account is judged as the account module judges it…` |
+| `refresh` does not judge its clock | `a clock that is not an instant is refused at every entry point` |
+| `isNow` accepts an unrenderable instant | `a clock that is not an instant is refused…` |
+| the assembly does not judge its instant | `a clock that is not an instant is refused…` |
+| `stop` keeps the session | `stop forgets the session, and a restart does not inherit it` |
+| `check()` relabels every figure `measured` | `the codes are the refusal vocabulary a caller matches on` |
+
 **Two of those mutations were found by writing the tests, and both were real
 bugs rather than test faults.** The first: the wire document's `kill` carries no
 `on` field (presence *is* the on-ness — `jsonKill` returns nil when the switch is
@@ -216,6 +256,58 @@ off), so passing the tree's node through was an unknown field that made
 second: an unreadable counter node crashed the assembly — a node holding text
 reached `counters.counted` on a refusal. It reads as `unavailable` now, never as
 `0`, and the rest of the document is untouched.
+
+### The review
+
+A code review of this task found eight more, and they are worth reading as one
+class rather than as eight incidents: **each was a rule the CLI has, restated
+here slightly differently** — which is exactly the failure mode this module was
+written to avoid, because the two implementations are meant to agree about the
+same tree.
+
+* **The burn window was fed `counted`.** `State.observe` records
+  `Spent+Notional`, and `counted` is `bar()`'s number. The phone's rate and its
+  `fast` flag therefore disagreed with the console's for the same tree, and the
+  test encoded the wrong series — a test that would have passed either way is
+  worse than no test, so it now moves `counted` alone and requires a zero slope.
+* **Every port error was collapsed into `refused`.** `State.conn` calls a
+  permission error `refused` and any other error a connection that is not up; a
+  dropped socket was being reported as an access problem, and the port could not
+  express the difference. There are two sets and two sentences now.
+* **`watch.LostAfter` was used as a connection threshold.** §10.9's table calls
+  it a property of a **run** (`State.health`), and `State.conn` never leaves
+  `stale` for a silence — so the phone would have said `offline` where the
+  console, reading the same tree, said `stale`. The constant is gone, and a test
+  asserts it is not exported again.
+* **An out-of-range `at` threw inside an assembly.** A nanosecond timestamp
+  fits an `int64` and does not fit a JS `Date`; `toISOString()` throws, and
+  because the value was stored before the assembly, every later assembly threw
+  too — a feed dead for the rest of the session, with an ON switch reading as
+  off. `MAX_INSTANT_MS` bounds the instant, and a switch whose instant cannot be
+  read is a switch the app believes (`State.kill`), not one it claims to have
+  read while quietly dropping a field.
+* **The mailbox path was composed from an unjudged `authUid`.** The account id
+  was judged and the uid was not, so an account without one composed
+  `mailbox/undefined/outbox` — a path the gate **grants**, because `undefined`
+  has a uid's shape. That is the request the plan's own case forbids, arriving
+  by the back door. The account is now judged by `validateAccount`, the module
+  that owns the tuple.
+* **`refresh()` did not judge its clock**, so a no-argument call threw a
+  `TypeError` out of `dayKey` instead of refusing with `BAD_NOW`. The same bound
+  is now applied at every entry point *and* in the assembly, so a clock that
+  cannot be rendered cannot reach `toISOString()` at all.
+* **`stop()` left the session's state behind**, so a re-`start()` rendered the
+  previous session's counters as freshly delivered — the exact confusion
+  `#delivered` exists to prevent.
+* **`check()` returned a `measured` figure for a notional one**, silently
+  dropping the state for any caller that reads `.figure`. `measured` is a claim
+  about who read the number, not a default.
+
+Each fix has its own test, and each test was mutation-proven (the twelve rows
+above). One divergence of the same class was found while fixing these and is
+**not** in the review: `State.record` clears the burn window when a counter goes
+backwards, where this sampler kept the reading it went back from — so the fix
+for the first finding carries the second with it.
 
 ## Which files may write a credential
 
@@ -337,7 +429,10 @@ a class rather than as an incident:**
   run against a real clock: the day rollover, the burn window and the silence
   thresholds are all arithmetic over an instant a test chose. Clock **skew** —
   "clock differs" — is check **84**'s, and `view.js` deliberately floors a
-  negative age at zero rather than deciding what it means.
+  negative age at zero rather than deciding what it means. What *is* asserted is
+  that an instant this app cannot render (past `MAX_INSTANT_MS`, or not a
+  number at all) is refused at every entry point rather than raising inside an
+  assembly.
 * **What the heartbeat means.** The reader reads `mailbox/$uid/heartbeat` and
   draws **no conclusion** from it: the heartbeat is delivered like any other
   granted node, and presence — live, stale, offline, and the boot id that says

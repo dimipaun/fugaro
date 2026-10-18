@@ -574,6 +574,13 @@ test('a clock that is not an instant is refused at every entry point', () => {
   // ... and a clock that is one still works.
   assert.equal(feed.refresh(T0).ok, true);
   assert.equal(feed.ingest(`spend/${DAY}/global`, { counted: 1 }, T0).ok, true);
+
+  // A **broken** clock is not a reason to throw. A port's error arrives with no
+  // instant of its own, so the reader asks its clock -- and an assembly from a
+  // clock that cannot be rendered refuses rather than raising inside itself.
+  const { reader: broken } = reader({ now: () => 1e300 });
+  assert.equal(broken.start(T0).ok, true, 'the instant a caller passes is the one that is judged');
+  assert.equal(broken.refused(`spend/${DAY}/global`).code, READER_CODES.BAD_NOW);
 });
 
 test('stop forgets the session, and a restart does not inherit it', () => {
