@@ -212,17 +212,15 @@ func finishedResult(in runview.Input, finishedSince, now time.Time) scanResult {
 	}}
 }
 
-// finishedTitle is a finished run's one-line title: the first line of its
-// task prompt, clipped as the runner's own registry entry titles a live
-// run (budget_session.go's registryEntry). Unlike that entry, it is not
-// redacted against the run's own secrets, which this reader never holds;
-// watch.clean sanitises it for display like every other bucket-derived
-// field here.
+// finishedTitle is a finished run's one-line title, from the ONE place the
+// text comes from (task.Spec.TitleLine): the title its launcher stored
+// (fugaro run --title), else its task prompt's first line. It is clipped as
+// the runner's own registry entry titles a live run (budget_session.go's
+// registryEntry). Unlike that entry, it is not redacted against the run's
+// own secrets, which this reader never holds; watch.clean sanitises it for
+// display like every other bucket-derived field here.
 func finishedTitle(t *task.Spec) string {
-	if t == nil {
-		return ""
-	}
-	title, _, _ := strings.Cut(strings.TrimSpace(t.Task), "\n")
+	title := t.TitleLine()
 	if runes := []rune(title); len(runes) > 80 {
 		title = string(runes[:80])
 	}

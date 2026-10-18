@@ -9,7 +9,9 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // release090 is a job image new enough to read a task's title (titlesSince).
@@ -295,6 +297,35 @@ func TestRunTitleGatesOnTheImageThatKnowsIt(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", release080)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261018-120000-abcd", "Add a feature"); err != nil {
 		t.Fatalf("a launch with no --title must not be gated: %v", err)
+	}
+}
+
+// A checkout: clone workflow has no build record to judge, so the same gate
+// is judged against base_images.base itself: 0.7.5 is cloneSince, so the
+// clone floor passes and the title floor (0.9.0) is what refuses.
+//
+// Mutation (drop the spec.Title != "" block from finishLaunch's clone
+// branch): the launch goes through on an image whose runner refuses the
+// whole task at bootstrap.
+func TestRunTitleGatesOnACloneWorkflow(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.5}\n")
+	testutil.IsolateGit(t)
+	other := mustSlug("github", "acme/other")
+	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n" +
+		"  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "--title", "Ship the flaky-test fix", "A task")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--title needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") ||
+		!strings.Contains(err.Error(), "ghcr.io/dimipaun/fugaro-base:0.7.5, release 0.7.5") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
 	}
 }
 
