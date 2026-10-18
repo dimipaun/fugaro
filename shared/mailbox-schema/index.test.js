@@ -758,6 +758,15 @@ test('canonicalBytes refuses a value JSON cannot carry, rather than dropping it'
   // surprise a caller that validated first.
   assert.throws(() => canonicalBytes({ ...good(), extra: undefined }), TypeError);
   assert.throws(() => canonicalBytes({ ...good(), extra: null }), TypeError);
+  // And it says WHICH failure it is, not merely that something failed: an
+  // absent-or-null field has no canonical form because omitting is not writing
+  // null, and that reason is the module's own. (The reason is asserted because
+  // it is also what makes the guard a guard: `null` and `undefined` would throw
+  // a TypeError from somewhere else entirely if this branch were dropped, and
+  // the difference between the two — one says why, the other accuses the
+  // caller's object of not being an object — is the whole of the refusal.)
+  assert.throws(() => canonicalBytes({ ...good(), extra: null }), /absent fields are omitted/);
+  assert.throws(() => canonicalBytes({ ...good(), extra: undefined }), /absent fields are omitted/);
   assert.throws(() => canonicalBytes(good({ at: undefined })), TypeError);
   assert.throws(() => canonicalBytes(null), TypeError);
   assert.throws(() => canonicalBytes('a message'), TypeError);
