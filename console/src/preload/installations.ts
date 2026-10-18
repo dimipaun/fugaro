@@ -3,9 +3,10 @@
 // rule 10, D13, D14; owner ruling C9, 2026-10-18).
 //
 // It is a second preload rather than a second window on the dashboard's, and
-// the reason is the surface: `src/preload/index.ts` exposes thirteen CLI reads
-// and one compatibility read to the document that draws the dashboard, and the
-// picker has no business with any of them. The two documents are served from the
+// the reason is the surface: `src/preload/index.ts` exposes **fourteen** rows to
+// the document that draws the dashboard -- the eleven CLI reads, the startup
+// handshake's answer, `openExternal`'s handover and `installation.current` -- and
+// the picker has no business with any of them. The two documents are served from the
 // same origin (`app://console`), so the *only* thing that separates their
 // surfaces is that each window is built with its own preload and each channel
 // prefix is gated on the document that may reach it -- `isSenderOnDocument` in
