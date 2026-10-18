@@ -28,7 +28,7 @@ P4.4's own line reads *"Files. None in this repository. Owner-run. Depends on
 P3.1, P4.2a. Verification. Check 89: a signed build reaches the store's internal
 track."* This document is the runbook for that verification; it is prose, and no
 repository file participates in the run. (One exception is recorded under
-[Recorded tensions, not resolved here](#recorded-tensions-not-resolved-here):
+[Recorded tensions, not resolved here](#14-recorded-tensions-not-resolved-here):
 `mobile/eas.json`, which Check 89's guard block attributes to P4.4 while the
 plan's `Files` line says none.)
 
@@ -102,7 +102,7 @@ it was made from, and a build from a dirty tree is not the artifact the release
 is.
 
 What this page adds is only the shape of the shell's prerequisites, so the guard
-can get past its first two lines:
+can pass its own first checks:
 
 - **a Node and npm you control** — `mobile/package.json` pins `engines` to
   `node >=22 <23` and `npm >=10`, and the same manifest's `test` script is the
@@ -292,15 +292,15 @@ a stylistic preference:
   That sentence is about Fugaro's own token; the reason it generalises to yours
   is that the same container, and the same reach, would hold it.
 
-| Credential | Where it lives | Who may read it |
-|---|---|---|
-| **iOS distribution certificate** | **EAS-managed** (EAS generates and stores it for your account) or **owner-held** (your keychain, via Xcode or `security`) | EAS's build servers, or your machine. **never in this repository** |
-| **iOS provisioning profile** | **EAS-managed**, or owner-held (a `.mobileprovision` on your machine) | as above. A profile is a credential-shaped file; Check 89's step 5 greps the tracked list for `.mobileprovision` |
-| **Android upload key (keystore)** | **EAS-managed** (EAS generates and stores it) or owner-held (a `.jks`/`.keystore` on your machine) | EAS's build servers, or your machine. **never in this repository** |
-| **Android app signing key** | **Play app signing** — **Google's**, not yours, and not something you can export | Google |
-| **App Store Connect API key** (a `.p8` file, a key id and an issuer id) | **owner-held**, on your machine, or in your password manager as the file | you. **Never in CI** for this check, and never pasted |
-| **Play service account** (the JSON key) | **owner-held**, on your machine at the path `mobile/eas.json` names — `serviceAccountKeyPath` | you, and `eas submit` reading that path. Its **contents** are never read by Check 89, and the file is never committed |
-| **Expo access token** (the one name CI may hold) | your Expo account's access tokens, on `https://expo.dev/`, under the account's own settings; stored as the repository secret **`EXPO_TOKEN`** only if a workflow needs it | you, and — if and only if a workflow is added — that workflow's job |
+| Credential | Where it lives | Who may read it | Where it must never be |
+|---|---|---|---|
+| **iOS distribution certificate** | **EAS-managed** (EAS generates and stores it for your account) or **owner-held** (your keychain, via Xcode or `security`) | EAS's build servers, or your machine | **never in this repository**, never in CI, never in an agent's environment |
+| **iOS provisioning profile** | **EAS-managed**, or owner-held (a `.mobileprovision` on your machine) | as above | as above — a profile is a credential-shaped file, and Check 89's step 5 greps the tracked list for `.mobileprovision` |
+| **Android upload key (keystore)** | **EAS-managed** (EAS generates and stores it) or owner-held (a `.jks`/`.keystore` on your machine) | EAS's build servers, or your machine | **never in this repository**, never in CI, never in an agent's environment |
+| **Android app signing key** | **Play app signing** — **Google's**, not yours, and not something you can export | Google | nowhere: there is no copy of it to place. This is the one credential whose location is not a choice |
+| **App Store Connect API key** (a `.p8` file, a key id and an issuer id) | **owner-held**, on your machine, or in your password manager as the file | you, and `eas submit` reading it | **never in this repository**, **never in CI** for this check, never pasted |
+| **Play service account** (the JSON key) | **owner-held**, on your machine at the path `mobile/eas.json` names — `serviceAccountKeyPath` | you, and `eas submit` reading that path | **never in this repository** (the file Check 89's step 5 looks for is `google-play-service-account.json`), never in CI. Its **contents** are never read by Check 89 |
+| **Expo access token** (the one name CI may hold) | your Expo account's access tokens, on `https://expo.dev/`, under the account's own settings; stored as the repository secret **`EXPO_TOKEN`** only if a workflow needs it | you, and — if and only if a workflow is added — that workflow's job | **never in this repository**, never on a build machine that does not need it |
 
 **The secret *names* a future build workflow would read, and nothing else.** This
 page names them and holds no value of any of them; a value here would be the
@@ -339,8 +339,9 @@ where a mistake becomes a public release rather than a failed build. Those reads
 are the check's, and this page does not restate them; what this page settles is
 **what the values have to be**, so the owner can write the profile once:
 
-- the build profile the check uses is named **`internal`** (`the `internal`
-  profile` in Check 89's step 1), and its **`distribution` must be `store`**.
+- the build profile the check uses is named **`internal`** — Check 89's step 1
+  calls it **the `internal` profile** — and its **`distribution` must be
+  `store`**.
   `distribution: "internal"` is an ad-hoc build with no store submission at all:
   it would build successfully and make every later step meaningless. This is the
   first place Check 89's guard turns a wrong value into a stop;
@@ -577,9 +578,12 @@ It is one file, and today two things are asked of it:
   prints them as its ready line.
 
 Both are defensible and they cannot both hold. Today the file on `main` carries
-neither field, so Check 89's guard line fails **before** it prints its ready
-line — an honest stop one line later than the missing-file stop, and the same
-conclusion. The two ways out:
+neither field, so Check 89's guard **line** — the one that reads the two keys out
+of `app.json` to build its ready line — fails before the check prints anything
+(it is a `KeyError`, not one of the guard's own stop messages, which is what the
+next reader of that block should expect to see). The conclusion is the same one
+the missing-file stop reaches: there is nothing to build an app identity from
+yet. The two ways out:
 
 1. **the identities go into `mobile/app.json`**, which is the only site Check
    89's guard reads, and P3.1's test loses its two absence assertions (D125's

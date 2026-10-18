@@ -36,6 +36,27 @@ package cli
 // identity tension it records rather than resolves (P3.1's config test and
 // Check 89's guard want opposite things of mobile/app.json, and both are on the
 // tree), and the directory's own index, which is where a reader finds it.
+//
+// Every check above is mutation-proven -- the bug was planted, the run went
+// red, the bug was removed. The mutations, in the order they were run, each
+// applied to the whole page (a phrase that wraps in the file is the same phrase
+// in the assertion, and a mutation that misses the wrapped copy is a mutation
+// that proves nothing):
+//
+//	| Mutation | Went red |
+//	| the plan task's name, and every "P4.4", replaced | TestDocsMobileEasRunbookNamesTheTaskAndTheCheck |
+//	| every "Check 89" replaced (54 occurrences) | TestDocsMobileEasRunbookNamesTheTaskAndTheCheck, TestDocsMobileEasRunbookDoesNotRestateCheck89 |
+//	| the "Never paste a signing key" warning dropped | TestDocsMobileEasRunbookStatesEveryOwnerOnlyWarning |
+//	| "credentials source" reworded | TestDocsMobileEasRunbookDoesNotRestateCheck89 |
+//	| EXPO_TOKEN renamed | TestDocsMobileEasRunbookNamesEveryCredentialAndWhereItLives, TestDocsMobileEasRunbookHoldsNoSecretShapedLiteral |
+//	| a PEM block planted in the page | TestDocsMobileEasRunbookHoldsNoSecretShapedLiteral |
+//	| a value assigned to a credential's name planted | TestDocsMobileEasRunbookHoldsNoSecretShapedLiteral |
+//	| docs.expo.dev replaced by a look-alike host | TestDocsMobileEasRunbookCitesOnlyTheAccountsOwnDocumentation |
+//	| "This runbook does not restate Check 89." reworded | TestDocsMobileEasRunbookDoesNotRestateCheck89 |
+//	| mobile-release renamed | TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape |
+//	| app-config.test.js's name dropped from the tension | TestDocsMobileEasRunbookRecordsTheBundleIdentityTension |
+//	| the README's row renamed | TestDocsMobileReadmeListsTheRunbook |
+//	| a pull-request trigger planted as a permitted one | TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape |
 
 import (
 	"net/url"
