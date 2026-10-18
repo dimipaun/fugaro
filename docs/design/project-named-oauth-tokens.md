@@ -181,9 +181,13 @@ The carrier, recommended:
   retry re-seal mirrored.
 - The runner takes it once, unseals it, registers the plaintext with its redactor
   (`internal/runner/runner.go:609-616`, `addSecret`), and puts it in the agent's environment as
-  `CLAUDE_CODE_OAUTH_TOKEN`. The key travels exactly as it does today: as the *value* of the
-  `FUGARO_BUDGET_TOKEN` marker in `LaunchSpec.Env` (`internal/cli/run.go`, the
-  `runner.BudgetTokenEnv + "=" + key` write; `internal/runner/budget_session.go:50`).
+  `CLAUDE_CODE_OAUTH_TOKEN`. The key travels by the carrier the seal already built for it: as the
+  *value* of the `FUGARO_BUDGET_TOKEN` marker in `LaunchSpec.Env`. On this branch that marker still
+  carries one bit — `internal/cli/run.go`'s `lspec.Env = []string{runner.BudgetTokenEnv + "=1"}`
+  (`internal/runner/budget_session.go:50` is the variable's name) — and `next-0.9`'s Slice B
+  replaces the `"=1"` with the encoded key. **Nothing new is added to the carrier**: no new
+  variable, no new permission, no new resource, which is [budget-token-channel.md](budget-token-channel.md)
+  §7.1's own point.
 - A second object, **not** a second field in the existing envelope. The budget token's envelope is
   versioned, reviewed and mutation-tested (`seal.go`, `seal_aad_test.go`, `seal_test.go` on
   `next-0.9`), and its take is the consume. Widening its payload would couple the credential's
