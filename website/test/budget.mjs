@@ -256,3 +256,59 @@ test('the README budget lines are read strictly', () => {
   )
   assert.throws(() => readmeBudgets('- **JavaScript per page:** zero\n'), /does not state the js budget/)
 })
+
+// ---- the numbers are the derivation, not a figure picked loose (D192) -------------------
+
+// D192: each README number is three times the build it was derived from plus 25 %, and the
+// README says which build. These read the derivation the README writes beside each number and
+// hold the number to it, so raising a ceiling means re-deriving it from a build the artifact
+// can be measured against — not editing the headline figure. The script is one file edited on
+// purpose, so its stated size is its size; the page and the site may grow under the × 3, and
+// may shrink up to a tenth before the stated build is too far above this one to stand.
+const DERIVATIONS = {
+  js: /\*\*JavaScript per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the one script[\s\S]*?\(([\d,]+) bytes/,
+  page: /\*\*Page weight per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the heaviest page[\s\S]*? at ([\d,]+) bytes/,
+  site: /\*\*Whole site:\*\* ([\d,]+) bytes\. Three times ([\d,]+) \(every file in `dist\/`, ([\d,]+)\s+bytes/,
+}
+
+/** Every way the README's numbers depart from their own derivation, given what is built. */
+export function derivationFailures(readme, measured) {
+  const out = []
+  const n = (s) => Number(s.replace(/,/g, ''))
+  for (const [key, re] of Object.entries(DERIVATIONS)) {
+    const m = re.exec(readme)
+    if (!m) {
+      out.push(`website/README.md does not write the ${key} budget as "N bytes. Three times T … (B bytes": D192 derives each number from a named build`)
+      continue
+    }
+    const [budget, tight, build] = [n(m[1]), n(m[2]), n(m[3])]
+    if (budget !== 3 * tight) out.push(`the ${key} budget is ${budget} bytes and three times ${tight} is ${3 * tight} (D192)`)
+    if (tight !== Math.ceil(build * 1.25)) out.push(`the ${key} tight figure is ${tight} bytes and ${build} plus 25 % is ${Math.ceil(build * 1.25)} (D192)`)
+    if (key === 'js' && build !== measured.js) out.push(`the README derives the JavaScript budget from a ${build}-byte site.js and the built one is ${measured.js} bytes: re-derive it in the commit that changes the script (D192)`)
+    if (key !== 'js' && build > measured[key] * 1.1) out.push(`the README derives the ${key} budget from a ${build}-byte build and this one is ${measured[key]} bytes: a stated build that far above the real one is a loosened budget (D192)`)
+  }
+  return out
+}
+
+function measuredNow() {
+  const pages = builtPages(DIST).map((p) => measurePage(p.html, p.rel, DIST))
+  return {
+    js: statSync(path.join(DIST, SCRIPT)).size,
+    page: Math.max(...pages.map((m) => m.weight)),
+    site: filesUnder(DIST).reduce((sum, rel) => sum + statSync(path.join(DIST, rel)).size, 0),
+  }
+}
+
+test("the README's budgets are D192's derivation from a build this one can be measured against", () => {
+  const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  assert.deepEqual(derivationFailures(readme, measuredNow()), [])
+})
+
+test('a budget raised without re-deriving it is refused', () => {
+  const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  const now = measuredNow()
+  const js = /\*\*JavaScript per page:\*\* ([\d,]+) bytes/.exec(readme)[1]
+  assert.match(derivationFailures(readme.replace(`**JavaScript per page:** ${js} bytes`, '**JavaScript per page:** 100,000 bytes'), now).join('\n'), /three times/)
+  assert.match(derivationFailures(readme, { ...now, js: now.js + 1 }).join('\n'), /re-derive it/)
+  assert.match(derivationFailures(readme, { ...now, site: Math.floor(now.site / 2) }).join('\n'), /loosened budget/)
+})

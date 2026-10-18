@@ -545,9 +545,10 @@ test('Escape and a click outside close the menu, and the focus goes back to a to
   narrow.document.dispatch('keydown', { key: 'Escape' })
   assert.equal(drawer.open, false, 'Escape left the drawer open')
   assert.equal(group.open, false, 'Escape left a group open')
-  assert.equal(
-    narrow.document.activeElement,
-    drawer.querySelector('summary'),
+  // Compared by identity and asserted as a boolean: the elements wrap whole parsed pages,
+  // and a failing deep comparison would print them.
+  assert.ok(
+    narrow.document.activeElement === drawer.querySelector('summary'),
     'Escape inside the drawer did not give the focus back to the drawer toggle: the panel is the toggle\'s sibling, and a focus left in it is a focus on something no longer drawn',
   )
 
@@ -558,7 +559,7 @@ test('Escape and a click outside close the menu, and the focus goes back to a to
   wideGroup.querySelector('a').focus()
   wide.document.dispatch('keydown', { key: 'Escape' })
   assert.equal(wideGroup.open, false, 'Escape left a dropdown open')
-  assert.equal(wide.document.activeElement, wideGroup.querySelector('summary'), 'Escape in a dropdown did not give the focus back to its toggle')
+  assert.ok(wide.document.activeElement === wideGroup.querySelector('summary'), 'Escape in a dropdown did not give the focus back to its toggle')
 
   // A key that is not Escape does nothing; a click inside the menu does nothing; outside closes.
   wideGroup.open = true
