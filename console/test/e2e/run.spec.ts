@@ -42,6 +42,16 @@
 // pixels differ, so a golden recorded on the wrong platform would compare
 // nothing.
 //
+// **The frame is the mount, not the page** (`#run-mount`, the host this spec
+// draws its screen into), for the reason `live.spec.ts` records at length: the
+// window's own entry draws a second dashboard beside this mount, and two of its
+// strings can never be the same in two runs -- the installation header carries
+// the active installation's **absolute binary path** (this spec's own `mkdtemp`
+// scratch directory), and the Live screen it draws carries the console's
+// wall-clock reading of when the last frame *arrived*. The screen under test is
+// drawn from the documents in this file and from nothing else, so its frame is
+// the same pixels on every run.
+//
 // They are compared, never written by a run: `playwright.config.ts` sets
 // `updateSnapshots: 'none'`, so a missing baseline FAILS. They are recorded by
 // an owner, on the platform the comparison runs on (macOS and Linux pixels
@@ -78,6 +88,10 @@ const GOLDEN_NAMES = {
   light: ['run', 'light.png'],
   dark: ['run', 'dark.png'],
 } as const
+
+/** THE_MOUNT is where this spec draws the screen, and therefore what the goldens
+ * frame: the mount and never the page (see the header). */
+const THE_MOUNT = '#run-mount'
 
 /** SKIP_GOLDENS is the one documented way to run this file with no goldens
  * recorded: `FUGARO_CONSOLE_GOLDENS=skip`. Anything else, including unset, means
@@ -596,7 +610,7 @@ test.describe('the Run detail screen', () => {
   test('draws the run screen', async () => {
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
     await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, '2026-10-15T12:05:00Z', 'light')
-    await expect(page).toHaveScreenshot(GOLDEN_NAMES.light)
+    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.light)
   })
 
   test('draws the run screen in the dark theme', async () => {
@@ -604,7 +618,7 @@ test.describe('the Run detail screen', () => {
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await expect(page).toHaveScreenshot(GOLDEN_NAMES.dark)
+    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.dark)
   })
 
   test('resolves the golden names under the run directory', ({}, testInfo) => {
