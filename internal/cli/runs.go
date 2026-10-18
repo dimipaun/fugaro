@@ -68,16 +68,17 @@ type lsDoc struct {
 	Warnings []string `json:"warnings"`
 }
 
-// newRunsCmd is "fugaro runs". ls is its only subcommand today; the 0.7.0
-// top-level `fugaro ls` tombstone was deleted by #350 in 0.7.5 (design
-// generic-tool §5, G17; the owner's 2026-10-14 ruling moved the deletion from
-// 0.8.0 to the next release — the one that became 0.7.5, #370; plan Task 29).
+// newRunsCmd is "fugaro runs": ls lists the runs, and stats aggregates them
+// by the person who started each one. The 0.7.0 top-level `fugaro ls`
+// tombstone was deleted by #350 in 0.7.5 (design generic-tool §5, G17; the
+// owner's 2026-10-14 ruling moved the deletion from 0.8.0 to the next
+// release — the one that became 0.7.5, #370; plan Task 29).
 func newRunsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "runs",
 		Short: "List and inspect runs",
 	}
-	cmd.AddCommand(newLsCmd())
+	cmd.AddCommand(newLsCmd(), newRunsStatsCmd())
 	return cmd
 }
 

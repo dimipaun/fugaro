@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 	storage "google.golang.org/api/storage/v1"
@@ -67,17 +66,19 @@ func doctorRunsBucketIAM(ctx context.Context, lc *localcfg.Config, c *crm.Servic
 }
 
 // selfCheck places the caller (only by the local config's self-asserted
-// user) and says what its unconditioned write access means.
+// user) and says what its unconditioned write access means. Which list
+// places it is read off the same two predicates every other command that
+// asks "is this identity an operator of the installation" reads (roles.go).
 func selfCheck(bucket string, held bool, user string, launchers, operators []string) doctorCheck {
 	if !held {
 		return doctorCheck{ID: "runs-bucket-iam", OK: true}
 	}
-	m := "user:" + user
+	m := meMember(user)
 	const text = "your credentials can write anywhere in gs://%s: this installation predates the 0.7.0 bucket hardening"
 	switch {
-	case user != "" && slices.Contains(operators, m):
+	case operatorMember(m, operators):
 		return doctorCheck{ID: "runs-bucket-iam", OK: true}
-	case user != "" && slices.Contains(launchers, m):
+	case launcherMember(m, launchers):
 		return doctorCheck{ID: "runs-bucket-iam", Severity: "warning", Problem: fmt.Sprintf(text, bucket),
 			Fix: "ask an operator to run fugaro init (0.7.0 or later)"}
 	default:
