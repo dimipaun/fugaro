@@ -93,6 +93,27 @@ with fixtures that keep its refusals running, and none of them needs the network
   - **Whole site:** 1,454,826 bytes. Three times 484,942 (every file in `dist/`, 387,953
     bytes, plus 25%).
 
+  Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
+  principle is "the gist above the fold on every page with very few words", which no byte
+  budget can hold (D187, D188). The same file reads them out of this list, and the same
+  rule applies — a task that needs more raises the number here, in the commit that needs
+  it:
+  - **Words in a page's lead:** 40 words. The lead is the visible text of `main` between
+    the page's `h1` and its first `h2` — the paragraph a page opens with before its first
+    section — and it is a lead and not an introduction: 40 words at most, on every page,
+    the three reference pages included, because a lead is the page's own whichever page it
+    is. A page whose `main` carries no `h2` at all (the homepage, whose hero is the whole
+    page) has no such region, and its lead is the paragraphs that follow its `h1`.
+  - **Words per page:** 250 words. Every word a reader sees inside `main` — command blocks
+    and code spans included, since the ceiling is a claim about the page rather than about
+    its prose — counted the way `test/lib/html.mjs` reads a page (a script or style body is
+    not text, a `hidden` subtree is not text, an image's `alt` is). `/docs/`, `/security/`
+    and `/changelog/` are exempt, which is D188's own list: each renders a document of this
+    repository rather than a page of the site, and the brief allows those to stay long.
+    The ceiling is set against the site as it was measured before the redesign
+    (`docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
+    getting-started 431, privacy 277, community 268 — every one of them over it).
+
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
 requests and the tests here are hermetic, so a browser-driven audit is not one of them.
