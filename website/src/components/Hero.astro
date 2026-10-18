@@ -133,10 +133,15 @@ const videoExists = facts.features.video
     /* The tagline is the page's `h1`, and on a phone it is the first thing that has to fit:
        at the desktop size (`--font-size-4xl`, 56px) the sentence runs to six lines and its
        own bottom lands below a 390 × 844 first screen, so the promise under it and the
-       first install command were both below the fold (RF5's measurement, P5). This is the
-       same clamp the layout's own `h1` rule uses — a phone gets `--font-size-2xl`, a wide
-       viewport gets the full size, and nothing between 6vw and the ends moves — so the
-       tagline is a heading like the other pages' headings at every width. */
+       first install command were both below the fold (RF5's measurement, P5). The shape is
+       the one the layout's own `h1` rule takes — `clamp(2xl, 6vw, …)`, so a phone gets
+       `--font-size-2xl` and a wide viewport gets the rule's upper end — but the upper end
+       here is the hero's own: this tagline is already the site's largest type at 56px
+       (`--font-size-4xl`), and reading it at the layout's `--font-size-3xl` (44px, what
+       every other page's `h1` takes above about 733px) would shrink the one loud line on
+       the one page whose whole job is the promise, which is a design change and not P5's.
+       What sits between 6vw and the ends is where the two rules agree; what they do at the
+       wide end is the hero's, on purpose. */
     font-size: clamp(var(--font-size-2xl), 6vw, var(--font-size-4xl));
     line-height: var(--leading-tight);
     letter-spacing: var(--tracking-tight);
