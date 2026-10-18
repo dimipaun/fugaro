@@ -42,6 +42,11 @@
 #                    (default: the real merge commit)
 # The api asserts that, once a PR has merged, it is only asked about the
 # merge commit and that PR's head (checks and tree).
+# A required check name with no arm above -- one added to release-gate.sh's
+# `names` that no test here sets up -- is an **error**, not a default
+# `success`: a fake that vouched for any name it did not recognise kept every
+# release.sh test green when a sixth name nobody produces entered the gate.
+# TestFakeGHAnswersEveryCheckTheGateRequires holds the two lists together.
 set -eu
 dir=$FAKE_GH_DIR
 printf '%s\n' "$*" >>"$dir/log"
@@ -219,8 +224,8 @@ case "$1 ${2:-}" in
           ;;
       esac
     done
-    echo success
-    exit 0
+    printf 'fake-gh.sh: the api asked about a required check name this fake has no arm for: %s\n' "$*" >&2
+    exit 1
     ;;
 esac
 

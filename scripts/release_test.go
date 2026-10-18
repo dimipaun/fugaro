@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -234,12 +235,135 @@ func runRelease(t *testing.T, r *releaseRepo, g *ghState, stdin string, args ...
 	return runResult{out: out.String(), err: err}
 }
 
-// greenChecks is every check scripts/release-gate.sh requires, green: the
-// three CLI jobs and `console`, which stands for both check runs the console
-// workflow's matrix reports (Task 4.6 -- the fake answers for both legs from
-// FAKE_GH_CHECK_CONSOLE, so the legs cannot be set apart here).
+// greenChecks is every check scripts/release-gate.sh requires, green, keyed by
+// the check name's stem: the three CLI jobs and `console`, which stands for
+// both check runs the console workflow's matrix reports (Task 4.6 -- the fake
+// answers for both legs from FAKE_GH_CHECK_CONSOLE, so the legs cannot be set
+// apart here). That claim is not left to the reader:
+// TestFakeGHAnswersEveryCheckTheGateRequires reads the gate's own `names` array
+// and fails if a name it holds has no stem here or no arm in the fake.
 func greenChecks() map[string]string {
 	return map[string]string{"test": "success", "terraform": "success", "rules": "success", "console": "success"}
+}
+
+// TestFakeGHAnswersEveryCheckTheGateRequires ties the three lists that have to
+// agree about what the gate requires -- the gate's `names` array, greenChecks
+// and scripts/testdata/fake-gh.sh's arms -- which nothing did before: the fake
+// ended with `echo success` for any name it did not recognise, so a sixth name
+// added to the gate that no workflow reports left every release.sh gate test
+// green, the fake vouching for a check nobody produces. The names are read from
+// the gate rather than repeated, and each one is actually asked of the fake, so
+// a missing arm fails here instead of passing on a default.
+func TestFakeGHAnswersEveryCheckTheGateRequires(t *testing.T) {
+	moduleRoot := testutil.ModuleRoot()
+	script, err := os.ReadFile(filepath.Join(moduleRoot, "scripts", "release-gate.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := releaseGateNames(t, string(script))
+	if len(names) == 0 {
+		t.Fatal("read no names from scripts/release-gate.sh: this test reads the gate's own required set")
+	}
+
+	// Every required name's stem is a key greenChecks covers, so a new check in
+	// the gate cannot be green-by-accident in the release.sh fixtures.
+	green := greenChecks()
+	for _, name := range names {
+		stem, _, _ := strings.Cut(name, " (")
+		if _, ok := green[stem]; !ok {
+			t.Errorf("scripts/release-gate.sh requires %q but greenChecks() has no %q: the release.sh tests would set no conclusion for it, and a check nobody sets is a check the fixtures cannot fail", name, stem)
+		}
+	}
+
+	// And the fake answers each name: its arm matches, so it does not fall
+	// through to the error it now ends with.
+	testutil.IsolateGit(t)
+	origin := testutil.NewRemote(t, map[string]string{"README.md": "seed\n"})
+	sha := testutil.Git(t, origin, "rev-parse", "HEAD")
+	dir := t.TempDir()
+	var env []string
+	env = append(env,
+		"FAKE_GH_DIR="+dir,
+		"FAKE_GH_ORIGIN="+origin,
+		"FAKE_GH_REPO=o/r",
+		"FAKE_GH_STATE="+filepath.Join(dir, "target.tsv"),
+	)
+	if err := os.WriteFile(filepath.Join(dir, "target.tsv"), []byte(strings.Join(greenCheckRunLines(names), "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for stem, conclusion := range green {
+		env = append(env, "FAKE_GH_CHECK_"+strings.ToUpper(stem)+"="+conclusion)
+	}
+	bin := fakeBinDir(t)
+
+	ask := func(name string) (string, error) {
+		// The gate's own check_state shape, so the fake's arm matches the way it
+		// does in a real run: the name and the app slug in one select.
+		expr := fmt.Sprintf(`[.check_runs[] | select(.name == %q and .app.slug == "github-actions")] | length`, name)
+		cmd := exec.Command(filepath.Join(bin, "gh"), "api",
+			"repos/o/r/commits/"+sha+"/check-runs?per_page=100", "--jq", expr)
+		cmd.Env = append(os.Environ(), env...)
+		var out bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &out
+		err := cmd.Run()
+		return out.String(), err
+	}
+
+	for _, name := range names {
+		out, err := ask(name)
+		if err != nil {
+			t.Errorf("the fake gh refused %q, which scripts/release-gate.sh requires: %v\n%s", name, err, out)
+			continue
+		}
+		if strings.TrimSpace(out) == "0" {
+			t.Errorf("the fake gh answered no run for %q: the fixtures set %q green, so a name with no run is a release.sh test passing on a check that does not exist", name, name)
+		}
+	}
+	// The fail-closed half: a name with no arm is an error, not a default
+	// success. This is the mutation-proof assertion for the line that used to
+	// read `echo success`.
+	if out, err := ask("lint"); err == nil {
+		t.Errorf("the fake gh answered %q, a check it has no arm for, with %q: a fake that vouches for any name keeps the release.sh tests green when a name nobody reports enters the gate", "lint", strings.TrimSpace(out))
+	}
+}
+
+// releaseGateNames reads the required-check set out of scripts/release-gate.sh:
+// the quoted strings of its single `names=(...)` array, in the order the script
+// has them. It is how this package's tests read the gate rather than repeating
+// it (the docs test internal/cli/docs_desktop_console_test.go reads the same
+// line, and pins it against the console workflow's matrix).
+func releaseGateNames(t *testing.T, script string) []string {
+	t.Helper()
+	line := ""
+	for _, l := range strings.Split(script, "\n") {
+		if strings.HasPrefix(l, "names=(") {
+			if line != "" {
+				t.Fatalf("scripts/release-gate.sh has more than one `names=(` line: this test cannot tell which set the gate requires")
+			}
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatal("scripts/release-gate.sh has no `names=(...)` line: the required set is not readable, and a whitespace-split `names=` string cannot hold a name with a space in it")
+	}
+	var names []string
+	for _, quoted := range quoteRE.FindAllStringSubmatch(line, -1) {
+		names = append(names, quoted[1])
+	}
+	return names
+}
+
+// quoteRE matches one `"..."` element of the gate's names array.
+var quoteRE = regexp.MustCompile(`"([^"]*)"`)
+
+// greenCheckRunLines is the fake's state file for a fully green commit: one
+// `name<TAB>app<TAB>state` line per required check run.
+func greenCheckRunLines(names []string) []string {
+	lines := make([]string, 0, len(names))
+	for _, name := range names {
+		lines = append(lines, name+"\tgithub-actions\tsuccess")
+	}
+	return lines
 }
 
 // TestPreconditionFailures checks every precondition stops the script with
