@@ -354,10 +354,13 @@ func codexOAuthRefusal(name string) error {
 // own secret (config.ReservedProviderSecret): storing a workflow's or another
 // provider's value under it would be captured the day the key is renamed to
 // the convention. provider and name are config-sourced names, stated with
-// Printable.
+// Printable — and so is the conventional name derived from provider, which
+// carries the same characters through: a provider entry named with a bidi
+// override would otherwise reach the terminal raw inside the sentence that
+// names the name it reserves.
 func providerConventionRefusal(provider, name string) error {
 	return userErr("%s is reserved for model provider %s's key: the convention names a provider's key after its entry (%s), and that name belongs to that provider whatever its .secret is written as today, so no other value may be stored under it. Store the workflow's own secret under a name of its own",
-		pluginwire.Printable(name), pluginwire.Printable(provider), config.ProviderSecretConvention(provider))
+		pluginwire.Printable(name), pluginwire.Printable(provider), pluginwire.Printable(config.ProviderSecretConvention(provider)))
 }
 
 // claudeOAuthAccountAllowed reports whether name (shaped

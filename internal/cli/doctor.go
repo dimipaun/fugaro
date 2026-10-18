@@ -90,7 +90,7 @@ func doctorProviderSecretNamesCheck(lc *localcfg.Config) *doctorCheck {
 	var lines []string
 	for _, name := range slices.Sorted(maps.Keys(lc.Providers)) {
 		if msg := config.SecretNameOffConvention(name, lc.Providers[name]); msg != "" {
-			lines = append(lines, "provider "+pluginwire.Printable(name)+" "+msg)
+			lines = append(lines, "provider "+pluginwire.Printable(name)+": "+msg)
 		}
 	}
 	if len(lines) == 0 {

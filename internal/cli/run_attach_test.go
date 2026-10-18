@@ -1198,6 +1198,30 @@ func TestAttachNamesTheRouteTheAuthModeActuallyTakes(t *testing.T) {
 	}
 }
 
+// TestAttachOAuthRouteNamesTheReservedSecret: the oauth destination line
+// names the secret the token is stored under — claude-oauth-token — rather
+// than a bare "oauth token". The reserved name is what tells this credential
+// apart from another harness's (codex-oauth-token is reserved for Codex,
+// owner ruling of 2026-10-18), and a line saying only "oauth token" names a
+// credential the owner cannot find and could not tell from the next one.
+//
+// The expected label is written out here rather than compared against
+// attachRouteOAuth: that constant is what the test above uses, so a revert to
+// the old wording would move both sides of that comparison and pass.
+//
+// Mutation (attachRouteOAuth = "Anthropic (oauth token)", the wording before
+// this change): fails, and so does any label that drops the secret's name.
+func TestAttachOAuthRouteNamesTheReservedSecret(t *testing.T) {
+	if want := "Anthropic (claude-oauth-token)"; attachRouteOAuth != want {
+		t.Fatalf("attachRouteOAuth = %q, want %q", attachRouteOAuth, want)
+	}
+	var buf bytes.Buffer
+	attachProviderWarning(&buf, attachProviders(nil, config.Agent{Auth: "oauth"}, "acme/app"))
+	if !strings.Contains(buf.String(), "Anthropic (claude-oauth-token)") {
+		t.Fatalf("the oauth destination line does not name the secret:\n%s", buf.String())
+	}
+}
+
 // TestAttachProviderWarningIsSilentWithoutAttachments: it is printed once per
 // launch and only when --attach carried a file, so a plain artifact launch —
 // the common case — says nothing about destinations.
