@@ -12,12 +12,15 @@
  *     with its control already in it and `hidden`, and this reveals the control and drives
  *     it. A browser that runs no script therefore shows the command and no button, rather
  *     than a button that copies nothing.
- *   - **Escape and a click outside close an open menu (part P3).** The menu's two levels are
- *     `<details>` and open and close by themselves (and the groups share a `name`, so only
- *     one is open at a time); what a `<details>` does not do is close when the reader
- *     presses Escape or clicks somewhere else, which is what a menu owes a keyboard. Closing
- *     is all this adds: with no script the menu still opens, still closes and still reaches
- *     every link.
+ *   - **The menu: Escape and a click outside close an open submenu (part P3), and on a device
+ *     whose pointer hovers a submenu opens when the pointer arrives at its group (the owner's
+ *     brief of 2026-10-18, item 1).** The menu's two levels are `<details>` and open and close
+ *     by themselves (and the groups share a `name`, so only one is open at a time). What a
+ *     `<details>` does not do is close when the reader presses Escape or clicks somewhere
+ *     else, or open when a pointer merely arrives at it, and those two are what this file
+ *     adds: with no script the menu still opens, still closes and still reaches every link.
+ *     The hover behaviour is bound only where `matchMedia` says the pointer hovers, so a
+ *     touch screen keeps the tap it has always had.
  *   - **The consent banner, and the analytics gate behind it (W1.12, W3.2; D93, D106).** The
  *     banner's two buttons write one decision to `localStorage`; this file reveals the banner
  *     when no decision is stored, and — only when that decision is `granted` — loads Google's
@@ -63,6 +66,27 @@
 
   // The menu, and everything that is open in it (P3).
   var OPEN_MENUS = '.site-nav details[open]'
+
+  // The menu's submenus: one `<details>` per group, whose `<summary>` is the control that
+  // announces the group's state. The drawer is not one of them — it is the narrow viewport's
+  // toggle, and it opens and closes by its own click.
+  var GROUP_DETAILS = '.site-nav-group details'
+  var SUMMARY = 'summary'
+
+  // A device whose pointer hovers opens a group's submenu when the pointer arrives at the
+  // group and closes it a moment after the pointer leaves (the owner's brief of 2026-10-18,
+  // item 1). The test is the pointer's capability and never the viewport's width: a tablet
+  // 1280 px wide has no hover to give, and a phone with a mouse attached has one. It is the
+  // query `base.css` scopes the menu's hover states to, and `test/nav-hover.mjs` holds the two
+  // strings to each other.
+  var HOVER_QUERY = '(hover: hover) and (pointer: fine)'
+
+  // How long a submenu stays open after the pointer leaves its group. A menu that closes the
+  // instant the pointer leaves the trigger is a menu that cannot be entered: the cursor
+  // crosses the seam between the summary and the list, and it clips the corner of a
+  // neighbouring group on the way. Long enough to cross, short enough that a menu the reader
+  // has walked away from does not hang over the page.
+  var CLOSE_AFTER_MS = 200
 
   // Whether this browser has a clipboard to write to at all. A control that cannot do the
   // one thing it offers is worse than no control, so a browser without one keeps the
@@ -115,6 +139,12 @@
     return !!(panel && details.classList.contains('site-nav-drawer') && panel.contains(element))
   }
 
+  // The focus this file has just given back, and the reason the group it lands on does not
+  // reopen. Both closes below hand the focus to the trigger they closed, and a trigger that
+  // reopened what was just closed under it would be a menu no keyboard could dismiss. It is
+  // cleared by the next focus that arrives, whichever trigger that lands on.
+  var restored = null
+
   // Close every open menu. A menu closed under the reader's focus would leave that focus on
   // an element that is no longer rendered, so the control that opened it takes the focus
   // back — which is where a keyboard reader expects to be after dismissing a menu. Menus come
@@ -130,7 +160,97 @@
       if (!back && summary && holds(open[i], active) && summary.getClientRects().length > 0) back = summary
     }
     for (var j = 0; j < open.length; j++) open[j].open = false
-    if (back) back.focus()
+    if (back && back !== active) {
+      restored = back
+      back.focus()
+    }
+  }
+
+  // What a `<summary>` announces, kept in step with the `open` attribute by the one event a
+  // browser fires when that attribute changes: a click, Enter or Space, a sibling in the
+  // group's exclusive set, or this file's own hover below. A `<summary>` already exposes its
+  // parent's state by itself — that native mapping is what makes the menu work with no script
+  // at all — and the attribute written here is the same state said in the place a reader of
+  // the DOM looks for it. The event does not bubble, so it is caught on the way down instead:
+  // one listener, for every group, in every mode.
+  //
+  // Nothing writes the attribute before a toggle happens, which is the point: with no script
+  // there is no attribute to override the mapping with, and no state to go stale.
+  function expanded() {
+    document.addEventListener(
+      'toggle',
+      function (event) {
+        var group = event.target
+        var parent = group && group.parentElement
+        if (!group || !parent || !parent.classList || !parent.classList.contains('site-nav-group')) return
+        var summary = group.querySelector(SUMMARY)
+        if (summary) summary.setAttribute('aria-expanded', group.open ? 'true' : 'false')
+      },
+      true,
+    )
+  }
+
+  // Whether this device's pointer hovers. A browser with no `matchMedia` to ask cannot say,
+  // and a menu whose hover behaviour is guessed at is worse than one that keeps the click:
+  // no answer means no hover behaviour.
+  function hovers() {
+    return !!(window.matchMedia && window.matchMedia(HOVER_QUERY).matches)
+  }
+
+  // The pointer's way in and out of a group (the owner's brief of 2026-10-18, item 1), bound
+  // on the group's `<details>` because that element holds both the trigger and the list: a
+  // pointer travelling from the summary into the list never leaves it, so the submenu cannot
+  // close under a reader who is on their way to a link.
+  //
+  // A group opens when the pointer arrives and when its trigger takes the focus — a keyboard
+  // reader who tabs to a group has to be able to reach the links inside it, and Tab from the
+  // trigger then goes into the list rather than past it — and it closes `CLOSE_AFTER_MS` after
+  // the pointer leaves. What this file does not touch is the click: a `<summary>` toggles its
+  // own group, so a click on a group the pointer has already opened closes it, which is what
+  // the control did before any of this and what a reader pressing it is asking for.
+  function hoverGroups() {
+    var groups = document.querySelectorAll(GROUP_DETAILS)
+    for (var i = 0; i < groups.length; i++) {
+      ;(function (group) {
+        var summary = group.querySelector(SUMMARY)
+        var closesAt = null
+
+        function stopClosing() {
+          if (closesAt !== null) window.clearTimeout(closesAt)
+          closesAt = null
+        }
+
+        function close() {
+          closesAt = null
+          // A group closed under the focus of a link inside it would leave that focus on an
+          // element that is no longer drawn, which is the courtesy `closeMenus` pays on Escape.
+          // The summary itself needs none: it is still drawn, and re-focusing what already
+          // holds the focus fires no event to be mistaken for a reader arriving at it.
+          if (summary && document.activeElement !== summary && holds(group, document.activeElement)) {
+            restored = summary
+            summary.focus()
+          }
+          group.open = false
+        }
+
+        group.addEventListener('mouseenter', function () {
+          stopClosing()
+          group.open = true
+        })
+
+        group.addEventListener('mouseleave', function () {
+          stopClosing()
+          closesAt = window.setTimeout(close, CLOSE_AFTER_MS)
+        })
+
+        group.addEventListener('focusin', function (event) {
+          var fromClosing = restored
+          restored = null
+          if (!summary || event.target !== summary || fromClosing === summary) return
+          group.open = true
+        })
+      })(groups[i])
+    }
   }
 
   function menu() {
@@ -142,6 +262,8 @@
       if (target && target.closest && target.closest('.site-nav')) return
       closeMenus()
     })
+    expanded()
+    if (hovers()) hoverGroups()
   }
 
   // ---- the consent banner, and the analytics gate behind it (W1.12, W3.2) ----------------

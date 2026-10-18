@@ -30,8 +30,11 @@
  *      is the only place the exception is written down.
  *
  *   5. **The site's one script.** `public/scripts/site.js` (D183) is loaded here, once, for
- *      every page: it is the copy control on the command blocks (P6), and it is the only
- *      script file the artifact carries. `defer` is the load's whole contract — the script
+ *      every page: it is the copy control on the command blocks (P6), the menu's Escape and
+ *      outside-click close and its hover-open on a pointer that hovers (P3, and the owner's
+ *      brief of 2026-10-18 item 1), and the consent gate's banner and analytics bootstrap
+ *      (W3.2), and it is the only script file the artifact carries. `defer` is the load's
+ *      whole contract — the script
  *      runs after the document is parsed, so every block it drives is already in the tree —
  *      and nothing on any page depends on it: the commands are in the markup in full and the
  *      controls are emitted `hidden` and revealed by it.
@@ -297,7 +300,10 @@ const analyticsEnabled = facts.analytics.enabled
           drawer toggle above the panel. Both levels are `<details>`, so both open and close
           with JavaScript off, need no CSP decision and cost nothing of the JavaScript budget;
           `public/scripts/site.js` adds only what `<details>` does not do by itself — Escape
-          and a click outside close what is open.
+          and a click outside close what is open, and, on a device whose pointer hovers, a
+          group's submenu opens when the pointer arrives at it (the owner's brief of
+          2026-10-18, item 1; the script asks `matchMedia` for that pointer, so a touch
+          screen keeps the tap it has always had).
 
           **The panel is the toggle's next sibling, not its child, and that is the one
           structural decision here.** A closed `<details>` hides its own children in a way

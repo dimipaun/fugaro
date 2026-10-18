@@ -146,7 +146,6 @@ a.skip-link:focus {
   cursor: pointer;
 }
 
-.site-nav-toggle:hover,
 .site-nav-toggle:focus-visible,
 .site-nav-drawer[open] > .site-nav-toggle {
   border-color: var(--accent);
@@ -190,11 +189,39 @@ a.skip-link:focus {
   cursor: pointer;
 }
 
-.site-nav-group > details > summary:hover,
 .site-nav-group > details > summary:focus-visible {
   color: var(--text);
   text-decoration: underline;
   text-underline-offset: 0.25em;
+}
+
+/* The menu's hover states, for a pointer that hovers and for no other kind (the owner's brief
+ * of 2026-10-18, item 1: a group's submenu opens when the pointer arrives at it). The query is
+ * the pointer's capability and never the viewport's width — a tablet 1280 px wide has no hover
+ * to give, and a phone with a mouse attached has one — and `public/scripts/site.js` asks the
+ * same query with `matchMedia` before it binds anything, so the mark the pointer sees and the
+ * state the pointer sets are decided by one rule rather than two. `test/nav-hover.mjs` holds
+ * the two strings to each other, and refuses a width query in either.
+ *
+ * The block is the menu's every `:hover` rule, the drawer's own toggle included, because a
+ * `:hover` that sticks after a tap is a mark on a control the reader has not opened: on a touch
+ * screen there is no hover, so there is no hover state. Nothing else about the drawer or the
+ * header's one row changes — the toggle is still a `<summary>`, the panel is still its sibling
+ * and the row still does not wrap. */
+@media (hover: hover) and (pointer: fine) {
+  .site-nav-group > details > summary:hover,
+  .site-nav a:hover {
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 0.25em;
+  }
+
+  /* The drawer's toggle is drawn as a button, so its hover is its border and not an
+   * underline under the word inside it. */
+  .site-nav-toggle:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
 }
 
 /* The group holding the page being read says so, because on a wide viewport the dropdown is
@@ -269,7 +296,6 @@ a.skip-link:focus {
   text-decoration: none;
 }
 
-.site-nav a:hover,
 .site-nav a:focus-visible {
   color: var(--text);
   text-decoration: underline;
