@@ -271,6 +271,9 @@ const FULL_ROW: JSONDoc = Object.freeze({
   settled: true,
   branch: 'feat/console-fixtures',
   outcome: 'ready',
+  // The run's own record of the paths it changed (console v2 design D27, F17;
+  // `runstore.ChangedFiles`): absent for a run that recorded none.
+  changed_files: { paths: ['console/src/shared/schema.ts', 'internal/runview/runview.go'], total: 2 },
   // What a run that delivered artifacts carries (`internal/runview/runview.go`,
   // between `outcome` and `task_pr`): the record's own count and byte total.
   // Absent for every run that opens a pull request, which is why the omission
