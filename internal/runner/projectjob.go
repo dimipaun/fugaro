@@ -183,6 +183,29 @@ func projectJobCandidates(p *projectpolicy.Policy) []jobTriple {
 	return out
 }
 
+// ProjectJobOfPolicy is the (profile, provider, account) of the project job
+// named job that the published policy defines, and whether it defines one at
+// all. It is the same computation and the same order matchJobName uses, so a
+// reader outside this package — internal/cli's watch, which shows a run's job
+// in its JSON — can never disagree with the runner about which job is whose,
+// and neither of them ever parses the name back (R2-5).
+//
+// ok is false for a name no profile of the policy computes: a per-repository
+// job, another installation's, or one a policy no longer describes. p may be
+// nil, which is a project that has published no policy and so defines no
+// project job.
+func ProjectJobOfPolicy(p *projectpolicy.Policy, job string) (profile, provider, account string, ok bool) {
+	if p == nil || job == "" {
+		return "", "", "", false
+	}
+	for _, c := range projectJobCandidates(p) {
+		if gcp.ProjectJobName(c.Profile, c.Provider, c.Account) == job {
+			return c.Profile, c.Provider, c.Account, true
+		}
+	}
+	return "", "", "", false
+}
+
 // legacyVariant is gcp.WorkflowVariant(workflow, token) for the workflow the
 // run's own task.json names, with the two refusals that keep the variant's
 // preconditions honest: WorkflowVariant panics on a workflow or a token outside

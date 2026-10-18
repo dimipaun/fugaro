@@ -9,7 +9,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/watch"
 )
 
 // The launcher's half of the project-centric job model (design §4.1, plan
@@ -144,6 +148,66 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 		Profile: profile,
 		Timeout: timeout + backend.TaskTimeoutSlack,
 	}, nil
+}
+
+// projectJobIndex places a run's Cloud Run job, for the readers that show it
+// (plan task 3.5 step 2: watch's JSON gains profile, provider and account
+// beside the job).
+//
+// The name a run's launch.json records is the only thing about the job anyone
+// wrote down, and it spells none of the three out. So the triple is *computed*
+// — every (profile, provider, account) the project's published policy defines,
+// with gcp.ProjectJobName, matched against the name — and never parsed out of
+// it (R2-5: derive truncates the readable part, profile names hold hyphens, an
+// api-key job's account segment is empty, and "fugaro-p-" is also the legacy
+// stem of an owner named "p", so a shape test would misread a per-repository
+// job as a project job).
+//
+// The document it is computed from is the *published policy*, which is the one
+// internal/runner matches CLOUD_RUN_JOB against (runner.ProjectJobOfPolicy is
+// that same function, so a reader and the runner cannot disagree), and not the
+// local config's profiles: a launcher's shared config drops them, and the jobs
+// were deployed from the policy in any case.
+//
+// The read is made once, when watch starts, and it never fails the command: a
+// project that has published no policy, or whose policy node cannot be read,
+// still gets its runs — each with the job its own launch.json records and
+// without the triple, which is what the JSON's absent fields say.
+type projectJobIndex struct {
+	p   *projectpolicy.Policy // the published policy; nil when there is none
+	err error                 // the read's error, kept for ref's own rule below
+}
+
+// newProjectJobIndex reads the published policy from the client watch already
+// holds. A read of the node is not a new credential and not a new connection:
+// the same database, the same read the launcher and the runner make.
+func newProjectJobIndex(ctx context.Context, db *rtdb.Client) *projectJobIndex {
+	p, found, err := projectpolicy.Read(ctx, db)
+	if err != nil {
+		return &projectJobIndex{err: err}
+	}
+	if !found {
+		return &projectJobIndex{}
+	}
+	return &projectJobIndex{p: p}
+}
+
+// ref is job as a watch row's job: the name, and the triple it was computed
+// from when the published policy defines it. A job the policy does not define
+// — a per-repository job, one of another installation, one a policy no longer
+// describes — keeps its name and nothing else, rather than a triple guessed
+// from its shape.
+func (i *projectJobIndex) ref(job string) watch.JobRef {
+	ref := watch.JobRef{Job: job}
+	if i == nil || i.err != nil || i.p == nil {
+		return ref
+	}
+	profile, provider, account, ok := runner.ProjectJobOfPolicy(i.p, job)
+	if !ok {
+		return ref
+	}
+	ref.Profile, ref.Provider, ref.Account = profile, provider, account
+	return ref
 }
 
 // repoProvider is repo's git provider kind as repoSlug resolves it: the local

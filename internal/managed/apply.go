@@ -25,12 +25,26 @@
 // thing that opens the gate is the
 // apply-time budget read (Task 4.4) — internal/cli's managed apply makes it and
 // hands the answer in, and this package refuses a gate that read did not open
-// as its own first step. The whole-project inventory (Task 4.1, inventory.go)
-// is built and tested but NOT consulted here: Apply has no inventory input,
-// so a resource created outside Fugaro in a managed project is not detected
-// by the apply (accepted for 0.8.5 by the owner's ruling of 2026-10-18; the
-// wiring is the plan's Task 4.5, unscheduled, with Task 6.1 in 0.9.0).
-// TestApplyConsultsNoInventory pins that, so wiring it is a deliberate change.
+// as its own first step.
+//
+// The whole-project inventory (Task 4.1, inventory.go) is consulted here, and
+// this is the wiring Task 4.5 is: Request.Inventory carries the caller's
+// read of the project against what the installation's own state accounts for,
+// and its Fallback is the third fact of the confirmation rule below — where it
+// fires, the run keeps its confirmations (D59). What that means in the two
+// sessions this command runs in: a person at a terminal is asked, with the
+// inventory's own warning printed first, and a coding agent's session is
+// refused, because the confirmation D55 removes for a managed project is
+// exactly the confirmation the fallback keeps. Nothing here halts and nothing
+// here deletes: a plan the gate admitted is still applied, by a session that
+// may confirm it.
+//
+// Request.Inventory is zero-value-closed (check.go/InventoryCheck): a caller
+// that read nothing falls back rather than proceeding, so forgetting the read
+// lands on the safe side of the rule.
+// TestApplyConsultsTheInventory pins the wiring, and the two directions of it:
+// a foreign resource keeps the confirmations, and an inventory that could not
+// be read keeps them too.
 package managed
 
 import (
@@ -165,6 +179,18 @@ type Request struct {
 	// function that runs an apply rather than left to each caller, and
 	// anything here is refused by name whatever the owner's object says.
 	Session []string
+	// Inventory is the whole-project inventory's answer (Task 4.5, design
+	// D59): the caller's Cloud Asset read of the project against what the
+	// installation's own state accounts for. It is the third fact of the
+	// confirmation rule — a fallback keeps this run's confirmations, which in
+	// a coding agent's session means the plan is not applied unattended and in
+	// a person's means the person is asked (and warned) as they would be
+	// without the managed case at all.
+	//
+	// The zero value FALLS BACK (InventoryCheck's contract): a caller that
+	// made no read is a run that checked nothing, and "checked nothing" must
+	// not read as "found nothing".
+	Inventory InventoryCheck
 	// Conditions is what the session asking for the apply says about who is
 	// there (initflow.Conditions: the marker its environment carries, a
 	// terminal, --yes). It is the third input of D55's confirmation rule, and
@@ -309,9 +335,26 @@ func DeleteAdvice(gcpProject string) string {
 //     assumption: terraform's own environment is built around its credential,
 //     the init and the plan run as it, the plan is gated, the session's own
 //     leg of D55's confirmation rule is asked (confirm, which is where the
-//     managed case is reached), and the saved file is applied. Nothing runs
-//     outside the assumption, and a refused or unassumable deployer runs no
-//     terraform at all.
+//     managed case and the inventory's fallback are reached), and the saved
+//     file is applied. Nothing runs outside the assumption, and a refused or
+//     unassumable deployer runs no terraform at all.
+//
+// The inventory read itself is not made here but handed in (Request.Inventory):
+// it needs the Cloud Asset API and the installation's own state bucket, which
+// internal/cli reads with the operator's credential — the identity the
+// installation grants the read role to — and not with the deployer's, which
+// holds neither. Reading it before terraform is also what makes it independent
+// of the plan: it is made whatever the plan turns out to hold, and its answer
+// is the same whether the plan applies something or nothing.
+//
+// Where it is SAID is narrower, and deliberately so: the fallback's sentence is
+// printed by confirm, and confirm is reached only where the run could go on to
+// apply — not on a plan that changes nothing, not on a plan the gate refuses,
+// and not on a closed gate. On each of those the run applies nothing, so there
+// is no confirmation for the fallback to keep and nothing for the sentence to
+// warn about; the read is still made, and its answer still decides whether
+// confirm would ask (the apply-time budget gate has the same shape: it is read
+// before the plan and its refusal is a refusal, not a warning).
 func Apply(ctx context.Context, r Request) (Result, error) {
 	if err := r.Enable.Refuse(); err != nil {
 		return Result{}, err
@@ -563,9 +606,10 @@ func (r Request) advice(v Verdict) string {
 
 // confirm is D55's rule, and this is the caller that reaches its managed case:
 // initflow.CanConfirmManaged is the one predicate, its zero Managed is today's
-// rule word for word, and the value asked with here is this apply's own two
-// facts — the creation fact the marker read answered and the verdict that
-// admitted the plan.
+// rule word for word, and the value asked with here is this apply's own three
+// facts — the creation fact the marker read answered, the verdict that
+// admitted the plan, and whether the whole-project inventory fell back (D59,
+// Task 4.5).
 //
 // The step's class is YesOrTyped because that is the class this apply is: the
 // gate judged a saved plan, which is what a YesOrTyped step is, and money or
@@ -576,19 +620,39 @@ func (r Request) advice(v Verdict) string {
 // apply nobody confirmed.
 //
 // A session the rule admits is then one of two. A coding agent's, in a managed
-// project with an admitted plan, is D55's answer: it proceeds, and says why in
-// initflow's own sentence (AgentProceeded). A person's — a terminal and no
-// marker — is ASKED (Request.Ask), with a question that names the project, the
-// saved plan's hash and what it changes: having a terminal is what makes a
-// confirmation possible, not a confirmation, and an apply in a project with no
-// agent must not run on a person's terminal without the person saying so.
+// project with an admitted plan the inventory did not fall back on, is D55's
+// answer: it proceeds, and says why in initflow's own sentence
+// (AgentProceeded). A person's — a terminal and no marker — is ASKED
+// (Request.Ask), with a question that names the project, the saved plan's hash
+// and what it changes: having a terminal is what makes a confirmation
+// possible, not a confirmation, and an apply in a project with no agent must
+// not run on a person's terminal without the person saying so.
 //
 // The refusal names what refused in the words initflow already produces: the
 // reason is decided in one place, and a caller that printed its own version of
 // it would be the second copy of the rule this whole shape exists to avoid.
+// Where the inventory's fallback is what kept the confirmation, the
+// inventory's own sentence is appended to that refusal rather than replacing
+// it — both are true, and the reader needs both.
 func (r Request) confirm(v Verdict, hash string) error {
-	if !initflow.CanConfirmManaged(initflow.YesOrTyped, r.Conditions, initflow.Managed{Managed: r.Fact.Managed, Admitted: v.OK}) {
+	// D59's warning comes first, before anything is asked or refused, and it
+	// is printed in every session: a person about to answer the question and
+	// the session about to be refused both read why this run is not the
+	// managed case. It names the foreign resources (the inventory's own
+	// sentence, bounded) and it halts nothing.
+	fallback := r.Inventory.Fallback()
+	if fallback && r.Out != nil {
+		fmt.Fprintln(r.Out, safetext.MultiLine(r.Inventory.Why()))
+	}
+	if !initflow.CanConfirmManaged(initflow.YesOrTyped, r.Conditions, initflow.Managed{Managed: r.Fact.Managed, Admitted: v.OK, Fallback: fallback}) {
 		if marker := r.Conditions.Agent; marker != "" {
+			// The reason is initflow's own sentence, which is where D55's
+			// rule is decided; the fallback's own sentence is appended rather
+			// than substituted, so a reader gets both the rule and what this
+			// project did to it.
+			if fallback {
+				return fmt.Errorf("%w: %s (%s)", ErrNotConfirmed, initflow.AgentRefusal(marker), safetext.MultiLine(r.Inventory.Why()))
+			}
 			return fmt.Errorf("%w: %s", ErrNotConfirmed, initflow.AgentRefusal(marker))
 		}
 		return fmt.Errorf("%w: %s", ErrNotConfirmed, initflow.NeedsTerminal("applying the saved plan of "+r.what()))

@@ -740,26 +740,26 @@ func TestSetupSkillOffersClone(t *testing.T) {
 	if !strings.Contains(skill, "`checkout`") {
 		t.Error("SKILL.md never mentions the checkout decision")
 	}
-	// The safety claim (the same honesty the named-oauth-tokens docs test
-	// pins): the skill must not tell a user to set a key every current
-	// binary refuses. Both files say clone is not shipped and to leave the
-	// key out.
+	// The honesty claim, inverted by the cloneShipped flip (0.9.0): the
+	// skill must not keep telling a user that an option which works is
+	// unavailable. Both files say clone is shipped, and neither says it is
+	// not.
 	for name, doc := range map[string]string{"decisions.md": topic, "SKILL.md": skill} {
-		for _, want := range []string{"not shipped", "leave the key out"} {
-			if !strings.Contains(doc, want) {
-				t.Errorf("%s never says checkout: clone is %q", name, want)
-			}
+		if !strings.Contains(doc, "is shipped") {
+			t.Errorf("%s never says checkout: clone is shipped", name)
+		}
+		if strings.Contains(doc, "not shipped") {
+			t.Errorf("%s still says checkout: clone %q", name, "not shipped")
 		}
 	}
-	// The gate, and its effect, must be named: this is the claim that stops
-	// the skill pointing a user at a key every current binary refuses.
-	// "refuse such a workflow" and not the bare "refuse", which the topic
-	// also uses for the keys `fugaro validate` refuses under clone — a
-	// different claim. Neither file names the two commands the gate refuses,
-	// on purpose: the plugin lint (skills_lint_test.go, ownerViolation)
-	// rejects an applying `fugaro init` in skill prose, and the claim is the
-	// refusal, not the command line it happens on.
-	for _, want := range []string{"cloneShipped", "internal/cli/recipes_skew.go", "refuse such a workflow"} {
+	// The gate, and its effect, must be named: this is the claim the flip
+	// changed. The topic names cloneShipped, where it lives, and that the
+	// gate is open — the state a reader has to be able to check against the
+	// constant. It does not name the two commands the gate used to refuse:
+	// the plugin lint (skills_lint_test.go, ownerViolation) rejects an
+	// applying `fugaro init` in skill prose, and the claim is the gate's
+	// state, not the command line it is read on.
+	for _, want := range []string{"cloneShipped", "internal/cli/recipes_skew.go", "is open"} {
 		if !strings.Contains(topic, want) {
 			t.Errorf("decisions.md's checkout topic never says %q", want)
 		}

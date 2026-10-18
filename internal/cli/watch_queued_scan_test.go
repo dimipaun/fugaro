@@ -268,7 +268,7 @@ func TestQueuedSourceQuitWhileOpenBlocked(t *testing.T) {
 				return nil, errors.New("too late")
 			}
 			ctx, cancel := context.WithCancel(context.Background())
-			qs := runQueuedSource(ctx, sc.scan, sc.Close)
+			qs := runQueuedSource(ctx, sc)
 			<-started
 			cancel()
 			done := make(chan struct{})
