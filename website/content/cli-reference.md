@@ -2236,17 +2236,19 @@ breakdown existed are none of them averaged in as a run that cost nothing.
 Who sees whom. An operator of the installation -- the identity the local config's
 user: (or git config user.email) names, listed in its terraform.operators, the
 list fugaro doctor's runs-bucket-iam check reads -- sees every user. Anyone else
-sees their own row alone, and --all-users asks for the whole table. When the lists
-do not place the caller -- an installation from before the 0.7.0 hardening, or a
-machine whose identity cannot be told -- the view stays private: the default is
-never the wider one. Whose numbers a table shows is printed above it.
+sees their own row alone, and --all-users asks for the whole table. An
+installation that names no operators (one from before the 0.7.0 hardening, say)
+places nobody, and the view then stays private: the default is never the wider
+one. Whose numbers a table shows is printed above it.
 
-A private view is the caller's own row, and no row at all when their identity has
-no key of its own: an identity the local config leaves empty, or one nothing
-printable is left of (a pasted zero-width character, say), is nobody. A row keyed
-'unknown' is every run of the window that recorded no launcher -- never one
-person's -- so it is not shown as the caller's own either, and the table says
-which of the two it is.
+A private view is the caller's own row. A caller whose identity cannot be told at
+all -- the local config names nobody, and git config user.email answers nothing --
+is refused, never quietly widened: the error says so, and names --all-users. An
+identity with no key of its own because nothing printable is left of it (a pasted
+zero-width character, say) is shown no row instead: the table is empty, and its
+view line says the CLI cannot tell who you are. A row keyed 'unknown' is every run
+of the window that recorded no launcher -- never one person's -- so it is not shown
+as the caller's own either, and a note says so.
 
 The launcher text is what a launcher wrote and is read for nothing else: it is
 sanitised and size-capped before it is printed, and it authorises and admits

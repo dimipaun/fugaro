@@ -140,16 +140,18 @@ func newRunsStatsCmd() *cobra.Command {
 			"Who sees whom. An operator of the installation -- the identity the local config's\n" +
 			"user: (or git config user.email) names, listed in its terraform.operators, the\n" +
 			"list fugaro doctor's runs-bucket-iam check reads -- sees every user. Anyone else\n" +
-			"sees their own row alone, and --all-users asks for the whole table. When the lists\n" +
-			"do not place the caller -- an installation from before the 0.7.0 hardening, or a\n" +
-			"machine whose identity cannot be told -- the view stays private: the default is\n" +
-			"never the wider one. Whose numbers a table shows is printed above it.\n\n" +
-			"A private view is the caller's own row, and no row at all when their identity has\n" +
-			"no key of its own: an identity the local config leaves empty, or one nothing\n" +
-			"printable is left of (a pasted zero-width character, say), is nobody. A row keyed\n" +
-			"'unknown' is every run of the window that recorded no launcher -- never one\n" +
-			"person's -- so it is not shown as the caller's own either, and the table says\n" +
-			"which of the two it is.\n\n" +
+			"sees their own row alone, and --all-users asks for the whole table. An\n" +
+			"installation that names no operators (one from before the 0.7.0 hardening, say)\n" +
+			"places nobody, and the view then stays private: the default is never the wider\n" +
+			"one. Whose numbers a table shows is printed above it.\n\n" +
+			"A private view is the caller's own row. A caller whose identity cannot be told at\n" +
+			"all -- the local config names nobody, and git config user.email answers nothing --\n" +
+			"is refused, never quietly widened: the error says so, and names --all-users. An\n" +
+			"identity with no key of its own because nothing printable is left of it (a pasted\n" +
+			"zero-width character, say) is shown no row instead: the table is empty, and its\n" +
+			"view line says the CLI cannot tell who you are. A row keyed 'unknown' is every run\n" +
+			"of the window that recorded no launcher -- never one person's -- so it is not shown\n" +
+			"as the caller's own either, and a note says so.\n\n" +
 			"The launcher text is what a launcher wrote and is read for nothing else: it is\n" +
 			"sanitised and size-capped before it is printed, and it authorises and admits\n" +
 			"nothing. Two identities that differ only in what the sanitising drops -- an\n" +
