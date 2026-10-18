@@ -227,34 +227,49 @@ test('with the console released, the option renders the release\'s own assets an
   )
 })
 
-test('the released site is still within the budget gate the README states', (t) => {
-  // The two-option page costs words, and Getting Started is close to D188's 250-word ceiling.
-  // The flag-on build is the build the owner's flip produces, so the gate that reads the
-  // artifact is run over it rather than the ceiling being assumed to hold: `budget.mjs` is
-  // pointed at the copy with `FUGARO_GATES_DIST`, the mechanism the gates document for
-  // reading a different build.
+test('the released site still passes the gates that read the artifact', (t) => {
+  // The flag-on build is the build the owner's flip produces, and every gate that reads the
+  // built artifact is run over it rather than assumed to hold: the two-option page costs
+  // words and Getting Started sits AT D188's 250-word ceiling, and a released console puts
+  // two external links and a list on the page that the a11y, link and copy gates read.
+  //
+  // The gates are run in one nested `node --test` with `FUGARO_GATES_DIST` pointed at the
+  // copy, which is the mechanism they document for reading a different build. `console.mjs`
+  // is NOT among them: it holds the checkout's own `site.yaml` to `false`, and this build is
+  // the one where the flag is on. `NODE_TEST_CONTEXT` is stripped, because a nested
+  // `node --test` that inherits this process's test context refuses to run the files it is
+  // given and exits zero — the trap the pass-count check below closes.
   const built = releasedBuild(t)
   assert.equal(built.status, 0, `the build of the released site failed:\n${built.output}`)
 
-  // `NODE_TEST_CONTEXT` is stripped: a nested `node --test` that inherits this process's test
-  // context refuses to run the files it is given and exits zero, which would make a case
-  // whose whole point is the child's exit status pass without ever reading the page.
+  const gates = ['a11y', 'budget', 'copy', 'fold', 'linkcheck', 'meta', 'origins']
   const env = { ...process.env, FUGARO_GATES_DIST: built.dist }
   delete env.NODE_TEST_CONTEXT
-  const run = spawnSync(process.execPath, ['--test', path.join(SITE, 'test', 'budget.mjs')], {
-    env,
-    encoding: 'utf8',
-  })
+  const run = spawnSync(
+    process.execPath,
+    ['--test', ...gates.map((name) => path.join(SITE, 'test', `${name}.mjs`))],
+    { env, encoding: 'utf8' },
+  )
   const output = `${run.stdout ?? ''}${run.stderr ?? ''}`
   assert.equal(
     run.status,
     0,
-    `the budget gate refuses the site the owner's flag flip produces, so the flip is not the whole change:\n${output}`,
+    `a gate that reads the artifact refuses the site the owner's flag flip produces, so the flip is not the whole change:\n${output}`,
+  )
+
+  // And the run really ran: the cases above are the artifact gates' own, and a child that
+  // skipped its files would report nothing while exiting zero. (`#` is escaped in captured
+  // TAP output, hence the unescaping before both reads below.)
+  const counts = /# pass (\d+)/.exec(output.replace(/\\#/g, '#'))
+  assert.ok(counts, `the nested run reported no pass count, so nothing above says the gates read the released build:\n${output}`)
+  assert.ok(
+    Number(counts[1]) >= 70,
+    `the nested run reported ${counts[1]} passing cases, and the gates that read the artifact declare far more than that: a run that skipped the files it was given exits zero`,
   )
   assert.match(
-    output,
+    output.replace(/\\#/g, '#'),
     /ok \d+ - every page is within the word ceilings the README states/,
-    'the budget gate did not run its word-ceiling case over the released build, so nothing above says the two-option page fits',
+    'the budget gate did not run its word-ceiling case over the released build, so nothing above says the two-option page fits the ceiling',
   )
 })
 
