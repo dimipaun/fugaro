@@ -16,19 +16,20 @@
 // consent gate's analytics bootstrap in that same script — plus 25 %, which is D192's rule and the rule the
 // README's loose figures are three times:
 //
-//   - JavaScript per page: 17,212 bytes. The one script the site ships,
-//     `public/scripts/site.js` (P6, P3, D183, and W3.2's gate), is 13,769 bytes; × 1.25,
-//     rounded up. Every page loads it exactly once, so the file's own size IS the whole of a
-//     page's JavaScript — which is why the case below reads the artifact rather than trusting
-//     this line, and why D192 requires the README's figure to be re-derived in the same commit
-//     that changes the script.
-//   - Page weight per page: 276,238 bytes. The heaviest page on 2026-10-18, `docs/index.html`,
-//     weighed 220,990 bytes: its HTML 184,742 bytes (the whole generated CLI reference, 11,300
-//     of them inline CSS) plus the 36,248 bytes of first-party files it fetches — the script
-//     above and the logo and icons the layout links; × 1.25, rounded up. One ceiling for every
-//     page rather than one per page, so a page that grows with the product (the changelog, the
-//     reference) is held to the same line as the rest instead of to its own history.
-//   - Whole site: 971,565 bytes. Every file in `dist/` on that build summed to 777,252
+//   - JavaScript per page: 25,508 bytes. The one script the site ships,
+//     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, and the cookie deletion the owner's
+//     ruling of 2026-10-18 added to a withdrawal), is 20,406 bytes; × 1.25, rounded up. Every
+//     page loads it exactly once, so the file's own size IS the whole of a page's JavaScript —
+//     which is why the case below reads the artifact rather than trusting this line, and why
+//     D192 requires the README's figure to be re-derived in the same commit that changes the
+//     script.
+//   - Page weight per page: 284,534 bytes. The heaviest page on 2026-10-18, `docs/index.html`,
+//     weighed 227,627 bytes: its HTML (the whole generated CLI reference) plus the first-party
+//     files it fetches — the script above and the logo and icons the layout links; × 1.25,
+//     rounded up. One ceiling for every page rather than one per page, so a page that grows
+//     with the product (the changelog, the reference) is held to the same line as the rest
+//     instead of to its own history.
+//   - Whole site: 980,408 bytes. Every file in `dist/` on that build summed to 784,326
 //     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
 //     × 1.25, rounded up.
 //

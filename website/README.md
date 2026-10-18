@@ -86,6 +86,16 @@ planted second copy fails. The id, the audit trail and the choices behind them:
   `allow_ad_personalization_signals` both false. GA4 anonymises the IP address by default;
   there is no setting to add for it. `test/consent.mjs` reads `dataLayer` and holds each of
   those to what was built.
+- **Withdrawing deletes the cookies the tag set** (owner's ruling of 2026-10-18): stopping the
+  sends was only half of a withdrawal — Google's tag left first-party cookies on the site's
+  origin, and a visitor who has said no should not keep being identified by them. So declining
+  after accepting, from the banner the privacy page always offers, deletes `_ga`,
+  `_ga_<container id>` (that name derived from the measurement id above rather than written
+  down), `_gid`, `_gat` and each `_gat_*` cookie the browser is holding — on the page's host,
+  and, only while one is still there, on the registrable parent domain the tag may have used —
+  with `Path=/` and an expiry in the past, and with nothing else in the browser touched. No
+  deletion, and no cookie read at all, runs before consent was ever given. `test/consent.mjs`
+  runs the shipped file against a cookie jar holding those cookies and reads what is left.
 - **The deployed policy is widened by exactly what Google documents** for Google Analytics 4
   without any Ads features
   ([tag-platform/security/guides/csp](https://developers.google.com/tag-platform/security/guides/csp),
@@ -125,16 +135,17 @@ with fixtures that keep its refusals running, and none of them needs the network
   number fails, and the test keeps a case that proves it. The derivation (that build plus
   25 %, D192) is in the test's header, and a task that moves the bytes re-derives the numbers
   here, in the commit that moves them:
-  - **JavaScript per page:** 56,256 bytes. Three times 18,752: the one script the site ships,
-    `public/scripts/site.js` (15,001 bytes — the copy control of P6 and D183, the menu's
+  - **JavaScript per page:** 76,524 bytes. Three times 25,508: the one script the site ships,
+    `public/scripts/site.js` (20,406 bytes — the copy control of P6 and D183, the menu's
     Escape/outside-click close of P3, and W3.2's consent banner and analytics gate, which
-    moved out of the markup and into this one file), plus 25 %. Every page loads it once, so
+    moved out of the markup and into this one file, with the cookie deletion the owner's
+    ruling of 2026-10-18 added to a withdrawal), plus 25 %. Every page loads it once, so
     it is the whole of a page's JavaScript, and the test keeps a case that says so over the
     built artifact.
-  - **Page weight per page:** 828,714 bytes. Three times 276,238: the heaviest page, the
-    docs hub, at 220,990 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 853,602 bytes. Three times 284,534: the heaviest page, the
+    docs hub, at 227,627 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 2,914,695 bytes. Three times 971,565 (every file in `dist/`, 777,252
+  - **Whole site:** 2,941,224 bytes. Three times 980,408 (every file in `dist/`, 784,326
     bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core

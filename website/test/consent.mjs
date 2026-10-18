@@ -28,8 +28,11 @@
 //
 //   1. **No analytics request before consent** — and none after a refusal.
 //   2. **Consent is withdrawable** — the privacy page always offers the choice again,
-//      declining overwrites a stored grant, and the next page view requests nothing.
-//   3. **No cookie**, before consent or after it: the scripts this site ships write none.
+//      declining overwrites a stored grant, the next page view requests nothing, and the
+//      withdrawal deletes the cookies the accepted tag set (owner's ruling, 2026-10-18).
+//   3. **No cookie the site set**, before consent or after it: the site writes no cookie of
+//      its own, and the one thing it does with cookies is delete GA4's after a withdrawal —
+//      which is what the section below runs the shipped file against a jar to prove.
 //   4. **The banner is accessible and keyboard-operable** — an accessible name, two equally
 //      prominent native buttons, Escape declining, focus that lands somewhere real when the
 //      banner goes, and no interception of the keyboard.
@@ -134,14 +137,88 @@ const DOCUMENT_SELECTORS = new Map([
 const PAGE_LOCATION = Object.freeze({
   href: 'https://site.example/docs/?token=leaked-query#leaked-fragment',
   origin: 'https://site.example',
+  hostname: 'site.example',
   pathname: '/docs/',
   search: '?token=leaked-query',
   hash: '#leaked-fragment',
 })
 const PAGE_REFERRER = 'https://site.example/?q=leaked-referrer#leaked-referrer-fragment'
 
+// The same page on a host with a label to spare, whose registrable parent (`site.example`) is
+// the domain Google's tag may have written cookies to instead of the host. A withdrawal has
+// to reach a cookie left there too, and this is the only address a case can prove it from.
+const SUBDOMAIN_LOCATION = Object.freeze({
+  href: 'https://www.site.example/docs/?token=leaked-query#leaked-fragment',
+  origin: 'https://www.site.example',
+  hostname: 'www.site.example',
+  pathname: '/docs/',
+  search: '?token=leaked-query',
+  hash: '#leaked-fragment',
+})
+
+/** The host a location names, which is where a cookie with no `Domain` attribute lives. */
+function hostOf(location) {
+  return location.hostname ?? new URL(location.origin).hostname
+}
+
+/** The registrable parent of a host, as `site.js` derives it: the leftmost label dropped. */
+function parentOf(host) {
+  const labels = String(host).split('.')
+  return labels.length > 2 ? labels.slice(1).join('.') : null
+}
+
+/**
+ * The path a cookie with no `Path` attribute lands on, which RFC 6265 calls the default-path:
+ * the request's own directory, and `/` when there is no directory to name. It is not a
+ * footnote — a write of `name=; expires=…` with no `Path` lands HERE, not on `/`, so a
+ * deletion that forgets `Path=/` does not match a cookie Google set at `/`, and the jar below
+ * is keyed on the path so that the case can see it.
+ */
+function defaultPathOf(pathname) {
+  const path = String(pathname ?? '')
+  if (!path.startsWith('/')) return '/'
+  const rightmost = path.lastIndexOf('/')
+  return rightmost <= 0 ? '/' : path.slice(0, rightmost)
+}
+
+/** Whether a cookie on `cookiePath` is sent with a request for `requestPath` (RFC 6265 §5.4). */
+function pathMatches(cookiePath, requestPath) {
+  if (cookiePath === requestPath) return true
+  if (!requestPath.startsWith(cookiePath)) return false
+  if (cookiePath.endsWith('/')) return true
+  return requestPath.charAt(cookiePath.length) === '/'
+}
+
+/**
+ * One `Set-Cookie` string, as the jar below reads it: the name, the value it carries, the
+ * domain it lands on (the host by default), the path it lands on (`Path`, or the request's own
+ * directory when the write names none) and whether it is an expiry in the past — which is how
+ * a cookie is DELETED, and the only kind of write a withdrawal may make.
+ */
+function parseCookie(raw, host, defaultPath) {
+  const [pair, ...attrs] = String(raw).split(';')
+  const at = pair.indexOf('=')
+  const name = (at === -1 ? pair : pair.slice(0, at)).trim()
+  if (!name) return null
+  const value = at === -1 ? '' : pair.slice(at + 1).trim()
+  let domain = host
+  let path = defaultPath
+  let expires = null
+  for (const attr of attrs) {
+    const eq = attr.indexOf('=')
+    const key = (eq === -1 ? attr : attr.slice(0, eq)).trim().toLowerCase()
+    const val = eq === -1 ? '' : attr.slice(eq + 1).trim()
+    if (key === 'domain') domain = val.replace(/^\./, '').toLowerCase()
+    if (key === 'path') path = val.startsWith('/') ? val : defaultPath
+    if (key === 'expires') expires = val
+    if (key === 'max-age') expires = Number(val) <= 0 ? 'past' : null
+  }
+  const past = expires === 'past' || (expires !== null && Date.parse(expires) <= Date.now())
+  return { name, value, domain, path, expired: past }
+}
+
 /** The element tree of a page, as the objects the scripts above see. */
-function stubDOM(html) {
+function stubDOM(html, location = PAGE_LOCATION) {
   const state = { activeElement: null }
   const elements = []
   const byId = new Map()
@@ -232,13 +309,75 @@ function stubDOM(html) {
   const root = parse(html)
   for (const child of root.children ?? []) if (child.name !== undefined) build(child)
 
-  // `document.cookie`: the scripts may not write one, and this is how a write would show up.
-  const cookies = []
+  // `document.cookie`, as a browser presents it: the cookies the page may read — the host's
+  // own and the parent domain's — a write replacing the cookie of the same name and domain,
+  // and an expiry in the past removing it. The raw writes are kept beside the jar because the
+  // two answer different questions: what a script DID (`cookies`) and what a visitor's
+  // browser is left HOLDING (`jar`, and `held()` below). The site's withdrawal deletes
+  // cookies, which is a write in the first list and nothing at all in the second.
+  const host = hostOf(location)
+  const parent = parentOf(host)
+  const requestPath = location.pathname ?? '/'
+  const defaultPath = defaultPathOf(requestPath)
+  const cookies = [] // every `Set-Cookie` string a script wrote, in order
+  const reads = [] // every read of `document.cookie`, which is work a refusal owes nobody
+  // The cookies in force: { name, value, domain, path }. A cookie is a (name, domain, path)
+  // triple, which is why a delete that names the wrong path does not remove one.
+  const jar = []
+
+  /** Put one parsed cookie into the jar, as a browser applies a `Set-Cookie` string. */
+  const applyCookie = (parsed) => {
+    if (parsed === null) return
+    // A page may only set a cookie on its own host or on a domain it is under. Anything else
+    // is what a browser ignores, and the jar ignores it the same way.
+    if (parsed.domain !== host && parsed.domain !== parent) return
+    const at = jar.findIndex((c) => c.name === parsed.name && c.domain === parsed.domain && c.path === parsed.path)
+    if (parsed.expired) {
+      if (at !== -1) jar.splice(at, 1)
+      return
+    }
+    if (at === -1) jar.push({ name: parsed.name, value: parsed.value, domain: parsed.domain, path: parsed.path })
+    else jar[at].value = parsed.value
+  }
+
+  /** The cookies this page can read: the host's and the parent's, on a path it is under. */
+  const visible = () => jar.filter((c) => pathMatches(c.path, requestPath))
+
   Object.defineProperty(document, 'cookie', {
-    get: () => cookies.join('; '),
-    set: (value) => cookies.push(String(value)),
+    get: () => {
+      reads.push(true)
+      return visible()
+        .map((c) => `${c.name}=${c.value}`)
+        .join('; ')
+    },
+    set: (value) => {
+      cookies.push(String(value))
+      applyCookie(parseCookie(value, host, defaultPath))
+    },
   })
   document.cookies = cookies
+  document.cookieReads = reads
+  document.jar = jar
+  /**
+   * The names the page is holding, which is what a reader of `document.cookie` would see — so
+   * a cookie set at `/` that a delete matched at `/privacy` is still named here, which is the
+   * defect the path-keyed jar exists to catch.
+   */
+  document.held = () => visible().map((c) => c.name)
+  /**
+   * The names a script WROTE that the browser is still holding: a cookie the page set and did
+   * not remove. A deletion is a write and leaves nothing, which is the whole difference
+   * between the site's withdrawal and the defect `gateFailures` refuses.
+   */
+  document.survivingWrites = () => {
+    const out = []
+    for (const raw of cookies) {
+      const parsed = parseCookie(raw, host, defaultPath)
+      if (parsed === null || parsed.expired) continue
+      if (jar.some((c) => c.name === parsed.name && c.domain === parsed.domain && c.path === parsed.path)) out.push(parsed.name)
+    }
+    return [...new Set(out)]
+  }
 
   state.requests = []
   return { document, elements, byId, state }
@@ -253,10 +392,17 @@ function stubDOM(html) {
  * run in the page's place, which is what makes this a test of the gate the site ships rather
  * than of a copy of it written here. `script` overrides that source, for the mutation cases
  * that need the site's own file with one line changed.
+ *
+ * `cookies` are the cookies the browser is ALREADY holding when the page loads — what a
+ * visitor who consented on an earlier page view brings with them. They are in the jar from
+ * the start and are not in the page's own writes, because the page did not write them.
  */
-export function runPage(html, { dist = DIST, script = null, storage = {}, readable = true, writable = true, location = PAGE_LOCATION, referrer = PAGE_REFERRER } = {}) {
-  const { document, elements, byId, state } = stubDOM(html)
+export function runPage(html, { dist = DIST, script = null, storage = {}, readable = true, writable = true, location = PAGE_LOCATION, referrer = PAGE_REFERRER, cookies = [] } = {}) {
+  const { document, elements, byId, state } = stubDOM(html, location)
   document.referrer = referrer
+  for (const cookie of cookies) document.cookie = cookie
+  document.cookies.length = 0 // planted, not written by the page
+  document.cookieReads.length = 0 // and not read by it either
   const requests = state.requests
   const store = { ...storage }
   const windowListeners = new Map()
@@ -326,7 +472,11 @@ export function runPage(html, { dist = DIST, script = null, storage = {}, readab
   const analyticsRequests = () => requests.filter((url) => url.includes(ANALYTICS_HOST))
   return {
     requests,
+    // Every `Set-Cookie` string the page's scripts wrote, in order — including the deletions
+    // a withdrawal makes, which is why `held()` is the list a cookie case reads.
     cookies: document.cookies,
+    cookieReads: document.cookieReads,
+    held: document.held,
     store,
     document,
     window,
@@ -367,7 +517,10 @@ export function gateFailures(html, { dist = DIST, script = null, storage = {}, r
   if (grantedAtLoad && atLoad !== 1) {
     out.push(`page requests googletagmanager.com ${atLoad} times with a grant stored; it loads once`)
   }
-  if (page.cookies.length > 0) out.push(`page writes document.cookie (${page.cookies[0].split('=')[0]})`)
+  // A cookie the page SET and left behind. Deleting one is a write too — an expiry in the
+  // past, which leaves nothing — so the jar is what decides, not the number of writes.
+  const set = page.document.survivingWrites()
+  if (set.length > 0) out.push(`page writes document.cookie (${set[0]})`)
 
   if (act) {
     const before = page.analyticsRequests().length
@@ -793,20 +946,161 @@ test('a browser that refuses storage is treated as undecided: nothing loads, and
   assert.equal(unwritable.banner.hidden, false, 'the banner was dismissed although nothing was remembered, so the visitor would never be asked again')
 })
 
-// ---- 3. no cookie -----------------------------------------------------------------------
+// ---- 3. cookies: none before consent, and none left after a withdrawal -------------------
+//
+// W1.12's step was "no cookie before consent": the site stores one decision and sets nothing
+// of its own. The owner's ruling of 2026-10-18 added the other half — withdrawing consent
+// deletes the cookies Google's tag set while the visitor had accepted — so this section holds
+// both: no write and no read before a grant, and the whole of what GA4 leaves gone after a
+// withdrawal, on the host and on the parent domain, with every other cookie untouched.
 
-test('the site sets no cookie, before consent or after it', () => {
+// The names GA4 writes for this site, one of them DERIVED from the measurement id the way the
+// ruling says (`_ga_` plus the id without its `G-` prefix). The test derives it here from
+// `site.yaml`'s own value, so a script that wrote a fixed name instead would fail the case
+// below rather than agree with a copy of the same literal typed in this file.
+const GA_CLIENT = '_ga'
+const GA_CONTAINER = `_ga_${MEASUREMENT_ID.replace(/^G-/, '')}`
+const GA_THROTTLE = `_gat_gtag_${MEASUREMENT_ID}`
+
+/**
+ * What GA4 leaves in a consented visitor's browser, and two cookies that are not Google's.
+ * Every one names `Path=/`, which is the path the tag sets its own at: the deletion has to
+ * match it, and a cookie planted at the page's own directory would not prove that it does.
+ */
+function plantedCookies({ domain = null } = {}) {
+  const suffix = domain ? `; path=/; domain=${domain}` : '; path=/'
+  return [
+    `${GA_CLIENT}=GA1.1.111.222${suffix}`,
+    `${GA_CONTAINER}=GS1.1.333${suffix}`,
+    `_gid=GA1.2.444${suffix}`,
+    `_gat=1${suffix}`,
+    `${GA_THROTTLE}=1${suffix}`,
+    `_gate=1${suffix}`,
+    `theme=dark${suffix}`,
+  ]
+}
+
+// The site's own cookies, which a withdrawal must leave exactly where they are: one whose name
+// merely begins with the throttle cookie's letters, and one with nothing to do with Google.
+const KEPT_NAMES = ['_gate', 'theme']
+
+/** The names a case expects a withdrawal to remove, and the ones it must leave alone. */
+const GA_NAMES = [GA_CLIENT, GA_CONTAINER, '_gid', '_gat', GA_THROTTLE]
+
+function assertForgotten(page, where) {
+  const left = page.held()
+  for (const name of GA_NAMES) {
+    assert.ok(!left.includes(name), `${where}: ${name} survived the withdrawal, so the identifiers the accepted script left are still in the browser (owner's ruling, 2026-10-18)`)
+  }
+  for (const name of KEPT_NAMES) {
+    assert.ok(left.includes(name), `${where}: the withdrawal deleted ${name}, which is not a cookie Google set`)
+  }
+}
+
+test('the site sets no cookie of its own, before consent or after it', () => {
   const html = pageOf(SHIPPED, 'index.html')
   const page = runPage(html)
   page.click('granted')
-  assert.deepEqual(page.cookies, [], 'a script this site ships wrote document.cookie: the site stores one decision and sets no cookie')
+  assert.deepEqual(page.document.survivingWrites(), [], 'a script this site ships left a cookie behind: the site stores one decision and sets no cookie of its own')
 
   for (const p of [...SHIPPED]) {
     assert.ok(
       !/document\.cookie/.test(p.html),
-      `${p.rel} names document.cookie: no script the site ships reads or writes a cookie (W1.12 step 5)`,
+      `${p.rel} names document.cookie: the cookie work W3.2's withdrawal does is in the site's one script file, and no page carries an inline block`,
     )
   }
+})
+
+test('withdrawing deletes every cookie GA4 set, on the host and on the parent domain', () => {
+  const html = pageOf(SHIPPED, 'privacy/index.html')
+  const page = runPage(html, { storage: { [CONSENT_KEY]: 'granted' }, cookies: plantedCookies() })
+  assert.ok(page.held().includes(GA_CLIENT), 'the cookie double did not hold the cookies a consented visitor brings, so the case below would pass on an empty browser')
+
+  page.click('denied')
+  assertForgotten(page, 'on the host')
+
+  // And the attribute the deletion depends on, read off the writes themselves: a write of
+  // `name=; expires=…` with no `Path` lands on the page's own directory, not on `/`, and would
+  // match no cookie GA4 set — so every write names the path, beside the expiry.
+  for (const write of page.cookies) {
+    assert.match(write, /;\s*path=\//i, `the withdrawal wrote "${write.trim()}" without Path=/, which in a browser lands on the page's own directory and deletes nothing`)
+  }
+})
+
+test('a cookie GA4 set on the registrable parent domain is deleted there too', () => {
+  const html = pageOf(SHIPPED, 'privacy/index.html')
+  // The host has a label to spare here, so the parent domain GA4 may have written to is a
+  // real one (`site.example`), and the cookie below is only reachable from the page while it
+  // is set on the parent: a withdrawal that only ever tried the host would leave it behind.
+  const page = runPage(html, {
+    storage: { [CONSENT_KEY]: 'granted' },
+    cookies: plantedCookies({ domain: 'site.example' }),
+    location: SUBDOMAIN_LOCATION,
+  })
+  assert.equal(page.document.jar.filter((c) => c.domain === 'site.example').length, plantedCookies().length, 'the parent-domain cookies are not in the browser the case runs against')
+
+  page.click('denied')
+  assertForgotten(page, 'on the parent domain')
+  assert.deepEqual(
+    page.document.jar.filter((c) => c.domain === 'site.example' && GA_NAMES.includes(c.name)).map((c) => c.name),
+    [],
+    'the withdrawal never reached the parent domain, so a cookie GA4 set there is still in the browser',
+  )
+})
+
+test('the container cookie name is derived from the measurement id the banner carries', () => {
+  const html = pageOf(SHIPPED, 'privacy/index.html').replace(
+    `data-analytics-id="${MEASUREMENT_ID}"`,
+    'data-analytics-id="G-OTHERTEST9"',
+  )
+  assert.ok(html.includes('data-analytics-id="G-OTHERTEST9"'), 'the fixture did not change the banner\'s measurement id, so the case below proves nothing')
+
+  const page = runPage(html, {
+    storage: { [CONSENT_KEY]: 'granted' },
+    cookies: ['_ga_OTHERTEST9=GS1.1.1; path=/', `${GA_CONTAINER}=GS1.1.2; path=/`, 'theme=dark; path=/'],
+  })
+  page.click('denied')
+  const left = page.held()
+  assert.ok(!left.includes('_ga_OTHERTEST9'), 'the withdrawal did not delete `_ga_` plus the id the banner carries: the name is not derived from it')
+  assert.ok(left.includes(GA_CONTAINER), 'the withdrawal deleted the container cookie of an id the banner does not carry, so the name is not the one this property uses')
+  assert.ok(left.includes('theme'), 'the withdrawal deleted a cookie that is not Google\'s')
+})
+
+test('nothing is read or deleted before consent was ever given', () => {
+  const html = pageOf(SHIPPED, 'index.html')
+  const fresh = runPage(html, { cookies: plantedCookies() })
+  assert.deepEqual(fresh.cookies, [], 'a page deleted cookies although the visitor never consented: there is nothing to delete before a grant, and the work is owed to nobody')
+  assert.equal(fresh.cookieReads.length, 0, 'a page read document.cookie before consent was ever given')
+  assert.ok(fresh.held().includes(GA_CLIENT), 'the page removed a cookie before consent was ever given, which is not the site\'s to do')
+
+  // A refusal on a first visit is a refusal, not a withdrawal: nothing was consented to, and
+  // nothing is deleted.
+  fresh.click('denied')
+  assert.deepEqual(fresh.cookies, [], 'declining on a first visit deleted cookies although nothing had been consented to')
+  assert.equal(fresh.cookieReads.length, 0, 'declining on a first visit read document.cookie')
+  assert.ok(fresh.held().includes(GA_CLIENT), 'declining on a first visit removed a cookie, which a visitor who never accepted did not leave through this site')
+})
+
+test('accepting and withdrawing again on the same page deletes what the second grant left', () => {
+  const html = pageOf(SHIPPED, 'privacy/index.html')
+  const page = runPage(html, { storage: { [CONSENT_KEY]: 'granted' }, cookies: plantedCookies() })
+  page.click('denied')
+  assertForgotten(page, 'on the first withdrawal')
+
+  // A withdrawal after a decline is idempotent: nothing is left to delete, so the second one
+  // writes nothing, and it neither throws nor takes the unrelated cookie with it.
+  const before = page.cookies.length
+  page.click('denied')
+  assert.equal(page.cookies.length, before, 'the second withdrawal wrote to document.cookie although nothing Google set was left')
+  assertForgotten(page, 'on the second withdrawal')
+
+  // And a grant given again leaves the browser to be cleared again, which is the state a
+  // visitor with the banner on the privacy page actually reaches.
+  page.click('granted')
+  for (const cookie of plantedCookies()) page.document.cookie = cookie
+  page.document.cookies.length = 0
+  page.click('denied')
+  assertForgotten(page, 'after a renewed grant')
 })
 
 // ---- 4. the banner is accessible, keyboard-operable, and traps nothing -------------------
@@ -944,6 +1238,19 @@ test("the privacy defaults the page states are the ones the site's script makes"
   assert.ok(/page_location:\s*bare\(/.test(script), 'the privacy page says only the path is reported and the script no longer strips the address')
   assert.match(text, /stops\s+reporting at once, on this page too/i, 'the privacy page no longer says declining stops the page already measuring')
   assert.ok(/'ga-disable-'/.test(script), "the privacy page says declining stops this page and the script no longer sets Google's opt-out flag")
+
+  // And the sentence the owner's ruling of 2026-10-18 put there: withdrawing takes the cookies
+  // Google set with it. The page is the claim and the file is the fact, so the two are held to
+  // each other in both directions, the way the defaults above are.
+  assert.match(
+    text,
+    /deletes Google's cookies/i,
+    "the privacy page no longer says that withdrawing deletes the cookies Google set (owner's ruling, 2026-10-18)",
+  )
+  assert.ok(
+    /document\.cookie/.test(script),
+    "the privacy page says withdrawing deletes Google's cookies and the script never touches document.cookie",
+  )
 
   // And the vendor the page names: the gate loads from the origin the banner's own markup
   // carries, so the origin has to be Google's while the page says Google Analytics. A gate

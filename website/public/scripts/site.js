@@ -22,7 +22,11 @@
  *     banner's two buttons write one decision to `localStorage`; this file reveals the banner
  *     when no decision is stored, and — only when that decision is `granted` — loads Google's
  *     analytics script. Nothing is requested from Google before that, and a refusal or a
- *     dismissal loads nothing at all.
+ *     dismissal loads nothing at all. A withdrawal does more than stop the sends (the owner's
+ *     ruling of 2026-10-18): it deletes the cookies the tag set while the visitor had
+ *     accepted, from this host and from the parent domain the tag may have used, and touches
+ *     no other cookie. Nothing is deleted, and no cookie is even read, before a grant: a
+ *     visitor who never consented has nothing this site put in their browser.
  *
  * **The analytics gate is here rather than in an inline block because D183 admits exactly one
  * script, and because an inline block would need a hash in the deployed Content-Security-
@@ -46,7 +50,9 @@
  *
  * It is loaded with `defer` from the base layout, so it runs once the document has been
  * parsed and every block and banner it looks for is in the tree. The only thing it stores is
- * the consent decision, under the key the banner's markup names, and it sets no cookie.
+ * the consent decision, under the key the banner's markup names, and it sets no cookie: the
+ * one thing it does with cookies is delete the ones the accepted tag left, which it does only
+ * after a withdrawal.
  */
 ;(function () {
   'use strict'
@@ -250,7 +256,99 @@
 
     function withdraw() {
       window[OPT_OUT] = true
-      if (loaded) gtag('consent', 'update', { analytics_storage: DENIED })
+      if (!loaded) return
+      gtag('consent', 'update', { analytics_storage: DENIED })
+      forget()
+    }
+
+    // ---- the cookies an accepted visitor leaves, and the withdrawal that removes them ----
+    //
+    // Stopping the sends is only half of a withdrawal (the owner's ruling of 2026-10-18): the
+    // identifiers the tag wrote while the visitor had accepted are still in their browser, and
+    // a withdrawal that left them there would keep identifying a visitor who has said no. So a
+    // withdrawal deletes every cookie the tag sets for this site, from the one place D183 puts
+    // the site's script in.
+    //
+    // It runs only where `loaded` is true, and that is the whole of the "no work before
+    // consent" rule: a visitor who never accepted has nothing this site put there, so a
+    // refusal on a first visit reads no cookie and writes none either.
+
+    // An expiry in the past is what removes a cookie; an empty value alone would only
+    // overwrite one with nothing.
+    var EXPIRED = 'expires=Thu, 01 Jan 1970 00:00:00 GMT'
+
+    // The names the tag writes for this property: the client id and its per-container variant,
+    // the session id, and the throttling cookie. The container name is DERIVED from the one
+    // measurement id the banner carries — `_ga_` plus the id without its `G-` prefix — rather
+    // than written here, so a property change moves the name with it and the two cannot drift.
+    function cookieNames() {
+      return ['_ga', '_ga_' + String(id).replace(/^G-/, ''), '_gid', '_gat']
+    }
+
+    // The names this browser is holding, read out of `document.cookie`. Reading it is the only
+    // way to find the throttling cookies, whose exact name (`_gat_gtag_` and the id) is not
+    // derivable, and it is why the deletion can leave a browser that holds nothing untouched.
+    function heldNames() {
+      var names = []
+      try {
+        var parts = String(document.cookie || '').split(';')
+        for (var i = 0; i < parts.length; i++) {
+          var name = parts[i].split('=')[0].replace(/^\s+|\s+$/g, '')
+          if (name) names.push(name)
+        }
+      } catch (err) {
+        // A browser that refuses to read them holds none this can see, which is the same
+        // answer as an empty jar rather than a reason to stop.
+      }
+      return names
+    }
+
+    // The parent domain the tag may have written a cookie to instead of the host: the host
+    // without its leftmost label — the registrable domain of a `www.` host, which is the case
+    // the tag's own `auto` setting picks — and only where there is a label to spare. An apex
+    // host has none, and nothing below the parent is tried: no wildcard, no suffix guessed
+    // from a list this file does not carry.
+    //
+    // One label means one label, and the result is not always a domain a cookie may be set
+    // on: a preview host like `foo--bar.web.app` has `web.app` for a parent, and that is a
+    // public suffix. The write is then refused by the browser (this file consults no
+    // public-suffix list, and a list is not worth the bytes here), so the attempt costs a
+    // rejected assignment and nothing else — and the host this site ships on is an apex, with
+    // no parent at all, so the attempt is never made there.
+    function parentDomain(host) {
+      var labels = String(host || '').split('.')
+      return labels.length > 2 ? labels.slice(1).join('.') : ''
+    }
+
+    // Delete one cookie: on this host first, and then — only while it is still there — on the
+    // parent domain the tag may have written it to. Both attempts carry `Path=/`, the path the
+    // tag's cookies are written at, which is what makes the expiry match the cookie rather
+    // than leave it in place.
+    function drop(name, host) {
+      var parent = parentDomain(host)
+      var scopes = ['']
+      if (parent) scopes.push('; domain=' + parent)
+      for (var i = 0; i < scopes.length; i++) {
+        document.cookie = name + '=; path=/' + scopes[i] + '; ' + EXPIRED
+        if (heldNames().indexOf(name) === -1) return
+      }
+    }
+
+    // Forget what the tag stored, and nothing else: the cookies this property wrote, plus the
+    // throttling ones the browser is actually holding — `_gat` and the names under it, which
+    // is as far as the match goes: `_gate` or `_gather` are somebody else's cookie and are
+    // left alone. Anything the page did not find in the jar is not written to at all.
+    function forget() {
+      var held = heldNames()
+      var names = cookieNames()
+      for (var i = 0; i < held.length; i++) {
+        var throttle = held[i] === '_gat' || held[i].indexOf('_gat_') === 0
+        if (throttle && names.indexOf(held[i]) === -1) names.push(held[i])
+      }
+      var host = (window.location && window.location.hostname) || ''
+      for (var j = 0; j < names.length; j++) {
+        if (heldNames().indexOf(names[j]) !== -1) drop(names[j], host)
+      }
     }
 
     if (stored(banner) === GRANTED) load()
