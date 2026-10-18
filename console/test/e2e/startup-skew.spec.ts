@@ -291,10 +291,13 @@ test.describe('the startup handshake, in the real app', () => {
       // window's title says which console this is and what it made of the CLI,
       // which is design section 3.4 rule 8 ("the console knows which CLI it is
       // driving, and says so in its header") read as far as this tree can carry
-      // it: no renderer draws a header yet, so the header is the title. What the *document* draws for a reduced
-      // mode -- the banner, and no withheld view -- is `renderVersionSkew`'s and
-      // is asserted in `skew.spec.ts`: nothing under `src/renderer/` is loaded
-      // into the app's document yet, and this spec does not pretend otherwise.
+      // it: the header is the title. What the *document* draws for a reduced
+      // mode -- the banner, and no withheld view -- is the renderer's, and since
+      // Task 3.4a the dashboard document loads the bundled entry, so it is drawn
+      // in the app's own document: `entry.spec.ts` asserts the banner, its
+      // headline and the three hidden views from inside the page, and
+      // `skew.spec.ts` asserts `renderVersionSkew` itself, injected into the same
+      // document. This spec stays what it was -- the wiring, and the title.
       expect(await windowTitles(app)).toEqual([`${CONSOLE_WINDOW_TITLE} — ${SKEW_HEADLINES.reduced}`])
       expect((await pageShape(page)).url).toBe(APP_ENTRY_URL)
     } finally {

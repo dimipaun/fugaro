@@ -757,6 +757,25 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     expect(activate).not.toContain('registerHandlers')
   })
 
+  it('joins in the one handler `source.ts` leaves out, which is the half it names', () => {
+    // `CliBackedHandlers` in `src/source/source.ts` is the surface *minus*
+    // `startup.compatibility`, and its comment says the entry point joins that
+    // key in -- which until this task was a promise about a file that did not do
+    // it yet. It does it now, and this is the assertion that keeps the comment
+    // true: `handlersFor(source, ...)` spread, and the handshake handler added by
+    // name beside it.
+    const gated = bodyOf('const gated: ConsoleHandlers = {')
+    expect(gated).toContain('...handlersFor(')
+    expect(gated).toContain("'startup.compatibility': startupCompatibility(")
+    // The join is what makes the surface complete, so there is exactly one of
+    // each half and they are in the same object.
+    expect(indexSource.match(/handlersFor\(/g) ?? []).toHaveLength(1)
+    expect(indexSource.match(/startupCompatibility\(/g) ?? []).toHaveLength(1)
+    // And the argument is the *function* that reads the store, not the store:
+    // the answer is asked for at message time (`startupCompatibility`'s `read`).
+    expect(gated).toContain('startupCompatibility(storedCompatibility)')
+  })
+
   it('hands the decision to the lifecycle, which is what runs it at the right moment', () => {
     // `createConsoleLifecycle` is what threads the callback into `startupWindow`
     // (tested above in 'the lifecycle'), so this is the entry point's half of
