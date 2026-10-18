@@ -110,6 +110,10 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // `config_sha256` already are.
   base_branch: 'branch',
   previous_run: 'runId',
+  // `changed_files.paths[]`: repository-relative paths a run changed (`runstore.ChangedFiles`,
+  // console v2 D27). A path can name a client or a person, so it is text a job
+  // wrote and goes through the sanitizer; `total` and `truncated` are not strings.
+  paths: 'path',
   // Provenance inside `runstore.Cost`: `model_source` is `gateway` or
   // `claude-code`, and `compute_source` is the price table's own line for the
   // figures the estimate came from. The console draws neither today; they are
@@ -687,7 +691,7 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * refused -- which is the point of closing the shape: a document the console
  * does not fully understand becomes Task 3.2's skew state, not a half-drawn
  * list. Keys accepted and not read (`project_layer`, `config_sha256`,
- * `image_age_s`, `artifact_count`, `artifact_bytes`, `task_pr`, `record_pr`,
+ * `image_age_s`, `changed_files`, `artifact_count`, `artifact_bytes`, `task_pr`, `record_pr`,
  * `pr`, `pushed_head`, `started_at`, `draft_fallback`, `pr_status_at`,
  * `stale_draft`, `execution`, `batch`, `halt`, `previous_run`, `base_branch`)
  * are the ones this screen has no use for yet; they are listed so that a
@@ -728,6 +732,7 @@ export const RECORD_KEYS = [
   'settled',
   'branch',
   'outcome',
+  'changed_files',
   'artifact_count',
   'artifact_bytes',
   'task_pr',
