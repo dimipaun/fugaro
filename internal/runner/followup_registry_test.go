@@ -7,11 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/oauth2"
-
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/budget"
-	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -54,17 +51,7 @@ func followUpBK(t *testing.T, mode string) (*fuHarness, *bk) {
 // launch, for a run id other than the package's shared runID constant.
 func mintFor(t *testing.T, b *bk, run string, at time.Time) {
 	t.Helper()
-	signer, err := token.NewIAMSigner(bkSignerEmail, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "ya29.launcher"}), token.WithIAMEndpoint(b.iam.URL))
-	if err != nil {
-		t.Fatal(err)
-	}
-	tok, err := token.MintAt(context.Background(), signer, token.Claims{Slug: repoSlug, Run: run, FX: token.ExpiryFX(at, 3*time.Hour), FP: "aurora", RB: bkRB}, at)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := token.PutObject(context.Background(), b.bucket, repoSlug, run, tok); err != nil {
-		t.Fatal(err)
-	}
+	b.mintSealed(repoSlug, run, at)
 }
 
 // entryFor is the registry entry of a run other than the package's shared

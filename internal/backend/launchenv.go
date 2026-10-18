@@ -6,7 +6,12 @@ import (
 )
 
 // EnvVar is one NAME=value entry of a launch's own environment, parsed.
-type EnvVar struct{ Name, Value string }
+// Secret is true for an entry from LaunchSpec.SecretEnv: its value is a secret
+// a backend carries only where the design accepts the audience, or refuses.
+type EnvVar struct {
+	Name, Value string
+	Secret      bool
+}
 
 // PlatformEnvNames are the names every deployed job's own environment carries
 // the installation's identity and configuration under: the runs bucket, which
@@ -50,12 +55,17 @@ func ReservedEnvNames(own ...string) []string {
 	return append(out, PlatformEnvNames...)
 }
 
-// LaunchEnv parses LaunchSpec.Env — the variables a launcher adds for one
-// execution only — into entries, in the order they were given, and refuses
-// the two an entry must not be. Both backends build the run's environment
-// through here, so what a launcher hands the seam is either carried by every
-// backend or refused by every backend: Env's one producer today is the budget
-// marker (internal/cli/run.go, internal/runner's BudgetTokenEnv), and a
+// LaunchEnv parses LaunchSpec.Env and then LaunchSpec.SecretEnv — the
+// variables a launcher adds for one execution only — into entries, in the
+// order they were given (SecretEnv's marked Secret), and refuses the three an
+// entry must not be. Both backends build the run's environment through here,
+// so what a launcher hands the seam is either carried by every backend or
+// refused by every backend — except a Secret entry, which a backend must also
+// refuse when the only place it could carry it is readable by a wider
+// audience than the execution's override (Batch's job definition). The
+// launcher's one entry today is the budget marker (internal/cli/run.go,
+// internal/runner's BudgetTokenEnv), a SecretEnv entry once the launcher seals
+// (its value is the seal key, D15), and a
 // backend that dropped it would leave the run unable to tell a minted token
 // from a project that published no policy at all (plan R2-8(a)). A backend
 // that carries an entry into a map of its own (Batch's job variables) must
@@ -63,7 +73,7 @@ func ReservedEnvNames(own ...string) []string {
 // refused there rather than silently replacing the value the run reads its own
 // identity from.
 //
-// The two refusals:
+// The three refusals, none of which quotes a secret entry's value:
 //
 //   - an entry that is not NAME=value. An entry with no "=" or with an empty
 //     name is a launcher's bug, and a silently dropped variable is a run that
@@ -76,24 +86,50 @@ func ReservedEnvNames(own ...string) []string {
 //     the platform, so which of the two values wins is the platform's to
 //     decide; a run whose FUGARO_RUN came from a launch override would be a
 //     run the launcher could not find again.
+//   - a name given twice, in either list or across both: which value the
+//     platform keeps is not the launcher's to leave to chance.
 func LaunchEnv(spec LaunchSpec, reserved ...string) ([]EnvVar, error) {
-	if len(spec.Env) == 0 {
+	if len(spec.Env) == 0 && len(spec.SecretEnv) == 0 {
 		return nil, nil
 	}
 	own := make(map[string]bool, len(reserved))
 	for _, name := range reserved {
 		own[name] = true
 	}
-	out := make([]EnvVar, 0, len(spec.Env))
-	for _, kv := range spec.Env {
+	seen := make(map[string]bool, len(spec.Env)+len(spec.SecretEnv))
+	out := make([]EnvVar, 0, len(spec.Env)+len(spec.SecretEnv))
+	add := func(kv string, secret bool) error {
 		name, value, ok := strings.Cut(kv, "=")
 		if !ok || name == "" {
-			return nil, fmt.Errorf("launch env %q: it must be NAME=value", kv)
+			// Nothing of a malformed entry is quoted, secret or not: an entry
+			// with no "=" may be a name run into its value (a launcher bug such
+			// as the marker's name directly followed by the seal key), so the
+			// refusal names only the shape it wanted.
+			kind := "a launch env entry"
+			if secret {
+				kind = "a secret launch env entry"
+			}
+			return fmt.Errorf("%s is not NAME=value (the entry is not quoted: it may carry a value)", kind)
 		}
 		if own[name] {
-			return nil, fmt.Errorf("launch env %s: the job's own environment already sets it, and that value is what the run reads its own identity and configuration from (design §2.1, §2.5): refusing rather than leaving which of the two the platform hands the run to chance", name)
+			return fmt.Errorf("launch env %s: the job's own environment already sets it, and that value is what the run reads its own identity and configuration from (design §2.1, §2.5): refusing rather than leaving which of the two the platform hands the run to chance", name)
 		}
-		out = append(out, EnvVar{Name: name, Value: value})
+		if seen[name] {
+			return fmt.Errorf("launch env %s: the launch names it twice, and which value the platform hands the run would be left to chance", name)
+		}
+		seen[name] = true
+		out = append(out, EnvVar{Name: name, Value: value, Secret: secret})
+		return nil
+	}
+	for _, kv := range spec.Env {
+		if err := add(kv, false); err != nil {
+			return nil, err
+		}
+	}
+	for _, kv := range spec.SecretEnv {
+		if err := add(kv, true); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }

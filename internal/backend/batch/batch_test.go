@@ -2114,3 +2114,36 @@ func equalJSON(a, b any) bool {
 	y, err2 := json.Marshal(b)
 	return err1 == nil && err2 == nil && string(x) == string(y)
 }
+
+// TestLaunchRefusesASecretEnv is the Batch half of the seal's carrier
+// (docs/design/budget-token-channel.md, the Slice B note): a Batch job has no
+// per-execution override, so the only place a launch's variable can go is the
+// job definition's plain variables, which every launcher (batch.jobsEditor)
+// and the reaper (batch.jobs.get) read back with `gcloud batch jobs describe`
+// for as long as the job is kept — a standing copy, not the Cloud Run
+// override the design prices. So
+// a launch carrying a secret entry (the budget seal key) is refused before
+// the create, definitively (ErrRejected, so the launcher drops its claim and
+// its sealed object), and the refusal does not quote the value. Batch carries
+// a sealed budget run only once a mechanism the design allows exists (an
+// open owner question).
+//
+// Mutation (run, restored): let jobDefinition merge secret entries into vars
+// like plain ones — the create happens and this test fails.
+func TestLaunchRefusesASecretEnv(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	s := spec()
+	v := strings.Repeat("k", 43)
+	s.SecretEnv = []string{"FUGARO_BUDGET_TOKEN=" + v}
+	_, err := b.Launch(ctx, s)
+	if !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch with a secret entry = %v, want ErrRejected", err)
+	}
+	if strings.Contains(err.Error(), v) {
+		t.Fatalf("the refusal quotes the secret's value: %v", err)
+	}
+	if n := len(bf.Creates()); n != 0 {
+		t.Fatalf("a refused launch created %d job(s)", n)
+	}
+}

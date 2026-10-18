@@ -44,6 +44,7 @@ type budgetRig struct {
 	iam    *gcpfake.IAMCredentials
 	upstr  *anthropicfake.Fake
 	bucket string // directory
+	key    []byte // the seal key the launcher handed the execution
 	claude string
 	rec    runstore.Record
 	exit   int
@@ -110,7 +111,14 @@ func runBudget(t *testing.T, auth, mode, script string, onStart func(r *budgetRi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := token.PutObject(context.Background(), b, acmeSlug, runID, tok); err != nil {
+	// Sealed under a key drawn for this launch, and the key handed to the
+	// execution in its marker (D15), as fugaro run does.
+	key, err := token.NewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.key = key
+	if err := token.PutObject(context.Background(), b, acmeSlug, runID, tok, key); err != nil {
 		t.Fatal(err)
 	}
 	b.Close()
@@ -138,6 +146,7 @@ func runBudget(t *testing.T, auth, mode, script string, onStart func(r *budgetRi
 		"PATH=" + os.Getenv("PATH"), "HOME=" + tmp, "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
 		"FUGARO_BUDGET_MODE=" + mode, "FUGARO_RTDB_URL=" + r.db.URL, "FUGARO_FIREBASE_API_KEY=" + e2eAPIKey, "FUGARO_BUDGET_GRACE=5s",
 		"FIXTURE_FAILS_FILE=" + filepath.Join(tmp, "fails"),
+		"FUGARO_BUDGET_TOKEN=" + token.EncodeKey(key),
 	}
 	if auth == "oauth" {
 		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN=oauth-e2e-token-abcdef")
@@ -223,25 +232,33 @@ func TestCloudBudgetRunWithFakes(t *testing.T) {
 	if r.db.Value(budget.PathAgent(acmeSlug, runID)) != nil {
 		t.Fatal("the registry entry survived the run")
 	}
-	if _, err := os.Stat(filepath.Join(r.bucket, "runs", acmeSlug, runID, "budget-token")); !os.IsNotExist(err) {
-		t.Fatalf("the token object is still in the bucket (%v)", err)
+	// The take is read-only (the job's grant on tokens/ has no delete, D16):
+	// the sealed object stays for the lifecycle rule, and it is ciphertext.
+	obj, err := os.ReadFile(filepath.Join(r.bucket, filepath.FromSlash(token.ObjectKey(acmeSlug, runID))))
+	if err != nil || !token.Sealed(obj) {
+		t.Fatalf("the sealed token object is not where the launcher left it (%v)", err)
 	}
-	// Nothing of the run's Firebase identity is in the bucket.
-	err := filepath.WalkDir(r.bucket, func(p string, d os.DirEntry, err error) error {
+	if _, err := os.Stat(filepath.Join(r.bucket, "runs", acmeSlug, runID, "budget-token")); !os.IsNotExist(err) {
+		t.Fatalf("a token object is under runs/ (%v)", err)
+	}
+	// Nothing of the run's Firebase identity is in the bucket, and not the
+	// seal key either.
+	enc := token.EncodeKey(r.key)
+	err = filepath.WalkDir(r.bucket, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
 		data, _ := os.ReadFile(p)
-		if strings.Contains(string(data), e2eAPIKey) || strings.Contains(string(data), "eyJ") {
-			t.Errorf("%s holds a Firebase credential", p)
+		if strings.Contains(string(data), e2eAPIKey) || strings.Contains(string(data), "eyJ") || strings.Contains(string(data), enc) {
+			t.Errorf("%s holds a Firebase credential or the seal key", p)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(r.out, e2eAPIKey) {
-		t.Fatal("the API key is in the run's output")
+	if strings.Contains(r.out, e2eAPIKey) || strings.Contains(r.out, enc) {
+		t.Fatal("the API key or the seal key is in the run's output")
 	}
 }
 

@@ -114,44 +114,52 @@ func TestDocsBudgetTokenChannelCitationsExist(t *testing.T) {
 		}
 	}
 
-	// The number the outline proposes, read from the register itself: a
-	// `## Check 60` section or a `| 60 |` row in the checklist means another
-	// document has taken it, and this design would be proposing a taken number.
+	// The number the outline proposes is now written, by the seal's own
+	// launcher half: the checklist's Check 60 is this design's, owner-run,
+	// sandbox only, and never the belong installation.
 	checklist := readDoc(t, "docs/gcp-live-checklist.md")
-	for _, taken := range []string{"## Check 60", "| 60 |"} {
-		if strings.Contains(checklist, taken) {
-			t.Errorf("docs/gcp-live-checklist.md carries %q, so Check 60 is no longer free and %s must propose the next number", taken, path)
+	i := strings.Index(checklist, "## Check 60: the sealed budget token")
+	if i < 0 || !strings.Contains(checklist, "| 60 | The sealed budget token") {
+		t.Fatalf("docs/gcp-live-checklist.md does not carry Check 60 for %s (its section and its summary row)", path)
+	}
+	section := checklist[i:]
+	for _, want := range []string{"never `belong`", "run by you", "NOT RUN", "**No agent runs any step of this check**", "P=fugaro-dev", "never a token, a key"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 60 does not say %q", want)
 		}
 	}
 }
 
 // TestDocsSecurityMdPointsAtTheTokenChannelDesign: the trust model's reader can
-// find the design that replaces the token's delivery channel, and the pointer
-// says the design is not built — which is the property, and it is carried by
-// the pointer's own wording, not by the path string. A paragraph rewritten to
-// imply the channel ships must fail this test.
+// find the design that sealed the token's delivery channel, from the D13
+// paragraph that the seal narrows, and the paragraph says what the seal is —
+// built, both halves, and a capability rather than a boundary — rather than
+// overstating it. The pointer is asserted on the D13 paragraph's own line, so
+// wording elsewhere in the file cannot stand in for it.
 func TestDocsSecurityMdPointsAtTheTokenChannelDesign(t *testing.T) {
-	const (
-		design = "docs/design/budget-token-channel.md"
-		gate   = "no code follows that document until the owner approves it"
-	)
+	const design = "docs/design/budget-token-channel.md"
 	sec := readDoc(t, "SECURITY.md")
-	// The pointer is one line of SECURITY.md's own list: assert on that line,
-	// so wording somewhere else in the file cannot stand in for it.
 	var pointer string
 	for _, line := range strings.Split(sec, "\n") {
-		if strings.Contains(line, design) {
+		if strings.Contains(line, "D13") && strings.Contains(line, design) {
 			pointer = line
 			break
 		}
 	}
 	if pointer == "" {
-		t.Fatalf("SECURITY.md does not point at %s", design)
+		t.Fatalf("SECURITY.md's D13 paragraph does not point at %s", design)
 	}
-	for _, want := range []string{"awaiting the owner's approval", gate} {
+	for _, want := range []string{"both halves built", "capability, not a boundary", "read-only", "sealed"} {
 		if !strings.Contains(pointer, want) {
-			t.Errorf("SECURITY.md's line about %s does not say the design is not built: it must carry %q\n\nline: %s",
-				design, want, pointer)
+			t.Errorf("SECURITY.md's D13 paragraph does not say %q about the seal\n\nline: %s", want, pointer)
+		}
+	}
+	// The marker's sentence and the launcher paragraph are rewritten
+	// together (D15): the token is a bearer credential that does not travel
+	// as an override, the key is not a credential and its audience is named.
+	for _, want := range []string{"**bearer credential**", "**seal key**", "is not a credential", "Its audience is the override's", "not** a peer run"} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("SECURITY.md does not carry %q: the marker's sentence and the launcher paragraph must say what the key is (D15)", want)
 		}
 	}
 	if _, err := os.Stat("../../" + design); err != nil {

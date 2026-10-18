@@ -25,9 +25,12 @@ func fakeBudgetToken(slug, run string) string {
 	return "h." + base64.RawURLEncoding.EncodeToString(payload) + ".s"
 }
 
-// Every write a launcher makes is under runs/, so the 0.7.0 grants (writes
-// denied everywhere else) leave launching, the claim takeover and release,
-// cancelling and the token object's cleanup working (bucket-iam.md §2.2).
+// Every write a launcher makes is under runs/ or tokens/, so the launchers'
+// conditioned write (gcp.LauncherBucketCondition: runs/ and, since the budget
+// token moved out of runs/, tokens/ — docs/design/budget-token-channel.md
+// §7.2) with writes denied everywhere else leaves launching, the claim
+// takeover and release, cancelling, the sealed token object and its cleanup
+// working (bucket-iam.md §2.2).
 func TestLauncherGrantsCoverEveryLauncherWrite(t *testing.T) {
 	ctx := context.Background()
 	fake := gcpfake.NewGCS(t)
@@ -56,7 +59,11 @@ func TestLauncherGrantsCoverEveryLauncherWrite(t *testing.T) {
 	if err := s.RequestCancel(ctx); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
-	if err := token.PutObject(ctx, b, slug, run, fakeBudgetToken(slug, run)); err != nil {
+	key, err := token.NewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := token.PutObject(ctx, b, slug, run, fakeBudgetToken(slug, run), key); err != nil {
 		t.Fatalf("budget token: %v", err)
 	}
 	if err := token.DeleteObject(ctx, b, slug, run); err != nil {

@@ -198,3 +198,113 @@ func TestFindingChecksRedactsControlCharactersInFix(t *testing.T) {
 		t.Fatalf("Fix was not escaped: %q", fix)
 	}
 }
+
+// jobBinding is a job account's objectUser grant on its own repository's
+// runs/, cache/ and locks/, as the workflow module writes it.
+func jobBinding(saID, slug string) gcpfake.Binding {
+	return gcpfake.Binding{Role: "roles/storage.objectUser", Members: []string{"serviceAccount:" + saID + "@proj-1234.iam.gserviceaccount.com"},
+		Condition: &gcpfake.IAMCondition{Title: gcp.BucketConditionTitle(saID), Expression: gcp.BucketCondition(dbBucket, gcp.JobBucketPrefixes, slug)}}
+}
+
+// jobTokenBinding is the same account's read-only grant on tokens/<slug>/.
+func jobTokenBinding(saID, slug string) gcpfake.Binding {
+	return gcpfake.Binding{Role: "roles/storage.objectViewer", Members: []string{"serviceAccount:" + saID + "@proj-1234.iam.gserviceaccount.com"},
+		Condition: &gcpfake.IAMCondition{Title: gcp.TokenBucketConditionTitle(saID), Expression: gcp.TokenBucketCondition(dbBucket, slug)}}
+}
+
+// TestDoctorJobTokenGrant: a job account that has its runs/ grant but not the
+// read-only grant on tokens/ (a repository not re-applied with fugaro init
+// --repo since the budget token moved there, budget-token-channel.md §7.2) is
+// a warning naming the account and the cure: its runs cannot read the sealed
+// token, and read it as missing. With the grant, the check is OK.
+func TestDoctorJobTokenGrant(t *testing.T) {
+	const sa, slug = "fugaro-acme-app-w-1234abcd", "acme-app-0123456789abcdef"
+	t.Run("missing", func(t *testing.T) {
+		r, g := newDoctorRig(t), gcpfake.NewGCS(t)
+		r.withRunsBucket(t, g, dbLists, append(hardenedPolicy(), jobBinding(sa, slug))...)
+		o := r.runDoctorJSON(t)
+		c, ok := doctorCheckByID(o.Checks, "job-token-grant")
+		if !ok || c.OK || c.Severity != "warning" {
+			t.Fatalf("check = %+v (%v), want a warning", c, ok)
+		}
+		var named bool
+		for _, c := range o.Checks {
+			if strings.HasPrefix(c.ID, "job-token-grant-") && strings.Contains(c.Problem, sa) && strings.Contains(c.Problem, "tokens/") && strings.Contains(c.Fix, "fugaro init --repo") {
+				named = true
+			}
+		}
+		if !named {
+			t.Fatalf("no finding names the account and the cure: %+v", o.Checks)
+		}
+		if s, _ := doctorCheckByID(o.Checks, "runs-bucket-iam"); !s.OK {
+			t.Fatalf("the job's own runs/ grant made runs-bucket-iam warn: %+v", s)
+		}
+	})
+	t.Run("present", func(t *testing.T) {
+		r, g := newDoctorRig(t), gcpfake.NewGCS(t)
+		r.withRunsBucket(t, g, dbLists, append(hardenedPolicy(), jobBinding(sa, slug), jobTokenBinding(sa, slug))...)
+		o := r.runDoctorJSON(t)
+		if c, ok := doctorCheckByID(o.Checks, "job-token-grant"); !ok || !c.OK {
+			t.Fatalf("check = %+v (%v), want OK", c, ok)
+		}
+		if s, _ := doctorCheckByID(o.Checks, "runs-bucket-iam"); !s.OK {
+			t.Fatalf("the job's tokens/ grant made runs-bucket-iam warn: %+v", s)
+		}
+	})
+	t.Run("another slug's grant does not count", func(t *testing.T) {
+		r, g := newDoctorRig(t), gcpfake.NewGCS(t)
+		r.withRunsBucket(t, g, dbLists, append(hardenedPolicy(), jobBinding(sa, slug), jobTokenBinding(sa, "other-0123456789abcdef"))...)
+		o := r.runDoctorJSON(t)
+		if c, ok := doctorCheckByID(o.Checks, "job-token-grant"); !ok || c.OK {
+			t.Fatalf("check = %+v (%v), want a warning", c, ok)
+		}
+	})
+}
+
+// TestDoctorJobTokenGrantNeverSilentlyGreen: when doctor cannot judge the
+// job accounts' tokens/ grants it says so, rather than dropping the check
+// (a missing line reads as nothing wrong): a bucket policy it may not read
+// (a launcher's usual case) or cannot read (a server error), and a job
+// account whose runs/ grant is not in the exact shape this fugaro writes.
+func TestDoctorJobTokenGrantNeverSilentlyGreen(t *testing.T) {
+	const sa, slug = "fugaro-acme-app-w-1234abcd", "acme-app-0123456789abcdef"
+	unchecked := func(t *testing.T, o doctorOutput, want string) {
+		t.Helper()
+		c, ok := doctorCheckByID(o.Checks, "job-token-grant")
+		if !ok || c.OK || c.Severity == "" || !strings.Contains(c.Problem, want) {
+			t.Fatalf("check = %+v (%v), want an unchecked line saying %q", c, ok, want)
+		}
+	}
+	t.Run("policy read refused", func(t *testing.T) {
+		r, g := newDoctorRig(t), gcpfake.NewGCS(t)
+		r.withRunsBucket(t, g, dbLists)
+		g.RefuseBucketPolicy(dbBucket)
+		unchecked(t, r.runDoctorJSON(t), "cannot read the bucket policy")
+	})
+	t.Run("policy read failed", func(t *testing.T) {
+		r, g := newDoctorRig(t), gcpfake.NewGCS(t)
+		r.withRunsBucket(t, g, dbLists, hardenedPolicy()...)
+		g.FailBucketPolicy(dbBucket)
+		unchecked(t, r.runDoctorJSON(t), "cannot read the bucket policy")
+	})
+	t.Run("a runs/ grant of another shape", func(t *testing.T) {
+		r, g := newDoctorRig(t), gcpfake.NewGCS(t)
+		odd := jobBinding(sa, slug)
+		odd.Condition.Expression = gcp.BucketCondition(dbBucket, []string{"runs", "cache"}, slug)
+		r.withRunsBucket(t, g, dbLists, append(hardenedPolicy(), odd)...)
+		o := r.runDoctorJSON(t)
+		c, ok := doctorCheckByID(o.Checks, "job-token-grant")
+		if !ok || c.OK {
+			t.Fatalf("check = %+v (%v), want not OK", c, ok)
+		}
+		var named bool
+		for _, c := range o.Checks {
+			if strings.HasPrefix(c.ID, "job-token-grant-") && strings.Contains(c.Problem, sa) && strings.Contains(c.Problem, "not checked") {
+				named = true
+			}
+		}
+		if !named {
+			t.Fatalf("no line says the account was not checked: %+v", o.Checks)
+		}
+	})
+}

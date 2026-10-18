@@ -371,6 +371,140 @@ run "bucket_condition_exact" {
   }
 }
 
+# The job's read-only grant on its own repository's budget token objects
+# (docs/design/budget-token-channel.md section 7.2, D16): objectViewer, never
+# objectUser, on exactly tokens/<slug>/ of the runs bucket, and the runs/,
+# cache/ and locks/ grant does not reach tokens/.
+run "token_condition_exact" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = var.bitbucket.repo.workflows.web
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.job_tokens.role == "roles/storage.objectViewer" && google_storage_bucket_iam_member.job_tokens.bucket == "fugaro-runs-proj-1234"
+    error_message = "the job account reads tokens/ and may not write it: objectViewer, never objectUser"
+  }
+  assert {
+    condition     = google_storage_bucket_iam_member.job_tokens.condition[0].expression == "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/acme-sandbox-100024cb41873d4e/\")"
+    error_message = "the job account's token condition is its own repository's tokens/<slug>/, byte for byte"
+  }
+  assert {
+    condition     = google_storage_bucket_iam_member.job_tokens.condition[0].title == "fugaro-tokens-fugaro-acme-sandbox-w-7815dfaf" && google_storage_bucket_iam_member.job_tokens.condition[0].description == null
+    error_message = "the token condition's title is the input, with no description"
+  }
+  assert {
+    condition     = !strcontains(google_storage_bucket_iam_member.job.condition[0].expression, "/objects/tokens/")
+    error_message = "the job's objectUser grant must not reach tokens/: a peer run could delete a queued token"
+  }
+}
+
+# A token condition widened past tokens/<slug>/ (a second clause) fails the plan.
+run "token_condition_not_past_tokens" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = merge(var.bitbucket.repo.workflows.web, { token_condition = { title = "fugaro-tokens-fugaro-acme-sandbox-w-7815dfaf", expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/acme-sandbox-100024cb41873d4e/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")" } })
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  expect_failures = [var.workflow]
+}
+
+# tokens/ of every repository fails the plan: a job reads its own repository's.
+run "token_condition_not_all_tokens" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = merge(var.bitbucket.repo.workflows.web, { token_condition = { title = "fugaro-tokens-fugaro-acme-sandbox-w-7815dfaf", expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")" } })
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  expect_failures = [var.workflow]
+}
+
+# Another repository's tokens/<slug>/ fails the plan: the slug must be the one
+# the job's own runs/ condition names.
+run "token_condition_not_another_repo" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = merge(var.bitbucket.repo.workflows.web, { token_condition = { title = "fugaro-tokens-fugaro-acme-sandbox-w-7815dfaf", expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/acme-other-0123456789abcdef/\")" } })
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  expect_failures = [var.workflow]
+}
+
+# Another bucket's tokens/ fails the plan (the resource precondition).
+run "token_condition_this_bucket" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = merge(var.bitbucket.repo.workflows.web, { bucket_condition = { title = var.bitbucket.repo.workflows.web.bucket_condition.title, expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-other/objects/runs/acme-sandbox-100024cb41873d4e/\")" }, token_condition = { title = "t", expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-other/objects/tokens/acme-sandbox-100024cb41873d4e/\")" } })
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  expect_failures = [google_storage_bucket_iam_member.job_tokens]
+}
+
 run "build_bucket_condition_exact" {
   command = plan
 

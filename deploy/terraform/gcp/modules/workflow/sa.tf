@@ -32,6 +32,31 @@ resource "google_storage_bucket_iam_member" "job" {
   }
 }
 
+# The repository's own budget token objects, tokens/<slug>/, read-only: the
+# launcher writes the sealed token there and the run reads it, and a run can
+# neither delete nor replace a queued run's token (objectViewer has no
+# delete or create; docs/design/budget-token-channel.md section 7.2, D16).
+# The runs/, cache/ and locks/ grant above never covers tokens/. The
+# precondition re-checks the bucket and the prefix, beside the variable's own
+# validation of the shape and the slug.
+resource "google_storage_bucket_iam_member" "job_tokens" {
+  bucket = var.runs_bucket
+  role   = "roles/storage.objectViewer"
+  member = google_service_account.job.member
+
+  condition {
+    title      = var.workflow.token_condition.title
+    expression = var.workflow.token_condition.expression
+  }
+
+  lifecycle {
+    precondition {
+      condition     = startswith(var.workflow.token_condition.expression, "resource.name.startsWith(\"projects/_/buckets/${var.runs_bucket}/objects/tokens/") && !strcontains(var.workflow.token_condition.expression, "||")
+      error_message = "workflow.token_condition must name tokens/ of this runs bucket, in one clause (gcp.TokenBucketCondition)."
+    }
+  }
+}
+
 # Each secret the job mounts, at the secret level, never the project's.
 resource "google_secret_manager_secret_iam_member" "job" {
   for_each = toset(values(var.workflow.secret_env))

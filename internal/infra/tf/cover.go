@@ -1080,15 +1080,23 @@ func (c Cover) deployerTokenCreator(ch Change) string {
 // as gcp.BucketCondition writes it.
 var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/(runs|cache|locks|builds)/([a-z0-9][a-z0-9_-]*)/"\)$`)
 
+// tokenClause is the one clause of a job account's read-only grant on its
+// repository's budget token objects, as gcp.TokenBucketCondition writes it:
+// tokens/<slug>/ of a bucket, nothing before it and nothing after it.
+var tokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/` + gcp.TokenBucketPrefix + `/([a-z0-9][a-z0-9_-]*)/"\)$`)
+
 // bucketCondition says why a bucket grant's condition is not the modules'
-// (docs/design/bucket-iam.md H6), "" when it is: objectAdmin and objectViewer
-// carry none; a person's objectUser carries exactly the launchers' condition
-// on one of this run's buckets; an account's objectUser carries either a
-// project job's widened condition (gcp.ProjectBucketCondition, byte for byte,
-// in the project module, with the title of an account that module creates) or
-// clauses of gcp.BucketCondition's shape, each on one of this run's buckets.
-// The modules never set a description, and a condition known only after apply
-// is not covered.
+// (docs/design/bucket-iam.md H6), "" when it is: objectAdmin carries none; an
+// objectViewer carries none, except an account's, which may carry exactly
+// one tokens/<slug>/ clause on one of this run's buckets (the job's read of
+// its own budget token objects, budget-token-channel.md §7.2); a person's
+// objectUser carries exactly the launchers' condition on one of this run's
+// buckets; an account's objectUser carries either a project job's widened
+// condition (gcp.ProjectBucketCondition, byte for byte, in the project
+// module, with the title of an account that module creates) or clauses of
+// gcp.BucketCondition's shape on runs/, cache/, locks/ or builds/ — never
+// tokens/ — each on one of this run's buckets. The modules never set a
+// description, and a condition known only after apply is not covered.
 //
 // createdSAIDs are the (module, account ID) pairs this plan creates and
 // heldSAIDs the pairs each module holds after it: the widened condition is
@@ -1111,6 +1119,11 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 	person := !unknown(ch, "member") && slices.Contains(c.Listed, str(ch.After["member"]))
 	bucket := str(ch.After["bucket"])
 	switch {
+	case role == "roles/storage.objectViewer" && len(conds) != 0 && !person:
+		m := tokenClause.FindStringSubmatch(expr)
+		if m == nil || !slices.Contains(c.Buckets, m[1]) || (bucket != "" && bucket != m[1]) {
+			return "grants objectViewer on the bucket to an account under a condition that is not one repository's tokens/ condition of this run's bucket"
+		}
 	case role == "roles/storage.objectAdmin" || role == "roles/storage.objectViewer":
 		if len(conds) != 0 {
 			return "grants " + role + " on the bucket under a condition, which the modules never do"
@@ -1128,7 +1141,7 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 				return ""
 			}
 		}
-		return "grants objectUser on the bucket to a person under a condition that is not the launchers' runs/ condition"
+		return "grants objectUser on the bucket to a person under a condition that is not the launchers' runs/ and tokens/ condition"
 	case role == "roles/storage.objectUser":
 		if len(conds) == 0 {
 			return "grants objectUser on the bucket to an account with no condition"

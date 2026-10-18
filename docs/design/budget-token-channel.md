@@ -1,13 +1,17 @@
 # The budget token's channel
 
-**Status: the decisions are answered (2026-10-15); implementation awaits the owner's explicit go.**
+**Status: the decisions are answered (2026-10-15); both halves are built for 0.9.0 — Slice A (the
+runner side and the token package, PR #417) and Slice B (the launcher seals, the retry re-seal, the
+`tokens/` move with its grants, SECURITY.md's two sentences; the pull request stacked on #417).
+Check 60 (owner-run, sandbox only) is written in `docs/gcp-live-checklist.md` and has not run.**
 Phase 3b, Task 3b.1 of [the project-centric plan](../plans/2026-10-14-project-centric.md).
 SECURITY-SENSITIVE: it is flagged for an independent review, and it decides nothing by itself.
 **D14 to D19 are no longer open**: the owner answered all six on 2026-10-15, and each answer is
 recorded under the decision it answers, in the owner's own terms. The answers settle *what* to
 build, not *whether to start*. This is still an approval-gated design and the gate is real:
-no code follows this document until the owner approves it — no change under `internal/`, no
-Terraform, no config, no live action, no secret handled. Its one red step is the documentation test
+no code follows this document until the owner approves it — D14's "build the seal" is the approval
+the runner side was built under, and the paragraphs below mark what it does and does not cover —
+no Terraform, no config, no live action, no secret handled. Its one red step is the documentation test
 beside it,
 `internal/cli/docs_budget_token_channel_test.go`, which fails until this file and the
 [SECURITY.md](../../SECURITY.md) pointer exist.
@@ -22,6 +26,75 @@ inside a shared job the profile is the isolation boundary for secrets only. It i
 objects — every project job account holds the same whole `runs/`, `cache/` and `locks/` prefixes
 (SECURITY.md, bucket-iam.md §10) — so D13's "separate profiles" mitigation is open for the owner to
 re-rule.
+
+**Slice A is built (2026-10-15).** The owner's "build the seal" (D14) is the approval the paragraph
+above was waiting for, and Slice A is the seal's **runner side**, in the order D19 fixes — runner
+and image first: the versioned envelope in `internal/budget/token` (the new `seal.go`:
+`Seal`/`Unseal`, the version byte, the object's name and the version byte as additional
+authenticated data, `ParseKey`/`EncodeKey`), `PutObject`/`TakeObject` understanding it, every
+refusal §7.4 lists, the
+runner's strict parse of the marker's value with `"1"` still accepted as the one-bit marker, the key
+registered with the runner's redactor before anything can print it, the marker stripped from every
+git call's environment beside the model credentials, and the `%q` leak gone — no code
+path prints the marker's value. **Slice B follows, and is not in this change:** the launcher seals
+and hands its key to the execution it starts, a `--retry` re-mints and re-seals under a new key
+(D17), the object moves to `tokens/` with the grant that reads it (D16, Task 3.2), and SECURITY.md's
+two sentences are rewritten with the launcher's seal (D15). Until Slice B the launcher still writes
+the token plaintext, which is why SECURITY.md's wording is unchanged here: the marker's nature
+change arrives with the launcher, not with the runner that is ready for it.
+
+**Slice B is built (2026-10-17), in D19's order.** The launcher draws a 32-byte key per launch
+(`token.NewKey`), seals the token under it and hands the key to the one execution it starts as the
+marker's value (`LaunchSpec.SecretEnv`); a `--retry` re-mints and re-seals under a new key and
+deletes the earlier object first (D17); the launcher's own errors are redacted of the key. The
+object moves to `tokens/<slug>/<run>/budget-token` (`token.ObjectPrefix`), `PutObject` has no
+plaintext form, and the take is read-only — no delete, no fallback keyed on a 403 (§7.2). A mixed
+fleet is gated both ways, closed except for one warned case: the launcher refuses to mint against a
+job image whose release base predates `sealSince` (the gate D19 allows), or whose build record is
+missing or names no base; on the owner's answer of 2026-10-17 it also refuses a development base
+whose record does not say `sealed_budget_token` (the base's own fugaro writes it at render) and was
+built before the seal's runner half (`sealRunnerIntroduced`). A development base with neither — no
+`sealed_budget_token` and a later or missing `built_at`, which is the job image's build time and
+not the base's — cannot be shown either way and **only warns**, so a launch against an old
+development base rebuilt today still goes ahead; the exact list is `docs/release.md`'s `sealSince`
+line. **What the record shows, and what it does not:** `sealed_budget_token` and `base_ref` are
+written by the base image's own fugaro during the image build — they say only that the base image's
+own build step recorded them. The launch runs the repository's `:latest`, which no launch compares
+with the record's `image_digest`, and a `dockerfile:` workflow's image is the repository's own to
+build, its fugaro included. So a hand-pushed `:latest`, or a `dockerfile:` image that ships an
+older fugaro, still gets the key echoed into `result.json` (where peer runs of the repository can
+read it), whatever its record says. **Unscheduled follow-up, for after 0.9.0 (the round-2
+reviewer's suggestion, not decided):** once 0.9.0 is released, refuse a development record that
+lacks `sealed_budget_token` instead of warning about it. A runner handed a marker of `1` — a launcher from before the seal — refuses at the take with
+the old side named, never reading a plaintext object.
+The grants moved with the object (§7.2, §7.5): the job account's `tokens/<slug>/` is
+`roles/storage.objectViewer` (`google_storage_bucket_iam_member.job_tokens`, in the workflow
+module), and the launchers' conditioned write is widened to `runs/ || tokens/` under the new title
+`fugaro-launchers-runs-tokens`, in Terraform, its precondition and tftest lines, and the four Go
+files that write and re-check it. **The project module of Task 3.2 does not exist on the base this
+was built on**, so the read-only grant is in the per-repository workflow module (`tokens/<slug>/`);
+Task 3.2's shared job must carry the same read-only grant on its own prefix condition, and must not
+add `tokens` to the job's objectUser prefixes.
+
+**The Batch backend refuses a sealed launch (decided in Slice B; an open owner question).** Once
+the launcher seals, the key it hands the execution would, on Batch, become a plain variable of the
+job's definition — Batch has no per-execution override. **The note this replaces named the wrong
+reader** (a peer's `gcloud run jobs describe`): on Batch a run's own account holds only
+`roles/batch.agentReporter` and `roles/logging.logWriter` (`deploy/terraform/gcp/modules/compute/iam.tf`),
+so a peer run cannot describe the job. The real audience is **every launcher**, through
+`roles/batch.jobsEditor` conditioned on the Fugaro job-name prefix (same file), which reads any
+Fugaro job's variables; **the reaper**, whose custom role carries `batch.jobs.get`, through
+`gcloud batch jobs describe`; and possibly the **CreateJob audit record** (unverified; Check 60
+step 3 records it). That is close to the override's audience in kind, but it is a standing copy in
+the job resource for as long as the job is kept rather than one request, and it widens to the
+reaper's account (compute Task 7, `docs/design/compute-backend.md`). This document
+allows no other carrier: a per-run Secret Manager secret read by the VM's account is C2, rejected
+above (the shared account reads every peer's secret, and revocation is not fail-closed). So the
+launcher hands the key as a *secret* launch variable (`LaunchSpec.SecretEnv`), Cloud Run carries it
+in the override, and Batch refuses the launch before creating anything (`ErrRejected`, the value
+never quoted). Batch's launcher wiring is not built, so no launch reaches this today. **Open for the
+owner:** whether Batch should ever run a budget-on run, and through which carrier — this document
+names none that satisfies §3's constraints.
 
 Every symbol below was read on `next` on 2026-10-15 and is cited by name rather than by line
 number, because the lines move.
@@ -306,8 +379,15 @@ nothing.
   generates with `crypto/rand` for this launch, in a small versioned envelope so that a later format
   is distinguishable and a plaintext object is distinguishable from a sealed one. The envelope is
   **`version byte || 12-byte nonce || ciphertext || 16-byte tag`**, and the object's own key —
-  `token.ObjectKey(slug, run)`, the `tokens/…` form of §7.2 once the object has moved — is the GCM
-  **additional authenticated data**. **What stops a sealed object from being replayed sideways is the
+  `token.ObjectKey(slug, run)`, the `tokens/…` form of §7.2 once the object has moved — **followed by
+  a zero byte and the envelope's version byte**, is the GCM **additional authenticated data**. The
+  zero byte is the separator (an object key carries none), so a name and a version cannot be
+  rearranged into another pair with the same AAD. The version byte is in the AAD as well as checked
+  — it is the envelope's first byte, and `Unseal` refuses a foreign one before it opens anything —
+  because the check is a statement about *this* build's format and the binding is a statement about
+  the bytes: a later version's envelope can then only be opened by code that knows which format it
+  holds. The AAD is not part of the envelope, so binding it changes nothing about the shape above.
+  **What stops a sealed object from being replayed sideways is the
   per-launch key, not the AAD**: while the object still lives under `runs/` — the seal-only first
   step D19 ships — copying one run's object onto another run's key is a write the peer's grant
   already allows (`google_storage_bucket_iam_member.job`, whose condition covers the bucket's
@@ -325,12 +405,21 @@ nothing.
   by the end-to-end check**: every step of Check 60 that could exercise it already fails earlier, at
   the unseal, because the keys differ. It needs a unit test in `internal/budget/token` that seals under
   one key string and opens under another and asserts the tag check refuses — that test, not a check
-  step, is where this claim is held.
+  step, is where this claim is held. The version byte's half of the AAD is held the same way and
+  needs its own: through `Unseal` the binding is invisible (the version byte is checked before the
+  open), so the test that holds it opens the envelope with `aad` itself and with a changed version
+  (`seal_aad_test.go`, in the package rather than beside it).
 - The key is **32 bytes from `crypto/rand`**, carried in the override as **unpadded base64url** (43
   characters), and the parse is strict, because the value decides whether the run unseals anything
   at all: a value that is not exactly one unpadded base64url string decoding to 32 bytes —
-  whitespace, `=` padding, a second segment, a shorter or longer key — is `MalformedEnv` and stops
-  the run (§7.4, row 2). It is a key, not a passphrase, so there is no KDF anywhere in the channel.
+  whitespace, `=` padding, a second segment, a shorter or longer key, or a non-canonical spelling of
+  the right 32 bytes — is `MalformedEnv` and stops the run (§7.4, row 2). The last of those is not
+  pedantry: 32 bytes is three whole base64url groups plus two, so the last character carries four
+  significant bits and two the encoding discards, and **three other 43-character spellings decode to
+  the same key**. The runner registers the *encoded* key with its redactor, so a lax parse would
+  leave three live spellings of the key that nothing redacts; `token.ParseKey` decodes through
+  `base64.RawURLEncoding.Strict()` and the rubric's value is one spelling, the one the redactor
+  knows. It is a key, not a passphrase, so there is no KDF anywhere in the channel.
 - The key travels in the override the launcher already writes. `internal/cli/run.go`'s
   `lspec.Env = []string{runner.BudgetTokenEnv + "=1"}` becomes a marker whose *value* is the
   execution's key; no new variable name, no new permission and no new resource for the carrier.
@@ -666,7 +755,8 @@ in `internal/budget/token` beside `PutObject`/`TakeObject` (one package owns bot
 channel), with the format's version as the envelope's first byte so a later format is refusable
 rather than misread, and with a plaintext object treated as a refusal once the launcher seals. The
 shape is fixed by §7.1 and decided here only in the sense of being accepted: `version byte ||
-12-byte nonce || ciphertext || 16-byte tag`, the object's key as additional authenticated data,
+12-byte nonce || ciphertext || 16-byte tag`, the object's key followed by the version byte as
+additional authenticated data,
 and a 32-byte key carried as unpadded base64url. **The AAD makes the envelope's bytes depend on the
 name they are stored under**, so the `tokens/` move of §7.2 changes the AAD and cannot be deployed
 against a launcher or a runner that still computes the old key — **the move and the code that
@@ -680,7 +770,7 @@ their only caller.
 
 **Owner's answer (2026-10-15): the versioned envelope, in `internal/budget/token`.** The file lives
 beside `PutObject`/`TakeObject`; the shape is **`version byte || 12-byte nonce || ciphertext ||
-16-byte tag`**; the object's own name is the additional authenticated data; the key is **32 bytes**
+16-byte tag`**; the object's own name and the version byte are the additional authenticated data; the key is **32 bytes**
 carried as **unpadded base64url**; and a plaintext object is **refused** once the launcher seals —
 no fallback to plaintext, for the reason §7.4's rows give (a mixed deployment is not an unsealing
 one), because a fallback would hand the exposure D13 accepted straight back.
@@ -775,7 +865,9 @@ untouched:
    object out of the runs bucket: it is not a JWT, it does not parse as one, and it carries no
    readable claim. Record the object's size and the fact that `fs`/`fr` are not in it.
 3. **The key is not in the bucket, and not in the logs.** Reads of the job's own environment
-   (`gcloud run jobs describe`, the v1 path Check 52 step 1 uses) and of the execution's overrides
+   (`gcloud run jobs describe`, the v1 path Check 52 step 1 uses; and, on an installation with the
+   compute backend, `gcloud batch jobs describe` of a Fugaro Batch job, which must show no key
+   because a sealed launch is refused on Batch) and of the execution's overrides
    (`gcloud run jobs executions describe`, Check 52 step 3's own read) show no key, and neither does
    the run's own log (`fugaro logs`). **The execution's record is a FACT, not a fact to assume**
    (Check 52 step 3, §3.1): U2 — the design's D10 option (b), whether the API serves an execution's
