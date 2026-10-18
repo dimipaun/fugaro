@@ -59,6 +59,8 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 		startable []string
 		unread    []string
 		public    []string // jobs a public member can start
+		withheld  int      // jobs whose policy the caller may not read
+		selfCan   []string // of those, the jobs the caller can start
 	)
 	page := ""
 	for {
@@ -72,6 +74,24 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 			}
 			jobs = append(jobs, j.Name)
 			p, err := svc.Projects.Locations.Jobs.GetIamPolicy(j.Name).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
+			if err != nil && isAccessDenied(err) {
+				// A plain launcher's doctor: the fugaroLauncher role lists
+				// jobs and does not read their policies. What the caller
+				// can still learn is its own reach, as the bucket check
+				// falls back to TestIamPermissions — both of fugaro run's
+				// permissions, since a launch carries overrides.
+				r, terr := svc.Projects.Locations.Jobs.TestIamPermissions(j.Name,
+					&runapi.GoogleIamV1TestIamPermissionsRequest{Permissions: launchPermissions}).Context(ctx).Do()
+				if terr != nil {
+					unread = append(unread, shortJobName(j.Name))
+					continue
+				}
+				withheld++
+				if r != nil && len(r.Permissions) == len(launchPermissions) {
+					selfCan = append(selfCan, shortJobName(j.Name))
+				}
+				continue
+			}
 			if err != nil {
 				// One job's policy unreadable: the job is named in a warning
 				// below rather than silently counted as a job no launcher can
@@ -94,9 +114,18 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 		}
 	}
 	slices.Sort(startable)
+	slices.Sort(selfCan)
+	read := len(jobs) - withheld - len(unread)
 	problem := fmt.Sprintf("launcher grants on Cloud Run jobs: %d grant(s) over %d job(s), and a launcher can start %d of them",
-		grants, len(jobs), len(startable))
+		grants, read, len(startable))
 	switch {
+	case withheld > 0 && read == 0:
+		// Nothing was read, so there is no count to give: only the
+		// caller's own reach.
+		problem = fmt.Sprintf("your credentials may not read the Cloud Run jobs' IAM policies (the launchers' grants are an operator's check); of %d job(s), you can start %d of them", withheld, len(selfCan))
+		if len(selfCan) > 0 {
+			problem += ": " + strings.Join(selfCan, ", ")
+		}
 	case len(launchers) == 0:
 		// Nothing to compare the policies' members against: a zero here is
 		// the local config's, not the jobs'.
@@ -105,6 +134,12 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 		problem += ": " + strings.Join(startable, ", ")
 	default:
 		problem += " (no launcher is granted on any job, so fugaro run cannot start one)"
+	}
+	if withheld > 0 && read > 0 {
+		problem += fmt.Sprintf("; of %d job(s) whose policy your credentials may not read, you can start %d", withheld, len(selfCan))
+		if len(selfCan) > 0 {
+			problem += ": " + strings.Join(selfCan, ", ")
+		}
 	}
 	out := []doctorCheck{{ID: "launcher-jobs", OK: true, Severity: "info", Problem: problem,
 		Fix: "the launcher role's permissions are unchanged by the project-centric model (run.jobs.run, run.jobs.runWithOverrides and the secret metadata list): what changes is how many jobs they attach to, so a grant count that falls while runs still work is a migration doing what it says, and a job a launcher is not granted on is a job fugaro run cannot start. Project-level run roles bypass the jobs' own policies and are not counted here"}}
@@ -123,6 +158,11 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 	}
 	return out
 }
+
+// launchPermissions are what fugaro run needs on a job: it always launches
+// with overrides (the run's FUGARO_RUN), so run.jobs.run alone does not start
+// a Fugaro run.
+var launchPermissions = []string{"run.jobs.run", "run.jobs.runWithOverrides"}
 
 // launcherGrantsOn is the (job, launcher) grants job's own policy carries and
 // whether a launcher can start it. Members are compared as IAM spells them

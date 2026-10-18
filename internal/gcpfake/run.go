@@ -53,6 +53,10 @@ type Run struct {
 	// read, which is what doctor's launcher-jobs check degrades on. Set it
 	// before the fake serves.
 	FailPolicyOf map[string]int
+	// HeldOn is what jobs:testIamPermissions reports the caller holds, by
+	// job name (by default nothing): the view of a launcher, who may not
+	// read a job's policy but may ask what it can do on the job.
+	HeldOn map[string][]string
 	// ProjectNumber, when set, replaces the project ID in every name the
 	// fake returns, as the real API may.
 	ProjectNumber string
@@ -620,6 +624,8 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	switch {
+	case r.Method == http.MethodPost && strings.HasSuffix(p, ":testIamPermissions"):
+		f.testJobPermissions(w, r, strings.TrimSuffix(p, ":testIamPermissions"), body)
 	case r.Method == http.MethodPost && strings.HasSuffix(p, ":run"):
 		f.run(w, r, strings.TrimSuffix(p, ":run"), body)
 	case r.Method == http.MethodPost && strings.HasSuffix(p, ":cancel"):
@@ -695,6 +701,30 @@ func (f *Run) getJobIamPolicy(w http.ResponseWriter, r *http.Request, p string) 
 		return
 	}
 	servePolicy(w, r.URL.Query(), f.policies[name])
+}
+
+// testJobPermissions answers jobs:testIamPermissions: the asked permissions
+// HeldOn grants on the job. A job the fake does not have is 404.
+func (f *Run) testJobPermissions(w http.ResponseWriter, r *http.Request, p string, body []byte) {
+	_, _, name, ok := jobPath(p)
+	if !ok || f.jobs[name] == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "job not found")
+		return
+	}
+	var req struct {
+		Permissions []string `json:"permissions"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
+	got := []string{}
+	for _, perm := range req.Permissions {
+		if slices.Contains(f.HeldOn[name], perm) {
+			got = append(got, perm)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"permissions": got})
 }
 
 // getJob answers jobs get: the stored body when there is one, else the

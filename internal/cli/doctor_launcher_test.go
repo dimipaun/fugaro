@@ -199,7 +199,7 @@ func TestDoctorLauncherReachKnowsTheOverridesExecutorRole(t *testing.T) {
 	}
 }
 
-// One job whose policy cannot be read is named in a warning, not counted as a
+// One job whose policy cannot be read (a failure, not a refusal) is named in a warning, not counted as a
 // job no launcher can start: an unread policy must not look like an empty one.
 func TestDoctorLauncherReachUnreadPolicyWarns(t *testing.T) {
 	r := newDoctorRig(t)
@@ -208,7 +208,7 @@ func TestDoctorLauncherReachUnreadPolicyWarns(t *testing.T) {
 	r.run.AddJob("fugaro-acme-app-hid", "2", "2Gi")
 	r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
 		Members: []string{"user:a@example.com"}})
-	r.run.FailPolicyOf = map[string]int{"fugaro-acme-app-hid": 403}
+	r.run.FailPolicyOf = map[string]int{"fugaro-acme-app-hid": 500}
 	checks := r.runDoctorJSON(t).Checks
 	c, found := doctorCheckByID(checks, "launcher-jobs-unread")
 	if !found || c.OK || c.Severity != "warning" || !strings.Contains(c.Problem, "fugaro-acme-app-hid") {
@@ -216,5 +216,36 @@ func TestDoctorLauncherReachUnreadPolicyWarns(t *testing.T) {
 	}
 	if info, _ := doctorCheckByID(checks, "launcher-jobs"); !strings.Contains(info.Problem, "can start 1 of them: fugaro-acme-app-web") {
 		t.Errorf("the readable job is not reported beside the unread one: %s", info.Problem)
+	}
+}
+
+// A plain launcher holds run.jobs.list and not run.jobs.getIamPolicy (the
+// installation's fugaroLauncher role), so every policy read is refused. That
+// is the ordinary launcher's doctor, not a fault: it must not warn about every
+// job, nor claim that no launcher can start one. It reports instead which jobs
+// the caller can start, from jobs:testIamPermissions, as the bucket check
+// falls back to the caller's own permissions.
+func TestDoctorLauncherReachAsAPlainLauncher(t *testing.T) {
+	r := newDoctorRig(t)
+	r.withLaunchers(t)
+	project := gcp.ProjectJobName("standard", "github", "")
+	r.run.AddJob(project, "2", "2Gi")
+	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+	r.run.FailPolicyOf = map[string]int{project: 403, "fugaro-acme-app-web": 403}
+	r.run.HeldOn = map[string][]string{project: {"run.jobs.run", "run.jobs.runWithOverrides"},
+		"fugaro-acme-app-web": {"run.jobs.run"}}
+	checks := r.runDoctorJSON(t).Checks
+	if c, found := doctorCheckByID(checks, "launcher-jobs-unread"); found {
+		t.Errorf("a refused policy read warned: %+v", c)
+	}
+	c, found := doctorCheckByID(checks, "launcher-jobs")
+	if !found || !c.OK || c.Severity != "info" {
+		t.Fatalf("check = %+v (found %v), want an info line", c, found)
+	}
+	if strings.Contains(c.Problem, "cannot start") {
+		t.Errorf("claims no launcher can start a job from policies it could not read: %s", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "you can start 1 of them: "+project) {
+		t.Errorf("does not report the job the caller can start (with overrides, as fugaro run launches): %s", c.Problem)
 	}
 }
