@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -52,6 +53,15 @@ func TestMatchRepo(t *testing.T) {
 		{"*/acme/*", "github/other/app", false},
 		{"github/acme/service-*", "github/acme/service-web", true}, // the design's prefix glob (§4.3)
 		{"github/acme/service-*", "github/acme/web", false},
+		// The second argument is read as a repository, so a "*" in it is the
+		// literal character the pattern's own "*" has to match -- and a
+		// wildcard that aligns with it is still a wildcard: it stands for any
+		// run, "*app" included, and "*" admits "*app" whole. Reading the
+		// pattern's "*" as that literal consumes the wildcard, so
+		// github/acme/* stops admitting a name it does admit, which is what
+		// `repos rm github/acme/*app` reads when github/acme/* remains.
+		{"github/acme/*", "github/acme/*app", true},
+		{"github/*", "github/*app", true},
 		{"github/acme/*", "bitbucket/acme/app", false}, // cross-provider
 		{"github/acme/app", "github/acme/app-web", false},
 		{"github/acme", "github/acme/app", false}, // a bare acme/* is not a pattern
@@ -173,17 +183,97 @@ func TestMatchRepoAdmitsASubjectThatCarriesAStar(t *testing.T) {
 	}
 }
 
+// MatchRepo's second argument is a repository, and `repos rm` reads an
+// allow-list *pattern* with it (internal/cli's admittedBy) to ask whether the
+// list left by a removal still admits everything that entry admitted. A
+// pattern is not a repository (no canonical repository carries a "*"), but as
+// a string it is all letters, "-", "." and "*", so the matcher meets a "*" in
+// the subject as well as in the pattern — and a "*" in the *subject* is a
+// character like any other.
+//
+// matchSeg tested literal equality before its wildcard case, so when both
+// positions held "*" it consumed them as a matching pair and never opened the
+// wildcard: matchSeg("a*", "a*b") was false, and MatchRepo("github/*/*",
+// "github/acme/*-web") with it. An operator removing github/acme/*-web while
+// github/*/* was on the list was told "its runs are refused from now on" —
+// about a security control the removal did not take away (the review of this
+// change).
+//
+// Nothing here is an admission bypass: a canonical repository can never
+// contain "*" (task.CanonicalRepo's own rule), so the cases below are the
+// removal warning's reading and no run's admission.
+func TestMatchRepoReadsAStarInTheSubject(t *testing.T) {
+	for _, tc := range []struct {
+		pattern, subject string
+		want             bool
+	}{
+		{"github/*/*", "github/acme/*-web", true},
+		{"github/ac*/*", "github/acme/*-web", true},
+		{"github/acme/*-web", "github/acme/*-web", true}, // the entry admits itself
+		{"github/*/*", "github/*/*", true},
+		{"github/a*", "github/a*b", true}, // the segment case in the small
+		{"github/*-web/*", "github/acme/*-web", false},
+		{"github/*/app", "github/acme/*-web", false},
+		{"github/acme/*", "github/acme/*-web", true},
+	} {
+		if got := MatchRepo(tc.pattern, tc.subject); got != tc.want {
+			t.Errorf("MatchRepo(%q, %q) = %v, want %v", tc.pattern, tc.subject, got, tc.want)
+		}
+	}
+	for _, tc := range []struct{ pattern, subject string }{
+		{"a*", "a*b"},
+		{"*", "*"},
+		{"a*b", "a*b"},
+		{"*b", "a*b"},
+	} {
+		if !matchSeg(tc.pattern, tc.subject) {
+			t.Errorf("matchSeg(%q, %q) = false, want true: a \"*\" in the subject is a character, not the pattern's wildcard", tc.pattern, tc.subject)
+		}
+	}
+}
+
 func TestValidPattern(t *testing.T) {
-	for _, ok := range []string{"*", "github/acme/app", "github/acme/*", "*/acme/*", "github/acme/service-*", "bitbucket/group/sub/app"} {
+	for _, ok := range []string{"*", "github/acme/app", "github/acme/*", "*/acme/*", "github/acme/service-*",
+		// A repository path may nest: Canonical admits "acme/group/app"
+		// (TestCanonical pins it), and MatchRepo compares segment against
+		// segment, so this entry admits exactly bitbucket/acme/group/app. It is
+		// not a longer spelling of "bitbucket/acme/group/*" — that is three
+		// segments and matches nothing of the four-segment canonical — which is
+		// why a cap of three was the wrong guard: it refused the entry that
+		// admits the repository and left the wildcard form as the only way to
+		// allow-list one (the review finding on this change).
+		"bitbucket/group/sub/app",
+		"bitbucket/acme/group/app",
+		"bitbucket/acme/group/*",
+	} {
 		if err := ValidPattern(ok); err != nil {
 			t.Errorf("ValidPattern(%q) = %v, want nil", ok, err)
 		}
 	}
 	for _, bad := range []string{"", "acme/*", "github", "github/acme", "GitHub/acme/app", "github/acme/app.git", "github/acme/a b", "github//app", "github/acme/",
-		"github/../app", "github/./app", "github/acme/..", "github/acme/."} {
+		"github/../app", "github/./app", "github/acme/..", "github/acme/.",
+		// The first segment is a git provider *kind*, not any lower-case word:
+		// task.CanonicalRepo takes a repository's kind from its own
+		// git.provider, which config.Providers lists, so a pattern spelled with
+		// anything else admits no repository. Accepting it published an entry
+		// that silently enrolled nothing (the review finding on this check),
+		// which is the one failure the function exists to prevent.
+		"githubb/acme/app", "gitlab/acme/app", "gcp/acme/*", "githu*/acme/app"} {
 		if err := ValidPattern(bad); err == nil {
 			t.Errorf("ValidPattern(%q) = nil, want an error", bad)
 		}
+	}
+	// Every kind a canonical repository may carry is accepted, and the message
+	// for a kind that is not one names them: the operator's fix is the word,
+	// not the shape (test.CanonicalRepo accepts "githubb" as a slug).
+	for _, kind := range config.Providers {
+		if err := ValidPattern(kind + "/acme/app"); err != nil {
+			t.Errorf("ValidPattern(%q) = %v, want nil", kind+"/acme/app", err)
+		}
+	}
+	err := ValidPattern("githubb/acme/app")
+	if err == nil || !strings.Contains(err.Error(), strings.Join(config.Providers, ", ")) {
+		t.Errorf("the refusal of a misspelt kind does not name the kinds: %v", err)
 	}
 }
 
@@ -271,11 +361,95 @@ func TestMatchSegmentIsLinear(t *testing.T) {
 		{"*a", "*ba", true},
 		{"*b", "*b", true},
 		{"a*b", "*ab", false}, // the subject's star is not the pattern's "a"
+		// A "*" in the name is an ordinary character, not a wildcard: s is
+		// not always a repository name. MatchRepo's callers read a pattern as
+		// its second argument too — admittedBy (internal/cli/project_cmd.go)
+		// asks whether the runs of a removed entry are still admitted — so the
+		// wildcard case must be tested before the literal one. A star is a star
+		// even where the name has a literal "*" under it: "*" admits "*app"
+		// (the star takes the whole run) and "*b" admits "*ab" (it takes "*a").
+		// Testing equality first spends the wildcard on one character and
+		// loses it, and every one of these answered false.
+		{"*", "*b", true},
+		{"a*", "a*b", true},
+		{"a*b", "a*b", true},
+		{"*a", "*a", true},
+		{"a*", "a*bc", true},
+		{"a*", "ab*c", true},
+		{"*", "*app", true},
+		{"*b", "*ab", true},
 	} {
 		if got := matchSeg(tc.pattern, tc.name); got != tc.want {
 			t.Errorf("matchSeg(%q, %q) = %v, want %v", tc.pattern, tc.name, got, tc.want)
 		}
 	}
+}
+
+// refMatchSeg is a glob matcher written for its obviousness rather than for its
+// cost: "*" matches any run of characters (the empty run included) and every
+// other character is a literal, in the pattern and in the name alike.
+// matchSeg's table cases are the ones a reader thinks of; this is what settles
+// the ones nobody thought of.
+func refMatchSeg(pattern, s string) bool {
+	if pattern == "" {
+		return s == ""
+	}
+	if pattern[0] == '*' {
+		for k := 0; k <= len(s); k++ {
+			if refMatchSeg(pattern[1:], s[k:]) {
+				return true
+			}
+		}
+		return false
+	}
+	return s != "" && pattern[0] == s[0] && refMatchSeg(pattern[1:], s[1:])
+}
+
+// TestMatchSegAgreesWithAReferenceGlob: every pattern and every name over
+// {a, b, *} up to four characters — 121 of each, 14641 pairs — against a
+// reference matcher. The alphabet includes "*" on purpose: matchSeg's second
+// argument is a repository *or* a pattern (admittedBy reads a pattern being
+// removed against the entries a removal leaves), so a "*" in the name is an
+// ordinary character, and an implementation that tests literal equality before
+// the wildcard silently loses the pattern's own star on exactly those inputs —
+// 302 of the pairs below, which is the number this test printed the last time
+// the two cases were the other way round.
+func TestMatchSegAgreesWithAReferenceGlob(t *testing.T) {
+	var all []string
+	for n := 0; n <= 4; n++ {
+		all = append(all, stringsOfLength(n)...)
+	}
+	bad := 0
+	for _, pattern := range all {
+		for _, name := range all {
+			want := refMatchSeg(pattern, name)
+			if got := matchSeg(pattern, name); got != want {
+				bad++
+				if bad <= 10 {
+					t.Errorf("matchSeg(%q, %q) = %v, want %v", pattern, name, got, want)
+				}
+			}
+		}
+	}
+	if bad > 10 {
+		t.Errorf("%d pairs disagree with the reference glob, in all", bad)
+	}
+}
+
+// stringsOfLength is every string of length n over the alphabet {a, b, *},
+// the empty string included at n = 0: the exhaustive set the test above
+// compares against, rather than a sample of it.
+func stringsOfLength(n int) []string {
+	if n == 0 {
+		return []string{""}
+	}
+	var out []string
+	for _, s := range stringsOfLength(n - 1) {
+		for _, c := range []string{"a", "b", "*"} {
+			out = append(out, s+c)
+		}
+	}
+	return out
 }
 
 // TestValidPatternCapsWildcards: the matcher is linear now, so this is not

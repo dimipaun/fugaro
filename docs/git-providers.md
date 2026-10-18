@@ -8,7 +8,7 @@ The platform injects credentials into the runner's environment from Secret Manag
 
 | Variable | Provider | Value |
 |---|---|---|
-| `FUGARO_BITBUCKET_TOKEN` | bitbucket | Repository access token |
+| `FUGARO_BITBUCKET_TOKEN` | bitbucket | Repository access token (one per repository; never stored project-wide) |
 | `FUGARO_BITBUCKET_API_URL` | bitbucket | Optional API root (default `https://api.bitbucket.org/2.0`) |
 | `FUGARO_GITHUB_APP_ID` | github | GitHub App ID (or client ID) |
 | `FUGARO_GITHUB_APP_PRIVATE_KEY` | github | The App's private key, PEM (PKCS#1 as GitHub issues it, or PKCS#8) |
@@ -25,6 +25,8 @@ Create a **repository access token** under *Repository settings → Security →
 - **Pull requests: Read, Write**
 
 Git uses it with the username `x-token-auth`. The token is scoped to its repository by design, which makes it the per-repo credential that design §6.1 asks for.
+
+**So Fugaro stores it per repository, not project-wide** (owner ruling, 2026-10-15; project scope only through the explicit allow-list entry below). A repository access token works for exactly one repository, so a project-wide copy would hand every repository the first one's token, which authenticates none of them: `fugaro secrets set bitbucket-token` and `fugaro init --repo`'s own prompt therefore always write the repository's own copy, and every repository is asked for its own token. The project scope that the other reserved names get by default does not apply to this one — the store refuses `--project-wide` for it unless the operator's local config carries an explicit `project_secrets.bitbucket-token` allow-list, which is only right for a credential that really does serve several repositories (a workspace or project access token; that one can be scoped to every repository a project holds is unverified, design §4.5). The default Claude token is per repository for its own reason: it is person-owned (design §7).
 
 **Name the token when you create it.** Pick a name you want people to see, such as `Fugaro <org>` (whether Bitbucket requires token names to be unique is unchecked; a bare `Fugaro` says nothing about whose it is). Bitbucket shows the token's name as the author of every pull request and comment Fugaro creates, and a token can't be renamed or edited after creation (it can be rotated or revoked, which keeps the name). To change the name, create a new token, store it as a new version of the repository's `bitbucket-token` secret (`fugaro secrets set bitbucket-token --repo <owner/name> < <token file>`), and then revoke the old one. Use the same name for every repository, so pull requests look the same everywhere. Commits are authored as `Fugaro` whatever the token is called.
 

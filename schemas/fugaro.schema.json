@@ -224,6 +224,8 @@
             "test": { "type": "string", "minLength": 1 },
             "lint": { "type": "string", "minLength": 1, "description": "The check step's gate command (build | test | lint)." },
             "fix": { "type": "string", "minLength": 1, "description": "The check step's autofix command; needs lint, since the gate runs fix, then lint." },
+            "render": { "type": "string", "minLength": 1, "description": "A mode: artifact recipe's render command: repository text, run once, in the checkout, as the agent's user (docs/design/artifact-runs.md §3). Absent, no artifact recipe may run against this workflow." },
+            "probe": { "type": "string", "minLength": 1, "description": "The artifact recipe's optional check on what it rendered: one command, given the outputs directory and the names in its environment. Absent, the recipe's outputs.probe must be none." },
             "rerun_failed": {
               "type": "object",
               "additionalProperties": false,
@@ -294,7 +296,18 @@
             "total": { "$ref": "#/$defs/duration" },
             "stage": { "$ref": "#/$defs/duration" },
             "verify": { "$ref": "#/$defs/duration" },
+            "render": { "$ref": "#/$defs/duration", "description": "Bounds the render step alone; absent means min(verify, total - finalize_reserve). The run's own deadline caps it further (docs/design/artifact-runs.md §3)." },
             "finalize_reserve": { "$ref": "#/$defs/duration" }
+          }
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Caps what a launcher may attach to a run of this workflow (docs/design/artifact-runs.md §4).",
+          "properties": {
+            "max_files": { "type": "integer", "minimum": 0, "maximum": 64, "description": "How many files may be attached; absent or 0 means 16 (config.DefaultInputFiles)." },
+            "max_bytes": { "type": "integer", "minimum": 0, "maximum": 1073741824, "description": "The most ONE attached file may hold; absent or 0 means 256 MiB (config.DefaultInputBytes)." },
+            "max_total_bytes": { "type": "integer", "minimum": 0, "maximum": 4294967296, "description": "The most the WHOLE set may hold; absent or 0 means 1 GiB (config.DefaultInputTotalBytes). The runner stages these beside the render's originals, so the memory rule counts them (docs/design/artifact-runs.md §5.2)." }
           }
         },
         "rebuild": {

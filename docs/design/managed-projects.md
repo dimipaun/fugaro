@@ -192,6 +192,15 @@ Each with this design's recommendation, **the cost of the alternative**, and an 
 | **D78** | **Does the managed allowlist keep the monitoring types — `google_monitoring_alert_policy` and `google_monitoring_notification_channel`?** Their resource names are **server-assigned** (`projects/<p>/alertPolicies/<id>`, `projects/<p>/notificationChannels/<id>`), so the reserved-name-prefix IAM condition of D75 cannot tell the agent's from Fugaro's own — the installation's email channel (`installation/alert.tf:3`), whose edit or delete silences its alerts, and its policy (`:44`). | **Drop them (the owner's choice, and the recommendation).** Agent-written managed plans cannot create alert policies or notification channels; they stay owner-run, and `init --budget` creates Fugaro's own. Fail-closed, as D75 requires for a type whose condition GCP cannot honour. | Keep them, unconditioned or create-only: unconditioned update and delete would reach Fugaro's own channel and policy; create-only would leave the agent unable to change or remove what it made. | **Owner answered 2026-10-16: "Drop them (Recommended)".** The plan's Task 1.1 table records the two types as dropped. |
 
 
+### 5.1 Owner rulings of 2026-10-17
+
+**Three rulings amend, and do not replace, the answers above; each row's own text is kept as written.** Nothing here is approved work beyond what the owner already approved.
+
+1. **The gate admits a delete or replace only for an exact address on the owner-written delete list, and only if the resource is otherwise inside the allowlist (amends D72 and D74).** Today `tf.Guard` (`internal/infra/tf/guard.go`) admits a delete whose exact address is in the list it is handed, and `Cover` does not judge a delete at all (`GrantsNotCovered`'s comment says so: "neither is a delete (tf.Guard refuses those)"). The ruling closes the gap between the two: a listed address of a type or name the managed allowlist does not allow is **refused**, and **unlisted deletes stay refused**. Plan Task 1.2a.
+2. **The Cloud Asset read role (D61's inventory, plan Task 4.1) is a custom role holding ONLY `cloudasset.assets.searchAllResources`**, not `roles/cloudasset.viewer`. The inventory therefore calls `SearchAllResources` and not `ListAssets`. Plan Task 4.1a.
+3. **No cloud label (amends the label half of D56/D57 and plan C3).** The marker object is the whole authority; plan Task 3.0 is **not wanted**.
+
+
 ## 6. What the reconciliation refuses to accept from the spec
 
 Three claims in the spec are not adopted, and this is the plain statement of each. **Item 4 is different in kind: it is not a claim the reconciliation refuses, it is the risk the owner's D55 answer accepts, stated so that nobody has to infer it.**

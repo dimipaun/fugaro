@@ -15,7 +15,6 @@ package repourl
 import (
 	"fmt"
 	"net/url"
-	"strings"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -40,7 +39,7 @@ import (
 // another repository's work — which is why internal/infra's own refusal says
 // "it must be this repository, not only this provider", and why the run
 // refuses a launcher-set remote that disagrees (internal/runner's
-// remoteOfAnotherKind, remoteOfAnotherRepo).
+// remoteAdmissionRefusal).
 func CloneURL(provider, repo, given string) (string, error) {
 	if given == "" {
 		host := ProviderHost(provider)
@@ -67,12 +66,22 @@ func CloneURL(provider, repo, given string) (string, error) {
 		return "", fmt.Errorf("the repository URL %s is not on %s's host", given, provider)
 	}
 	// The URL is where the build and the run clone from, so it must be this
-	// repository, not only this provider.
+	// repository, not only this provider. EscapedPath, not Path: the run's own
+	// admission compares the path git will send, which is the escaped one
+	// (gitprov.SplitRemote returns EscapedPath for exactly this comparison), so
+	// a URL whose path decodes to this repository but is spelled otherwise —
+	// https://bitbucket.org/acme/sandb%6fx.git — would be accepted here and
+	// refuse every run of the job it deployed. The path's punctuation is
+	// trimmed by gitprov.TrimRepoPath, the same function the run's admission
+	// asks (internal/runner's remoteRepoPath): trimming every "/" here read
+	// https://bitbucket.org//acme/sandbox.git as this repository and wrote it
+	// as the job's remote, where the admission's one-per-side trim leaves the
+	// empty segment and refuses every run.
 	want, err := task.CanonicalRepo(repo)
 	if err != nil {
 		return "", err
 	}
-	if got, err := task.CanonicalRepo(strings.Trim(u.Path, "/")); err != nil || got != want {
+	if got, err := task.CanonicalRepo(gitprov.TrimRepoPath(u.EscapedPath())); err != nil || got != want {
 		return "", fmt.Errorf("the repository URL %s is not %s", given, repo)
 	}
 	return given, nil

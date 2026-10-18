@@ -40,7 +40,7 @@ const (
 )
 
 // The roots the embedded tree holds.
-var roots = map[string]bool{"installation": true, "repo": true, "firebase": true}
+var roots = map[string]bool{"installation": true, "repo": true, "firebase": true, "compute": true}
 
 var projectIDRE = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 

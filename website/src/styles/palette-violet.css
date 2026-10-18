@@ -1,0 +1,48 @@
+/* website/src/styles/palette-violet.css — D104's palette A, one of the three candidates.
+ *
+ * Violet for structure and links, with the warning tone taken from the orange family so
+ * that "attention" never shares a hue with "this is a link". It is a complete value set
+ * for the vocabulary `tokens.css` declares: the same ten tokens as the other two palettes,
+ * with the same roles, so swapping the import in `tokens.css` swaps the whole site's colour
+ * and nothing else. `website/test/a11y.mjs` holds both halves of that — the token sets are
+ * identical across the three files, and every pair below meets its WCAG ratio.
+ *
+ * Every value is an opaque six-digit hex literal, which is not a style preference: it is
+ * what lets the contrast check read a pair at all. A colour function, a translucent value
+ * or a `var()` here would be a pair the test could not compute, and the test refuses one
+ * rather than skipping it.
+ */
+
+:root {
+  /* The page's ground and the surface a card, a code block or a terminal sits on. Both are
+   * dark enough that every text tone below clears AA on either of them. */
+  --ground: #0B0B12;
+  --surface: #14141F;
+
+  /* Body text and the tone for the sentence beside it. */
+  --text: #E8E8F0;
+  --text-muted: #A9A9C2;
+
+  /* The accent in its two jobs, which are two different contrast requirements and are why
+   * the pair exists rather than one token: `--accent` is the fill and the structure colour
+   * — a focus ring, a rule, the terminal's caret, a filled button's background — and is
+   * checked at 3:1 as a UI colour; `--accent-on-dark` is the same accent made legible as
+   * text on the dark ground, which is what a link and a heading use, and is checked at
+   * 4.5:1. The darker fill is what carries dark text (`--ground` on `--accent` is a pair
+   * too, at 4.5:1, because a button's label is text). */
+  --accent: #8B5CF6;
+  --accent-on-dark: #C4B5FD;
+
+  /* A separator that is meant to be seen and not to shout, and the warning tone. */
+  --border: #2A2A3D;
+  --warn: #FDBA74;
+
+  /* The hero's gradient, as its two stops: `linear-gradient(var(--gradient-from),
+   * var(--gradient-to))`. Naming the stops as tokens is what lets the contrast check treat
+   * text over the hero as text over a known colour instead of exempting the one place the
+   * site's largest type sits (U5) — so the stops are dark enough for `--text`,
+   * `--text-muted` and `--accent-on-dark` to clear AA on each of them, and there are
+   * exactly two of them, which the token-set case asserts. */
+  --gradient-from: #1C1430;
+  --gradient-to: #120C22;
+}

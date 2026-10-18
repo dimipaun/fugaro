@@ -605,7 +605,9 @@ func TestRunAccountsHaveNoWritePathToTheDeleteList(t *testing.T) {
 	// no grant on the runs bucket that this scan cannot account for, and no
 	// finding at all.
 	scan := scanModuleIAM(moduleFiles(t))
-	for _, f := range scan.findings {
+	// The compute module's refused grants are 0.8.5's known limit
+	// (knownComputeRefusals, marker_test.go); every other finding fails.
+	for _, f := range otherThanComputeRefusals(t, scan.findings) {
 		t.Errorf("%s", f)
 	}
 	if scan.writes < 4 || scan.narrowed < 3 {

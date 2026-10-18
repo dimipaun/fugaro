@@ -54,6 +54,10 @@ type RenderOptions struct {
 	// (design generic-tool §10.1). The caller computes it, since by the time
 	// Render runs the row's own block may already be gone from v.
 	Ready []ReadyRow
+	// PRNote is a one-line reason the ready list's pull request states could
+	// not be read from the operator's gh (not installed, not answering); it
+	// is drawn faint above the key line, never once per row.
+	PRNote string
 }
 
 // Frame is a drawn screen.
@@ -310,6 +314,9 @@ func Render(v View, o RenderOptions) Frame {
 		for _, l := range wrap(f, o.Width) {
 			foot = append(foot, r.line(seg{l, cWarn}))
 		}
+	}
+	if o.PRNote != "" {
+		foot = append(foot, r.line(seg{o.PRNote, cFaint}))
 	}
 	if !live && o.Keys {
 		foot = append(foot, r.line(seg{"kill and resume keys are off until the data is live", cFaint}))
@@ -655,6 +662,12 @@ func (r *rend) finishedRow(run RunRow, selected bool) string {
 		word, c = "ready for review", cOK
 	case "draft":
 		word += ", passed review"
+	case "artifacts":
+		// A mode: artifact run succeeded, and its deliverable is in the
+		// runs bucket: the bare stage word (SUCCEEDED) would be the one
+		// thing an owner must not read here, since it did not do what a
+		// succeeded implement run does (design artifact-runs.md §3).
+		word, c = "artifacts, no PR", cOK
 	}
 	segs := []seg{{cur + " " + run.Run + " ", ""}, {dash(run.Title) + " ", cBold}, {word, c}}
 	if run.PRURL != "" {

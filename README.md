@@ -1,6 +1,10 @@
+<p align="center"><img src="brand/fugaro-logo.png" alt="Fugaro logo" width="200"></p>
+
 # Fugaro
 
 **Fleeting cloud workers for coding agents: one task, one container, one PR, then gone.**
+
+Website: [fugaro.dev](https://fugaro.dev)
 
 *Fugax* is Latin for "fleeting." Fugaro runs long, self-contained coding-agent loops (implement, test, review, fix, compile, open a pull request) in throwaway cloud containers instead of on your laptop. Each task gets its own Cloud Run job execution in your own Google Cloud project, runs Claude Code headless to completion, pushes its work, opens a pull request and disappears. Google Cloud is the first backend; AWS and Azure are wanted (see [Other clouds](#other-clouds-help-wanted)).
 
@@ -151,7 +155,7 @@ A run's coder can be a non-Anthropic model served by OpenRouter — one key for 
      per_run_usd: 2                    # enforce needs a per-run cap
    ```
 
-3. **Store the key in your own terminal**: `fugaro secrets set openrouter-api-key`, run from a checkout of a listed repository, or `fugaro secrets set openrouter-api-key --repo <owner>/<repo>` from anywhere (`fugaro init --repo` prompts for it in its secrets stage too). The value is read only from stdin or a hidden prompt: **never put a key in a file, on a command line or in a chat**, and it is never printed. `fugaro secrets set openrouter-api-key --project-wide` stores it once for the whole project instead of per repository, reaches the same repositories `allow_data_to` already allows, and needs no checkout.
+3. **Store the key in your own terminal**: `fugaro secrets set openrouter-api-key` stores it once for the whole project — the default for a provider's key, and it needs no checkout, since the key reaches exactly the repositories `allow_data_to` already allows. `fugaro secrets set openrouter-api-key --repo <owner>/<repo>` stores one repository's own copy instead (a repository copy wins over the project copy), and `--project-wide` is still accepted as a synonym of the default. `fugaro init --repo` prompts for it in its secrets stage too. The value is read only from stdin or a hidden prompt: **never put a key in a file, on a command line or in a chat**, and it is never printed.
 4. **Pin the models in the repository's `fugaro.yaml`** — a repository can only name a model the owner already opened to it. The example below is the setup [docs/dogfooding.md](docs/dogfooding.md) runs: one cheap model for both roles, with the senior review kept **outside** the loop, because a cheap reviewer's own `ship` is a smoke check rather than independent review. The default shape instead keeps a Claude reviewer (`reviewer: claude-sonnet-5-5`), which goes direct to Anthropic and so also needs `fugaro secrets set anthropic-api-key`:
 
    ```yaml

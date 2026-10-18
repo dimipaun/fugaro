@@ -43,6 +43,13 @@ type EnvSpec struct {
 	// gets the gateway's URL and per-run token, never the real model
 	// credential (see GatewayVars). It is an error with auth: oauth.
 	Gateway *Gateway
+	// Docker is whether this run's workflow asked for `docker: true`
+	// (design compute-backend.md §4.2): the one fact that lets DOCKER_HOST
+	// through, because it is the one fact that says a socket was mounted
+	// into this container. It is the runner's copy of the ask the launcher
+	// passes as LaunchSpec.Docker; a run that did not ask is refused nothing
+	// by it, it simply has no daemon to be pointed at.
+	Docker bool
 }
 
 // BuildEnv builds the agent's environment from the runner's (parent), keeping
@@ -59,6 +66,22 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 	for _, k := range baseEnv {
 		if v, ok := p[k]; ok {
 			out[k] = v
+		}
+	}
+	if spec.Docker {
+		// A run whose workflow asked for `docker: true` reaches the VM's
+		// daemon through the socket the job mounted and the address the job
+		// env names (design compute-backend.md §2.2, §4.3). It is gated on
+		// the run's own ask, not on the variable being present in the
+		// runner's environment: an operator with DOCKER_HOST exported who
+		// hand-starts a runner -- or a local run on a machine that happens
+		// to have one -- would otherwise hand the agent an address to a
+		// daemon its container was never given a socket for (§4.4 check 6).
+		// Nothing sets spec.Docker yet: the launcher's half is
+		// LaunchSpec.Docker and the workflow's `docker: true` reaches both
+		// in Task 8's config plumbing, so this fails closed until then.
+		if v, ok := p["DOCKER_HOST"]; ok {
+			out["DOCKER_HOST"] = v
 		}
 	}
 	for _, k := range spec.Secrets {

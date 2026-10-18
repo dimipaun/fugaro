@@ -35,6 +35,28 @@
       }
     },
     "requested_by": { "type": "string" },
+    "mode": {
+      "enum": ["implement", "review", "artifact"],
+      "description": "The resolved recipe's mode, written by the launching CLI (\"artifact\" today; an implement or review recipe writes nothing, so those specs are unchanged). The runner selects the run's shape from it at bootstrap, before the recipe is resolved, and cross-checks it against the resolved recipe afterwards. Needs a 0.8.0 runner, which is why an artifact launch at a job image older than that is refused at launch."
+    },
+    "inputs": {
+      "type": "array",
+      "description": "The files the launching CLI attached (fugaro run --attach, docs/design/artifact-runs.md §4), in the order --attach named them: each one is stored under runs/<slug>/<run>/inputs/<name> and downloaded by a mode: artifact run into <checkout>/inputs/. Absent for every launch that attached nothing. The name's own shape is checked where it becomes a filesystem path (the launcher's, then the runner's), never here. Needs a 0.8.0 runner, which is why an --attach launch at an older job image is refused at launch.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "bytes", "sha256"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "The name the file is stored and written under. A name of nothing but whitespace is no name, the same rule task.InputNameBlank applies before the launcher uploads anything." },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "The sha256 the launcher read while uploading the file. The runner verifies the object it downloads against it, so a mismatch leaves nothing at the destination."
+          }
+        }
+      }
+    },
     "recipe": {
       "type": "object",
       "additionalProperties": false,

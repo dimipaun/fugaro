@@ -535,6 +535,10 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	showRecipe := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Recipe != "" && r.Recipe != recipe.DefaultName })
 	showLayer := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ProjectLayer != nil })
 	showAccount := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.OAuthAccount != "" && r.OAuthAccount != "default" })
+	// The artifact column appears only when some listed run has artifacts:
+	// every run that opens a pull request has none, and its columns do not
+	// change (design artifact-runs.md §9).
+	showArtifacts := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ArtifactCount > 0 })
 	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR"
 	if showRecipe {
 		header += "\tRECIPE"
@@ -544,6 +548,9 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	}
 	if showAccount {
 		header += "\tACCOUNT"
+	}
+	if showArtifacts {
+		header += "\tARTIFACTS"
 	}
 	fmt.Fprintln(tw, header)
 	for _, r := range rows {
@@ -571,6 +578,9 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 				name = "default"
 			}
 			line += "\t" + cellOneLine(clipRunes(name, maxNameCellRunes))
+		}
+		if showArtifacts {
+			line += "\t" + artifactCell(r)
 		}
 		fmt.Fprintln(tw, line)
 	}

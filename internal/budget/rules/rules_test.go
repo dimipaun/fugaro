@@ -6,6 +6,8 @@ import (
 	"math/rand"
 	"os"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -610,6 +612,317 @@ func TestRunTokenWritesSurviveThePolicyEdit(t *testing.T) {
 			if !inList[p] {
 				t.Errorf("/%s is writable by a run token but is not one of this test's rows: add it", p)
 			}
+		case "mailbox":
+			// Not a run token's tree, and named here so that the sweep has no
+			// root it skips: the mailbox's writes are exactly four, and a
+			// fifth is a new grant to a phone or to a consumer (D113, D113b).
+			if _, listed := mailboxWrites()[p]; !listed {
+				t.Errorf("/%s is writable under the mailbox: a write there is one of the four mailboxWrites() lists, and this one is not", p)
+			}
+		}
+	}
+}
+
+// mailboxWrites is the mailbox's grant list: each writable location with the
+// fragments its predicate must carry. The phone's are MAILBOX (the user claim,
+// and $mb naming the token's own uid), the consumer's are CONSUMER (mc naming
+// the mailbox it serves), and all four require newData.exists(), because
+// validation does not run on a delete and a delete of a message is therefore
+// denied. The two message nodes and the ack also require !data.exists():
+// a message, and its ack, are written once, so neither writer can rewrite
+// history (the phone a sent message, the consumer an outbox message or its
+// ack). The heartbeat is the one node that is overwritten by design: it is
+// the consumer's latest liveness, not a record. TestMailboxWritesAreExactlyTheFour
+// pins the list against the generated rules and
+// TestRunTokenWritesSurviveThePolicyEdit's sweep fails on any mailbox write
+// that is not in it.
+func mailboxWrites() map[string][]string {
+	phone := []string{"auth.token.mu != null", "auth.token.mu == auth.uid", "$mb == auth.uid", "newData.exists()"}
+	consumer := []string{"auth.token.mc != null", "auth.token.mc == $mb", "newData.exists()"}
+	once := func(f []string) []string { return append(slices.Clone(f), "!data.exists()") }
+	return map[string][]string{
+		"mailbox/$mb/inbox/$msg":        once(phone),
+		"mailbox/$mb/outbox/$msg/acked": once(phone),
+		"mailbox/$mb/outbox/$msg":       once(consumer),
+		"mailbox/$mb/heartbeat":         consumer,
+	}
+}
+
+// TestMailboxWritesAreExactlyTheFour pins the mailbox's grant list without an
+// emulator: D113's two phone writes (its own inbox message, the ack on a
+// message it spoke), D113b's two consumer writes (the outbox message, the
+// heartbeat), and nothing else. The emulator proves what each identity can
+// reach through them (emulator_mailbox_test.go, plan task P2.2); this proves
+// the list did not grow, which is the half a later edit would change quietly.
+func TestMailboxWritesAreExactlyTheFour(t *testing.T) {
+	paths := generatedPaths(t)
+	want := mailboxWrites()
+	for p, frags := range want {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		w, _ := attrs[".write"].(string)
+		if w == "" {
+			t.Errorf("/%s carries no .write: one of the mailbox's four writes is gone", p)
+			continue
+		}
+		for _, f := range frags {
+			if !strings.Contains(w, f) {
+				t.Errorf("/%s .write = %q, want it to carry %q", p, w, f)
+			}
+		}
+	}
+
+	// No fifth: every writable location under the mailbox is one of the four.
+	// TestRunTokenWritesSurviveThePolicyEdit's sweep fails on any of them
+	// that is not listed here, so a new grant has to be argued for in both.
+	for p, attrs := range paths {
+		if p != "mailbox" && !strings.HasPrefix(p, "mailbox/") {
+			continue
+		}
+		if w, ok := attrs[".write"].(string); ok {
+			if _, listed := want[p]; !listed {
+				t.Errorf("/%s is writable (%s) and is not one of the mailbox's four writes", p, w)
+			}
+		}
+	}
+
+	// The read side, which is the other half of the fence: the phone reads its
+	// own outbox and heartbeat, and reads no inbox — its own included, since
+	// the consumer collects what the phone wrote (§6.4).
+	for _, p := range []string{"mailbox/$mb/outbox", "mailbox/$mb/heartbeat"} {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		r, _ := attrs[".read"].(string)
+		for _, f := range []string{"auth.token.mu == auth.uid", "$mb == auth.uid"} {
+			if !strings.Contains(r, f) {
+				t.Errorf("/%s .read = %q, want it to carry %q", p, r, f)
+			}
+		}
+	}
+	for _, p := range []string{"mailbox", "mailbox/$mb", "mailbox/$mb/inbox", "mailbox/$mb/inbox/$msg"} {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		if r, ok := attrs[".read"]; ok && r != false {
+			t.Errorf("/%s .read = %v: an RTDB grant on a parent cascades to its children", p, r)
+		}
+	}
+}
+
+// ---- The mailbox and the shared schema (mobile plan P2.1, design m9 §6.4).
+
+// schemaPath is the shared schema, from this package's directory: the two
+// artifacts are separate (the schema is the phone's, the rules are the
+// database's) and nothing but a test can hold them together.
+const schemaPath = "../../../shared/mailbox-schema/index.js"
+
+// schemaCatalog reads shared/mailbox-schema/index.js and returns its exported
+// constants by name, and the string literals of its two field lists. It is a
+// deliberately small reader of a deliberately simple file: every export in it
+// is `export const NAME = <number, Number.MAX_SAFE_INTEGER, or a frozen array
+// of strings>;`, so a value this cannot parse is a failure rather than a
+// silently unchecked number.
+func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required []string) {
+	t.Helper()
+	b, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("reading the shared schema: %v", err)
+	}
+	consts = map[string]int64{}
+	for _, m := range regexp.MustCompile(`(?m)^export const ([A-Z_]+) = ([^;]+);`).FindAllStringSubmatch(string(b), -1) {
+		name, expr := m[1], strings.TrimSpace(m[2])
+		switch {
+		case regexp.MustCompile(`^\d+$`).MatchString(expr):
+			n, err := strconv.ParseInt(expr, 10, 64)
+			if err != nil {
+				t.Fatalf("%s = %s: %v", name, expr, err)
+			}
+			consts[name] = n
+		case expr == "Number.MAX_SAFE_INTEGER":
+			consts[name] = 1<<53 - 1
+		case strings.HasPrefix(expr, "Object.freeze({"):
+			// A frozen map of names (REFUSALS): no bound in it to compare.
+		case strings.HasPrefix(expr, "Object.freeze(["):
+			consts[name] = 0
+			var got []string
+			for _, s := range regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(expr, -1) {
+				got = append(got, s[1])
+			}
+			switch name {
+			case "FIELDS":
+				fields = got
+			case "REQUIRED_FIELDS":
+				required = got
+			}
+		default:
+			t.Fatalf("shared/mailbox-schema exports %s = %s, which this reader does not understand: teach it, so the number stays checked", name, expr)
+		}
+	}
+	if len(consts) == 0 || len(fields) == 0 || len(required) == 0 {
+		t.Fatalf("shared/mailbox-schema: read %d constants, %d fields and %d required fields", len(consts), len(fields), len(required))
+	}
+	return consts, fields, required
+}
+
+// TestMailboxRulesAgreeWithTheSharedSchema pins, without the emulator, the part
+// of §6.4's "the two artifacts cannot disagree" that can be pinned in Go: the
+// four bounds the rules apply to a message are the schema's own numbers, and
+// the fields the rules accept are the schema's field set. Both directions
+// matter, and the direction that matters more is the one that would refuse a
+// message the phone accepted: a bound the rules apply tighter than the schema
+// (at held to MaxAmount, an id to something the schema allows longer) fails
+// here.
+//
+// What this test cannot pin is the rest of the schema's judgement, and §6.4
+// says where the rules are looser rather than claiming they are the same: the
+// rules cannot inspect characters, so the id's key rule (no `%`, no control
+// character, no lone surrogate — all of which the schema refuses) is the
+// schema's alone, and `text`'s control characters with it. The emulator cases
+// (emulator_mailbox_test.go) prove what the rules do refuse.
+func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
+	consts, fields, required := schemaCatalog(t)
+	if got, want := MaxKeyLength, consts["ID_MAX"]; int64(got) != want {
+		t.Errorf("MaxKeyLength = %d, the schema's ID_MAX = %d", got, want)
+	}
+	if got, want := MaxString, consts["SENDER_MAX"]; int64(got) != want {
+		t.Errorf("MaxString = %d, the schema's SENDER_MAX = %d", got, want)
+	}
+	if got, want := MaxText, consts["TEXT_MAX"]; int64(got) != want {
+		t.Errorf("MaxText = %d, the schema's TEXT_MAX = %d", got, want)
+	}
+	if got, want := MaxTimestamp, consts["AT_MAX"]; got != want {
+		t.Errorf("MaxTimestamp = %d, the schema's AT_MAX = %d", got, want)
+	}
+	if want := []string{"id", "sender", "text", "at"}; !slices.Equal(required, want) {
+		t.Errorf("the schema's REQUIRED_FIELDS = %v, want %v", required, want)
+	}
+	if want := []string{"id", "sender", "text", "at", "acked"}; !slices.Equal(fields, want) {
+		t.Errorf("the schema's FIELDS = %v, want %v", fields, want)
+	}
+
+	// The generated mailbox applies those numbers, in the fields the schema
+	// names. The heartbeat's `at` is the fourth, and its `boot` is a sender-like
+	// string: the schema does not model the heartbeat, so only the bound is
+	// shared.
+	paths := generatedPaths(t)
+	for _, c := range []struct {
+		path string
+		frag string
+	}{
+		{`mailbox/$mb/inbox/$msg`, `$msg.length <= ` + strconv.Itoa(MaxKeyLength)},
+		{`mailbox/$mb/inbox/$msg/id`, `newData.val().length <= ` + strconv.Itoa(MaxKeyLength)},
+		{`mailbox/$mb/inbox/$msg/sender`, `newData.val().length <= ` + strconv.Itoa(MaxString)},
+		{`mailbox/$mb/inbox/$msg/text`, `newData.val().length <= ` + strconv.Itoa(MaxText)},
+		{`mailbox/$mb/inbox/$msg/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
+		{`mailbox/$mb/outbox/$msg`, `$msg.length <= ` + strconv.Itoa(MaxKeyLength)},
+		{`mailbox/$mb/outbox/$msg/text`, `newData.val().length <= ` + strconv.Itoa(MaxText)},
+		{`mailbox/$mb/outbox/$msg/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
+		{`mailbox/$mb/heartbeat/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
+	} {
+		attrs, ok := paths[c.path]
+		if !ok {
+			t.Errorf("the template does not generate /%s", c.path)
+			continue
+		}
+		v, _ := attrs[".validate"].(string)
+		if !strings.Contains(v, c.frag) {
+			t.Errorf("/%s .validate = %q, want it to carry the schema's own bound (%q)", c.path, v, c.frag)
+		}
+	}
+
+	// The fields, per node: exactly the schema's set, no more. An inbox message
+	// has the four required ones — `acked` is the phone's ack of a message it
+	// spoke, which lives on an outbox message — and an outbox message has all
+	// five.
+	for _, c := range []struct {
+		path string
+		want []string
+	}{
+		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at"}},
+		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "acked"}},
+	} {
+		if _, ok := paths[c.path]; !ok {
+			t.Errorf("the template does not generate /%s", c.path)
+			continue
+		}
+		var got []string
+		for p := range paths {
+			name, ok := strings.CutPrefix(p, c.path+"/")
+			if !ok || name == "$other" || strings.Contains(name, "/") {
+				continue
+			}
+			got = append(got, name)
+		}
+		slices.Sort(got)
+		want := slices.Clone(c.want)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("/%s holds %v, the schema's field set for it is %v", c.path, got, want)
+		}
+	}
+}
+
+// TestUserReadGrantsAreExactlyTheNamedFamilies: the read grants D112's answer
+// adds, and nothing else. The user claim reads the eight expressions a run
+// token already carried (each now `… || USER`) and the two nodes of its own
+// mailbox — and a grant anywhere else, on a family tension (b1) struck or on a
+// parent that would cascade to one, fails here as well as in the golden.
+//
+// F11's property is the half this pins from the other side: the eight are the
+// only families a signed-in user reaches, so an account with no mu claim reads
+// nothing (admitted nowhere), and no family of the run's own slices — agents
+// and outcomes above all — was widened by this change.
+func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
+	paths := generatedPaths(t)
+	// The eight, and the two mailbox nodes, which are scoped to the mailbox
+	// the claim owns.
+	// generatedPaths spells $slug as slugForPath (it is the one wildcard the
+	// tests substitute), so the keys below do too.
+	want := map[string]bool{
+		"config/caps/global":                       true,
+		"config/caps/defaults":                     true,
+		"config/caps/repos/" + slugForPath:         true,
+		"config/kill/global":                       true,
+		"config/kill/repos/" + slugForPath:         true,
+		"spend/$day/global":                        true,
+		"spend/$day/repos/" + slugForPath:          true,
+		"spend/$day/runs/" + slugForPath + "/$run": true,
+		"mailbox/$mb/outbox":                       true,
+		"mailbox/$mb/heartbeat":                    true,
+	}
+	got := map[string]string{}
+	for p, attrs := range paths {
+		if r, ok := attrs[".read"].(string); ok && strings.Contains(r, "auth.token.mu") {
+			got[p] = r
+		}
+	}
+	for p := range want {
+		r, ok := got[p]
+		if !ok {
+			t.Errorf("/%s does not carry the user claim's read grant: the app cannot read a family the owner granted it", p)
+			continue
+		}
+		if strings.HasPrefix(p, "mailbox/") {
+			if !strings.Contains(r, "$mb == auth.uid") {
+				t.Errorf("/%s .read = %q, want the mailbox-scoped predicate ($mb == auth.uid)", p, r)
+			}
+			continue
+		}
+		if strings.Contains(r, "$mb") {
+			t.Errorf("/%s .read = %q carries $mb: the dashboard families are the whole family, not one mailbox's", p, r)
+		}
+	}
+	for p, r := range got {
+		if !want[p] {
+			t.Errorf("/%s carries the user claim's read grant (%s) and is not one of the families tension (b1) names", p, r)
 		}
 	}
 }

@@ -18,7 +18,7 @@ agent:
   # config sets the caps). The senior review stays OUTSIDE the cloud loop (independent local
   # agents), so there is no Claude model in the loop and no OAuth token on the job.
   auth: api-key
-  max_budget_usd: 150  # Claude Code prices a non-Anthropic model at Sonnet-like rates, about 25 times what the gateway charges for DeepSeek, so this per-stage limit is set high on purpose; the gateway's per-run cap (budget set --repo) is the real hard stop
+  max_budget_usd: 500  # Claude Code prices a non-Anthropic model at Sonnet-like rates, about 25 times what the gateway charges for DeepSeek, so this per-stage limit is set high on purpose; the gateway's per-run cap (budget set --repo) is the real hard stop
   models:
     coder: deepseek/deepseek-v4.1-flash
     reviewer: deepseek/deepseek-v4.1-flash

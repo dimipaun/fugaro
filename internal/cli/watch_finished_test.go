@@ -58,7 +58,11 @@ func TestWatchJSONAndPlainShowFinishedAndReady(t *testing.T) {
 		t.Fatalf("ready = %+v", doc.Ready)
 	}
 
-	plain, _, err := execute(t, "watch", "--once", "--plain")
+	// --no-pr-state: this test is about the ready list's own rule, and the
+	// default would ask the developer's own gh about acme/app (a real
+	// command over a real network); the PR-state filter is tested on its own
+	// in watch_prstate_test.go.
+	plain, _, err := execute(t, "watch", "--once", "--plain", "--no-pr-state")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +129,10 @@ func TestWatchPlainReadySurvivesKeepFilter(t *testing.T) {
 	f.writeTask(t, appSlug, run, "")
 	f.writeFinishedResult(t, appSlug, run, "succeeded", "ready", 7, "https://github.com/acme/app/pull/7", 10*time.Hour)
 
-	plain, _, err := execute(t, "watch", "--once", "--plain")
+	// --no-pr-state: without it the default would ask the developer's own gh
+	// about acme/app — a real command over a real network — and this test is
+	// about --keep, not about the PR-state filter (watch_prstate_test.go).
+	plain, _, err := execute(t, "watch", "--once", "--plain", "--no-pr-state")
 	if err != nil {
 		t.Fatal(err)
 	}

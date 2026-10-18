@@ -71,8 +71,9 @@ func TestInitRepoRepoCopyStillWinsAndIsReady(t *testing.T) {
 }
 
 // Neither copy is stored: the name is still the real missing case, and the
-// command printed beside it stores the --project-wide copy -- never the
-// repository copy that would then win forever over it.
+// command printed beside it stores the project-wide copy -- the bare command,
+// since D2 made project scope the default store -- never the repository copy
+// that would then win forever over it.
 func TestInitRepoProjectWideProviderKeyUnstoredIsMissing(t *testing.T) {
 	r := newProjectKeyRig(t, `["*"]`)
 	r.seedRepoSecret(t, "bitbucket-token", []byte("tok"))
@@ -82,8 +83,8 @@ func TestInitRepoProjectWideProviderKeyUnstoredIsMissing(t *testing.T) {
 	if err := e.r.repoEngine(t.Context(), ".", "", false); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if got := missingLine(e.r.res.Missing, "probe2-api-key"); !strings.Contains(got, "secrets set probe2-api-key --project-wide") {
-		t.Errorf("missing = %q, want the --project-wide command, never a repository copy", got)
+	if got := missingLine(e.r.res.Missing, "probe2-api-key"); !strings.Contains(got, "secrets set probe2-api-key") || strings.Contains(got, "--repo") {
+		t.Errorf("missing = %q, want the project-wide command, never a repository copy", got)
 	}
 	if !strings.Contains(out.String(), "Still missing for acme/sandbox:") {
 		t.Errorf("no missing block:\n%s", out.String())
@@ -91,7 +92,7 @@ func TestInitRepoProjectWideProviderKeyUnstoredIsMissing(t *testing.T) {
 }
 
 // A project container whose only version is DISABLED covers nothing: the
-// name is missing, with the same --project-wide fix.
+// name is missing, with the same project-wide fix.
 func TestInitRepoProjectWideProviderKeyDisabledIsMissing(t *testing.T) {
 	r := newProjectKeyRig(t, `["*"]`)
 	r.seedRepoSecret(t, "bitbucket-token", []byte("tok"))
@@ -102,8 +103,8 @@ func TestInitRepoProjectWideProviderKeyDisabledIsMissing(t *testing.T) {
 	if err := e.r.repoEngine(t.Context(), ".", "", false); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if got := missingLine(e.r.res.Missing, "probe2-api-key"); !strings.Contains(got, "secrets set probe2-api-key --project-wide") {
-		t.Errorf("missing = %q, want the --project-wide command", got)
+	if got := missingLine(e.r.res.Missing, "probe2-api-key"); !strings.Contains(got, "secrets set probe2-api-key") || strings.Contains(got, "--repo") {
+		t.Errorf("missing = %q, want the project-wide command", got)
 	}
 }
 

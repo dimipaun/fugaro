@@ -287,6 +287,35 @@ func TestBatchFakeCancelOfATerminalJob(t *testing.T) {
 	}
 }
 
+// TestBatchFakeCancelGone: CancelGone is how a test says "the job was deleted
+// between the listing that decided to cancel it and the call itself". The job
+// stays in the listing -- the two read the same stored map otherwise -- and only
+// the cancel answers 404, which is the shape a caller's tolerance of that race
+// has to meet.
+func TestBatchFakeCancelGone(t *testing.T) {
+	f := NewBatch(t)
+	base := f.URL + "/v1/projects/p/locations/r1"
+	if code, _ := batchCall(t, "POST", base+"/jobs?jobId=fugaro-x-web-1", batchJobBody); code != http.StatusOK {
+		t.Fatal("create failed")
+	}
+	f.CancelGone = map[string]bool{"fugaro-x-web-1": true}
+	if code, body := batchCall(t, "POST", base+"/jobs/fugaro-x-web-1:cancel", "{}"); code != http.StatusNotFound || body["error"] == nil {
+		t.Fatalf("cancel of a job that is gone: status %d: %v", code, body)
+	}
+	if got := f.Cancels(); len(got) != 0 {
+		t.Fatalf("a 404'd cancel was recorded: %v", got)
+	}
+	if got := f.State("fugaro-x-web-1"); got != "QUEUED" {
+		t.Fatalf("a 404'd cancel changed the state to %q", got)
+	}
+	// The listing is untouched by the knob: the job is still read back, which
+	// is what makes it the "gone between the listing and the cancel" shape
+	// rather than a job that was never there.
+	if code, _ := batchCall(t, "GET", base+"/jobs/fugaro-x-web-1", ""); code != http.StatusOK {
+		t.Fatalf("get after a 404'd cancel: status %d", code)
+	}
+}
+
 // TestBatchFakeListFiltersAndPages: the listing is what a sweeper reads, so
 // its filter and its paging are the fake's, not the client's, business.
 func TestBatchFakeListFiltersAndPages(t *testing.T) {
@@ -341,6 +370,15 @@ func TestBatchFakeListFiltersAndPages(t *testing.T) {
 	}
 	if page2["nextPageToken"] != nil {
 		t.Fatalf("the last page carried a next page: %v", page2)
+	}
+
+	// IgnoreFilter answers every job the fake holds whatever the filter said,
+	// as a server that does not honour a label filter would: the shape a
+	// caller's own client-side label check has to survive.
+	f.IgnoreFilter = true
+	code, ignored := batchCall(t, "GET", base+"/jobs?filter="+`labels.fugaro%20%3D%20%22managed%22`, "")
+	if code != http.StatusOK || len(batchNames(ignored)) != 3 {
+		t.Fatalf("with the filter ignored: status %d, %v, want all three jobs", code, ignored)
 	}
 }
 
@@ -407,6 +445,80 @@ func TestBatchFakeSetCreatedAndUID(t *testing.T) {
 	if got := f.JobJSON("p", "r1", "fugaro-x-web-1")["uid"]; got != "" {
 		t.Fatalf("uid = %v, want empty", got)
 	}
+}
+
+// TestBatchFakeStatusKnobs are the three knobs a caller needs to reach a job
+// whose time in its state is a fact (SetStateAt), one whose events date
+// something else (SetStatusEvents), and one that reports only a runDuration
+// (SetRunDuration) -- the shapes a per-state deadline is read from.
+func TestBatchFakeStatusKnobs(t *testing.T) {
+	f := NewBatch(t)
+	if code, _ := batchCall(t, "POST", f.URL+"/v1/projects/p/locations/r1/jobs?jobId=fugaro-x-web-1", batchJobBody); code != http.StatusOK {
+		t.Fatal("create failed")
+	}
+	when := time.Now().Add(-48 * time.Hour).UTC().Truncate(time.Second)
+	f.SetStateAt("fugaro-x-web-1", "RUNNING", when)
+	st := batchStatus(f.JobJSON("p", "r1", "fugaro-x-web-1"))
+	if st["state"] != "RUNNING" {
+		t.Fatalf("state = %v, want RUNNING", st["state"])
+	}
+	events, _ := st["statusEvents"].([]any)
+	if len(events) != 1 {
+		t.Fatalf("SetStateAt wrote %d status events, want one: %v", len(events), st)
+	}
+	e, _ := events[0].(map[string]any)
+	if e["type"] != "STATUS_CHANGED" || e["eventTime"] != when.Format(time.RFC3339) {
+		t.Fatalf("status event = %v, want a STATUS_CHANGED at %s", e, when.Format(time.RFC3339))
+	}
+	// SetStatusEvents replaces them, which is how a task-level event (one the
+	// state deadline must not read) is reached.
+	f.SetStatusEvents("fugaro-x-web-1", map[string]any{
+		"type": "TASK_STATE_CHANGED", "taskState": "RUNNING",
+		"eventTime": when.Add(time.Hour).Format(time.RFC3339),
+	})
+	events, _ = batchStatus(f.JobJSON("p", "r1", "fugaro-x-web-1"))["statusEvents"].([]any)
+	if len(events) != 1 {
+		t.Fatalf("SetStatusEvents wrote %d events, want one", len(events))
+	}
+	f.SetRunDuration("fugaro-x-web-1", "600s")
+	if got := batchStatus(f.JobJSON("p", "r1", "fugaro-x-web-1"))["runDuration"]; got != "600s" {
+		t.Fatalf("runDuration = %v, want 600s", got)
+	}
+	// And the state survives a render: it is the job's, not the event's.
+	if got := f.State("fugaro-x-web-1"); got != "RUNNING" {
+		t.Fatalf("State = %q, want RUNNING", got)
+	}
+}
+
+// TestBatchFakeUnreachable: jobs.list reports the locations it could not reach
+// alongside the jobs it did answer, and reports nothing when it reached them
+// all -- a caller reading absence as fact has to be able to tell the two
+// answers apart.
+func TestBatchFakeUnreachable(t *testing.T) {
+	f := NewBatch(t)
+	if code, _ := batchCall(t, "POST", f.URL+"/v1/projects/p/locations/r1/jobs?jobId=fugaro-x-web-1", batchJobBody); code != http.StatusOK {
+		t.Fatal("create failed")
+	}
+	list := func() map[string]any {
+		code, body := batchCall(t, "GET", f.URL+"/v1/projects/p/locations/r1/jobs", "")
+		if code != http.StatusOK {
+			t.Fatalf("list: status %d: %v", code, body)
+		}
+		return body
+	}
+	if got := list()["unreachable"]; got != nil {
+		t.Fatalf("unreachable = %v, want the field absent while every location is reachable", got)
+	}
+	f.Unreachable = []string{"r2", "r3"}
+	got, _ := list()["unreachable"].([]any)
+	if len(got) != 2 || got[0] != "r2" || got[1] != "r3" {
+		t.Fatalf("unreachable = %v, want [r2 r3]", got)
+	}
+}
+
+func batchStatus(job map[string]any) map[string]any {
+	st, _ := job["status"].(map[string]any)
+	return st
 }
 
 // TestLoggingFakeReadsBatchTaskLogsByUID is the Logging fake's Batch half:

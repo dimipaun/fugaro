@@ -19,20 +19,23 @@ func grantRoleString(key string) string {
 	return key
 }
 
-// bucketCondFor is the condition a bucket iam_member grant's cell needs so
-// that bucketCondition (added alongside grantRules' objectUser/objectViewer
-// toPeople cells) never flips a cell these matrices test only at the table
-// level: the launchers' exact condition for a person, a Fugaro prefix
-// condition for an account. Every other role or type needs none, since
-// bucketCondition does not check them.
-func bucketCondFor(typ, role string, person bool) []any {
-	if typ != "google_storage_bucket_iam_member" || role != "roles/storage.objectUser" {
-		return nil
+// withCondFor gives a grant's cell the condition it needs so that
+// bucketCondition and jobsCondition (added alongside grantRules' conditioned
+// cells) never flip a cell these matrices test only at the table level: for a
+// bucket objectUser, the launchers' exact condition for a person and a Fugaro
+// prefix condition for an account; for the project's batch.jobsEditor, the
+// compute module's job-name condition on proj-1. Every other role or type
+// needs none, since neither function checks them.
+func withCondFor(after map[string]any, typ, role string, person bool) {
+	switch {
+	case typ == "google_storage_bucket_iam_member" && role == "roles/storage.objectUser" && person:
+		after["condition"] = []any{map[string]any{"title": gcp.LauncherBucketConditionTitle, "expression": gcp.LauncherBucketCondition("fugaro-runs-proj-1"), "description": nil}}
+	case typ == "google_storage_bucket_iam_member" && role == "roles/storage.objectUser":
+		after["condition"] = []any{map[string]any{"title": "fugaro-x", "expression": gcp.BucketCondition("fugaro-runs-proj-1", gcp.JobBucketPrefixes, "acme-0123456789abcdef"), "description": nil}}
+	case typ == "google_project_iam_member" && role == "roles/batch.jobsEditor":
+		after["project"] = "proj-1"
+		after["condition"] = []any{map[string]any{"title": gcp.LauncherJobsConditionTitle, "expression": gcp.LauncherJobsCondition("proj-1", testCover.Region), "description": gcp.LauncherJobsConditionDescription}}
 	}
-	if person {
-		return []any{map[string]any{"title": gcp.LauncherBucketConditionTitle, "expression": gcp.LauncherBucketCondition("fugaro-runs-proj-1"), "description": nil}}
-	}
-	return []any{map[string]any{"title": "fugaro-x", "expression": gcp.BucketCondition("fugaro-runs-proj-1", gcp.JobBucketPrefixes, "acme-0123456789abcdef"), "description": nil}}
 }
 
 // deployerCondFor is the condition a project grant of one of the deployer's
@@ -82,9 +85,8 @@ func TestGrantRulesMatrix(t *testing.T) {
 				if acct := deployerGrantAccountFor(typ, role); acct != "" {
 					after["service_account_id"] = acct
 				}
-				if cond := bucketCondFor(typ, role, kind == toPeople); cond != nil {
-					after["condition"] = cond
-				} else if cond := deployerCondFor(typ, role); cond != nil {
+				withCondFor(after, typ, role, kind == toPeople)
+				if cond := deployerCondFor(typ, role); cond != nil {
 					after["condition"] = cond
 				}
 				ch := rc(typ, after, map[string]any{}, "create")
@@ -100,9 +102,8 @@ func TestGrantRulesMatrix(t *testing.T) {
 			if acct := deployerGrantAccountFor(typ, role); acct != "" {
 				after["service_account_id"] = acct
 			}
-			if cond := bucketCondFor(typ, role, false); cond != nil {
-				after["condition"] = cond
-			} else if cond := deployerCondFor(typ, role); cond != nil {
+			withCondFor(after, typ, role, false)
+			if cond := deployerCondFor(typ, role); cond != nil {
 				after["condition"] = cond
 			}
 			ch := rc(typ, after, map[string]any{"member": true}, "create")
@@ -350,13 +351,11 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{logview, "roles/logging.logWriter", account, false},
 	} {
 		// These cells test checkGrant alone (the table), not the condition,
-		// which TestCoverBucketConditions covers: a bucket objectUser cell
-		// carries the condition its kind of principal needs, so bucketCondition
-		// never flips it to a problem the table did not predict.
+		// which TestCoverBucketConditions and TestCoverBatchJobsEditorCondition
+		// cover: a conditioned cell carries the condition its kind of principal
+		// needs, so neither condition check flips it to a problem the table did not predict.
 		after := map[string]any{"member": c.member, "role": c.role, "bucket": "fugaro-runs-proj-1"}
-		if cond := bucketCondFor(c.typ, c.role, c.member == person); cond != nil {
-			after["condition"] = cond
-		}
+		withCondFor(after, c.typ, c.role, c.member == person)
 		ch := rc(c.typ, after, map[string]any{}, "create")
 		got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
 		if (len(got) == 0) != c.covered {

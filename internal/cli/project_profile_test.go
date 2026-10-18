@@ -260,7 +260,7 @@ func TestBuildProjectPolicyRefusesAnEmptyProfileAllowRepos(t *testing.T) {
 		Budget:   &localcfg.Budget{Mode: "observe"},
 		Profiles: map[string]config.JobProfile{projectpolicy.DefaultProfileName: pr},
 	}
-	pol, err := buildProjectPolicy(lc, []string{"github/acme/app"}, nil)
+	pol, _, err := buildProjectPolicy(lc, []string{"github/acme/app"}, nil, false)
 	if err == nil {
 		t.Fatalf("an empty profile allow_repos was built into a policy: %+v", pol.Profiles)
 	}

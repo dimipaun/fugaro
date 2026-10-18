@@ -86,12 +86,34 @@ func localRecipe(root string, cfg *config.Config) *recipe.Recipe {
 	if name == "" {
 		name = recipe.DefaultName
 	}
+	return localRecipeNamed(root, name)
+}
+
+// localRecipeNamed is localRecipe for a recipe NAME the caller resolved
+// itself, rather than the one this file selects: the follow-up case, where
+// agent.recipe is not consulted at all (recipeForLaunch, internal/cli/run.go,
+// mirroring the runner's resolveRecipe), so the name is recipe.DefaultName
+// whatever the file says. The repository layer is read first and the catalog
+// second, the order the runner reads them in.
+//
+// An empty root is no checkout of the task's repository (checkoutRoot), and
+// then there is no repository layer to read: ReadRepoFile would be handed a
+// RELATIVE path and resolve it against the process's own working directory,
+// so a directory that merely happens to hold .fugaro/recipes/<name>.yaml
+// would decide the launch. The catalog is the only answer that can be given
+// without a checkout, and the runner — which reads the repository layer at
+// the task's ref — is the one that decides the run either way.
+func localRecipeNamed(root, name string) *recipe.Recipe {
 	if !recipe.NameRE.MatchString(name) {
 		return nil
 	}
-	data, found, err := recipe.ReadRepoFile(root, name)
-	if err != nil {
-		return nil
+	var data []byte
+	found := false
+	if root != "" {
+		var err error
+		if data, found, err = recipe.ReadRepoFile(root, name); err != nil {
+			return nil
+		}
 	}
 	if !found {
 		data, _ = recipe.CatalogText(name)
@@ -107,11 +129,13 @@ func localRecipe(root string, cfg *config.Config) *recipe.Recipe {
 }
 
 // gateCheckProblems is `fugaro validate`'s check that the recipe the file
-// selects (localRecipe) never leaves a check step's gate silently doing
-// nothing: the same two refusals bootstrap's checkGateCommands makes at
-// launch (runner.RecipeGateProblems), checked against every workflow since
-// validate has no one run to pick a single workflow for. nil when the
-// recipe can't be read locally (a project recipe) or has no check step.
+// selects (localRecipe) fits the file's workflows: the same refusals
+// bootstrap's checkGateCommands makes at launch (runner.RecipeGateProblems)
+// — a check step whose commands.* key is empty, and, for a mode: artifact
+// recipe, its render and probe steps and the caps they declare against the
+// workflow's memory — checked against every workflow since validate has no
+// one run to pick a single workflow for. nil when the recipe can't be read
+// locally (a project recipe).
 func gateCheckProblems(root string, cfg *config.Config) []config.Problem {
 	rcp := localRecipe(root, cfg)
 	if rcp == nil {
@@ -119,8 +143,11 @@ func gateCheckProblems(root string, cfg *config.Config) []config.Problem {
 	}
 	var problems []config.Problem
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		for _, msg := range runner.RecipeGateProblems(rcp, cfg.Workflows[name].Commands) {
-			problems = append(problems, config.Problem{Path: "workflows." + name + ".commands", Message: "the " + msg})
+		// Each problem is reported at the key it is about: commands.render
+		// and commands.probe under workflows.<name>.commands, the caps that
+		// cannot fit under workflows.<name>.resources.memory.
+		for _, p := range runner.RecipeGateProblems(rcp, cfg.Workflows[name]) {
+			problems = append(problems, config.Problem{Path: "workflows." + name + "." + p.Field, Message: "the " + p.Message})
 		}
 	}
 	return problems

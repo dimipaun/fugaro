@@ -87,6 +87,25 @@ workflows:
 
 **An agent cannot `apt-get install` during a run.** It has no sudo, by design: a root-capable agent could rewrite the runner it shares the container with. Bake what your runs need into the image with `image.apt`, or install a standalone tool in user space mid-run with `mise use -g <tool>@<version>`.
 
+**A command-line tool that is not a language runtime comes from `image.apt` too, and an artifact recipe is the case that needs it most.** A `mode: artifact` run renders a file with a tool the base does not carry — ffmpeg is the standard example, and neither `image.tools` (mise's registry, for runtimes) nor a mid-run `mise use -g` fits a render that must work the same on every run. Put it in `apt`, where a Debian package exists and is pinned by the image's own build:
+
+```yaml
+# fugaro.yaml
+workflows:
+  sizzle:
+    image:
+      apt: [ffmpeg]                     # the render's tool, baked in at build time
+    commands:
+      render: |
+        set -eu
+        mkdir -p out
+        ffmpeg -y -framerate 1 -pattern_type glob -i 'inputs/*.png' \
+          -c:v libx264 -pix_fmt yuv420p out/sizzle.mp4
+    resources: { cpu: 4, memory: 8Gi }
+```
+
+Changing `image.apt` needs a rebuild, and the command for it is `fugaro image build` in the repository's checkout, in your own terminal window (it asks for the project's name typed there, and a coding-agent session never confirms one). **`fugaro image refresh` is not that rebuild:** refresh rebuilds a workflow only when the base image the workflow was built from is not the one the config pins now — it reads the build record's `base_ref` and never the image config (`refreshVerdict`, `internal/cli/image_refresh_rules.go`) — so on a repository already built from the current base it prints `current: built from …`, submits no Cloud Build, and the package never arrives. Until a rebuild from the changed config has run, a job still lacks the package and the render fails with `ffmpeg: not found`. The recipe side of this — `mode: artifact`, `steps`, `outputs` and the probe — is [artifact-runs.md](artifact-runs.md).
+
 ## When `image:` is not enough: a Dockerfile
 
 Run `fugaro image render --workflow <name>`, save it as `.fugaro/<name>.Dockerfile`, point `dockerfile:` at it, and add your lines: system packages in a `USER root` block above the clone, steps that need the checkout after the `mise install` step. Keep everything else, which carries the security-critical parts (the credential handling, the sudo removal, `finalize-checkout`). A minimal one is exactly the render's output.

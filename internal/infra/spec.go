@@ -539,6 +539,11 @@ func Workflow(in Inputs, name string) (WorkflowSpec, error) {
 // GitSecret is the logical name of the git credential of provider (the
 // secret every job mounts), and false for a provider that is neither
 // Bitbucket nor GitHub. The one place that names them.
+//
+// Bitbucket's is the per-repository one of the two: a repository access token
+// is issued for one repository and works for no other, so it is never stored
+// project-wide (config.PerRepositorySecret, the owner's ruling of 2026-10-15).
+// GitHub's App key is a project's, mounted by every repository the App serves.
 func GitSecret(provider string) (string, bool) {
 	switch provider {
 	case gitprov.KindBitbucket:
@@ -931,18 +936,33 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 
 // ProjectSecretCandidate is the one place that answers "may this repository
 // use logical project-wide, and what ID would that be": the name is an
-// entry of project_secrets that lists repo, or a named Claude account's own
-// derived secret whose account lists repo, or a model provider's own key
-// whose provider lists repo -- AllowsData uniformly across all three, so
-// §3a's no-list/["*"]-means-any-repository rule applies to a provider's key
-// exactly as it does everywhere else. ok is false, id "" otherwise. It is
-// exported because fugaro init --repo's secrets stage (before any RepoSpec
-// exists) needs the identical answer.
+// entry of project_secrets that lists repo, or a reserved secret D2 swept
+// into project scope with no project_secrets entry at all, or a named Claude
+// account's own derived secret whose account lists repo, or a model
+// provider's own key whose provider lists repo -- AllowsData uniformly
+// across the last three, so §3a's no-list/["*"]-means-any-repository rule
+// applies to a provider's key exactly as it does everywhere else. ok is
+// false, id "" otherwise. It is exported because fugaro init --repo's
+// secrets stage (before any RepoSpec exists) needs the identical answer.
 func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
 	if lc == nil || logical == "" {
 		return "", false
 	}
 	eligible := config.AllowedForProjectSecret(lc.ProjectSecrets, logical, repo)
+	if !eligible && config.ProjectScopeByDefault(logical) {
+		// D2 (plan Task 2.1 step 2, finding 13): a reserved name the platform
+		// itself mounts is eligible project-wide with no per-name list, which
+		// is the case this function refused before -- only an entry of
+		// project_secrets reached it. An *entry* still decides: an owner who
+		// wrote project_secrets.<name>.allow_data_to said who may read it, and
+		// "absent or empty means nobody" stays true of a list someone wrote.
+		// Without one, the sweep applies, and every repository may read it --
+		// the same reach the CLI's default store announces, which is what
+		// makes "stored project-wide" mean what a person reads it to mean.
+		if _, listed := lc.ProjectSecrets[logical]; !listed {
+			eligible = true
+		}
+	}
 	if !eligible {
 		// ClaudeAccountBySecret always resolves the bare claude-oauth-token
 		// to DefaultClaudeAccount, which is never a key of the map
@@ -962,6 +982,34 @@ func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id strin
 		return "", false
 	}
 	return gcp.ProjectSecretID(lc.Name, logical), true
+}
+
+// MountSecretID is the one place that answers "which secret ID does this
+// repository's job mount for logical": the project's copy when Readiness
+// resolved the name to it (ProjectSecrets, written by resolveProject from the
+// one predicate, infra.ProjectSecretCandidate, which is D2's
+// config.ProjectScopeByDefault), the repository's own container otherwise, and
+// "" when neither holds the name -- a name no job mounts at all, or an
+// optional secret Readiness dropped for having no version anywhere.
+//
+// It reads the decision, it does not take it: the two maps are exactly the two
+// the repository module's Terraform merge reads
+// (deploy/terraform/gcp/modules/repo/workflows.tf's local.secrets prefers
+// var.repo.project_secrets over the repository's own container, which is what
+// makes a project-scope key mount on the repository's job at all). A caller
+// that spelled that precedence itself could point a job at a secret the plan
+// never mounted, so the readers of it ask here instead of repeating it.
+//
+// The phase-3 hand-off (plan Task 2.2 step 3): a repository has a job of its
+// own until phase 3. When it stops having one, the same resolution feeds a
+// profile's mount list instead, and the repository copy's precedence survives
+// only on the per-repository path -- so that move lands here, not in each
+// caller.
+func (rs RepoSpec) MountSecretID(logical string) string {
+	if id := rs.ProjectSecrets[logical]; id != "" {
+		return id
+	}
+	return rs.Secrets[logical]
 }
 
 // UsesVertex reports whether any of the repository's workflows

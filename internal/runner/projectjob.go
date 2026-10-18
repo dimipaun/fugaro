@@ -256,7 +256,7 @@ func cannotPlaceJob(job string, p *projectpolicy.Policy, found bool, slug, workf
 // checkProjectCheckoutOrigin refuses, on a project job, any checkout already
 // in the work directory (review C5). openCheckout opens an existing checkout
 // as it is, and on a per-repository job the admission holds its origin to the
-// task's repository (originURL feeds remoteOfAnotherRepo); a project job
+// task's repository (originURL feeds remoteAdmissionErr); a project job
 // computes its clone URL and reads no origin, so without this a checkout of
 // another repository — a baked image built for one, or a directory something
 // left behind — would be fetched with the profile's credential and worked on

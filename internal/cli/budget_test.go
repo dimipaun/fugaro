@@ -411,7 +411,7 @@ func TestSetMaxReserveKeepsOtherLimitKeys(t *testing.T) {
 		t.Fatalf("config/limits = %#v, want an object", f.db.Value(budget.PathLimits))
 	}
 	got, ok := lim[markerKey].(json.Number)
-	if !ok || got.String() != "1" {
+	if !ok || got.String() != strconv.Itoa(projectpolicy.RulesVersion) {
 		t.Errorf("config/limits = %v: budget set dropped or changed the rules marker (%s), which the runner reads", lim, projectpolicy.PathRulesMarker())
 	}
 	if lim["maxReserveMicros"] == nil {

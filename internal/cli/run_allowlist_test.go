@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -141,6 +142,41 @@ func TestRunRefusesBeforeLaunch(t *testing.T) {
 	}
 }
 
+// TestRunRefusesUnderAPolicyOfThePolicyGeneration: the allow-list gate applies
+// to a policy published under a marker *below* this binary's generation but at
+// or above the one that carries the policy nodes. Generation 1 is a real
+// installation: it deployed the config/policy nodes, `project policy publish`
+// wrote there and every run of it reads the policy — so a launcher that read
+// the marker as legacy skipped the gate and launched a repository the policy
+// does not admit. `launchPolicyGates` reads through projectpolicy.Read, which
+// gates on PolicyRulesVersion for exactly this reason (the review finding on
+// P2.1: the bump to 2 answered "no policy" for every installation on
+// generation 1, keeping its job-environment ceiling and skipping this refusal).
+//
+// Mutation (verified, run and restored): gate Read on `gen < RulesVersion` —
+// this test fails, the launch creating an execution under a policy that refuses
+// its repository.
+func TestRunRefusesUnderAPolicyOfThePolicyGeneration(t *testing.T) {
+	if projectpolicy.PolicyRulesVersion >= projectpolicy.RulesVersion {
+		t.Fatalf("PolicyRulesVersion = %d and RulesVersion = %d: this test is about a generation below this binary's, and the two have met", projectpolicy.PolicyRulesVersion, projectpolicy.RulesVersion)
+	}
+	f := newLaunchBudget(t, "enforce")
+	markRules(t, f, projectpolicy.PolicyRulesVersion)
+	// The policy node's own version is this binary's (projectpolicy.Version,
+	// 2 on next-0.8.5): the generation under test is the rules marker's.
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(fmt.Sprintf(`{"version":%d,"allow_repos":["github/other/*"]}`, projectpolicy.Version)))
+	_, _, err := runBudget(t)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v (exit %d), want a user error: the policy of generation %d is read and its allow-list governs", err, ExitCode(err), projectpolicy.PolicyRulesVersion)
+	}
+	if !strings.Contains(err.Error(), "github/acme/app") || !strings.Contains(err.Error(), "allow_repos") {
+		t.Errorf("the refusal does not read as the allow-list gate's: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions were created for a refused launch", n)
+	}
+}
+
 // A best-of-N batch is refused by the same gate, and before its first attempt:
 // runAttempts launches every attempt through launchAttempt, which in production
 // is finishLaunch, so the gate is not a single-run path. The tests that swap
@@ -177,6 +213,17 @@ func TestRunAttemptsRefusesBeforeAnyLaunch(t *testing.T) {
 // (policySince) and the fix. The budget is on here on purpose: with the mode
 // not off nothing else in the launch path reads the policy node, so what
 // refuses is this gate.
+//
+// The remedy is the upgrading side's, and it is the only one this direction may
+// print: `fugaro init --firebase` is the wrong move here, and it is the deploy's
+// own plan that says so — a deployed rules marker above this binary's
+// RulesVersion stops the plan, "the rules this database runs under came from a
+// newer Fugaro, and 'fugaro init --firebase' would deploy this binary's older
+// rules over them. Upgrade Fugaro first" (internal/infra's DB.Plan; doctor's
+// policy-rules-skew reports the same state, and requirePolicyRules reads a
+// marker at or above RulesVersion as one this Fugaro reads a policy under
+// rather than refusing it). The assertion below is what keeps the directions
+// apart.
 func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	publishPolicy(t, f, `{"version":99,"allow_repos":["*"]}`)
@@ -190,6 +237,11 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	for _, bad := range []string{"re-run init", "init --firebase"} {
+		if strings.Contains(err.Error(), bad) {
+			t.Errorf("the refusal tells an older binary to %q: the deploy's plan refuses to put this release's rules over a newer Fugaro's, so it is the operator's upgrade that is missing: %v", bad, err)
 		}
 	}
 	if n := len(f.run.Executions()); n != 0 {
@@ -209,45 +261,126 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 	}
 }
 
-// The other skew direction (plan task 3.3's version bump): a policy an older
-// Fugaro published — version 1, written before a runner enforced a profile's
-// allow_repos — is refused too, since this binary's runs would refuse it at
-// bootstrap, but "upgrade Fugaro" is backwards for it: this binary is the newer
-// one. The remedy is the publisher's own (publishedPolicyOf): remove the node
-// and publish again.
-func TestRunRefusesAPolicyOlderThanTheBinaryWithAWorkingRemedy(t *testing.T) {
+// The other skew direction, which is the one the message used to get wrong: a
+// node below what this Fugaro understands (a hand-written one, or one a release
+// before this shape wrote — version 1, published before a runner enforced a
+// profile's allow_repos, plan task 3.3's bump; a version below Version decodes
+// fine and is not the legacy path, that is the marker's job) is refused by the same gate, and the remedy printed
+// is the operator's delete-then-publish — the same remedy internal/cli's
+// publishedPolicyOf refuses an older node with, because this release's publish
+// will not overwrite one — and never `fugaro upgrade`, which is this
+// binary's own remedy for the opposite direction and does nothing here. The two
+// directions shared one sentence until this test: the binary looked newer than
+// the node in both, so an operator whose node was simply behind was told to
+// upgrade a Fugaro that was already ahead of it.
+func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	publishPolicy(t, f, `{"version":1,"allow_repos":["*"]}`)
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
 	}
-	for _, want := range []string{"the project policy is version 1", "fugaro project policy publish --delete"} {
+	for _, want := range []string{
+		"the project policy is version 1", fmt.Sprintf("this Fugaro understands version %d", projectpolicy.Version),
+		"fugaro project policy publish --delete", "publish it again", policySince,
+	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
-	if strings.Contains(err.Error(), "upgrade") {
-		t.Errorf("an older policy is met with the newer direction's remedy: %v", err)
+	// Two remedies that are wrong advice here: the other direction's (nothing
+	// on this machine is behind the node) and init, which deploys the rules
+	// template and marker but writes no policy node — an operator sent to
+	// re-run it would meet this refusal again.
+	for _, bad := range []string{"upgrade", "init --firebase"} {
+		if strings.Contains(err.Error(), bad) {
+			t.Errorf("the refusal tells the operator to %q, but this binary is the newer side: what is behind is the node, and the remedy is the delete: %v", bad, err)
+		}
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Errorf("%d executions were created for a refused launch", n)
 	}
 }
 
+// The two directions as the sentences themselves, at the layer all three
+// callers share (launch_budget.go's policyReadErr and run_allowlist.go's
+// policySkewRefusal here, internal/runner's unreadablePolicy there, all of
+// them projectpolicy.SkewSentence): each reader names its own remedy and not
+// the other's, and both quote the versions. This is what a change to either
+// constant has to keep true, and the reason the remedy lives in
+// internal/projectpolicy at all — one wording, one helper, three readers.
+func TestSkewSentencesSplitByDirection(t *testing.T) {
+	older := &projectpolicy.VersionError{Found: 0, Understood: projectpolicy.Version}
+	newer := &projectpolicy.VersionError{Found: projectpolicy.Version + 1, Understood: projectpolicy.Version}
+	understood := fmt.Sprintf("version %d", projectpolicy.Version)
+	for _, tc := range []struct {
+		name    string
+		ve      *projectpolicy.VersionError
+		want    []string
+		notWant []string
+	}{
+		{
+			name: "the node is older", ve: older,
+			want:    []string{"version 0", understood, "fugaro project policy publish --delete", "publish it again"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase"},
+		},
+		{
+			name: "the node is newer", ve: newer,
+			want:    []string{fmt.Sprintf("version %d", projectpolicy.Version+1), understood, "upgrade Fugaro"},
+			notWant: []string{"publish --delete", "init --firebase"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := projectpolicy.SkewSentence(tc.ve, projectpolicy.ReaderCLI)
+			for _, want := range tc.want {
+				if !strings.Contains(msg, want) {
+					t.Errorf("SkewSentence(%+v, ReaderCLI) does not say %q: %s", tc.ve, want, msg)
+				}
+			}
+			for _, bad := range tc.notWant {
+				if strings.Contains(msg, bad) {
+					t.Errorf("SkewSentence(%+v, ReaderCLI) says %q, which is the other direction's remedy: %s", tc.ve, bad, msg)
+				}
+			}
+		})
+	}
+
+	// And the whole of the launch gate's refusal, which splices the sentence
+	// into its own release-marked text: the remedy must survive the splice.
+	gate := policySkewRefusal(older).Error()
+	if !strings.Contains(gate, "publish --delete") || strings.Contains(gate, "upgrade Fugaro") {
+		t.Errorf("policySkewRefusal(older) = %q, want the delete remark and not the upgrade one", gate)
+	}
+	if !strings.Contains(policySkewRefusal(newer).Error(), "upgrade Fugaro") {
+		t.Errorf("policySkewRefusal(newer) = %q, want the upgrade remark", policySkewRefusal(newer))
+	}
+
+	// The other caller, which reads the node for the budget decision: same
+	// sentence, one flat error.
+	if e := policyReadErr(older); !strings.Contains(e.Error(), "publish --delete") || strings.Contains(e.Error(), "upgrade Fugaro") {
+		t.Errorf("policyReadErr(older) = %v, want the delete remark", e)
+	}
+	if e := policyReadErr(newer); !strings.Contains(e.Error(), "upgrade Fugaro") {
+		t.Errorf("policyReadErr(newer) = %v, want the upgrade remark", e)
+	}
+}
+
 // The round-6 correction: an installation whose rules predate the model — no
-// marker at all, or a marker below RulesVersion — has no policy for the gate
-// to compare, and when no node is published it has no allow-list either. The
-// launch creates the execution and refuses nothing, exactly as it did before
-// this phase. The marker is deliberately not part of the gate (plan task 1.5
-// step 4).
+// marker at all, or a marker below the generation that carries the policy nodes
+// — has no policy for the gate to compare, and when no node is published it has
+// no allow-list either. The launch creates the execution and refuses nothing,
+// exactly as it did before this phase. The marker is deliberately not part of
+// the gate (plan task 1.5 step 4), and neither is the generation *between* the
+// two constants: a marker at PolicyRulesVersion with no node is the same state
+// as one at RulesVersion with no node — the gate compares what is published.
 func TestRunLaunchesWithNoPolicyPublished(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		marker func(t *testing.T, f *launchBudgetFixture)
 	}{
 		{"no marker at all", func(*testing.T, *launchBudgetFixture) {}},
-		{"a marker below RulesVersion", func(t *testing.T, f *launchBudgetFixture) { markRules(t, f, projectpolicy.RulesVersion-1) }},
+		{"a marker below the policy generation", func(t *testing.T, f *launchBudgetFixture) { markRules(t, f, projectpolicy.PolicyRulesVersion-1) }},
+		{"the policy generation, no node", func(t *testing.T, f *launchBudgetFixture) { markRules(t, f, projectpolicy.PolicyRulesVersion) }},
 		{"the rules generation, no node", func(t *testing.T, f *launchBudgetFixture) { markRules(t, f, projectpolicy.RulesVersion) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

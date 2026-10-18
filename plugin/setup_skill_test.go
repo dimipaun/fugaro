@@ -320,7 +320,7 @@ func TestSetupSkillContent(t *testing.T) {
 	files := setupFiles(t)
 	for file, wants := range map[string][]string{
 		"skills/setup/SKILL.md": {
-			"fugaro doctor --json", "fugaro secrets ls --json", "fugaro image render", "fugaro image build --local --json",
+			"fugaro doctor --json", "fugaro secrets ls --repo --json", "fugaro image render", "fugaro image build --local --json",
 			"fugaro validate --json", "fugaro init --repo --plan-only", ".fugaro/<workflow>.Dockerfile", "blank Dockerfile",
 			".github/workflows", "Docker daemon", "`fugaro_yaml`", "WSL2", "agent.instructions",
 			"whole content", "_.source", "[hooks]",
@@ -786,12 +786,12 @@ func decisionsTopic(t *testing.T, dec, name string) string {
 }
 
 // TestSetupSkillSecretsStepReadsMissingFromSecretsLs pins step 8's sentence
-// about the MISSING signal: it comes from `fugaro secrets ls --json` run in
+// about the MISSING signal: it comes from `fugaro secrets ls --repo --json` run in
 // the checkout (only the checkout's fugaro.yaml says what is required), not
 // from doctor, and it is the names this repository's jobs need — so "store
 // each" never sends the user after a name no job of it reads.
 func TestSetupSkillSecretsStepReadsMissingFromSecretsLs(t *testing.T) {
-	const want = "From the checkout, run `fugaro secrets ls --json` (not doctor, which lists only stored names): " +
+	const want = "From the checkout, run `fugaro secrets ls --repo --json` (not doctor, which lists only stored names): " +
 		"each entry with `missing` set is a name this repository's jobs need that has no value, so store each of those."
 	text := setupFiles(t)["skills/setup/SKILL.md"]
 	if !strings.Contains(text, want) {

@@ -28,6 +28,21 @@ const CloudBatch = "cloud-batch"
 // the runner's lock expiry and writeback window rely on it. It is the single source for both.
 const TaskTimeoutSlack = 2 * time.Minute
 
+// MaxRunTime is the longest total time a run may ask for with a per-run
+// override (--total-timeout), and therefore the longest any run can
+// legitimately be active whatever the workflows are configured with: the CLI
+// refuses an override above it (OverrideCap, internal/cli/run.go) and the
+// platform caps what a task may run for besides. A runaway value is more
+// likely a typo than a plan, so it is a ceiling rather than a plan value.
+//
+// It lives here rather than in internal/cli because it is not a CLI policy
+// but a fact about LaunchSpec.Timeout: anything that measures how long a run
+// may legitimately be active has to account for it -- the CLI's max_parallel
+// horizon (max(longest, OverrideCap), internal/cli/run.go) and the reaper's
+// deadlines (internal/backend/batch/reap.go) both do -- and internal/backend
+// cannot import internal/cli.
+const MaxRunTime = 24 * time.Hour
+
 // State is an execution's lifecycle state as the platform reports it.
 type State string
 
@@ -72,6 +87,15 @@ type LaunchSpec struct {
 	// launch, not about the job's deploy-time environment, so it cannot come
 	// from init --repo (internal/runner's BudgetTokenEnv, plan R2-8(a)).
 	Env []string
+	// Docker is what the workflow asked for: `docker: true` (design
+	// compute-backend.md §4.2, C16), a real Docker daemon for the run's own
+	// containers. It is the workflow's ask and not a capability, so a backend
+	// that cannot give a run a daemon must refuse the launch rather than run
+	// the job without one: the agent's `docker` commands would fail one by
+	// one, in the middle of a stage, with no daemon to talk to. On Batch it
+	// mounts the VM's socket and puts DOCKER_HOST in the job env (§2.2,
+	// §4.3); Cloud Run has no daemon at all and refuses it.
+	Docker bool
 }
 
 // ExecID is a run's identity, parsed from its resource name by the
@@ -211,9 +235,12 @@ const VMMinimumBilled = time.Minute
 // that priced it differently would change every Cloud Run estimate already
 // recorded.
 //
-// ok is false only for a VM-backed execution whose boot window the backend
-// has not reported (neither Scheduled nor Created is set, so nothing can be
-// priced). The estimate must then say "unknown", never "free".
+// ok is false for a VM-backed execution whose window cannot be bounded at
+// all: neither Scheduled nor Created is set (nothing can be priced), or the
+// execution has ended and no completion time was reported, so the window has
+// no end either. The estimate must then say "unknown", never "free" -- and
+// never a figure that grows: a caller re-reading a finished run must not
+// re-price it higher every time it looks.
 func (e Execution) BilledWindow(now time.Time) (time.Duration, bool) {
 	if e.MachineType == "" {
 		return e.Billed(now), true
@@ -227,6 +254,17 @@ func (e Execution) BilledWindow(now time.Time) (time.Duration, bool) {
 	}
 	end := e.Completed
 	if end.IsZero() {
+		if e.State.Terminal() {
+			// It has ended and the backend reported no completion time
+			// (the Batch backend leaves Completed zero: the job's status
+			// events are where it comes from and their shape is UNVERIFIED,
+			// design §2.3, §9). now is not the end of a window that is
+			// already over, and a job's record outlives it by 60 days
+			// (§2.4), so treating now as the end would read the same
+			// finished run as costing more and more the longer it is
+			// looked at.
+			return 0, false
+		}
 		end = now
 	}
 	return max(VMMinimumBilled, end.Sub(start)), true
@@ -283,8 +321,10 @@ type Backend interface {
 	Logs(ctx context.Context, q LogQuery, fn func(LogEntry) error) error
 	Cancel(ctx context.Context, name string) error
 	// LongestTaskTimeout is the longest task timeout among the Fugaro
-	// workflow jobs, zero when there are none. No run of them can be active
-	// for longer, so it bounds how far back an active-only List must look.
+	// workflow jobs, zero when there are none. A run of one of them may
+	// override its own total time past it, though (LaunchSpec.Timeout, up to
+	// MaxRunTime), so a caller bounding how long a run may legitimately be
+	// active must use max(LongestTaskTimeout, MaxRunTime).
 	LongestTaskTimeout(ctx context.Context) (time.Duration, error)
 	// TaskTimeout is the task timeout of the repository's workflow job
 	// (DefaultTaskTimeout when the job sets none). ErrNotFound when the job

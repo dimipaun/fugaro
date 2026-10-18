@@ -1,0 +1,17 @@
+# website/.gitignore — what the site's toolchain writes and the repository does not keep.
+#
+# The install and the build are reproducible from what IS committed:
+# package.json pins the exact versions, package-lock.json pins the exact tree that
+# install produced, and `npm ci` installs that tree and nothing else. So neither the tree
+# it writes nor the output it produces is a source file.
+
+# The dependency tree `npm ci` writes. Committed, it would be thousands of files nobody
+# reviews and a second copy of what the lockfile already pins.
+node_modules/
+
+# The build output `npm run build` writes (astro's default `dist/`): the artifact, per
+# build, from the sources in this directory.
+dist/
+
+# Astro's cache of generated types and content state.
+.astro/

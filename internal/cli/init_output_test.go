@@ -157,7 +157,11 @@ func outputHygieneLefts(t *testing.T) []printedLeft {
 	add("secrets/no-checkout", (&secretsStage{e: e}).Left())
 	add("secrets/github", (&secretsStage{e: e, tg: &secretTarget{repo: "acme/app", wanted: []string{multilineSecret, "claude-oauth-token"}}, checked: true, missing: []string{multilineSecret, "claude-oauth-token"}}).Left())
 	add("secrets/bitbucket", (&secretsStage{e: e, tg: &secretTarget{repo: "acme/app", wanted: []string{"bitbucket-token"}}}).Left())
-	add("secrets/odd-repo", (&secretsStage{e: e, tg: &secretTarget{repo: "ac me/ap'p", wanted: []string{"bitbucket-token"}}}).Left())
+	// A hostile repository value must stay quoted in the command the user is
+	// handed. The name here keeps repository scope on purpose (D2 stores a
+	// swept-in reserved name project-wide, whose command carries no repo), so
+	// the pin covers the quoting either way.
+	add("secrets/odd-repo", (&secretsStage{e: e, tg: &secretTarget{repo: "ac me/ap'p", wanted: []string{"claude-oauth-token"}}}).Left())
 	add("plugin/update", (&pluginStage{e: e}).Left())
 	add("plugin/fork", forkLeft())
 	add("repository", newRepositoryStage(e).Left())

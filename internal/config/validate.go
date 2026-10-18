@@ -248,7 +248,7 @@ func Validate(c *Config) []Problem {
 		for _, d := range []struct {
 			name string
 			v    Duration
-		}{{"total", t.Total}, {"stage", t.Stage}, {"verify", t.Verify}, {"finalize_reserve", t.FinalizeReserve}} {
+		}{{"total", t.Total}, {"stage", t.Stage}, {"verify", t.Verify}, {"render", t.Render}, {"finalize_reserve", t.FinalizeReserve}} {
 			if d.v.Duration <= 0 {
 				add(p+".timeouts."+d.name, "must be positive")
 			}
@@ -259,6 +259,46 @@ func Validate(c *Config) []Problem {
 		if t.Stage.Duration > t.Total.Duration {
 			add(p+".timeouts.stage", "must not exceed timeouts.total")
 		}
+		ps = append(ps, validateInputs(p+".inputs", w.Inputs)...)
+	}
+	return ps
+}
+
+// validateInputs reports a workflow's inputs caps (design artifact-runs.md
+// §4, P6): each cap has a ceiling of its own and may not be negative, and a
+// set cap below the per-file cap with room for only one file is a pair
+// nobody can satisfy — that one legal file is the whole set, so the smaller
+// cap silently governs. Only the caps the file wrote are compared: a
+// defaulted one is not a relation the author wrote, and with room for more
+// than one file the pair is a set cap doing its job.
+func validateInputs(p string, in Inputs) []Problem {
+	var ps []Problem
+	add := func(path, format string, args ...any) {
+		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
+	}
+	for _, c := range []struct {
+		name    string
+		got     int64
+		ceiling int64
+	}{
+		{"max_files", int64(in.MaxFiles), MaxInputFiles},
+		{"max_bytes", in.MaxBytes, MaxInputBytes},
+		{"max_total_bytes", in.MaxTotalBytes, MaxInputTotalBytes},
+	} {
+		switch {
+		case c.got < 0:
+			add(p+"."+c.name, "must not be negative")
+		case c.got > c.ceiling:
+			// max_files counts files, so its ceiling names no unit.
+			if c.name == "max_files" {
+				add(p+"."+c.name, "must be at most %d", c.ceiling)
+			} else {
+				add(p+"."+c.name, "must be at most %d bytes (%s)", c.ceiling, recipe.SizeText(c.ceiling))
+			}
+		}
+	}
+	if in.MaxFiles == 1 && in.MaxBytes > 0 && in.MaxTotalBytes > 0 && in.MaxTotalBytes < in.MaxBytes {
+		add(p+".max_total_bytes", "must be at least inputs.max_bytes")
 	}
 	return ps
 }

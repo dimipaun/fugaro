@@ -276,8 +276,22 @@ type run struct {
 	ckpt checkpointState
 	// skipPR is set when the check gate already ended the run (clean, or an
 	// infra error of its own, gate.go): finalize, which still runs after,
-	// does nothing more.
+	// does nothing more. A review run and an artifact run set it for their
+	// whole lives: neither ever pushes or opens a pull request.
 	skipPR bool
+	// artifact is whether this run is a mode: artifact run (design
+	// artifact-runs.md §3): set at bootstrap from the task spec's Mode,
+	// beside r.review, and confirmed against the resolved recipe's mode
+	// there (an empty spec.Mode takes the recipe's). out is that recipe's
+	// outputs: block, artifactPlan whether its steps lead with a plan
+	// stage, and useWhen its use_when text for the plan prompt.
+	artifact     bool
+	out          *recipe.Outputs
+	artifactPlan bool
+	useWhen      string
+	// renderRec is what the render step did, stored as Record.Render: the
+	// same record the report and result.json are written from.
+	renderRec *runstore.RenderRecord
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
@@ -320,7 +334,10 @@ const prAttempts = 3
 // nothing and returns a nil record. The error is non-nil for an
 // infra_error, for a cancellation seen during bootstrap (before any stage
 // or finalize runs, where the record's status is cancelled rather than
-// infra_error), or when writing the final record itself fails.
+// infra_error), or when writing the final record itself fails. Whatever error
+// it returns is redacted (redactedErr): the caller prints it — internal/cli's
+// exec hands it to the command's error and cmd/fugaro/main.go writes that to
+// the job's stderr — and a git failure quotes the remote it was given.
 func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	if d.Now == nil {
 		d.Now = time.Now
@@ -348,6 +365,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			// lock are not ours to touch.
 			d.Log.Error("not the run's owner; exiting without writing", "execution", d.Execution, "err", r.redact(err.Error()))
 			rec = nil
+			err = r.redactErr(err)
 			return
 		}
 		r.closeGateway()
@@ -386,11 +404,21 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			case errors.Is(cerr, runstore.ErrExists):
 				d.Log.Error("another execution's run record is in place; not replacing it", "execution", d.Execution)
 				rec = nil
+				// The error is the run's own bootstrap failure — the one this
+				// execution met before it could claim anything — and the
+				// caller prints it, so it is redacted here like the ones
+				// above and below. It is the third of the not-the-owner
+				// returns: ErrDuplicateExecution and errOwnerUnknown come
+				// back earlier, and this is the execution whose bootstrap
+				// failed outright while another execution's record was
+				// already in the bucket.
+				err = r.redactErr(err)
 				return
 			case cerr != nil && err == nil:
 				err = fmt.Errorf("writing run record: %w", cerr)
 			}
 			rec = r.rec
+			err = r.redactErr(err)
 			return
 		}
 		wctx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
@@ -399,6 +427,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			err = fmt.Errorf("writing run record: %w", werr)
 		}
 		rec = r.rec
+		err = r.redactErr(err)
 	}()
 
 	r.addMountedSecrets()
@@ -424,9 +453,12 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
-	if r.review {
+	switch {
+	case r.artifact:
+		r.runArtifactMode(runCtx)
+	case r.review:
 		r.runReviewMode(runCtx)
-	} else {
+	default:
 		r.runAgentLoop(runCtx)
 	}
 	// From here nothing the backend says can stop a stage.
@@ -539,6 +571,33 @@ func (r *run) claimRecord(ctx context.Context) error {
 
 // redact removes every known secret value from s.
 func (r *run) redact(s string) string { return agent.Redact(s, r.secretList()) }
+
+// redactedErr is an error whose text is the redacted one: Error returns it,
+// Unwrap returns the error underneath, so errors.Is and errors.As still find
+// what the caller was matching on (Run's callers match ErrDuplicateExecution
+// and errOwnerUnknown that way, and internal/cli matches the run's own error
+// kinds through the layers above).
+type redactedErr struct {
+	err  error
+	text string
+}
+
+func (e redactedErr) Error() string { return e.text }
+func (e redactedErr) Unwrap() error { return e.err }
+
+// redactErr is the error Run returns: the same error with its text redacted.
+// The value Run returns is not only recorded — internal/cli/exec.go hands it to
+// the command's own error, which cmd/fugaro/main.go prints, so in a job it is
+// the process's stderr and then Cloud Logging. Git's own failures quote the
+// remote they were given (internal/gitops writes "git <args>" with the URL
+// among the args, and git's stderr quotes it too), so that text is redacted the
+// same way the record's reason is, not only where the run publishes it.
+func (r *run) redactErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	return redactedErr{err: err, text: r.redact(err.Error())}
+}
 
 // secretList is a snapshot of the secrets known now.
 func (r *run) secretList() []string {
@@ -659,8 +718,11 @@ func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error 
 	// A follow-up's agent gets no git credentials (design §6.1): the
 	// runner fetches and pushes for it. Neither does a review run's
 	// (design generic-tool §3.6, G12): the runner fetches its checkout(s)
-	// itself, and never pushes or opens anything on its behalf.
-	if r.env != nil && r.follow == nil && !r.review {
+	// itself, and never pushes or opens anything on its behalf. Nor an
+	// artifact run's (design artifact-runs.md §3): its deliverable goes to
+	// the runs bucket, nothing is ever pushed, and the plan stage is the
+	// only agent stage there is.
+	if r.env != nil && r.follow == nil && !r.review && !r.artifact {
 		r.env = gitops.WithVars(r.env, vars)
 	}
 	return nil
@@ -842,11 +904,24 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
 	// Read before the sync below moves the checkout off the baked commit.
 	r.rec.Image = r.imageInfo(ctx)
+
+	// Every credential the run's two remotes can carry — the job's own
+	// FUGARO_REMOTE and the origin of a checkout already in the work
+	// directory — is in the redactor before anything can quote either of
+	// them: the run's own record, which the claim below is what writes, the
+	// admission refusal further down, git's messages about a remote it could
+	// not reach, and result.json.
+	r.addRemoteSecrets(r.d.Remote)
+	r.addRemoteSecrets(r.originURL(ctx))
+
 	if r.owned {
 		r.save(ctx)
 	} else if err := r.claimRecord(ctx); err != nil {
 		// Claimed before the lock, so two executions of one run are
-		// always told apart here (design §4.7).
+		// always told apart here (design §4.7) — and before the admission
+		// check below, so a duplicate is told it is a duplicate whatever
+		// else about it would have been refused (fugaro exec exits a
+		// duplicate as a remote error, and prints no record).
 		return err
 	}
 	if r.d.SpendErr != nil {
@@ -865,6 +940,15 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if len(spec.ReviewPRs) > 0 {
 		r.review = true
 	}
+	// An artifact run's shape comes from the TASK SPEC's mode, beside
+	// r.review and for the same reason: resolveRecipe runs further down,
+	// after the configuration is read, and the checkout arm above is
+	// decided in between (design artifact-runs.md §3, plan Task 2). The
+	// resolved recipe is cross-checked against this below, in both
+	// directions.
+	if spec.Mode == recipe.ModeArtifact {
+		r.artifact = true
+	}
 	if err := stateDirOutsideCheckout(r.d.WorkDir, r.d.StateDir); err != nil {
 		return err
 	}
@@ -872,9 +956,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// The run's admission, in the order the security property needs it:
 	// task.json has been read, the project's policy is read here (memoized;
 	// Task 1.3), and only then is the provider opened and the clone made. No
-	// git credential exists yet, nothing has been cloned and no lease has been
-	// written, so a run that is not admitted for this repository changes
-	// nothing anywhere.
+	// git credential is requested, nothing is cloned, and no lease, no
+	// outcome and no spend is written, so a run that is not admitted for this
+	// repository leaves exactly one trace: its own run record, claimed above
+	// and carrying the refusal — which is what makes it visible to the
+	// operator and to the launcher instead of looking like a run that never
+	// started (R2-12). It is the record and nothing else: the claim above is
+	// what makes this execution the run's owner, and a duplicate was turned
+	// away there.
 	if err := r.admissionCheck(ctx); err != nil {
 		return err
 	}
@@ -1006,6 +1095,58 @@ func (r *run) bootstrap(ctx context.Context) error {
 	case !r.review && rcp.Mode == recipe.ModeReview:
 		return fmt.Errorf("recipe %s is mode: review, but the task names no pull request to review", rrec.Name)
 	}
+	// A follow-up continues a pull request: it inherits that PR's branch
+	// and base, pushes to the branch and reports on the PR. A mode:
+	// artifact recipe renders a deliverable into the run's bucket and opens
+	// no pull request at all (design artifact-runs.md §3), so there is no
+	// pull request for one to continue — and a follow-up does not ask for
+	// its recipe anyway: it INHERITS it (the previous task's embedded text,
+	// a repository recipe carried by name, or the one the runner chose for
+	// the previous run), so an artifact recipe can arrive here without
+	// anyone choosing it for this task. Refused before any stage, and keyed
+	// on the RESOLVED recipe rather than any mode the task carries, because
+	// a follow-up spec carries none and an empty one takes the recipe's
+	// (below). This is the backstop the launcher's own refusal cannot be:
+	// a repository recipe by name is read here, at this run's base, and not
+	// there (refuseFollowUpArtifactMode, internal/cli/recipes_resolve.go).
+	if r.follow != nil && rcp.Mode == recipe.ModeArtifact {
+		return fmt.Errorf("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; this task continues pull request #%d, so it cannot run that recipe", rrec.Name, spec.PR)
+	}
+	// The spec's mode and the resolved recipe's mode must agree, and an
+	// EMPTY spec.Mode takes the resolved recipe's mode rather than
+	// defaulting to implement: the launcher leaves the recipe to the runner
+	// whenever it cannot resolve one (runnerChooses, internal/cli/run.go),
+	// so a spec that carries no mode is a real launch and not a mistake.
+	// Both directions are refused, because both are silent pull requests
+	// otherwise: an artifact spec against a non-artifact recipe would run
+	// the mode the recipe names instead, and a non-artifact spec against an
+	// artifact recipe would run an implement loop and push a branch for a
+	// recipe that asked for a file (design §8.2, Review Focus 10).
+	mode := spec.Mode
+	if mode == "" {
+		mode = rcp.Mode
+	}
+	if mode != rcp.Mode {
+		return fmt.Errorf("recipe %s is mode: %s, but the task says mode: %s", rrec.Name, rcp.Mode, spec.Mode)
+	}
+	r.artifact, r.out = rcp.Mode == recipe.ModeArtifact, rcp.Outputs
+	// A task that attached files under a resolved recipe of another mode
+	// fails the run before its first step (design §8.2): the launcher
+	// refuses this for every launch that resolves a recipe, and this is the
+	// arm that catches the ones it could not resolve — a recipe the runner
+	// chose, or a hand-written task.json — where the inputs would otherwise
+	// be downloaded into a run that commits a diff and opens a pull request,
+	// and nothing in its steps reads inputs/. Keyed on the RESOLVED mode, not
+	// on spec.Mode, because a spec is allowed to carry none.
+	if len(spec.Inputs) > 0 && !r.artifact {
+		return fmt.Errorf("the task attached %d file(s), but recipe %s is mode: %s: an attached file is only read by a mode: artifact run", len(spec.Inputs), rrec.Name, rcp.Mode)
+	}
+	if r.artifact {
+		r.artifactPlan, r.useWhen = artifactHasPlan(rcp), r.redact(rcp.UseWhen)
+		if err := r.downloadInputs(ctx, wf.Inputs); err != nil {
+			return err
+		}
+	}
 	if lo, hi, ok := recipe.ReviewPRRange(rrec.Name); ok {
 		if n := len(spec.ReviewPRs); n < lo || n > hi {
 			if lo == hi {
@@ -1016,13 +1157,8 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.rec.Recipe = &rrec
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
-	plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds)
-	if err := checkPlan(plan); err != nil {
-		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
-	}
-	r.plan = plan
 	r.gateSteps = checkGateSteps(rcp)
-	if err := checkGateCommands(r.gateSteps, wf.Commands, spec.Ref); err != nil {
+	if err := checkGateCommands(rcp, wf, spec.Ref); err != nil {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 	}
 	if rcp.ReviewerIsCoder && cfg.Agent.Models.Reviewer != "" {
@@ -1070,6 +1206,30 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	if err := r.resolvePolicy(ctx, cfg); err != nil {
 		return err
+	}
+	// The plan is derived here, *after* the policy: the routing switch is
+	// applied inside resolvePolicy and rewrites the pins the plan's
+	// first-line decision is read off — Agent.FirstLineOn asks whether the
+	// coder's model is claimed by a route and the reviewer's is not — so a
+	// plan derived before it would answer from the pins the switch replaced.
+	// Concretely, with `agent.first_line_review: auto` and a switch that
+	// routes only the coder, the canonical coder pin is unclaimed before the
+	// rewrite and claimed after it, and the earlier order silently dropped the
+	// cheap first-line loop of exactly the runs a switch routed (the review
+	// finding on this change). Nothing between here and the loop reads the
+	// plan, so deriving it here changes nothing else, and the steps' rounds
+	// and the trailing-review check are the same derivation as before.
+	if !r.artifact {
+		// An artifact run has no implement/fix/review loop: planOf builds
+		// the ordinary loop's plan and checkPlan demands a trailing review
+		// step, neither of which an artifact recipe's [plan], render shape
+		// has. Its own stage list is read directly (artifactHasPlan), and
+		// the render is the runner's (artifact.go).
+		plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds)
+		if err := checkPlan(plan); err != nil {
+			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
+		}
+		r.plan = plan
 	}
 	// The run's Firebase identity, the shared caps and the kill switches:
 	// a halt here is outcome none (nothing is locked, pushed or opened).
@@ -1202,16 +1362,26 @@ func (r *run) bootstrap(ctx context.Context) error {
 		"BASH_DEFAULT_TIMEOUT_MS": bashMS,
 		"BASH_MAX_TIMEOUT_MS":     bashMS,
 	}
+	if len(r.spec.Inputs) > 0 {
+		// The directory the task's attachments were downloaded into, for
+		// the run that has them (design §4 step 5). It is absolute, so a
+		// step that changes directory still finds it, and it is set only
+		// when the task attached something: a variable naming a directory
+		// that does not exist is worse than no variable at all.
+		set["FUGARO_INPUTS_DIR"] = filepath.Join(r.d.WorkDir, inputsDir)
+	}
 	for k, v := range gitops.Identity {
 		set[k] = v
 	}
-	if r.follow == nil && !r.review {
+	if r.follow == nil && !r.review && !r.artifact {
 		// A follow-up's agent gets no git credentials and no GH_TOKEN
 		// (design §6.1): the runner fetched the branch and pushes it, and
 		// the comments arrive in the prompt. A review run's agent gets
 		// none either (design generic-tool §3.6, G12): it only ever reads
 		// the checkout, and the runner never pushes or opens anything on
-		// its behalf.
+		// its behalf. An artifact run's gets none for the same reason
+		// (design artifact-runs.md §3): no branch is pushed, and the
+		// deliverable is uploaded by the runner.
 		agentAuthVars, err := r.authVars()
 		if err != nil {
 			return fmt.Errorf("building git credentials: %w", err)
@@ -1228,6 +1398,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
 		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend, Gateway: r.gateway(),
+		// Docker stays false here, so the agent's environment has no
+		// DOCKER_HOST: nothing yet tells this runner that its workflow asked
+		// for `docker: true` (the workflow field and the runner's copy of it
+		// are compute-backend Task 8's config plumbing). It fails closed: a
+		// run with no socket mounted is a run with no daemon to point at,
+		// and an operator's own exported DOCKER_HOST must not follow an
+		// agent into one (design compute-backend.md §4.4 check 6).
+		Docker: false,
 	})
 	if err != nil {
 		return fmt.Errorf("building agent environment: %w", err)
@@ -1337,13 +1515,14 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))
 	}
 	// The layer's claims are merged here, before anything reads a route:
-	// bootstrap reaches this at runner.go's own first step and asks planOf
-	// about the reviewer (FirstLineOn) a moment later, well before
-	// checkBudget and the gateway's routes. A merge any later leaves a
-	// layer-only claimed senior looking unclaimed and the derived recipe
-	// keeps its cheap first line. An overlap — a claim colliding with a
-	// route this run has — fails bootstrap here, as a config error naming
-	// the key, before any call.
+	// bootstrap reaches this at runner.go's own first step, and the plan that
+	// reads a claim — planOf's FirstLineOn about the reviewer, derived after
+	// resolvePolicy returns, which is also where the routing switch rewrites
+	// the pins it reads — is derived later still, well before checkBudget and
+	// the gateway's routes. A merge any later leaves a layer-only claimed
+	// senior looking unclaimed and the derived recipe keeps its cheap first
+	// line. An overlap — a claim colliding with a route this run has — fails
+	// bootstrap here, as a config error naming the key, before any call.
 	//
 	// ClaimsOnRoutes first, because the run's routes are the job's own
 	// FUGARO_MODEL_PROVIDERS: written per repository, holding only the
