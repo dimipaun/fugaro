@@ -308,6 +308,63 @@ describe('the dashboard the entry mounts', () => {
     expect(classed(panel, 'live-repo-name')).toEqual([])
   })
 
+  it('draws a repository’s kill banner, and withholds it in the reduced mode', async () => {
+    // The `kill` view is one panel of the Live screen rather than a screen of its
+    // own, so the gate decides whether the model the screen is handed carries the
+    // kill state at all (C10). The same killed frame, in the two modes.
+    const last = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+    const killed = {
+      ...last,
+      repos: (last['repos'] as readonly Record<string, unknown>[]).map((repo) => ({
+        ...repo,
+        kill: { by: 'operator', at: '2026-10-15T12:04:00Z', reason: 'runaway spend' },
+      })),
+    }
+    const banners = async (compatibility: Record<string, unknown>): Promise<readonly FakeNode[]> => {
+      const { bridge } = fakeBridge({ compatibility, replies: { subscribeLive: () => snapshotReply(killed) } })
+      const document = await boot(bridge, new FakeDocument())
+      const panel = panelOf(document)
+      expect(classed(panel, 'live-repo-name'), 'the Live screen was not drawn').toHaveLength(1)
+      return classed(panel, 'live-kill')
+    }
+    const drawn = await banners(anOkCompatibility())
+    expect(drawn.map((banner) => banner.attributes.get('data-killed')), 'the ok mode drew no kill banner').toContain('true')
+    expect(await banners(aReducedCompatibility()), 'the reduced mode drew the kill state').toEqual([])
+  })
+
+  it.each(['readRunLogs', 'runLogLink'] as const)(
+    'does not draw a run whose %s answer landed after the operator went back to Live',
+    async (late) => {
+      const held: (() => void)[] = []
+      const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+      const answers: Record<string, unknown> = {
+        diagnoseRun: { ok: true, data: { document: {} } },
+        readRunLogs: { ok: true, data: { document: { entries: [], total: 0, refused: 0 } } },
+        runLogLink: { ok: true, data: 'https://console.cloud.google.com/logs' },
+      }
+      const answer = (name: string) => (): unknown =>
+        name === late ? new Promise((resolve) => held.push(() => resolve(answers[name]))) : answers[name]
+      const { bridge } = fakeBridge({
+        replies: {
+          subscribeLive: () => snapshotReply(frame),
+          diagnoseRun: answer('diagnoseRun'),
+          readRunLogs: answer('readRunLogs'),
+          runLogLink: answer('runLogLink'),
+        },
+      })
+      const document = await boot(bridge, new FakeDocument())
+      const panel = panelOf(document)
+      ;(classed(panel, 'live-run')[0] as FakeNode).click()
+      await flush()
+      buttonFor(document, 'live').click()
+      expect(panel.children[0]?.attributes.get('class')).toBe('live')
+      expect(held, `the run’s ${late} answered before the operator moved: the case proves nothing`).toHaveLength(1)
+      held[0]?.()
+      await flush()
+      expect(panel.children[0]?.attributes.get('class'), 'a late run record replaced the Live screen').toBe('live')
+    },
+  )
+
   it('draws the refusal, not an empty run, when a run’s own record refuses', async () => {
     // `diagnose` and `logs` are the run's own record: a refused read of either
     // is a run this console cannot draw, and handing the screen `null` would
@@ -509,6 +566,54 @@ describe('the dashboard the entry mounts', () => {
       held[0]?.()
       await flush()
       expect(panel.children[0]?.attributes.get('class')).toBe('live')
+    })
+
+    it('does not draw a report for a range the operator has already changed again', async () => {
+      // Two control changes in a row are two reports in flight. The one asked
+      // for first can answer last, and drawing it would put the earlier range's
+      // figures under a picker that marks the later one.
+      const held: { since: unknown; answer: () => void }[] = []
+      const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+      const { bridge } = fakeBridge({
+        replies: {
+          subscribeLive: () => snapshotReply(frame),
+          showBudget: () => ({ ok: true, data: {} }),
+          runReport: (args) =>
+            new Promise((resolve) => {
+              held.push({
+                since: (args as Record<string, unknown>)['since'],
+                answer: () => resolve({ ok: true, data: { document: {} } }),
+              })
+            }),
+        },
+      })
+      const document = await boot(bridge, new FakeDocument())
+      const panel = panelOf(document)
+      buttonFor(document, 'spend').click()
+      await flush()
+      held.shift()?.answer()
+      await flush()
+      const windows = classed(panel, 'spend-window')
+      expect(windows.length, 'the spend screen drew no range picker: the case proves nothing').toBeGreaterThan(2)
+
+      // Two ranges, chosen one after the other; neither report has answered.
+      windows[1]?.click()
+      windows[2]?.click()
+      await flush()
+      expect(held.map((each) => each.since)).toEqual([windows[1]?.textContent, windows[2]?.textContent])
+      const [earlier, later] = held
+      later?.answer()
+      await flush()
+      const drawn = panel.children[0]
+      const current = classed(panel, 'spend-window')
+        .filter((each) => each.attributes.get('data-current') === 'true')
+        .map((each) => each.textContent)
+      expect(current).toEqual([windows[2]?.textContent])
+
+      // The earlier range answers last, and the screen is still the later one's.
+      earlier?.answer()
+      await flush()
+      expect(panel.children[0], 'a report for a superseded range replaced the screen').toBe(drawn)
     })
 
     it('does not draw a live frame over the view the operator moved to', async () => {

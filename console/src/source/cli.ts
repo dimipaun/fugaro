@@ -632,7 +632,11 @@ export interface BoundSource extends FugaroSource {
  *     interface states, kept here rather than only under it.
  */
 export function createBoundSource(deps: BoundSourceDeps): BoundSource {
-  const create = deps.create ?? ((installation: BoundInstallation): Promise<CliSource> => sourceFor(installation, deps))
+  // The two seams are this function's own and are not `CliSource` options, so
+  // they are not handed on to it.
+  const { installation: _installation, create: injected, ...options } = deps
+  const create =
+    injected ?? ((installation: BoundInstallation): Promise<CliSource> => sourceFor(installation, options))
   let bound: { readonly id: string; readonly source: CliSource } | null = null
   let pending: { readonly id: string; readonly source: Promise<CliSource> } | null = null
   const feeds = new Map<string, LiveFeed>()
@@ -711,6 +715,14 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       return created
     })()
     pending = { id: installation.id, source }
+    // A build that failed is not kept as this installation's pending build: the
+    // probe can fail for a reason that passes (a `version` that did not answer
+    // in time on a loaded machine, a binary mid-upgrade), and a rejection kept
+    // here would answer every later read with it until the operator switched
+    // installations. The next read builds again.
+    source.catch(() => {
+      if (pending !== null && pending.source === source) pending = null
+    })
     return source
   }
 
@@ -729,13 +741,18 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
    * listeners attach once the source exists (nothing in this console calls them
    * yet -- the surface is `invoke`-only and `live.watch` is a poll), and
    * `current`/`stop` are the two the handler uses.
+   *
+   * Every `current()` asks the bound source for the feed again rather than
+   * keeping the first stream it was handed. `CliSource.subscribeLive` answers
+   * the same stream while it is live and drops one that has *ended*, so the
+   * poll after a `watch` child exited (or was evicted past `MAX_LIVE_FEEDS`)
+   * starts a fresh child; a stream held here would be polled dead forever.
    */
   const lazyFeed = (args: ValidatedArguments): LiveFeed => {
     let real: LiveFeed | null = null
     let attaching: Promise<LiveFeed> | null = null
     const attach = (): Promise<LiveFeed> => {
-      if (real !== null) return Promise.resolve(real)
-      attaching ??= resolve().then((source) => {
+      attaching = resolve().then((source) => {
         real = source.subscribeLive(args)
         return real
       })

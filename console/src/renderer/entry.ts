@@ -797,7 +797,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     try {
       drawLive(await bridge.subscribeLive({}))
     } catch {
-      refuse('live.watch', READ_UNREADABLE)
+      // The same rule `drawLive` keeps: a poll that fails while another view is
+      // on screen does not replace the view the operator chose.
+      if (currentView === 'live') refuse('live.watch', READ_UNREADABLE)
     } finally {
       live.inFlight = false
     }
@@ -891,19 +893,26 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       return answer.data
     }
 
+    // asked is which report is the latest one asked for. Two control changes in
+    // a row are two reports in flight, and the first can answer last: drawn, it
+    // would put the earlier range's figures under a picker that marks the later
+    // one. Each draw also renders with the controls *it* read with, never with
+    // whatever `controls` has become since.
+    let asked = 0
     const draw = async (): Promise<void> => {
-      const outcome = await readSpend(reader, controls, caps)
-      // The report was read for a view that is no longer the one on screen. A
-      // control change re-runs `draw` under the *same* generation, so this is
-      // the operator leaving Spend and nothing else.
-      if (stale(mine)) return
+      const ticket = (asked += 1)
+      const readWith = controls
+      const outcome = await readSpend(reader, readWith, caps)
+      // The report was read for a view that is no longer the one on screen (the
+      // operator left Spend), or for controls the operator has changed again.
+      if (stale(mine) || ticket !== asked) return
       if (!outcome.ok) {
         refuse('spend.report', outcome.reason)
         return
       }
-      const drawn = renderSpend(factory, outcome.model, theme, controls)
+      const drawn = renderSpend(factory, outcome.model, theme, readWith)
       replace(drawn)
-      wireSpendControls(drawn, controls, (next) => {
+      wireSpendControls(drawn, readWith, (next) => {
         controls = next
         void draw()
       })

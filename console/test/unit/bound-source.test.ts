@@ -192,4 +192,70 @@ describe('the source bound to the active installation', () => {
     expect(String((error as Error).message)).toContain('no longer showing')
     expect(closed, 'the superseded build’s source was left running').toEqual([FIRST.id])
   })
+
+  it('builds again on the next read after a build that failed, rather than refusing forever', async () => {
+    // The probe can fail for a reason that passes: a `version` that did not
+    // answer in time on a loaded machine, a binary being replaced by an upgrade.
+    // A failed build that stayed cached as the installation's pending build
+    // would answer every later read with the same rejection until the operator
+    // switched installations or restarted the console.
+    const closed: string[] = []
+    let attempts = 0
+    const source = createBoundSource({
+      installation: () => FIRST,
+      create: async (each) => {
+        attempts += 1
+        if (attempts === 1) throw new SourceRefusal('the binary did not answer `version` in time')
+        return aSource(closed, each.id)
+      },
+    })
+
+    const error = await refusalOf(source.version())
+    expect(error, 'the failed build was not the read’s refusal').toBeInstanceOf(SourceRefusal)
+    expect((await source.version()).text, 'the read after a failed build was not built again').toBe(FIRST.id)
+    expect(attempts).toBe(2)
+  })
+
+  it('asks the source for the live feed on every poll, so a feed that ended is replaced', async () => {
+    // `CliSource.subscribeLive` is idempotent while a feed is live and drops a
+    // feed that has ended, so the poll after a `watch` that exited starts a
+    // fresh child. A bound feed that kept the first stream it was handed would
+    // poll a dead one forever: a refusal on every poll, or the last frame
+    // answered as if it were current.
+    let started = 0
+    let live: { ended: boolean; n: number } | null = null
+    const real = {
+      version: async () => ({ text: FIRST.id, receivedAt: '2026-10-15T12:00:00Z' }),
+      close: async () => undefined,
+      subscribeLive: () => {
+        if (live === null || live.ended) {
+          started += 1
+          live = { ended: false, n: started }
+        }
+        const stream = live
+        return {
+          latest: null,
+          current: () =>
+            stream.ended
+              ? Promise.reject(new SourceRefusal('watch failed: the feed ended'))
+              : Promise.resolve({ document: { child: stream.n }, receivedAt: '2026-10-15T12:00:00Z' }),
+          stop: async () => undefined,
+        }
+      },
+    } as unknown as CliSource
+    const source = createBoundSource({ installation: () => FIRST, create: async () => real })
+    const args = { project: 'acme' }
+
+    expect((await source.subscribeLive(args).current()).document).toEqual({ child: 1 })
+    expect((await source.subscribeLive(args).current()).document, 'a live feed was not reused').toEqual({ child: 1 })
+    // The `watch` child exits: the stream the source handed out has ended.
+    if (live === null) throw new Error('no feed was started: the case proves nothing')
+    ;(live as { ended: boolean }).ended = true
+
+    expect(
+      (await source.subscribeLive(args).current()).document,
+      'the poll after the feed ended was answered by the dead stream',
+    ).toEqual({ child: 2 })
+    expect(started).toBe(2)
+  })
 })
