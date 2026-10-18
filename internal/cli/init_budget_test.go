@@ -123,7 +123,7 @@ func TestManagedBudgetIsRequiredAtCreation(t *testing.T) {
 	})
 
 	// --managed is about the project this run creates: a project that already
-	// exists is flagged managed by an owner-run command of its own (D58), and
+	// exists cannot be flagged managed in this release (D58, Task 6.1), and
 	// init --firebase adds Firebase to such a project, which is never what
 	// makes one managed (D73).
 	t.Run("--managed without --create-project", func(t *testing.T) {
@@ -242,6 +242,35 @@ func TestManagedBudgetHasNoDefault(t *testing.T) {
 	}
 	noMarker(t, r.gcs, bucket)
 	r.nothingDone(t, "a managed creation refused for its missing amount")
+
+	// The same property where a fallback has room to live: the amount is
+	// absent while the other two flags are there, so a refusal that only
+	// counts flags sees a complete trio. Nothing else in this file reaches
+	// that state — the subtest above passes none of the three and the one in
+	// TestManagedBudgetIsRequiredAtCreation passes an amount without its
+	// currency — and it is the state a constant such as
+	// `if o.budget <= 0 { o.budget = 50 }` turns into a managed project whose
+	// monthly line nobody chose. An absent amount and `--budget 0` are the
+	// same run (the flag defaults to 0), and D64 refuses both: the refusal is
+	// the amount's, not the other two flags'.
+	t.Run("--managed with a currency and a billing account and no amount", func(t *testing.T) {
+		r, bucket := newManagedCreateRig(t)
+		out, errOut, err := r.run(t, true, createStdin,
+			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
+			"--managed", "--budget-currency", "USD", "--billing-account", billingAcc)
+		if err == nil {
+			t.Fatalf("a managed creation with no amount was accepted because the other two flags were there:\n%s", refusalText(out, errOut, nil))
+		}
+		s := refusalText(out, errOut, err)
+		if code := ExitCode(err); code != ExitUserError {
+			t.Errorf("exit %d, want %d: a missing amount is the caller's to fix:\n%s", code, ExitUserError, s)
+		}
+		if !strings.Contains(s, "--budget ") {
+			t.Errorf("the refusal does not name the missing amount:\n%s", s)
+		}
+		r.nothingDone(t, "a managed creation refused for its missing amount")
+		noMarker(t, r.gcs, bucket)
+	})
 }
 
 // --create-project --managed on a project that already exists: the project
@@ -286,5 +315,120 @@ func TestManagedOnAnExistingProjectSaysItWasNotApplied(t *testing.T) {
 	}
 	if !strings.Contains(all, "no creation fact was written") {
 		t.Errorf("the run did not say that no creation fact was written:\n%s", all)
+	}
+}
+
+// The other half of that warning, and the reason it is two: an empty
+// r.res.Created is what adoption leaves behind and also what every other way
+// a --managed run creates nothing leaves behind, so the message may only say
+// "already existed" when the project stage actually read a project that was
+// already there. Here it does not exist and the typed confirmation is
+// declined, so nothing was adopted and nothing was created: the warning says
+// the creation did not happen, and a reader is not sent to look for a project
+// that is not there.
+func TestManagedWarningDoesNotClaimAdoptionWithoutOne(t *testing.T) {
+	r := newProjectRig(t)
+	r.bill.AddAccount(billingAcc, true)
+	out, errOut, err := r.run(t, true, "not-the-project-id\n",
+		"--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
+	all := refusalText(out, errOut, err)
+	if err == nil {
+		t.Fatalf("a declined creation returned no error:\n%s", all)
+	}
+	// The run really did reach the project stage's confirmation and stop
+	// there, so the warning below is about a creation that did not happen
+	// rather than about an earlier refusal.
+	r.nothingDone(t, "a managed creation whose confirmation was declined")
+	if !strings.Contains(all, "not confirmed") {
+		t.Fatalf("the run did not stop at the project's typed confirmation:\n%s", all)
+	}
+	if !strings.Contains(all, "--managed was not applied") {
+		t.Errorf("the run created no project under --managed and did not say --managed was not applied:\n%s", all)
+	}
+	if strings.Contains(all, "already existed") {
+		t.Errorf("the run says the project already existed, and it does not (nothing was adopted and nothing was created):\n%s", all)
+	}
+	if !strings.Contains(all, "no creation fact was written") {
+		t.Errorf("the run did not say that no creation fact was written:\n%s", all)
+	}
+}
+
+// The figures a managed creation records are held, before anything is
+// created, to the rule the creation fact's write and read share
+// (managed.Budget.Check): a currency that is not three ASCII uppercase
+// letters and an amount outside 1 to 10,000,000 whole units are refused, the
+// run does nothing, and no fact is written. Without the check the run created
+// the project and only the marker's write refused the figures — a managed
+// project left unmarked by a typo.
+func TestManagedBudgetFiguresAreChecked(t *testing.T) {
+	for name, flags := range map[string][]string{
+		"a lower-case currency":     {"--budget", "7", "--budget-currency", "usd"},
+		"a four-letter currency":    {"--budget", "7", "--budget-currency", "USDX"},
+		"an amount above the range": {"--budget", "10000001", "--budget-currency", "USD"},
+		"the largest int64 amount":  {"--budget", "9223372036854775807", "--budget-currency", "USD"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, bucket := newManagedCreateRig(t)
+			args := append([]string{"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
+				"--managed", "--billing-account", billingAcc}, flags...)
+			out, errOut, err := r.run(t, true, createStdin, args...)
+			if err == nil {
+				t.Fatalf("a managed creation with %s was accepted:\n%s", name, refusalText(out, errOut, nil))
+			}
+			s := refusalText(out, errOut, err)
+			if code := ExitCode(err); code != ExitUserError {
+				t.Errorf("exit %d, want %d:\n%s", code, ExitUserError, s)
+			}
+			if !strings.Contains(s, "ISO 4217") {
+				t.Errorf("the refusal does not say what a budget must be:\n%s", s)
+			}
+			r.nothingDone(t, "a managed creation refused for its budget figures")
+			noMarker(t, r.gcs, bucket)
+		})
+	}
+
+	// The bound is a bound: the largest amount is a creation like any other.
+	t.Run("the largest amount in the range", func(t *testing.T) {
+		r, bucket := newManagedCreateRig(t)
+		out, errOut, err := r.run(t, true, createStdin,
+			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
+			"--managed", "--budget", "10000000", "--budget-currency", "EUR", "--billing-account", billingAcc)
+		if err != nil {
+			t.Fatalf("%v\n%s", err, refusalText(out, errOut, nil))
+		}
+		b, ok := markerAt(t, r.gcs, bucket)
+		want := `{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":10000000,"currency":"EUR"}}`
+		if !ok || b != want {
+			t.Errorf("gs://%s/%s = %s (present %v), want %s", bucket, managed.MarkerObject, b, ok, want)
+		}
+	})
+}
+
+// A budget Terraform (or the Budget API behind it) rejects is never recorded:
+// the budget is a resource of the installation root's apply, and markCreated
+// writes the fact only once that apply has succeeded — it needs the runs
+// bucket from r.res.Outputs, which writeConfig sets after a successful
+// installation apply and nothing else sets in a creation run. So a creation
+// whose installation apply fails (a currency that is not the billing
+// account's, say) created the project and records nothing: unmarked, the
+// fail-closed direction, and the warning says so. Pinned because the order is
+// what makes the fact true, and a refactor that read the bucket name from
+// the spec instead would record an amount no budget carries.
+func TestManagedFactIsNotWrittenWhenTheInstallationApplyFails(t *testing.T) {
+	r, bucket := newManagedCreateRig(t)
+	r.script["apply"] = map[string]any{"exit": 1}
+	r.save(t)
+	out, errOut, err := r.run(t, true, createStdin,
+		"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
+		"--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
+	if err == nil {
+		t.Fatalf("the installation apply failed, yet init succeeded:\n%s", refusalText(out, errOut, nil))
+	}
+	if n := len(r.crm.Creates()); n != 1 {
+		t.Fatalf("%d project(s) created, want the one this run created before the apply failed:\n%s", n, refusalText(out, errOut, err))
+	}
+	noMarker(t, r.gcs, bucket)
+	if s := refusalText(out, errOut, err); !strings.Contains(s, "not marked") {
+		t.Errorf("the run does not say the created project is not marked:\n%s", s)
 	}
 }

@@ -1,5 +1,5 @@
-# An optional budget on the project, with email alerts to the billing
-# account's admins. Creating it needs billing-account permissions.
+# An optional budget on the project; its alerts only email the billing account's
+# administrators and users. Creating it needs billing-account permissions.
 data "google_project" "this" {
   count = var.budget == null ? 0 : 1
 

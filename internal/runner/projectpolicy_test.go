@@ -456,6 +456,26 @@ func TestPolicyParseErrorHaltsTheRun(t *testing.T) {
 	}
 }
 
+// A policy carrying a profile that mounts a Claude OAuth token is the same
+// class: projectpolicy refuses the node (validProfiles — the rule publish, init
+// and both readers share), because the job that profile names is one
+// `fugaro init` refuses to deploy. Without that refusal the run computes the
+// profile's job name with the default account where the deployer deploys the
+// empty one, matches no candidate of its own and halts with cannotPlaceJob,
+// which blames a stale module version instead of the profile — on every run of
+// that profile.
+func TestPolicyWithAClaudeOAuthTokenProfileHaltsTheRun(t *testing.T) {
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50",
+		`{"version":2,"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":["claude-oauth-token"]}}}`, capScript(3)...)
+	rec, err := b.run(t, implement("feature"))
+	if err == nil || !strings.Contains(err.Error(), projectpolicy.PathShared()) || !strings.Contains(err.Error(), "person-owned") {
+		t.Fatalf("a profile mounting the reserved claude-oauth-token must stop the run naming the node: err = %v, rec = %+v", err, rec)
+	}
+	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+		t.Fatalf("%d stages ran", len(b.agent.calls))
+	}
+}
+
 // Carried review item (b): a top-level key this Fugaro does not know is logged
 // and the run goes on — a newer CLI's key must not break an older image, and
 // the last word on a misspelling is the CLI's (task 1.6).

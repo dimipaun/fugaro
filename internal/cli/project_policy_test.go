@@ -332,6 +332,31 @@ func TestProjectPolicyPublishDeleteRefusesANewerNode(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyPublishRefusesAProfileMountingAClaudeOAuthToken: publish
+// copies the operator's profiles into the node verbatim, so the policy's own
+// rule (projectpolicy.validProfiles) is the only thing that can refuse a
+// profile here — and it must, because `fugaro init` refuses to deploy the job
+// such a profile names (internal/infra's projectJobSecrets). One rule for both
+// is what keeps a published profile from naming a job that does not exist: the
+// launcher would compute the account segment of that job (the default account)
+// where the deployer deploys the empty one, and call Cloud Run on a 404, and
+// the runner would match no candidate and halt every run of the profile.
+func TestProjectPolicyPublishRefusesAProfileMountingAClaudeOAuthToken(t *testing.T) {
+	f := newProjectFixture(t, "profiles: { standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, secrets: [claude-oauth-token] } }\n")
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatal("publishing a profile mounting the reserved claude-oauth-token was allowed")
+	}
+	for _, want := range []string{"person-owned", "phase 5"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("a node was written anyway")
+	}
+}
+
 // put writes p as the policy node, the way an earlier publish did.
 func put(t *testing.T, f *projectFixture, p *projectpolicy.Policy) {
 	t.Helper()

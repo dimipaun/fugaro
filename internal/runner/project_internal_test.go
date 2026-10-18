@@ -64,6 +64,18 @@ func TestRemoteHost(t *testing.T) {
 		{"git@bitbucket.org:acme/app.git", "bitbucket.org", "bitbucket", true},
 		{"git@github.com:acme/app.git", "github.com", "github", true},
 		{"github.com:acme/app.git", "github.com", "github", true},
+		// The scp-like form names a host with or without its userinfo, and the
+		// userinfo is cut at the last "@", where git ends it: git ssh's to
+		// evil.example for each of these, so each is a host no kind owns
+		// (next-0.8.5's TestRemoteOffTheKindsHost, asked of main's reader). The
+		// userinfo alone is no host, which is a local path's answer.
+		{"evil.example:acme/app.git", "evil.example", "", true},
+		{"git@evil.example:acme/app.git", "evil.example", "", true},
+		{"a@b@evil.example:acme/app.git", "evil.example", "", true},
+		{"https://github.com./evil/other.git", "github.com.", "", true},
+		{"https://www.github.com/evil/other.git", "www.github.com", "", true},
+		{"@:acme/app.git", "", "", false},
+		{"git@:acme/app.git", "", "", false},
 		// A host no provider kind owns: another forge, a name that only looks
 		// like github.com, and a loopback address — a real host either way, so
 		// the credential would go to it.
@@ -287,6 +299,11 @@ func TestRemoteRepoPath(t *testing.T) {
 		{"github.com:acme/app.git", "acme/app.git", true},
 		{"github.com:/acme/app.git", "acme/app.git", true},
 		{"github.com:acme/app.git/", "acme/app.git", true},
+		// The userinfo is cut where git ends it (the host is github.com, not
+		// "b@github.com"), and the userinfo alone is no host, so no path either.
+		{"a@b@github.com:acme/app.git", "acme/app.git", true},
+		{"@:acme/app.git", "", false},
+		{"git@:acme/app.git", "", false},
 		// Not scp-like: a URL's authority is "//" and a local path has no
 		// colon before its first "/", so neither names a host and a path.
 		//
@@ -347,6 +364,11 @@ func TestRemoteOfAnotherRepo(t *testing.T) {
 		{"github", "acme/app", "https://github.com/acme/other.git", "acme/other"},
 		{"github", "acme/app", "https://github.com/evil/other", "evil/other"},
 		{"github", "acme/app", "git@github.com:evil/other.git", "evil/other"},
+		// The same scp-like remote with no user: git ssh's to github.com for
+		// it too, so it is the provider's and its path is compared.
+		{"github", "acme/app", "github.com:acme/app.git", ""},
+		{"github", "acme/app", "github.com:evil/other.git", "evil/other"},
+		{"github", "acme/app", "a@b@github.com:evil/other.git", "evil/other"},
 		{"github", "acme/app", "https://github.com/evil/other/tree/main", "evil/other/tree/main"},
 		{"bitbucket", "group/sub/repo", "https://bitbucket.org/group/sub/repo.git", ""},
 		{"bitbucket", "group/sub/repo", "https://bitbucket.org/group/sub/other.git", "group/sub/other"},
@@ -442,6 +464,12 @@ func TestRemoteDisplayDropsUserinfoQueryAndFragment(t *testing.T) {
 		{"https:////x:ATBBsecret@github.com/acme/app.git", "github.com/acme/app.git"},
 		{"HTTPS:///x:ATBBsecret@github.com/acme/app.git", "github.com/acme/app.git"},
 		{"https:///x:ATBBsecret@github.com/acme/app.git?ref=main#ATBBsecret", "github.com/acme/app.git"},
+		{"a@b@github.com:acme/app.git", "github.com"},
+		// Two colons are git's own reading and not a URL's: the first one ends
+		// the host, so this is ssh to the host "x" and the rest is its path —
+		// the token is not in the userinfo this function drops, and it is not
+		// quoted either, because the host alone is what comes back.
+		{"x:glpat-secret@github.com:acme/app.git", "x"},
 	} {
 		got := remoteDisplay(tc.in)
 		if got != tc.want {

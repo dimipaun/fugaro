@@ -58,6 +58,19 @@ type ResourceChange struct {
 	// ProviderName is the provider's full source address, such as
 	// registry.terraform.io/hashicorp/google.
 	ProviderName string `json:"provider_name"`
+	// PreviousAddress is set when a moved block (or a refactoring terraform
+	// infers) moves the resource here from another address: the object the
+	// change acts on — the one in before — was at PreviousAddress. A delete
+	// or a replace that carries one removes the object of another address
+	// than its own, so the delete rule refuses it (removesUnderAnotherAddress).
+	PreviousAddress string `json:"previous_address"`
+	// Deposed is the deposed key when the change acts on a deposed object of
+	// the address rather than its current one.
+	Deposed string `json:"deposed"`
+	// ActionReason is terraform's reason for the actions, such as
+	// delete_because_no_resource_config or replace_because_tainted; empty
+	// when it gives none.
+	ActionReason string `json:"action_reason"`
 	Change       Change `json:"change"`
 }
 
@@ -147,6 +160,24 @@ type ConfigResource struct {
 type ModuleCall struct {
 	Source string       `json:"source"`
 	Module ConfigModule `json:"module"`
+
+	// fields are its keys, as a module's are: a call's arguments, its
+	// version constraint and the meta-arguments that decide what the call
+	// makes (count, for_each), which provider configurations its block uses
+	// (providers) and what it waits for (depends_on) live under keys this
+	// struct does not decode, and the managed cover reads a call's own keys
+	// rather than taking them to be inert (managedModuleCallKeys and
+	// managedModuleCallArguments, managed_cover.go).
+	fields map[string]json.RawMessage
+}
+
+// UnmarshalJSON decodes a module call and keeps its keys.
+func (mc *ModuleCall) UnmarshalJSON(data []byte) error {
+	type plain ModuleCall
+	if err := json.Unmarshal(data, (*plain)(mc)); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &mc.fields)
 }
 
 // Change is what a plan will do to one resource instance.
@@ -191,10 +222,18 @@ type TF struct {
 	Out io.Writer
 }
 
-// The supported terraform versions: >= 1.7.0 (import for_each, removed
-// blocks, mock providers) and < 2.0.0.
+// The supported terraform versions: >= 1.9.0 and < 2.0.0.
+//
+// 1.7 was the floor while the tree's features arrived there (import
+// for_each, removed blocks, mock providers). 1.9 is the floor because a
+// variable validation may only read the variable it validates before it: the
+// project module's `secrets` validation reads var.job.secret_env, and on
+// 1.8.5 `terraform init` refuses the installation root outright with "Invalid
+// reference in variable validation" — every installation on 1.7 or 1.8 stops
+// there, rather than merely losing a check. The floor is the version at which
+// the tree can be planned at all, so it moves with the tree.
 const (
-	minMinor    = 7
+	minMinor    = 9
 	lockTimeout = "-lock-timeout=60s"
 	stderrTail  = 4096
 )
@@ -233,7 +272,7 @@ func checkVersion(v string) error {
 	minor, _ := strconv.Atoi(m[2])
 	patch, _ := strconv.Atoi(m[3])
 	pre := m[4] != ""
-	// A pre-release sorts before its release, so 1.7.0-beta1 is < 1.7.0.
+	// A pre-release sorts before its release, so 1.9.0-beta1 is < 1.9.0.
 	if major != 1 || minor < minMinor || (minor == minMinor && patch == 0 && pre) {
 		return fmt.Errorf("terraform %s is not supported: fugaro needs >= 1.%d.0 and < 2.0.0", v, minMinor)
 	}

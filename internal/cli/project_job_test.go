@@ -423,92 +423,125 @@ func projectJobCheckoutYAML(t *testing.T, yaml string) string {
 	return dir
 }
 
-// projectJobAccountPolicy is the fixture's policy with the standard profile
-// mounting acme-personal's token: the profile's account is the account segment
-// of its job's name (gcp.ProjectJobName), which is what the launch has to
-// agree with.
-const projectJobAccountPolicy = `{"version":2,"allow_repos":["github/acme/*"],` +
-	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
-	`"secrets":["claude-oauth-token-acme-personal"]}}}`
-
-// projectJobAccountConfig is the local config beside it: the two named Claude
-// accounts this repository may use (config.AllowedClaudeAccounts), one of them
-// the profile's, and the profile the installation deploys the job from.
+// projectJobAccountConfig is the fixture's local config addition: the two
+// named Claude accounts this repository may select (config.AllowedClaudeAccounts),
+// so that a launch naming one passes the allow-list gate and reaches the
+// account check. Neither is mounted: no profile may mount a Claude OAuth token
+// in this release (projectpolicy.validProfiles; internal/infra's
+// projectJobSecrets has always refused to deploy one), so the fixture's profile
+// mounts none and the job it names runs as no account.
 const projectJobAccountConfig = "claude_accounts:\n" +
 	"  acme-personal:\n    allow_data_to: [\"acme/app\"]\n" +
 	"  acme-work:\n    allow_data_to: [\"acme/app\"]\n"
 
-// newProjectJobAccountFixture is newProjectJobFixture with the profile's
-// account axis: the standard profile mounts acme-personal's token, so the job
-// the installation deploys for it is gcp.ProjectJobName("standard", "github",
-// "acme-personal") and every run on it reads that account's token.
+// newProjectJobAccountFixture is newProjectJobFixture with those accounts: the
+// profile is the fixture's own (mounting no Claude token), so the job the
+// installation deploys for it is gcp.ProjectJobName("standard", "github", "")
+// — the empty account segment — and every run on it reads no account's token.
 func newProjectJobAccountFixture(t *testing.T) *projectJobFixture {
 	t.Helper()
-	f := newLaunchBudget(t, "off")
-	f.appendConfig(t, projectJobAccountConfig+
-		"profiles: { standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, secrets: [claude-oauth-token-acme-personal] } }\n"+
-		"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.7.5 }\n")
-	publishPolicy(t, f, projectJobAccountPolicy)
-	job := gcp.ProjectJobName("standard", "github", "acme-personal")
-	f.run.AddProjectJob(job, "standard", "github", "acme-personal", "2", "4Gi")
-	f.run.SetJobTimeout(job, projectJobTimeout+backend.TaskTimeoutSlack)
-	return &projectJobFixture{launchBudgetFixture: f, job: job}
+	f := newProjectJobFixture(t)
+	f.appendConfig(t, projectJobAccountConfig)
+	return f
 }
 
 // TestLaunchRefusesAnAccountTheProfileDoesNotMount is the account half of task
 // 3.4 step 1: the account is an axis of the project job's own name, fixed by
-// the profile's secrets where the job is deployed, so a run that selects
-// another account would run as one its own fugaro.yaml did not choose — and
-// the credential the job holds is not the one the launch's allow_data_to check
-// was made for. The launch stops instead.
+// the profile's secrets where the job is deployed, so a run that selects an
+// account the profile does not mount would run as one its own fugaro.yaml did
+// not choose — and the credential the job holds is not the one the launch's
+// allow_data_to check was made for. The launch stops instead.
 //
-// Mutation (run, restore): drop checkProjectJobAccount and read the profile's
-// account unconditionally — the first launch below succeeds, lands on the
-// acme-personal job, and its task.json says the default account.
+// Mutation (run, restore): drop checkProjectJobAccount — the two --token
+// launches below are accepted, take their claim, mint their budget token and
+// reach Cloud Run on the profile's job, whose task.json then names an account
+// the run did not choose.
 //
-// The third launch — the profile's own account — no longer runs: since task
-// 3.4a (the owner's ruling of 2026-10-17) an OAuth account on a shared project
-// job is refused up front, and this fixture's profile mounts one, so the job
-// it names is one `fugaro init` refuses to deploy. Before that refusal this
-// launch was accepted, took its claim, minted its token and then failed in
-// Cloud Run; the last third of the test is that refusal now.
+// Since task 3.4a (the owner's ruling of 2026-10-17) an OAuth account on a
+// shared project job is refused up front, and no profile may mount a Claude
+// OAuth token at all (projectpolicy.validProfiles), so the account the fixture's
+// profile runs as is none and the launch whose own credential is the default
+// Claude OAuth account is the first refusal below — task 3.4a's check, not this
+// one. The profile this fixture used to deploy (mounting acme-personal's token)
+// is now a node the decoder refuses: TestLaunchRefusesAPolicyMountingAClaudeOAuthToken
+// is that case.
 func TestLaunchRefusesAnAccountTheProfileDoesNotMount(t *testing.T) {
 	f := newProjectJobAccountFixture(t)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 
-	// A run that selects nothing runs on the default account, and the profile's
-	// job is not it.
+	// The run's own credential is the default Claude OAuth account, and no
+	// shared job holds one until phase 5: the launch stops here, before the
+	// claim, the budget token and the Cloud Run call (task 3.4a).
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261016-140000-aaaa", "Add a feature")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-personal") || !strings.Contains(err.Error(), "standard") {
-		t.Fatalf("a launch selecting the default account: %v", err)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "phase 5") || !strings.Contains(err.Error(), "standard") {
+		t.Fatalf("a launch whose own credential is the default OAuth account: %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Errorf("%d executions, want none", n)
 	}
 
-	// --token naming another account the repository may use is the same
-	// refusal: the allow-list gate above it passed, and the profile's job still
-	// does not hold that account's token.
+	// --token naming an account the repository may use is this check's own
+	// refusal: the allow-list gate above it passed, and the profile's job runs
+	// as no account at all.
 	_, _, err = execute(t, "run", "--repo", "acme/app", "--run-id", "20261016-140000-bbbb", "--token", "acme-work", "Add a feature")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-work") || !strings.Contains(err.Error(), "acme-personal") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-work") || !strings.Contains(err.Error(), "standard") {
 		t.Fatalf("a launch selecting acme-work: %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Errorf("%d executions, want none", n)
 	}
 
-	// The profile's own account is the account its job runs as — and it is a
-	// Claude OAuth token, which no shared job may mount in this release: the
-	// job this launch computes was refused by `fugaro init` and so was never
-	// deployed, which is why the launch stops here, before the claim, the
-	// budget token and the Cloud Run call (task 3.4a).
+	// And the account an earlier revision's profile mounted is no different:
+	// no account is this profile's, so the selection is refused before the
+	// claim, the budget token and the Cloud Run call.
 	const run = "20261016-140000-cccc"
 	_, _, err = execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", "acme-personal", "Add a feature")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "phase 5") || !strings.Contains(err.Error(), "acme-personal") {
-		t.Fatalf("a launch selecting the profile's own account: %v", err)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-personal") || !strings.Contains(err.Error(), "standard") {
+		t.Fatalf("a launch selecting acme-personal: %v", err)
 	}
 	if calls := f.run.RunRequests(); len(calls) != 0 {
 		t.Fatalf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
+	}
+	if tok := readToken(t, f.cloudFixture, run); tok != "" {
+		t.Errorf("the refused launch minted a budget token: %s", tok)
+	}
+}
+
+// projectJobReservedTokenPolicy is the node an owner can write by hand (the
+// node is theirs), with the standard profile mounting the reserved
+// claude-oauth-token. The account segment of the job that profile names is the
+// default account on the launcher's and the runner's side and the empty account
+// on the deployer's, and `fugaro init` refuses to deploy it at all
+// (internal/infra's projectJobSecrets) — the state in which the launcher took
+// the claim, minted the budget token and reached Cloud Run on a job that does
+// not exist, and every run of the profile halted with cannotPlaceJob, which
+// blames a stale module version instead of the profile.
+const projectJobReservedTokenPolicy = `{"version":2,"allow_repos":["github/acme/*"],` +
+	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
+	`"secrets":["claude-oauth-token"]}}}`
+
+// TestLaunchRefusesAPolicyMountingAClaudeOAuthToken is the reserved token end
+// to end, on the launcher's side: the node is written straight to the database
+// (as an owner's own write, or an earlier CLI's publish, leaves it), and the
+// launch of a repository the profile admits is refused where the node is read —
+// projectpolicy.validProfiles, the one rule publish, init and both readers
+// share — rather than on a job `fugaro init` refused to deploy. Nothing was
+// launched: no claim, no budget token, no Cloud Run call.
+func TestLaunchRefusesAPolicyMountingAClaudeOAuthToken(t *testing.T) {
+	f := newProjectJobFixture(t)
+	projectJobCheckout(t)
+	publishPolicy(t, f.launchBudgetFixture, projectJobReservedTokenPolicy)
+
+	const run = "20261016-150000-aaaa"
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "person-owned") || !strings.Contains(err.Error(), "phase 5") {
+		t.Fatalf("a launch on a policy mounting the reserved claude-oauth-token: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
 	}
 	if tok := readToken(t, f.cloudFixture, run); tok != "" {
 		t.Errorf("the refused launch minted a budget token: %s", tok)

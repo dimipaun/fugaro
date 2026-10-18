@@ -990,4 +990,19 @@ func TestProjectBucketConditionHasNoSlug(t *testing.T) {
 	if strings.Contains(ProjectBucketCondition(bucket, JobBucketPrefixes), "acme-sandbox") {
 		t.Error("the project condition names a repository")
 	}
+	// And the per-repository builder refuses to produce the widened one: an
+	// empty slug has nothing to scope the grant to, and the clause it used to
+	// build was this condition's, byte for byte — a grant over every
+	// repository's objects under the prefix, from a call whose whole point is
+	// to be narrower than that. A panic is the refusal: it is a programming
+	// error (a slug comes from task.Slug and is never empty), and returning
+	// the wider condition is the one thing a caller must not be handed.
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Errorf("BucketCondition(%q, prefixes, \"\") returned %q instead of refusing: the per-repository condition must never be the widened one", bucket, BucketCondition(bucket, JobBucketPrefixes, ""))
+			}
+		}()
+		BucketCondition(bucket, JobBucketPrefixes, "")
+	}()
 }

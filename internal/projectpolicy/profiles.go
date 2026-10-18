@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 )
@@ -220,7 +221,10 @@ func providerOf(canonical string) string {
 // pin one provider (required, finding 4), its cpu/memory/timeout be a shape
 // Cloud Run accepts, and every allow_repos pattern name a repository of that
 // one provider — a pattern of another provider could never match and is
-// refused here instead of silently admitting nothing.
+// refused here instead of silently admitting nothing. A secret entry must be a
+// name (CheckSecretName) and never a Claude OAuth token, which no shared job
+// may mount until phase 5 (isClaudeOAuthSecret): the rule `fugaro init` deploys
+// by, stated here so that the two cannot disagree about one profile.
 func validProfiles(profiles map[string]Profile) error {
 	if len(profiles) == 0 {
 		// A block that carries nothing defines nothing — not even the profile
@@ -269,6 +273,24 @@ func validProfiles(profiles map[string]Profile) error {
 			if msg := config.CheckSecretName(secret); msg != "" {
 				return fmt.Errorf("%s.secrets[%d]: %s", at, i, msg)
 			}
+			// A Claude OAuth token is refused here, and this is where the
+			// deployer's refusal is too: ProjectJobs runs CheckProfiles over
+			// the local config's profiles before it builds any job, so
+			// publish, the deployer and both readers of this node hold a
+			// profile to ONE rule rather than to a copy of it each. Without
+			// it the documents can disagree about one profile: publish copies
+			// the operator's profiles verbatim, so a policy can mount the
+			// reserved claude-oauth-token and name a job `fugaro init` never
+			// deployed — its account segment is the default
+			// account on the launcher's and the runner's side and empty on the
+			// deployer's. The launcher then reaches Cloud Run on that job and
+			// reads a 404, after the claim and the budget token, and the runner
+			// matches no candidate of its own and halts every run of the profile
+			// with cannotPlaceJob, which blames a stale module version. Like the
+			// two refusals above, it never echoes the entry.
+			if isClaudeOAuthSecret(secret) {
+				return fmt.Errorf("%s.secrets[%d]: a Claude OAuth token is person-owned (design D2), and its allow_data_to is a per-repository list a shared job cannot honour — a profile is shared by every repository admitted to it — so no profile mounts one until phase 5 decides how an account reaches a shared job. `fugaro init` refuses to deploy the job such a profile names, and this node must not name one either", at, i)
+			}
 			if seen[secret] {
 				return fmt.Errorf("%s.secrets[%d]: a secret is listed twice; list each secret once", at, i)
 			}
@@ -294,13 +316,38 @@ func validProfiles(profiles map[string]Profile) error {
 	return nil
 }
 
+// isClaudeOAuthSecret reports whether name is a Claude account's OAuth secret:
+// the reserved claude-oauth-token (config.ClaudeAccountSecret of the default
+// account) or any name in the claude-oauth-token-<account> namespace. The whole
+// namespace rather than the names a claude_accounts block happens to define,
+// because config.ClaudeOAuthTokenPrefix reserves it for the derived secret IDs
+// of accounts: a name merely shaped like one is never a secret of a profile's
+// own, and the deployer refuses it by this rule rather than by one of its own
+// (internal/infra's ProjectJobs calls CheckProfiles before it builds a job, so
+// a profile mounting one never reaches the job it would name).
+func isClaudeOAuthSecret(name string) bool {
+	return name == config.ClaudeAccountSecret(config.DefaultClaudeAccount) ||
+		strings.HasPrefix(name, config.ClaudeOAuthTokenPrefix)
+}
+
 // validTimeoutClass checks a profile's task timeout. Cloud Run's own ceiling
 // is the authority (gcp.MaxTaskTimeout, 168h) exactly as its cpu and memory
-// limits are: the value becomes the job's task timeout, so a form the API
-// would refuse must be refused where the owner can read it. The spelling is
-// config.ParseDuration's — the one timeouts.total is read with in fugaro.yaml,
-// day counts and all — so "14d" is a timeout here because it is a timeout
-// there, rather than a form this package refused and that one accepted.
+// limits are: a form the API would refuse must be refused where the owner can
+// read it.
+//
+// The figure compared against the ceiling is the one the job is *deployed*
+// with, and that is the class plus backend.TaskTimeoutSlack — the job's
+// task_timeout_s is the sum (internal/infra/projectjobs.go's TaskTimeoutS,
+// and the launch override writes the same sum), so a class at 168h deploys at
+// 604920 s against Cloud Run's 604800 and the apply is refused. The bound is
+// therefore the ceiling minus the slack, which is what internal/cli's
+// parseTotalTimeout takes for the same quantity (R15): a class at the bound
+// deploys at exactly the ceiling, and one second more does not.
+//
+// The spelling is config.ParseDuration's — the one timeouts.total is read with
+// in fugaro.yaml, day counts and all — so "14d" is a timeout here because it is
+// a timeout there, rather than a form this package refused and that one
+// accepted.
 func validTimeoutClass(at, class string) error {
 	if class == "" {
 		return fmt.Errorf("%s.timeout_class: a profile must name its task timeout, for example \"6h\"", at)
@@ -312,8 +359,9 @@ func validTimeoutClass(at, class string) error {
 	if d <= 0 {
 		return fmt.Errorf("%s.timeout_class: %q is not a positive duration", at, class)
 	}
-	if d > gcp.MaxTaskTimeout {
-		return fmt.Errorf("%s.timeout_class: %q is longer than Cloud Run's longest task timeout, %s", at, class, gcp.MaxTaskTimeout)
+	if limit := gcp.MaxTaskTimeout - backend.TaskTimeoutSlack; d > limit {
+		return fmt.Errorf("%s.timeout_class: %q is longer than a Cloud Run task allows, %s: the job's task timeout is this class plus %s, and Cloud Run's ceiling is %s",
+			at, class, limit, backend.TaskTimeoutSlack, gcp.MaxTaskTimeout)
 	}
 	return nil
 }

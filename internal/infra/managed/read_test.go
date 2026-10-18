@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -501,6 +502,38 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 		},
 		// The amount is a monthly line above 0, so a negative one is no more
 		// an amount than 0 is.
+		"version 2 with a lower-case currency": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"usd"}}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		"version 2 with a newline inside the currency": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"XXXXXXXX\n"}}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		"version 2 with the largest int64 amount": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":9223372036854775807,"currency":"USD"}}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		"version 2 with an amount one above the ceiling": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":10000001,"currency":"USD"}}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
 		"version 2 with a negative amount": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				s, f, c, _ := managedWorld(t)
@@ -767,5 +800,111 @@ func TestIsManagedNeverTreatsAnErrorAsManaged(t *testing.T) {
 				t.Error("no reason")
 			}
 		})
+	}
+}
+
+// The read's bounds are the write's (Budget.Check), so the largest amount a
+// creation may record and the smallest are read back as they were written:
+// the ceiling is a bound, not an off-by-one that refuses the value the write
+// accepted.
+func TestReadBudgetAcceptsTheBounds(t *testing.T) {
+	ctx := context.Background()
+	for _, amount := range []int64{MinBudgetAmount, MaxBudgetAmount} {
+		s, f, c, _ := managedWorld(t)
+		f.Put(testBucket, MarkerObject, []byte(fmt.Sprintf(`{"version":2,"gcp_project":"%s","budget":{"amount":%d,"currency":"EUR"}}`, testProject, amount)))
+		budget, ok, reason, err := ReadBudget(ctx, s, c, testFugaroProject, testProject)
+		if err != nil || !ok || budget.Amount != amount || budget.Currency != "EUR" {
+			t.Errorf("amount %d: ReadBudget = %+v, %v, %q, %v; want it read back", amount, budget, ok, reason, err)
+		}
+	}
+}
+
+// A version-1 creation fact — every --create-project run without --managed
+// writes one, and every project created before Task 4.2 carries one — is
+// managed (IsManaged true: the compatibility the merged code and its tests
+// keep) and has no budget (ReadBudget ok=false). The two answers differ on
+// purpose, and this pins both so Task 4.4 cannot forget it: the apply gate
+// and `fugaro managed apply` must ask ReadBudget, not IsManaged, or a v1
+// project — managed without a budget — reaches an apply with no line to
+// compare a spend against (docs/plans/2026-10-16-managed-projects.md, Task
+// 4.4; docs/design/managed-projects.md).
+func TestVersion1IsManagedWithoutABudget(t *testing.T) {
+	ctx := context.Background()
+	s, f, c, _ := managedWorld(t)
+	f.Put(testBucket, MarkerObject, []byte(markerJSON))
+	ok, reason, err := IsManaged(ctx, s, c, testFugaroProject, testProject)
+	if err != nil || !ok {
+		t.Fatalf("IsManaged = %v, %q, %v; want true: a version-1 fact stays managed", ok, reason, err)
+	}
+	budget, ok, reason, err := ReadBudget(ctx, s, c, testFugaroProject, testProject)
+	if err != nil || ok {
+		t.Fatalf("ReadBudget = %+v, %v, %q, %v; want ok=false and no error: a version-1 fact records no budget", budget, ok, reason, err)
+	}
+	if !strings.Contains(reason, "records no budget amount") {
+		t.Errorf("reason = %q, want it to say the fact records no budget amount", reason)
+	}
+}
+
+// A version-2 marker whose recorded figure fails Budget.Check is refused —
+// IsManaged false, ReadBudget ok=false — and ReadBudget hands the refused
+// figure back beside the refusal, so a caller can say the recorded budget is
+// invalid rather than that the project is not managed. Only that case carries
+// a figure; a valid one naming another project carries none.
+func TestReadBudgetHandsBackAFigureThatFailsCheck(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		marker string
+		want   Budget
+	}{
+		{`{"version":2,"gcp_project":"` + testProject + `","budget":{"amount":5000,"currency":"usd"}}`, Budget{Amount: 5000, Currency: "usd"}},
+		{`{"version":2,"gcp_project":"` + testProject + `","budget":{"amount":10000001,"currency":"USD"}}`, Budget{Amount: 10000001, Currency: "USD"}},
+		{`{"version":2,"gcp_project":"proj-9999","budget":{"amount":5000,"currency":"USD"}}`, Budget{}},
+	} {
+		s, f, c, _ := managedWorld(t)
+		f.Put(testBucket, MarkerObject, []byte(tc.marker))
+		b, ok, reason, err := ReadBudget(ctx, s, c, testFugaroProject, testProject)
+		if ok || err != nil {
+			t.Fatalf("%s: ReadBudget = %+v, %v, %v: want a refusal answered, not failed", tc.marker, b, ok, err)
+		}
+		if b != tc.want {
+			t.Errorf("%s: the figure handed back is %+v, want %+v", tc.marker, b, tc.want)
+		}
+		if reason == "" {
+			t.Errorf("%s: no reason", tc.marker)
+		}
+		if managed, _, _ := IsManaged(ctx, s, c, testFugaroProject, testProject); managed {
+			t.Errorf("%s: IsManaged believed it", tc.marker)
+		}
+	}
+}
+
+// L3: ReadBudgetAnswer says Invalid for a v2 figure that fails Check —
+// including the empty "budget":{} — and the project name is judged first, so
+// an invalid figure in a marker about another project is "another project",
+// never this project's invalid budget.
+func TestReadBudgetAnswerInvalidAndProjectFirst(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		marker  string
+		invalid bool
+		reason  string
+	}{
+		{`{"version":2,"gcp_project":"` + testProject + `","budget":{}}`, true, "records no budget amount a managed creation could have chosen"},
+		{`{"version":2,"gcp_project":"` + testProject + `","budget":{"amount":5000,"currency":"usd"}}`, true, "could have chosen"},
+		{`{"version":2,"gcp_project":"proj-9999","budget":{"amount":5000,"currency":"usd"}}`, false, "names project proj-9999"},
+		{`{"version":2,"gcp_project":"proj-9999","budget":{}}`, false, "names project proj-9999"},
+	} {
+		s, f, c, _ := managedWorld(t)
+		f.Put(testBucket, MarkerObject, []byte(tc.marker))
+		a, err := ReadBudgetAnswer(ctx, s, c, testFugaroProject, testProject)
+		if err != nil || a.OK {
+			t.Fatalf("%s: %+v, %v", tc.marker, a, err)
+		}
+		if a.Invalid != tc.invalid {
+			t.Errorf("%s: Invalid = %v, want %v (%s)", tc.marker, a.Invalid, tc.invalid, a.Reason)
+		}
+		if !strings.Contains(a.Reason, tc.reason) {
+			t.Errorf("%s: reason %q, want %q", tc.marker, a.Reason, tc.reason)
+		}
 	}
 }

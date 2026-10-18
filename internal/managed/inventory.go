@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"google.golang.org/api/cloudasset/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
+
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // The whole-project inventory (Task 4.1, design D59).
@@ -43,22 +46,40 @@ import (
 // resource types nobody has listed yet.
 const ServiceCloudAsset = "cloudasset.googleapis.com"
 
-// RoleCloudAssetViewer is the read role the whole-project read needs: the
-// narrowest role that lists a project's assets, and a read role, so the
-// identity that runs the inventory gains no write from holding it. It is named
-// once, here, so the grant, the gate that admits it and the owner-run check
-// that exercises it (Check 67a) all refer to one string.
+// RoleCloudAssetReader is the read role the whole-project read needs: the
+// installation's own custom role holding exactly cloudasset.assets.searchAllResources,
+// the one permission the read's SearchAllResources call makes, and a read
+// permission, so the identity that runs the inventory gains no write from
+// holding it. It is the same role ID the gate pins (tf.CloudAssetRole, whose
+// permissions tf.RolePermissions holds to that one element), so the role the
+// module creates, the role the gate admits a grant of, the role this read
+// needs, and the owner-run check that exercises it (Check 67a) cannot drift
+// apart.
+//
+// The owner's ruling of 2026-10-17 (Task 4.1a) replaced the predefined
+// roles/cloudasset.viewer this read first named: viewer also carries
+// cloudasset.assets.listResource, which no call here makes — the read is
+// SearchAllResources alone — and more besides, so holding it was a read of a
+// wider kind than the inventory is.
 //
 // The installation module grants it to the operators (iam.tf's
-// operator_cloudasset_viewer): the operator running a managed apply is the
+// operator_cloud_asset_reader): the operator running a managed apply is the
 // identity that makes the read. The module grant and this role's entry in
 // internal/infra/tf's grantRules landed together, because that table is an
 // allowlist — an installation grant of a role the table does not name makes
-// fugaro init refuse the installation's own plan. The apply's own credential
-// becomes the impersonated deployer account (D75, Task 1.5), and the grant
-// that account needs of this role is that task's to make beside the roles the
-// account is created with.
-const RoleCloudAssetViewer = "roles/cloudasset.viewer"
+// fugaro init refuse the installation's own plan.
+//
+// The impersonated deployer is NOT an identity that holds it, and nothing
+// here may assume one. The deployer is created with its two custom roles and
+// no other (D75, Task 1.5; deployer.tf), and the table above grants this
+// role to people only, so a managed plan cannot grant it to an account either:
+// a read made under the deployer's credential answers CauseRoleMissing and
+// falls the run back to its confirmations, which is the fail-closed direction
+// (the fallback a call that fails for any reason takes) rather than a clean
+// read. Which credential the caller makes the read with is the caller's to
+// decide: Task 4.4 wires this check into the apply, and this paragraph is the
+// constraint it has to meet.
+const RoleCloudAssetReader = tf.CloudAssetRole
 
 // inventoryPageSize is how many assets the read asks for per page. The read
 // follows the next-page token, so it is a request-size knob; the bounds on
@@ -126,6 +147,13 @@ type Inventory struct {
 	// Project is the Fugaro project's name and GCPProject its GCP project ID.
 	// They name the project in the warning; GCPProject is what is read.
 	Project, GCPProject string
+	// ProjectNumber is GCPProject's number, from the caller's own Resource
+	// Manager read (the read every managed command already makes to prove a
+	// bucket is the project's own). The service accounts GCP names by the
+	// number are ignored only when the number in the name IS this one; with
+	// a zero ProjectNumber none of them is, so they are foreign and the run
+	// falls back to confirmations — the safe direction.
+	ProjectNumber int64
 	// Assets is the read. A nil read falls back rather than reading as clean:
 	// a check that could not run means ask for confirmation (Global
 	// Constraint 3).
@@ -184,8 +212,8 @@ const (
 	// fugaro init enables with the installation's other APIs.
 	CauseAPIDisabled Cause = "the Cloud Asset API is disabled in the project"
 	// CauseRoleMissing is the identity running the read without
-	// RoleCloudAssetViewer.
-	CauseRoleMissing Cause = "the identity running the read does not hold " + RoleCloudAssetViewer
+	// RoleCloudAssetReader.
+	CauseRoleMissing Cause = "the identity running the read does not hold " + RoleCloudAssetReader
 	// CauseQuota is the read refused for quota.
 	CauseQuota Cause = "the read is over its quota"
 	// CauseUnreadable is any other failure of the read.
@@ -254,16 +282,182 @@ func (in Inventory) fallback(cause Cause, detail string) Decision {
 			in.what(), cause, detail)}
 }
 
-// foreign is the listed assets the state does not account for, in the order
-// the read returned them.
+// foreign is the listed assets the state does not account for — and that GCP
+// did not create itself — in the order the read returned them.
 func (in Inventory) foreign(listed []Asset) []Asset {
 	var out []Asset
 	for _, a := range listed {
-		if !in.accounted(a) {
+		if !in.gcpCreated(a) && !in.accounted(a) {
 			out = append(out, a)
 		}
 	}
 	return out
+}
+
+// gcpCreated is the second half of what a clean project is, and it is the
+// half that makes the check usable at all (Task 4.4's required precursor,
+// recorded on #489's review of 2026-10-17).
+//
+// A whole-project read lists everything, and a real project always holds
+// resources GCP created and no Terraform state can account for. One of them is
+// always the project itself and one is each service it has enabled, so
+// without this list EVERY read of a real managed project falls back — and D59's
+// own "never halt, ask for a confirmation" would turn the managed apply's gate
+// into a prompt on every run, which is the failure mode the gate exists to
+// remove. Several of these are named by the project NUMBER, which no state id
+// carries, so no Accounted entry could ever match them.
+//
+// The list is CLOSED, and that is the direction that matters: a type GCP adds
+// later is foreign until it is named here, and a foreign resource is one
+// confirmation. The two shared types — a service account, a log bucket or sink
+// — are ignored by the NAME GCP gives its own, never by type alone, because a
+// service account or a sink an operator created in the project is exactly the
+// "single purpose" case D59 is about. Anything that is not one of these is
+// still foreign.
+func (in Inventory) gcpCreated(a Asset) bool {
+	switch a.Type {
+	case
+		// The project itself: "//cloudresourcemanager.googleapis.com/projects/<p>".
+		// Created by whoever created the project, and the resource the whole
+		// read is made about.
+		"cloudresourcemanager.googleapis.com/Project",
+		// The services the project has enabled, which fugaro init enables with
+		// the installation and which the deployment in progress enables for
+		// itself: "//serviceusage.googleapis.com/projects/<number>/services/<api>".
+		// Named by the project NUMBER, never by its id.
+		"serviceusage.googleapis.com/Service",
+		// Cloud Run's revisions and executions: created by the service or job
+		// they belong to, never by a plan of their own, and unaccountable — a
+		// revision's name carries a generated suffix.
+		"run.googleapis.com/Revision",
+		"run.googleapis.com/Execution",
+		// The images a build pushes into the project's own Artifact Registry:
+		// the output of the pipeline, not a resource a plan declares, and named
+		// by digest.
+		"artifactregistry.googleapis.com/DockerImage":
+		return true
+	case
+		// The "_Default" and "_Required" log buckets and sinks: GCP reserves
+		// both names, so neither can be an operator's. A bucket or sink of
+		// another name is not this and stays foreign.
+		"logging.googleapis.com/LogBucket",
+		"logging.googleapis.com/LogSink":
+		return lastSegment(a.Name) == "_Default" || lastSegment(a.Name) == "_Required"
+	case "iam.googleapis.com/ServiceAccount":
+		return in.gcpServiceAccount(a)
+	}
+	return false
+}
+
+// gcpServiceAccount reports whether a service account is one GCP itself
+// created for THIS project — the default ones and the Google-managed agents,
+// whose names GCP assigns and which a project of the installation's kind has
+// whether or not any plan mentions it. Each form is matched exactly, against
+// this project's own id and number, and nothing else is: an account an
+// operator or an agent created — even one whose local part borrows an agent's
+// shape, such as service-1@<p>.iam.gserviceaccount.com — and a default
+// account of another project are resources the state does not account for and
+// stay foreign, which is what keeps D59's fallback to confirmations reachable.
+//
+// The forms, with <N> this project's number (Inventory.ProjectNumber) and <p>
+// its id (Inventory.GCPProject):
+//
+//   - <N>-compute@developer.gserviceaccount.com — the Compute Engine default.
+//   - <N>@cloudservices.gserviceaccount.com — the Google APIs service agent:
+//     the identity the API calls made on the project's behalf run as.
+//   - service-<N>@gcp-sa-<agent>.iam.gserviceaccount.com — the Google-managed
+//     agents GCP creates as services are used (Firebase's, Artifact
+//     Registry's), and service-<N>@<d>.iam.gserviceaccount.com for the closed
+//     list of older agent domains in legacyAgentDomains (Cloud Run's
+//     serverless-robot-prod among them). The domain is never <p>'s own: an
+//     account under <p>.iam.gserviceaccount.com is one somebody created in
+//     the project, whatever it is called.
+//   - <p>@appspot.gserviceaccount.com — the App Engine default, which the
+//     project has once Firebase is added to it; <p> must be this project's id
+//     and the asset must be filed under it.
+//
+// The number in the first three is why no Accounted entry could carry them:
+// the installation's state knows the project by its id, and these are named by
+// its number — and why the number is checked: any run of digits would also
+// match another project's default account.
+func (in Inventory) gcpServiceAccount(a Asset) bool {
+	local, domain, ok := strings.Cut(lastSegment(a.Name), "@")
+	if !ok || local == "" {
+		return false
+	}
+	number := ""
+	if in.ProjectNumber > 0 {
+		number = strconv.FormatInt(in.ProjectNumber, 10)
+	}
+	ours := func(n string) bool { return number != "" && n == number }
+	switch domain {
+	case "developer.gserviceaccount.com":
+		n, ok := strings.CutSuffix(local, "-compute")
+		return ok && ours(n)
+	case "cloudservices.gserviceaccount.com":
+		return ours(local)
+	case "appspot.gserviceaccount.com":
+		// The id is checked twice: it is this project's, and the asset is
+		// filed under it ("projects/<p>/...").
+		return in.GCPProject != "" && local == in.GCPProject && pathSegment(a.Name, "projects") == in.GCPProject
+	}
+	sub, ok := strings.CutSuffix(domain, ".iam.gserviceaccount.com")
+	if !ok || sub == "" || sub == in.GCPProject {
+		return false
+	}
+	if !strings.HasPrefix(sub, "gcp-sa-") && !legacyAgentDomains[sub] {
+		return false
+	}
+	n, ok := strings.CutPrefix(local, "service-")
+	return ok && ours(n)
+}
+
+// legacyAgentDomains are the Google-managed service agents' domains that
+// predate the gcp-sa-* naming, closed as gcpCreated's list is: an agent whose
+// domain is not here and not gcp-sa-* is foreign until it is named.
+var legacyAgentDomains = map[string]bool{
+	"serverless-robot-prod": true, // Cloud Run
+	"gcf-admin-robot":       true, // Cloud Functions
+	"firebase-rules":        true, // Firebase Rules
+	"compute-system":        true, // Compute Engine
+	"containerregistry":     true, // Container Registry
+}
+
+// pathSegment is the segment of a full resource name that follows key: with
+// the name "//iam.googleapis.com/projects/<p>/serviceAccounts/<email>", the
+// project id is pathSegment(name, "projects"). It is empty when the name does
+// not carry the key, which makes a comparison against it fail.
+func pathSegment(name, key string) string {
+	seg := strings.Split(assetPath(name), "/")
+	for i, s := range seg {
+		if s == key && i+1 < len(seg) {
+			return seg[i+1]
+		}
+	}
+	return ""
+}
+
+// digits reports whether s is a non-empty run of ASCII digits: a project
+// number, and never the empty string a name with no number would leave.
+func digits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// lastSegment is the part of a full resource name after its last "/": the
+// bucket, sink or service account's own name.
+func lastSegment(name string) string {
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		return name[i+1:]
+	}
+	return name
 }
 
 // accounted reports whether a listed asset is a resource the state accounts
@@ -362,7 +556,7 @@ func (in Inventory) what() string {
 
 // classify says which of the read's failures this is, because the three are
 // three different things for an operator to do: enable the API (fugaro init
-// does), grant RoleCloudAssetViewer, or wait out a quota. It reads the
+// does), grant RoleCloudAssetReader, or wait out a quota. It reads the
 // structured answer, not the message, in the discipline internal/infra's own
 // serviceDisabled keeps (apis.go): a 403 whose details carry an ErrorInfo with
 // reason SERVICE_DISABLED *for this API* is a disabled API, any other 403 is a
@@ -430,7 +624,7 @@ type CloudAssets struct {
 
 // NewCloudAssets connects to the Cloud Asset API. The identity the returned
 // read runs as is the caller's — the one that applies a managed plan — and it
-// needs RoleCloudAssetViewer on the project, which is a read role.
+// needs RoleCloudAssetReader on the project, which is a read role.
 func NewCloudAssets(ctx context.Context, opts ...option.ClientOption) (*CloudAssets, error) {
 	svc, err := cloudasset.NewService(ctx, opts...)
 	if err != nil {

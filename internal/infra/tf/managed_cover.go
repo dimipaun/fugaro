@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The managed project's instantiation of Cover (Task 1.1 of
@@ -173,9 +175,14 @@ var managedGrantRules = map[string]bool{
 // region, the buckets, the registry and the billing account — taken from it
 // unchanged, because they are the review's and not this list's.
 //
-// What it adds to Cover is the managed answer to four questions, each of which
+// What it adds to Cover is the managed answer to six questions, each of which
 // is a refusal rather than an inheritance:
 //
+//   - the delete (the design's D72/D74 — the plan carries no task of its own
+//     for this rule, and Tasks 1.2 and 1.4 are where its material is): a delete
+//     or a replace is admitted only for an exact address on the owner's own
+//     list, and only when the resource it removes or creates is one the rules
+//     below admit — the list alone never admits one (NotCovered);
 //   - the type: managedTypes rather than allowedTypes, so the twelve entries
 //     of managedDropped ask for a confirmation instead;
 //   - the resource: every name a managed resource carries must carry
@@ -203,12 +210,12 @@ var managedGrantRules = map[string]bool{
 // an object's Locked retention can never be undone, so it is refused whatever
 // the delete rule would later allow (managedBucketLock, managedObjectLock).
 //
-// And one rule under all four: every value the cover reads — a name, the
+// And one rule under all six: every value the cover reads — a name, the
 // account a job, a scheduler or a grant is on, a member, a role — must be
 // known at plan time. A computed one is refused, never trusted for what it
 // references (managedNames says why).
 //
-// And one rule before all four, because a managed apply runs as the operator
+// And one rule before all six, because a managed apply runs as the operator
 // (D75: the operator's shell impersonates the deployer): nothing in the plan
 // runs at apply besides Google's own provider making the resources' API
 // calls. No provisioner anywhere, no provider but Google's two, no data
@@ -225,6 +232,33 @@ var managedGrantRules = map[string]bool{
 // is Task 3.1's to refuse before init.
 type ManagedCover struct {
 	Cover
+	// AllowDelete are the exact addresses the owner approved a delete or a
+	// replace for, handed over by WithDeleteList beside the plan — the same
+	// list tf.Guard is handed, so the two cannot be given different ones. It
+	// is a copy of the caller's slice, so a cover cannot edit the list the
+	// guard was given. Absent and empty are the same thing here: no delete and
+	// no replace at all.
+	AllowDelete []string
+}
+
+// Deletable is a cover that can be told the owner's delete list, and the one
+// thing a cover must be for a delete or a replace to be judged at all. The
+// list is an input of the gate beside the plan (design D72/D74), so
+// a cover that cannot be told it cannot judge a delete — and
+// managed.Spec.notCovered refuses a listed one rather than letting the address
+// alone admit a resource nothing read.
+type Deletable interface {
+	NotCovered(p *Plan, imports []ImportKey) []string
+	WithDeleteList(allowDelete []string) Deletable
+}
+
+// WithDeleteList is the managed cover with the owner's delete list, which is
+// what a managed apply's gate hands it. A copy, so the list the guard is
+// handed and the list this cover holds are the same list rather than two that
+// can drift.
+func (c ManagedCover) WithDeleteList(allowDelete []string) Deletable {
+	c.AllowDelete = slices.Clone(allowDelete)
+	return c
 }
 
 // NotCovered lists why a managed project's plan is not covered, empty when it
@@ -237,6 +271,27 @@ type ManagedCover struct {
 // the two attribute checks in place of the embedded modules' own: the billing
 // account a resource names (managedBilling, read before the type rule so that
 // it is read at all) and the project it is in (managedProject).
+//
+// A delete and a replace are the one part of that walk the list
+// changes: they are admitted for an exact address on the owner's list alone —
+// managedActions says which action sets they are — and the resource is then
+// judged by the same chain as a create, on the view of it the change shows
+// (removed says which), so a listed address whose resource is not one a
+// managed plan may carry is refused for the resource. The list is what
+// managed.Spec.notCovered hands this cover beside the plan, the same slice
+// tf.Guard is handed, and a cover that was handed none admits no delete at all.
+//
+// The whole chain is read on the removed view, and the two lock rules with it
+// (managedBucketLock, managedObjectLock): a listed delete of a bucket or an
+// object whose retention is already locked is refused. The lock is then a fact
+// of the state in before rather than a setting the plan writes, which is not
+// what those rules were written about — they are about what a managed plan
+// locks — and the refusal is deliberate rather than incidental: a lock can
+// never be undone and holds the resource, its bucket and the project, so a
+// resource in that state is not one the allowlist admits, and reading the chain
+// in full is the fail-closed direction. A narrower reading would be a rule
+// loosened for deletes, which is what this task must not do. The refusal falls
+// back to the confirmation, as every refusal does.
 func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	if p == nil {
 		return []string{"no plan"}
@@ -244,7 +299,7 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 	out := append(managedPlanFields(p), managedConfiguration(p)...)
 	out = append(out, c.managedProviderProject(p)...)
 	declared := managedConfigResources(p.Configuration)
-	add := func(rc ResourceChange, why string) { out = append(out, rc.Address+" ("+why+")") }
+	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
 		// What runs besides the resource's API calls, before its actions: a
@@ -257,45 +312,157 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, managedProviderReason(rc.ProviderName))
 			continue
 		}
+		// The actions, and then the resource. A delete, or a replace in either
+		// of terraform's two orders, is admitted only for an exact address on
+		// the owner's list (D72/D74) — the same list tf.Guard is
+		// handed, compared the same way, by string equality: no prefix, module
+		// or instance key stands in for an address, so a listed x[0] admits
+		// nothing of x[1]. The list is not the decision about the resource:
+		// the resource is judged below exactly as a create is, and a resource
+		// that is not one a managed plan may carry is refused although its
+		// address is listed — otherwise the list would be a way past every
+		// rule about the resource, which is the failure this gate exists to
+		// avoid.
+		// acts is one of managedActions' sets past the switch below, so a set
+		// that names "delete" is a destroy or a replace, and the two are told
+		// apart by how many actions it has.
+		removes := slices.Contains(acts, "delete")
+		destroy := slices.Equal(acts, []string{"delete"})
 		switch {
 		case len(acts) == 0:
 			add(rc, "no actions")
 			continue
-		case !allOf(acts, "create", "update", "no-op", "read"):
+		case !managedActions(acts):
 			add(rc, "actions "+strings.Join(acts, ", "))
+			continue
+		case removes && !slices.Contains(c.AllowDelete, rc.Address):
+			add(rc, "actions "+strings.Join(acts, ", ")+": an address that is not on the owner's delete list")
+			continue
+		// The list names an address, and the object a removal takes away is
+		// the one in before: with a moved block that object was at another
+		// address, so a listed address would admit the delete of an unlisted
+		// one. Refused, as tf.Guard refuses it (removesUnderAnotherAddress).
+		case removes && removesUnderAnotherAddress(rc):
+			add(rc, "actions "+strings.Join(acts, ", ")+": "+movedRemovalReason(rc))
+			continue
+		case removes && !managedRemovalReasons[rc.ActionReason]:
+			add(rc, "actions "+strings.Join(acts, ", ")+": action_reason "+rc.ActionReason+", which the managed delete rule does not know")
 			continue
 		}
 		if allOf(acts, "no-op", "read") && rc.Change.Importing == nil {
 			continue
 		}
-		t := rc.Type
-		switch {
-		case strings.HasSuffix(t, "_iam_binding") || strings.HasSuffix(t, "_iam_policy") || strings.HasSuffix(t, "_iam_audit_config"):
-			add(rc, "an authoritative IAM resource")
-		case t == "google_service_account_key":
-			add(rc, "a service account key")
-		case c.managedBilling(rc) != "":
-			// Before the type rule: google_billing_budget is off the managed
-			// list, so read after it the billing account would never be read
-			// (managedBilling).
-			add(rc, c.managedBilling(rc))
-		case !managedTypes[t]:
-			add(rc, c.managedTypeReason(t))
-		case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
-			add(rc, "imports "+rc.Change.Importing.ID+", which is not in the managed project's projects")
-		case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
-			add(rc, "imports "+rc.Change.Importing.ID+", which this run's discovery did not find")
-		case c.managedResource(rc) != "":
-			add(rc, c.managedResource(rc))
-		case c.managedProject(rc, declared) != "":
-			add(rc, c.managedProject(rc, declared))
-		case strings.HasSuffix(t, "_iam_member"):
-			if why := c.managedGrant(rc); why != "" {
+		// Both resources of a replace are judged — the one it creates, read
+		// from after as a create is, and the one it removes, read from before
+		// (removed) — while a destroy has nothing in after to read and is
+		// judged on the resource it removes alone.
+		if !destroy {
+			if why := c.notCoveredResource(rc, declared, imports); why != "" {
+				add(rc, why)
+				continue
+			}
+		}
+		if removes {
+			if why := c.notCoveredResource(removed(rc), declared, imports); why != "" {
 				add(rc, why)
 			}
 		}
 	}
 	return out
+}
+
+// managedRemovalReasons are the action_reason values a listed delete or
+// replace may carry, every one of them a removal of the address's own object:
+// none (a plain destroy), the four replace reasons, and the deletes of an
+// address whose configuration went away — its resource block, its module, its
+// count or for_each, or one of its instance keys. delete_because_no_move_target
+// is not here: it is a moved object with nowhere to go, the object of another
+// address (removesUnderAnotherAddress refuses it first). A reason a later
+// terraform adds is refused until it is read and added, fail closed like the
+// action sets.
+var managedRemovalReasons = map[string]bool{
+	"":                                  true,
+	"replace_because_tainted":           true,
+	"replace_because_cannot_update":     true,
+	"replace_by_request":                true,
+	"replace_by_triggers":               true,
+	"delete_because_no_resource_config": true,
+	"delete_because_no_module":          true,
+	"delete_because_wrong_repetition":   true,
+	"delete_because_count_index":        true,
+	"delete_because_each_key":           true,
+}
+
+// managedActions: the plan action sets a managed plan may carry. Terraform's
+// own sets, whole and in order, and nothing else: create, update, no-op and
+// read change or read a resource without removing it, and a delete or one of
+// the two orders of a replace is admitted only with the owner's list (read
+// beside this in NotCovered). Any other set — an action this list does not
+// carry, a delete of a resource that is not shown as one, a set no version of
+// terraform writes — is refused rather than read as one of these.
+//
+// forget is the one set worth naming, because it is a real terraform action
+// that tf.Guard deliberately allows: a `removed` block takes a resource out of
+// the state without destroying it, so the guard has nothing to refuse
+// (guard.go:12-14). A managed plan may not carry it. The managed root's state
+// is Fugaro's own (D77), and a forget writes it with no cloud change beside
+// it: the resource would leave the plan while staying in the project, which is
+// exactly the kind of change none of the rules here can judge — every one of
+// them reads a resource's type, name, project and attributes, and none says
+// what leaving the state means. Refused, fail closed like the rest: a plan
+// that needs it is refused and falls back to the confirmation.
+func managedActions(acts []string) bool {
+	return allOf(acts, "create", "update", "no-op", "read") ||
+		slices.Equal(acts, []string{"delete"}) ||
+		slices.Equal(acts, []string{"create", "delete"}) ||
+		slices.Equal(acts, []string{"delete", "create"})
+}
+
+// removed is the change as the resource it takes away: terraform writes a
+// destroy with the resource in before and null in after, and a replace with
+// both. Reading the rules on this view is what judges the removed resource —
+// its name, its type, the account it is on — rather than reading the empty
+// after a delete has.
+func removed(rc ResourceChange) ResourceChange {
+	rc.Change.After = rc.Change.Before
+	rc.Change.AfterUnknown = nil
+	// An import is about the resource the plan takes over, which is the after
+	// view's; a removed resource is imported by nothing.
+	rc.Change.Importing = nil
+	return rc
+}
+
+// notCoveredResource is why the resource a change's view shows is not one a
+// managed plan may contain, "" when it is: the rule chain NotCovered reads a
+// create through, which a delete and both halves of a replace are judged by as
+// well. rc is either the change itself (the resource the plan creates, in
+// after) or removed(rc) (the resource it removes, in before).
+func (c ManagedCover) notCoveredResource(rc ResourceChange, declared map[string]ConfigResource, imports []ImportKey) string {
+	t := rc.Type
+	switch {
+	case strings.HasSuffix(t, "_iam_binding") || strings.HasSuffix(t, "_iam_policy") || strings.HasSuffix(t, "_iam_audit_config"):
+		return "an authoritative IAM resource"
+	case t == "google_service_account_key":
+		return "a service account key"
+	case c.managedBilling(rc) != "":
+		// Before the type rule: google_billing_budget is off the managed
+		// list, so read after it the billing account would never be read
+		// (managedBilling).
+		return c.managedBilling(rc)
+	case !managedTypes[t]:
+		return c.managedTypeReason(t)
+	case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
+		return "imports " + rc.Change.Importing.ID + ", which is not in the managed project's projects"
+	case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
+		return "imports " + rc.Change.Importing.ID + ", which this run's discovery did not find"
+	case c.managedResource(rc) != "":
+		return c.managedResource(rc)
+	case c.managedProject(rc, declared) != "":
+		return c.managedProject(rc, declared)
+	case strings.HasSuffix(t, "_iam_member"):
+		return c.managedGrant(rc)
+	}
+	return ""
 }
 
 // managedProviders are the providers a managed plan may use: Google's own two,
@@ -342,7 +509,18 @@ func managedModeReason(mode string) string {
 // not their plan; plan-time execution is Task 3.x's.
 func managedConfiguration(p *Plan) []string {
 	cfg := p.Configuration
-	if cfg == nil {
+	// An empty configuration is no configuration. terraform's own
+	// `show -json` always writes a configuration with a root_module (and a
+	// provider_config), so "{}" is a document nothing here wrote — and read
+	// as a configuration, it has no provisioner, no provider and no data
+	// source, so every rule below passes and the plan is taken to have none.
+	// That is the one reading this function exists to refuse.
+	//
+	// raw is set only by UnmarshalJSON, so it is what tells a configuration
+	// read out of a document — the only one that can be the empty object —
+	// from one a fixture built in Go, which carries no keys for the same
+	// reason: it never went through the decoder.
+	if cfg == nil || (cfg.raw != nil && len(cfg.fields) == 0) {
 		if len(p.ResourceChanges) == 0 {
 			return nil
 		}
@@ -370,13 +548,20 @@ func managedConfiguration(p *Plan) []string {
 			addr := prefix + r.Address
 			switch {
 			case len(r.Provisioners) > 0:
-				out = append(out, addr+" (a provisioner, which runs a command or a file copy at apply on the machine that applies: a managed plan declares none)")
+				out = append(out, safetext.Field(addr)+" (a provisioner, which runs a command or a file copy at apply on the machine that applies: a managed plan declares none)")
 			case r.Mode != "managed":
-				out = append(out, addr+" ("+managedModeReason(r.Mode)+")")
+				out = append(out, safetext.Field(addr)+" ("+managedModeReason(r.Mode)+")")
 			}
 		}
 		for _, name := range slices.Sorted(maps.Keys(m.ModuleCalls)) {
-			walk(prefix+"module."+name+".", m.ModuleCalls[name].Module)
+			call := m.ModuleCalls[name]
+			// A call's own keys are read here, at the call, before the
+			// module it calls: what the call passes is not an attribute of
+			// any resource, so nothing further in the walk sees it.
+			at := where + ".module_calls." + name
+			out = append(out, unknownFields(at, call.fields, managedModuleCallKeys)...)
+			out = append(out, managedModuleCallArguments(at, call.fields)...)
+			walk(prefix+"module."+name+".", call.Module)
 		}
 	}
 	walk("", cfg.RootModule)
@@ -404,6 +589,22 @@ var managedInertPlanKeys = map[string]bool{
 var (
 	managedConfigurationKeys = map[string]bool{"provider_config": true, "root_module": true}
 	managedModuleKeys        = map[string]bool{"resources": true, "module_calls": true, "outputs": true, "variables": true}
+	// managedModuleCallKeys are the keys of a module call this cover reads or
+	// knows inert: what it calls (source, module) and the arguments it passes
+	// (expressions), which are read where they land — a resource's own
+	// expressions, or the variable a module's block declares — rather than at
+	// the call. Anything else, a version constraint among them, is refused
+	// when it carries anything.
+	managedModuleCallKeys = map[string]bool{"source": true, "module": true, "expressions": true}
+	// managedModuleCallMetaKeys are the keys of a call's expressions that are
+	// not arguments: the meta-arguments that decide how many instances the
+	// call makes (count, for_each), which provider configurations the called
+	// module's resources use (providers) and what the call waits for
+	// (depends_on). The cover reads none of them — it reads the provider
+	// blocks by key, the resources by address, and nothing at all that a call
+	// multiplies itself by — so a call carrying one is refused rather than
+	// read as inert.
+	managedModuleCallMetaKeys = map[string]bool{"count": true, "for_each": true, "providers": true, "depends_on": true}
 )
 
 // managedPlanFields says why the plan carries a top-level key a managed plan
@@ -421,6 +622,37 @@ func unknownFields(where string, fields map[string]json.RawMessage, known map[st
 			continue
 		}
 		out = append(out, fmt.Sprintf("%s (carries %q, which the managed cover does not read: an action runs at apply and a deferred change is a resource the plan does not show, so a key it does not know is refused rather than read as inert)", where, k))
+	}
+	return out
+}
+
+// managedModuleCallArguments lists, as refusals at at, the meta-arguments a
+// module call's expressions carry: the keys of managedModuleCallMetaKeys that
+// carry anything. count and for_each decide how many instances the call makes,
+// providers decides which provider configuration the called module's resources
+// use, and depends_on decides what the apply waits for — none of them is an
+// attribute of a resource the cover reads, and a plan whose shape the cover
+// cannot see is refused rather than admitted on the assumption that the
+// instances it multiplies into are all the ones the resource changes show.
+//
+// An expressions block that does not decode as an object is refused too: a
+// call's arguments the cover cannot read are not read as carrying no
+// meta-argument. Empty is nothing — absent, null, [] and {} — as in
+// unknownFields.
+func managedModuleCallArguments(at string, fields map[string]json.RawMessage) []string {
+	raw, ok := fields["expressions"]
+	if !ok || emptyJSON(raw) {
+		return nil
+	}
+	var exprs map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &exprs); err != nil {
+		return []string{fmt.Sprintf("%s.expressions (does not decode as a module call's arguments: the managed cover reads them for the meta-arguments it refuses, so what it cannot read it does not call inert)", at)}
+	}
+	var out []string
+	for _, k := range slices.Sorted(maps.Keys(exprs)) {
+		if managedModuleCallMetaKeys[k] && !emptyJSON(exprs[k]) {
+			out = append(out, fmt.Sprintf("%s.expressions.%s (a module call's meta-argument: it decides what the call makes rather than what any resource in it is, and a managed plan carries none)", at, k))
+		}
 	}
 	return out
 }
@@ -459,6 +691,15 @@ var managedProviderAllowed = map[string]bool{
 	"project": true, "region": true, "zone": true, "default_labels": true,
 	"add_terraform_attribution_label": true, "terraform_attribution_label_addition_strategy": true,
 }
+
+// ManagedProviderSetting reports whether a managed root's provider block may
+// carry the setting name: the same list the cover reads the plan's provider
+// configuration with (managedProviderAllowed), for the managed apply's
+// preflight, which reads the root's own files BEFORE init — the provider is
+// configured at plan time with the deployer's credential, so a custom endpoint
+// or a credential setting has to be refused before the plan the cover reads
+// exists (internal/managed's preflight).
+func ManagedProviderSetting(name string) bool { return managedProviderAllowed[name] }
 
 // managedProviderSettings says why a provider block carries what a managed
 // plan's may not: an alias (a second configuration of the provider is a

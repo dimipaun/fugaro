@@ -233,16 +233,24 @@ func jobWorkflow(workflow, token string) (variant string, ok bool) {
 //
 // The policy is named because it is what the set is computed from: the message
 // says which profiles this project's policy defines, so a reader can tell "the
-// job is stale" from "the policy is".
+// job is stale" from "the policy is". A policy that defines no profiles is a
+// third case and says so: it is published — the rules a policy is read under
+// are deployed — but it names no profile, so the set is empty and no job is a
+// project job of it. Saying "no policy published" there would send the reader
+// to deploy rules that are already deployed.
 func cannotPlaceJob(job string, p *projectpolicy.Policy, found bool, slug, workflow, variant string) error {
 	detail := "This project has published no policy, so it defines no project job at all"
+	fix := "The fix is `fugaro doctor`, then `fugaro init --firebase` with the current Fugaro"
 	if found {
 		if names := p.ProfileNames(); len(names) > 0 {
 			detail = fmt.Sprintf("This project's published policy defines the job profiles %s, and a project job is one whose name is gcp.ProjectJobName of one of their (profile, provider, account) triples", strings.Join(names, ", "))
+		} else {
+			detail = "This project's published policy defines no job profiles at all, so it defines no project job either: a project job is gcp.ProjectJobName of a (profile, provider, account) triple, and a policy with no profiles has no such triple"
+			fix = "The fix is `fugaro doctor`, then `fugaro project policy publish` with the profiles this project's fugaro.yaml defines"
 		}
 	}
-	return fmt.Errorf("this run is in the Cloud Run job %s, and that is neither a project job of this project's policy nor the per-repository job of this run (%s for the slug %s and the workflow %s): a job the run cannot place may be another installation's, a job of a module version this policy no longer describes, or one created by hand, and the run adopts no identity from it. %s. The fix is `fugaro doctor`, then `fugaro init --firebase` with the current Fugaro",
-		job, gcp.JobName(slug, variant), slug, workflow, detail)
+	return fmt.Errorf("this run is in the Cloud Run job %s, and that is neither a project job of this project's policy nor the per-repository job of this run (%s for the slug %s and the workflow %s): a job the run cannot place may be another installation's, a job of a module version this policy no longer describes, or one created by hand, and the run adopts no identity from it. %s. %s",
+		job, gcp.JobName(slug, variant), slug, workflow, detail, fix)
 }
 
 // checkProjectCheckoutOrigin refuses, on a project job, any checkout already
