@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -36,14 +37,16 @@ var check67aGuard = []string{
 	"B=fugaro-runs-$M             # the managed project's runs bucket, where the marker and the delete list live (fugaro's own naming)",
 	"ACCOUNT_ID=                  # the SANDBOX installation's billing account ID, no BILLING_ prefix: the throwaway project is created under it",
 	"AMOUNT=                      # the monthly amount for the throwaway managed project, a number: fugaro init --managed has no default for it",
+	"TERRAFORM_ADDRESS=           # ONE resource address out of a real plan, in terraform's own form: the single address fugaro allow-delete is given in step 7",
 	"",
 	"# ${VAR:?} everywhere: an empty variable is a hard error, never an empty",
 	"# argument that gcloud would resolve from its ambient configuration (a default",
 	"# gcloud project is not this check's). No apostrophe inside a ${VAR:?...}",
 	"# message: bash reads the message as a word expecting a closing quote and the",
-	"# whole block then fails to parse.",
-	"[ \"$P\" = fugaro-dev ] && [ -n \"$L\" ] && [ -n \"$R\" ] && [ -n \"$F\" ] && [ -n \"$M\" ] && [ -n \"$B\" ] && [ -n \"$ACCOUNT_ID\" ] && [ -n \"$AMOUNT\" ] \\",
-	"  || { echo \"Check 67a stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R F=$F M=$M B=$B ACCOUNT_ID=$ACCOUNT_ID AMOUNT=$AMOUNT must not be empty)\" >&2; exit 1; }",
+	"# whole block then fails to parse. TERRAFORM_ADDRESS is the one value here no",
+	"# step can choose for you: it comes out of a plan the owner reads.",
+	"[ \"$P\" = fugaro-dev ] && [ -n \"$L\" ] && [ -n \"$R\" ] && [ -n \"$F\" ] && [ -n \"$M\" ] && [ -n \"$B\" ] && [ -n \"$ACCOUNT_ID\" ] && [ -n \"$AMOUNT\" ] && [ -n \"$TERRAFORM_ADDRESS\" ] \\",
+	"  || { echo \"Check 67a stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R F=$F M=$M B=$B ACCOUNT_ID=$ACCOUNT_ID AMOUNT=$AMOUNT TERRAFORM_ADDRESS=$TERRAFORM_ADDRESS must not be empty)\" >&2; exit 1; }",
 	"fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \\",
 	"  || { echo \"Check 67a stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)\" >&2; exit 1; }",
 	"git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\\.git)?$' \\",
@@ -62,12 +65,14 @@ var check67bGuard = []string{
 	"R=edgeappinc/fugarosandbox   # the sandbox repository, owner/name: the only repository this check touches",
 	"ACCOUNT_ID=                  # the SANDBOX installation's billing account ID, no BILLING_ prefix: the new project is created under it",
 	"AMOUNT=                      # the monthly amount for the new managed project, a number",
+	"TERRAFORM_ADDRESS=           # ONE resource address out of a real plan, in terraform's own form: the single address fugaro allow-delete is given in step 4",
 	"",
 	"# ${VAR:?} everywhere: an empty variable is a hard error, never an empty",
 	"# argument that gcloud would resolve from its ambient configuration. No",
 	"# apostrophe inside a ${VAR:?...} message (bash reads it as an unclosed quote).",
-	"[ \"$P\" = fugaro-dev ] && [ -n \"$L\" ] && [ -n \"$R\" ] && [ -n \"$F\" ] && [ -n \"$M\" ] && [ -n \"$N\" ] && [ -n \"$ACCOUNT_ID\" ] && [ -n \"$AMOUNT\" ] \\",
-	"  || { echo \"Check 67b stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R F=$F M=$M N=$N ACCOUNT_ID=$ACCOUNT_ID AMOUNT=$AMOUNT must not be empty)\" >&2; exit 1; }",
+	"# TERRAFORM_ADDRESS comes out of a plan you read, exactly as in 67a.",
+	"[ \"$P\" = fugaro-dev ] && [ -n \"$L\" ] && [ -n \"$R\" ] && [ -n \"$F\" ] && [ -n \"$M\" ] && [ -n \"$N\" ] && [ -n \"$ACCOUNT_ID\" ] && [ -n \"$AMOUNT\" ] && [ -n \"$TERRAFORM_ADDRESS\" ] \\",
+	"  || { echo \"Check 67b stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R F=$F M=$M N=$N ACCOUNT_ID=$ACCOUNT_ID AMOUNT=$AMOUNT TERRAFORM_ADDRESS=$TERRAFORM_ADDRESS must not be empty)\" >&2; exit 1; }",
 	"fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \\",
 	"  || { echo \"Check 67b stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)\" >&2; exit 1; }",
 	"git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\\.git)?$' \\",
@@ -292,7 +297,7 @@ func TestChecklistHasCheck67a(t *testing.T) {
 		"**(5) A project that is not managed still asks** — **once per repo checkout",
 		"**(6) A plan that names a second project is refused** — **once per repo checkout, in the managed checkout.**",
 		"**(7) The delete list: absent means refused, one written address means applied** — **once per repo checkout.**",
-		"**(8) The run's own job credential cannot write either object** — **once per repo checkout",
+		"**(8) The run's own job credential: the grant that keeps it out of `fugaro/`, read live — and the write-level FACT that stays UNVERIFIED** — **once per repo checkout",
 		"**(9) The whole-project inventory read, through the Cloud Asset API** — **once per repo checkout.**",
 		"**Restore — once per installation, and it deletes only what this check created.**",
 	} {
@@ -309,8 +314,10 @@ func TestChecklistHasCheck67a(t *testing.T) {
 		"`fmgd-`",
 		"`fugaro/managed.json`",
 		"fugaro/allow-delete.json",
-		"the project is not managed",
 		"`managed.ErrNotManaged`",
+		"`managed.ErrNotEnabled`",
+		"internal/managed/budget.go",
+		"internal/managed/apply.go",
 		"`ErrSessionAddresses`",
 		"`cloudasset.assets.searchAllResources`",
 		"`fugaroCloudAssetReader`",
@@ -367,30 +374,81 @@ func TestChecklistHasCheck67a(t *testing.T) {
 	//     not managed;
 	//   - the Restore has to be conditional, because 68 and 67b both need the
 	//     project and the checkout it deletes.
+	//
+	// The second review added four more, and each is the same shape: a step
+	// whose command and whose expectation did not describe the same thing.
+	//
+	//   - step 5's root has to be INSIDE the checkout the command acts on,
+	//     because `managedRoot` refuses a root from another project's checkout
+	//     before any cloud call (`internal/cli/managed_apply.go`), so a root
+	//     under /tmp with `--project fugaro` answers the checkout rule and not
+	//     the gate, and the gate's own words are ErrNotEnabled's, not
+	//     ErrNotManaged's;
+	//   - step 6 restores the root from its own copy, because nothing commits
+	//     `./managed-root` and `git checkout --` fails on an untracked path,
+	//     leaving step 7 to apply a root that names a second project;
+	//   - step 8 reads the job account's BUCKET-level binding and its condition
+	//     instead of impersonating that account: the only
+	//     `roles/iam.serviceAccountTokenCreator` grant in this installation is
+	//     on D75's deployer account (`installation/deployer.tf`), so the
+	//     impersonation would be refused to the OPERATOR and prove nothing about
+	//     the job account, and the write level is UNVERIFIED here;
+	//   - `TERRAFORM_ADDRESS` is declared and guarded in the two checks that use
+	//     it, or step 7's and 67b's `fugaro allow-delete` is handed an empty
+	//     address by a stop that never looked at it.
 	for _, want := range []string{
 		"--billing-account ${ACCOUNT_ID:?} --budget ${AMOUNT:?} --budget-currency USD --link-billing ${ACCOUNT_ID:?}",
 		`sed -i -e 's/^project: .*/project: '"${F:?}"'/' -e 's/^gcp_project: .*/gcp_project: '"${M:?}"'/' fugaro.yaml`,
 		`cp /tmp/chk67-marker.orig.json /tmp/chk67-marker-bad.json`,
 		`gcloud storage cp /tmp/chk67-marker.orig.json "gs://${B:?}/fugaro/managed.json" --project="${M:?}"`,
 		"ONLY if Check 68 and Check 67b are not going to run",
+		// step 5: both refusals, each with the command that produces it
+		`fugaro managed apply ./chk67-scratch-root --project fugaro`,
+		`mkdir -p ./chk67-scratch-root`,
+		"is in the checkout of project fugaro-managed, and this command is acting on fugaro",
+		"so its plans keep the coding agent's refusal",
+		// step 6: the root restored from a copy, tracked or not
+		`cp -a ./managed-root /tmp/chk67-managed-root.orig`,
+		`rm -rf ./managed-root && cp -a /tmp/chk67-managed-root.orig ./managed-root`,
+		// step 8: the binding read, and the UNVERIFIED it carries
+		`gcloud storage buckets get-iam-policy "gs://fugaro-runs-${P:?}" --project="${P:?}" --format=json`,
+		`grep -c 'objects/fugaro/' /tmp/chk67-runs-policy.json`,
+		"fugaro_deployer_token_creator",
+		"deploy/terraform/gcp/modules/installation/deployer.tf",
+		"deploy/terraform/gcp/modules/repo/workflow/sa.tf",
+		"the **write-level** denial itself",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 67a does not carry %q", want)
 		}
 	}
-	// The shapes those four replaced, each one a dead end the section must not
+	// The shapes those eight replaced, each one a dead end the section must not
 	// go back to: a creation with no --billing-account, a sed that moves only
-	// the installation's name, a copy named after the doctored file, and a
-	// Restore that deletes what the next two checks run on.
+	// the installation's name, a copy named after the doctored file, a Restore
+	// that deletes what the next two checks run on, an expectation pinned to a
+	// refusal that command cannot produce, a `git checkout` of a root nothing
+	// commits, and an impersonation whose denial would be the operator's own.
 	for _, bad := range []string{
 		"--managed --name \"${F:?}\" --gcp-project \"${M:?}\" --region \"${L:?}\" \\\n  --link-billing",
 		"'s/^project: .*/project: fugaro-managed/'",
 		"/tmp/chk67-marker.json",
 		"rm -rf /tmp/chk67-managed /tmp/chk67-marker.json",
+		`fugaro managed apply /tmp/chk67-managed/managed-root --project fugaro   # expect: refused, "the project is not managed"`,
+		"git checkout -- managed-root",
+		"JOB_SA=",
+		`--impersonate-service-account="$JOB_SA"`,
+		"the run's job credential failed to write both objects",
 	} {
 		if strings.Contains(section, bad) {
 			t.Errorf("Check 67a still carries the dead end %q", bad)
 		}
+	}
+	// The one claim step 5 must not make again: `managed.ErrNotManaged` is the
+	// apply's own creation-fact refusal, and this command ends at the gate
+	// before the apply is reached. The section still names it, but only to say
+	// which of the two it is NOT.
+	if !strings.Contains(section, "**not** `managed.ErrNotManaged`") {
+		t.Error("Check 67a's step 5 no longer says which refusal it is not")
 	}
 
 	// 8. The commands. Every gcloud command names its project with
@@ -481,6 +539,26 @@ func TestChecklistHasCheck67b(t *testing.T) {
 	}
 	if !strings.Contains(section, `gcloud projects delete "${N:?}" --project="${N:?}"`) {
 		t.Error("Check 67b's Restore does not delete the project its own restore made")
+	}
+	// The review's two findings against this section: a stray check number left
+	// in the Method's prose (the section is 67b, and a reader who sees **73**
+	// goes looking for a Check 73 that does not exist), and the one address
+	// `fugaro allow-delete` is given, which was used here out of a variable no
+	// setup block declared.
+	for _, bad := range []string{"**73**"} {
+		if strings.Contains(section, bad) {
+			t.Errorf("Check 67b still carries the stray token %q", bad)
+		}
+	}
+	if !strings.Contains(section, "The guard block is re-run before every step") {
+		t.Error("Check 67b's Method no longer says the guard block is re-run before every step")
+	}
+	// The write of the owner's object carries its CONFIRM here too: it is the
+	// same command 67a's step 7 marks, and an unmarked write of
+	// fugaro/allow-delete.json is the one line in the section that can approve
+	// a delete in the new project.
+	if !strings.Contains(section, `fugaro allow-delete ${TERRAFORM_ADDRESS:?} --project "${F:?}"   # ⚠ CONFIRM`) {
+		t.Error("Check 67b's step 4 writes the owner's delete list without its ⚠ CONFIRM")
 	}
 	// No step of this check may name the sandbox installation's project in a
 	// creating command: the only IDs a restore is ever pointed at here are the
@@ -622,6 +700,41 @@ func TestChecklistHasCheck68(t *testing.T) {
 	if !strings.Contains(section, "must read `0`") {
 		t.Error("Check 68's Restore does not demand a `0` count on every line")
 	}
+	// Step 4e copies a file, so a step has to create it: the probe file step 3
+	// makes is removed at the end of step 3, so a section that copies
+	// /tmp/chk68-probe2.txt without writing it first sends the owner to a
+	// `no such file` that says nothing about IAM. The create must come BEFORE
+	// the copy, or it is the same dead end written in the other order.
+	create := strings.Index(section, "printf x > /tmp/chk68-probe2.txt")
+	use := strings.Index(section, `gcloud storage cp /tmp/chk68-probe2.txt "gs://fugaro-tfstate-${M:?}/fugaro/installation/probe.json"`)
+	if create < 0 {
+		t.Error("Check 68's step 4e copies /tmp/chk68-probe2.txt without any step creating it")
+	} else if use < 0 {
+		t.Error("Check 68 no longer copies the probe into the installation state bucket")
+	} else if create > use {
+		t.Error("Check 68's step 4e creates /tmp/chk68-probe2.txt after the copy that needs it")
+	}
+	// Step 6 overwrites the LIVE creation fact with the operator's own
+	// credentials. It therefore has to keep the original first, carry its
+	// CONFIRM on the written line rather than on the read after it, and put the
+	// creation fact back before the check moves on — otherwise 67b runs on top
+	// of a marker that reads as not managed.
+	for _, want := range []string{
+		`gcloud storage cp "gs://${B:?}/fugaro/managed.json" /tmp/chk68-marker.orig.json --project="${M:?}"`,
+		`gcloud storage cp /tmp/chk68-operator.txt "gs://${B:?}/fugaro/managed.json" --project="${M:?}"       # ⚠ CONFIRM`,
+		`gcloud storage cp /tmp/chk68-marker.orig.json "gs://${B:?}/fugaro/managed.json" --project="${M:?}"   # ⚠ CONFIRM`,
+		"this read-back is what says the object is whole again",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 68's step 6 does not carry %q", want)
+		}
+	}
+	// And every file the section writes is in the Restore's own rm line, as one
+	// command: a record file left in /tmp is a file the Restore's count of what
+	// is gone cannot be right about.
+	if !strings.Contains(section, "rm -f /tmp/chk68-deployer.txt /tmp/chk68-scoped.txt /tmp/chk68-operator.txt \\\n  /tmp/chk68-probe.txt /tmp/chk68-probe2.txt /tmp/chk68-marker.orig.json") {
+		t.Error("Check 68's Restore does not remove every file the check wrote")
+	}
 	assertProjectFlags(t, "68", blocks, 10, 1)
 }
 
@@ -695,6 +808,72 @@ func assertProjectFlags(t *testing.T, check string, blocks [][]string, minGcloud
 	}
 	if gcloud < minGcloud || fugaro < minFugaro {
 		t.Errorf("Check %s has %d gcloud and %d fugaro commands, want at least %d and %d: the flag rule above has too few subjects to mean anything", check, gcloud, fugaro, minGcloud, minFugaro)
+	}
+}
+
+// TestManagedChecklistAddressVariablesAreGuarded is the rule the review found
+// broken: a `${VAR:?}` a step uses has to be a variable the check's OWN setup
+// block declares and its OWN first hard stop refuses empty. A step that uses
+// `${TERRAFORM_ADDRESS:?}` while no setup block declares it is a block that
+// dies on an unbound variable at the owner's terminal, and a declaration the
+// stop does not read is an empty address handed to the one command in Fugaro
+// that approves a delete — so both halves are asserted here, for every
+// variable the three sections use in the `${VAR:?}` form.
+func TestManagedChecklistAddressVariablesAreGuarded(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	uses := regexp.MustCompile(`\$\{([A-Z_][A-Z0-9_]*):\?`)
+	for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
+		section := managedCheckSection(t, path, doc, h)
+		blocks := bashBlocks(section)
+		if len(blocks) == 0 {
+			t.Fatalf("%s has no fenced bash block", h)
+		}
+		guard := strings.Join(blocks[0], "\n")
+		declared, stopped := map[string]bool{}, map[string]bool{}
+		for _, m := range regexp.MustCompile(`(?m)^([A-Z_][A-Z0-9_]*)=`).FindAllStringSubmatch(guard, -1) {
+			declared[m[1]] = true
+		}
+		// The stop's condition and its message are two lines of one compound
+		// command, so the `[ -n "$VAR" ]` clauses are read out of the block as
+		// a whole rather than out of the message's own line.
+		for _, m := range regexp.MustCompile(`\[ -n "\$([A-Z_][A-Z0-9_]*)" \]`).FindAllStringSubmatch(guard, -1) {
+			stopped[m[1]] = true
+		}
+		// `P` is not refused empty but pinned to its one value, which is the
+		// stronger form Check 43 uses and the same guard.
+		for _, m := range regexp.MustCompile(`\[ "\$([A-Z_][A-Z0-9_]*)" = [^]]+ \]`).FindAllStringSubmatch(guard, -1) {
+			stopped[m[1]] = true
+		}
+		if !strings.Contains(guard, "stopped: re-run the whole setup block") {
+			t.Fatalf("%s's guard block carries no first hard stop", h)
+		}
+		// The three of this section's own variables that the steps reach for.
+		// `P`, `F`, `M`, `L`, `R`, `B`, `N`, `D`, `ACCOUNT_ID` and `AMOUNT`
+		// are the same rule; the test applies it to every one of them at once
+		// rather than listing them, so a new variable cannot be added to a step
+		// without its guard.
+		named := map[string]bool{}
+		for _, b := range blocks[1:] {
+			for _, m := range uses.FindAllStringSubmatch(strings.Join(b, "\n"), -1) {
+				named[m[1]] = true
+			}
+		}
+		for name := range named {
+			if !declared[name] {
+				t.Errorf("%s's steps use ${%s:?} and its setup block never declares %s=", h, name, name)
+			}
+			if !stopped[name] {
+				t.Errorf("%s declares %s= and its first hard stop never refuses an empty %s", h, name, name)
+			}
+		}
+		// The two checks that hand `fugaro allow-delete` an address are the two
+		// this test exists for: if neither reaches for it any more, the rule
+		// above has no subject and this test would pass on an empty section.
+		if h != "## Check 68:" && !named["TERRAFORM_ADDRESS"] {
+			t.Errorf("%s no longer uses ${TERRAFORM_ADDRESS:?}, so this test has nothing to guard", h)
+		}
 	}
 }
 
