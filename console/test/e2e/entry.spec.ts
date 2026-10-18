@@ -119,7 +119,13 @@ async function launch(
     args: profile.launchArgs(consoleDir),
     env: { ...stubEnv, ...(options.env ?? {}), [SPAWN_LOG_ENV]: spawnLog },
   })
-  const page = await app.firstWindow()
+  // A console that exits before it opens a window would leave `firstWindow`
+  // waiting until the test's own timeout; this says so, with the exit code.
+  const page = await app.firstWindow({ timeout: 15_000 }).catch((error: unknown) => {
+    throw new Error(
+      `the console opened no window (exit code ${String(app.process().exitCode)}): ${error instanceof Error ? error.message : String(error)}`,
+    )
+  })
   await page.waitForLoadState('domcontentloaded')
   if (options.firstRun !== undefined) await dismissFirstRunPicker(app, page)
   return {

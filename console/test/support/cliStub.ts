@@ -36,7 +36,7 @@
 // their machine, and `resolveConsoleBinary` below is what lets a spec say so
 // instead of failing on a missing element.
 
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -66,13 +66,18 @@ export interface CliStub {
    * absent rather than `undefined`, which is both what a child process actually
    * receives and what Playwright's `env` option takes. */
   readonly env: Record<string, string>
-  /** userData is a scratch `--user-data-dir` (Task 3.4b): the store the app
-   * reads `installations.json` from. Every launch passes it (`launchArgs`), so
-   * no spec reads or writes the machine's own console profile. It starts
-   * empty, which is D13's first run: no installation, and the picker opens. */
+  /** userData is the seed for every launch's scratch `--user-data-dir` (Task
+   * 3.4b): `seedInstallations` writes `installations.json` here and
+   * `launchArgs` copies it into a fresh profile, so no spec reads or writes the
+   * machine's own console profile. Unseeded, it is D13's first run: no
+   * installation, and the picker opens. */
   readonly userData: string
-  /** launchArgs is `electron.launch`'s `args`: the app directory, and the
-   * scratch `--user-data-dir`. */
+  /** launchArgs is `electron.launch`'s `args`: the app directory, and a
+   * **fresh** scratch `--user-data-dir` per launch, holding a copy of the seeded
+   * `installations.json` (if any). Fresh, because Chromium locks a profile to
+   * one process: a launch that reused the profile of an app still shutting down
+   * would hand itself to that process and exit, and the spec would wait for a
+   * window that never comes. */
   launchArgs(consoleDir: string): string[]
   /** seedActiveInstallation writes one installation naming this stub as the
    * active one, so the handshake's configured path is the stub (rule 4 puts it
@@ -132,7 +137,14 @@ export function installCliStub(line: string): CliStub {
     userData,
     env,
     launchArgs(consoleDir: string): string[] {
-      return [consoleDir, `--user-data-dir=${userData}`]
+      const profile = mkdtempSync(join(scratch, 'profile-'))
+      chmodSync(profile, 0o700)
+      const seededFile = join(userData, INSTALLATIONS_FILE_NAME)
+      if (existsSync(seededFile)) {
+        copyFileSync(seededFile, join(profile, INSTALLATIONS_FILE_NAME))
+        chmodSync(join(profile, INSTALLATIONS_FILE_NAME), 0o600)
+      }
+      return [consoleDir, `--user-data-dir=${profile}`]
     },
     seedActiveInstallation(project = 'e2e', binaryPath = join(dir, 'fugaro')): void {
       const id = '0123456789abcdef'
