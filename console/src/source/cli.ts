@@ -637,6 +637,18 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   let pending: { readonly id: string; readonly source: Promise<CliSource> } | null = null
   const feeds = new Map<string, LiveFeed>()
 
+  /**
+   * epoch is what "the build in flight is no longer the one that matters" is
+   * written as. Building a source is asynchronous -- it resolves the binary and
+   * probes its version -- and `drop` can run in the middle of one: the operator
+   * removes the installation while the console is reading from it. A build that
+   * finishes after that must not bind, because `bound` is what every later read
+   * is handed, and a source bound for an installation the store no longer names
+   * is a `fugaro watch` child nobody holds and nobody will ever close -- which
+   * is the one thing `forget` exists to prevent.
+   */
+  let epoch = 0
+
   const noInstallation = (): NoInstallation =>
     new NoInstallation(
       noInstallationState({
@@ -659,8 +671,19 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     bound = null
     pending = null
     feeds.clear()
+    epoch += 1
+    const mine = epoch
     if (previous !== null) await previous.source.close()
     const source = create(installation).then((created) => {
+      if (mine !== epoch) {
+        // Dropped, or superseded by a build for another installation, while
+        // this one was in flight. `forget` could not close what did not exist
+        // yet, so this source is closed here -- nothing else holds it -- and
+        // the read that asked for it is refused as a read for an installation
+        // that is gone.
+        void created.close().catch(() => undefined)
+        throw noInstallation()
+      }
       bound = { id: installation.id, source: created }
       pending = null
       return created
@@ -740,6 +763,9 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     bound = null
     pending = null
     feeds.clear()
+    // A build in flight is invalidated here rather than awaited: it is for an
+    // installation that is gone, and it closes its own source when it lands.
+    epoch += 1
     if (previous !== null) await previous.source.close()
   }
 
