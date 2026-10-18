@@ -1038,6 +1038,72 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		}
 	}
 
+	// The required fields, from the schema's own list rather than from a literal
+	// here: `hasChildren([...])` is what refuses a message with no tag, and a
+	// tag is required on every message of every kind and on the heartbeat. The
+	// heartbeat's list is three of the four (it has no `id`), which the schema
+	// states separately (HEARTBEAT_REQUIRED).
+	msgRequired := "newData.hasChildren(['" + strings.Join(required, "', '") + "'])"
+	for _, p := range []string{`mailbox/$mb/inbox/$msg`, `mailbox/$mb/outbox/$msg`} {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		v, _ := attrs[".validate"].(string)
+		if !strings.Contains(v, msgRequired) {
+			t.Errorf("/%s .validate = %q, want the schema's required fields (%q)", p, v, msgRequired)
+		}
+	}
+	if attrs, ok := paths[`mailbox/$mb/heartbeat`]; !ok {
+		t.Error("the template does not generate /mailbox/$mb/heartbeat")
+	} else if v, _ := attrs[".validate"].(string); !strings.Contains(v, "newData.hasChildren(['at', 'boot', 'mac'])") {
+		t.Errorf("/mailbox/$mb/heartbeat .validate = %q, want the tag required beside at and boot", v)
+	}
+
+	// The action record's own required set and the merge's head SHA. Not read
+	// from the schema (ACTION_REQUIRED is not exported and this reader does not
+	// follow a local constant), so these are pins: a record without its
+	// confirmation is the shape G11 calls prose, and a merge without the head it
+	// read back is one the consumer cannot check.
+	for _, p := range []string{`mailbox/$mb/inbox/$msg/action`, `mailbox/$mb/outbox/$msg/action`} {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		v, _ := attrs[".validate"].(string)
+		for _, frag := range []string{
+			"newData.hasChildren(['id', 'verb', 'target', 'confirmation'])",
+			"newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true",
+			"== 'action'",
+		} {
+			if !strings.Contains(v, frag) {
+				t.Errorf("/%s .validate = %q, want it to carry %q", p, v, frag)
+			}
+		}
+	}
+
+	// Every node of the subtree refuses an unknown field. `$other` with
+	// `.validate: false` is the subtree idiom's whole point (F21): without it a
+	// field the schema does not name is stored rather than refused, and the
+	// field set would stop being the version.
+	for _, p := range []string{
+		`mailbox/$mb/inbox/$msg`, `mailbox/$mb/outbox/$msg`, `mailbox/$mb/heartbeat`,
+		`mailbox/$mb/inbox/$msg/action`, `mailbox/$mb/inbox/$msg/action/target`,
+		`mailbox/$mb/inbox/$msg/action/confirmation`, `mailbox/$mb/heartbeat/agents/$i`,
+		`mailbox/$mb/outbox/$msg/action`, `pairing/$uid/request`,
+	} {
+		attrs, ok := paths[p+"/$other"]
+		if !ok {
+			t.Errorf("/%s has no $other child: an unknown field would be stored, not refused", p)
+			continue
+		}
+		if v, ok := attrs[".validate"]; !ok || v != false {
+			t.Errorf("/%s/$other .validate = %v, want false", p, v)
+		}
+	}
+
 	// The fields, per node: the schema's own set, and every one of them a field
 	// the schema names. An inbox message has the required P6.3 fields plus the
 	// optional ones (`acked` is the phone's ack of a message it spoke, which

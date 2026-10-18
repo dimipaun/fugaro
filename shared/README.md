@@ -38,10 +38,13 @@ HMAC-SHA-256 — and it is deliberately **not** in the module's entry point: it 
 Native's bundler resolves no `node:` builtin and the phone must still be able to import
 the validator and the canonical serialisation. `index.js` imports nothing at all, a test
 asserts it, and the phone implements HMAC-SHA-256 itself against `vectors.json`. There
-is still no dependency: nothing is installed, nothing is fetched. Note that P6.3 changes
-the schema and not
-`internal/budget/rules`' template, which is P6.4's task and is asserted as a known gap in
-`TestMailboxRulesAgreeWithTheSharedSchema`.
+is still no dependency: nothing is installed, nothing is fetched. Note that P6.3 changed
+the schema, and P6.4 has since carried it into
+`internal/budget/rules`' template: the mailbox subtree now gates the same field set —
+`mac` required on every message of every kind and on the heartbeat — and
+`TestMailboxRulesAgreeWithTheSharedSchema` holds the two artifacts' bounds together. What
+the rules still cannot do is check a tag's characters or its value: they hold no key
+(P6.7 does).
 
 `command/` (P6.1) is the wake-word router and the app-command grammar: built, with its own tests and its own mutation proof; see `command/README.md`.
 

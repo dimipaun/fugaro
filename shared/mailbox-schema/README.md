@@ -266,9 +266,9 @@ compatibility path: nothing has shipped that writes a mailbox message (P3.6 and 
 are not built), and the project's own rule is no backward compatibility before release.
 What it costs inside the repository is stated rather than discovered: the simulator
 (`shared/mailbox-sim`) writes a mac-shaped placeholder on every message it makes, the
-mailbox module's tests carry one, and P2.1's rules template still refuses a write that
-carries `mac` until P6.4 (see the gaps below). A stored message written before P6.3 is
-refused on read, which is the fail-closed reading of version skew.
+mailbox module's tests carry one, and P2.1's rules template refused a write that
+carried `mac` until P6.4 landed (see the gaps below). A stored message written before
+P6.3 is refused on read, which is the fail-closed reading of version skew.
 
 ### For the Go consumer (P4.1, P6.7): three things the vectors cannot say alone
 
@@ -344,11 +344,17 @@ assuming it:
 - **Not the URL rules.** A message carries text, not links. (P0.3)
 - **Not the rules.** The schema is what P2.1's template must agree with — the same
   fields, the byte-for-byte key rule on the id, `text`'s bound at `TEXT_MAX` — but who
-  may write a message, and the ack's own fence, are the rules' business. **P6.3 has
-  changed the schema and not the template**, which is P6.4's task (level 3, after
-  P2.2): until it lands, the rules would refuse a write carrying `mac`. That gap is
-  asserted, not hidden — see the note in
-  `TestMailboxRulesAgreeWithTheSharedSchema`.
+  may write a message, and the ack's own fence, are the rules' business. **P6.3 changed
+  the schema and P6.4 has since carried it into the template**: the mailbox subtree now
+  gates this field set — `mac` required on every message of every kind and on the
+  heartbeat, with `agent`, `kind`, `options`, `reply_to` and the action record beside it,
+  and the (kind, field) table's per-kind clauses — and
+  `TestMailboxRulesAgreeWithTheSharedSchema` asserts the two lists against each other,
+  bound by bound. The rules stay looser in one direction and it is stated there: this
+  language cannot look at a string's characters, so the hex character sets of a `mac` and
+  a head SHA, the key rule on an id and the patterns a `run` and a `repo` target must
+  match are this module's alone. What the rules never do is verify a tag — they hold no
+  key (P6.7 does, over `verifyMac`).
 - **Not the node's retention.** D118's TTL and the owner's sweeper are properties of
   the mailbox node, not of a message.
 
@@ -428,18 +434,23 @@ mode the harness exists to surface.
   plan's Global Constraint 8: no agent edits `.github/workflows/`). Until it exists the
   tests run only where someone runs them — the same gap [the package's
   README](../README.md) records.
-- **The rules do not carry the new fields yet.** P6.3 changes the schema; P6.4 (level 3,
-  after P2.2) changes `rules.json.tmpl`, `rules.go` and the golden plan. Until it lands,
-  a write carrying `mac` is refused by the template. The Go test asserts the gap in both
-  directions and names it, so the difference is a listed state and not an oversight.
+- **The rules carry the fields but cannot check a tag's characters or value.** P6.4 has
+  landed (level 3, after P2.2): `rules.json.tmpl`, `rules.go` and the golden plan now
+  gate this field set, `mac` included, and the mailbox's bounds are this module's numbers
+  bound for bound. What remains outside them is exact rather than vague: an RTDB
+  expression cannot inspect a string's characters, so a tag's hex spelling, an id's key
+  rule, `text`'s control characters and the target patterns are this module's alone; and
+  the rules check a tag's *shape*, never its value, because the per-pairing key (D171)
+  never reaches the database. `fugaro mailbox` (P6.7) is where a tag is verified.
 - **The heartbeat this schema signs is not the heartbeat `shared/presence` reads.**
   `validateHeartbeat` accepts `{at, boot, agents?, mac}` — `boot` is the field name
   P2.1's template already gates (`rules.json.tmpl`), and `mac` and `agents` are what P6.3
   and O7 added. P1.4's staleness rule accepts `{at, bootId}` and refuses **any other
   field** (`heartbeat-unknown-field`), so a heartbeat signed per §3.5 cannot be handed to
   the rule that decides whether the phone is offline without a mapping in between — and
-  nothing landed or planned maps it: P6.4's Files row is `rules.json.tmpl`, `rules.go`,
-  the golden plan, the version and the emulator test, and it does not touch `presence`.
+  nothing landed or planned maps it: P6.4 has landed and its Files row is
+  `rules.json.tmpl`, `rules.go`, the golden plan, the version and the emulator test, and
+  it does not touch `presence`.
   The `boot`/`bootId` half is older than this task and the template sides with `boot`;
   the `mac` and `agents` halves are new here. This is a **conflict for the owner**, not a
   design decision this task may take: the fix is either a rename on one side, or a
