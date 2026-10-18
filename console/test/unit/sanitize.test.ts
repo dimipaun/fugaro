@@ -325,6 +325,25 @@ describe('the refusal door', () => {
     }
   })
 
+  it('redacts an address a child echoed into a refusal, as the sentence class does', () => {
+    // An address is not a remedy. The refusal door drew one verbatim until the
+    // review of Task 4.2: `REFUSAL_RULES` filtered the rule out by flag, and
+    // the docstring's list of deliberate omissions -- repository, GCP name,
+    // path, host -- never named it, so the filter had quietly become a rule
+    // nobody had decided. A person and a service account are identifiers the
+    // design redacts on every other channel, and `sentence` redacts them here.
+    for (const address of ['zora@acme.example', 'runner@proj.iam.gserviceaccount.com']) {
+      const sentence = `permission denied for ${address}`
+      const text = sanitizeText(sentence, 'sentence')
+      expect(text.ok && text.text, address).not.toContain(address)
+      const refusal = sanitizeRefusal(sentence)
+      expect(refusal.ok && refusal.text, address).toBe(
+        `permission denied for ${ADDRESS_PLACEHOLDER}`,
+      )
+      expect(refusal.ok && refusal.flags, address).toContain('address-marker')
+    }
+  })
+
   it('strips the invisible characters and flattens the sentence, as every class does', () => {
     // The zero-width space goes (it is removed, not turned into a space) and the
     // line break is flattened: a sentence is drawn as one line.

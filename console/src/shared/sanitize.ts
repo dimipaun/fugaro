@@ -1099,16 +1099,33 @@ function isPathShapedSecret(run: string): boolean {
 const CREDENTIAL_RULES: readonly OneRule[] = Object.freeze(FREE_TEXT_RULES.slice(0, 2))
 
 /**
- * REFUSAL_RULES are every credential redaction the free-text path makes, and
- * nothing else: the URL rule, the credential pass, the path-shaped secret and
- * the entropy net. They are what `sanitizeRefusal` runs. The pattern classes
- * that rewrite a remedy (repository, GCP name, path, host) are left out on
- * purpose -- see `sanitizeRefusal` -- but a credential the text path would
- * redact is redacted here too (`sanitize-agreement.test.ts` pins the two equal
- * over a corpus).
+ * REFUSAL_RULES are every *redacting* rule of the free-text path, and nothing
+ * else: the URL rule, the credential pass, the path-shaped secret, the entropy
+ * net, and **the address rule**. They are what `sanitizeRefusal` runs. The
+ * pattern classes that rewrite a remedy (repository, GCP name, path, host) are
+ * left out on purpose -- see `sanitizeRefusal` -- but a value the text path
+ * would redact is redacted here too (`sanitize-agreement.test.ts` pins the two
+ * equal over a corpus).
+ *
+ * The address rule is in and not out, and the distinction is the one the
+ * omissions are drawn on: a role name, a project name or a path is what the
+ * refusal is *about* and redacting it takes the remedy away, while an address
+ * is a person or a service account -- an identifier of someone, in a sentence
+ * about permissions -- and the design redacts those everywhere else. Dropping
+ * it here drew `zora@acme.example` and
+ * `runner@proj.iam.gserviceaccount.com` verbatim on the Refused screen, which
+ * is what the review of Task 4.2 found: the docstring above listed the
+ * omissions and the address rule was not among them, so the filter had quietly
+ * become the rule. `sanitize.test.ts` holds both halves -- the remedy still
+ * drawn character for character, the address still redacted.
  */
 const REFUSAL_RULES: readonly OneRule[] = Object.freeze(
-  FREE_TEXT_RULES.filter((rule) => rule.flag === 'neutralised-credential' || rule.flag === 'replaced-url'),
+  FREE_TEXT_RULES.filter(
+    (rule) =>
+      rule.flag === 'neutralised-credential' ||
+      rule.flag === 'replaced-url' ||
+      rule.flag === 'address-marker',
+  ),
 )
 
 /**
@@ -2405,14 +2422,18 @@ export function sanitizeText(
  * and a credential a child echoed into it must not reach a screen.
  *
  * So this pass is `REFUSAL_RULES` and only those -- a URL, a percent-encoded
- * or base64-wrapped run decoded, the token families, an assignment, a
- * path-shaped secret, the entropy net -- read, as every class reads them, on
+ * or base64-wrapped run decoded, the token families, an assignment, an
+ * address, a path-shaped secret, the entropy net -- read, as every class reads them, on
  * the **prepared** form (NFKC, so a fullwidth token is a token: review round 2
  * of PR 494), plus this layer's own two: the invisible characters go (a value a screen is made to
  * misspell is not a value), and the display bound applies. A refusal sentence
- * that echoes a token is redacted; a refusal sentence that names a role, a
- * project or a path is drawn as the CLI printed it, which is what the design
- * asks for and what makes the screen useful. The last of those is the trade the
+ * that echoes a token is redacted, and so is one that names an address: a
+ * person or a service account in a sentence about permissions is an identifier
+ * of someone, and the design redacts those on every other channel. A refusal
+ * sentence that names a role, a project or a path is drawn as the CLI printed
+ * it, which is what the design asks for and what makes the screen useful -- an
+ * address is none of those three, because the remedy is the role or the
+ * project, never who asked. The last of those is the trade the
  * design makes deliberately: `sentence` would draw `/home/zora/checkout` as
  * `<path>`, and this does not, because the operator's own refusal is the one
  * message on this console the console may not paraphrase.
