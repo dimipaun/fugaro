@@ -115,3 +115,49 @@ func TestChangedFilesRoundTripsThroughTheRecord(t *testing.T) {
 		t.Fatalf("round trip gave %+v", back.ChangedFiles)
 	}
 }
+
+// TestChangedFilesBoundedReappliesTheBoundOnRead: the record is an object the
+// job can write, so a reader never trusts its set to be bounded or honest —
+// Bounded cuts an oversized list, drops empty paths, and never lets a record
+// that lies about its total present a cut set as a whole one.
+func TestChangedFilesBoundedReappliesTheBoundOnRead(t *testing.T) {
+	if (*ChangedFiles)(nil).Bounded() != nil {
+		t.Fatal("a record with no set must read as no set")
+	}
+	var paths []string
+	for i := range 5000 {
+		paths = append(paths, fmt.Sprintf("p/%05d.go", i))
+	}
+	// A record that carries 5000 paths, claims a total of 3 and no truncation.
+	lying := &ChangedFiles{Paths: append([]string{""}, paths...), Total: 3}
+	got := lying.Bounded()
+	if len(got.Paths) != MaxChangedFiles {
+		t.Fatalf("read back %d paths, want the bound of %d", len(got.Paths), MaxChangedFiles)
+	}
+	if got.Paths[0] == "" {
+		t.Fatal("an empty path survived the read")
+	}
+	if !got.Truncated || got.Total != len(paths) {
+		t.Fatalf("truncated %v, total %d; want true and %d", got.Truncated, got.Total, len(paths))
+	}
+	// A record whose total is larger than its list says so on read even
+	// when it forgot the flag.
+	short := (&ChangedFiles{Paths: []string{"a.go"}, Total: 9}).Bounded()
+	if !short.Truncated || short.Total != 9 || len(short.Paths) != 1 {
+		t.Fatalf("short record read back as %+v", short)
+	}
+	// A negative total is not a size.
+	neg := (&ChangedFiles{Paths: []string{"a.go"}, Total: -4}).Bounded()
+	if neg.Total != 1 || neg.Truncated {
+		t.Fatalf("negative total read back as %+v", neg)
+	}
+	// A whole, honest record reads back unchanged.
+	whole := NewChangedFiles([]string{"a.go", "b.go"}).Bounded()
+	if whole.Truncated || whole.Total != 2 || len(whole.Paths) != 2 {
+		t.Fatalf("honest record read back as %+v", whole)
+	}
+	// A record that says it was truncated stays truncated.
+	if !(&ChangedFiles{Paths: []string{"a.go"}, Total: 1, Truncated: true}).Bounded().Truncated {
+		t.Fatal("a record's own truncation was dropped on read")
+	}
+}

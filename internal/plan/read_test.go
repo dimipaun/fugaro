@@ -2,6 +2,7 @@ package plan
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -256,5 +257,23 @@ func TestPlanFootprintMatchesTheRepositorysGlobSemantics(t *testing.T) {
 	empty := NewFootprint(nil)
 	if empty.Matches("internal/plan/read.go") {
 		t.Error("an empty footprint matched a path")
+	}
+}
+
+// TestPlanRefusesAnOversizedArtifact: the artifact is a file in a checkout,
+// which anyone with push access can write, and what it carries goes to the
+// console's renderer — so the read is bounded. A file past MaxArtifactBytes is
+// refused with a sentence that says so, and the read stops at the bound
+// rather than taking the whole file into memory first.
+func TestPlanRefusesAnOversizedArtifact(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "big.graph.json")
+	pad := strings.Repeat(" ", MaxArtifactBytes)
+	if err := os.WriteFile(path, []byte(`{"schema_version": 1, "plan": "p.md", "nodes": [], "edges": []}`+pad), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ReadFile(path)
+	var refusal *Refusal
+	if !errors.As(err, &refusal) || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("an oversized artifact gave %v, want a refusal naming the bound", err)
 	}
 }

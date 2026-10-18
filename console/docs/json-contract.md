@@ -390,7 +390,6 @@ reads:
 | `draft_fallback` | bool | **yes** | the host has no draft PRs, so the PR is an ordinary one with `[DRAFT]` in its title |
 | `pr_status_at` | `*time.Time` | **yes** | when the runner last wrote the PR's status section — **null = never** |
 | `stale_draft` | bool | **yes** | the record is not final but its draft's status section is old, or the execution is gone: the run probably died |
-| `changed_files` | `*runstore.ChangedFiles` (`paths`, `total`, `truncated`) | **yes** | the paths the run changed, as its own record says (console v2 D27, F17); absent for a run that recorded none, which is not the same as an empty `paths` |
 | `artifact_count` | int | **yes** | what an artifact run's record says it delivered; absent for every run that has none, and the count `runs ls`'s `ARTIFACTS` column shows — its total is `artifact_bytes` |
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
 | `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
@@ -412,6 +411,13 @@ path can name a client, a person or a project, so the record holds the least
 that answers "did these two runs touch the same file". A rename is recorded as
 the delete and the add it is, because a path that moved is a path two runs can
 collide on.
+
+**The reader bounds it again.** The record is an object the job can write, so
+`runview.Join` does not pass the set through as written: `ChangedFiles.Bounded`
+drops empty paths, re-applies both caps, never lets `total` fall below the
+paths kept, and sets `truncated` when the record said so or when `paths` is
+short of `total`. A tampered record therefore reaches the console bounded and
+with its truncation flagged, never larger or dressed as whole.
 
 `runview.Totals` (`runview.go:436`): `runs` int, `model_usd` float64,
 `model_notional_usd` float64 (**notional** — kept apart from `model_usd` by

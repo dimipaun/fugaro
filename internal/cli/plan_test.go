@@ -215,3 +215,25 @@ func TestPlanGraphIsALocalRead(t *testing.T) {
 		t.Errorf("plan graph's flags are %s, want --plan and --json", cmd.Flags().FlagUsages())
 	}
 }
+
+// TestPlanGraphTextIsTerminalSafe: the artifact is checkout text anyone with
+// push access writes, so the human form escapes what would drive a terminal
+// and keeps a tab from opening a column of its own in the table.
+func TestPlanGraphTextIsTerminalSafe(t *testing.T) {
+	graph := `{"schema_version": 1, "plan": "p.md", "nodes": [
+		{"id": "a", "title": "evil\u001b]52;c;aGk=\u0007\ttitle", "footprint": {"prediction": true, "paths": []}}],
+		"edges": []}`
+	_, planPath := planGraphFixture(t, graph)
+	text, _, err := execute(t, "plan", "graph", "--plan", planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(text, "\x1b\x07") {
+		t.Errorf("text graph carries a raw control character:\n%q", text)
+	}
+	for _, l := range strings.Split(text, "\n") {
+		if strings.Contains(l, "evil") && strings.Contains(l, "\t") {
+			t.Errorf("a title's tab reached the table: %q", l)
+		}
+	}
+}

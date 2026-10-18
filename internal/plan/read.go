@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"strings"
@@ -40,14 +41,31 @@ func ArtifactPath(planPath string) string {
 	return strings.TrimSuffix(planPath, ext) + ArtifactSuffix
 }
 
-// ReadFile reads and validates the artifact at path.
+// MaxArtifactBytes is the largest graph artifact this build reads. The file is
+// in a checkout, so whoever can push to the repository writes it, and what it
+// carries is handed to the console's renderer: the read is bounded the way
+// every other document the console reads is. A plan's graph is a few
+// kilobytes; a mebibyte is room for thousands of tasks.
+const MaxArtifactBytes = 1 << 20
+
+// ReadFile reads and validates the artifact at path. The read stops at
+// MaxArtifactBytes, so a file past it — or one that never ends, such as a
+// symlink to a device — is refused without being read whole.
 func ReadFile(path string) (Document, error) {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return Document{}, refuse(path, "no graph artifact here; a plan's graph is written beside it as <plan>%s", ArtifactSuffix)
 		}
 		return Document{}, refuse(path, "the graph artifact could not be read: %v", err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, MaxArtifactBytes+1))
+	if err != nil {
+		return Document{}, refuse(path, "the graph artifact could not be read: %v", err)
+	}
+	if len(data) > MaxArtifactBytes {
+		return Document{}, refuse(path, "the graph artifact is larger than %d bytes, the most this build reads", MaxArtifactBytes)
 	}
 	return Parse(path, data)
 }

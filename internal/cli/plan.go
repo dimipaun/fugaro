@@ -128,9 +128,13 @@ func printPlanGraph(w io.Writer, doc plan.Document, asJSON bool) error {
 			fp = "predicted: none"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			pluginwire.Printable(n.ID), pluginwire.Printable(n.Title),
-			pluginwire.Printable(version), pluginwire.Printable(run),
-			pluginwire.Printable(deps), pluginwire.Printable(fp))
+			planCell(n.ID), planCell(n.Title), planCell(version), planCell(run),
+			planCell(deps), planCell(fp))
 	}
 	return tw.Flush()
 }
+
+// planCell is one cell of the human table: Printable's escaping and length
+// cap, and then no tab — Printable keeps one, and in a tabwriter row a tab
+// from the artifact would open a column of its own.
+func planCell(s string) string { return cellOneLine(pluginwire.Printable(s)) }

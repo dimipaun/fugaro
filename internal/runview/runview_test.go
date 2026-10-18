@@ -2,6 +2,7 @@ package runview
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -647,5 +648,23 @@ func TestJoinCarriesTheRunsChangedFiles(t *testing.T) {
 	}
 	if strings.Contains(string(b), "changed_files") {
 		t.Fatalf("a run that recorded none names the field:\n%s", b)
+	}
+}
+
+// TestJoinReboundsTheRecordedChangedFiles: the row does not pass a record's
+// set through as written — a record carrying more than the bound is cut on
+// read and flagged truncated, so `runs ls --json` never hands the console an
+// unbounded list or a cut one dressed as whole.
+func TestJoinReboundsTheRecordedChangedFiles(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	big := make([]string, 0, 3*runstore.MaxChangedFiles)
+	for i := range 3 * runstore.MaxChangedFiles {
+		big = append(big, fmt.Sprintf("f%04d", i))
+	}
+	r.ChangedFiles = &runstore.ChangedFiles{Paths: big, Total: len(big)}
+	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
+	if row.ChangedFiles == nil || len(row.ChangedFiles.Paths) != runstore.MaxChangedFiles || !row.ChangedFiles.Truncated {
+		t.Fatalf("an oversized record reached the row as %d paths, truncated %v",
+			len(row.ChangedFiles.Paths), row.ChangedFiles.Truncated)
 	}
 }

@@ -35,6 +35,33 @@ type ChangedFiles struct {
 // in the order git gave them (sorted), so two records of the same work are
 // the same record, and the cap falls on the same paths every time.
 func NewChangedFiles(paths []string) *ChangedFiles {
+	return boundChangedFiles(paths)
+}
+
+// Bounded is cf as a reader may show it. The record is an object the job's
+// service account can write, so the set read back is not trusted to be the
+// bounded, honest one NewChangedFiles wrote: it is bounded again (empty paths
+// dropped, the same count and byte caps), Total is never less than the paths
+// it read nor negative, and the set is marked truncated when the record said
+// so or when what is kept is short of Total. nil stays nil: a record with no
+// set is "no record", never an empty set.
+func (cf *ChangedFiles) Bounded() *ChangedFiles {
+	if cf == nil {
+		return nil
+	}
+	kept := make([]string, 0, min(len(cf.Paths), MaxChangedFiles))
+	for _, p := range cf.Paths {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	out := boundChangedFiles(kept)
+	out.Total = max(out.Total, cf.Total)
+	out.Truncated = out.Truncated || cf.Truncated || len(out.Paths) < out.Total
+	return out
+}
+
+func boundChangedFiles(paths []string) *ChangedFiles {
 	cf := &ChangedFiles{Paths: []string{}, Total: len(paths)}
 	var bytes int
 	for _, p := range paths {

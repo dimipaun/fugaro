@@ -126,7 +126,7 @@ func buildConfigList(getenv func(string) string, now time.Time) configListDoc {
 				// the constants the reader uses (SharedFreshFor,
 				// SharedOfflineFor). The human listing says it in words.
 				doc.Warnings = append(doc.Warnings, fmt.Sprintf("%s's shared config was last checked %s ago, over the %s the reader refreshes it within",
-					name, time.Since(e.CheckedAt).Round(time.Second), localcfg.SharedFreshFor))
+					name, now.Sub(e.CheckedAt).Round(time.Second), localcfg.SharedFreshFor))
 			}
 		}
 		doc.Installations = append(doc.Installations, inst)

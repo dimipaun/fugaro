@@ -233,7 +233,9 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 	}
 	if r != nil {
 		row.ProjectLayer, row.ConfigSHA256 = r.ProjectLayer, r.ConfigSHA256
-		row.ChangedFiles = r.ChangedFiles
+		// Bounded again on read: the record is job-writable, so the row
+		// never carries more than the bound or a cut set dressed as whole.
+		row.ChangedFiles = r.ChangedFiles.Bounded()
 		row.Stage = r.Stage
 		if r.Reason != "" {
 			row.Reason = r.Reason
