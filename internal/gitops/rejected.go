@@ -126,23 +126,44 @@ const WorkflowDir = ".github/workflows/"
 // below, which wants the slash, would drop the path anyway.
 const workflowRoot = ".github/workflows"
 
-// The check is the net diff since the merge base, which has two blind
-// spots, both left to GitHub's own refusal: a follow-up that rebases
-// commits from before its start can attribute a person's workflow commit
-// to the run, and a workflow file added and removed within the run passes.
+// The check reads every commit of the range, not the net diff at its ends,
+// so a workflow file an early commit changed and a later one put back still
+// counts. One shape is left to GitHub's own refusal: a workflow change made
+// only in a merge commit's conflict resolution, which merges are skipped
+// for (a merge brings the base branch's own commits with it, and their
+// changes are not the run's).
 //
 // WorkflowFiles lists, sorted, the files under .github/workflows/ that the
-// commits since changed: since...HEAD, the changes on HEAD's side of their
-// merge base. since is the commit the run was cut from — the task's ref as
-// bootstrap read it for a first run, the commit a follow-up started from —
-// so a workflow edit a person made earlier on the branch, or a workflow
-// file the branch already carried, is not this run's. It is what GitHub
-// refuses to take from an App without the `workflows` permission.
+// commits since changed. since is the commit the run was cut from — the
+// task's ref as bootstrap read it for a first run, the commit a follow-up
+// started from — so a workflow edit a person made earlier on the branch, or
+// a workflow file the branch already carried, is not this run's. It is what
+// GitHub refuses to take from an App without the `workflows` permission.
 func (r *Repo) WorkflowFiles(ctx context.Context, since string) ([]string, error) {
-	return r.workflowFilesIn(ctx, since, "HEAD")
+	return r.workflowFiles(ctx, since, "HEAD", "")
 }
 
-// WorkflowFilesIn is WorkflowFiles for the commits since...until, until
+// WorkflowFilesExcept is WorkflowFiles under one more bound: the commits
+// except — the base branch — does not have either. Each bound alone is
+// wrong in a way the other fixes.
+//
+// The commit the run was cut from is the only one that says what the run
+// did: the base branch is another branch whenever the run started from one
+// (--ref console with base_branch main), and measured against main a run
+// cut from console looks like it added every workflow file console already
+// carried, so its push was refused for files it never touched.
+//
+// The base branch is the only one that leaves out its own commits: a base
+// the agent rebased or merged into the branch carries them, and against the
+// commit the run was cut from alone they look like the run's. except is a
+// ref the agent's own git could repoint, so it can only ever make the list
+// shorter; when it cannot be read the list falls back to the since side
+// alone, which reports more rather than nothing.
+func (r *Repo) WorkflowFilesExcept(ctx context.Context, since, except string) ([]string, error) {
+	return r.workflowFiles(ctx, since, "HEAD", except)
+}
+
+// WorkflowFilesIn is WorkflowFiles for the commits since..until, until
 // being any commit rather than HEAD: a checkpoint checks the exact commit
 // it pushes. until must be a full commit SHA and since a full SHA or a
 // plain ref name (see checkRange), so neither can be read as an option or
@@ -151,21 +172,58 @@ func (r *Repo) WorkflowFilesIn(ctx context.Context, since, until string) ([]stri
 	if err := checkRange(since, until); err != nil {
 		return nil, err
 	}
-	return r.workflowFilesIn(ctx, since, until)
+	return r.workflowFiles(ctx, since, until, "")
 }
 
-func (r *Repo) workflowFilesIn(ctx context.Context, since, until string) ([]string, error) {
-	out, err := r.gitRaw(ctx, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--end-of-options", since+"..."+until, "--", workflowRoot)
-	if err != nil {
+// WorkflowFilesInExcept is WorkflowFilesExcept over since..until, until
+// being any commit rather than HEAD: a checkpoint checks the exact commit
+// it pushes, which the agent may have moved HEAD away from since (see
+// WorkflowFilesIn).
+func (r *Repo) WorkflowFilesInExcept(ctx context.Context, since, except, until string) ([]string, error) {
+	if err := checkRange(since, until); err != nil {
 		return nil, err
 	}
+	if err := checkRange(except, until); err != nil {
+		return nil, err
+	}
+	return r.workflowFiles(ctx, since, until, except)
+}
+
+// workflowFiles lists, sorted and without duplicates, the files under
+// .github/workflows/ changed by the commits of since..until that except —
+// when it names a revision — does not have. Merge commits are skipped: a
+// merge of the base branch changes what the base branch changed.
+func (r *Repo) workflowFiles(ctx context.Context, since, until, except string) ([]string, error) {
+	revs := []string{"log", "--format=", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-merges",
+		"--end-of-options", since + ".." + until}
+	if except != "" {
+		revs = append(revs, "^"+except)
+	}
+	revs = append(revs, "--", workflowRoot)
+	out, err := r.gitRaw(ctx, revs...)
+	if err != nil {
+		if except == "" {
+			return nil, err
+		}
+		// The base branch could not be read: report what the run's own base
+		// alone says rather than nothing (the guard fails closed either way,
+		// but this is also what the guard did before it knew about the base
+		// branch's own commits).
+		return r.workflowFiles(ctx, since, until, "")
+	}
+	seen := make(map[string]bool)
 	var files []string
 	for _, f := range strings.Split(string(out), "\x00") {
-		if f == workflowRoot || strings.HasPrefix(f, WorkflowDir) {
+		if f != workflowRoot && !strings.HasPrefix(f, WorkflowDir) {
+			continue
+		}
+		if !seen[f] {
+			seen[f] = true
 			files = append(files, f)
 		}
 	}
-	return files, nil // git lists paths in sorted order
+	slices.Sort(files) // a commit's own files come sorted, the commits do not
+	return files, nil
 }
 
 // MaxBundleBytes caps the bundle of a run's work that is saved.

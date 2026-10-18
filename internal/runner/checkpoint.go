@@ -322,11 +322,9 @@ func (r *run) checkpointClean(ctx context.Context, sha string) bool {
 // does, so a run killed later still says what reached the remote.
 func (r *run) pushCheckpoint(ctx context.Context, sha string) error {
 	r.refreshForPush(ctx)
-	// The range starts at the frozen base commit (or the last pushed one),
-	// wider than finalize's, which starts at origin/<base>. After a rebase
-	// onto a newer base that brought someone else's .github/workflows
-	// change, this guard refuses and checkpoints stop for the run although
-	// the host would accept the push: it fails closed, over-conservatively.
+	// finalize's guard over the range this push adds: the same two bounds
+	// (checkpointSince and the base branch), so a checkpoint is refused
+	// exactly when the push it makes would be.
 	if rej := r.workflowGuardAt(ctx, r.checkpointSince(), sha); rej != nil {
 		return rej // no network call for a push GitHub is sure to refuse
 	}

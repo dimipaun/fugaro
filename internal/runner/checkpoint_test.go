@@ -137,6 +137,38 @@ func TestCheckpointOnARefWithWorkflowFilesPushesItsOwnWork(t *testing.T) {
 	}
 }
 
+// TestCheckpointOnARunThatMergedANewerBase: the base branch gaining a
+// workflow file while the run works is not this run's change, so a
+// checkpoint after the agent merged that base is pushed as any checkpoint
+// is, rather than refused and stopped for the rest of the run.
+func TestCheckpointOnARunThatMergedANewerBase(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	seed := filepath.Join(t.TempDir(), "seed")
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		// The base branch moves on while the run works, as a dependabot
+		// bump merged on main does.
+		testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", g.remote, seed)
+		testutil.WriteFiles(t, seed, map[string]string{".github/workflows/person.yml": "on: push\n"})
+		testutil.Git(t, seed, "add", "-A")
+		testutil.Git(t, seed, "commit", "--quiet", "-m", "a person's CI")
+		testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+		shell(t, req, "git fetch -q origin main && git merge -q --no-edit origin/main")
+		head := commitWIP(t, req, "wip")
+		g.settle()
+		if pushedHead(t, g.harness) != head || remoteTip(t, g.harness) != head {
+			t.Errorf("the checkpoint was refused although the run changed no workflow file")
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := g.run(t, long, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if strings.Contains(g.logs.String(), "no more checkpoint pushes") {
+		t.Fatalf("the checkpoints were stopped:\n%s", g.logs)
+	}
+}
+
 // TestCheckpointIgnoresALocalBaseRefTheAgentMoved: the agent's own git (a
 // fetch of the base branch, or an adversarial update-ref) can move the
 // local origin/<base> tracking ref forward during the stage. Checkpoints

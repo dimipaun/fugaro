@@ -264,6 +264,118 @@ func TestWorkflowFilesSeesTheDirectoryItself(t *testing.T) {
 	}
 }
 
+// A run that merges or rebases a newer base branch into its own branch
+// carries that base's commits. Their workflow changes are the base's, not
+// the run's: against the commit the run was cut from alone they are
+// reported, and the push is refused for work the run never did.
+func TestWorkflowFilesExceptLeavesOutTheBasesOwnChanges(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	start, err := repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The run's own change, before it rebases.
+	testutil.WriteFiles(t, repo.Dir, map[string]string{".github/workflows/ci.yml": "on: pull_request\n"})
+	if _, err := repo.CommitAll(ctx, "the run's CI"); err != nil {
+		t.Fatal(err)
+	}
+	// A person lands a workflow file on main after the run was cut: a
+	// dependabot bump, say, merged while the run was working.
+	seed := filepath.Join(t.TempDir(), "seed")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", remote, seed)
+	testutil.WriteFiles(t, seed, map[string]string{".github/workflows/person.yml": "on: push\n"})
+	testutil.Git(t, seed, "add", "-A")
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "a person's CI")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	// The agent rebases onto it, as a run told to keep up with its base does.
+	testutil.Git(t, repo.Dir, "fetch", "--quiet", "origin", "main")
+	testutil.Git(t, repo.Dir, "rebase", "--quiet", "origin/main")
+	head, err := repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Against the run's own base alone the person's file is blamed on the
+	// run, which is the shape of the merge-only range.
+	mine, err := repo.WorkflowFiles(ctx, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{".github/workflows/ci.yml", ".github/workflows/person.yml"}; !reflect.DeepEqual(mine, want) {
+		t.Fatalf("WorkflowFiles = %v, want %v", mine, want)
+	}
+	// Less what the base branch changed itself, only the run's is left.
+	got, err := repo.WorkflowFilesExcept(ctx, start, "origin/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{".github/workflows/ci.yml"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("WorkflowFilesExcept = %v, want %v", got, want)
+	}
+	// The same over the exact commit a checkpoint would push.
+	in, err := repo.WorkflowFilesInExcept(ctx, start, "origin/main", head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(in, got) {
+		t.Fatalf("WorkflowFilesInExcept = %v, want %v", in, got)
+	}
+	// A base branch that cannot be read falls back to the run's own base
+	// alone — what the guard did before it knew about the base branch's own
+	// commits — so the list is longer rather than empty.
+	files, err := repo.WorkflowFilesExcept(ctx, start, "origin/nope")
+	if err != nil {
+		t.Fatalf("WorkflowFilesExcept with an unknown base ref: %v", err)
+	}
+	if !reflect.DeepEqual(files, mine) {
+		t.Fatalf("WorkflowFilesExcept = %v, want the run's own %v", files, mine)
+	}
+}
+
+// CommitsAhead counts the run's own commits: the base branch's own, merged
+// or rebased in after the run was cut, are not the run's work, so a run
+// that adds nothing still counts none.
+func TestCommitsAheadCountsOnlyTheRunsOwnCommits(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	start, err := repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repo.CommitsAhead(ctx, start, "origin/main"); err != nil || n != 0 {
+		t.Fatalf("CommitsAhead before any commit = %d, %v; want 0", n, err)
+	}
+	if err := repo.CommitEmpty(ctx, "the run's own"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repo.CommitsAhead(ctx, start, "origin/main"); err != nil || n != 1 {
+		t.Fatalf("CommitsAhead = %d, %v; want 1", n, err)
+	}
+	// The base branch moves on and the agent rebases onto it: its commit is
+	// not the run's, so the count is unchanged.
+	seed := filepath.Join(t.TempDir(), "seed")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", remote, seed)
+	testutil.WriteFiles(t, seed, map[string]string{"person.txt": "a person's\n"})
+	testutil.Git(t, seed, "add", "-A")
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "a person's work")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	testutil.Git(t, repo.Dir, "fetch", "--quiet", "origin", "main")
+	testutil.Git(t, repo.Dir, "rebase", "--quiet", "origin/main")
+	if n, err := repo.CommitsAhead(ctx, start, "origin/main"); err != nil || n != 1 {
+		t.Fatalf("CommitsAhead after a rebase = %d, %v; want the run's 1", n, err)
+	}
+	// Without the base branch to subtract there is no way to tell the two
+	// apart, which is why the run itself is measured at bootstrap.
+	if n, err := repo.CommitsAhead(ctx, start, ""); err != nil || n != 2 {
+		t.Fatalf("CommitsAhead without a base = %d, %v; want 2", n, err)
+	}
+}
+
 func TestBundleHoldsOnlyTheRunsCommits(t *testing.T) {
 	repo, _ := setup(t)
 	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {

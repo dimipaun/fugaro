@@ -2139,10 +2139,14 @@ func (r *run) finalize(ctx context.Context) error {
 	if r.follow == nil {
 		// A follow-up's branch is already ahead of its base: when its
 		// agent adds nothing, the report says so rather than an empty
-		// commit.
-		ahead, err := r.repo.AheadOf(ctx, base)
+		// commit. What is counted is the run's own commits — those after
+		// the commit it was cut from that the base branch does not have —
+		// not origin/<base>..HEAD: for a run cut from another ref (--ref
+		// console) every one of that ref's commits is ahead of the base
+		// branch, and "the agent made no commits" could never fire.
+		ahead, err := r.runCommits(ctx)
 		if err != nil {
-			return fmt.Errorf("counting commits ahead of %s: %w", base, err)
+			return fmt.Errorf("counting the run's own commits: %w", err)
 		}
 		if ahead == 0 {
 			r.fail("the agent made no commits")

@@ -145,6 +145,56 @@ func TestRunOnTheBaseBranchIgnoresAPersonsWorkflowFile(t *testing.T) {
 	}
 }
 
+// A base branch that gains a workflow file while the run is working — a
+// dependabot bump merged on main, say — is not this run's work: a run that
+// merges it and changes no workflow file is pushed as any run is. Neither
+// bound alone says this: against the commit the run was cut from the merged
+// base's file looks like the run's, and against the base branch alone the
+// branch the run was cut from looks like it added every workflow file the
+// run never touched.
+func TestRunThatMergesANewerBaseIsNotRefused(t *testing.T) {
+	h := newHarness(t, "", nil)
+	seed := filepath.Join(t.TempDir(), "seed")
+	mergeTheBase := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", h.remote, seed)
+		testutil.WriteFiles(t, seed, map[string]string{".github/workflows/person.yml": "on: push\n"})
+		testutil.Git(t, seed, "add", "-A")
+		testutil.Git(t, seed, "commit", "--quiet", "-m", "a person's CI")
+		testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+		// The run merges it, as one told to keep up with its base does.
+		shell(t, req, "git fetch -q origin main && git merge -q --no-edit origin/main")
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := h.run(t, mergeTheBase, review("ship", 0))
+	if err != nil || rec.Status == runstore.StatusInfraError {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.PushedHead == "" || !remoteHasBranch(t, h) {
+		t.Fatalf("the run's work was not pushed: %+v", rec)
+	}
+	names := testutil.Git(t, h.remote, "ls-tree", "-r", "--name-only", "refs/heads/"+rec.Branch)
+	for _, want := range []string{"feature.txt", ".github/workflows/person.yml"} {
+		if !strings.Contains(names, want) {
+			t.Errorf("the pushed tree lacks %s: %q", want, names)
+		}
+	}
+}
+
+// "The agent made no commits" is about the run's own commits: a run cut
+// from a ref with commits of its own, which the agent adds nothing to, made
+// none — measured against the base branch alone it always looks ahead.
+func TestARunFromARefThatMakesNoCommitsSaysSo(t *testing.T) {
+	h := consoleHarness(t)
+	nothing := func(*testing.T, context.Context, agent.Request) (agent.Result, error) { return agent.Result{}, nil }
+	rec, err := h.run(t, nothing, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeDraft || rec.Reason != "the agent made no commits" {
+		t.Fatalf("record = %+v", rec)
+	}
+}
+
 // The run's own base is the commit its branch was cut from, recorded at
 // bootstrap so the guard's comparison is auditable.
 func TestTheRunRecordsTheCommitItWasCutFrom(t *testing.T) {

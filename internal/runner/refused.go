@@ -46,45 +46,87 @@ func (r *run) workBase() string {
 	if r.startSHA != "" {
 		return r.startSHA
 	}
+	return r.baseRef()
+}
+
+// baseRef is the base branch as the checkout sees it. It is only ever the
+// second half of a comparison — the base branch's own commits, which a run
+// that merged or rebased it in carries but did not make — never the bound
+// that decides what the run changed: it is a ref the agent's own git could
+// repoint, while the run's own side of that comparison is a commit read
+// before the agent ran.
+func (r *run) baseRef() string {
 	return "origin/" + r.cfg.Git.BaseBranch
 }
 
+// runCommits counts the commits the run made itself: those after the commit
+// it was cut from and not on the base branch, whose commits are the base's
+// even when the agent merged or rebased them in. For a first run with no
+// start commit (startErr) the base branch is all there is to measure
+// against, as before.
+func (r *run) runCommits(ctx context.Context) (int, error) {
+	since, except := r.guardBounds()
+	return r.repo.CommitsAhead(ctx, since, except)
+}
+
+// guardBounds are the two revisions the run's own work is read between: the
+// commit the run was cut from (workBase), and the base branch, whose own
+// commits are the base's even when the agent merged or rebased them in.
+// They are the same revision for a start that has no start commit (startErr:
+// workBase falls back to the base branch), and then only one bound is left.
+func (r *run) guardBounds() (since, except string) {
+	since, except = r.workBase(), r.baseRef()
+	if since == except {
+		except = ""
+	}
+	return since, except
+}
+
 // workflowGuard returns the refusal GitHub is certain to give, without the
-// network call: with the github provider, a run whose own commits — those
-// after workBase, the commit it was cut from — change files under
-// .github/workflows/ can't be pushed, because Fugaro's App never has the
-// `workflows` permission (a run able to edit CI could change the merge
-// gates or reach secrets). nil when the push may go ahead, or when git
-// can't tell (the push then decides).
+// network call: with the github provider, a run whose own commits change
+// files under .github/workflows/ can't be pushed, because Fugaro's App
+// never has the `workflows` permission (a run able to edit CI could change
+// the merge gates or reach secrets). What is the run's own is read between
+// both bounds (gitops.WorkflowFilesExcept): the commit it was cut from,
+// which is the base branch only when the run started from it, and the base
+// branch, whose own commits a merged or rebased-in base brought. nil when
+// the push may go ahead, or when git can't tell (the push then decides).
 func (r *run) workflowGuard(ctx context.Context) *gitops.PushRejected {
 	if r.providerKind != gitprov.KindGitHub {
 		return nil
 	}
-	files, err := r.repo.WorkflowFiles(ctx, r.workBase())
-	if err != nil {
-		r.d.Log.Warn("checking the commits for workflow files failed; pushing anyway", "err", r.redact(err.Error()))
-		return nil
-	}
-	if len(files) == 0 {
-		return nil
-	}
-	return &gitops.PushRejected{Kind: gitops.RejectWorkflows, Files: files}
+	since, except := r.guardBounds()
+	files, err := r.repo.WorkflowFilesExcept(ctx, since, except)
+	return r.workflowRefusal(files, err)
 }
 
 // workflowGuardAt is workflowGuard for the exact commit a checkpoint is
 // about to push, over the exact range it is about to add (since..until,
 // since being checkpointSince and until the sha just read): the same
-// GitHub-only guard, never weaker than workflowGuard's. It is kept apart
-// from workflowGuard, rather than sharing one body, because
-// gitops.WorkflowFilesIn (unlike the plain WorkflowFiles finalize and
-// pushBranch still use) requires until to be a full commit SHA, never
-// "HEAD": a checkpoint always has one on hand (the tip it polled), so it
-// passes it directly instead of letting git resolve a moving ref.
+// GitHub-only guard over the same two bounds, so a checkpoint is refused
+// exactly when the push it makes would be. It is kept apart from
+// workflowGuard because gitops.WorkflowFilesInExcept (unlike the plain
+// WorkflowFilesExcept finalize and pushBranch still use) requires until to
+// be a full commit SHA, never "HEAD": a checkpoint always has one on hand
+// (the tip it polled), so it passes it directly instead of letting git
+// resolve a moving ref.
 func (r *run) workflowGuardAt(ctx context.Context, since, until string) *gitops.PushRejected {
 	if r.providerKind != gitprov.KindGitHub {
 		return nil
 	}
+	if _, except := r.guardBounds(); except != "" {
+		files, err := r.repo.WorkflowFilesInExcept(ctx, since, except, until)
+		return r.workflowRefusal(files, err)
+	}
 	files, err := r.repo.WorkflowFilesIn(ctx, since, until)
+	return r.workflowRefusal(files, err)
+}
+
+// workflowRefusal is the refusal files is worth, with err logged. A range
+// that cannot be read is left to the push, which is what the guard always
+// did when git could not tell (the base-branch side of the comparison is
+// only ever a fallback anyway: see gitops.workflowFiles).
+func (r *run) workflowRefusal(files []string, err error) *gitops.PushRejected {
 	if err != nil {
 		r.d.Log.Warn("checking the commits for workflow files failed; pushing anyway", "err", r.redact(err.Error()))
 		return nil
