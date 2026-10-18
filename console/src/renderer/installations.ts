@@ -204,7 +204,9 @@ const PICK_LABELS: Readonly<Record<PickKind, { readonly idle: string; readonly c
  *     that used it returns -- a token is single-use, and a view that kept one
  *     would send a refused one the second time;
  *   - **a sentence is never written here.** Every refusal shown is a string the
- *     main process sent, passed through unchanged;
+ *     main process sent, and it is drawn through `drawn` rather than composed:
+ *     the console does not paraphrase a refusal, and it does not trust one
+ *     either;
  *   - **nothing is drawn with `innerHTML`**: rows are elements whose text is
  *     `rowText`'s output, and the only attributes set are a button's `type`;
  *   - **a submit is handled in the page**, never as a navigation.
