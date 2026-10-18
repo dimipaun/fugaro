@@ -88,7 +88,7 @@ already project-scoped, so the budget the spec wants already covers what the spe
   because the two figures are not the same quantity. **The recorded amount caps no bill**; it decides whether an
   apply happens at all.
 - **Fugaro's own halt.** `fugaro budget kill` / `fugaro budget resume`
-  (`internal/cli/budget.go:1164-1229`; `internal/budget/kill.go:141`) is the closest thing in the tree to a hard
+  (`internal/cli/budget.go:1137-1229`; `internal/budget/kill.go:141`) is the closest thing in the tree to a hard
   stop, and it is the **model this design copies for the parts of a stop that are not the stopping**: it records
   who, when and why; it is confirmed by typing the project's name; it halts runs in flight within seconds and
   refuses new ones; it is one command to undo; and a switch nobody can read counts as **on**
@@ -146,10 +146,13 @@ conditioned to a prefix below it and no credential a run holds has a write path
 credential a managed run holds has any IAM on, and which holds the function, its identity, the topic and the
 subscription, and the record of what it did. One guardian per installation serves every managed project of that
 installation, the way one deployer account serves them all (C8's answer of 2026-10-16). The guardian is the
-**owner's own project**, created and applied by the owner outside Fugaro's managed apply, and it must be
-billable in its own right (a function, a topic and Cloud Run need a billing link of their own) — which is
-legitimate and does not weaken the stop, because unlinking a *managed* project's billing leaves the guardian's
-own link alone.
+**owner's own project**, created and applied by the owner outside Fugaro's managed apply. It does not have to be
+a new project: **any project the managed project's identities hold no IAM on serves**, and the operator's own
+launching installation is the obvious candidate — except `belong`, which Global Constraint 7 puts out of scope
+for every step of this work, so it can never be the guardian. It does have to be **billable in its own right** (a
+Cloud Run service in it needs the project to have a billing link), and that is legitimate rather than
+self-defeating: unlinking a *managed* project's billing leaves the guardian's own link alone, which is exactly
+why the two must not be the same project.
 
 **What it costs, and the alternatives.** A second project, a second thing to deploy and to patch, and — the part
 to weigh — **the guardian is now itself something that can silently stop working**: a guardian that is broken,
@@ -202,7 +205,7 @@ relinks the project's billing account: **refused under each of the six agent mar
 (`internal/cli/initsecrets.go:132`, the refusal `fugaro allow-delete` already carries at
 `internal/cli/allow_delete.go:114`), **confirmed by typing the exact project ID** (`initflow.Typed`), and
 **recorded with who, when and why** — the shape `fugaro budget kill` / `resume` already has
-(`internal/cli/budget.go:1187-1215`). The stop's own credential cannot undo it (§3.4): **the thing that stops
+(`internal/cli/budget.go:1188-1223`). The stop's own credential cannot undo it (§3.4): **the thing that stops
 the money can only ever take the link away**, so no failure or compromise of the enforcement can re-enable
 spending. Recovery also has a **deadline**, if the platform puts an unlinked project's resources at risk (§8
 item 5): this document requires that fact to be read before the implementation, because a stop whose undo has a
