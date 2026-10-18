@@ -2,10 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
+	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -614,8 +620,13 @@ func TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer(t *testing.T
 	if err := rr.writeConfig(); err != nil {
 		t.Fatalf("moving the local config: %v", err)
 	}
-	if err := rr.create(t.Context()); err != nil {
+	var made initCreation
+	if err := rr.create(t.Context(), &made); err != nil {
 		t.Fatalf("the creating path: %v\n%s", err, out.String())
+	}
+	// The creating run's own account, which verifyCreated binds to.
+	if made != (initCreation{Created: newProj, Marked: true}) {
+		t.Errorf("the creating run reported %+v, want it created %s, did not find it there, and wrote its fact", made, newProj)
 	}
 	if strings.Contains(out.String(), "left for you") {
 		t.Errorf("the creating path left a typed step for the user: it was not given the user's terminal\n%s", out.String())
@@ -1094,7 +1105,14 @@ func restoreManagedOld(r *projectRig) {
 // ttyLines is a terminal's stdin as a program sees it: one Read returns at
 // most the one line typed so far, so a buffered reader in one step (the
 // creating path's) cannot take the lines a later step (the anchor's) reads.
-type ttyLines struct{ rest string }
+//
+// afterFirst, when set, runs once the first line (the restore's own typed
+// confirmation) has been handed out: what happens in the cloud while the
+// operator is typing.
+type ttyLines struct {
+	rest       string
+	afterFirst func()
+}
 
 func (r *ttyLines) Read(p []byte) (int, error) {
 	if r.rest == "" {
@@ -1106,13 +1124,24 @@ func (r *ttyLines) Read(p []byte) (int, error) {
 	}
 	n := copy(p, line)
 	r.rest = r.rest[n:]
+	if f := r.afterFirst; f != nil && strings.HasSuffix(line[:n], "\n") {
+		r.afterFirst = nil
+		f()
+	}
 	return n, nil
 }
 
 // restoreStepsWith runs the sequence with stdin as the user's terminal.
 func restoreStepsWith(t *testing.T, r *projectRig, stdin, root string) (string, error) {
 	t.Helper()
-	in := &ttyLines{rest: stdin}
+	return restoreStepsDuring(t, r, stdin, root, nil)
+}
+
+// restoreStepsDuring is restoreStepsWith with afterFirst run while the
+// operator types (see ttyLines).
+func restoreStepsDuring(t *testing.T, r *projectRig, stdin, root string, afterFirst func()) (string, error) {
+	t.Helper()
+	in := &ttyLines{rest: stdin, afterFirst: afterFirst}
 	restoreTestTerminal(t, in)
 	cmd, out := restoreTestCmdIn(in)
 	cmd.SetContext(t.Context())
@@ -1279,13 +1308,25 @@ func TestRestoreACreationThatEndsUnmarkedStopsBeforeTheCheckout(t *testing.T) {
 // fail-closed — a fact about another project (the mismatch infra/managed's
 // own suite refuses) fails the restore here too, and the right one passes.
 func TestRestoreVerifiesTheCreatedProjectIsManaged(t *testing.T) {
+	good := `{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"USD"}}`
+	ours := initCreation{Created: newProj, Marked: true}
 	for name, tc := range map[string]struct {
 		fact string
+		made initCreation
 		ok   bool
 	}{
-		"the new project's own fact": {`{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"USD"}}`, true},
-		"a fact about another":       {`{"version":2,"gcp_project":"someone-else-1","budget":{"amount":7,"currency":"USD"}}`, false},
-		"no fact":                    {"", false},
+		"this run created it and wrote its own fact": {good, ours, true},
+		"a fact about another":                       {`{"version":2,"gcp_project":"someone-else-1","budget":{"amount":7,"currency":"USD"}}`, ours, false},
+		"no fact":                                    {"", ours, false},
+		// The binding: a valid fact in the new project's bucket is not
+		// enough. A planted fact beside a run that adopted the project, that
+		// created nothing, or whose own marker write did not happen (the
+		// create-only write fails on a planted object) must not pass.
+		"a planted fact, the project adopted":      {good, initCreation{Existed: true, Marked: false}, false},
+		"a planted fact, nothing created":          {good, initCreation{}, false},
+		"a planted fact, created but write failed": {good, initCreation{Created: newProj}, false},
+		"a planted fact, another project created":  {good, initCreation{Created: "other-proj-1", Marked: true}, false},
+		"the run says it found the project there":  {good, initCreation{Created: newProj, Existed: true, Marked: true}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r, lc := newRestoreRig(t)
@@ -1297,7 +1338,7 @@ func TestRestoreVerifiesTheCreatedProjectIsManaged(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = (&restoreRun{lc: lc, newID: newProj}).verifyCreated(t.Context(), c)
+			err = (&restoreRun{lc: lc, newID: newProj}).verifyCreated(t.Context(), c, tc.made)
 			if (err == nil) != tc.ok {
 				t.Errorf("verifyCreated = %v, want ok=%v", err, tc.ok)
 			}
@@ -1315,7 +1356,7 @@ func TestRestoreChildPrintsNoRawErrorOrUsage(t *testing.T) {
 	rr := &restoreRun{cmd: cmd, lc: lc, newID: newProj, path: r.cfg,
 		o:      restoreOptions{billingAccount: billingAcc, parent: "not-a-parent"},
 		budget: &managed.Budget{Amount: 7, Currency: "USD"}}
-	if err := rr.create(t.Context()); err == nil {
+	if err := rr.create(t.Context(), &initCreation{}); err == nil {
 		t.Fatalf("an invalid --parent was accepted:\n%s", out)
 	}
 	if strings.Contains(out.String(), "Usage:") || strings.Contains(out.String(), "Error:") {
@@ -1333,5 +1374,312 @@ func TestRestoreGCPProjectLineSanitisesTheCheckoutsValue(t *testing.T) {
 	}
 	if strings.ContainsAny(err.Error(), "\x1b\n") {
 		t.Errorf("the refusal quotes the checkout's value raw: %q", err.Error())
+	}
+}
+
+// ------------------------------------------------------- round 3: the races
+
+// restoreNoChange asserts the installation as it was: the local config and
+// the checkout byte for byte, no apply call, no "is restored".
+func restoreNoChange(t *testing.T, r *projectRig, checkout string, cfg, yaml []byte, calls *[]restoreApplyCall, out string) {
+	t.Helper()
+	if !bytes.Equal(mustRead(t, r.cfg), cfg) {
+		t.Errorf("the project config was not put back:\n%s", mustRead(t, r.cfg))
+	}
+	if !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
+		t.Errorf("the checkout's line moved:\n%s", mustRead(t, filepath.Join(checkout, "fugaro.yaml")))
+	}
+	if len(*calls) != 0 {
+		t.Errorf("the apply was called %d time(s)", len(*calls))
+	}
+	if strings.Contains(out, "is restored") {
+		t.Errorf("the run said it restored:\n%s", out)
+	}
+}
+
+// TestRestoreAProjectThatAppearsDuringTheConfirmationIsNotAdopted is the
+// race the round-2 review probed: refuseExisting saw no project, and the
+// project appears (or becomes readable to the operator: an IAM grant) while
+// the operator types — with a managed-labelled runs bucket and, in one case,
+// a planted creation fact. The creating path refuses it (strictCreate) before
+// it applies anything into it, and the restore reaches no apply.
+func TestRestoreAProjectThatAppearsDuringTheConfirmationIsNotAdopted(t *testing.T) {
+	planted := `{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"USD"}}`
+	for name, fact := range map[string]string{
+		"with a planted fact":                 planted,
+		"no fact (unreadable, then readable)": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, _ := newRestoreRig(t)
+			restoreManagedOld(r)
+			calls := recordRestoreApply(t, r)
+			checkout, root := restoreCheckout(t)
+			cfg, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
+			out, err := restoreStepsDuring(t, r, initProjectName+"\n"+createStdin+"y\n", root, func() {
+				r.existing(true)
+				r.crm.AddProject(newProj, int64(gcpfake.FirstCreatedProjectNumber))
+				r.gcs.AddBucket("fugaro-runs-"+newProj, gcpfake.FirstCreatedProjectNumber, managedBucketLabels)
+				if fact != "" {
+					r.gcs.Put("fugaro-runs-"+newProj, managed.MarkerObject, []byte(fact))
+				}
+			})
+			if err == nil {
+				t.Fatalf("a project that appeared during the confirmation was restored into:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), "already exists") {
+				t.Errorf("the refusal is not the creating path's strict one: %v", err)
+			}
+			if n := len(r.crm.Creates()); n != 0 {
+				t.Errorf("%d creation(s)", n)
+			}
+			if r.gcs.Inserted("fugaro-tfstate-"+newProj) != nil {
+				t.Error("the creating path made a state bucket in the project it should have refused: it adopted it")
+			}
+			restoreNoChange(t, r, checkout, cfg, yaml, calls, out)
+		})
+	}
+}
+
+// TestRestoreClosedGateRefusesBeforeAnything: the gate is asked before the
+// project is selected; a closed one (here injected, with a sentence of its
+// own) refuses with nothing read and nothing created.
+func TestRestoreClosedGateRefusesBeforeAnything(t *testing.T) {
+	noAgentSession(t)
+	r := newInitRig(t)
+	old := restoreGate
+	restoreGate = func() error { return errors.New("the injected gate is closed") }
+	t.Cleanup(func() { restoreGate = old })
+	cfg := mustRead(t, r.cfg)
+	_, _, err := execute(t, "restore", restoreNewProj, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "the injected gate is closed") {
+		t.Fatalf("want the gate's refusal, got %v", err)
+	}
+	if n := len(r.gcs.Requests()) + len(r.crm.Requests()); n != 0 {
+		t.Errorf("a closed gate read the cloud %d time(s)", n)
+	}
+	if len(r.crm.Creates()) != 0 || !bytes.Equal(mustRead(t, r.cfg), cfg) {
+		t.Error("a closed gate created a project or changed the config")
+	}
+}
+
+// TestRestorePreflightRefusesEachBadInputWithoutASideEffect: every input the
+// later steps would need is checked before anything changes, and each bad
+// one is refused with no file written, no project created and no cloud
+// write.
+func TestRestorePreflightRefusesEachBadInputWithoutASideEffect(t *testing.T) {
+	flags := restoreOptions{budget: 9, budgetCurrency: "EUR", billingAccount: billingAcc}
+	for name, tc := range map[string]struct {
+		o      restoreOptions
+		newID  string
+		setup  func(t *testing.T, r *projectRig, checkout string)
+		noTTY  bool
+		reason string
+	}{
+		"a coding agent's session": {o: flags, setup: func(t *testing.T, _ *projectRig, _ string) { t.Setenv(agentMarkers[0], "1") }, reason: "nothing was restored"},
+		"no terminal":              {o: flags, noTTY: true, reason: "terminal"},
+		"not a project ID":         {o: flags, newID: "Not_An_ID", reason: "not a GCP project ID"},
+		"the old ID":               {o: flags, newID: initProject, reason: "was lost"},
+		"a lower-case currency":    {o: restoreOptions{budget: 9, budgetCurrency: "eur", billingAccount: billingAcc}, reason: "currency"},
+		"a currency with escapes":  {o: restoreOptions{budget: 9, budgetCurrency: "US\x1b[2K", billingAccount: billingAcc}, reason: "currency"},
+		"an amount over the cap":   {o: restoreOptions{budget: managed.MaxBudgetAmount + 1, budgetCurrency: "EUR", billingAccount: billingAcc}, reason: "outside"},
+		"a fact with a bad currency": {o: restoreOptions{billingAccount: billingAcc}, setup: func(_ *testing.T, r *projectRig, _ string) {
+			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":2,"gcp_project":"`+initProject+`","budget":{"amount":7,"currency":"usd"}}`))
+		}, reason: "not managed"},
+		"an old project that is not managed": {o: flags, setup: func(_ *testing.T, r *projectRig, _ string) {
+			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{}`))
+		}, reason: "not managed"},
+		"a new project that exists": {o: flags, setup: func(_ *testing.T, r *projectRig, _ string) { r.existing(true) }, reason: "already exists"},
+		"a checkout naming a third project": {o: flags, setup: func(t *testing.T, _ *projectRig, checkout string) {
+			if err := os.WriteFile(filepath.Join(checkout, "fugaro.yaml"), []byte("version: 1\nproject: "+initProjectName+"\ngcp_project: third-proj-1\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, reason: "third-proj-1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, _ := newRestoreRig(t)
+			r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":2,"gcp_project":"`+initProject+`","budget":{"amount":7,"currency":"USD"}}`))
+			checkout, root := restoreCheckout(t)
+			if tc.setup != nil {
+				tc.setup(t, r, checkout)
+			}
+			cfg, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
+			entries, _ := os.ReadDir(filepath.Dir(r.cfg))
+			in := &ttyLines{rest: initProjectName + "\n"}
+			if tc.noTTY {
+				terminal(t, false)
+			} else {
+				restoreTestTerminal(t, in)
+			}
+			cmd, out := restoreTestCmdIn(in)
+			cmd.SetContext(t.Context())
+			id := cmp.Or(tc.newID, newProj)
+			_, _, err := restorePreflight(cmd, restoreOptions{cloud: cloudOptions{config: r.cfg}, budget: tc.o.budget, budgetCurrency: tc.o.budgetCurrency, billingAccount: tc.o.billingAccount}, id, root)
+			if err == nil {
+				t.Fatalf("restorePreflight accepted it:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), tc.reason) {
+				t.Errorf("the refusal does not say %q: %v", tc.reason, err)
+			}
+			if strings.Contains(err.Error(), "\x1b") || strings.Contains(out.String(), "\x1b") {
+				t.Errorf("a terminal escape was printed: %q / %q", err.Error(), out.String())
+			}
+			if !bytes.Equal(mustRead(t, r.cfg), cfg) || !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
+				t.Error("the preflight changed a file")
+			}
+			if after, _ := os.ReadDir(filepath.Dir(r.cfg)); len(after) != len(entries) {
+				t.Errorf("the preflight wrote a file beside the config (%d entries, was %d)", len(after), len(entries))
+			}
+			if len(r.crm.Creates()) != 0 {
+				t.Error("the preflight created a project")
+			}
+			for _, req := range r.gcs.Requests() {
+				if req.Method != http.MethodGet {
+					t.Errorf("the preflight wrote to GCS: %s %s", req.Method, req.Path)
+				}
+			}
+		})
+	}
+}
+
+// TestRestoreConfirmLineIsOneLine is LOW 3: the CONFIRM line carries the
+// budget's currency, which comes from a fact or a flag; it is printed as one
+// line whatever it holds (Budget.Check refuses such a value first, in the
+// preflight).
+func TestRestoreConfirmLineIsOneLine(t *testing.T) {
+	rr := &restoreRun{lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, rootArg: "infra",
+		budget: &managed.Budget{Amount: 7, Currency: "USD\x1b[2K\r\x1b[1A"}}
+	if got := rr.whatToDo(); strings.ContainsAny(got, "\x1b\r\n") {
+		t.Errorf("the confirmation's subject carries the currency raw: %q", got)
+	}
+}
+
+// failingServer answers every request with status.
+func failingServer(t *testing.T, status int) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"error":{"code":` + strconv.Itoa(status) + `,"message":"backend error","status":"UNAVAILABLE"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL + "/"
+}
+
+// TestRestoreAReadWithNoAnswerRefuses is LOW 4: a 5xx is neither "gone" nor
+// "managed" nor "absent", so each read that gets one refuses — the old
+// project's (even with the budget flags, which would otherwise carry an
+// unreadable project) and the new ID's.
+func TestRestoreAReadWithNoAnswerRefuses(t *testing.T) {
+	t.Run("the old project", func(t *testing.T) {
+		r := newInitRig(t)
+		lc, err := localcfg.Load(r.cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lc.Endpoints.ResourceManager = failingServer(t, http.StatusServiceUnavailable)
+		c, err := newInitClients(t.Context(), lc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = (&restoreRun{o: restoreOptions{budget: 9, budgetCurrency: "EUR", billingAccount: billingAcc}, lc: lc, newID: restoreNewProj}).budgetOf(t.Context(), c)
+		if err == nil || !strings.Contains(err.Error(), "did not get an answer") {
+			t.Errorf("a 5xx on the old project was taken as an answer: %v", err)
+		}
+	})
+	t.Run("the new ID", func(t *testing.T) {
+		r := newProjectRig(t)
+		lc, err := localcfg.Load(r.cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lc.Endpoints.ResourceManager = failingServer(t, http.StatusServiceUnavailable)
+		err = (&restoreRun{lc: lc, newID: restoreNewProj}).refuseExisting(t.Context())
+		if err == nil || !strings.Contains(err.Error(), "could not be read") {
+			t.Errorf("a 5xx on the new ID was taken as absent: %v", err)
+		}
+	})
+}
+
+// TestRestoreAFailedAnchorSaysWhatWasLeft is LOW 5: past the verification the
+// config stays moved, and a failure of the checkout's edit says so.
+func TestRestoreAFailedAnchorSaysWhatWasLeft(t *testing.T) {
+	r, _ := newRestoreRig(t)
+	restoreManagedOld(r)
+	calls := recordRestoreApply(t, r)
+	checkout, root := restoreCheckout(t)
+	out, err := restoreStepsDuring(t, r, initProjectName+"\n"+createStdin+"y\n", root, func() {
+		// The checkout's directory goes read-only once the operator has
+		// confirmed: the line's write fails, after the project is made.
+		if err := os.Chmod(checkout, 0o500); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Cleanup(func() { _ = os.Chmod(checkout, 0o700) })
+	if err == nil {
+		t.Fatalf("the restore ran on past a failed write of the checkout:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "was created by this run and is managed") || !strings.Contains(err.Error(), "gcp_project: "+newProj) {
+		t.Errorf("the failure does not say what was left: %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("the apply ran after a failed checkout edit")
+	}
+	if lc, err := localcfg.Load(r.cfg); err != nil || lc.GCPProject != newProj {
+		t.Errorf("past the verification the config must stay on the new project")
+	}
+}
+
+// TestRestoreAPanicPutsTheConfigBack is LOW 6: putBack also runs when the
+// creating path panics, and the panic goes on.
+func TestRestoreAPanicPutsTheConfigBack(t *testing.T) {
+	r, _ := newRestoreRig(t)
+	restoreManagedOld(r)
+	recordRestoreApply(t, r)
+	_, root := restoreCheckout(t)
+	cfg := mustRead(t, r.cfg)
+	old := restoreInitCmd
+	restoreInitCmd = func(*initOptions) *cobra.Command {
+		return &cobra.Command{Use: "init", DisableFlagParsing: true, RunE: func(*cobra.Command, []string) error { panic("the creating path broke") }}
+	}
+	t.Cleanup(func() { restoreInitCmd = old })
+	func() {
+		defer func() {
+			if p := recover(); p == nil {
+				t.Error("the panic did not go on")
+			}
+		}()
+		_, _ = restoreStepsWith(t, r, initProjectName+"\n", root)
+	}()
+	if !bytes.Equal(mustRead(t, r.cfg), cfg) {
+		t.Errorf("a panic left the config moved:\n%s", mustRead(t, r.cfg))
+	}
+}
+
+// TestRestorePutBackThatFailsSaysSo: when the config cannot be written back,
+// the message says so and names the backup.
+func TestRestorePutBackThatFailsSaysSo(t *testing.T) {
+	rr := &restoreRun{lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj,
+		path: filepath.Join(t.TempDir(), "gone", "config.yaml"), old: []byte("x"), backup: "/b/config.yaml.bak"}
+	err := rr.putBack(userErr("the creation failed"))
+	if err == nil || !strings.Contains(err.Error(), "could NOT be put back") || !strings.Contains(err.Error(), "/b/config.yaml.bak") {
+		t.Errorf("want the double failure named with its backup, got %v", err)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want the cause's %d", ExitCode(err), ExitUserError)
+	}
+}
+
+// TestRestoreSeamsAreProductionsFunctions is LOW 7: the variables tests swap
+// are, in production, exactly the functions they stand for.
+func TestRestoreSeamsAreProductionsFunctions(t *testing.T) {
+	for name, pair := range map[string][2]any{
+		"restoreManagedApply": {restoreManagedApply, managedApply},
+		"restoreGate":         {restoreGate, restoreGateClosed},
+		"restoreInitCmd":      {restoreInitCmd, newInitCmdWith},
+	} {
+		if reflect.ValueOf(pair[0]).Pointer() != reflect.ValueOf(pair[1]).Pointer() {
+			t.Errorf("%s is not its production function", name)
+		}
 	}
 }

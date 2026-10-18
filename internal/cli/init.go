@@ -52,6 +52,13 @@ var stdinIsTerminal = func(in io.Reader) bool {
 }
 
 type initOptions struct {
+	// strictCreate and created are fugaro restore's, and nothing else sets
+	// them: no flag reaches either (restore.go builds the child with
+	// newInitCmdWith). strictCreate makes --create-project FAIL on a project
+	// that already exists instead of adopting it; created, when set, is
+	// filled with what this run did, for the caller to check.
+	strictCreate                        bool
+	created                             *initCreation
 	cloud                               cloudOptions
 	schedulerRegion                     string
 	runsBucket, stateBucket             string
@@ -116,8 +123,23 @@ type initOptions struct {
 	checkApp    bool // --check-github-app
 }
 
-func newInitCmd() *cobra.Command {
-	o := &initOptions{}
+func newInitCmd() *cobra.Command { return newInitCmdWith(&initOptions{}) }
+
+// initCreation is what a run of init --create-project did, as the run itself
+// knows it (not inferred from the cloud afterwards): the project it created,
+// whether the project was already there when it was read, and whether this
+// run wrote the creation fact — with managed.WriteMarker's create-only
+// precondition, so a fact someone else put there first is never this run's.
+type initCreation struct {
+	Created string
+	Existed bool
+	Marked  bool
+}
+
+// newInitCmdWith is newInitCmd over options the caller holds: fugaro
+// restore's child sets strictCreate and created on them before the flags are
+// parsed into the same value.
+func newInitCmdWith(o *initOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init [--repo [PATH]]",
 		Short: "Stand up or adopt the installation's, or a repository's, cloud resources through Terraform",
@@ -684,6 +706,12 @@ func runInit(r *initRun) error {
 // (checkCreateProject, managed.Budget.Check).
 func (e *initEngine) markCreated(ctx context.Context) {
 	r := e.r
+	if c := r.o.created; c != nil {
+		// projectExisted is the last read's answer, and the stage reads the
+		// project again after creating it: it was there before this run only
+		// if this run did not create it.
+		c.Created, c.Existed = r.res.Created, r.projectExisted && r.res.Created == ""
+	}
 	// Created is set by the project stage alone, inside its create branch
 	// (projectStage.Apply in init_project.go): "" means this run created no project, whatever
 	// else it did, and then there is no fact to record. This is the gate the
@@ -756,6 +784,9 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	if err != nil {
 		r.warn(fmt.Sprintf("project %s was created but not marked as managed in gs://%s (%v): the marker is written once, by the run that creates the project, so nothing is skipped for it until an owner-run command marks it", r.res.Created, bucket, err))
 		return
+	}
+	if c := r.o.created; c != nil {
+		c.Marked = true
 	}
 	fmt.Fprintf(r.w, "recorded that this run created project %s: it is Fugaro-managed (gs://%s/%s)\n", r.res.Created, bucket, managed.MarkerObject)
 

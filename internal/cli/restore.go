@@ -119,8 +119,11 @@ closed, not yours to read) the restore proceeds only on --budget and
 fact is not a credential and records none.
 
 NEW_PROJECT_ID must not exist: an existing project is refused, never adopted.
-If the creation fails or does not end in a managed project, the local project
-config is put back as it was and the restore can be run again.
+If the creation fails or does not end in a project this run created and
+marked, the local project config file is put back as it was and the restore
+can be run again; what the creation did in the cloud (the project, its
+billing link, its state bucket, the installation's resources, any secrets)
+is not undone, and the message says so.
 
 Every step is money or permanent, so the project's name is typed at a real
 terminal, and there is no --yes, no --non-interactive and no address argument.
@@ -175,9 +178,10 @@ type restoreRun struct {
 }
 
 // runRestore is newRestoreCmd's body. The order is the whole of the design:
-// the refusals first, then the inputs, then the move, then the one
-// confirmation, then the creation, the checkout and the apply — and every
-// refusal before the creation is a hard return.
+// the refusals first, then the inputs (restorePreflight), then the one
+// confirmation, then the move, the creation and its verification, the
+// checkout and the apply — and every refusal before the creation is a hard
+// return.
 func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) error {
 	// A credential leak first, before anything opens the cloud (refuseHTTP2Debug).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
@@ -189,85 +193,138 @@ func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) err
 	if m := agentMarker(os.Getenv); m != "" {
 		return userErr("nothing was restored: %s", initflow.AgentRefusal(m))
 	}
-	// And then the config gate, before the project is selected: in this
-	// release a restore is refused by config, and a refused command must not
-	// read a bucket, create a project or run terraform on its way to the
-	// refusal. The same value is handed to the apply at the end, which
-	// refuses again (managed.Apply's own first step): two checks of one
-	// value, so neither can be left out.
-	if err := managedmode.Shipped().Refuse(); err != nil {
+	// And then the gate, before the project is selected: in this release a
+	// restore is refused, and a refused command must not read a bucket,
+	// create a project or run terraform on its way to the refusal. The apply
+	// at the end refuses on its own gate again (managedApply's first step).
+	if err := restoreGate(); err != nil {
 		return userErr("nothing was restored: %v", err)
 	}
 	return restoreSteps(cmd, o, newID, rootArg)
 }
 
+// restoreGateClosed is the restore's release gate, and the ONLY place in this
+// file that names the closed-gate symbol (managedmode.Shipped). Everything
+// the restore must refuse on its merits is restorePreflight's, which does not
+// reference the gate; so when the managed apply's gate is replaced (Task 4.4
+// removes managedmode.Shipped), this one-line function is the only thing in
+// the restore its author changes or deletes.
+func restoreGateClosed() error { return managedmode.Shipped().Refuse() }
+
+// restoreGate is the gate runRestore asks. It is restoreGateClosed in
+// production; a variable only so a test can drive runRestore with a gate of
+// its own and assert that a closed one refuses before anything is read.
+var restoreGate = restoreGateClosed
+
 // restoreManagedApply is the apply a restore ends in: managedApply, the
-// function `fugaro managed apply` runs, and nothing else. It is a variable
-// only so that a test can record that the sequence below reaches it, exactly
-// once and with the new project's root — the gate above keeps the sequence
-// unreachable through the command tree, so nothing else could pin that.
+// function `fugaro managed apply` runs, and nothing else (a test pins the
+// production value). It is a variable only so that a test can record that
+// the sequence below reaches it, exactly once and with the new project's
+// root — the gate keeps the sequence unreachable through the command tree.
 var restoreManagedApply = managedApply
 
-// restoreSteps is the sequence behind runRestore's refusals: the inputs, the
-// new project's own refusals, the one confirmation, the creation and its
-// verification, the checkout and the apply.
+// restoreInitCmd builds the creating path's command: newInitCmdWith, the
+// constructor `fugaro init` itself uses. A variable only so a test can make
+// the creating path panic and see the config put back.
+var restoreInitCmd = newInitCmdWith
+
+// restorePreflight is every check a restore makes before it changes anything:
+// no file is written, no project created, nothing applied, and the one cloud
+// write it could cause is none — it only reads. It does not reference the
+// release gate (restoreGateClosed), so it stays correct once the gate opens:
+// it is what refuses a restore on its merits.
 //
-// The local config moves before the creation (the creating path installs into
-// it, and init refuses a --gcp-project the selected config does not name), so
-// until the creation is verified — the project exists and this run's creation
-// marked it managed — a failure puts the config back to its original bytes
-// (the deferred putBack) and the checkout's fugaro.yaml has not been touched:
-// a retry finds the installation exactly as it was.
-func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (err error) {
+// In order: the coding agent's refusal and the real terminal every typed step
+// needs; the selection and the project config's file; the fresh ID; the root
+// and its checkout, and the checkout's gcp_project: line, which must be one
+// the restore can move; the old project's managed status and the budget
+// (budgetOf), which must pass managed.Budget.Check whether it came from the
+// flags or from the old fact; the new ID, which must not exist; and the
+// config's move.
+func restorePreflight(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (*restoreRun, *infra.Clients, error) {
 	ctx := cmd.Context()
 	// The coding agent's refusal again, at the head of the sequence itself:
 	// runRestore checks it before the gate, and a caller of this function
 	// that skipped runRestore must not skip it too.
 	if m := agentMarker(os.Getenv); m != "" {
-		return userErr("nothing was restored: %s", initflow.AgentRefusal(m))
+		return nil, nil, userErr("nothing was restored: %s", initflow.AgentRefusal(m))
+	}
+	if !stdinIsTerminal(cmd.InOrStdin()) {
+		return nil, nil, userErr("nothing was restored: %s", initflow.NeedsTerminal("a restore's typed confirmations"))
 	}
 	sel, lc, err := selectProject(ctx, o.cloud)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	for _, w := range lc.Warnings() {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
 	}
 	rr := &restoreRun{cmd: cmd, o: o, sel: sel, lc: lc, newID: newID, rootArg: rootArg}
 	if err := restoreNewProjectID(lc, newID); err != nil {
-		return err
+		return nil, nil, err
 	}
 	if rr.path, err = restoreConfigPath(sel, lc); err != nil {
-		return err
+		return nil, nil, err
 	}
 	if rr.old, err = os.ReadFile(rr.path); err != nil {
-		return userErr("reading the project config %s: %v", rr.path, err)
+		return nil, nil, userErr("reading the project config %s: %v", rr.path, err)
 	}
 	if rr.root, rr.checkout, err = restoreRoot(ctx, lc, rootArg); err != nil {
-		return err
+		return nil, nil, err
+	}
+	// The checkout's line, read now: a line the restore would refuse to move
+	// (a third project, a nested key) is a refusal before the creation, not
+	// a project created for an installation whose checkout then cannot follow.
+	yaml, err := readFugaroYAML(filepath.Join(rr.checkout, "fugaro.yaml"))
+	if err != nil {
+		return nil, nil, userErr("the checkout's fugaro.yaml: %v", err)
+	}
+	if _, _, err := restoreGCPProjectLine(yaml, lc.GCPProject, newID); err != nil {
+		return nil, nil, err
 	}
 	// The amount, and the account: the two things a creation needs and that
-	// the old project's fact does not both answer.
+	// the old project's fact does not both answer — and the old project's
+	// managed status, which budgetOf refuses on.
 	c, err := newInitClients(ctx, lc)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if rr.budget, err = rr.budgetOf(ctx, c); err != nil {
-		return err
+		return nil, nil, err
 	}
-	// The new project must not exist yet: the creating path adopts any
-	// project the caller can read and then writes no creation fact, so a
-	// restore into one would move the installation into a project that is
-	// not managed (and may be someone else's).
+	// The same shape rule the creation and the fact's read apply (Task 4.2),
+	// to the flags' value and the fact's alike, before either is printed.
+	if err := rr.budget.Check(); err != nil {
+		return nil, nil, userErr("nothing was restored: %v", err)
+	}
+	// The new project must not exist yet (and the creating path is told to
+	// refuse one that does by the time it reads it: strictCreate).
 	if err := rr.refuseExisting(ctx); err != nil {
-		return err
+		return nil, nil, err
 	}
 	// What the config's move will be, before the confirmation rather than
-	// after it: the two things it refuses (a runs_bucket that is not the
-	// installation's default, a terraform.state_bucket of the operator's own)
-	// are refusals a typed name does not help with, so the operator is told
-	// them before typing, not after.
+	// after it: restoreConfig's refusals are refusals a typed name does not
+	// help with.
 	if err := rr.planConfig(); err != nil {
+		return nil, nil, err
+	}
+	return rr, c, nil
+}
+
+// restoreSteps is the sequence behind runRestore's refusals: the preflight,
+// the one confirmation, the creation and its verification, the checkout and
+// the apply.
+//
+// The local config moves before the creation (the creating path installs into
+// it, and init refuses a --gcp-project the selected config does not name), so
+// until the creation is verified a failure — an error or a panic — puts the
+// config FILE back to its original bytes (the deferred putBack) and the
+// checkout's fugaro.yaml has not been touched. What the creating path did in
+// the cloud is not undone (putBack's message lists it).
+func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (err error) {
+	ctx := cmd.Context()
+	rr, c, err := restorePreflight(cmd, o, newID, rootArg)
+	if err != nil {
 		return err
 	}
 	// The one confirmation, before anything is changed: the local config, the
@@ -280,21 +337,29 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 	}
 	moved := true
 	defer func() {
-		if moved && err != nil {
+		if !moved {
+			return
+		}
+		if p := recover(); p != nil {
+			_ = rr.putBack(fmt.Errorf("panic: %v", p))
+			panic(p)
+		}
+		if err != nil {
 			err = rr.putBack(err)
 		}
 	}()
-	if err := rr.create(ctx); err != nil {
+	var made initCreation
+	if err := rr.create(ctx, &made); err != nil {
 		return err
 	}
-	if err := rr.verifyCreated(ctx, c); err != nil {
+	if err := rr.verifyCreated(ctx, c, made); err != nil {
 		return err
 	}
-	// The project exists and this run's creation marked it managed: from here
+	// The project exists, this run created it and wrote its fact: from here
 	// the config names a project that is the installation's, and it stays.
 	moved = false
 	if err := rr.anchor(cmd); err != nil {
-		return err
+		return restoreWrap(err, "%s was created by this run and is managed, and the project config names it; the checkout's gcp_project: line did not move, so change it to gcp_project: %s yourself, then run fugaro managed apply %s", rr.newID, rr.newID, rr.rootArg)
 	}
 	// The apply: the same function `fugaro managed apply` runs, so the
 	// preflight allowlist, the gate, the plan-hash re-check, the credential
@@ -311,15 +376,13 @@ func restoreWrap(err error, format string, args ...any) error {
 	return &ExitError{Code: ExitCode(err), Err: fmt.Errorf("%w. %s", err, fmt.Sprintf(format, args...))}
 }
 
-// refuseExisting is the creation's precondition: NEW_PROJECT_ID is not a
-// project the caller can read. `fugaro init --create-project` adopts any
-// project the caller can read, and a run that adopted one writes no creation
-// fact (it warns that --managed was not applied and succeeds), so without this
-// a restore would move the installation into a project nobody marked — a
-// stale one, or someone else's. The read fails closed: an answer that is not
-// "absent" is a refusal. (A project that exists and that the caller cannot
-// read answers the same as an absent one; the creation then fails as taken,
-// before anything is adopted.)
+// refuseExisting is the creation's first precondition: NEW_PROJECT_ID is not
+// a project the caller can read. The read fails closed: an answer that is not
+// "absent" is a refusal. It is not the guard on its own — a project can
+// appear, or become readable, between this read and the creation — so the
+// creating path also refuses one that exists when it reads it (strictCreate),
+// a create of a taken ID fails (409), and verifyCreated requires that the
+// creating run itself created the project and wrote its fact.
 func (rr *restoreRun) refuseExisting(ctx context.Context) error {
 	ep := rr.lc.Endpoints
 	pc, err := infra.NewProjectClients(ctx, infra.ProjectEndpoints{ResourceManager: ep.ResourceManager, Firebase: ep.FirebaseManagement, Billing: ep.CloudBilling}, ep.NoAuth, nil)
@@ -337,12 +400,22 @@ func (rr *restoreRun) refuseExisting(ctx context.Context) error {
 }
 
 // verifyCreated is the creation's postcondition, checked before anything
-// else moves: NEW_PROJECT_ID is managed, by the same fail-closed read every
-// managed command uses. With refuseExisting having seen no such project, a
-// creation fact for it is one this run's creating path wrote. A child init
-// that returned without creating (a declined typed ID, an adopted project, a
-// creation that stopped part way) fails here.
-func (rr *restoreRun) verifyCreated(ctx context.Context, c *infra.Clients) error {
+// else moves, and it is bound to THIS run rather than to whatever is in the
+// cloud: the creating run's own account (made, filled by init's markCreated)
+// must say it created NEW_PROJECT_ID, did not find it already there, and
+// wrote its creation fact — a write managed.WriteMarker makes create-only
+// (ifGenerationMatch=0), so a fact somebody planted first makes that write
+// fail and is never this run's. Only then is the fact read back through the
+// fail-closed read every managed command uses.
+func (rr *restoreRun) verifyCreated(ctx context.Context, c *infra.Clients, made initCreation) error {
+	switch {
+	case made.Existed:
+		return userErr("the creating path found %s already there, so this run did not create it (a restore never adopts a project)", rr.newID)
+	case made.Created != rr.newID:
+		return userErr("the creating path did not create %s (it created %q)", rr.newID, made.Created)
+	case !made.Marked:
+		return userErr("the creating path created %s but did not write its creation fact, so it is not managed", rr.newID)
+	}
 	var s *storage.Service
 	var r *crm.Service
 	if c != nil {
@@ -359,11 +432,11 @@ func (rr *restoreRun) verifyCreated(ctx context.Context, c *infra.Clients) error
 }
 
 // putBack is the rollback of the local config's move, for a run that failed
-// after the move and before the new project was verified: the config gets its
-// original bytes back so `fugaro restore` can simply be run again, and the
-// error says what state the run left.
+// after the move and before the new project was verified: the config FILE
+// gets its original bytes back so `fugaro restore` can be run again, and the
+// error says what state the run left — including what it does not undo.
 func (rr *restoreRun) putBack(cause error) error {
-	left := fmt.Sprintf("the checkout's fugaro.yaml was not touched. If the creation got as far as making %s, that project exists and is not this installation's: a restore never adopts an existing project, so retry with another NEW_PROJECT_ID, and shut %s down (gcloud projects delete %s) if it is yours and unwanted", rr.newID, rr.newID, rr.newID)
+	left := fmt.Sprintf("the checkout's fugaro.yaml was not touched, and the backup %s stays. Nothing the creating path did in the cloud is undone: if it got as far as creating %s, that project stays, with whatever it reached of its billing link, its Terraform state bucket, the installation's resources and any Secret Manager values it stored. A restore never adopts an existing project, so retry with another NEW_PROJECT_ID, and shut %s down (gcloud projects delete %s) if it is yours and unwanted", rr.backup, rr.newID, rr.newID, rr.newID)
 	if werr := writeFileAtomic(rr.path, rr.old); werr != nil {
 		return restoreWrap(cause, "nothing was restored, and the project config %s could NOT be put back (%v): it names %s, so copy its backup %s over it by hand before retrying; %s", rr.path, werr, rr.newID, rr.backup, left)
 	}
@@ -640,7 +713,7 @@ func readConfirmLine(in io.Reader) (string, error) {
 // operator is committing to on a billing account.
 func (rr *restoreRun) whatToDo() string {
 	return fmt.Sprintf("restore %s into the new GCP project %s, with a monthly budget of %d %s, apply the agent-authored root %s from zero, and move this machine's project config and the repository's gcp_project: line to it",
-		rr.lc.Name, rr.newID, rr.budget.Amount, rr.budget.Currency, rr.rootArg)
+		rr.lc.Name, rr.newID, rr.budget.Amount, oneLine(rr.budget.Currency), rr.rootArg)
 }
 
 // whyPermanent is why this step is one initflow.Typed and not one --yes
@@ -769,11 +842,14 @@ func (rr *restoreRun) createArgs() []string {
 // terminal (stdinIsTerminal is a type assertion on an *os.File), and this
 // run's own confirmations read it a byte at a time so that they take one line
 // and leave the rest — see readConfirmLine.
-func (rr *restoreRun) create(ctx context.Context) error {
+func (rr *restoreRun) create(ctx context.Context, made *initCreation) error {
 	cmd := rr.cmd
 	args := rr.createArgs()
 	fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: creating the project through the same path fugaro init --create-project --managed uses: fugaro init %s\n", strings.Join(args, " "))
-	child := newInitCmd()
+	// strictCreate: the child refuses a project that is already there rather
+	// than adopting it; made: the child's own account of what it did, which
+	// verifyCreated checks.
+	child := restoreInitCmd(&initOptions{strictCreate: true, created: made})
 	// The child is run as a root of its own, so cobra would print its error
 	// (raw, past ErrorText's sanitising) and its whole usage before returning
 	// it — and main prints the error again. Both are silenced: the error comes
