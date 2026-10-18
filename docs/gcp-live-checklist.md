@@ -308,6 +308,31 @@ work holds 80–89 carved out of that range** (`docs/mobile/README.md`, owner
 allocation of 2026-10-16): neither is derived from a grep of the free numbers,
 and a reserved number is never reused or renumbered.
 
+**Check 90 to 99 are the credentials service's**
+([`docs/credentials-service/`](credentials-service/README.md) — the spec, the
+reconciliation, and `implementation-plan.md`'s own "Check numbers this plan
+takes (90–99)"), the
+block the owner reserved for that work on 2026-10-17 (D146, D151). **90** (the
+OAuth header swap, on the owner's own machine, no cloud) and **91** (Cloud Run
+streaming through a throwaway service on installation `fugaro`) are written
+below by that plan's Task C0.3, and they are the two the owner runs before any
+product task of that plan starts — the plan's Slice 0 is verification first
+because a swap that does not survive makes its tier A wasted work. **92** (the
+rules deployed) and **94 to 99** (the service deployed, a run through it, GitHub
+tokens, the Batch backend, resume after job death, and the cascade end to end)
+belong to that plan's later tasks and are **reserved here and not written yet**,
+so their absence below is not a gap in the numbering. **93 is reserved and
+unused:** it was the declined in-runner cascade's end-to-end check, its subject
+is gone with the owner's O1 ruling, and a reserved number is never given a new
+subject. **Check 47's subject is gone too, and that number also stays reserved
+and unused** (D130): the OAuth-reviewer-stage plan is superseded by this work,
+so its row and section below are the record of a plan that will not be built and
+nothing runnable points at the number — the same ruling is recorded in that
+plan's own status banner and in the credentials service plan's check table. This
+block collides with no earlier reservation: the rows above stop at 60, 69a and
+69b are the website work's (with 80–89 carved out of the 69-and-up range for the
+mobile work), and 90 is the first number free above every claim recorded here.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -467,6 +492,8 @@ probe account carries predefined grants only).
 | 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled — except its step 7 (the preload image *family*'s rebuild), which needs only the compute root:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, the fail-closed marker, and **the largest `computeResource` a task can ask for on `e2-standard-4` and still leave `QUEUED`** (the built shares are Check 57a's own 2000m/4096MiB submission, a floor known to work rather than a measured maximum — the built-in headroom for the OS, the Batch agent and the Docker daemon is what that step pins), and — step 1 and step 7 — the two UNVERIFIEDs the compute module ships with (whether a run's VM reports to the Batch agent under the module's deny-all ingress rule, and whether the family handover leaves the runs' boot reference serving while the delete of a superseded generation is refused or accepted). | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image (the check's own 57a-3b artefact, `${SA}-preload`; the compute module's preload **family** is the installation's and is never this check's to delete), the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **57a RUN 2026-10-15: see the RESULTS block above; 57b USER-RUN, NOT RUN.** |
 | 58 | Artifact runs (design `artifact-runs.md` §3–§9 and §11; plan `2026-10-15-artifact-runs.md`): a `mode: artifact` recipe rendered on a real image (ffmpeg through `image.apt`, one Cloud Build), three attached PNGs in and a video out, the `render` record and the model-against-compute counters, **no branch pushed and no pull request opened**, the probe's verdict through `commands.probe` beside an independent local `ffprobe`, the recorded content type against the object's own (U5), retrieval with a sha256 match and the upload's wall clock inside `finalize_reserve` — at the set's own size, and in 6b for two files written at exactly `outputs.max_bytes` (U6) — and the failure direction in three halves — a probe that demands an impossible duration and must fail the run with nothing uploaded, a set over `outputs.max_total_bytes` that must refuse with the cap named and the container alive, and a render driven past the job's memory, whose FACT is what was seen (U3) | See "Check 58" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs one hard-coded project guard (`P` hard-coded and never read from `gcloud`, `${VAR:?}` on every argument, the three hard stops, the workflow name checked against the checkout), every launch is guarded per step and records its run id, its commit and the image and base HEAD step 1 found in a per-attempt record file (`/tmp/chk58-records/<batch>.env`), and the Restore reverts only the commits that record holds and that are not already reverted — it refuses to guess at one it does not. | One Cloud Build (the image that carries ffmpeg) and five tiny sandbox runs — two of them carrying the same three attached PNGs (step 2 and 7a; 7b may too), one render-only and therefore at model $0, and one driven past its memory limit. **USER-RUN, NOT RUN.** |
 | 60 | The sealed budget token (design `budget-token-channel.md` §7 and "The check outline"): a sealed run works end to end; the `tokens/` object is ciphertext with no claim readable and nothing is left under `runs/`; where the key is and is not (the job's environment, the execution record — U2 as found — and the RunJob audit entry, recorded by length, never by value); a wrong key, a plaintext object and a sideways copy all refuse; a peer job account cannot delete a queued token; the launchers' widened `runs/`+`tokens/` condition and the job's read-only `tokens/<slug>/` grant read off the live policy | See "Check 60" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only, with Check 43's guard block re-run at every step; Restore puts back the two objects the check overwrote, removes its probe file and scratch dir, and diffs the bucket policy against step 8's. | Three or four tiny sandbox runs and executions. **USER-RUN, NOT RUN.** |
+| 90 | The OAuth header swap, on your own machine ([`docs/credentials-service/`](credentials-service/implementation-plan.md), its Check 90 and D151; settles U1, U2, U3 and U4): Claude Code's subscription traffic reaching Anthropic through a throwaway loopback proxy that strips the incoming `Authorization`/`x-api-key` and attaches your own `claude setup-token` value with a placeholder in the environment — which request headers have to pass through, what a usage or rate limit looks like on the wire, what the client does when the proxy delays, and the token's stated validity | See "Check 90" below; **you** run it at your own terminal, from a scratch directory outside every repository, with your own token in a file **you** create. **No cloud project, no installation, no `fugaro` command and no agent runs anything** | No cost beyond the subscription's own traffic. The header list it records is what the tier-A work is written against, and a swap that fails drops tier A (that plan's Global Constraint 4). **USER-RUN, NOT RUN.** |
+| 91 | Cloud Run streaming through a throwaway service (same plan, its Check 91 and D151; settles U5): request timeout, request-body limit on HTTP/1 versus end-to-end HTTP/2, whether SSE reaches the caller unbuffered through the front end, and the cold start — measured with one long call through `fugaro-chk91`, a service relaying a fake upstream that emits SSE for N minutes | See "Check 91" below; **you** run it, on installation `fugaro` (never `belong`), sandbox only, every step re-running a hard-coded project guard, and **no agent runs any step** | One throwaway Cloud Run service, its image and — only if it did not exist before — its registry repository, all three deleted by the check's own Restore, whose assertion's every line must read `0`. **USER-RUN, NOT RUN.** |
 
 | 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no console download link (`features.console_downloads` is false) and no video player (`features.video` is false) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; and the greps for a download link, a player and an unshipped platform printing nothing. **USER-RUN, NOT RUN.** |
 | 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Firebase Analytics behind the consent banner, so `analytics.enabled` is false until W3.2 and today's pass is that no analytics request appears at all) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
@@ -4221,3 +4248,478 @@ C=$(sed -n 's/^canonical_url: *//p' website/data/site.yaml)
 **Fails when:** any request or any markup URL names a host that is not on the list, or an analytics request appears before consent (or after the banner is declined). What failing looks like: a font or a script someone added from a CDN for one page; a `preconnect` left in a layout; an analytics loader that runs on load instead of after consent — the last is W1.12's rule as well as this check's, so it is a bug in the loader's tests too. **The fix is never "add the host to `allowed_hosts`"**: that list is what the site's build refuses links to, and the CSP in `firebase.json` (`default-src 'self'`, `script-src 'self'`) is what the browser enforces, so a new origin is a decision about the site's privacy page taken by the task that wants it.
 
 **Paste back:** the panel's host list per page; the origins of any request that is not the canonical one; the analytics requests with the banner's state at each of the four points above; the markup's absolute URLs; and the browser and its version (the panel groups requests differently between them). **Never paste a cookie value, or any header that is not an origin.** Until this check runs, the site's runtime behaviour is **UNVERIFIED** — the build's origin lint is not the browser — and the row above stays **NOT RUN**.
+
+## Check 90: the OAuth header swap — a throwaway loopback proxy (your own machine; no cloud, no installation, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by Task C0.3 of [credentials-service/implementation-plan.md](credentials-service/implementation-plan.md) (its Check 90, D151); **no step of it has been run, and nothing here is a claim that it works.** It is the check the credentials service's tier A waits on: if Claude Code's subscription traffic does not survive a proxy that strips the incoming credential and attaches the real one, tier A is wasted work, and that plan's TIER A tasks are dropped before any product task starts (its Global Constraint 4). Its `FACT` lines settle four of [reconciliation.md](credentials-service/reconciliation.md)'s open items — **U1** (does the swap work at all, and which headers must pass through), **U2** (the token's stated validity), **U3** (which status, error type and reset headers carry a usage limit) and **U4** (Claude Code's client timeout and retries) — and the header list it records is what the tier-A forwarding is written against. **No agent runs any step of it**, on either side: you type every command, and you alone hold the token.
+
+**Where it runs, and what it never touches.** On **your own machine**, in a **scratch directory outside every repository** — not a checkout, not a work tree, nothing that can be committed. **No cloud project is named or touched, no Fugaro installation is involved, no `fugaro` command runs, and `belong`, EdgeWeb and EdgeServer appear nowhere in it.** The only credential is **your own** `claude setup-token` value, in a file you create; the program below reads it, attaches it, and never prints, logs or stores it. The environment carries a **placeholder** instead, and the placeholder is what would otherwise leave your machine. **Never paste the token — or any header value — into the register, into a pull request, or into a chat with an agent:** every `FACT` line below records header **names**, statuses and timings, never a value.
+
+### Check 90 step 1: setup and guard
+
+```bash
+# === Check 90: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step: it is idempotent, and nothing below the three hard stops runs. ===
+SCRATCH=${SCRATCH:-$HOME/chk90-scratch}   # OUTSIDE every repository, by construction
+mkdir -p "$SCRATCH" && cd "$SCRATCH" || exit 1
+chmod 700 "$SCRATCH"
+# Hard stop 1: this directory is not inside a git work tree, so nothing written
+# here can be committed by accident.
+git rev-parse --show-toplevel >/dev/null 2>&1 \
+  && { echo "Check 90 stopped: $SCRATCH is inside a git work tree — use a directory outside every repository" >&2; exit 1; }
+# Hard stop 2: the token file is non-empty, yours, and outside a work tree too.
+TOKEN_FILE=${TOKEN_FILE:-$SCRATCH/token}
+[ -s "$TOKEN_FILE" ] || { echo "Check 90 stopped: create $TOKEN_FILE yourself first (step 2)" >&2; exit 1; }
+git -C "$(dirname "$TOKEN_FILE")" rev-parse --show-toplevel >/dev/null 2>&1 \
+  && { echo "Check 90 stopped: the token file is inside a git work tree" >&2; exit 1; }
+chmod 600 "$TOKEN_FILE"
+# Hard stop 3: the client this check measures, recorded by version.
+claude --version || { echo "Check 90 stopped: no claude on PATH" >&2; exit 1; }
+PORT=${PORT:-8787}                        # any free loopback port
+```
+
+**FACT:** `claude --version`; and the token file's length and mode (`wc -c`, `ls -l`) — a length and a mode, never the value.
+
+### Check 90 step 2: the token file — yours, typed by you
+
+`claude setup-token` prints the value once. Put it in `$TOKEN_FILE` **yourself**, from your own terminal, with the value on stdin rather than on a command line: `read -rs` keeps it out of your shell's history and out of `ps`, and the redirection is the only place it is written.
+
+```bash
+read -rs TOKEN && printf '%s' "$TOKEN" > "$TOKEN_FILE" && unset TOKEN
+chmod 600 "$TOKEN_FILE"
+```
+
+**FACT (U2):** what `claude setup-token` said about the token's validity — its stated expiry, or that it has none — **verbatim and without the value**, plus the file's length and mode. That sentence is U2's answer; [reconciliation.md](credentials-service/reconciliation.md)'s U2 row is where it is recorded.
+
+### Check 90 step 3: the proxy, in full
+
+Write this into `$SCRATCH/proxy.py`. It listens on loopback only, deletes the client's `Authorization` and `x-api-key`, attaches the token read from `--token-file`, forwards every other header as it arrived, streams the response back as it arrives, and prints **header names and statuses only** — never a value and never a body. Its `--drop` and `--delay` options are what steps 6 and 8 use.
+
+```python
+#!/usr/bin/env python3
+"""Check 90's proxy. Loopback only.
+
+It does one thing to the request: it deletes the client's Authorization and
+x-api-key and attaches the token read from --token-file. Everything else is
+forwarded as it arrived, the response is streamed back as it arrives, and the
+only thing this program ever prints is header NAMES and statuses -- never a
+header value, never a body.
+"""
+import argparse, http.client, http.server, time
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--port", type=int, default=8787)
+ap.add_argument("--token-file", required=True)
+ap.add_argument("--upstream", default="api.anthropic.com")
+ap.add_argument("--delay", type=float, default=0.0)
+ap.add_argument("--drop", action="append", default=[])
+ap.add_argument("--timeout", type=float, default=3600.0)
+args = ap.parse_args()
+
+TOKEN = open(args.token_file, "rb").read().strip().decode()
+HOP = {"authorization", "x-api-key", "host", "content-length", "connection",
+       "transfer-encoding", "accept-encoding", "expect", "proxy-connection",
+       "keep-alive", "te", "upgrade"}
+DROP = {d.lower() for d in args.drop}
+
+
+def fact(*parts):
+    print("FACT", *parts, flush=True)
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    server_version = "chk90proxy"
+
+    def log_message(self, *a):     # BaseHTTPRequestHandler logs the request line
+        pass                       # and the client's address; we do not.
+
+    def read_body(self):
+        if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
+            out = []
+            while True:
+                n = int(self.rfile.readline().split(b";")[0], 16)
+                if n == 0:
+                    self.rfile.readline()
+                    return b"".join(out)
+                out.append(self.rfile.read(n))
+                self.rfile.readline()
+        n = int(self.headers.get("Content-Length") or 0)
+        return self.rfile.read(n) if n else b""
+
+    def forward(self):
+        body = self.read_body()
+        sent = [n for n in sorted({k.lower() for k in self.headers.keys()})
+                if n not in HOP and n not in DROP]
+        fact("request", self.command, self.path, "headers:",
+             ",".join(sent) or "(none)")
+        if args.delay:
+            fact("delaying", args.delay, "seconds before answering")
+            time.sleep(args.delay)
+        conn = http.client.HTTPSConnection(args.upstream, timeout=args.timeout)
+        try:
+            conn.putrequest(self.command, self.path, skip_host=True,
+                            skip_accept_encoding=True)
+            conn.putheader("Host", args.upstream)
+            conn.putheader("Authorization", "Bearer " + TOKEN)
+            for n in sent:
+                conn.putheader(n, self.headers[n])
+            conn.putheader("Content-Length", str(len(body)))
+            conn.endheaders(body)
+            resp = conn.getresponse()
+        except Exception as e:
+            fact("upstream-error", type(e).__name__)
+            self.send_error(502, "chk90proxy: upstream error")
+            return
+        fact("response", resp.status, resp.reason, "headers:",
+             ",".join(n.lower() for n, _ in resp.getheaders()))
+        self.send_response(resp.status)
+        for n, v in resp.getheaders():
+            if n.lower() in ("content-length", "transfer-encoding",
+                             "connection", "keep-alive"):
+                continue
+            self.send_header(n, v)
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        try:
+            while True:
+                chunk = resp.read1(65536)   # as soon as there is one: SSE
+                if not chunk:
+                    break
+                self.wfile.write(b"%x\r\n" % len(chunk) + chunk + b"\r\n")
+                self.wfile.flush()
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            fact("client-gone", "the client closed before the response ended")
+        conn.close()
+
+    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = forward
+
+
+print("chk90proxy listening on 127.0.0.1:%d, upstream %s" % (args.port, args.upstream),
+      flush=True)
+http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
+```
+
+### Check 90 step 4: the control, then the swap (U1)
+
+The control first — the same call with **no proxy** and the real token in the environment — so that a token which does not work at all is never mistaken for a swap that failed:
+
+```bash
+CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")" claude -p "say ok"
+```
+
+Then the swap. The placeholder below is a literal that is not a credential, it is what Claude Code puts in the `Authorization` header, and the proxy replaces it before anything leaves your machine:
+
+```bash
+python3 "$SCRATCH/proxy.py" --token-file "$TOKEN_FILE" --port "$PORT" > "$SCRATCH/proxy.log" 2>&1 &
+echo $! > "$SCRATCH/proxy.pid"
+sleep 1
+ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" CLAUDE_CODE_OAUTH_TOKEN="placeholder-not-a-credential" \
+  claude -p "say ok"
+```
+
+**FACT:** whether each call succeeded, the exact text either printed, and the header names on the `FACT request` line in `$SCRATCH/proxy.log`. (`ANTHROPIC_API_KEY="placeholder-not-a-credential"` runs the other client path — the API-key one, whose header is `x-api-key` — and is worth recording separately if you want the two side by side; the subscription path, `CLAUDE_CODE_OAUTH_TOKEN`, is the one tier A is built on.)
+
+### Check 90 step 5: a long prompt, streaming through the proxy
+
+```bash
+ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" CLAUDE_CODE_OAUTH_TOKEN="placeholder-not-a-credential" \
+  claude -p "Write the numbers from 1 to 200, one per line, slowly."
+```
+
+**FACT:** whether it completed, roughly how long it took, and whether the text arrived progressively rather than in one burst at the end — a burst is the buffering a proxy in the path must not add.
+
+### Check 90 step 6: dropping each optional header in turn (U1 — the list tier A is written against)
+
+For each name the step-4 log printed, other than `authorization` and `x-api-key` (which the proxy removes by design), restart the proxy with `--drop <name>` and re-run step 4:
+
+```bash
+kill "$(cat "$SCRATCH/proxy.pid")"
+python3 "$SCRATCH/proxy.py" --token-file "$TOKEN_FILE" --port "$PORT" --drop "anthropic-beta" > "$SCRATCH/proxy.log" 2>&1 &
+echo $! > "$SCRATCH/proxy.pid"; sleep 1
+ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" CLAUDE_CODE_OAUTH_TOKEN="placeholder-not-a-credential" claude -p "say ok"
+```
+
+**FACT:** per header name, the call's outcome and — when it failed — the failure, so the recorded list separates the names that **must** pass through from the ones that are optional. **This list is the answer the tier-A header handling is written against**; nothing else in this check is.
+
+### Check 90 step 7: a usage or rate limit, if one can be observed (U3)
+
+Drive enough subscription traffic to meet the account's own limit — or wait for one — and record the response when it comes. **The check passes without one:** if no limit can be observed in the session, record exactly that, and **U3 stays open** with the plan's 15-minute default back-off applying until the cascade's own check meets one.
+
+**FACT (U3):** the HTTP status, the error's own `type` (and from the body only its `type` and `message`), and every reset-carrying header verbatim — for example `retry-after` or an `anthropic-ratelimit-*-reset`. Those headers are what the mark-and-back-off rule has to read; a guess at them is what this step exists to replace.
+
+### Check 90 step 8: the client's timeout and retries (U4)
+
+Restart the proxy with `--delay 90` and re-run step 4, timing it; raise the delay if the first was survived.
+
+```bash
+kill "$(cat "$SCRATCH/proxy.pid")"
+python3 "$SCRATCH/proxy.py" --token-file "$TOKEN_FILE" --port "$PORT" --delay 90 > "$SCRATCH/proxy.log" 2>&1 &
+echo $! > "$SCRATCH/proxy.pid"; sleep 1
+time ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" CLAUDE_CODE_OAUTH_TOKEN="placeholder-not-a-credential" claude -p "say ok"
+```
+
+**FACT (U4):** how long the client waited, whether it retried (the `FACT request` lines count the attempts) or gave up, the wall clock to each outcome, and the exact text of a give-up. This is the measurement the plan's D138 turns on: the wait belongs in the runner, and the service answers a typed "exhausted until T" rather than holding one call open.
+
+### Check 90 step 9: Restore
+
+```bash
+kill "$(cat "$SCRATCH/proxy.pid")" 2>/dev/null
+rm -rf "$SCRATCH"                     # the token file goes with it, unless you keep it
+pgrep -f proxy.py                     # nothing: the proxy is gone
+```
+
+The token file is yours to keep or delete, and revoking a `claude setup-token` value is done from the Claude account's own settings, not here. **Nothing was created in any cloud project, no repository was touched and no `fugaro` installation was involved** — the Restore's assertion is that the scratch directory and the proxy are gone.
+
+**Passes when:** the control and the swapped call both succeed (step 4), the long prompt streams through the proxy (step 5), the header-name list is recorded (step 6), U2's stated validity and U3's answer — or the explicit record that no usage limit was observable — are recorded (steps 2 and 7), U4's timings are recorded (step 8), and the scratch directory and the proxy are gone (step 9).
+
+**Fails when:** the swapped call fails **and the control succeeded**. Separate the two before concluding anything: a 401 whose body says the credential is invalid, or a request the API never saw, is a bug in the little program above and not a finding about subscription traffic. A failure that survives that look is the plan's **Global Constraint 4**: the TIER A tasks are dropped, the service ships with a B-only cascade, and the plan is amended in a docs PR before any further task starts. A token that fails the **control** too says nothing about the swap — record it and stop.
+
+**Paste back:** `claude --version`; the token's stated validity with the file's length and mode; the control's and the swapped call's outcomes and texts; every `FACT request` and `FACT response` line (header **names** and statuses); the per-header drop results; the usage-limit status, error type and reset headers, or the explicit record that none was observable; and the U4 timings with the attempt count. **Never paste the token, a header value, or a body.** Until this check runs, tier A is **UNVERIFIED** and its row above stays **NOT RUN**.
+
+## Check 91: Cloud Run streaming — one long call through a throwaway service (installation `fugaro`, sandbox only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by Task C0.3 of [credentials-service/implementation-plan.md](credentials-service/implementation-plan.md) (its Check 91, D151); **no step of it has been run, and nothing here is a claim that it works.** It settles **U5** and the reconciliation's F31: Cloud Run's request timeout, its request-body limit on HTTP/1 against end-to-end HTTP/2, whether an SSE response reaches the caller unbuffered through the front end, and the cold start — the four numbers the service's forwarding is written against, and the reason the plan calls them owner-run measurements. **No agent runs any step of it**, and **never `belong`**: this check is installation `fugaro` (project `fugaro-dev`, region `us-east5`), sandbox side only.
+
+**What it creates, and what it deletes.** One throwaway Cloud Run **service** (`fugaro-chk91`), its container image, and — only if it did not exist before — the Artifact Registry repository the image lands in. **Nothing else in the project is touched:** not the installation's jobs, its secrets, its bucket or any repository, and no repository checkout is involved at all (the relay is written and built from a scratch directory outside every work tree). The Restore deletes the three things above and ends in an assertion whose every line must read `0`.
+
+### Check 91 step 1: setup and guard
+
+```bash
+# === Check 91: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step: it is idempotent, and nothing below the hard stops runs. ===
+P=fugaro-dev                 # HARD-CODED, never `gcloud config get-value project`
+L=us-east5                   # the installation's region
+[ "$P" = fugaro-dev ] && [ -n "$L" ] \
+  || { echo "Check 91 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L not empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 91 stopped: this is not the fugaro-dev installation" >&2; exit 1; }
+SVC=fugaro-chk91
+# Hard stop 3: the service is not already there. This check deletes what it
+# creates; a service it did not create is not its to adopt or delete.
+gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" >/dev/null 2>&1 \
+  && { echo "Check 91 stopped: ${SVC} already exists in ${P}/${L}, and it is not this check's" >&2; exit 1; }
+# Hard stop 4: the scratch directory is outside every repository (the relay,
+# its Dockerfile and the probe bodies are written there).
+CHK91=${CHK91:-/tmp/chk91}; mkdir -p "$CHK91" && cd "$CHK91" || exit 1
+chmod 700 "$CHK91"
+git rev-parse --show-toplevel >/dev/null 2>&1 \
+  && { echo "Check 91 stopped: $CHK91 is inside a git work tree" >&2; exit 1; }
+IMG=${L}-docker.pkg.dev/${P}/${SVC}/${SVC}:chk91
+```
+
+**Baseline, once, before anything is created** (the Restore reads it, and it is what decides whether the registry repository is this check's to delete):
+
+```bash
+[ -e "$CHK91/repo-existed" ] || { gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null 2>&1 && echo yes || echo no; } > "$CHK91/repo-existed"
+cat "$CHK91/repo-existed"
+```
+
+**FACT:** `fugaro version`, the two `P`/`L` values, and whether the registry repository already existed.
+
+### Check 91 step 2: the relay, in full
+
+Write `$CHK91/relay.py` and `$CHK91/Dockerfile`. The container runs **two listeners**: the fake SSE upstream on loopback, and the relay the caller reaches — so what this measures is Cloud Run's front end and the relay's own streaming, never an external upstream.
+
+```python
+#!/usr/bin/env python3
+"""Check 91's relay. One container, two listeners: a fake SSE upstream on
+loopback and the relay the caller reaches.
+
+  GET  /         -> 200 ok                      (liveness and cold start)
+  GET  /sse      -> SSE for SSE_MINUTES minutes, one event a second
+  POST /echo     -> 200 "read N bytes\n"        (the body-limit probe)
+"""
+import http.client, http.server, os, threading, time
+
+PORT = int(os.environ.get("PORT", "8080"))          # Cloud Run sets PORT
+FAKE = ("127.0.0.1", 8081)                          # the fake upstream, same box
+MINUTES = float(os.environ.get("SSE_MINUTES", "20"))
+
+
+class Fake(http.server.BaseHTTPRequestHandler):     # the fake upstream
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        deadline = time.monotonic() + MINUTES * 60
+        n = 0
+        while time.monotonic() < deadline:
+            n += 1
+            d = ('data: {"n": %d, "t": %.3f}\n\n' % (n, time.time())).encode()
+            self.wfile.write(b"%x\r\n" % len(d) + d + b"\r\n")
+            self.wfile.flush()
+            time.sleep(1)
+        self.wfile.write(b"0\r\n\r\n")
+        self.wfile.flush()
+
+
+class Relay(http.server.BaseHTTPRequestHandler):    # what the caller reaches
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        if not self.path.startswith("/sse"):
+            body = b"ok\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        conn = http.client.HTTPConnection(*FAKE, timeout=3700)
+        conn.request("GET", "/sse")
+        resp = conn.getresponse()
+        self.send_response(resp.status)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("X-Relay", "chk91")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        try:
+            while True:
+                chunk = resp.read1(65536)   # as soon as the fake wrote: SSE
+                if not chunk:
+                    break
+                self.wfile.write(b"%x\r\n" % len(chunk) + chunk + b"\r\n")
+                self.wfile.flush()
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass                               # the front end closed the request
+        conn.close()
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        left = n
+        while left > 0:
+            chunk = self.rfile.read(min(left, 1 << 20))
+            if not chunk:
+                break
+            left -= len(chunk)
+        body = ("read %d bytes\n" % (n - left)).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def serve(handler, host, port):
+    srv = http.server.ThreadingHTTPServer((host, port), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+serve(Fake, FAKE[0], FAKE[1])
+print("chk91 relay on %d, fake upstream on %d, SSE_MINUTES=%g"
+      % (PORT, FAKE[1], MINUTES), flush=True)
+serve(Relay, "0.0.0.0", PORT)      # the public listener, and only this one
+while True:
+    time.sleep(3600)
+```
+
+```dockerfile
+FROM python:3.13-slim
+ENV PYTHONUNBUFFERED=1
+COPY relay.py /relay.py
+CMD ["python3", "/relay.py"]
+```
+
+### Check 91 step 3: build and deploy the throwaway service
+
+```bash
+gcloud builds submit --project="${P:?}" --tag="${IMG:?}" "$CHK91"
+gcloud run deploy "${SVC:?}" --project="${P:?}" --region="${L:?}" --image="${IMG:?}" \
+  --no-allow-unauthenticated --timeout=3600 --min-instances=0 --max-instances=1 \
+  --set-env-vars SSE_MINUTES=20 --quiet
+URL=$(gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" --format='value(status.url)')
+IDT=$(gcloud auth print-identity-token)     # NEVER paste this
+[ -n "$URL" ] && [ -n "$IDT" ] || { echo "Check 91 stopped: no URL or no identity token" >&2; exit 1; }
+```
+
+**FACT:** that the service is `--no-allow-unauthenticated` (an unauthenticated `curl` must be refused), its `--timeout`, its min/max instances, and the image digest Cloud Run reports. **The identity token is never pasted**, only used.
+
+### Check 91 step 4: cold start (U5)
+
+`--min-instances=0` lets the instance go; wait for it to be released, then time the first request and immediately the second.
+
+```bash
+sleep 300                                    # let the instance go
+echo -n "cold: "; curl -sS -o /dev/null -w '%{time_starttransfer}s to first byte, %{time_total}s total\n' -H "Authorization: Bearer ${IDT:?}" "${URL:?}/"
+echo -n "warm: "; curl -sS -o /dev/null -w '%{time_starttransfer}s to first byte, %{time_total}s total\n' -H "Authorization: Bearer ${IDT:?}" "${URL:?}/"
+```
+
+**FACT (U5):** both time-to-first-byte figures and both totals, with the wait you allowed before the first, and the `--min-instances`/`--max-instances` values in force. This is the number the spec's "about a second" is checked against.
+
+### Check 91 step 5: a long stream, and whether it arrives unbuffered (U5)
+
+```bash
+curl -sS -N --max-time 30 -H "Authorization: Bearer ${IDT:?}" "${URL:?}/sse" \
+  | while IFS= read -r line; do [ -n "$line" ] && printf '%s %s\n' "$(date -u +%H:%M:%S)" "$line"; done
+```
+
+**FACT:** the timestamps of the first events — one a second is the pass (the stream is unbuffered through the front end and through the relay), a single burst at the end is the failure — and the `X-Relay` header.
+
+Then the longest stream that completes, raising `SSE_MINUTES` toward the service's own `--timeout=3600`:
+
+```bash
+gcloud run services update "${SVC:?}" --project="${P:?}" --region="${L:?}" --set-env-vars SSE_MINUTES=59 --quiet
+time curl -sS -N -o /dev/null -w '%{http_code} after %{time_total}s\n' -H "Authorization: Bearer ${IDT:?}" "${URL:?}/sse"
+```
+
+**FACT (U5):** the longest stream that completed, and the status and time of the first one that did not — whether the front end cuts at the service's timeout, at a fixed 60-minute cap, or at something else. **This step is the one that costs wall-clock time** (an hour at the top of the range), and it needs the SSE rather than a longer fake: the stream is the request.
+
+### Check 91 step 6: the request-body limit, HTTP/1 against HTTP/2 (U5)
+
+The check believes 32 MiB on HTTP/1 and no limit on end-to-end HTTP/2; this is where that is either confirmed or corrected. `curl` reaches the front end over HTTPS and negotiates HTTP/2 by ALPN; `--http1.1` forces HTTP/1.1 end to end.
+
+```bash
+for n in 1048576 16777216 33554432 67108864 134217728; do
+  head -c "$n" /dev/zero > "$CHK91/body.bin"
+  echo -n "$n bytes, HTTP/1.1: "
+  curl -sS --http1.1 -o /dev/null -w '%{http_code} %{size_upload} uploaded\n' \
+    -H "Authorization: Bearer ${IDT:?}" -X POST --data-binary @"$CHK91/body.bin" "${URL:?}/echo"
+  echo -n "$n bytes, HTTP/2:   "
+  curl -sS -o /dev/null -w '%{http_code} %{size_upload} uploaded\n' \
+    -H "Authorization: Bearer ${IDT:?}" -X POST --data-binary @"$CHK91/body.bin" "${URL:?}/echo"
+done
+rm -f "$CHK91/body.bin"
+```
+
+**FACT (U5):** for each size, the status and the bytes the relay read (its own `read N bytes` body, fetched once with `-o -` rather than `-o /dev/null`, is what proves the whole body arrived and not only the headers), and the exact text of the first refusal on each protocol. `--data-binary @file` sends a `Content-Length`, which is what makes the two comparable; a chunked upload is a different question and this check does not ask it.
+
+### Check 91 step 7: Restore
+
+```bash
+gcloud run services delete "${SVC:?}" --project="${P:?}" --region="${L:?}" --quiet
+gcloud artifacts docker images delete "${IMG:?}" --project="${P:?}" --delete-tags --quiet
+[ "$(cat "$CHK91/repo-existed")" = no ] && \
+  gcloud artifacts repositories delete "${SVC:?}" --project="${P:?}" --location="${L:?}" --quiet
+rm -rf "$CHK91"
+```
+
+Then the assertion, **every line of which must read `0`**:
+
+```bash
+echo -n "services:   "; gcloud run services list --project="${P:?}" --region="${L:?}" --filter="metadata.name=${SVC}" --format='value(metadata.name)' | wc -l
+echo -n "images:     "; gcloud artifacts docker images list "${L}-docker.pkg.dev/${P}/${SVC}" --project="${P:?}" --include-tags --format='value(image)' 2>/dev/null | wc -l
+echo -n "repository: "; [ "$(cat "$CHK91/repo-existed" 2>/dev/null)" = no ] && gcloud artifacts repositories list --project="${P:?}" --location="${L:?}" --filter="name:${SVC}" --format='value(name)' | wc -l || echo "0 (it existed before this check: not this check's to delete)"
+```
+
+**FACT:** the three counts. A line that does not read `0` is the failure: the first two are this check's own service and image, and a survivor of either is the Restore's bug. **The registry repository is deleted only when the baseline said it did not exist** — a repository the project already had is never this check's to remove. One thing this check leaves and does not count: the `gcloud builds submit` source tarball in the project's own Cloud Build bucket, which is that bucket's retention's business and not a resource this check created by name.
+
+**Passes when:** the guard's hard stops held; the relay ran with an image this check built, from a service that refuses unauthenticated calls; the cold and warm time-to-first-byte figures are recorded; the SSE events arrived one a second through the front end rather than in a burst; the longest completed stream and the first refusal are recorded; the largest body accepted on each protocol is recorded with the relay's own byte count; and the Restore's assertion lines all read `0`.
+
+**Fails when:** any of those is not what you saw. A stream that arrives in a burst, or a body that is accepted on HTTP/1 above what the check believed, is a **finding about U5, not a failure of the check** — record it, because the service's forwarding is written against these numbers, and the reconciliation's F31 consequence changes with them (a per-request timeout binds a call and not a review; the size risk is one large request). A non-zero line in the Restore's assertion is a failure of the check itself and stops it: delete what it names by hand before doing anything else.
+
+**Paste back:** `fugaro version` and the service's configuration (timeout, min/max instances, image digest); the cold and warm figures with the wait before the first; the streaming timestamps and the `X-Relay` header; the longest completed stream and the first refusal; the body-limit table with the relay's byte counts; and the Restore's three counts. **Never paste the identity token**, and never a URL's query string if one appears. Until this check runs, U5 is **UNVERIFIED** and its row above stays **NOT RUN**.
