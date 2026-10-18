@@ -28,12 +28,13 @@ func TestDocsDesignDocPinsTheHostOfThePRStateLookup(t *testing.T) {
 	f.writeFinishedResult(t, appSlug, run, "succeeded", "ready", 42, "https://github.com/acme/app/pull/42", 10*time.Minute)
 	calls := fakeWatchGH(t, "echo OPEN\n")
 
-	if _, _, err := execute(t, "watch", "--once", "--plain"); err != nil {
+	plain, _, err := execute(t, "watch", "--once", "--plain")
+	if err != nil {
 		t.Fatal(err)
 	}
 	argv := ghWatchCalls(t, calls)
 	if len(argv) != 1 {
-		t.Fatalf("calls = %v, want one lookup of the ready row", argv)
+		t.Fatalf("calls = %v, want one lookup of the ready row\nframe:\n%s", argv, plain)
 	}
 	repo := repoArgument(t, argv[0])
 	// The property the doc has to carry: the repository gh is asked for is
