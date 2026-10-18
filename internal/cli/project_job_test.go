@@ -573,7 +573,8 @@ func TestProjectJobOAuthAllowedWhenAccountCovered(t *testing.T) {
 	// The same run on a profile that serves neither is refused: an OAuth run
 	// whose own credential is the default account has no credential on a job
 	// that mounts no token (design §4.4 row 9). The end-to-end refusal is
-	// TestLaunchRefusesAnAccountTheProfileDoesNotMount.
+	// TestOAuthLaunchOntoASharedProjectJobIsRefusedBeforeLaunch
+	// (run_oauth_shared_test.go).
 	plain := projectpolicy.Profile{JobProfile: config.JobProfile{Provider: "github"}}
 	if _, err := projectJobAccountFor(p, "standard", plain, "oauth", "", "github", "acme/app"); err == nil || !strings.Contains(err.Error(), "claude-oauth-token") {
 		t.Errorf("an OAuth run on a profile that serves no account: %v", err)

@@ -48,9 +48,10 @@ import (
 // also states in the node which enforcement a reader must have, which is what
 // a version is for. The rules themselves ship in the
 // same release as this constant: an account job's enforcement is plan task 3,
-// and until it lands no OAuth launch reaches such a job at all
-// (checkProjectJobOAuth). The shape is version 2's; only what a runner must
-// enforce changed.
+// and until it lands no OAuth launch reaches such a job at all — what admits
+// one is internal/cli's checkProjectJobAccount, with the runner's own re-check
+// of the same name behind it. The shape is version 2's; only what a runner
+// must enforce changed.
 const Version = 3
 
 // PolicyRulesVersion is the generation of the Realtime Database security rules
