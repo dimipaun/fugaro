@@ -4,12 +4,14 @@ The Expo (React Native) app for the phone. It is **its own artifact**: outside
 the Go module, with its own release path, and it merges without touching the
 CLI (mobile plan D125, Phase 3).
 
-**Status.** Phase 3, task **P3.1** only — the app skeleton and the account
-store ([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)
-line 455). P3.2 (the feed reader), P3.3 (the job list), P3.4 (the audio
-interfaces), P3.5 (the voice screen) and P3.6 (the mailbox client) are not
-here. What exists is the shell, the account model, the two device ports and the
-fences around them.
+**Status.** Phase 3, tasks **P3.1** (the app skeleton and the account store) and
+**P3.2** (the feed reader and the contract's document rules)
+([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)
+line 455). P3.3 (the job list), P3.4 (the audio interfaces), P3.5 (the voice
+screen) and P3.6 (the mailbox client) are not here. What exists is the shell,
+the account model, the two device ports, the fences around them, and the feed:
+the four granted families read directly from the Realtime Database, the
+document they add up to, and the screen's rules over it.
 
 ## Running the tests
 
@@ -39,6 +41,7 @@ module plugged in by `index.js` at the bottom of the tree.
 | `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from. |
+| `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
 | `src/skeleton/` | The trivial module and test that proved the runner runs (P3.1's red step). |
 
@@ -101,6 +104,118 @@ and a prompt per refresh is a prompt the owner switches off.
 * **No `belong`.** The `belong` installation is added by the owner by hand
   (D114, Global Constraint 11); no fixture here is recorded from it, and no
   agent touches it. `app.json` ships with no installation in it at all.
+
+## The feed: four families, and nothing else
+
+D112 was answered **direct Realtime Database reads** on 2026-10-17, and tension
+(a) was resolved with it: the phone reads **database nodes directly**, as
+documents judged by the contract's rules, from **exactly four families**
+(`config/caps/**`, `spend/$day/**`, `config/kill/**`, and the phone's own
+mailbox — `outbox` and `heartbeat`). D124 is kept as the **reader rules and the
+document shapes**, not as the `watch --json` transport: there is no child
+process on a phone, and no iOS or Android build of the Go CLI to be one.
+
+**What the phone therefore cannot show, and does not try to.** `agents/$slug/$run`
+and `outcomes/**` carry no read for a user claim, so **there are no run titles,
+no run rows and no PR link** anywhere in the app. `config/caps/repos` (the
+*parent* of `$slug`) carries no grant either, so the phone **cannot enumerate
+repositories**: the list is the owner's, typed in, exactly as D114's account
+list is. `config/mode` is not granted, so a document this app assembles carries
+`mode: null` rather than a guessed `observe` — on the one setting that decides
+whether a cap is enforced. And the queued and finished rows live in the runs
+bucket, which the phone does not see.
+
+The plan's own added test case is a statement about **requests**, not about
+refusals: *no request is ever made for `agents/**` or `outcomes/**`*. So the
+gate (`paths.js`'s `request`) judges every path **by exact shape** before the
+port is called, and the test proves it the only way a request can be proved
+absent — the fake port records every path it is handed, and the assertion is on
+that record. A reader that asked and handled the refusal would pass a test that
+only checked the refusal, and fails this one.
+
+### The contract's reader rules, and where each one lives
+
+| §10.13 rule | Where |
+| --- | --- |
+| 1. a line that is not JSON is skipped | `document.js`'s `decode` (the phone's analogue of a line is a node's value: a value that is not an object is not a counter, and reads as `unavailable` — never a throw, and never a `0`) |
+| 2. the newest document, never accumulated | `view.js`: one document, replaced on every ingest; there is no arithmetic in the file, so nothing *can* accumulate |
+| 3. silence is not death | `view.js`'s `livenessOf`, from the four inputs the rule names: the phone's clock, the document's `now`, its `connection.state` and its `connection.age_seconds`. The vocabulary (`LIVENESS`) has no word for a dead process |
+| 4. a changed `day` is a break | `view.js`: `broken` is `!measured`, and a broken view's `drawable` is **`null`** — so the zero a rollover document carries (§10.7: "must not draw the zero") cannot be drawn by a screen that forgot to check |
+| 5. a missing field is `unavailable`, never `0` | `availability.js` (the figure) and `document.js` (every number in a document comes out of it as one). Both kinds of the tree's "absent" are honoured: a **cap** is a pointer (`nil` = unset = `unavailable`, never a cap of zero, which would be a project allowed to spend nothing) and a **counter** is `omitempty` (absent = the zero the CLI's own document carries) |
+| 6. `--repo` | not the phone's: its repository list is the owner's, and `len(repos)` is that list |
+| 7. the child's exit | not the phone's: there is no child to end and nothing to loop on |
+| 8. the console's allow-list | the console's |
+| the degraded shape (§10.8) | `document.js` recognises it by its `degraded` key, refuses a document that carries both halves, and `view.js` renders it **as degraded**, never as a zero spend |
+
+### The two choices P3.2 had to make
+
+The resolution of 2026-10-17 left two things to this task, and both are stated
+here because a reviewer has to be able to disagree with them:
+
+1. **The burn rate and the cap fraction are recomputed on the phone** rather
+   than not shown. The alternative would leave the live screen without the two
+   numbers it exists for, and both inputs are inside the grant. What is
+   recomputed is recomputed **exactly as the CLI computes it**, from the same
+   constants and formulas (`internal/watch/build.go`'s `bar`, `internal/watch/state.go`'s
+   `State.Burn` and `burnOf`): a 5-minute window that needs a 60-second span
+   before it says anything, `perMin*60 > daily/8` for `fast`, and `100%` when
+   the cap is zero. A rate with no window is **unknown, not zero** — and so is
+   one whose counter went backwards. A missing input makes the figure
+   `unavailable`, never `0`.
+2. **The repository list is the owner's**, typed in, and never discovered:
+   `config/caps/repos` carries no grant, so the database cannot be asked which
+   repositories exist. The list is bounded (`MAX_PATHS`) because every entry is
+   a listener, and an entry that is not a slug is **refused, not dropped** — a
+   list that quietly lost an entry is a repository the phone would never show.
+
+### The connection the phone reports
+
+The CLI's `State.conn` is "the worst of the four streams". The phone's streams
+are its granted paths, so the same rule applies to them: the **oldest node that
+has delivered** decides, a **refused read outranks** the silence it causes, and
+`polling` is a way to read rather than a fault. `age_seconds` is the CLI's own
+measure, and it is what `view.js` reads as silence. The reasons are **static
+sentences** (`CONNECTION_REASONS`): an error message from the database is not
+something this app puts on a screen, and the reader drops it rather than
+echoing it. Before anything has arrived the state is `offline`/`connecting` —
+the CLI's own word for a stream that has not spoken yet, and not a death.
+
+### The feed's mutations
+
+Each was planted, the run went red, the bug was removed:
+
+| Mutation | Went red |
+| --- | --- |
+| the gate lets a denied family through and the plan asks for `agents/…` | `no request is ever made for a denied family, and the port proves it` |
+| the path bound (`MAX_PATHS`) is not enforced | `the plan is the granted shapes…` |
+| the repository list is not judged | `the plan is the granted shapes…` |
+| the account's uid is not judged | `the plan is the granted shapes…` |
+| `ingest` stores a value for a path that was never asked for | `a value for a path the reader never asked for is refused and not stored` |
+| a listener is subscribed without being registered with the account | `the listener belongs to the account…` |
+| a closed account can subscribe anyway | `…not one socket is opened for a closed account` |
+| the project's cap is read as the repository default | `the granted nodes add up to a document…` |
+| an unset cap becomes a cap of zero | `a missing node is unavailable, never a zero…` |
+| a counter reading is not sampled | `the rate is the phone's own…` |
+| a rollover does not move the reader to the new day | `a changed day is a break…` |
+| the day is measured before its counter has been heard | `a changed day is a break…` |
+| a refused read is not a connection state | `the connection is the worst of the granted paths…` |
+| the kill node is passed through instead of the document's shape | `a kill switch the phone cannot read is a kill switch that is on` |
+| an unreadable counter node reads as zero | `a node that cannot be read is unavailable, and never a zero` |
+| a reader that was never started refreshes anyway | `a reader that was never started refuses to refresh…` |
+| starting does not assemble the first, connecting document | `the connection is the worst of the granted paths…` |
+| `stop` does not stop the listeners | `…stop is final` |
+| starting twice is allowed | `…and stop is final` |
+| the recording ignores the day it is asked for | the door's end-to-end test and `the granted nodes add up to a document…` |
+| the door re-exports a path composer | `the door carries no port and no path composer` |
+
+**Two of those mutations were found by writing the tests, and both were real
+bugs rather than test faults.** The first: the wire document's `kill` carries no
+`on` field (presence *is* the on-ness — `jsonKill` returns nil when the switch is
+off), so passing the tree's node through was an unknown field that made
+`document.js` refuse the **whole document** the moment a kill switch was on. The
+second: an unreadable counter node crashed the assembly — a node holding text
+reached `counters.counted` on a refusal. It reads as `unavailable` now, never as
+`0`, and the rest of the document is untouched.
 
 ## Which files may write a credential
 
@@ -205,3 +320,27 @@ a class rather than as an incident:**
   is a statement about this code, not about a phone. No iOS bundle identifier or
   Android package is committed: those are the owner's, and they differ per
   installation (D125).
+* **The Realtime Database itself (P3.2).** No database client is installed: the
+  reader takes a port — `{ subscribe(path, { onValue, onError }) }` — and every
+  test hands it a fake that records the paths it is asked for. So **no listener
+  has ever been attached to a real project**, no document has ever come off a
+  real tree, and the deployed grant has never been exercised from a phone. That
+  is check **81**'s and check **84**'s job (owner-run), not this suite's.
+* **The tree's real shapes.** `fixtures/nodes.js` is synthetic and written from
+  `internal/budget/model.go`, not recorded from an installation — no fixture
+  here may be recorded from `belong`, or from any live project (Global
+  Constraint 11). A tree whose shape changed would be caught by the CLI's own
+  tests; nothing in this app would notice a field it does not read, which is
+  deliberate (the reader ignores what it does not use) and is exactly why the
+  fixtures carry fields it does not use.
+* **The clock.** Every instant in the feed's tests is injected, so no test has
+  run against a real clock: the day rollover, the burn window and the silence
+  thresholds are all arithmetic over an instant a test chose. Clock **skew** —
+  "clock differs" — is check **84**'s, and `view.js` deliberately floors a
+  negative age at zero rather than deciding what it means.
+* **What the heartbeat means.** The reader reads `mailbox/$uid/heartbeat` and
+  draws **no conclusion** from it: the heartbeat is delivered like any other
+  granted node, and presence — live, stale, offline, and the boot id that says
+  the orchestrator restarted — is check **84** (P4.2)'s rule, which has a real
+  clock and a real database. A heartbeat that is not there is a node that is not
+  there, and this task does not call that "the orchestrator is down".
