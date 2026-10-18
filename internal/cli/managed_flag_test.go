@@ -320,27 +320,62 @@ func TestManagedFlagNeedsTheDefaultRunsBucket(t *testing.T) {
 	}
 }
 
-// TestManagedFlagRefusesAProjectThatAlreadyRecordsOne: the marker is a fact
-// written once. A project that already records one — created by a run, or
-// flagged by an owner before — is refused rather than rewritten, so this
-// command never replaces a record with another one.
-func TestManagedFlagRefusesAProjectThatAlreadyRecordsOne(t *testing.T) {
+// TestManagedFlagReplacesTheCreationFactThatRecordsNoAmount: a project Fugaro
+// created without --managed holds the version-1 creation fact and no amount,
+// and the apply's gate refuses it for exactly that (internal/managed's
+// refusal names this command as the way out). So flagging it replaces that one
+// object — and says so, because "created the marker" and "replaced the fact
+// that recorded no amount" are different things to have done.
+func TestManagedFlagReplacesTheCreationFactThatRecordsNoAmount(t *testing.T) {
 	r := managedFlagRig(t)
 	const existing = `{"version":1,"gcp_project":"proj-1234"}`
 	r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(existing))
 	terminal(t, true)
 	out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
-	if err == nil {
-		t.Fatalf("an already-marked project was flagged again:\n%s", out)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
-	if ExitCode(err) != ExitUserError {
-		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	want := `{"version":2,"gcp_project":"proj-1234","budget":{"amount":50,"currency":"USD"}}`
+	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok || got != want {
+		t.Errorf("gs://%s/%s = %s (present %v), want %s", initRunsBucket, managed.MarkerObject, got, ok, want)
 	}
-	if !strings.Contains(err.Error(), "already there") {
-		t.Errorf("the refusal does not say the object is already there: %v", err)
+	if !strings.Contains(out, "replaced the creation fact") || !strings.Contains(out, "recorded no budget amount") {
+		t.Errorf("the command did not say it replaced the creation fact:\n%s", out)
 	}
-	if got, _ := managedFlagAt(t, r.gcs, initRunsBucket); got != existing {
-		t.Errorf("a refused flag changed the object: %s → %s", existing, got)
+}
+
+// TestManagedFlagRefusesAProjectThatAlreadyRecordsAnAmount: the marker is a
+// fact, and the amount in it is the owner's decision at the time it was taken.
+// A project that already records one — created by a managed run, or flagged
+// before — is refused rather than flagged again: this command adds a budget,
+// it does not edit one. So is every object that is not this project's
+// version-1 fact: a marker about another project, a version this build does
+// not know, and an object that is not a marker at all.
+func TestManagedFlagRefusesAProjectThatAlreadyRecordsAnAmount(t *testing.T) {
+	for name, existing := range map[string]string{
+		"a version-2 marker":                 `{"version":2,"gcp_project":"proj-1234","budget":{"amount":50,"currency":"USD"}}`,
+		"a version this build does not know": `{"version":3,"gcp_project":"proj-1234"}`,
+		"a marker about another project":     `{"version":1,"gcp_project":"another-proj"}`,
+		"an object that is not a marker":     "not json at all",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := managedFlagRig(t)
+			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(existing))
+			terminal(t, true)
+			out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+			if err == nil {
+				t.Fatalf("an object the command may not replace was flagged over:\n%s", out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+			}
+			if !strings.Contains(err.Error(), "already there") {
+				t.Errorf("the refusal does not say the object is already there: %v", err)
+			}
+			if got, _ := managedFlagAt(t, r.gcs, initRunsBucket); got != existing {
+				t.Errorf("a refused flag changed the object: %s → %s", existing, got)
+			}
+		})
 	}
 }
 

@@ -1586,9 +1586,13 @@ marker and run this command; SECURITY.md records the wider Owner/Editor
 bypass. The refusal below is a speed bump against an agent that uses the
 program, not a wall against one that goes around it.
 
-The marker is written once: a project that already records one — created by a
-run, or already flagged — is refused, and this command never rewrites a fact
-it finds.
+A project that already records an amount is refused: the amount is the owner's
+decision at the time it was taken, and this command adds a budget rather than
+editing one. The one object it does replace is a version-1 creation fact —
+what fugaro init --create-project without --managed leaves, and the state the
+managed apply refuses for having no amount recorded. What it replaced is said
+in the output, and the write is conditioned on the object it read, so nothing
+is overwritten blind.
 
 Usage: `fugaro managed flag PROJECT_ID`
 

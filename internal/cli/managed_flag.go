@@ -50,9 +50,20 @@ import (
 //     managed.WriteFlag exactly as Task 0.1 writes the creation fact: into a
 //     bucket proved to be that project's own by its project number and the
 //     installation's label (a bucket name is global, so a mark proves nothing
-//     without them), once, and in the version that carries the budget amount
-//     the owner states. A project whose bucket fails that proof is not
-//     flagged, and the command says so rather than writing anywhere else.
+//     without them), and in the version that carries the budget amount the
+//     owner states. A project whose bucket fails that proof is not flagged,
+//     and the command says so rather than writing anywhere else.
+//   - It writes once, with one exception. A project that already records an
+//     amount is refused — the amount is the owner's decision at the time it
+//     was taken, and this command adds a budget rather than editing one — and
+//     so is any object this build cannot read as this project's marker. The
+//     exception is the one object the apply cannot use and the gate's own
+//     refusal names this command as the way out of: a version-1 creation fact,
+//     which is what every `fugaro init --create-project` without --managed
+//     leaves behind. That fact records no amount, so the project is refused by
+//     every managed apply; the flag replaces it with the version that records
+//     the amount, under a write conditioned on the generation it read, so a
+//     writer that got there first is never clobbered.
 //   - It only ADDS guards, and the risk is in its own output. A flagged
 //     project gains the deterministic gate, the owner-written delete list
 //     (fugaro allow-delete) and the recorded budget — things an ordinary
@@ -122,9 +133,13 @@ marker and run this command; SECURITY.md records the wider Owner/Editor
 bypass. The refusal below is a speed bump against an agent that uses the
 program, not a wall against one that goes around it.
 
-The marker is written once: a project that already records one — created by a
-run, or already flagged — is refused, and this command never rewrites a fact
-it finds.`,
+A project that already records an amount is refused: the amount is the owner's
+decision at the time it was taken, and this command adds a budget rather than
+editing one. The one object it does replace is a version-1 creation fact —
+what fugaro init --create-project without --managed leaves, and the state the
+managed apply refuses for having no amount recorded. What it replaced is said
+in the output, and the write is conditioned on the object it read, so nothing
+is overwritten blind.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return managedFlag(cmd, o, args[0], amount, currency)
@@ -220,14 +235,23 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	fmt.Fprintf(w, "  it gives up: the typed confirmation for this project's applies. From the next apply on, a plan a coding agent's session authored is applied with no human prompt when the deterministic gate admits it (D55), and what stands in the confirmation's place is the gate, the whole-project inventory, the owner's delete list (fugaro allow-delete) and the budget above.\n")
 	fmt.Fprintf(w, "  it adds: nothing is created, no billing call is made, and the amount above is recorded rather than spent.\n")
 	fmt.Fprintf(w, "  it does not protect against: a coding agent's session, which holds these credentials and can write this object directly (SECURITY.md).\n")
+	fmt.Fprintf(w, "  if this project already records whether it is managed: nothing is written unless its marker is the creation fact that records no amount (what `fugaro init --create-project` without --managed leaves), which this replaces with the one above. A marker that already records an amount is refused, and so is any object this build cannot read as this project's.\n")
 	if err := confirmTypedGCPProject(cmd, lc.GCPProject); err != nil {
 		return err
 	}
-	if err := managed.WriteFlag(ctx, c.Storage, bucket, lc.GCPProject, number, budget); err != nil {
+	replaced, err := managed.WriteFlag(ctx, c.Storage, bucket, lc.GCPProject, number, budget)
+	if err != nil {
 		return managedFlagErr(lc, bucket, err)
 	}
-	fmt.Fprintf(w, "wrote gs://%s/%s: %s is a managed project, and its applies no longer stop for the typed confirmation; the gate, the owner's delete list and the recorded budget %d %s are what replace it\n",
-		bucket, managed.MarkerObject, lc.Name, amount, safetext.Field(currency))
+	// What happened is said, and the two are different things: this project
+	// had no marker, or it had the version-1 creation fact and now records an
+	// amount.
+	wrote := fmt.Sprintf("wrote gs://%s/%s: %s is a managed project", bucket, managed.MarkerObject, lc.Name)
+	if replaced {
+		wrote = fmt.Sprintf("replaced the creation fact in gs://%s/%s: %s recorded no budget amount and now records %d %s", bucket, managed.MarkerObject, lc.Name, amount, safetext.Field(currency))
+	}
+	fmt.Fprintf(w, "%s, and its applies no longer stop for the typed confirmation; the gate, the owner's delete list and the recorded budget %d %s are what replace it\n",
+		wrote, amount, safetext.Field(currency))
 	fmt.Fprintf(w, "undo: there is no command that removes the marker in this release — delete gs://%s/%s yourself as the operator to make the project unmanaged again\n", bucket, managed.MarkerObject)
 	return nil
 }
@@ -263,8 +287,8 @@ func confirmTypedGCPProject(cmd *cobra.Command, gcpProject string) error {
 func managedFlagErr(lc *localcfg.Config, bucket string, err error) error {
 	switch {
 	case errors.Is(err, managed.ErrAlreadyMarked):
-		return userErr("nothing was written for %s: gs://%s/%s is already there, so this project already records whether it is managed — a run that created it wrote it, or an owner flagged it before. This command records the fact once and never rewrites one. To read what is recorded there, use `gcloud storage cat gs://%s/%s` as the operator",
-			lc.Name, bucket, managed.MarkerObject, bucket, managed.MarkerObject)
+		return userErr("nothing was written for %s: gs://%s/%s is already there and is not the creation fact this command adds a budget to, so %s already records whether it is managed — a run that created it wrote the fact, or an owner flagged it before. This command replaces only a version-1 creation fact, which records no amount; a marker that records one is the owner's decision, not a value to edit. To read what is there, use `gcloud storage cat gs://%s/%s` as the operator",
+			lc.Name, bucket, managed.MarkerObject, lc.Name, bucket, managed.MarkerObject)
 	case errors.Is(err, managed.ErrRefused):
 		return userErr("nothing was written for %s: the marker goes into the project's own runs bucket, at gs://%s/%s, and that bucket is not %s's: check gcp_project and runs_bucket in the project config, or run fugaro project check: %s",
 			lc.Name, bucket, managed.MarkerObject, lc.GCPProject, safetext.Field(err.Error()))

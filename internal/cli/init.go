@@ -106,9 +106,9 @@ type initOptions struct {
 	// so a later run and a restore can read what was chosen
 	// (internal/infra/managed, MarkerVersionBudget). It goes with
 	// --create-project and nothing else — a project that already exists is
-	// not flaggable as managed in this release (D58; Task 6.1, unscheduled) —
-	// and it removes no confirmation: a managed creation is a creation with
-	// more guards, not fewer.
+	// made managed by the owner's own command instead, `fugaro managed flag`
+	// (D58; Task 6.1), never by init — and it removes no confirmation: a
+	// managed creation is a creation with more guards, not fewer.
 	managed bool
 
 	// name is the project's name, for a project config fugaro init
