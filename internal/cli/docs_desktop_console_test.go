@@ -23,8 +23,10 @@ package cli
 // record that the owner's answers of 2026-10-16 do not reach this document.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -40,6 +42,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/watch"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -3048,4 +3051,530 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	if strings.Contains(entry, "proposed") {
 		t.Errorf("the file tree still calls src/renderer/entry.ts proposed: %q", entry)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 4.6: the release gate requires the console check.
+//
+// scripts/release-gate.sh requires the checks in its `names` list on the tag's
+// commit and, in its identical_tree_checks fallback, on the pull request head
+// whose tree matches. Task 4.6 adds the console to that list -- and the console
+// job is a **matrix**: .github/workflows/console-tests.yml runs one job keyed
+// `console` on two operating systems, and GitHub names each leg's check run
+// "<job> (<values>)", so what the checks API reports is
+// `console (ubuntu-latest)` and `console (macos-latest)`. A bare `console` is
+// reported by nothing: check_state matches check runs by exact name, so
+// requiring it would make the gate see a check it can never find, and a
+// missing check is not a success -- the gate would refuse **every** tag in this
+// repository, the CLI-only releases included. That is the failure this task's
+// correction (owner, 2026-10-18) exists to prevent, and the one the plan's own
+// wording -- "Add `console` to that list" -- would have caused.
+//
+// So the gate requires both legs, and this test **derives** them from the
+// workflow rather than repeating them: rename the job, add a matrix key or add
+// an operating system, and the gate's list has to move with it or this fails.
+// The two names carry a space, which the old whitespace-split `names` string
+// cannot hold -- so `names` is an array, and the array-shaped loops are pinned
+// here too, because reverting one of them to `$names` would silently look for
+// a check named `console` and one named `(ubuntu-latest)`.
+//
+// The behaviour is exercised, not just read: a fake gh answers the gate's three
+// API calls and runs the gate's own `--jq` expression through a real jq, so the
+// name match, the app filter and the status/conclusion rules are all the
+// script's, and a green run of a required name from another app is refused for
+// the reason the script gives it, not because the fake knew to say so.
+// ---------------------------------------------------------------------------
+
+const releaseGatePath = "scripts/release-gate.sh"
+
+// readReleaseGate returns the script's text, the required-check names its
+// `names=(...)` array holds, and the names listed by the block of `#   ` lines
+// directly above that array -- the comment's own copy of the list, which the
+// script's comment asks a reader to keep in step with it.
+func readReleaseGate(t *testing.T) (string, []string, []string) {
+	t.Helper()
+	script := readDoc(t, releaseGatePath)
+	lines := strings.Split(script, "\n")
+	quoted := regexp.MustCompile(`"([^"]*)"`)
+	listed := regexp.MustCompile(`^#   (.*\S)[ \t]*$`)
+	var required, commented []string
+	found := false
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "names=(") {
+			continue
+		}
+		if found {
+			t.Fatalf("%s has more than one names=(...) line: the required set has to be one list", releaseGatePath)
+		}
+		found = true
+		if !strings.HasSuffix(line, ")") {
+			t.Fatalf("%s's names= line is not one array literal on one line, which is the form this test reads: %q", releaseGatePath, line)
+		}
+		for _, m := range quoted.FindAllStringSubmatch(line, -1) {
+			required = append(required, m[1])
+		}
+		for j := i - 1; j >= 0; j-- {
+			m := listed.FindStringSubmatch(lines[j])
+			if m == nil {
+				break
+			}
+			commented = append([]string{m[1]}, commented...)
+		}
+	}
+	if !found {
+		t.Fatalf("%s has no names=(...) array: the gate's required-check set must be a list this task's test can read", releaseGatePath)
+	}
+	if len(required) == 0 {
+		t.Fatalf("%s's names=(...) array is empty: a gate that requires nothing passes every tag", releaseGatePath)
+	}
+	if len(commented) == 0 {
+		t.Fatalf("%s lists no checks in the `#   ` comment block directly above names=(...): the prose copy of the list is how the two are held together", releaseGatePath)
+	}
+	return script, required, commented
+}
+
+// consoleGateCheckNames derives, from the **applied** console workflow, the
+// check-run names its job produces: the job's displayed name (falling back to
+// its key, as GitHub does) and one name per matrix leg, "<job> (<values>)"
+// with the values joined by ", ". The matrix keys are read in sorted order --
+// the current workflow has one, and this is the one place to revisit if a
+// second key is ever added, since GitHub joins the values in the order the keys
+// are written.
+func consoleGateCheckNames(t *testing.T) []string {
+	t.Helper()
+	text := readDoc(t, appliedConsoleTestsPath)
+	var wf struct {
+		Jobs map[string]struct {
+			Name     string `yaml:"name"`
+			Strategy struct {
+				Matrix map[string][]string `yaml:"matrix"`
+			} `yaml:"strategy"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", appliedConsoleTestsPath, err)
+	}
+	if len(wf.Jobs) != 1 {
+		var keys []string
+		for k := range wf.Jobs {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		t.Fatalf("%s has jobs %v: the release gate requires the checks of the console's tests, and this test cannot tell which of several jobs that is", appliedConsoleTestsPath, keys)
+	}
+	var key string
+	for k := range wf.Jobs {
+		key = k
+	}
+	job := wf.Jobs[key]
+	display := job.Name
+	if display == "" {
+		display = key
+	}
+	var keys []string
+	for k := range job.Strategy.Matrix {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	if len(keys) == 0 || len(job.Strategy.Matrix[keys[0]]) == 0 {
+		t.Fatalf("%s's %s job has no matrix values (%v): without them it reports one check run named %q, which is not the shape scripts/release-gate.sh requires", appliedConsoleTestsPath, key, job.Strategy.Matrix, display)
+	}
+	legs := [][]string{{}}
+	for _, k := range keys {
+		var next [][]string
+		for _, leg := range legs {
+			for _, v := range job.Strategy.Matrix[k] {
+				next = append(next, append(slices.Clone(leg), v))
+			}
+		}
+		legs = next
+	}
+	names := make([]string, 0, len(legs))
+	for _, leg := range legs {
+		names = append(names, display+" ("+strings.Join(leg, ", ")+")")
+	}
+	slices.Sort(names)
+	return names
+}
+
+// TestReleaseGateRequiresTheConsoleCheck holds scripts/release-gate.sh to the
+// console checks .github/workflows/console-tests.yml reports, and proves the
+// gate's verdict follows them: it passes only when every required check is
+// green on the tagged commit, and refuses when a console leg is missing,
+// pending, failed, cancelled or green only from some other app. The mutations
+// to try first are the ones this task exists to prevent: write the bare
+// `console` into the list (every tag is then refused), drop one leg, and revert
+// a loop to `for name in $names`.
+func TestReleaseGateRequiresTheConsoleCheck(t *testing.T) {
+	script, required, commented := readReleaseGate(t)
+	consoleNames := consoleGateCheckNames(t)
+
+	// The full set, exactly: the three CLI checks the gate required before this
+	// task, and both console legs, and nothing else. The workflow is the source
+	// of the console names, so a renamed job or an added platform fails here
+	// rather than at a release tag.
+	want := append([]string{"test", "terraform", "rules"}, consoleNames...)
+	slices.Sort(want)
+	got := slices.Clone(required)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s requires the checks %v, want %v (the console names derived from %s): a name no workflow reports is a check the gate can never find, and a missing check is not a success", releaseGatePath, got, want, appliedConsoleTestsPath)
+	}
+	for _, name := range consoleNames {
+		if !slices.Contains(required, name) {
+			t.Errorf("%s does not require %q, which %s's matrix reports on every commit: a console failure would not stop a tag (Task 4.6)", releaseGatePath, name, appliedConsoleTestsPath)
+		}
+	}
+	if slices.Contains(required, "console") {
+		t.Errorf("%s requires the bare name %q, which no workflow reports: the console job is a matrix, so its check runs are %v, and requiring a name that cannot exist refuses every tag in this repository", releaseGatePath, "console", consoleNames)
+	}
+
+	// Prose and variable: the comment above the array lists the same set, so the
+	// two cannot drift and a reader of the script sees what it requires.
+	commentedSorted := slices.Clone(commented)
+	slices.Sort(commentedSorted)
+	if !slices.Equal(commentedSorted, got) {
+		t.Errorf("%s's names array is %v but the comment above it lists %v: they have to name the same set", releaseGatePath, got, commentedSorted)
+	}
+
+	// The array is read as an array. A whitespace-split loop turns
+	// `console (ubuntu-latest)` into `console` and `(ubuntu-latest)`, two checks
+	// that no workflow reports.
+	if strings.Contains(script, "for name in $names") {
+		t.Errorf("%s still iterates `for name in $names`: word splitting takes a console leg apart, so the gate would require a check named `console` that no workflow reports", releaseGatePath)
+	}
+	if n := strings.Count(script, `for name in "${names[@]}"`); n != 2 {
+		t.Errorf("%s has %d loops over \"${names[@]}\", want 2 (the target's own checks and identical_tree_checks'): every loop over the required set has to keep a name with a space in it whole", releaseGatePath, n)
+	}
+	if strings.Contains(script, `pending="$name`) {
+		t.Errorf("%s still packs the first pending check into one \"$name $state\" string: a console leg's name carries a space, so the message would print it split at the wrong one", releaseGatePath)
+	}
+
+	if len(consoleNames) != 2 {
+		t.Fatalf("%s's console job reports %v: this test's cases are written for two legs, and a third platform must be a deliberate edit here", appliedConsoleTestsPath, consoleNames)
+	}
+	// The two legs, by position in the derived (sorted) set; only one of them is
+	// ever non-green in a case below, so position does not decide an
+	// expectation -- the gate reports the check that is actually missing.
+	legA, legB := consoleNames[0], consoleNames[1]
+	// The first console name the script requires: when neither leg is green,
+	// that is the one its message names, since it walks the array in order.
+	firstConsoleLeg := ""
+	for _, name := range required {
+		if slices.Contains(consoleNames, name) {
+			firstConsoleLeg = name
+			break
+		}
+	}
+	if firstConsoleLeg == "" {
+		t.Fatalf("%s requires none of the console legs %v: the set assertion above has already failed, and this is the check it failed on", releaseGatePath, consoleNames)
+	}
+
+	// requiredChecks is the five checks of a fully green commit, with one entry
+	// replaced or removed for a case.
+	requiredChecks := func(replace string, app, state string, drop bool) []string {
+		var out []string
+		for _, name := range append([]string{"test", "terraform", "rules"}, consoleNames...) {
+			switch {
+			case name == replace && drop:
+			case name == replace:
+				out = append(out, gateCheckRun(name, app, state))
+			default:
+				out = append(out, gateCheckRun(name, "github-actions", "success"))
+			}
+		}
+		return out
+	}
+
+	t.Run("every required check green is a pass", func(t *testing.T) {
+		h := newGateHarness(t)
+		h.setTargetChecks(t, requiredChecks("", "", "", false))
+		ok, out := h.run(t)
+		if !ok {
+			t.Fatalf("the gate refused a commit whose every required check is green:\n%s", out)
+		}
+		if !strings.Contains(out, "gate passed for v1.2.3") {
+			t.Errorf("the gate passed without saying so:\n%s", out)
+		}
+	})
+
+	for _, c := range []struct {
+		name  string
+		app   string
+		state string
+		drop  bool
+	}{
+		{"the first console leg is missing", "", "", true},
+		{"the first console leg is still running", "github-actions", "pending", false},
+		{"the first console leg failed", "github-actions", "failed", false},
+		{"the first console leg was cancelled", "github-actions", "cancelled", false},
+		{"the second console leg is missing", "", "", true},
+		{"the second console leg is still running", "github-actions", "pending", false},
+		{"the second console leg failed", "github-actions", "failed", false},
+		{"the second console leg was cancelled", "github-actions", "cancelled", false},
+		{"a console leg is green, but from another app", "some-other-app", "success", false},
+	} {
+		t.Run(c.name+" is refused", func(t *testing.T) {
+			leg := legA
+			if strings.Contains(c.name, "second") || strings.Contains(c.name, "another app") {
+				leg = legB
+			}
+			// What the gate's own rules make of the case: a run that is not there
+			// and a run that belongs to another app are both "missing", because
+			// check_state selects on the name **and** on the app slug.
+			state := c.state
+			if c.drop || c.app != "github-actions" {
+				state = "missing"
+			}
+			h := newGateHarness(t)
+			h.setTargetChecks(t, requiredChecks(leg, c.app, c.state, c.drop))
+			ok, out := h.run(t)
+			if ok {
+				t.Fatalf("the gate passed with %s:\n%s", c.name, out)
+			}
+			wantErr := fmt.Sprintf("required check '%s' is %s on %s", leg, state, h.sha)
+			if !strings.Contains(out, wantErr) {
+				t.Errorf("the gate refused for the wrong reason:\nwant %q in:\n%s", wantErr, out)
+			}
+		})
+	}
+
+	t.Run("a check named plain console does not stand in for the legs", func(t *testing.T) {
+		// The plan's text asked for the bare name. A commit that carries a green
+		// run of that name -- and neither matrix leg -- must still be refused:
+		// the legs are what GitHub reports for the job that actually runs.
+		h := newGateHarness(t)
+		var checks []string
+		for _, name := range append([]string{"test", "terraform", "rules"}, consoleNames...) {
+			if slices.Contains(consoleNames, name) {
+				continue
+			}
+			checks = append(checks, gateCheckRun(name, "github-actions", "success"))
+		}
+		checks = append(checks, gateCheckRun("console", "github-actions", "success"))
+		h.setTargetChecks(t, checks)
+		ok, out := h.run(t)
+		if ok {
+			t.Fatalf("the gate passed on a bare `console` run:\n%s", out)
+		}
+		if want := fmt.Sprintf("required check '%s' is missing on %s", firstConsoleLeg, h.sha); !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	})
+
+	t.Run("the identical-tree fallback requires the console legs too", func(t *testing.T) {
+		h := newGateHarness(t)
+		head := h.identicalTreeHead(t)
+		h.setTargetChecks(t, nil)
+		h.setHeadChecks(t, requiredChecks("", "", "", false))
+		h.setMergedPR(t, h.sha, head)
+		ok, out := h.run(t)
+		if !ok {
+			t.Fatalf("the gate refused a commit whose merged pull request head carries every required check:\n%s", out)
+		}
+		if !strings.Contains(out, "using the checks of "+head+" (identical tree)") {
+			t.Errorf("the fallback did not name the head it used:\n%s", out)
+		}
+	})
+
+	t.Run("the identical-tree fallback refuses a head without a console leg", func(t *testing.T) {
+		h := newGateHarness(t)
+		head := h.identicalTreeHead(t)
+		h.setTargetChecks(t, nil)
+		h.setHeadChecks(t, requiredChecks(legB, "", "", true))
+		h.setMergedPR(t, h.sha, head)
+		ok, out := h.run(t)
+		if ok {
+			t.Fatalf("the gate passed on a head missing %s:\n%s", legB, out)
+		}
+		if strings.Contains(out, "identical tree") {
+			t.Errorf("the head's incomplete checks must not vouch:\n%s", out)
+		}
+		// The target has no checks of its own, so the message names the first
+		// name the script requires -- read from the array, not assumed.
+		if want := fmt.Sprintf("required check '%s' is missing on %s", required[0], h.sha); !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	})
+}
+
+// gateCheckRun is one check run as the fake gh's state file writes it: the
+// check-run name, the app slug that owns it, and the state the gate reads.
+func gateCheckRun(name, app, state string) string {
+	return name + "\t" + app + "\t" + state
+}
+
+// gateFakeGH answers the three `gh api` calls scripts/release-gate.sh makes.
+// It is a shell script because the gate runs it through PATH, and it runs the
+// gate's **own** `--jq` expression through a real jq over check runs built from
+// the state file -- so the name match, the `github-actions` app filter and the
+// status/conclusion rules are all the script's, and a bug in the expression
+// shows up here rather than being papered over by a fake that already knew the
+// answer.
+const gateFakeGH = `#!/usr/bin/env bash
+set -eu
+log=${FAKE_GH_LOG:?}
+printf 'gh %s\n' "$*" >>"$log"
+
+api=${2:-}
+expr=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--jq" ]; then expr=$a; fi
+  prev=$a
+done
+
+# check_runs_json FILE prints the checks API's own shape, one run per
+# "name<TAB>app<TAB>state" line.
+check_runs_json() {
+  jq -Rn '
+    [inputs | select(length > 0) | split("\t")
+     | {name: .[0], app: {slug: .[1]}, state: .[2]}
+     | . + (if .state == "pending" then {status: "in_progress", conclusion: null}
+            elif .state == "failed" then {status: "completed", conclusion: "failure"}
+            elif .state == "cancelled" then {status: "completed", conclusion: "cancelled"}
+            else {status: "completed", conclusion: "success"} end)]
+    | {check_runs: .}' <"$1"
+}
+
+case "$api" in
+  */check-runs*)
+    sha=$(printf '%s' "$api" | sed -n 's|.*/commits/\([^/]*\)/check-runs.*|\1|p')
+    state=${FAKE_GH_STATE:?}
+    if [ -n "${FAKE_GH_HEAD_STATE:-}" ] && [ -s "${FAKE_GH_PR:-}" ] && [ "$sha" = "$(cut -f3 "${FAKE_GH_PR}")" ]; then
+      state=$FAKE_GH_HEAD_STATE
+    fi
+    check_runs_json "$state" | jq -r "$expr"
+    ;;
+  */git/commits/*)
+    sha=$(printf '%s' "$api" | sed -n 's|.*/git/commits/\([^/?]*\).*|\1|p')
+    git -C "${FAKE_GH_ORIGIN:?}" rev-parse "$sha^{tree}"
+    ;;
+  */pulls*)
+    if [ -s "${FAKE_GH_PR:-}" ]; then cat "${FAKE_GH_PR}"; fi
+    ;;
+  *)
+    echo "fake gh: unexpected call: $*" >&2
+    exit 3
+    ;;
+esac
+`
+
+// gateHarness is a checkout with a real origin/main, a fake gh first on PATH,
+// and the files that fake reads: nothing about the gate's logic is simulated.
+type gateHarness struct {
+	work   string
+	origin string
+	sha    string
+	bin    string
+	root   string
+}
+
+func newGateHarness(t *testing.T) *gateHarness {
+	t.Helper()
+	for _, tool := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not on PATH: the gate's own --jq expression is run through a real jq", tool)
+		}
+	}
+	testutil.IsolateGit(t)
+	root := t.TempDir()
+	origin := testutil.NewRemote(t, map[string]string{"README.md": "seed\n"})
+	work := filepath.Join(root, "work")
+	testutil.Git(t, root, "clone", "--quiet", origin, work)
+	testutil.WriteFiles(t, root, map[string]string{"bin/gh": gateFakeGH})
+	return &gateHarness{
+		work:   work,
+		origin: origin,
+		sha:    testutil.Git(t, work, "rev-parse", "HEAD"),
+		bin:    filepath.Join(root, "bin"),
+		root:   root,
+	}
+}
+
+func (h *gateHarness) write(t *testing.T, name string, lines []string) string {
+	t.Helper()
+	path := filepath.Join(h.root, name)
+	body := ""
+	if len(lines) > 0 {
+		body = strings.Join(lines, "\n") + "\n"
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// setTargetChecks is the tagged commit's check-run set.
+func (h *gateHarness) setTargetChecks(t *testing.T, lines []string) {
+	t.Helper()
+	h.write(t, "target.tsv", lines)
+}
+
+// setHeadChecks is the merged pull request head's check-run set.
+func (h *gateHarness) setHeadChecks(t *testing.T, lines []string) {
+	t.Helper()
+	h.write(t, "head.tsv", lines)
+}
+
+// setMergedPR is the checks API's listing of the pull request merged as the
+// target: the tsv the gate's own jq would have produced.
+func (h *gateHarness) setMergedPR(t *testing.T, mergeSHA, headSHA string) {
+	t.Helper()
+	h.write(t, "pulls.tsv", []string{"2026-01-01T00:00:00Z\t" + mergeSHA + "\t" + headSHA})
+}
+
+// identicalTreeHead pushes an empty commit -- the same tree as the target, a
+// different commit -- to origin and returns its sha, so the gate's fallback has
+// a candidate to read.
+func (h *gateHarness) identicalTreeHead(t *testing.T) string {
+	t.Helper()
+	testutil.Git(t, h.work, "checkout", "--quiet", "-b", "pr-head")
+	testutil.Git(t, h.work, "commit", "--quiet", "--allow-empty", "-m", "pr head")
+	head := testutil.Git(t, h.work, "rev-parse", "HEAD")
+	testutil.Git(t, h.work, "push", "--quiet", "origin", "HEAD:refs/heads/pr-head")
+	testutil.Git(t, h.work, "checkout", "--quiet", "main")
+	targetTree := testutil.Git(t, h.work, "rev-parse", h.sha+"^{tree}")
+	if headTree := testutil.Git(t, h.work, "rev-parse", head+"^{tree}"); headTree != targetTree {
+		t.Fatalf("the fixture head's tree is %s, not the target's %s: the fallback is about identical trees", headTree, targetTree)
+	}
+	return head
+}
+
+// run runs scripts/release-gate.sh for v1.2.3 in the checkout and returns
+// whether it passed and everything it printed.
+func (h *gateHarness) run(t *testing.T, extra ...string) (bool, string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", filepath.Join(testutil.ModuleRoot(), releaseGatePath), "v1.2.3")
+	cmd.Dir = h.work
+	cmd.Env = append(os.Environ(),
+		"PATH="+h.bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GITHUB_SHA="+h.sha,
+		"GITHUB_REPOSITORY=dimipaun/fugaro",
+		// No waiting: a conclusive failure fails at once, and a missing or
+		// running check fails on the first pass rather than after a poll.
+		"GATE_WAIT_SECONDS=0",
+		"GATE_POLL_SECONDS=1",
+		"FAKE_GH_LOG="+filepath.Join(h.root, "gh.log"),
+		"FAKE_GH_ORIGIN="+h.origin,
+		"FAKE_GH_STATE="+filepath.Join(h.root, "target.tsv"),
+	)
+	for _, name := range []string{"head.tsv", "pulls.tsv"} {
+		path := filepath.Join(h.root, name)
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		if name == "head.tsv" {
+			cmd.Env = append(cmd.Env, "FAKE_GH_HEAD_STATE="+path)
+		} else {
+			cmd.Env = append(cmd.Env, "FAKE_GH_PR="+path)
+		}
+	}
+	cmd.Env = append(cmd.Env, extra...)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := cmd.Run()
+	return err == nil, out.String()
 }
