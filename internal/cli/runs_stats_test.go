@@ -578,6 +578,65 @@ func TestRunsStatsIdentitiesPastTheCapAreOneRow(t *testing.T) {
 	}
 }
 
+// TestWriteUserStatsNamesEachCurrencyWhenSeveral is the table's half of the
+// currency rule. No record carries a currency today -- result.json has no such
+// field, so the CLI always aggregates in USD -- but the aggregation and the
+// document both carry one, and the day a second currency appears the table
+// must not print two rows of different units under one undivided total. The
+// renderer is held to that here, off a document built for the case, rather
+// than left as a branch nothing reaches.
+func TestWriteUserStatsNamesEachCurrencyWhenSeveral(t *testing.T) {
+	doc := userStatsDoc{
+		Project: "aurora", By: userStatsByUser, View: userStatsViewAll,
+		You: "someone@example.com", Operator: true, Since: "2026-10-11", Until: "2026-10-18",
+		MaxRuns: userStatsMaxRuns,
+		Rows: []userstats.Row{
+			{User: "dana@example.com", Currency: "EUR", Counts: userstats.Counts{Runs: 1, Succeeded: 1},
+				CountedUSD: 90, CountedRuns: 1, AvgCountedUSD: 90},
+			{User: "dana@example.com", Currency: userstats.CurrencyUSD, Counts: userstats.Counts{Runs: 1, Succeeded: 1},
+				CountedUSD: 10, CountedRuns: 1, AvgCountedUSD: 10},
+		},
+		Totals: []userstats.Row{
+			{Currency: "EUR", Counts: userstats.Counts{Runs: 1, Succeeded: 1}, CountedUSD: 90, CountedRuns: 1, AvgCountedUSD: 90},
+			{Currency: userstats.CurrencyUSD, Counts: userstats.Counts{Runs: 1, Succeeded: 1}, CountedUSD: 10, CountedRuns: 1, AvgCountedUSD: 10},
+		},
+	}
+	var b strings.Builder
+	if err := writeUserStats(&b, doc, "7d", false); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	// The column appears, and each row says which unit its dollars are in.
+	if !strings.Contains(out, "CUR") || !strings.Contains(out, "EUR") {
+		t.Errorf("the table shows no currency column:\n%s", out)
+	}
+	// The totals are named per currency: "TOTAL" alone would be the one line a
+	// reader could take for a sum across units.
+	for _, want := range []string{"TOTAL EUR", "TOTAL USD"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the table does not carry %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "\tTOTAL\t") || strings.Contains(strings.ReplaceAll(out, " ", ""), "TOTAL$") {
+		t.Errorf("a total is unnamed:\n%s", out)
+	}
+
+	// One currency, one column: the always-same word is not a fact a reader
+	// needs.
+	single := userStatsDoc{Project: "aurora", By: userStatsByUser, View: userStatsViewOwn,
+		You: "dana@example.com", Since: "2026-10-11", Until: "2026-10-18", MaxRuns: userStatsMaxRuns,
+		Rows:   []userstats.Row{{User: "dana@example.com", Currency: userstats.CurrencyUSD, Counts: userstats.Counts{Runs: 1, Succeeded: 1}, CountedUSD: 10, CountedRuns: 1, AvgCountedUSD: 10}},
+		Totals: []userstats.Row{{Currency: userstats.CurrencyUSD, Counts: userstats.Counts{Runs: 1, Succeeded: 1}, CountedUSD: 10, CountedRuns: 1, AvgCountedUSD: 10}},
+	}
+	b.Reset()
+	if err := writeUserStats(&b, single, "7d", false); err != nil {
+		t.Fatal(err)
+	}
+	if out := b.String(); !strings.Contains(out, "USER") || strings.Contains(out, "CUR") || strings.Contains(out, "TOTAL USD") {
+		t.Errorf("a one-currency table = \n%s", out)
+	}
+}
+
 // TestRunsStatsRefusesWhatItDoesNotPublish holds --by to the one value the
 // command has, rather than accepting a word it silently ignores, and the rest
 // of the flags to what they mean.
