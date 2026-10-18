@@ -310,12 +310,13 @@ and a reserved number is never reused or renumbered.
 
 **Check 70 is the website redesign's, proposed as 70a–70c**
 (`docs/website/redesign/implementation-plan.md` §4 and §8, written by its parts P3,
-P5 and P6), in the same sub-lettering convention. **70a** (the mobile header on one
-row, the drawer by keyboard) is written below by **P3** and **70c** (the copy
-control in a real browser, with a real clipboard) by **P6**; **70b** (the gist above
-the fold) is **P5**'s and is not in this file yet, so its absence is not a gap in
-the numbering — the shape 69a–69c arrived in. The number was free when P3 and P6
-merged: the highest written `## Check N` section here was **69b**, the website work
+P5 and P6), in the same sub-lettering convention. All three are written below:
+**70a** (the mobile header on one row, the drawer by keyboard) by **P3**, **70b**
+(the gist above the fold) by **P5** — merged in #603, and written here after 70a and
+70c because that is the order the parts landed, not the order of the numbers — and
+**70c** (the copy control in a real browser, with a real clipboard) by **P6**, so the
+block 69a–69c arrived in is complete. The number was free when P3 and P6 merged (and
+when P5 did): the highest written `## Check N` section here was **69b**, the website work
 holds 69 and up, and no document in the tree wrote `70` (the redesign plan checked
 that on 2026-10-18). The redesign's §8 proposes this block for the owner to confirm
 with `D180`–`D192` in `docs/website/redesign/reconciliation.md` §9, and the parts
@@ -484,6 +485,7 @@ probe account carries predefined grants only).
 | 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no console download link (`features.console_downloads` is false) and no video player (`features.video` is false) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; and the greps for a download link, a player and an unshipped platform printing nothing. **USER-RUN, NOT RUN.** |
 | 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Google Analytics behind the consent banner and **W3.2 has turned it on** — the measurement id is `website/data/site.yaml`'s, the gate is the site's own file, and the pass is therefore a pass about the post-consent request, not about analytics being absent) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
 | 70a | The mobile header fits one row (website redesign plan `docs/website/redesign/implementation-plan.md` §3, part P3; D182, RF3): at **390 × 844** the header is **one row** — the wordmark and the menu toggle, with nothing wrapped under them and no sideways scroll — the drawer opens and closes **by keyboard**, Escape and a click outside close it, the focus goes back to the control that opened it, and the menu reaches every link with **JavaScript disabled** | See "Check 70a" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | The header's measured height at 390 × 844 is one row's (about 56 px, not the 177 px of three rows RF3 measured), `document.documentElement.scrollWidth` is not wider than 390, the toggle is focusable and opens the panel, Escape closes it and returns the focus, every link in the three groups is reachable and follows with JavaScript off, and at 1280 × 900 the menu is **visible**: the three groups in the header's one row as the three dropdowns D182 asks for, with no `Menu` toggle and no overlay panel, and opening a group showing its links **without changing the header's height**. **USER-RUN, NOT RUN.** |
+| 70b | The gist is above the fold (website redesign plan `docs/website/redesign/implementation-plan.md` §3 and §8, part P5; D187, D188, RF23, RF5): on the built or deployed site **every page states its main point above the fold** — the `h1`'s bottom and the lead's bottom inside the first screen at **390 × 844** — the homepage's **first command** is fully visible above the fold at 390 × 844 **with its copy control**, Getting Started's **first command block** is fully visible at **390 × 844 and 1280 × 900**, the consent banner neither pushes the commands below the fold nor covers the first command on a first visit, the word ceilings hold (a page's lead at most **40 words**, a page at most **250 words** except `/docs/`, `/security/` and `/changelog/`), and no page carries the provenance phrases the build refuses | See "Check 70b" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | Per page, the `h1`'s and the lead's bottom under 844 at 390 × 844; the homepage's first command and its control inside the first screen; Getting Started's first command block inside the first screen at both widths; the banner's rectangle and what it covers, with the first command clear of it; every page's lead and page word counts inside D188's ceilings, read from the site's own gate; and none of the gate's provenance phrases on any page. **USER-RUN, NOT RUN.** |
 | 70c | Every copy control copies its own command (redesign plan §3, part P6; D183, RF13): on the built or deployed site **each kind of control** — the hero's install blocks, Getting Started's code blocks, the docs hub's rendered reference, the caps guide's usage lines and the terminal's own line — puts **that command** on a real clipboard, **by mouse and by keyboard**, the "Copied" state is announced politely and clears itself, and **nothing is shown with JavaScript off** | See "Check 70c" below; run by you, in a browser, against the **built artifact** or the deployed site — read-only, no cloud project touched, and **No agent runs any step of it** | Each control's clipboard content equals the command it sits on and nothing else — no `$` prompt, no caret, no neighbouring line, no page furniture — the copied state appears, is announced and clears, the keyboard reaches every control and the focus ring is visible on it, and with JavaScript disabled every command is still on the page with **no button rendered at all**. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -4180,6 +4182,178 @@ visibility, and the links that appeared — with the browser and its version, be
 no agent runs any step of it.** Until this check runs, the menu's **rendered** behaviour at
 phone width and at desktop width is **UNVERIFIED** — the artifact's structure is not a
 rendered row — and the row above stays **NOT RUN**.
+
+## Check 70b: the gist above the fold — every page's point, and Getting Started's commands (the built artifact or the live site, read-only; run by you; NOT RUN)
+
+**NOT RUN.** Written by **part P5** of the website redesign
+(`docs/website/redesign/implementation-plan.md` §3 and §8, decision D187, reconciliation finding
+RF23), and written here rather than left to the redesign's own plan because this is the file the
+owner runs live checks out of. It is the half of P5 no hermetic test can take. Two gates hold the
+halves the claim rests on — `website/test/fold.mjs` the **ordering** (the homepage's lead region is
+the promise and nothing else, Getting Started's install section opens with its commands, and every
+page that prints a command prints it under a heading) and `website/test/budget.mjs` the **word
+ceilings** (D188: 40 words in a page's lead, 250 per page except the three reference pages) — and
+neither of them can see a viewport, which is exactly D187's question. The fold is a position on a
+screen, and this repository's gates are deliberately browser-free, so D187 answered it with the
+ceiling **plus this one owner-run check** rather than with the repository's first browser-driven
+test: the first screen is measured here, by you, and by nothing else.
+
+**What RF23 measured, and what P5 changed.** RF23 is the finding this check answers: "above the
+fold" and "very few words" were, before the redesign, unwritten and unmeasured — no gate measured
+words or viewport position, `budget.mjs` measured bytes and `a11y.mjs` structure, and both read the
+built HTML and CSS with no browser. Measured at 390 × 844, the homepage's `h1` ended at **893 px**
+— the site's own headline one line below the fold on the phone it is being read on — and every
+other route's `h1` was inside the first screen (home 893, security 825, faq and console 283,
+privacy 308; `docs/website/redesign/reconciliation.md` §6). Getting Started's first screen was
+RF5's internal paragraph — the sentence about `install.yaml` and the Go test that holds it —
+rather than its first command. P5 rebuilt the hero so the tagline, the one-line promise and the
+first install command fit a 390 × 844 first screen, and moved Getting Started's install section to
+open with the paths themselves. **The numbers above are the owner's record of the page before the
+redesign** (`docs/website/redesign/reconciliation.md` §6, the capture set described by
+`docs/website/redesign/current/README.md`): they are not measurements of the page as it is now, and
+every number this check passes or fails on is one it takes itself.
+
+**Method.** One browser, one built site, two widths, no account and no cloud project. Either serve
+the artifact locally or read the deployed site; both are read-only:
+
+```bash
+# What this check needs, read out of the tree rather than remembered. It refuses to start on a
+# build that is not there, so a pass below is a pass about a page that exists.
+[ -f website/dist/index.html ] || { echo "Check 70b stopped: website/dist/ is not built — run (cd website && npm run check) or scripts/deploy-website.sh --dry-run first" >&2; exit 1; }
+(cd website/dist && python3 -m http.server 8080) &     # the built artifact, on localhost:8080
+# ...or, for the deployed site instead, read the canonical origin out of the site's own facts:
+sed -n 's/^canonical_url: *//p' website/data/site.yaml
+# The pages the fold is claimed for: the artifact's own list, rather than one typed here that can
+# go stale the day a route is added.
+find website/dist -name index.html | sort
+# The three numbers this check reads, and the two viewports it reads them at, out of the
+# measurement script rather than typed here: the `h1`'s bottom, the lead paragraph's bottom and
+# the first command's bottom, at 390 × 844 and 1280 × 900.
+grep -oE 'h1Bottom|leadBottom|firstCommandBottom' docs/website/redesign/capture-screenshots.mjs | sort -u
+grep -oE 'width: [0-9]+, height: [0-9]+' docs/website/redesign/capture-screenshots.mjs
+# The word ceilings, out of the site's own gate rather than typed here: the numbers live in the
+# README `website/test/budget.mjs` reads them from, and `budget.mjs` is what enforces them.
+grep -oE '\*\*Words (in a page.s lead|per page):\*\* [0-9]+ words' website/README.md
+grep -n 'PAGE_EXEMPT = ' website/test/budget.mjs
+# The provenance phrases the build refuses (D186), out of the gate's own list: the phrases step 6
+# searches every page for.
+sed -n '/^export const PHRASES = \[/,/^\]/p' website/test/meta.mjs
+# The homepage's first command, out of the page's own source rather than remembered: the two
+# install paths the hero renders, and the markup the first of their commands is in.
+grep -n "HERO_PATHS\|hero-install-command" website/src/components/Hero.astro
+# The banner that is over the page on a first visit, and where it sits: the consent banner, fixed
+# at the foot of the window, which is what step 4 measures.
+grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
+```
+
+1. **At 390 × 844, every page's point is above the fold.** Set the viewport to **390 × 844** (the
+   phone the site is read on, and the size RF23 measured), hard-reload, and for every page the
+   artifact lists read the `h1`'s bottom and the lead paragraph's bottom — the two numbers the
+   capture script takes as `h1Bottom` and `leadBottom`, both measured from the top of the
+   document. The fold is the viewport's height: **844** at this width, and **900** at the desktop
+   shot's. The `h1` alone is not the claim: a page whose heading fits and whose lead does not has
+   a title above the fold and no gist, which is why the lead's bottom is the second number. RF23
+   measured the homepage's `h1` at 893 px at this width — one line below the fold — and every
+   other route's inside the first screen. **FACT:** per route, `h1Bottom` and `leadBottom` in
+   pixels, and whether each is under 844.
+
+2. **The homepage's first command is above the fold at 390 × 844, with its copy control.** Read
+   the homepage's first command out of the page's own source rather than remembering it:
+   `website/src/pages/index.astro` renders the hero, and `Hero.astro`'s `HERO_PATHS` names the
+   paths it renders — Homebrew first, then the Go install — so the first command is the first
+   path's first command, and whichever P5 shipped is what this step reads and not a command typed
+   here. At 390 × 844, read `firstCommandBottom` for `/` and the copy control's own rectangle
+   beside it. The control is P6's and it sits above its command, so a command whose own bottom is
+   inside the first screen while its button is not is a command a reader can see and cannot copy
+   — which is why this step reads both rectangles and not the command's alone. **FACT:** the
+   command as rendered, its bottom in pixels, the control's top and bottom, and whether the whole
+   of both is above 844.
+
+3. **Getting Started's first command block is above the fold on both sizes.** At 390 × 844 and at
+   1280 × 900, read `firstCommandBottom` for `/getting-started/` and check the first command
+   block's bottom is under the viewport's height on each. The block is the whole of it — the
+   command and the control above it — and the section's heading and the `From …` line sit above
+   it, so a block whose bottom is inside the first screen is a block a reader meets without
+   scrolling. RF5 measured this page's first screen as the internal paragraph, with the commands
+   after it; P5's change is the ordering, and this step is where the position of the result is
+   read. **FACT:** the command, its bottom at both widths, and whether the whole block is above
+   the fold at each.
+
+4. **The consent banner is over the page, and it covers nothing this check claims.** The banner is
+   `position: fixed` at the foot of the window (read where it sits out of
+   `website/src/components/ConsentBanner.astro`, in the block above), so it is over the first
+   screen rather than in the page's flow: it cannot push the commands below the fold, and it does
+   cover whatever is at the bottom of the viewport. It is rendered whenever `site.yaml` says
+   analytics are on, and they are on, so it is there on **every first visit** — which is the visit
+   this check is about. In a fresh profile, with no stored decision, at the top of the page,
+   measure the banner's own rectangle and the first command's, at 390 × 844 and at 1280 × 900. A
+   command under the banner is not a command above the fold, and the fix for it is spacing or the
+   banner's own height rather than a fold moved for it. **FACT:** per size, the banner's height
+   and its top edge, the first command's bottom, what the banner's rectangle covers — the command,
+   its control, or neither — and the scroll position the page was at when it was measured.
+
+5. **The word ceilings hold, read from the site's own gate.** D188's two numbers are the gate's:
+   `website/test/budget.mjs` reads them out of `website/README.md`, and they are a page's **lead
+   at most 40 words** — the visible text of `main` between the `h1` and the first `h2` — and a
+   **page at most 250 words**, except `/docs/`, `/security/` and `/changelog/`, which each render
+   a document of this repository rather than a page of the site. Read the numbers out of the
+   README the gate reads (the block above) rather than from this section, and count the words the
+   way the gate counts them: every word a reader sees inside `main`, command blocks and code spans
+   included, an image's `alt` standing in for the image, and a `hidden` subtree not counted at
+   all. In the console, the page's own count is `main`'s rendered text and the lead's is the text
+   between the two headings; the gate itself is `(cd website && npm run check)`, whose `budget.mjs`
+   cases are the ceilings' own. RF23 measured the pages before the redesign — getting-started 431
+   words, caps-and-costs 487, faq 493, community 268, privacy 277, every one of them over the page
+   ceiling, and the three exempt pages at 18,282, 6,240 and 6,191 — which is the size of the
+   change the ceiling was set to make. **FACT:** per page, the lead's word count and the page's
+   word count against the two numbers the README carries, and the pages the exemption list names.
+
+6. **No page carries the provenance text the build refuses.** D186's rule is that a page says what
+   it is for and never why its own text exists, and the gate holds an explicit list of phrases —
+   `website/test/meta.mjs`'s `PHRASES`, read out in the block above. Search each page the artifact
+   lists for every phrase over the page's rendered text and its `<title>`, with whitespace
+   flattened and case ignored, because a phrase split across two lines of a source file, or
+   capitalized at the start of a sentence, is the same phrase to a reader. RF5's paragraph on
+   Getting Started — "Every command on this page is rendered from `website/data/install.yaml` …
+   Nothing here is typed into this page." — is the sentence P4 removed, and this step is what
+   would catch it coming back, on that page or on any other. **FACT:** per phrase, the pages that
+   carry it: none.
+
+**Passes when:** every page the artifact lists states its point inside a 390 × 844 first screen —
+the `h1`'s bottom and the lead's bottom both under 844 — the homepage's first command is above the
+fold at 390 × 844 **with its copy control**, Getting Started's first command block is above the
+fold at 390 × 844 **and** at 1280 × 900, the consent banner covers neither the first command nor
+its control on a first visit at either size, every page's lead is within 40 words and every page
+but `/docs/`, `/security/` and `/changelog/` within 250, and no page carries a phrase on D186's
+list.
+
+**Fails when:** a page's lead — or its `h1` — ends below 844 at 390 × 844; the homepage's first
+command, or its copy control, is not wholly inside the first screen; Getting Started's first
+command block is below the fold at either width; the consent banner covers the first command or
+its control on a first visit; a page is over a ceiling the README states, or a page that is not
+one of the three exempt ones is measured as exempt; or a page carries a provenance phrase. What
+failing looks like: a hero that grows a second paragraph above the install section, so the lead is
+41 words and its bottom is below the fold (the shape `fold.mjs` refuses in the built artifact and
+this check is the position of); a first command that is the *second* path's, because the paths'
+order moved and nobody re-read the page; a copy control rendered below its command rather than
+above it, so the command is visible and the button is not; a banner whose text grew a line, so its
+top edge came up over the first command's bottom. The **ordering** half of the first and third of
+those is already refused by `website/test/fold.mjs` and the **word** half of the first by
+`budget.mjs`, so a failure here that the build did not catch is a **rendered** fact — a position,
+a height, an overlap — and the fix belongs in `website/src/pages/*.astro`, `Hero.astro` or
+`base.css`'s spacing, with the case that would have caught it added to the gate that can see it.
+
+**Paste back:** per page at 390 × 844, the `h1`'s bottom and the lead's bottom, and whether each is
+above the fold; the homepage's first command as rendered, its bottom and its control's rectangle;
+Getting Started's first command block's bottom at both widths; the consent banner's height and top
+edge on a first visit at both widths, and what it covers; per page, the lead's and the page's word
+counts against the README's two numbers; and the provenance phrases found, if any — with the
+browser and its version, because the fold is the browser's layout, and a device with a different
+font scale or a browser UI that changes the visual viewport can and will differ
+(`docs/website/redesign/reconciliation.md` §7, RU5). **No step here changes anything and no agent
+runs any step of it.** Until this check runs, the **rendered** fold is **UNVERIFIED** — a word
+ceiling is not a first screen and an ordering is not a position — and the row above stays
+**NOT RUN**.
 
 ## Check 70c: every copy control copies its own command, by mouse and by keyboard (the built artifact or the live site; run by you; NOT RUN)
 
