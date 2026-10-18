@@ -128,13 +128,24 @@ func newInitCmd() *cobra.Command { return newInitCmdWith(&initOptions{}) }
 
 // initCreation is what a run of init --create-project did, as the run itself
 // knows it (not inferred from the cloud afterwards): the project it created,
-// whether the project was already there when it was read, and whether this
-// run wrote the creation fact — with managed.WriteMarker's create-only
-// precondition, so a fact someone else put there first is never this run's.
+// whether the project was already there when it was read, whether this run
+// wrote the creation fact — with managed.WriteMarker's create-only
+// precondition, so a fact someone else put there first is never this run's —
+// and whether D77's managed state bucket was set up.
+//
+// StateBucket is a field of its own because the two steps are separate and
+// their failures are separate warnings (markCreated): a run can write the
+// fact and then fail to set the state bucket up, and "the project is
+// managed" is not by itself "a managed apply can run here" — the apply needs
+// the bucket to keep its state in. A reader of this struct that treats
+// Marked as a complete creation (fugaro restore's verifyCreated) would
+// otherwise take a project with nowhere to keep its state for a finished
+// one and send the operator after a command that cannot create that bucket.
 type initCreation struct {
-	Created string
-	Existed bool
-	Marked  bool
+	Created     string
+	Existed     bool
+	Marked      bool
+	StateBucket bool
 }
 
 // newInitCmdWith is newInitCmd over options the caller holds: fugaro
@@ -802,12 +813,19 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// rest of the project's storage does. Like the marker, this never changes
 	// the outcome of the run — a project that is marked but has no state
 	// bucket is the fail-closed direction (a managed apply finds nowhere to
-	// keep its state and says so, rather than writing it somewhere else).
+	// keep its state and says so, rather than writing it somewhere else)).
+	// The caller's account (o.created) learns which of the two happened: it
+	// is told the state bucket is up only once this step has succeeded, so a
+	// caller that needs a complete managed project — fugaro restore's
+	// verifyCreated — can refuse one this step left half-built.
 	if err := managedmode.EnsureManagedStateBucket(ctx, managedmode.InfraStore{Clients: e.c}, r.res.Created, e.spec.Region); err != nil {
 		r.warn(fmt.Sprintf("project %s was created and marked as Fugaro-managed, but its managed state bucket was not set up (%v): a managed apply has nowhere to keep its state until an owner-run command sets it up", r.res.Created, err))
 		return
 	}
 	fmt.Fprintf(r.w, "set up the managed state bucket gs://%s and bound the deployer to it (%s)\n", managedmode.ManagedStateBucketName(r.res.Created), managedmode.DeployerStateRole)
+	if c := r.o.created; c != nil {
+		c.StateBucket = true
+	}
 }
 
 // checkEnv refuses an environment that would point Terraform or the
