@@ -288,14 +288,14 @@ type Workflow struct {
 	// "" defaults to baked (design generic-tool.md §2, G3, G5). The build
 	// acts on it (generic-tool plan Task 16): a clone workflow's job image
 	// is base_images.base, with no per-repository image build or daily
-	// check. clone is not released yet: the runner side (generic-tool plan
-	// Task 17, in the tree but in no tagged release) is what actually reads
-	// FUGARO_CHECKOUT and makes the
-	// blobless clone, so a checkout: clone launch is refused at launch
-	// until fugaro 0.7.5 (internal/cli/recipes_skew.go's cloneSince) ships
-	// it, whether or not the installation's own base image (fugaro-base)
-	// has been published — a separate, person-run step this plan does not
-	// do. Use checkout: baked to run a workflow today.
+	// check. The runner side is what actually reads FUGARO_CHECKOUT and
+	// makes the blobless clone: it ships at fugaro 0.7.5
+	// (internal/cli/recipes_skew.go's cloneSince), and checkout: clone
+	// itself shipped in 0.9.0, when that flip landed. A launch is still
+	// refused on a job image older than cloneSince, whether or not the
+	// installation's own base image (fugaro-base) has been published — a
+	// separate, person-run step. Use checkout: baked for a workflow that
+	// needs a system package, a service or a Dockerfile.
 	Checkout string `yaml:"checkout,omitempty"`
 	// Inputs caps what a launcher may attach to a run of this workflow
 	// (design artifact-runs.md §4). Binaries before 0.8.0 refuse the key.
