@@ -1028,6 +1028,8 @@ locals {
 	for name, role := range map[string]string{
 		"roles/editor":                          `"roles/editor"`,
 		"roles/owner":                           `"roles/owner"`,
+		"roles/resourcemanager.projectIamAdmin": `"roles/resourcemanager.projectIamAdmin"`,
+		"roles/iam.securityAdmin":               `"roles/iam.securityAdmin"`,
 		"a custom role with projects.update":    `google_project_iam_custom_role.labeller.name`,
 		"a custom role with projects.setIamPol": `google_project_iam_custom_role.policy_labeller.name`,
 	} {
@@ -1486,16 +1488,29 @@ var labelWritePerms = map[string]bool{
 	"resourcemanager.projects.setIamPolicy": true,
 }
 
-// labelWriteRoles are the predefined roles this test knows carry the
-// permission above. It is a list rather than a permission check because a
-// test cannot ask Google what roles/xyzzy carries (Global Constraint 12: no
-// live IAM read), so a predefined role this test does not know is judged by
-// the allowlist instead — runAccountGrants pins every grant to a non-people
-// member whole, so a new predefined role reaching a run account is a finding
-// there before it can be one here. These two are named because they carry
-// every project permission, and because "roles/editor to the job account"
-// would otherwise be a grant this test had no opinion about.
-var labelWriteRoles = map[string]bool{"roles/owner": true, "roles/editor": true}
+// labelWriteRoles are the predefined roles this test knows carry one of the
+// permissions above, and **the list is not claimed to be exhaustive**. It is
+// a list rather than a permission check because a test cannot ask Google what
+// roles/xyzzy carries (Global Constraint 12: no live IAM read), and a role
+// whose contents this test cannot resolve is not silently passed: it lands in
+// runAccountGrants, which pins every grant to a non-people member whole, so a
+// predefined role reaching a run account is a finding there whether or not it
+// is named here. What naming one adds is the second, independent reason for
+// the roles whose contents are not in doubt — the rule still refuses them if
+// a future task widens runAccountGrants without reading what it admitted.
+//
+// The four are chosen by what they carry and nothing else: Owner and Editor
+// carry resourcemanager.projects.update (and setIamPolicy with it), and
+// Project IAM Admin and Security Admin carry
+// resourcemanager.projects.setIamPolicy, which is how a holder grants itself
+// the update. A role this test does not know is left to the allowlist rather
+// than guessed at: a wrong guess here would be a rule that refuses nothing.
+var labelWriteRoles = map[string]bool{
+	"roles/owner":                           true,
+	"roles/editor":                          true,
+	"roles/resourcemanager.projectIamAdmin": true,
+	"roles/iam.securityAdmin":               true,
+}
 
 // checkLabelGrant refuses a grant that would let a credential a run holds set
 // or remove the project's fugaro_managed label. It is the third rule over the
