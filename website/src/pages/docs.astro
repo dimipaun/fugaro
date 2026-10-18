@@ -241,6 +241,20 @@ const entries = [...guides, referenceEntry]
 <Base title="Documentation" description="The guides this repository holds, and the generated CLI reference.">
   <h1>Documentation</h1>
 
+  {/* The hub's lead (D188, D189). It is one sentence and it gathers what the guides below
+      answer, in the order they are listed: D189 puts the hub's summary here, drawn from the
+      per-guide `answers` lines the page already carries. It is not those lines themselves —
+      six of them plus the reference's are about 110 words, and D188 holds every page's lead,
+      this one included, to 40. So the lead is their subjects gathered into one sentence, and
+      the answers stay on their entries, where the reader is when they need them. The count
+      is rendered rather than typed, so a guide added to `GUIDES` changes the sentence with
+      it. */}
+  <p class="lead">
+    {entries.length} documents, in the order a reader needs them: install the CLI, set up the
+    cloud, choose the loop a run follows, configure the layers, run another model, connect a
+    provider, and the generated command reference.
+  </p>
+
   <section id="guides">
     <h2>Guides</h2>
 
@@ -273,6 +287,11 @@ const entries = [...guides, referenceEntry]
      here is anchored on a class this file writes, which is the scoping a rendered document
      needs. Only the design tokens are named (W1.2's `tokens.css`); no colour, spacing or
      type size is written as a literal, so a palette change is that file's business. */
+  .lead {
+    max-width: var(--measure);
+    color: var(--text-muted);
+  }
+
   .guides {
     list-style: none;
     margin: 0;
