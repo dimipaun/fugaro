@@ -144,7 +144,7 @@ resource "google_project_iam_custom_role" "fugaro_deployer_scoped" {
     "artifactregistry.repositories.update",       # ... and update it (labels, cleanup policy)
     "cloudscheduler.jobs.delete",                 # google_cloud_scheduler_job: delete a prefixed job
     "cloudscheduler.jobs.pause",                  # ... pause it
-    "cloudscheduler.jobs.resume",                 # ... and resume it: the pair of pause, so a job the plan paused cannot be stranded
+    "cloudscheduler.jobs.enable",                 # ... and resume it (GCP names resume "enable"; cloudscheduler.jobs.resume does not exist): the pair of pause, so a job the plan paused cannot be stranded
     "cloudscheduler.jobs.run",                    # ... and run it once
     "cloudscheduler.jobs.update",                 # ... and update it, which is what an apply of a changed schedule does
     "iam.serviceAccounts.actAs",                  # a job or a schedule runs as an account of the plan's own, prefixed — so it can never act as the default compute account or Fugaro's own

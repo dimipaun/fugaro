@@ -2695,3 +2695,155 @@ func allResourceBlocks(t *testing.T, path string, src []byte) []block {
 	}
 	return out
 }
+
+// customRolePermissions is the snapshot of the permissions Google allows in a
+// custom role (GA, customRolesSupportLevel empty), for the service prefixes
+// the modules use. See the header of the file for how it is made and refreshed.
+const customRolePermissionsSnapshot = "testdata/custom-role-permissions.txt"
+
+var (
+	permissionsListStart = regexp.MustCompile(`\bpermissions\s*=\s*\[`)
+	quotedString         = regexp.MustCompile(`"([^"\\]*)"`)
+)
+
+// permissionStrings returns, for each `permissions = [...]` list in a .tf
+// file, the role that owns it (the last resource header before the list) and
+// its quoted entries. Comments are dropped before the entries are read.
+func permissionStrings(src string) (out []struct{ Role, Permission string }) {
+	stripComments := func(s string) string {
+		var b strings.Builder
+		in := false
+		for i := 0; i < len(s); i++ {
+			switch {
+			case s[i] == '"':
+				in = !in
+			case s[i] == '#' && !in:
+				return b.String()
+			}
+			b.WriteByte(s[i])
+		}
+		return b.String()
+	}
+	role := ""
+	var inList bool
+	for _, line := range strings.Split(src, "\n") {
+		line = stripComments(line)
+		if m := resourceHeader.FindStringSubmatch(line); m != nil {
+			role = m[1] + "." + m[2]
+		}
+		rest := line
+		if !inList {
+			loc := permissionsListStart.FindStringIndex(line)
+			if loc == nil {
+				continue
+			}
+			inList = true
+			rest = line[loc[1]:]
+		}
+		end := strings.Index(rest, "]")
+		if end >= 0 {
+			inList = false
+			rest = rest[:end]
+		}
+		for _, m := range quotedString.FindAllStringSubmatch(rest, -1) {
+			out = append(out, struct{ Role, Permission string }{role, m[1]})
+		}
+	}
+	return out
+}
+
+func loadPermissionSnapshot(t *testing.T) map[string]bool {
+	t.Helper()
+	b, err := os.ReadFile(customRolePermissionsSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{}
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		allowed[l] = true
+	}
+	return allowed
+}
+
+// 0.8.5 shipped with a custom role naming cloudscheduler.jobs.resume, which
+// does not exist (Google names it cloudscheduler.jobs.enable), so creating the
+// role failed at apply. Every permission any module puts in a custom role
+// must be one Google allows in a custom role.
+func TestCustomRolePermissionsAreAllowedByGoogle(t *testing.T) {
+	// Known-invalid entries not fixed by this change, keyed "file|permission".
+	// The compute module is not part of the installation root's apply, and
+	// which permission its reaper needs to cancel a Batch job is a design
+	// call (Google lists batch.jobs.create/delete/get/list only). Remove the
+	// entry when the module is fixed: the test fails while it is stale.
+	knownInvalid := map[string]string{
+		"gcp/modules/compute/iam.tf|batch.jobs.cancel": "reaper role, compute backend (unshipped)",
+	}
+	usedKnown := map[string]bool{}
+	allowed := loadPermissionSnapshot(t)
+	if len(allowed) < 100 {
+		t.Fatalf("%s has %d permissions: the snapshot is missing or truncated", customRolePermissionsSnapshot, len(allowed))
+	}
+	checked := 0
+	err := filepath.WalkDir("gcp", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".tf") {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		for _, ps := range permissionStrings(string(b)) {
+			checked++
+			key := filepath.ToSlash(p) + "|" + ps.Permission
+			if _, ok := knownInvalid[key]; ok {
+				usedKnown[key] = true
+				if allowed[ps.Permission] {
+					t.Errorf("%s is allowed by Google now: remove it from knownInvalid", key)
+				}
+				continue
+			}
+			if !allowed[ps.Permission] {
+				t.Errorf("%s: %s names permission %q, which is not in %s (not a permission Google allows in a custom role, or a restricted/testing one); if it is valid, refresh the snapshot as its header says",
+					p, ps.Role, ps.Permission, customRolePermissionsSnapshot)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k := range knownInvalid {
+		if !usedKnown[k] {
+			t.Errorf("knownInvalid entry %q matches nothing: remove it", k)
+		}
+	}
+	if checked < 30 {
+		t.Fatalf("only %d permission strings found in deploy/terraform: the extraction is broken", checked)
+	}
+}
+
+func TestPermissionStringsExtraction(t *testing.T) {
+	src := `resource "google_project_iam_custom_role" "a" {
+  permissions = [
+    "x.y.z", # "no.pe.rm"
+    "x.y.w",
+  ]
+}
+resource "google_project_iam_custom_role" "b" {
+  permissions = ["p.q.r", "p.q.s"]
+}
+`
+	got := permissionStrings(src)
+	want := []string{"google_project_iam_custom_role.a/x.y.z", "google_project_iam_custom_role.a/x.y.w", "google_project_iam_custom_role.b/p.q.r", "google_project_iam_custom_role.b/p.q.s"}
+	var have []string
+	for _, g := range got {
+		have = append(have, g.Role+"/"+g.Permission)
+	}
+	if !slices.Equal(have, want) {
+		t.Fatalf("got %v want %v", have, want)
+	}
+}
