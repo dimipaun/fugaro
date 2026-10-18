@@ -96,8 +96,9 @@ reader** (a peer's `gcloud run jobs describe`): on Batch a run's own account hol
 so a peer run cannot describe the job. The real audience is **every launcher**, through
 `roles/batch.jobsEditor` conditioned on the Fugaro job-name prefix (same file), which reads any
 Fugaro job's variables; **the reaper**, whose custom role carries `batch.jobs.get`, through
-`gcloud batch jobs describe`; and possibly the **CreateJob audit record** (unverified; Check 60
-step 3 records it). That is close to the override's audience in kind, but it is a standing copy in
+`gcloud batch jobs describe`; and possibly the **CreateJob audit record** (unverified, and **no check
+reads it** — Check 60 step 3 reads a Batch job's own variables and step 4 the Cloud Run `RunJob`
+entry). That is close to the override's audience in kind, but it is a standing copy in
 the job resource for as long as the job is kept rather than one request, and it widens to the
 reaper's account (compute Task 7, `docs/design/compute-backend.md`). This document
 allows no other carrier: a per-run Secret Manager secret read by the VM's account is C2, rejected

@@ -3999,7 +3999,7 @@ echo "RUN2=${RUN2:?} SLUG=${SLUG:?}" >> "$CHK60/vars.env"
 fugaro logs --project fugaro --follow "${SLUG:?}/${RUN2:?}" > "$CHK60/run2.log"
 ```
 
-FACT: the run's outcome (`fugaro status`), and that `run2.log` and the run's `result.json` carry no budget token and no key (`grep -c` for `eyJ` and for the marker's value: both `0`; the key is not printed anywhere for you to grep, which is the point — record the count of `FUGARO_BUDGET_TOKEN=` in the log, which must be `0` too).
+FACT: the run's outcome (`fugaro runs ls --project fugaro`, or `fugaro diagnose "${SLUG:?}/${RUN2:?}" --project fugaro` for the one run), and that `run2.log` and the run's `result.json` carry no budget token and no key (`grep -c` for `eyJ` and for the marker's value: both `0`; the key is not printed anywhere for you to grep, which is the point — record the count of `FUGARO_BUDGET_TOKEN=` in the log, which must be `0` too).
 
 ### 3. The object is worthless without the key, and where the key is (design steps 2 and 3)
 
@@ -4013,12 +4013,12 @@ gcloud storage ls "gs://${SANDBOX_BUCKET:?}/runs/${SLUG:?}/${RUN2:?}/budget-toke
 gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json \
   | jq '[.spec.template.spec.template.spec.containers[0].env[]? | select(.name=="FUGARO_BUDGET_TOKEN")] | length'
 # The execution's record (v1 path): what it shows of the override, recorded, not asserted.
-EXE=$(fugaro status --project fugaro --json "${SLUG:?}/${RUN2:?}" | jq -r .execution)
+EXE=$(fugaro diagnose "${SLUG:?}/${RUN2:?}" --project fugaro --json | jq -r .row.execution)
 gcloud run jobs executions describe "${EXE##*/}" --project="${P:?}" --region="${L:?}" --format=json \
   | jq '[.spec.template.spec.containers[0].env[]? | select(.name=="FUGARO_BUDGET_TOKEN") | (.value|length)]'
 ```
 
-If the installation has the compute backend, also read every Fugaro Batch job's variables: the launcher refuses a sealed launch on Batch, so none may carry the marker.
+On an installation that runs the compute backend, read every Fugaro Batch job's variables too. **No installation of this release can:** `backend: cloud-batch` is refused by config validation (`not enabled yet`, `internal/localcfg`), and the launcher's Batch wiring is not built, so the block below is a record for the release that enables it. What it checks then is the **Batch backend's own refusal** — a launch carrying the marker (`LaunchSpec.SecretEnv`) is refused before anything is created (`backend.ErrRejected`, and the refusal never quotes the value), so no Fugaro Batch job may carry `FUGARO_BUDGET_TOKEN`.
 
 ```bash
 for j in $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --format='value(name)' --filter='name~/jobs/fugaro-'); do
@@ -4027,7 +4027,7 @@ for j in $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --forma
 done
 ```
 
-FACT: the object's size and first byte (`01`); the two `grep -c` counts (`0`, `0`); that nothing is under `runs/`; the job's env count of `FUGARO_BUDGET_TOKEN` (`0`); and **U2 as found**: whether the execution record shows the override at all, and if so the **length** of its value (43 is the key) — never the value; and, with the compute backend, that no Fugaro Batch job's variables carry `FUGARO_BUDGET_TOKEN` (every line `false`). This FACT, not the design, is what §3.1's and §7.1's audience sentences are then worded from.
+FACT: the object's size and first byte (`01`); the two `grep -c` counts (`0`, `0`); that nothing is under `runs/`; the job's env count of `FUGARO_BUDGET_TOKEN` (`0`); and **U2 as found**: whether the execution record shows the override at all, and if so the **length** of its value (43 is the key) — never the value; and, on an installation that runs the compute backend (none of this release does), that no Fugaro Batch job's variables carry `FUGARO_BUDGET_TOKEN` (every line `false` — with no such job the loop prints nothing, which is not this FACT). This FACT, not the design, is what §3.1's and §7.1's audience sentences are then worded from.
 
 ### 4. What the audit log carries (design step 4)
 
