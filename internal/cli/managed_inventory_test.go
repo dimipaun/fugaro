@@ -282,6 +282,11 @@ func TestManagedApplyHandsTheInventoryToTheConfirmation(t *testing.T) {
 	}
 }
 
+// inventoryOperator is the person the command runs as in these fixtures: the
+// identity the impersonation grant names, whose own ADC the inventory read is
+// made with.
+const inventoryOperator = "user:operator@example.com"
+
 // inventoryApplyRig is inventoryRig plus everything the command needs to reach
 // the confirmation: the open budget gate's marker, a root with a plan, the
 // operator's own identity and the impersonation grant it assumes the deployer
@@ -296,17 +301,16 @@ func inventoryApplyRig(t *testing.T) (*initRig, string) {
 		t.Fatal(err)
 	}
 	setManagedPlan(t, r)
-	const operator = "user:operator@example.com"
 	account := managedmode.DeployerAccount(initProject)
 	r.iam.AddServiceAccount(initProject, account, "fugaro deployer")
-	r.iam.SetServiceAccountPolicy(initProject, account, gcpfake.Binding{Role: tf.DeployerTokenCreatorRole, Members: []string{operator}})
+	r.iam.SetServiceAccountPolicy(initProject, account, gcpfake.Binding{Role: tf.DeployerTokenCreatorRole, Members: []string{inventoryOperator}})
 	operatorADC(t)
 	isolateCredentialDir(t)
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 
 	oldCaller := managedCaller
 	managedCaller = func(context.Context, *localcfg.Config) (string, oauth2.TokenSource, error) {
-		return operator, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: fixtureToken("op-")}), nil
+		return inventoryOperator, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: fixtureToken("op-")}), nil
 	}
 	t.Cleanup(func() { managedCaller = oldCaller })
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -387,5 +391,51 @@ func TestManagedAccountedReadsTheProjectsOwnStateBuckets(t *testing.T) {
 	}
 	if managedmode.InstallationsStateBucket(initProject) == managedmode.ManagedStateBucketName(initProject) {
 		t.Error("the two state buckets are the same bucket")
+	}
+}
+
+// The security-relevant part of the wiring is WHERE the read is made: with the
+// operator's own credential, before the deployer is assumed. The Cloud Asset
+// read role is granted to the operators and to nobody else (iam.tf's
+// operator_cloud_asset_reader), and the deployer the command assumes holds
+// neither it nor the installation's own state bucket the accounted side is
+// read from — a read made after the impersonation would answer
+// CauseRoleMissing and fall the run back on every apply.
+//
+// So the two are ordered against each other here: the whole-project read is
+// asked for first, and the caller's own identity is resolved after it. What
+// the read is handed is the caller's own configuration — the project the
+// command loaded from the checkout — and not anything a step below built.
+func TestManagedApplyReadsTheInventoryBeforeItAssumesTheDeployer(t *testing.T) {
+	noAgentSession(t)
+	_, root := inventoryApplyRig(t)
+	var order []string
+	var readConfig *localcfg.Config
+
+	oldAssets := managedAssets
+	managedAssets = func(_ context.Context, lc *localcfg.Config) (managedmode.Assets, error) {
+		order = append(order, "read")
+		readConfig = lc
+		return &fakeManagedAssets{assets: []managedmode.Asset{
+			{Name: "//storage.googleapis.com/" + initRunsBucket, Type: "storage.googleapis.com/Bucket"},
+			{Name: "//storage.googleapis.com/fmgd-data", Type: "storage.googleapis.com/Bucket"},
+		}}, nil
+	}
+	t.Cleanup(func() { managedAssets = oldAssets })
+	oldCaller := managedCaller
+	managedCaller = func(_ context.Context, _ *localcfg.Config) (string, oauth2.TokenSource, error) {
+		order = append(order, "caller")
+		return inventoryOperator, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: fixtureToken("op-")}), nil
+	}
+	t.Cleanup(func() { managedCaller = oldCaller })
+
+	if _, _, err := execute(t, "managed", "apply", root); err == nil {
+		t.Fatal("the command applied without a confirmation")
+	}
+	if len(order) != 2 || order[0] != "read" || order[1] != "caller" {
+		t.Fatalf("the command did %v, want the whole-project read before the caller's identity is resolved", order)
+	}
+	if readConfig == nil || readConfig.GCPProject != initProject || readConfig.Name != initProjectName {
+		t.Errorf("the read was handed %+v, want the operator's own configuration of %s (%s)", readConfig, initProjectName, initProject)
 	}
 }

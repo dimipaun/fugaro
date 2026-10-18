@@ -27,9 +27,12 @@ import (
 // holds neither it nor the installation's state bucket, and this is the last
 // place in the command where the operator's credential is the one in hand —
 // everything after the impersonation runs as the deployer. It is also before
-// terraform: the read is independent of the plan (an empty plan is decided
-// before the confirmation and still reported), and a read that cannot be made
-// must not be able to launch terraform at all.
+// terraform: the read is made whatever the plan turns out to hold — an empty
+// plan is decided without ever reaching the confirmation — and a read that
+// cannot be made must not be able to launch terraform at all. Where a fallback
+// is SAID is narrower: managed.Apply prints its sentence at the confirmation,
+// so a run that applies nothing (an empty plan, a refused plan, a closed gate)
+// carries the answer without warning about it.
 //
 // Nothing here writes, and nothing here can: the Cloud Asset read is an
 // interface with one read method (managed.Assets), and the state reads are
@@ -87,15 +90,20 @@ func managedInventory(ctx context.Context, lc *localcfg.Config, c *infra.Clients
 // managed.InstallationsStateBucket): a bucket a caller could name is a bucket
 // this command would believe instead of the project's own.
 //
-// What it does NOT account for is written down where the table of Terraform
-// types is (internal/managed/stateaccounts.go): the resources a creating run
-// makes outside Terraform — the two state buckets themselves, the Firestore
-// database and the Firebase project infra.AddFirebase adds — and the objects a
-// job writes into the runs bucket at run time are in no state, so they stay
-// foreign and fall a managed apply back to its confirmations until a task
-// accounts for them. That is the safe direction, and Check 67a — the owner-run
-// live check — is where the listing of a real managed project is read and the
-// remaining gaps are named by the warning itself.
+// What LEAVES this list is written down where the table of Terraform types is
+// (internal/managed/stateaccounts.go): the state holds no entry for the
+// Firebase project infra.AddFirebase adds, and none for an object a job writes
+// into the runs bucket at run time, so neither can be accounted for here. The
+// resources a creating run makes outside Terraform that DO have a name this
+// program derives — the two state buckets themselves and the default Firestore
+// database Firebase provisions — are the inventory's third category and are
+// ignored by their exact names (managed.Inventory's installationCreated), not
+// by this function: the state says no word about them, and building them into
+// Accounted would make the state read out to be something it is not. What
+// remains uncovered falls the run back to its confirmations, which is the safe
+// direction, and Check 67a — the owner-run live check — is where the listing of
+// a real managed project is read and any remaining gap is named by the warning
+// itself.
 //
 // A state that cannot be listed or parsed is an error and never an empty list
 // of accounts, and the caller turns it into the fallback: reading "the state

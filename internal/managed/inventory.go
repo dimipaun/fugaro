@@ -296,16 +296,69 @@ func (in Inventory) fallback(cause Cause, detail string) Decision {
 			in.what(), cause, safetext.Field(detail))}
 }
 
-// foreign is the listed assets the state does not account for — and that GCP
-// did not create itself — in the order the read returned them.
+// foreign is the listed assets nothing about this installation can claim — not
+// the state (accounted), not GCP itself (gcpCreated), and not the owner-run
+// commands that made the project Fugaro's own (installationCreated) — in the
+// order the read returned them.
 func (in Inventory) foreign(listed []Asset) []Asset {
 	var out []Asset
 	for _, a := range listed {
-		if !in.gcpCreated(a) && !in.accounted(a) {
+		if !in.gcpCreated(a) && !in.installationCreated(a) && !in.accounted(a) {
 			out = append(out, a)
 		}
 	}
 	return out
+}
+
+// installationCreated is the third thing that is not foreign: a resource
+// Fugaro's own owner-run commands created and NO Terraform state accounts for.
+//
+// Why it is needed, and why it is not Accounted: the two kinds of resource the
+// installation makes without Terraform. Its own state buckets are created by
+// infra.CreateStateBucket (the installation's fugaro-tfstate-<gcp-project> and
+// D77's fugaro-managed-tfstate-<gcp-project>) and the managed creation's own
+// step, and the Firebase the project was created with is added by
+// infra.AddFirebase, which is an API call and no root's plan — the Firestore
+// default database Firebase provisions with it is in no state either. The
+// whole-project read lists all of them, so without this the accounted side
+// could never cover them, every real managed project would fall back, and the
+// agent apply the budget gate opens would ask for a confirmation on every run
+// (Check 67a's "no fallback" step). They are not Accounted entries because
+// nothing in the state says a word about them: calling them accounted would
+// make the state read out to be something it is not, and the caller builds
+// Accounted out of the state alone.
+//
+// The match is by the exact names these resources carry, which are functions
+// of this project's id — the same functions the rest of the program creates
+// them with (InstallationsStateBucket, ManagedStateBucketName) — and never by
+// a prefix or by type alone:
+//
+//   - a bucket called fugaro-tfstate-<this id> or
+//     fugaro-managed-tfstate-<this id>. Bucket names are globally unique, so
+//     there is exactly one of each and an agent cannot make a second under
+//     that name; a bucket called fugaro-tfstate-<another id> is another
+//     project's and stays foreign.
+//   - the DEFAULT Firestore database of this project,
+//     firestore.googleapis.com/Database at "projects/<this id>/databases/(default)".
+//     Any other database in the project is one somebody created and stays
+//     foreign.
+//
+// Anything else is foreign, and a project is single-purpose (D59) whatever
+// else it holds. What this cannot claim, because no name identifies it, is
+// listed where the check's own limits are: the objects a run writes into the
+// runs bucket, which is itself accounted for by the installation's state.
+func (in Inventory) installationCreated(a Asset) bool {
+	if in.GCPProject == "" {
+		return false
+	}
+	switch a.Type {
+	case "storage.googleapis.com/Bucket":
+		name := lastSegment(a.Name)
+		return name == InstallationsStateBucket(in.GCPProject) || name == ManagedStateBucketName(in.GCPProject)
+	case "firestore.googleapis.com/Database":
+		return assetPath(a.Name) == "projects/"+in.GCPProject+"/databases/(default)"
+	}
+	return false
 }
 
 // gcpCreated is the second half of what a clean project is, and it is the

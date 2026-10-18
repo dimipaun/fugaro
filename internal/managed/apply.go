@@ -344,8 +344,17 @@ func DeleteAdvice(gcpProject string) string {
 // internal/cli reads with the operator's credential — the identity the
 // installation grants the read role to — and not with the deployer's, which
 // holds neither. Reading it before terraform is also what makes it independent
-// of the plan: an empty plan returns before the confirmation and applies
-// nothing, and the read is still made and still reported.
+// of the plan: it is made whatever the plan turns out to hold, and its answer
+// is the same whether the plan applies something or nothing.
+//
+// Where it is SAID is narrower, and deliberately so: the fallback's sentence is
+// printed by confirm, and confirm is reached only where the run could go on to
+// apply — not on a plan that changes nothing, not on a plan the gate refuses,
+// and not on a closed gate. On each of those the run applies nothing, so there
+// is no confirmation for the fallback to keep and nothing for the sentence to
+// warn about; the read is still made, and its answer still decides whether
+// confirm would ask (the apply-time budget gate has the same shape: it is read
+// before the plan and its refusal is a refusal, not a warning).
 func Apply(ctx context.Context, r Request) (Result, error) {
 	if err := r.Enable.Refuse(); err != nil {
 		return Result{}, err

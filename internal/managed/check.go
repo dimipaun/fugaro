@@ -13,8 +13,8 @@ import "fmt"
 // the read through would hand the apply a clean project and the apply would
 // remove the coding agent's refusal for a project nobody looked at. So the
 // zero value of this type is the other branch — the fallback that keeps the
-// confirmations — and the only way to hold the other one is to have a Decision
-// to build it from (CheckedInventory), which is a read someone made.
+// confirmations — and the other one has to be asked for by name, with a
+// Decision the caller made the read to get (CheckedInventory).
 //
 // It mirrors enable.go's Enable: unexported fields, one constructor, the safe
 // answer at the zero value, and the whole of the behaviour in one predicate
@@ -30,10 +30,19 @@ type InventoryCheck struct {
 	decision Decision
 }
 
-// CheckedInventory is the one way to hold a check that does not fall back: the
-// caller that made the read passes what it decided. A Decision is a value only
-// Inventory.Check and Unread build, so this cannot be passed a clean project
-// by a caller that read nothing.
+// CheckedInventory is the way to hold a check that reports a read: the caller
+// that made the read passes what it decided, and this is what turns "no read"
+// into "read, and here is the answer".
+//
+// It is not a proof that a read happened, and it does not try to be: Decision
+// is exported, so a caller can build a clean one by hand and pass it here.
+// What protects the apply is the zero value — a caller that never mentions the
+// inventory at all holds the fallback — and the fact that the two callers that
+// do mention it (internal/cli's managed apply, through Inventory.Check or
+// Unread) are the ones that read. A caller that goes out of its way to
+// construct a clean Decision is lying about a read, which no type in this
+// package can prevent; the tests that pin the wiring are what catch it
+// (TestApplyConsultsTheInventory in this package, and the command's own).
 func CheckedInventory(d Decision) InventoryCheck { return InventoryCheck{read: true, decision: d} }
 
 // Fallback reports whether the run keeps its confirmations: the decision fell
