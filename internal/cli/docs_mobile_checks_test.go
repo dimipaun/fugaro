@@ -212,15 +212,41 @@ func TestDocsMobileChecklistHasCheck81And82And89(t *testing.T) {
 	// the checklist, so each is held to its own side: the format must exist in
 	// DB.Plan, and the rendered forms -- the marker line and the byte count --
 	// are the two strings above, derived rather than typed.
+	const rulesFormat = "deploys the security rules (%d bytes, generated)"
+	const markerFormat = "records the rules generation (%s = %d)"
 	for _, c := range []struct{ file, format, why string }{
-		{"../infra/firebasedb.go", "deploys the security rules (%d bytes, generated)",
+		{"../infra/firebasedb.go", rulesFormat,
 			"check 82 step 3 quotes the rules act line"},
-		{"../infra/firebasedb.go", "records the rules generation (%s = %d)",
+		{"../infra/firebasedb.go", markerFormat,
 			"check 82 step 3 quotes the marker act line"},
 	} {
 		if !strings.Contains(readSrc(t, c.file), c.format) {
 			t.Errorf("%s does not carry the format %q: %s", c.file, c.format, c.why)
 		}
+	}
+
+	// And the checklist prints them in the order the plan prints them: DB.Plan
+	// appends the PutRules action before the marker's PutIfMatch, and
+	// deployDatabase prints the actions in slice order, so the rules line comes
+	// first and the marker line last. That order is the check's substance, not
+	// its style: the owner reads the plan before typing the project's name, and
+	// the claim "a deploy that fails leaves no marker" is true because the
+	// marker is what comes after the rules. The reviewer's finding: a check that
+	// lists them the other way round teaches the owner that a marker-first plan
+	// is what a correct deploy prints.
+	dbSrc := readSrc(t, "../infra/firebasedb.go")
+	rulesAt, markerAt := strings.Index(dbSrc, rulesFormat), strings.Index(dbSrc, markerFormat)
+	if rulesAt < 0 || markerAt < 0 {
+		t.Errorf("../infra/firebasedb.go does not carry both act-line formats, so the order check 82 asserts cannot be read from it")
+	} else if rulesAt > markerAt {
+		t.Errorf("DB.Plan now plans the rules marker (offset %d) before the rules deploy (offset %d): check 82 step 3 still prints the rules line first, and that order is what makes the marker's presence a statement about the document under it -- rewrite the check if the plan really changed", markerAt, rulesAt)
+	}
+	docRulesAt, docMarkerAt := strings.Index(section82, "rules: "+fmt.Sprintf("deploys the security rules (%d bytes, generated)", len(gen))), strings.Index(section82, fmt.Sprintf("records the rules generation (%s = %d)", projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion))
+	if docRulesAt < 0 || docMarkerAt < 0 {
+		// Already reported by the derived-string loop above; the order is only
+		// readable once both are there.
+	} else if docRulesAt > docMarkerAt {
+		t.Errorf("## Check 82: prints the marker line before the rules line, which is the reverse of the plan's order (DB.Plan plans PutRules first, the marker last): the check tells the owner to record the act lines in the order printed, so it has to show them that way")
 	}
 
 	// Check 81 is the live half of P2.2's emulator cases, and it names them.
