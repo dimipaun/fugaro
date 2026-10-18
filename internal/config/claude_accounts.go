@@ -206,26 +206,33 @@ func ValidClaudeAccountRef(name string) string {
 	return ""
 }
 
-// MountsAnthropicKey reports whether a profile's secrets: entry is an
-// Anthropic API key, in either of the two spellings a profile can hold one in:
-// the reserved secret name anthropic-api-key (AnthropicSecret, mounted as
-// ANTHROPIC_API_KEY), or the variable name ANTHROPIC_API_KEY itself — an
-// operator who writes the variable where the name goes means the same
-// credential.
+// MountsAnthropicKey reports whether a profile's secrets: entry means the
+// Anthropic API key, in either spelling of it: the reserved secret's name
+// (anthropic-api-key, mounted as ANTHROPIC_API_KEY), or that variable's name
+// itself — an operator who writes the variable where the name goes means the
+// same credential, and reading it as a name of some other secret would let the
+// key ride in beside a profile's Claude accounts.
 //
 // It is the predicate of D4's rule that a profile listing Claude accounts may
 // not also carry an API key (design project-named-oauth-tokens §4.1): an
 // account job's container would then hold a key no OAuth run of it can use,
 // and "which credential does this job serve" would stop being answerable from
-// the profile. The design words the same rule as "a provider whose key
-// variable is ANTHROPIC_API_KEY"; this release cannot reach that case through
-// a profile, and refusing the variable's own spelling is what covers it: a
-// provider's key is mounted as FUGARO_PROVIDER_KEY_<SECRET>
-// (ProviderKeyEnv), never as the bare ANTHROPIC_API_KEY, a secrets: entry is
-// held to CheckSecretName, and a provider's secret may never be a reserved
-// secret's name (reservedSecretName) — so the two spellings below are the
-// ones a profile can be written with, and neither a provider entry nor any
-// other secrets: entry can spell an Anthropic key in a third way.
+// the profile.
+//
+// The design words the same rule as "a provider whose key variable is
+// ANTHROPIC_API_KEY", and no profile can be written with that spelling in this
+// release: a provider's key is mounted as FUGARO_PROVIDER_KEY_<SECRET>
+// (ProviderKeyEnv), which is never the bare Anthropic variable, a secrets:
+// entry is held to CheckSecretName (and "ANTHROPIC_API_KEY" is not a
+// lower-case secret name), and a provider's secret may never be a reserved
+// secret's name (reservedSecretName) — so the two spellings below are the ones
+// reachable, and the variable's own is the one that stands in for the
+// provider case (it is refused by CheckSecretName before this predicate, on
+// every profile and not only one that lists accounts; internal/projectpolicy's
+// TestProfileAccountWithAnthropicKeyRefused pins that ordering). The
+// comparison is kept because this is the function that answers "is this entry
+// the Anthropic key", and an entry spelling it that way is the key whether or
+// not another rule refuses it first.
 func MountsAnthropicKey(secret string) bool {
 	return secret == AnthropicSecret || secret == ReservedSecrets[AnthropicSecret]
 }
