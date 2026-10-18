@@ -169,7 +169,7 @@ func WriteDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject
 	case s == nil:
 		return refusedf("to write %s for %s: no storage client", AllowDeleteObject, gcpProject)
 	}
-	if err := proveRunsBucket(ctx, s, bucket, gcpProject, number); err != nil {
+	if err := proveRunsBucket(ctx, s, bucket, gcpProject, AllowDeleteObject, number); err != nil {
 		return err
 	}
 	if _, err := s.Objects.Insert(bucket, &storage.Object{Name: AllowDeleteObject, ContentType: "application/json"}).
@@ -203,7 +203,7 @@ func AllowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject str
 	if bucket == "" || gcpProject == "" || number == 0 || s == nil {
 		return nil, nil
 	}
-	if err := proveRunsBucket(ctx, s, bucket, gcpProject, number); err != nil {
+	if err := proveRunsBucket(ctx, s, bucket, gcpProject, AllowDeleteObject, number); err != nil {
 		return nil, nil
 	}
 	resp, err := s.Objects.Get(bucket, AllowDeleteObject).Context(ctx).Download()
@@ -290,7 +290,7 @@ func ReadDeleteListForWrite(ctx context.Context, s *storage.Service, bucket, gcp
 	case s == nil:
 		return DeleteListState{}, refusedf("to read %s for %s: no storage client", AllowDeleteObject, gcpProject)
 	}
-	if err := proveRunsBucket(ctx, s, bucket, gcpProject, number); err != nil {
+	if err := proveRunsBucket(ctx, s, bucket, gcpProject, AllowDeleteObject, number); err != nil {
 		return DeleteListState{}, err
 	}
 	o, err := s.Objects.Get(bucket, AllowDeleteObject).Context(ctx).Do()
@@ -412,10 +412,30 @@ func GuardAllowList(ctx context.Context, s *storage.Service, bucket, gcpProject 
 // project number the caller read, and the label the installation sets. A
 // bucket name is global, so neither alone is worth anything — and this is the
 // read half, an error meaning "do not believe anything in it".
-func proveRunsBucket(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64) error {
+//
+// what is the object the caller is about — MarkerObject for the two marker
+// writers, AllowDeleteObject for the delete list — and it appears in the one
+// message that names the read that could not be made; the refusal below is
+// about the bucket and names no object, because it is the same answer for
+// everybody. It is one function for every caller so the rule that decides
+// whether an object in a bucket is about this project exists once: three
+// copies of it would be three chances for one of them to drift.
+func proveRunsBucket(ctx context.Context, s *storage.Service, bucket, gcpProject, what string, number uint64) error {
 	b, err := s.Buckets.Get(bucket).Context(ctx).Do()
 	if err != nil {
-		return fmt.Errorf("reading gs://%s before reading %s for %s: %w", bucket, AllowDeleteObject, gcpProject, err)
+		// A 404 and a 403 are answers rather than failures, the way the read
+		// of the marker treats them (readFact): Google answers a bucket the
+		// caller may not read the same way it answers one that is not there,
+		// so the refusal says which name was looked for instead of guessing
+		// which of the two it was. Both directions are fail-closed: nothing
+		// is written into a bucket this call could not look at, and nothing
+		// in one is believed.
+		var ge *googleapi.Error
+		if errors.As(err, &ge) && (ge.Code == http.StatusForbidden || ge.Code == http.StatusNotFound) {
+			return refusedf("gs://%s is not there, or cannot be read, so %s has no runs bucket to hold %s (an installation that never made its runs bucket has none)",
+				bucket, gcpProject, what)
+		}
+		return fmt.Errorf("reading gs://%s before reading %s for %s: %w", bucket, what, gcpProject, err)
 	}
 	if b.ProjectNumber != number || b.Labels[gcp.LabelManaged] != gcp.ManagedValue {
 		return refusedf("gs://%s is not %s's own runs bucket (project number %d, label %s=%s)",
