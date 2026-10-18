@@ -40,6 +40,14 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { linkNodeModules } from './lib/build.mjs'
+import {
+  DOWNLOADS_JSON,
+  SITE_YAML,
+  downloadNeedle,
+  downloadsData,
+  publishedDownloads,
+  repoFile,
+} from './lib/console-downloads.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -49,19 +57,6 @@ const REPO = path.dirname(SITE)
 // directories (the last two are symlinked and rebuilt instead).
 const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'plugin', 'schemas', 'deploy', 'testdata'])
 const SKIP_UNDER_WEBSITE = new Set(['node_modules', 'dist', '.astro'])
-
-const DOWNLOADS_JSON = 'website/content/downloads.json'
-const SITE_YAML = 'website/data/site.yaml'
-
-/** The bytes of a file in the checkout, for a test to hold the build's output against. */
-function repoFile(relative) {
-  return readFileSync(path.join(REPO, relative), 'utf8')
-}
-
-/** The console's data file, parsed: the facts the page renders and this test checks. */
-function downloadsData() {
-  return JSON.parse(repoFile(DOWNLOADS_JSON))
-}
 
 /**
  * One decision row of the console's design, as that document writes it: the row is the
@@ -74,18 +69,6 @@ function decisionRow(id) {
   const row = new RegExp(`^\\|\\s*\\*\\*${id}\\*\\*\\s*\\|.*$`, 'm').exec(design)
   assert.ok(row, `docs/design/desktop-console.md carries no ${id} row, and the console's page cites it`)
   return row[0]
-}
-
-/**
- * The string a console download URL of this repository contains, built from `site.yaml`'s
- * own repository rather than typed here: while the flag is false the built page may carry
- * none of it, and the same shape is what the Go boundary test scans the whole site for
- * (Global Constraint 9). It is assembled at run time so that this file is not itself a
- * second spelling of a URL the site must not carry.
- */
-function downloadNeedle() {
-  const repository = /^repository:\s*(\S+)$/m.exec(repoFile(SITE_YAML))[1]
-  return `${new URL(repository).host}${new URL(repository).pathname}/releases/download`
 }
 
 /** A copy of the repository in a temp directory, ready to be mutated and built. */
@@ -335,39 +318,68 @@ test("the console's guarantees are stated as the document that decides them stat
 
 test('the build refuses a download URL while the flag is false', async (t) => {
   // The rule W0.2's Go test enforces over the whole tree, wired into the build (W1.6 step
-  // 2): a URL in the data file while the console is unreleased stops the build here, naming
-  // the file — and the URL is synthetic, because no real artifact exists to point at.
-  const built = buildWith(t, (copy) => {
+  // 2): a URL written into the data file stops the build here, naming the file — and the URL
+  // is synthetic, because no real artifact exists to point at. Both shapes it can arrive in
+  // are refused: as a `url` key of its own, and as a `file` that is a URL rather than a
+  // published name. Since the owner's item 6 the URLs are DERIVED — the data file carries the
+  // release's published names and nothing else — so either shape is a file that has stopped
+  // being the file the derivation reads.
+  const url = 'https://downloads.example.invalid/console-macos.tar.gz'
+
+  const asKey = buildWith(t, (copy) => {
     const file = path.join(copy.root, 'website', 'content', 'downloads.json')
     const data = JSON.parse(readFileSync(file, 'utf8'))
-    data.downloads = [{ id: 'macos', platform: 'macOS', url: 'https://downloads.example.invalid/console-macos.tar.gz' }]
+    data.downloads = [{ id: 'macos', platform: 'macOS', url }]
     writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
   })
+  assert.notEqual(asKey.status, 0, `the build accepted a download URL while the console is unreleased:\n${asKey.output}`)
+  assert.match(asKey.output, /downloads\.json/, 'the failure does not name the data file the URL came from')
+  assert.match(asKey.output, /carries the key "url"/, 'the failure does not say which key it refused')
+  assert.match(asKey.output, /derived/, 'the failure does not say where a download URL comes from instead')
+  assert.equal(asKey.page, null, 'the build wrote a page carrying a link to an unreleased artifact')
 
-  assert.notEqual(built.status, 0, `the build accepted a download URL while the console is unreleased:\n${built.output}`)
-  assert.match(built.output, /downloads\.json/, 'the failure does not name the data file the URL came from')
-  assert.match(built.output, /available is false/, 'the failure does not say why the URL was refused')
-  assert.equal(built.page, null, 'the build wrote a page carrying a link to an unreleased artifact')
+  const asFile = buildWith(t, (copy) => {
+    const file = path.join(copy.root, 'website', 'content', 'downloads.json')
+    const data = JSON.parse(readFileSync(file, 'utf8'))
+    data.downloads[0].file = url
+    writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
+  })
+  assert.notEqual(asFile.status, 0, `the build accepted a URL in the file field while the console is unreleased:\n${asFile.output}`)
+  assert.match(asFile.output, /downloads\.json/, 'the failure does not name the data file the URL came from')
+  assert.match(asFile.output, /\.file is "/, 'the failure does not name the field the URL was written into')
+  assert.equal(asFile.page, null, 'the build wrote a page carrying a link to an unreleased artifact')
 })
 
-test('with the console released, the section renders the platform link the data carries', async (t) => {
+test('with the console released, the section renders the downloads the release publishes', async (t) => {
   // W3.1's state: the console has shipped, the flag in `site.yaml` and the data file's own
-  // `available` are both true, and the section renders what the data carries. Nothing in
-  // the page changes, which is the point of rendering the section from a data file.
-  const url = 'https://downloads.example.invalid/console-macos.tar.gz'
+  // `available` are both true — and that pair is the WHOLE change. Nothing in the page
+  // changes and no URL is written anywhere: the section's links are derived from the
+  // release's published names, so the flip and a version bump move every button (the owner's
+  // changes spec of 2026-10-18, item 6).
   const built = buildWith(t, (copy) => {
     const yaml = path.join(copy.root, 'website', 'data', 'site.yaml')
     writeFileSync(yaml, readFileSync(yaml, 'utf8').replace(/^(\s*console_downloads:\s*)false\s*$/m, '$1true'))
     const file = path.join(copy.root, 'website', 'content', 'downloads.json')
     const data = JSON.parse(readFileSync(file, 'utf8'))
     data.available = true
-    data.downloads = [{ id: 'macos', platform: 'macOS', url }]
     writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
   })
 
-  const page = builtPage(built)
-  assert.ok(page.includes(`href="${url}"`), `the section does not render the download the data carries (${url})`)
-  assert.ok(!page.includes(downloadsData().not_released.text), 'the section still renders the not-released sentence with the console released')
+  const page = decode(builtPage(built))
+  const expected = publishedDownloads()
+  assert.ok(expected.length >= 2, `the data file names ${expected.length} asset(s), which is too few to prove the section renders the release`)
+
+  for (const download of expected) {
+    assert.ok(
+      page.includes(`href="${download.url}"`),
+      `the section does not render the derived URL of "${download.id}": ${download.url}`,
+    )
+    assert.ok(page.includes(download.label), `the section does not offer "${download.label}", the label the published name makes`)
+  }
+  assert.ok(
+    !page.includes(downloadsData().not_released.text),
+    'the section still renders the not-released sentence with the console released',
+  )
 })
 
 test('the page states nothing its data file does not carry', async (t) => {
