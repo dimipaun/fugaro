@@ -4269,7 +4269,7 @@ git rev-parse --show-toplevel >/dev/null 2>&1 \
   && { echo "Check 90 stopped: $SCRATCH is inside a git work tree — use a directory outside every repository" >&2; exit 1; }
 # Hard stop 2: the token file is non-empty, yours, and outside a work tree too.
 TOKEN_FILE=${TOKEN_FILE:-$SCRATCH/token}
-[ -s "$TOKEN_FILE" ] || { echo "Check 90 stopped: create $TOKEN_FILE yourself first (step 2)" >&2; exit 1; }
+[ -s "$TOKEN_FILE" ] || { echo "Check 90 stopped: no token file at $TOKEN_FILE yet — do step 2, then re-run this block" >&2; exit 1; }
 git -C "$(dirname "$TOKEN_FILE")" rev-parse --show-toplevel >/dev/null 2>&1 \
   && { echo "Check 90 stopped: the token file is inside a git work tree" >&2; exit 1; }
 chmod 600 "$TOKEN_FILE"
@@ -4277,6 +4277,8 @@ chmod 600 "$TOKEN_FILE"
 claude --version || { echo "Check 90 stopped: no claude on PATH" >&2; exit 1; }
 PORT=${PORT:-8787}                        # any free loopback port
 ```
+
+**The first time through, hard stop 2 stops you on purpose:** the token file does not exist until step 2 has made it, so run step 2, come back, and re-run this block — after that it passes unchanged at the start of every step.
 
 **FACT:** `claude --version`; and the token file's length and mode (`wc -c`, `ls -l`) — a length and a mode, never the value.
 
@@ -4413,6 +4415,7 @@ CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")" claude -p "say ok"
 Then the swap. The placeholder below is a literal that is not a credential, it is what Claude Code puts in the `Authorization` header, and the proxy replaces it before anything leaves your machine:
 
 ```bash
+[ -e "$SCRATCH/proxy.pid" ] && kill "$(cat "$SCRATCH/proxy.pid")" 2>/dev/null   # a rerun of this step
 python3 "$SCRATCH/proxy.py" --token-file "$TOKEN_FILE" --port "$PORT" > "$SCRATCH/proxy.log" 2>&1 &
 echo $! > "$SCRATCH/proxy.pid"
 sleep 1
@@ -4436,7 +4439,7 @@ ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" CLAUDE_CODE_OAUTH_TOKEN="placeholder
 For each name the step-4 log printed, other than `authorization` and `x-api-key` (which the proxy removes by design), restart the proxy with `--drop <name>` and re-run step 4:
 
 ```bash
-kill "$(cat "$SCRATCH/proxy.pid")"
+kill "$(cat "$SCRATCH/proxy.pid")" 2>/dev/null
 python3 "$SCRATCH/proxy.py" --token-file "$TOKEN_FILE" --port "$PORT" --drop "anthropic-beta" > "$SCRATCH/proxy.log" 2>&1 &
 echo $! > "$SCRATCH/proxy.pid"; sleep 1
 ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" CLAUDE_CODE_OAUTH_TOKEN="placeholder-not-a-credential" claude -p "say ok"
@@ -4455,7 +4458,7 @@ Drive enough subscription traffic to meet the account's own limit — or wait fo
 Restart the proxy with `--delay 90` and re-run step 4, timing it; raise the delay if the first was survived.
 
 ```bash
-kill "$(cat "$SCRATCH/proxy.pid")"
+kill "$(cat "$SCRATCH/proxy.pid")" 2>/dev/null
 python3 "$SCRATCH/proxy.py" --token-file "$TOKEN_FILE" --port "$PORT" --delay 90 > "$SCRATCH/proxy.log" 2>&1 &
 echo $! > "$SCRATCH/proxy.pid"; sleep 1
 time ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" CLAUDE_CODE_OAUTH_TOKEN="placeholder-not-a-credential" claude -p "say ok"
@@ -4492,8 +4495,10 @@ The token file is yours to keep or delete, and revoking a `claude setup-token` v
 # step: it is idempotent, and nothing below the hard stops runs. ===
 P=fugaro-dev                 # HARD-CODED, never `gcloud config get-value project`
 L=us-east5                   # the installation's region
+# Hard stop 1: the project and the region are the two the block just set.
 [ "$P" = fugaro-dev ] && [ -n "$L" ] \
   || { echo "Check 91 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L not empty)" >&2; exit 1; }
+# Hard stop 2: this is the fugaro-dev installation, not another one.
 fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 91 stopped: this is not the fugaro-dev installation" >&2; exit 1; }
 SVC=fugaro-chk91
@@ -4513,7 +4518,13 @@ IMG=${L}-docker.pkg.dev/${P}/${SVC}/${SVC}:chk91
 **Baseline, once, before anything is created** (the Restore reads it, and it is what decides whether the registry repository is this check's to delete):
 
 ```bash
-[ -e "$CHK91/repo-existed" ] || { gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null 2>&1 && echo yes || echo no; } > "$CHK91/repo-existed"
+if [ ! -e "$CHK91/repo-existed" ]; then
+  if gcloud artifacts repositories describe "${SVC:?}" --project="${P:?}" --location="${L:?}" >/dev/null 2>&1; then
+    echo yes > "$CHK91/repo-existed"
+  else
+    echo no > "$CHK91/repo-existed"
+  fi
+fi
 cat "$CHK91/repo-existed"
 ```
 
@@ -4701,11 +4712,11 @@ rm -f "$CHK91/body.bin"
 ### Check 91 step 7: Restore
 
 ```bash
+REPO_EXISTED=$(cat "$CHK91/repo-existed")     # read it before the scratch dir goes
 gcloud run services delete "${SVC:?}" --project="${P:?}" --region="${L:?}" --quiet
 gcloud artifacts docker images delete "${IMG:?}" --project="${P:?}" --delete-tags --quiet
-[ "$(cat "$CHK91/repo-existed")" = no ] && \
+[ "$REPO_EXISTED" = no ] && \
   gcloud artifacts repositories delete "${SVC:?}" --project="${P:?}" --location="${L:?}" --quiet
-rm -rf "$CHK91"
 ```
 
 Then the assertion, **every line of which must read `0`**:
@@ -4713,7 +4724,8 @@ Then the assertion, **every line of which must read `0`**:
 ```bash
 echo -n "services:   "; gcloud run services list --project="${P:?}" --region="${L:?}" --filter="metadata.name=${SVC}" --format='value(metadata.name)' | wc -l
 echo -n "images:     "; gcloud artifacts docker images list "${L}-docker.pkg.dev/${P}/${SVC}" --project="${P:?}" --include-tags --format='value(image)' 2>/dev/null | wc -l
-echo -n "repository: "; [ "$(cat "$CHK91/repo-existed" 2>/dev/null)" = no ] && gcloud artifacts repositories list --project="${P:?}" --location="${L:?}" --filter="name:${SVC}" --format='value(name)' | wc -l || echo "0 (it existed before this check: not this check's to delete)"
+echo -n "repository: "; [ "${REPO_EXISTED:?}" = no ] && gcloud artifacts repositories list --project="${P:?}" --location="${L:?}" --filter="name:${SVC}" --format='value(name)' | wc -l || echo "0 (it existed before this check: not this check's to delete)"
+rm -rf "$CHK91"
 ```
 
 **FACT:** the three counts. A line that does not read `0` is the failure: the first two are this check's own service and image, and a survivor of either is the Restore's bug. **The registry repository is deleted only when the baseline said it did not exist** — a repository the project already had is never this check's to remove. One thing this check leaves and does not count: the `gcloud builds submit` source tarball in the project's own Cloud Build bucket, which is that bucket's retention's business and not a resource this check created by name.
