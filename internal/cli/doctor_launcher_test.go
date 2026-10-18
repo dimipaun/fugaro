@@ -13,7 +13,21 @@ import (
 // jobRunnerRole is the installation's job runner role as a binding spells
 // it: the custom role ids are the installation module's (infra.RoleJobRunner)
 // and a binding carries the full name.
-func jobRunnerRole(project string) string { return "projects/" + project + "/roles/" + infra.RoleJobRunner }
+func jobRunnerRole(project string) string {
+	return "projects/" + project + "/roles/" + infra.RoleJobRunner
+}
+
+const dbLaunchers = "terraform: { launchers: [\"user:a@example.com\", \"user:o@example.com\"], operators: [\"user:o@example.com\"] }\n"
+
+// withLaunchers gives the rig the launcher and operator lists the check
+// compares each job's policy members against (the same lists dbLists gives
+// the bucket check).
+func (r *doctorRig) withLaunchers(t *testing.T) {
+	t.Helper()
+	if err := os.WriteFile(r.cfgPath, []byte(r.cfg+dbLaunchers), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // TestDoctorReportsLauncherReach is plan task 3.5 step 1: the launcher role's
 // permissions do not change with the project-centric model, only how many
@@ -29,6 +43,7 @@ func jobRunnerRole(project string) string { return "projects/" + project + "/rol
 // member is a launcher grant.
 func TestDoctorReportsLauncherReach(t *testing.T) {
 	r := newDoctorRig(t)
+	r.withLaunchers(t)
 	perRepo, project := "fugaro-acme-app-web", gcp.ProjectJobName("standard", "github", "")
 	for _, n := range []string{perRepo, project} {
 		r.run.AddJob(n, "2", "2Gi")
@@ -69,6 +84,7 @@ func TestDoctorReportsLauncherReach(t *testing.T) {
 // attaches (modules/project/iam.tf's launcher grant).
 func TestDoctorLauncherReachCountsOnlyStartableRoles(t *testing.T) {
 	r := newDoctorRig(t)
+	r.withLaunchers(t)
 	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
 	r.run.AddJob("fugaro-acme-app-read", "2", "2Gi")
 	r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
@@ -96,6 +112,7 @@ func TestDoctorLauncherReachCountsOnlyStartableRoles(t *testing.T) {
 // like a clean one.
 func TestDoctorLauncherReachFailedListWarns(t *testing.T) {
 	r := newDoctorRig(t)
+	r.withLaunchers(t)
 	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
 	r.run.FailListWith = 500
 	c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "launcher-jobs")
@@ -108,7 +125,7 @@ func TestDoctorLauncherReachFailedListWarns(t *testing.T) {
 // job, as the bucket check reads no bucket.
 func TestDoctorLauncherReachSkippedWithoutARunEndpoint(t *testing.T) {
 	r := newDoctorRig(t)
-	cfg := strings.Replace(r.cfg, ", run: "+r.run.URL+"/", "", 1)
+	cfg := strings.Replace(r.cfg+dbLaunchers, ", run: "+r.run.URL+"/", "", 1)
 	if cfg == r.cfg {
 		t.Fatal("the rig's config does not name the run endpoint")
 	}
