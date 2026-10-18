@@ -47,6 +47,12 @@ export const SECURE_STORE_CODES = Object.freeze({
   ABSENT: 'absent',
   UNREADABLE: 'unreadable',
   STORE_FAILED: 'store-failed',
+  /** `use` was given something that is not a callback (P3.6). */
+  NOT_A_CALLBACK: 'not-a-callback',
+  /** The callback threw. What it threw is never carried: it may quote the material. */
+  CALLBACK_FAILED: 'callback-failed',
+  /** The callback tried to hand the material back (P3.6). See `use`. */
+  LEAKED: 'leaked',
 });
 
 /** A frozen refusal, in the shape the shared package's modules use. */
@@ -158,6 +164,69 @@ export class SecretStore {
   }
 
   /**
+   * Hand one item's material to a callback for the duration of one call, and
+   * give back only what the callback returned.
+   *
+   * **Why this exists, and why it is here rather than in the caller.** The
+   * per-pairing MAC key of D171 has to be used somewhere: P3.6's client signs
+   * an inbox message with it and verifies the consumer's tags with it. The only
+   * way to the material is `reveal()`, which `src/boundary.test.js` allows in
+   * exactly two files -- `secret.js`, which defines it, and this one. A client
+   * that called `reveal()` itself would be a third file, and widening that list
+   * is how the fence is lost. So the reveal happens here, inside the store that
+   * is already allowed to make it, and the material never becomes a value the
+   * caller holds: it is an argument to the callback, and a callback cannot
+   * return it by accident without being caught (below).
+   *
+   * **The fence against the material leaving.** The callback's result is
+   * walked -- strings, arrays and plain objects, four levels deep -- and if the
+   * material appears anywhere in it the answer is a `leaked` refusal rather
+   * than a result. This is the "never logged, never stored in the clear" rule
+   * (D111) applied to the one new path to the material: a caller that put the
+   * key into the value it returned would be a caller one step from printing it.
+   * The walk is a fence and not a proof, and the limit is named: material
+   * inside a closure, a class instance's private field, or nested more than
+   * four levels deep is not caught. A caller that wants to smuggle the key out
+   * can still do it; what it cannot do is do it by accident.
+   *
+   * A callback that throws is `callback-failed`, and what it threw is not
+   * carried: an exception from code that held the material may quote it.
+   *
+   * @param {string} accountId
+   * @param {string} item one of `SECRET_ITEMS`
+   * @param {(material: string) => unknown} fn the use, which may be async
+   * @returns {Promise<{ ok: true, result: unknown } | { ok: false, code: string, field: string | null }>}
+   */
+  async use(accountId, item, fn) {
+    if (!isAccountId(accountId)) return refuse(SECURE_STORE_CODES.BAD_ACCOUNT, 'accountId');
+    if (!isSecretItem(item)) return refuse(SECURE_STORE_CODES.UNKNOWN_ITEM, 'item');
+    if (typeof fn !== 'function') return refuse(SECURE_STORE_CODES.NOT_A_CALLBACK, 'fn');
+    const read = await this.get(accountId, item);
+    // A missing or unreadable item is this method's refusal too, verbatim --
+    // `absent` is how a caller learns the account was never paired, which is a
+    // decision for the caller and not something to paper over with an empty key.
+    if (!read.ok) return read;
+    const material = read.secret.reveal();
+    let result;
+    try {
+      result = await fn(material);
+    } catch {
+      return refuse(SECURE_STORE_CODES.CALLBACK_FAILED, 'fn');
+    }
+    let leaked;
+    try {
+      leaked = carries(result, material);
+    } catch {
+      // A result this check cannot walk -- a Proxy that throws, a getter that
+      // throws, a structure too deep to be sure about -- is refused: "could not
+      // prove it does not carry the key" is not "does not carry the key".
+      leaked = true;
+    }
+    if (leaked) return refuse(SECURE_STORE_CODES.LEAKED, 'fn');
+    return Object.freeze({ ok: true, result });
+  }
+
+  /**
    * Which of the two items this account has. Probes every name `SECRET_ITEMS`
    * declares rather than enumerating (the platform cannot), and reports
    * presence only: the values are read to answer the question and are not
@@ -229,3 +298,28 @@ export class SecretStore {
 
 /** The longest value `put` will hand the platform, re-exported for callers. */
 export { SECRET_VALUE_MAX };
+
+/** How deep `use` walks a callback's result looking for the material. */
+const LEAK_DEPTH = 4;
+
+// carries reports whether the material appears anywhere in a value a callback
+// returned: in a string, in an array's items, in a plain object's own
+// enumerable keys and values, four levels deep. It is the fence that keeps
+// `use` from being a way to hand the key back up the stack by accident (see
+// `use`), and its limit is named there: a Map, a Set, a class instance and
+// anything deeper are not walked.
+function carries(value, material, depth = 0) {
+  if (typeof value === 'string') return value.includes(material);
+  if (value === null || typeof value !== 'object') return false;
+  // The depth bound is also what stops a self-referencing result (`a.self =
+  // a`) from recursing for ever.
+  if (depth >= LEAK_DEPTH) return false;
+  if (Array.isArray(value)) return value.some((item) => carries(item, material, depth + 1));
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return false;
+  for (const key of Object.keys(value)) {
+    if (key.includes(material)) return true;
+    if (carries(value[key], material, depth + 1)) return true;
+  }
+  return false;
+}
