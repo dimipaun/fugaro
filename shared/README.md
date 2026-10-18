@@ -49,7 +49,7 @@ the schema and not
 natural pause, "what's pending" per installation, expiry at D118's mailbox TTL, D173's two
 windows, the reminder schedule and the pending cap — and the interrupt policy: D160's set of
 four events read through D127's local switch. Built on `mailbox/`, `mailbox-schema/`,
-`digest/` and `presence/`, with its own tests (36) and its own mutation proof (45 guards);
+`digest/` and `presence/`, with its own tests (36) and its own mutation proof (46 guards);
 see `prompts/README.md`.
 
 ## The runner, and the glob
