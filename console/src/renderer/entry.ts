@@ -730,6 +730,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     button.setAttribute('class', VIEW_BUTTON_CLASS)
     button.setAttribute('type', 'button')
     button.setAttribute('data-view', entry.id)
+    // The view on screen is marked from the first paint, not only after the
+    // first click: `show` writes this attribute on every switch, and a
+    // navigation that carried it only once something had been clicked would
+    // draw a console whose current view is unmarked.
+    button.setAttribute('aria-current', entry.id === currentView ? 'true' : 'false')
     button.textContent = entry.label
     nav.append(button)
     buttons.set(entry.id, button)

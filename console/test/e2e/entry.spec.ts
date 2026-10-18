@@ -540,6 +540,18 @@ test.describe('the renderer entry, in the real window', () => {
                 ['version'],
                 ['watch', '--json', '--project', 'e2e'],
               ]
+        // The watch is written by the entry's *first poll*, which is a message
+        // round and a spawn behind the window's `domcontentloaded` -- so a mode
+        // that mounts waits for it rather than racing it. A mode that mounts
+        // nothing never writes one, and for that mode the wait is the loop
+        // below: one record, the probe.
+        if (mode !== 'refused') {
+          await expect
+            .poll(() => launched.records().some((record) => record.argv[1] === 'watch'), {
+              message: `${mode}: the live read never reached the spawn log`,
+            })
+            .toBe(true)
+        }
         const records = launched.records()
         expect(records.length, `${mode}: the handshake read is not in the log`).toBeGreaterThan(0)
         for (const record of records) {
@@ -560,14 +572,6 @@ test.describe('the renderer entry, in the real window', () => {
           expect(expected, `${mode}: the console ran ${record.argv.join(' ')}`).toContainEqual(
             record.argv.slice(1),
           )
-        }
-        // The premise of the `ok` case: the watch really is in the log, so the
-        // loop above is not passing on a log that holds the probe alone.
-        if (mode !== 'refused') {
-          expect(
-            records.some((record) => record.argv[1] === 'watch'),
-            `${mode}: the live read is not in the log`,
-          ).toBe(true)
         }
       } finally {
         await close(launched)
