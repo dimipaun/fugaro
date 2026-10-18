@@ -94,7 +94,11 @@ verified(
   message({ kind: 'action', agent: 'orchestrator', text: 'cancel the run', action: { id: 'a-0001', verb: 'cancel', target: { run: '20261018-125859-d3c8' }, confirmation: { id: 'c-0001', at: AT } } }),
 );
 
-verified(
+// Kept, not just pushed: the two halves of the merge the consumer must
+// re-check before it merges anything — the pull request the read-back named and
+// the head it was on — are pinned as swaps below (§3.5's list of what P6.3's
+// vectors must refuse).
+const mergeOne = verified(
   'action: merge a pull request',
   'a merge carries the head SHA read back at confirmation, which the consumer re-checks before it merges',
   message({ kind: 'action', agent: 'orchestrator', text: 'merge the pull request', action: { id: 'a-0002', verb: 'merge', target: { repo: 'dimipaun/fugaro', pr: 532 }, head_sha: 'b'.repeat(40), confirmation: { id: 'c-0002', at: AT } } }),
@@ -148,6 +152,13 @@ cases.push(
   tampered('agents changed', 'an impostor added to the advertised list under a tag made for the real one', beat, { ...beat, agents: [{ id: 'orchestrator', name: 'Orchestrator' }, { id: 'impostor', name: 'Orchestrator' }] }),
 );
 cases.push(tampered('agent renamed', 'the spoken name of an advertised agent changed under its tag', beat, { ...beat, agents: [{ id: 'orchestrator', name: 'Impostor' }] }));
+
+cases.push(
+  tampered('target swapped', 'another pull request under a tag made for this one: the read-back named a target, and the consumer must merge that one', mergeOne, { ...mergeOne, action: { ...mergeOne.action, target: { repo: 'dimipaun/fugaro', pr: 533 } } }),
+);
+cases.push(
+  tampered('head SHA swapped', 'the branch moved after the read-back: the head in the record is the state of the world that was confirmed', mergeOne, { ...mergeOne, action: { ...mergeOne.action, head_sha: 'c'.repeat(40) } }),
+);
 
 const cancelOne = signed(message({ kind: 'action', agent: 'orchestrator', text: 'cancel the run', action: { id: 'a-0001', verb: 'cancel', target: { run: '20261018-125859-d3c8' }, confirmation: { id: 'c-0001', at: AT } } }));
 cases.push(

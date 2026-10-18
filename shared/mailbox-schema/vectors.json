@@ -301,6 +301,64 @@
       "verdict": "refused"
     },
     {
+      "name": "target swapped",
+      "why": "another pull request under a tag made for this one: the read-back named a target, and the consumer must merge that one",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "merge the pull request",
+        "at": 1700000000000,
+        "mac": "2d94c23d7a0f5225343c6cdab174c95125d1497b9f7f0b395eeaf318497e66b1",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0002",
+          "verb": "merge",
+          "target": {
+            "repo": "dimipaun/fugaro",
+            "pr": 533
+          },
+          "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "confirmation": {
+            "id": "c-0002",
+            "at": 1700000000000
+          }
+        }
+      },
+      "canonical": "{\"action\":{\"confirmation\":{\"at\":1700000000000,\"id\":\"c-0002\"},\"head_sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"id\":\"a-0002\",\"target\":{\"pr\":533,\"repo\":\"dimipaun/fugaro\"},\"verb\":\"merge\"},\"agent\":\"orchestrator\",\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"action\",\"sender\":\"phone\",\"text\":\"merge the pull request\"}",
+      "mac": "f1b7b68bcc637f99b3641b839b3506c8f70f130806b86936588217efefe08fcd",
+      "verdict": "refused"
+    },
+    {
+      "name": "head SHA swapped",
+      "why": "the branch moved after the read-back: the head in the record is the state of the world that was confirmed",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "merge the pull request",
+        "at": 1700000000000,
+        "mac": "2d94c23d7a0f5225343c6cdab174c95125d1497b9f7f0b395eeaf318497e66b1",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0002",
+          "verb": "merge",
+          "target": {
+            "repo": "dimipaun/fugaro",
+            "pr": 532
+          },
+          "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "confirmation": {
+            "id": "c-0002",
+            "at": 1700000000000
+          }
+        }
+      },
+      "canonical": "{\"action\":{\"confirmation\":{\"at\":1700000000000,\"id\":\"c-0002\"},\"head_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"id\":\"a-0002\",\"target\":{\"pr\":532,\"repo\":\"dimipaun/fugaro\"},\"verb\":\"merge\"},\"agent\":\"orchestrator\",\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"action\",\"sender\":\"phone\",\"text\":\"merge the pull request\"}",
+      "mac": "fbc1440950ead6fc972ff98d2667888b6727fe0df293a84c2f494cf92707c39a",
+      "verdict": "refused"
+    },
+    {
       "name": "confirmation swapped",
       "why": "another confirmation id under a tag made for this one: the consumer's ledger must not be fooled",
       "message": {

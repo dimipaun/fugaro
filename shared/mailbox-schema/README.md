@@ -148,11 +148,12 @@ mean across two languages.
 
 That is the hard part of this task, because the two ends are JavaScript (the phone) and
 Go (the consumer), and the Go end cannot call into JavaScript. It reimplements the
-serialisation and **tests against [`vectors.json`](vectors.json)**: 18 cases — the four
+serialisation and **tests against [`vectors.json`](vectors.json)**: 20 cases — the four
 kinds, the heartbeat, the argv-shaped targets, HTML characters Go escapes by default,
 an emoji, an unknown field inside the bytes, and the swaps a token-holder without the
-key would try (text, options, option order, `reply_to`, answer, agents, confirmation,
-verb) — each pinning the message, the exact bytes, the tag and whether it verifies. A
+key would try (text, options, option order, `reply_to`, answer, agents, agent name,
+target, head SHA, confirmation, verb) — each pinning the message, the exact bytes, the
+tag and whether it verifies. A
 disagreement about key order, whitespace or escaping fails on the side that is wrong,
 at the byte level, rather than at three in the morning on a phone. Regenerate with
 `node shared/mailbox-schema/vectors.generate.mjs`; the key in the file is a readable
