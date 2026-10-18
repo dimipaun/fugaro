@@ -392,6 +392,16 @@ test.describe('the renderer entry, in the real window', () => {
       // what refused it is the source (`activeSource` in `src/main/index.ts`),
       // named here so a gate that had swallowed it would fail this rather than
       // pass on a different refusal.
+      //
+      // **The string pinned is the whole sentence, both halves of it.**
+      // `noInstallation` throws `` `${NO_ACTIVE_INSTALLATION}: ${operation} has
+      // nothing to read` ``, and `dispatch`/`replyReason` pass that message
+      // through verbatim, so the reply is the constant *plus* the source's own
+      // suffix naming the operation it refused. `toContain(NO_ACTIVE_INSTALLATION)`
+      // alone would also pass for an answer that merely quoted the constant --
+      // the suffix is what says this refusal came from the read that was asked
+      // for -- so the suffix is written out, and a reworded suffix fails here
+      // rather than quietly weakening the claim.
       const live = (await launched.page.evaluate(async () => {
         const api = (
           window as unknown as {
@@ -402,7 +412,7 @@ test.describe('the renderer entry, in the real window', () => {
       })) as { readonly ok: boolean; readonly reason?: string }
       expect(live.ok).toBe(false)
       expect(live.reason, 'live.watch must not be withheld by the reduced mode').toBe(
-        NO_ACTIVE_INSTALLATION,
+        `${NO_ACTIVE_INSTALLATION}: live.watch has nothing to read`,
       )
     } finally {
       await close(launched)
