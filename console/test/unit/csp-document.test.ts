@@ -123,10 +123,10 @@ describe('the console’s CSP', () => {
 })
 
 describe('the served documents', () => {
-  it('are the two documents of SERVED_FILES, and both are non-empty', () => {
+  it('are the three documents of SERVED_FILES, and each is non-empty', () => {
     // The non-vacuity guard for every claim below: an empty list, or a document
     // that was not there, would make them all true by looking at nothing.
-    expect(DOCUMENTS).toEqual(['index.html', 'refusal.html'])
+    expect(DOCUMENTS).toEqual(['index.html', 'installations.html', 'refusal.html'])
     for (const name of DOCUMENTS) expect(served(name).length, `${name} is empty`).toBeGreaterThan(0)
   })
 
@@ -141,6 +141,7 @@ describe('the served documents', () => {
       expect(copy, `${name}'s meta copy is not the header's policy`).toBe(CONTENT_SECURITY_POLICY)
     }
     expect(copies[0]).toBe(copies[1])
+    expect(copies[1]).toBe(copies[2])
   })
 
   it('give the dashboard exactly one script, from this origin', () => {
@@ -156,6 +157,16 @@ describe('the served documents', () => {
     // And the file it names is one the served root holds, so the document's one
     // script cannot be a 404.
     expect(builtListing('bundle')).toContain('console.js')
+  })
+
+  it('give the picker exactly one script, its own bundle, from this origin (Task 3.4b)', () => {
+    const scripts = scriptElements(served('installations.html'))
+    expect(scripts.length, 'the picker document loads no script at all').toBe(1)
+    expect(scripts[0] ?? '').toMatch(/^<script\s+src="\.\/installations\.js"\s+defer\s*>$/)
+    // Never the dashboard's bundle: the picker's document has its own preload
+    // and its own surface, and the dashboard's screens are not on it.
+    expect(markup(served('installations.html'))).not.toContain('console.js')
+    expect(builtListing('bundle')).toContain('installations.js')
   })
 
   it('give the refusal document no script at all', () => {

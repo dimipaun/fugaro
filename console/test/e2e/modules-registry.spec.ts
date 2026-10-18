@@ -20,7 +20,7 @@
 // builds first, so `dist/` is always the tree under test.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { join, posix } from 'node:path'
+import { basename, join, posix } from 'node:path'
 
 import { expect, test } from '@playwright/test'
 
@@ -46,6 +46,12 @@ function relativeRequires(module: string, code: string): readonly string[] {
   return out
 }
 
+// Sorted by name, because `readdirSync` order is unspecified -- ext4 returns
+// hash order, APFS returns something else again -- and the non-vacuity check
+// below compares this list with a derived set by `toEqual`, which is
+// order-sensitive. An unsorted side would make the guard fail on a filesystem
+// that happened to enumerate the directory differently, for no reason that has
+// anything to do with a registry.
 const specSources = readdirSync(e2eDir)
   .filter((name) => name.endsWith('.spec.ts'))
   .map((name) => ({ name, source: readFileSync(join(e2eDir, name), 'utf8') }))
@@ -53,6 +59,7 @@ const specSources = readdirSync(e2eDir)
 const specs = specSources
   .map((spec) => ({ name: spec.name, registry: registryOf(spec.source) }))
   .filter((spec): spec is { name: string; registry: readonly string[] } => spec.registry !== null)
+  .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
 
 /**
  * declaring is every spec that injects the compiled renderer, found by a scan
@@ -84,6 +91,18 @@ test.describe('the hand-built module registries', () => {
     for (const spec of specs) {
       expect(spec.registry.length, `${spec.name} declares an empty registry`).toBeGreaterThan(0)
     }
+    // **Derived, not listed**, a second way (Task 3.4b): every spec in the
+    // directory that declares a `MODULES` list, this guard file excepted, read
+    // with a pattern independent of `registryOf`'s, and compared exactly.
+    const declaringModules = readdirSync(e2eDir)
+      .filter((name) => name.endsWith('.spec.ts'))
+      .filter((name) => name !== basename(__filename))
+      .filter((name) => /const MODULES[^=]*=\s*Object\.freeze\(\[/.test(readFileSync(join(e2eDir, name), 'utf8')))
+      .sort()
+    expect(specs.map((spec) => spec.name)).toEqual(declaringModules)
+    // ...and the floor, so a directory that somehow read as empty fails here
+    // rather than making the assertions above vacuously true.
+    expect(declaringModules.length).toBeGreaterThanOrEqual(6)
   })
 
   for (const spec of specs) {

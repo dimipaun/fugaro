@@ -108,17 +108,19 @@ export const BRIDGE_VERSION = 1
  * a row to the table in `src/main/ipc.ts` and a row here, and the test above is
  * what makes forgetting the second half fail rather than pass.
  *
- * **The thirteen rows are now thirteen.** Task 3.3 added
- * `startup.compatibility` / `getCompatibility` to both files: the handshake's
- * answer, which the renderer asks for once at load and draws nothing until it
- * has. Task 3.4a is the task that makes that sentence literal -- the dashboard
- * document loads the bundled entry, its first call is `startConsole`, and the
- * first thing `startConsole` does is ask this method -- so the main process
- * registers this handler *before* that document is loaded
- * (`src/main/index.ts`'s `onDecided`, called by `startupWindow` between the
- * version read and the `loadURL`). It is the one row whose handler is not a
- * spawn, and it takes no argument at all -- `ConsoleMethod`'s optional argument
- * object is simply not sent, so there is nothing for a renderer to name.
+ * **There are fourteen rows, and two of them are not spawns.** Task 3.3 added
+ * `startup.compatibility` / `getCompatibility`: the handshake's answer, which the
+ * renderer asks for once at load and draws nothing until it has. Task 3.4a makes
+ * that sentence literal -- the dashboard document loads the bundled entry, its
+ * first call is `startConsole`, and the first thing `startConsole` does is ask
+ * this method -- so the main process registers this handler *before* that
+ * document is loaded (`src/main/index.ts`'s `onDecided`, called by
+ * `startupWindow` between the version read and the `loadURL`). Task 3.4b added
+ * `installation.current` / `getInstallation`: the installation the operator
+ * chose, as the store holds it, so the header can name the project it is showing
+ * without the renderer ever naming a path. Both take no argument at all --
+ * `ConsoleMethod`'s optional argument object is simply not sent, so there is
+ * nothing for a renderer to name.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -132,13 +134,14 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   ['accounts.inventory', 'listAccounts'],
   ['cli.version', 'cliVersion'],
   ['startup.compatibility', 'getCompatibility'],
+  ['installation.current', 'getInstallation'],
   ['environment.report', 'environmentReport'],
   ['link.openExternal', 'openExternal'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * thirteen string literals, not `string`. It is the type of the `operations` list
+ * fourteen string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]

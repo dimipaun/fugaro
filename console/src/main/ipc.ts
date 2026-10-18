@@ -81,7 +81,7 @@
 import { invisibleRe, isInvisibleCodePoint, isSeparatorCodePoint } from '../shared/sanitize'
 import { REDUCED_VIEWS, hidesView, unreadableCompatibility } from '../shared/version'
 import type { CliCompatibility, ReducedView } from '../shared/version'
-import { APP_HOST, APP_SCHEME } from './protocol'
+import { APP_ENTRY_URL, APP_HOST, APP_SCHEME } from './protocol'
 import { validateExternalUrl } from './window'
 
 /**
@@ -279,7 +279,7 @@ export interface ConsoleOperation {
 }
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Thirteen operations, and the table is
+ * CONSOLE_OPERATIONS is the whole surface. Fourteen operations, and the table is
  * the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -290,7 +290,11 @@ export interface ConsoleOperation {
  * that is not a command: `openExternal`, whose URL argument goes
  * through `validateExternalUrl` -- `https:` only, no credentials, no port, host
  * on `ALLOWED_EXTERNAL_HOSTS` -- so the renderer's only way out of the console
- * is a link the console would have opened anyway.
+ * is a link the console would have opened anyway. The fourteenth
+ * (`installation.current`) is the dashboard's read of the installation the
+ * operator chose in the picker window, or D13's no-installation state; its
+ * handler is `handlersFor`'s **optional** `installation` dep, so a build without
+ * a picker answers it with that state rather than failing to register.
  *
  * Two operations share one command and differ by their flags, deliberately:
  * `run.logs` is `logs RUN --json` and `run.logLink` is `logs RUN --url`. They
@@ -524,6 +528,22 @@ export const CONSOLE_OPERATIONS = [
     command: null,
     flags: [],
     summary: 'the handshake’s answer: this console’s mode, and the views it withholds',
+    args: [],
+  },
+  // The fourteenth operation (Task 3.4b) is the second read of the console's own
+  // state, and it is the one the header needs: **which installation is active**.
+  // It is not a read of the CLI -- the store holds it -- and it takes no argument
+  // at all, so a renderer cannot ask about an installation other than the one
+  // this console is running. Its answer names a project and a binary path and
+  // **never an id a renderer could pass back**: choosing is the picker's
+  // operation (`fugaro:installations/choose`), on the picker's own channel, which
+  // a frame on this document cannot reach.
+  {
+    name: 'installation.current',
+    method: 'getInstallation',
+    command: null,
+    flags: [],
+    summary: 'the installation the operator chose, or D13’s no-installation state',
     args: [],
   },
   {
@@ -1532,11 +1552,12 @@ export function readStoredCompatibility(value: unknown): CliCompatibility {
  * exception.
  *
  * `read` is a function rather than the value because the answer is asked for at
- * message time: the store is written once, when the handshake answers
- * (`src/main/index.ts`, which registers these handlers in the same breath), and a
- * handler built over a snapshot would keep answering whatever the snapshot was,
- * which is exactly the kind of stale answer the handshake exists to prevent. It
- * throws for a store that has not answered yet -- an operation called before
+ * message time: the store is written when the handshake answers
+ * (`src/main/index.ts`, which registers these handlers in the same breath) and
+ * again when the operator chooses an installation in the picker (Task 3.4b), and
+ * a handler built over a snapshot would keep answering whatever the snapshot
+ * was, which is exactly the kind of stale answer the handshake exists to
+ * prevent. It throws for a store that has not answered yet -- an operation called before
  * startup finished is a console that does not exist yet -- and `dispatch` turns
  * that throw into the reply.
  */
@@ -1564,6 +1585,37 @@ export type ConsoleHandler = (args: ValidatedArguments) => unknown | Promise<unk
  * a missing handler is a compile error rather than an operation that answers
  * "not implemented" in production. */
 export type ConsoleHandlers = { readonly [Name in OperationName]: ConsoleHandler }
+
+/**
+ * isSenderOnDocument is the sender gate, narrowed to **one document**.
+ *
+ * `isConsoleSenderUrl` answers about the *origin*, and it has to: a fragment is
+ * how a screen addresses its own views, and refusing `app://console/index.html#spend`
+ * would be refusing the console's own window. But two documents are served from
+ * that origin -- the dashboard and, from Task 3.4b, the installation picker --
+ * and an origin-only check cannot tell them apart. A picker frame that invoked
+ * `runs.list`, or a dashboard frame that invoked `fugaro:installations/remove`,
+ * would both pass an origin check, so the check is on the **path** the frame is
+ * on as well.
+ *
+ * The path is compared after the query and the fragment are stripped, so
+ * `app://console/index.html#spend` is still the dashboard and
+ * `app://console/installations.html?x=1` is still the picker. A frame on a
+ * document this console does not serve -- there is none today, because
+ * `resolveBundleRequest` serves only what is in the bundle -- matches neither
+ * and is refused.
+ */
+export function isSenderOnDocument(event: ConsoleEventLike | null | undefined, entryUrl: string): boolean {
+  try {
+    if (!isConsoleSender(event)) return false
+    const frame = event?.senderFrame
+    const raw = frame?.url
+    if (typeof raw !== 'string' || raw === '') return false
+    return new URL(raw).pathname === new URL(entryUrl).pathname
+  } catch {
+    return false
+  }
+}
 
 /**
  * SENDER_REFUSAL is what a message from anywhere but the console's own top frame
@@ -1859,8 +1911,13 @@ export function registerConsoleHandlers(ipcMain: IpcMainLike, handlers: ConsoleH
     // and never reaches validation, the handler, or anything that would parse
     // what it carried. `dispatch` is then the only path to a handler, and it is
     // the only caller of `validateArguments`.
+    // The gate is `isSenderOnDocument`, not `isConsoleSender`: the origin is not
+    // enough now that the picker is served from it too (Task 3.4b). Every
+    // channel under the `fugaro:console/` prefix answers a frame on the dashboard and nothing
+    // else, and the picker's own channels are gated the same way in
+    // `src/main/picker.ts` -- so neither document can reach the other's surface.
     ipcMain.handle(channelForOperation(operation.name), (event: ConsoleEventLike, raw: unknown) =>
-      isConsoleSender(event) ? dispatch(operation.name, handler, raw) : { ok: false, reason: SENDER_REFUSAL },
+      isSenderOnDocument(event, APP_ENTRY_URL) ? dispatch(operation.name, handler, raw) : { ok: false, reason: SENDER_REFUSAL },
     )
   }
 }
@@ -1894,12 +1951,15 @@ async function dispatch(
  *
  * It is a constant of this file, and not a sentence the entry point invents,
  * because the renderer's `degraded` screen draws a refusal's *category* and the
- * console's own sentences are the ones it knows how to draw. Task 3.4b replaces
- * the refusal with a chosen installation; until then every read of the CLI is
+ * console's own sentences are the ones it knows how to draw. Until an
+ * installation is chosen in the picker (Task 3.4b) every read of the CLI is
  * answered with this, which is the truth rather than a stub: this console really
- * is driving nothing.
+ * is driving nothing. It is also the sentence `installation.current` carries in
+ * D13's no-installation state (`src/main/installations.ts` re-exports it), so the
+ * header and a refused read say the same thing about the same state -- one
+ * constant, where 3.4a and 3.4b each wrote one in parallel.
  */
-export const NO_ACTIVE_INSTALLATION = 'this console has no installation to drive yet'
+export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
 
 /**
  * REDUCED_VIEW_OPERATIONS is the closed mapping from a withheld view to the

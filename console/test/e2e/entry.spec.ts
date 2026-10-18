@@ -35,14 +35,13 @@
 //     one place a spawn that should not have happened is visible, and this task
 //     makes the console drive no CLI at all, so the log is the evidence for it.
 //
-// **The premise, repeated from `startup-skew.spec.ts` because it decides what
-// can run here.** There is no `FUGARO_BIN` and this task does not add one, so a
-// spec chooses the CLI the only way `resolveBinary` allows: `PATH` (and `HOME`,
-// so `~/.local/bin` is covered) point at a stub. The well-known prefixes are
-// searched first, so on a machine with a real `fugaro` in one of those the stub
-// never wins -- `resolveConsoleBinary` asks the app's own question so this file
-// knows which case it is in, and every stub-driven test below skips with that
-// reason printed. That is a developer machine; CI has no such binary.
+// **The premise (Task 3.4b; review S3).** Every launch here runs against a
+// scratch `--user-data-dir` seeded with one **active installation naming the
+// stub**, so the startup handshake reads that binary and no other
+// (`resolveHandshakeBinary`) -- whatever `fugaro` the machine has in
+// `/usr/local/bin` or `/opt/homebrew/bin`. No case here skips for the machine
+// it runs on. The one first-run case uses an unseeded profile of its own, and
+// asserts nothing that depends on which `fugaro` the machine resolves.
 //
 // Nothing here reaches the network and nothing here starts a child that the
 // console's own read would not have started: the stub answers `version` and
@@ -64,13 +63,13 @@ import {
   CLI_VERSION_BUILT_AGAINST,
   REDUCED_VIEWS,
   SKEW_HEADLINES,
-  classifyCliVersion,
 } from '../../src/shared/version'
-import type { CliCompatibilityMode } from '../../src/shared/version'
 import { EXPOSED_OPERATIONS } from '../../src/preload/index'
-import { installCliStub, resolveConsoleBinary } from '../support/cliStub'
+import { installCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
-import type { BinaryResolution } from '../../src/main/spawn'
+import { dismissFirstRunPicker } from '../support/firstRun'
+import { INSTALLATIONS_MENU_LABEL, PICKER_ENTRY_URL } from '../../src/main/picker'
+import { sanitizeRefusal } from '../../src/shared/sanitize'
 
 // The console's own directory, from this file's location, as in the other specs:
 // `test/e2e/x.spec.ts` is two levels below it, and Playwright loads these specs
@@ -106,15 +105,29 @@ interface Launched {
  * the operator's own opt-in and the only way the spawn log is ever written
  * (design section 5.1 rule 10).
  */
-async function launch(stubEnv: Record<string, string>): Promise<Launched> {
+async function launch(
+  stubEnv: Record<string, string>,
+  options: { readonly firstRun?: CliStub; readonly env?: Record<string, string> } = {},
+): Promise<Launched> {
   const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
   const spawnLog = join(scratch, 'spawn.jsonl')
+  // The seeded profile (see the header), or -- for the first-run case -- an
+  // unseeded one, whose picker opens beside the window under test and is
+  // dismissed before any assertion about that window (`dismissFirstRunPicker`).
+  const profile = options.firstRun ?? stub
   const app = await electron.launch({
-    args: [consoleDir],
-    env: { ...stubEnv, [SPAWN_LOG_ENV]: spawnLog },
+    args: profile.launchArgs(consoleDir),
+    env: { ...stubEnv, ...(options.env ?? {}), [SPAWN_LOG_ENV]: spawnLog },
   })
-  const page = await app.firstWindow()
+  // A console that exits before it opens a window would leave `firstWindow`
+  // waiting until the test's own timeout; this says so, with the exit code.
+  const page = await app.firstWindow({ timeout: 15_000 }).catch((error: unknown) => {
+    throw new Error(
+      `the console opened no window (exit code ${String(app.process().exitCode)}): ${error instanceof Error ? error.message : String(error)}`,
+    )
+  })
   await page.waitForLoadState('domcontentloaded')
+  if (options.firstRun !== undefined) await dismissFirstRunPicker(app, page)
   return {
     app,
     page,
@@ -188,32 +201,48 @@ function pageShape(page: Page): Promise<{
   })
 }
 
+/**
+ * openPickerFromMenu clicks the application menu's `Installations…` item -- the
+ * one door to the picker (C9) -- and answers the picker's page.
+ */
+async function openPickerFromMenu(app: ElectronApplication): Promise<Page> {
+  const opened = app.waitForEvent('window')
+  const clicked = await app.evaluate(({ Menu }, label) => {
+    const menu = Menu.getApplicationMenu()
+    for (const top of menu?.items ?? []) {
+      for (const item of top.submenu?.items ?? []) {
+        if (item.label === label) {
+          item.click()
+          return true
+        }
+      }
+    }
+    return false
+  }, INSTALLATIONS_MENU_LABEL)
+  expect(clicked, `the application menu has no ${INSTALLATIONS_MENU_LABEL} item`).toBe(true)
+  const picker = await opened
+  await picker.waitForLoadState('load')
+  expect(picker.url()).toBe(PICKER_ENTRY_URL)
+  return picker
+}
+
+/** installationOf is the dashboard's `installation.current`, read through the
+ * real preload from inside the page. */
+function installationOf(page: Page): Promise<Record<string, unknown>> {
+  return page.evaluate(async () => {
+    const api = (window as unknown as { fugaro: { getInstallation: () => Promise<unknown> } }).fugaro
+    return (await api.getInstallation()) as Record<string, unknown>
+  })
+}
+
 let stub: CliStub
-let winner: BinaryResolution
-/** stubWins is true when the resolution this launch will run picks the stub --
- * see this file's header for why it may not. */
-let stubWins = false
-let whyNotTheStub = ''
-/** resolvedMode is what this machine's own answer makes of the CLI it will
- * resolve. The dashboard's tests need `ok` -- the document the entry draws in is
- * the dashboard's -- and that is a property of the resolved binary, not of the
- * stub: on a machine whose `fugaro` is in range the dashboard loads whether or
- * not the stub won. */
-let resolvedMode: CliCompatibilityMode = 'refused'
 
 test.describe('the renderer entry, in the real window', () => {
   test.describe.configure({ mode: 'serial' })
 
-  test.beforeAll(async () => {
+  test.beforeAll(() => {
     stub = installCliStub(CLI_VERSION_BUILT_AGAINST)
-    winner = await resolveConsoleBinary(stub.env)
-    stubWins = winner.ok && winner.path === join(stub.dir, 'fugaro')
-    resolvedMode = winner.ok ? classifyCliVersion(winner.version).mode : 'refused'
-    whyNotTheStub =
-      `the console will resolve ${winner.ok ? winner.path : 'no binary at all'} rather than the stub: ` +
-      'the well-known prefixes (/opt/homebrew/bin, /usr/local/bin, ~/.local/bin) are searched before any ' +
-      'PATH entry, and there is no FUGARO_BIN by design. This case needs a machine with no fugaro in those ' +
-      'directories -- CI has none.'
+    stub.seedActiveInstallation('e2e')
   })
 
   test.afterAll(() => {
@@ -221,12 +250,7 @@ test.describe('the renderer entry, in the real window', () => {
   })
 
   test('loads the bundled entry from the console’s own origin, and the frozen bridge with it', async () => {
-    test.skip(
-      resolvedMode !== 'ok',
-      `the CLI this machine resolves is ${resolvedMode === 'refused' ? 'not in range' : 'in the degraded band'}, ` +
-        'so this console loads the refusal document or the reduced banner rather than the dashboard this case is ' +
-        'about. CI resolves the stub, which is in range.',
-    )
+    stub.setVersion(CLI_VERSION_BUILT_AGAINST)
     const launched = await launch(stub.env)
     try {
       const shape = await pageShape(launched.page)
@@ -259,6 +283,7 @@ test.describe('the renderer entry, in the real window', () => {
   })
 
   test('gives the renderer nothing but that one object', async () => {
+    stub.setVersion(CLI_VERSION_BUILT_AGAINST)
     const launched = await launch(stub.env)
     try {
       const shape = await pageShape(launched.page)
@@ -297,6 +322,7 @@ test.describe('the renderer entry, in the real window', () => {
   })
 
   test('does not run an inline script, and says so through the CSP', async () => {
+    stub.setVersion(CLI_VERSION_BUILT_AGAINST)
     const launched = await launch(stub.env)
     try {
       // The claim the policy is for. An inline `<script>` appended to the page is
@@ -336,7 +362,6 @@ test.describe('the renderer entry, in the real window', () => {
   })
 
   test('a refused console loads the refusal document: no script, and no bridge', async () => {
-    test.skip(!stubWins, whyNotTheStub)
     stub.setVersion('0.5.0')
     const launched = await launch(stub.env)
     try {
@@ -359,7 +384,6 @@ test.describe('the renderer entry, in the real window', () => {
   })
 
   test('a reduced console draws the banner and refuses a withheld read over real IPC', async () => {
-    test.skip(!stubWins, whyNotTheStub)
     stub.setVersion('0.9.0')
     const launched = await launch(stub.env)
     try {
@@ -414,13 +438,46 @@ test.describe('the renderer entry, in the real window', () => {
       expect(live.reason, 'live.watch must not be withheld by the reduced mode').toBe(
         `${NO_ACTIVE_INSTALLATION}: live.watch has nothing to read`,
       )
+      // The header's read says reduced too, with the version the startup
+      // handshake read -- never a default `ok` (review S1) -- and the dashboard
+      // draws it.
+      const installation = await installationOf(launched.page)
+      expect(installation).toEqual({
+        ok: true,
+        data: {
+          chosen: true,
+          id: '0123456789abcdef',
+          project: 'e2e',
+          binary: join(stub.dir, 'fugaro'),
+          cliVersion: '0.9.0',
+          mode: 'reduced',
+        },
+      })
+      const header = await launched.page.evaluate(() => {
+        const section = document.querySelector('section.console-installation')
+        return {
+          kind: section?.getAttribute('data-installation') ?? null,
+          lines: [...(section?.querySelectorAll('p') ?? [])].map((line) => line.textContent),
+        }
+      })
+      // The binary line is the path as the console's sanitizer draws it (a
+      // scratch directory's random suffix can read as a token and is redacted,
+      // exactly as the picker's row draws it).
+      const drawnBinary = sanitizeRefusal(join(stub.dir, 'fugaro'), 'the installation’s binary')
+      expect(drawnBinary.ok).toBe(true)
+      expect(header).toEqual({
+        kind: 'chosen',
+        lines: ['e2e', drawnBinary.ok ? drawnBinary.text : '', '0.9.0 · reduced'],
+      })
+      // And the picker's status line, opened from the menu.
+      const picker = await openPickerFromMenu(launched.app)
+      await expect(picker.locator('#picker-status')).toHaveText('e2e is the installation this console is showing (reduced).')
     } finally {
       await close(launched)
     }
   })
 
   test('the spawn log holds the version read and nothing else, in every mode', async () => {
-    test.skip(!stubWins, whyNotTheStub)
     // Task 3.4a drives no CLI at all (D13's picker is 3.4b), so the only spawn
     // this console makes is the handshake's own `version` read. The log is the
     // evidence: one line per child, and every line's argv is a bare `version`.
@@ -460,6 +517,10 @@ test.describe('the renderer entry, in the real window', () => {
           // not have been reachable in this task.
           expect(record.argv, `${mode}: a spawn that is not the version read`).toHaveLength(2)
           expect(record.argv[1], `${mode}: a spawn that is not the version read`).toBe('version')
+          // The active installation's binary and project (Task 3.4b, step 3):
+          // the bare `version` spawn records which installation it was for.
+          expect(record.argv[0], `${mode}: the handshake read another binary`).toBe(join(stub.dir, 'fugaro'))
+          expect(record.project, `${mode}: the spawn log lost the installation's project`).toBe('e2e')
           for (const forbidden of ['report', 'watch', 'budget', 'kill', 'runs', 'diagnose']) {
             expect(record.argv.join(' '), `${mode}: the console ran ${forbidden}`).not.toContain(
               forbidden,
@@ -469,6 +530,74 @@ test.describe('the renderer entry, in the real window', () => {
       } finally {
         await close(launched)
       }
+    }
+  })
+  test('a stored binary that is gone is a refusal, never another fugaro, and the picker is still reachable (review B1)', async () => {
+    // A second profile whose active installation names a binary that is not
+    // there. Before the fix the handshake walked on to the machine's own
+    // `fugaro` (or the stub on `PATH`) and drew a dashboard for it.
+    const gone = installCliStub(CLI_VERSION_BUILT_AGAINST)
+    gone.seedActiveInstallation('gone', join(gone.dir, 'missing', 'fugaro'))
+    const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
+    const spawnLog = join(scratch, 'spawn.jsonl')
+    const app = await electron.launch({ args: gone.launchArgs(consoleDir), env: { ...gone.env, [SPAWN_LOG_ENV]: spawnLog } })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      expect(page.url()).toBe(REFUSAL_ENTRY_URL)
+      expect(app.windows()).toHaveLength(1)
+      // Nothing was spawned: not the stub on `PATH`, not the machine's own.
+      let logged = ''
+      try {
+        logged = readFileSync(spawnLog, 'utf8')
+      } catch {
+        logged = ''
+      }
+      expect(logged).toBe('')
+      // The door out of a refusal is still there (plan 3.4b step 5).
+      const picker = await openPickerFromMenu(app)
+      const listed = (await picker.evaluate(async () => {
+        const api = (window as unknown as { fugaroInstallations: { list: () => Promise<unknown> } }).fugaroInstallations
+        return await api.list()
+      })) as { ok: boolean; data: { rows: { project: string; active: boolean; mode: string }[] } }
+      expect(listed.ok).toBe(true)
+      expect(listed.data.rows.map((row) => [row.project, row.active, row.mode])).toEqual([['gone', true, 'refused']])
+    } finally {
+      await app.close()
+      rmSync(scratch, { recursive: true, force: true })
+      gone.remove()
+    }
+  })
+
+  test('the first run reads no ambient project, and opens the picker once', async () => {
+    // An unseeded profile: D13's first run. `FUGARO_PROJECT` is planted in the
+    // app's environment and must not reach the handshake (plan 3.4b, tests).
+    // Which `fugaro` the machine resolves is not asserted -- only what the
+    // console sent it.
+    const fresh = installCliStub(CLI_VERSION_BUILT_AGAINST)
+    try {
+      const launched = await launch(fresh.env, { firstRun: fresh, env: { FUGARO_PROJECT: 'planted-ambient-project' } })
+      try {
+        // `launch` asserted the picker opened, once, and closed it.
+        expect(launched.app.windows()).toHaveLength(1)
+        const records = launched.records()
+        expect(records.length).toBeGreaterThan(0)
+        for (const record of records) {
+          expect(record.argv[1]).toBe('version')
+          expect(record.project, 'the handshake took a project nobody chose').toBe('')
+        }
+        if (launched.page.url() === APP_ENTRY_URL) {
+          const installation = await installationOf(launched.page)
+          expect(installation).toEqual({ ok: true, data: { chosen: false, sentence: NO_ACTIVE_INSTALLATION } })
+          await expect(launched.page.locator('section.console-installation p.installation-none')).toHaveText(
+            NO_ACTIVE_INSTALLATION,
+          )
+        }
+      } finally {
+        await close(launched)
+      }
+    } finally {
+      fresh.remove()
     }
   })
 })

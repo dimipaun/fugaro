@@ -75,13 +75,28 @@ export const REFUSAL_ENTRY_PATH = '/refusal.html'
 export const REFUSAL_ENTRY_URL = `${APP_ORIGIN}${REFUSAL_ENTRY_PATH}`
 
 /**
+ * PICKER_ENTRY_PATH is the installation picker's document (Task 3.4b; owner
+ * ruling C9): a separate window opened from the application menu, with its own
+ * preload and its own channel prefix, and PICKER_ENTRY_URL is the URL that
+ * window loads and the one its channels' sender gate compares against
+ * (`isSenderOnDocument` in `src/main/ipc.ts`).
+ */
+export const PICKER_ENTRY_PATH = '/installations.html'
+
+/** PICKER_ENTRY_URL is the full URL of the picker's document. */
+export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
+
+/**
  * SERVED_FILES is the whole of what the served root holds (desktop-console plan
- * Task 3.4a, step 4): the two documents and the one script that draws in them.
+ * Task 3.4a, step 4; Task 3.4b's second entry): the dashboard's and the
+ * refusal's documents and the one script the dashboard loads, and the picker's
+ * document and its own script.
  *
  * The root itself is `dist/bundle/` (`rendererRoot` in `src/main/index.ts`),
- * and the three files are there because `npm run build` puts them there: `tsc`
- * compiles `src/renderer/entry.ts` and everything it requires, and
- * `tools/bundle-renderer/index.ts` writes `console.js` and copies the documents
+ * and the five files are there because `npm run build` puts them there: `tsc`
+ * compiles `src/renderer/entry.ts` and `src/renderer/installations.ts` and
+ * everything they require, and `tools/bundle-renderer/index.ts` writes
+ * `console.js` and `installations.js` and copies the three documents
  * verbatim. `test/unit/bundle.test.ts` holds this list and that directory equal
  * in both directions, so a file that appears beside the bundle -- or a name
  * dropped from this list -- is a failing test rather than a document the
@@ -98,6 +113,8 @@ export const REFUSAL_ENTRY_URL = `${APP_ORIGIN}${REFUSAL_ENTRY_PATH}`
 export const SERVED_FILES: readonly string[] = Object.freeze([
   '/console.js',
   '/index.html',
+  '/installations.html',
+  '/installations.js',
   '/refusal.html',
 ])
 

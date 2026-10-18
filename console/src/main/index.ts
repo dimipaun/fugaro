@@ -33,9 +33,12 @@
 
 import { join } from 'node:path'
 
-import { app, BrowserWindow, ipcMain, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, Menu, dialog, ipcMain, protocol, session, shell } from 'electron'
+import type { OpenDialogOptions } from 'electron'
 
 import { handleAppRequests, registerAppScheme } from './protocol'
+import { installInstallationPicker } from './picker'
+import type { DialogLike, InstallationPicker } from './picker'
 import {
   createConsoleLifecycle,
   installWebContentsSecurity,
@@ -43,7 +46,7 @@ import {
   versionReadFrom,
 } from './window'
 import type { ConsoleWindowDeps, VersionRead } from './window'
-import { privateWorkingDirectory, resolveBinary } from './spawn'
+import { privateWorkingDirectory, resolveHandshakeBinary } from './spawn'
 import type { SpawnTarget } from './spawn'
 import { createSpawnLog } from './spawnlog'
 import {
@@ -119,56 +122,74 @@ function serveBundle(): void {
 }
 
 /**
- * HANDSHAKE_TARGET is the target the startup version read runs with: no project
- * and no config path, because `fugaro version` takes neither -- the spawn
- * table's row for `cli.version` is the one with `takesProject: false`, and the
- * CLI's own `newVersionCmd` has no flags at all (see `COMMANDS_WITHOUT_PROJECT`
- * in `src/main/spawn.ts`). The installation the operator chooses is D13's, and
- * it does not exist yet: inventing a project name here, or falling back to the
- * ambient `FUGARO_PROJECT`, would be a target nobody chose (design section 3.4
- * rule 1). The probe's child therefore sees `FUGARO_PROJECT` set to the empty
- * string, which is what `childEnvironment` makes of a target with no project,
- * and `version` is the one command that does not read it.
+ * handshakeInstallation is the stored **active** installation the startup
+ * handshake reads (Task 3.4b, steps 3 and 4), or `null` when there is none.
+ *
+ * With one, its `binaryPath` is the **only** binary the handshake reads
+ * (`resolveInstalledBinary`: no fallthrough to any other `fugaro`, review B1)
+ * and its project (and config path, when stored) is the spawn target, so the
+ * bare `version` spawn records which installation it was for. With none, the
+ * console makes **no guess**: not `FUGARO_PROJECT`, not the working directory's
+ * checkout, never the CLI's config -- `resolveHandshakeBinary` runs Task 3.3's
+ * project-less read against rule 4's resolution, the dashboard answers
+ * `NO_ACTIVE_INSTALLATION`, and the picker opens once.
  */
-const HANDSHAKE_TARGET: SpawnTarget = Object.freeze({ project: '' })
+function handshakeInstallation(): {
+  readonly id: string
+  readonly binaryPath: string
+  readonly target: SpawnTarget
+} | null {
+  const chosen = picker?.installation()
+  if (chosen === undefined || !chosen.chosen) return null
+  return {
+    id: chosen.id,
+    binaryPath: chosen.binary,
+    target: Object.freeze({
+      project: chosen.project,
+      ...(chosen.config === undefined ? {} : { configPath: chosen.config }),
+    }),
+  }
+}
 
 /**
- * readCliVersion is the handshake's reader: rule 4's resolution (Task 1.3) and
- * the version line of the `fugaro` it finds.
+ * handshakeFor is the id of the installation whose startup handshake has just
+ * been read, until `onDecided` hands the answer to the picker's registry
+ * (`picker.remember`), so `installation.current` and the picker's rows carry the
+ * startup's mode and version rather than a default (review S1). It is consumed
+ * once: a later `onDecided` comes from a choose, whose own probe the picker has
+ * already remembered.
+ */
+let handshakeFor: string | null = null
+
+/**
+ * readCliVersion is the handshake's reader: `resolveHandshakeBinary`
+ * (`src/main/spawn.ts`, where it is unit-tested) and the version line of the
+ * one binary it reads.
  *
  * It reads the machine and nothing else -- no state from a previous run, no
- * cached answer -- because the question the handshake asks is "which CLI is the
- * console about to drive, right now". A resolution that fails crosses into the
- * compatibility as a **category** (`versionReadFrom` in `window.ts`), never as
- * `resolution.reason`, which embeds what the binary printed; and a resolution
- * or a probe that *throws* is left to `runVersionHandshake`, which turns it into
- * the refusal with the console's own sentence rather than a crash.
+ * cached answer. A resolution that fails crosses into the compatibility as a
+ * **category** (`versionReadFrom` in `window.ts`), never as `resolution.reason`,
+ * which embeds what the binary printed; and a resolution or a probe that
+ * *throws* is left to `runVersionHandshake`, which turns it into the refusal
+ * with the console's own sentence rather than a crash.
  *
- * The child runs in `privateWorkingDirectory()` -- the same owner-only 0700
- * directory every spawn without a checkout uses (rule 5, `src/source/cli.ts`'s
- * `verifyCandidate`), so the probe is not run from wherever the app happened to
- * be launched.
- *
- * **The probe is a spawn, so it is logged like one** (Task 3.4a; design section
- * 5.1 rule 10). The log is the operator's opt-in (`createSpawnLog` reads
- * `FUGARO_CONSOLE_SPAWN_LOG` and nothing else), and it is opened for this one
- * read and closed as soon as it is done: a console that recorded every read but
- * its first would be a log that cannot answer which binary the console actually
- * read. `test/e2e/entry.spec.ts` asserts what is in it -- the `version` spawns,
- * and no read of the surface -- because the log is the one place a spawn that
- * should not have happened is visible.
+ * The child runs in `privateWorkingDirectory()` (rule 5), and the probe is
+ * logged like every spawn (design section 5.1 rule 10): the log is opened for
+ * this one read and closed as soon as it is done.
  */
 async function readCliVersion(): Promise<VersionRead> {
   const log = createSpawnLog(process.env)
+  const chosen = handshakeInstallation()
   try {
-    const resolution = await resolveBinary({
+    const resolution = await resolveHandshakeBinary({
+      installation: chosen,
       appEnv: process.env,
       directory: privateWorkingDirectory(),
-      target: HANDSHAKE_TARGET,
       log,
     })
     return versionReadFrom(resolution)
   } finally {
+    handshakeFor = chosen === null ? null : chosen.id
     log.close()
   }
 }
@@ -209,10 +230,10 @@ function storedCompatibility(): CliCompatibility {
 }
 
 /**
- * noInstallation is the console's answer for every read, until Task 3.4b gives
- * it an installation to drive.
+ * noInstallation is the console's answer for every read, until Task 3.4c binds
+ * a `CliSource` to the installation the picker (Task 3.4b) made active.
  *
- * D13's picker does not exist yet, and the alternative to this refusal would be
+ * The alternative to this refusal would be
  * a source built from whatever the machine happened to have -- the ambient
  * `FUGARO_PROJECT` and the first `fugaro` on `PATH` -- which is a console
  * driving something the operator never chose. So the surface exists, every
@@ -279,7 +300,13 @@ async function openExternalFromShell(raw: unknown): Promise<void> {
  * holds is the gate over it.
  */
 const gated: ConsoleHandlers = {
-  ...handlersFor(activeSource, { openExternal: openExternalFromShell }),
+  ...handlersFor(activeSource, {
+    openExternal: openExternalFromShell,
+    // `installation.current` (Task 3.4b): the picker's store, read at message
+    // time. Before the picker exists the answer is `handlersFor`'s own
+    // no-installation state.
+    installation: () => picker?.installation(),
+  }),
   'startup.compatibility': startupCompatibility(storedCompatibility),
 }
 
@@ -323,6 +350,9 @@ function registerHandlers(): void {
  */
 function onDecided(compatibility: CliCompatibility): void {
   current = compatibility
+  const read = handshakeFor
+  handshakeFor = null
+  if (read !== null) picker?.remember(read, compatibility)
   if (compatibility.mode === 'refused') return
   registerHandlers()
 }
@@ -344,12 +374,65 @@ const lifecycle = createConsoleLifecycle({
 })
 
 /**
+ * picker is the installation picker (Task 3.4b): the store in
+ * `<userData>/installations.json`, the `Installations…` menu item, and the
+ * picker's own window and channels. It is built **after** `whenReady`, because
+ * `session.defaultSession` and `app.getPath` do not exist before it, and
+ * **before** the startup handshake, which reads the stored active installation
+ * (`handshakeInstallation` above).
+ *
+ * A choose runs the version handshake for that installation in the picker
+ * (`probeInstallation`); a `refused` answer is not chosen. Otherwise
+ * `onChosen` hands the answer to `lifecycle.choose`, which goes through the
+ * same path the startup does: `onDecided` stores it and registers the surface if
+ * it was not yet, and the window is reopened through `openWindowFor` -- so a
+ * refused-to-ok switch replaces the refusal window with the dashboard.
+ */
+let picker: InstallationPicker | null = null
+
+/**
+ * pickerDialog is Electron's `dialog` narrowed to the picker's `DialogLike`: a
+ * parentless dialog when the picker has no window, and the options copied into
+ * Electron's own (mutable) shapes rather than cast.
+ */
+const pickerDialog: DialogLike = {
+  showOpenDialog: (window, options) => {
+    const electronOptions: OpenDialogOptions = {
+      title: options.title,
+      properties: [...options.properties] as OpenDialogOptions['properties'],
+      ...(options.filters === undefined
+        ? {}
+        : { filters: options.filters.map((filter) => ({ name: filter.name, extensions: [...filter.extensions] })) }),
+    }
+    return window === null ? dialog.showOpenDialog(electronOptions) : dialog.showOpenDialog(window, electronOptions)
+  },
+}
+
+/**
  * main is what `whenReady` resolves into: serve the bundle once, then run the
  * startup. Everything a second call would repeat is in `lifecycle.activate`.
  */
 async function main(): Promise<void> {
   serveBundle()
+  picker = installInstallationPicker({
+    electron: { BrowserWindow, session: session.defaultSession, ipcMain, dialog: pickerDialog, Menu, app },
+    appEnv: process.env,
+    // The picker awaits this inside its own serial chain (review S6), so a
+    // second choose cannot start until the window this one asked for is up.
+    onChosen: (chosen) => lifecycle.choose(chosen.compatibility).catch(reportAndQuit),
+  })
+  // The menu is installed in **every** mode, `refused` included: choosing an
+  // installation is how an operator gets out of a refusal, and a console that
+  // hid the door would be a console with no way back.
+  picker.installMenu()
   await lifecycle.start()
+  // D13's first run: with no installation chosen the console makes no guess,
+  // says so, and opens the picker once. A picker that fails to open is logged
+  // and is not a reason to quit a console whose own window is already up: the
+  // menu item is still there.
+  await picker.openOnFirstRun().catch((error: unknown) => {
+    console.error('[console] the installation picker could not be opened:', error)
+  })
 }
 
 app.whenReady().then(main).catch(reportAndQuit)

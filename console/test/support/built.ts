@@ -32,7 +32,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { bundleRenderer, consoleBundlePaths } from '../../tools/bundle-renderer/index'
+import { bundleRenderer, consoleBundles } from '../../tools/bundle-renderer/index'
 
 /** CONSOLE_ROOT is the console package, from this file's location. */
 export const CONSOLE_ROOT = fileURLToPath(new URL('../../', import.meta.url))
@@ -56,15 +56,20 @@ const STALE_LOCK_MS = 60_000
  * giving up loudly rather than building a second time. */
 const WAIT_LIMIT_MS = 120_000
 
-/** OUTPUTS are the files a build produces, as this suite reads them: the three
- * entry points Electron loads and the three served files. */
+/** OUTPUTS are the files a build produces, as this suite reads them: the entry
+ * points Electron loads (with the picker's preload and entry, Task 3.4b) and
+ * the five served files. */
 const OUTPUTS: readonly string[] = Object.freeze([
   join(DIST, 'bundle', 'console.js'),
   join(DIST, 'bundle', 'index.html'),
+  join(DIST, 'bundle', 'installations.html'),
+  join(DIST, 'bundle', 'installations.js'),
   join(DIST, 'bundle', 'refusal.html'),
   join(DIST, 'main', 'index.js'),
   join(DIST, 'preload', 'index.js'),
+  join(DIST, 'preload', 'installations.js'),
   join(DIST, 'renderer', 'entry.js'),
+  join(DIST, 'renderer', 'installations.js'),
 ])
 
 /** sourced is every `.ts` file under a directory, recursively. */
@@ -73,12 +78,13 @@ function sourced(directory: string): readonly string[] {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name)
     if (entry.isDirectory()) out.push(...sourced(path))
-    else if (entry.name.endsWith('.ts')) out.push(path)
+    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.html')) out.push(path)
   }
   return out
 }
 
-/** INPUTS are the files a build is made from: the sources, the bundler, and the
+/** INPUTS are the files a build is made from: the sources and the documents the
+ * bundler copies (an edited document is a stale build too), the bundler, and the
  * two configs that decide what the build does. */
 function inputs(): readonly string[] {
   return [
@@ -115,7 +121,7 @@ function build(): void {
     [join(CONSOLE_ROOT, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.build.json'],
     { cwd: CONSOLE_ROOT, stdio: 'pipe' },
   )
-  bundleRenderer(consoleBundlePaths(CONSOLE_ROOT))
+  for (const bundle of consoleBundles(CONSOLE_ROOT)) bundleRenderer(bundle)
 }
 
 /** takeLock is the one-writer rule: `wx` either creates the file or says

@@ -4,10 +4,10 @@
 // This is the file the dashboard document loads, and it is small on purpose:
 // **its first call is `startConsole`, and it draws nothing before that promise
 // settles** (plan step 5). Everything a screen may draw is behind the gate
-// `startConsole` hands back -- and in this task the entry stops there. The
-// refusal screen or the reduced-mode banner is drawn, and the dashboard frame
-// stays empty: the screens are Task 3.4c's, and a reader of this task should not
-// go looking for one here.
+// `startConsole` hands back. The refusal screen or the reduced-mode banner is
+// drawn, then (Task 3.4b) one line saying which installation the console is
+// showing, or that none is chosen; the screens are Task 3.4c's, and a reader of
+// this task should not go looking for one here.
 //
 // Three things this file decides, each for a reason a reviewer can check:
 //
@@ -51,6 +51,7 @@
 
 import { startConsole } from './app'
 import type { CompatibilityBridge, MountLike } from './app'
+import { sanitizeRefusal } from '../shared/sanitize'
 import type { SkewElement, SkewFactory, SkewTheme } from '../shared/version'
 
 /**
@@ -173,27 +174,127 @@ export function bridgeFrom(fugaro: unknown): CompatibilityBridge {
 }
 
 /**
+ * InstallationBridge is the one other method of the dashboard's bridge this
+ * file uses (Task 3.4b, step 6): `installation.current`, the store's answer for
+ * which installation the console is showing. Described structurally, for the
+ * reason `CompatibilityBridge` is.
+ */
+export interface InstallationBridge {
+  getInstallation(): Promise<unknown>
+}
+
+/** installationBridgeFrom is `bridgeFrom`'s twin for `getInstallation`: a
+ * missing bridge or member answers `null`, which draws the console's own
+ * "could not read" sentence. */
+export function installationBridgeFrom(fugaro: unknown): InstallationBridge {
+  const bridge = fugaro as { readonly getInstallation?: unknown } | null | undefined
+  const ask = bridge === null || bridge === undefined ? undefined : bridge.getInstallation
+  if (typeof ask !== 'function') return { getInstallation: async (): Promise<unknown> => null }
+  return {
+    getInstallation: (): Promise<unknown> => Promise.resolve((ask as () => unknown).call(bridge)),
+  }
+}
+
+/** INSTALLATION_UNREADABLE is the console's sentence for an answer to
+ * `installation.current` it will not draw from. */
+export const INSTALLATION_UNREADABLE = 'the console could not read which installation it is showing'
+
+/** UNDRAWN is what a field the sanitizer refused is drawn as. */
+const UNDRAWN = 'a line the console will not draw'
+
+/** textOf is one server string as the dashboard draws it: through
+ * `sanitizeRefusal`, like every sentence the picker draws, and set as
+ * `textContent` only. */
+function textOf(raw: unknown, field: string): string {
+  const result = sanitizeRefusal(raw, field)
+  return result.ok ? result.text : UNDRAWN
+}
+
+/**
+ * drawInstallation is the dashboard's statement of which installation it is
+ * showing (plan 3.4b, steps 1, 4 and 6; review S5). It draws **no figure**:
+ *
+ *   - none chosen: D13's no-installation sentence, and -- when the store's file
+ *     was refused -- the console's sentence naming the file's path and why;
+ *   - one chosen: its project, its binary path, and the version and mode the
+ *     handshake read for it (`unknown` when nothing has read it).
+ *
+ * Every string is the main process's, drawn through `sanitizeRefusal`; an
+ * answer of any other shape is the console's own "could not read" sentence.
+ */
+export function drawInstallation(factory: SkewFactory, reply: unknown): SkewElement {
+  const section = factory.create('section')
+  section.setAttribute('class', 'console-installation')
+  const line = (className: string, text: string): void => {
+    const element = factory.create('p')
+    element.setAttribute('class', className)
+    element.textContent = text
+    section.append(element)
+  }
+  const envelope = typeof reply === 'object' && reply !== null ? (reply as Record<string, unknown>) : null
+  const data = envelope !== null && envelope['ok'] === true ? envelope['data'] : null
+  const value = typeof data === 'object' && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>) : null
+  if (value === null || typeof value['chosen'] !== 'boolean') {
+    section.setAttribute('data-installation', 'unreadable')
+    line('installation-unreadable', INSTALLATION_UNREADABLE)
+    return section
+  }
+  if (value['chosen'] === false) {
+    section.setAttribute('data-installation', 'none')
+    line('installation-none', textOf(value['sentence'], 'the no-installation sentence'))
+    if (value['refusal'] !== undefined) {
+      line(
+        'installation-store-refusal',
+        `${textOf(value['path'], 'the installations file’s path')} could not be read: ${textOf(value['refusal'], 'the installations file’s refusal')}`,
+      )
+    }
+    return section
+  }
+  section.setAttribute('data-installation', 'chosen')
+  const mode = textOf(value['mode'], 'the installation’s mode')
+  section.setAttribute('data-mode', mode)
+  line('installation-project', textOf(value['project'], 'the installation’s project'))
+  line('installation-binary', textOf(value['binary'], 'the installation’s binary'))
+  const version = value['cliVersion']
+  line(
+    'installation-version',
+    `${typeof version === 'string' ? textOf(version, 'the installation’s version') : 'version not read'} · ${mode}`,
+  )
+  return section
+}
+
+/**
  * bootDashboard is what the loaded document runs: read the bridge, hand it to
  * `startConsole`, and let the gate draw. It is a function of a *scope* rather
  * than of globals so that it can be driven -- in `test/unit/startup.test.ts`
  * with a fake document, and in `test/e2e/entry.spec.ts` in the real window.
  *
- * What it does not do is draw anything itself: no frame, no heading, no
- * placeholder. The document already carries the frame (`index.html`'s `<main>`),
- * the refusal and the banner are `startConsole`'s, and a figure is a screen's --
- * which is Task 3.4c's, so the gate's answer is deliberately dropped here.
+ * What it draws itself is one statement and no figure: which installation the
+ * console is showing, or that it shows none (`drawInstallation`, Task 3.4b). The
+ * document already carries the frame (`index.html`'s `<main>`), the refusal and
+ * the banner are `startConsole`'s, and a figure is a screen's -- Task 3.4c's.
  */
 export async function bootDashboard(scope: {
   readonly fugaro: unknown
   readonly document: Document
 }): Promise<void> {
   const surface = domSurface(scope.document)
-  await startConsole({
+  const gate = await startConsole({
     bridge: bridgeFrom(scope.fugaro),
     mount: surface.mount,
     factory: surface.factory,
     theme: CONSOLE_THEME,
   })
+  // A refused console draws the refusal and nothing else. Any other one says
+  // which installation it is showing -- or that it shows none, and why.
+  if (gate.compatibility.mode === 'refused') return
+  let installation: unknown
+  try {
+    installation = await installationBridgeFrom(scope.fugaro).getInstallation()
+  } catch {
+    installation = null
+  }
+  surface.mount.append(drawInstallation(surface.factory, installation))
 }
 
 // The one moment this file gets in a renderer. `startConsole` answers every

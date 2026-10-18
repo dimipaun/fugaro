@@ -524,9 +524,9 @@ happens to name the thing it is looking for.
 The console reaches the data one way: it spawns the installed `fugaro` and reads
 its JSON (design D1, Option A). It never reads a database, never holds a
 credential and never opens the operator's config. Four files say so —
-`src/main/spawn.ts` decides every spawn, `src/main/spawnlog.ts` is the one thing
-the app writes, `src/source/source.ts` is the data plane every screen talks to,
-and `src/source/cli.ts` is the v1 implementation over the child.
+`src/main/spawn.ts` decides every spawn, `src/main/spawnlog.ts` is one of the
+two things the app writes, `src/source/source.ts` is the data plane every screen
+talks to, and `src/source/cli.ts` is the v1 implementation over the child.
 
 `FugaroSource` **yields `JSONDoc`-shaped snapshots and emits change events, and
 knows nothing about how they were produced**: v1 spawns the CLI, the fixtures of
@@ -546,9 +546,10 @@ field this task reads out of a document is `day`, which the rollover needs.
 | 5 — the working directory is set explicitly | the installation's checkout when it has one, otherwise a private `0700` directory the app owns under the system temporary directory, checked with `lstat` (not a link, owned by this uid, mode `0700`) rather than trusted to `mkdir`. Never `/`, which is nobody's checkout. `doctor` is called with `--dir <that directory>` and **never `--strict`**: outside a checkout its `plugin-pin` check is a warning that `--strict` turns into a failure about the checkout rather than about the environment on screen |
 | 7 — the app never reads the operator's config | the config's *path* is a string on the installation, passed to the child as `--config`; the CLI is the reader. The add-an-installation check is a **spawn** for the same reason: one allow-listed `doctor --json` with the checkout as the child's working directory, and a checkout that belongs to another project is refused with the CLI's own `this checkout belongs to project %s; --project says %s` — and **not stored**, because storing it would leave every screen refused later with nothing on screen explaining why |
 | 10 — the spawn log (D20) | `src/main/spawnlog.ts`, documented below |
+| 10 — the installations file (D13, C8) | `src/main/installations.ts`, documented below: the second and last file the app writes |
 | Task 0.2's four settled behaviours | restart with the CLI's own backoff (1 s doubling to 30 s) except after a refusal, a signal read as the ordinary end of a feed, the UTC-midnight rollover marked as a **gap** rather than a zero, and the reader rule that a stdout line which is not a JSON object is **skipped** and surfaced as a notice — the degraded mode writes a plain sentence on the same stream as the documents (`runWatchDegraded`, `internal/cli/watch.go`) |
 
-### The spawn log, and what the app writes
+### The spawn log, and the two files the app writes
 
 **The console writes nothing by default.** Set `FUGARO_CONSOLE_SPAWN_LOG` to a
 path and the main process appends one JSON object per line there, one line per
@@ -574,25 +575,16 @@ the last as scans over `console/src/`, so a screen, a source or an IPC handler
 that started reading it would fail a named test. It is what Check 59's
 assertion (4) reads and what Task 4.3's FACT commands read the key names from.
 
-**It is the only record the app writes today.** The one other write in this task
-is a directory rather than a record: `privateWorkingDirectory()` creates an empty
-`0700` directory under the system temporary directory for an installation that has
-no checkout, so that `doctor --dir` is a directory and the child's `cwd` is not
-`/`. Section 5.1 rule 10 is about *records* — no history, no cached document, no
-crash dump, nothing that outlives the process — and this holds nothing at all.
-
-**The second write rule 10 used to leave open is now ruled on, and named.** The
-store above is in memory, and a persisted installation list would be a second
-thing the app writes; rather than let that grow by accident, it was put to the
-owner. **C8 was answered yes on 2026-10-18**: the list is persisted, and §5.1 rule
-10 and §7.4 were amended to "the app writes the spawn log, when asked, and the
-installations file, and nothing else". **Task 3.4b builds that file** — one
-`installations.json` in Electron's `userData` directory, mode `0600`,
-schema-closed and bounded, holding **tuples only** (a project name, a config path,
-a binary path and an optional checkout directory), **never a credential**, and
-never read from the operator's own CLI config. Until 3.4b lands, "the only thing
-the app writes" still describes the shipped code exactly, because nothing writes
-that file yet.
+**It is one of the two files the app ever writes to disk, and the other one is
+off by default too.** The other write in this task is a directory rather than a
+record: `privateWorkingDirectory()` creates an empty `0700` directory under the
+system temporary directory for an installation that has no checkout, so that
+`doctor --dir` is a directory and the child's `cwd` is not `/`. Section 5.1 rule
+10 is about *records* — no history, no cached document, no crash dump, nothing
+that outlives the process — and this holds nothing at all. The **other record**
+is the installation list, `installations.json`, which the owner ruled in on
+2026-10-18 (C8) and which is documented in its own section below: rule 10 was
+amended to name it rather than having it grow by accident.
 
 ### The spawn properties are tests, and each one fails under a mutation
 
@@ -641,8 +633,11 @@ run against the committed tree, and each made a named test red:
   (`READ_TIMEOUT_MS`) and a stdout cap, the feed's line buffer is capped, and a
   source keeps at most `MAX_LIVE_FEEDS` (4) live children, stopping the least
   recently used.
-- **Persistence.** The installation store is in memory for one run; see the note
-  above on rule 10.
+- **Persistence.** `createInstallationStore` holds the list in memory for one
+  run, and it took a `persistence` seam rather than a file: the store's
+  read-and-write half is `src/main/installations.ts` (Task 3.4b), which owns
+  `installations.json` and is documented below. The in-memory default is what
+  the unit tests and the e2e harness use, and nothing here writes.
 - **The fixtures.** `FugaroSource`'s second implementation is Task 1.4's
   recorder and replay, and it slots in behind the same interface — see the
   section below. What landed there is the tool and one synthetic fixture; the
@@ -1342,6 +1337,188 @@ awkward cases — empty containers, `undefined` in objects and in arrays,
 non-finite numbers, escaping, `toJSON` nested and returning `undefined` — and
 carries the 10 000-deep document as its own case.
 
+## The installation store, and the picker window (Task 3.4b)
+
+The console is pointed at an **installation** — a project name, the path to a
+`fugaro` binary, the path to that installation's config, and optionally the
+checkout directory (design D13). This task is where the list of them is kept and
+where the operator picks one.
+
+### The store: one bounded, schema-checked, `0600` file
+
+`src/main/installations.ts` owns it. It is the second of the **two files the app
+writes** (design §5.1 rule 10, §7.4), and the owner ruled it in on 2026-10-18
+(**C8**) rather than letting it grow by accident:
+
+- **`installations.json`, in the app's own `userData`**. Electron names that
+  directory after `package.json`'s `productName`, else its `name`; this
+  package sets no top-level `productName`, so a development run (`electron .`,
+  the e2e specs) uses `fugaro-console`, and a packaged build may use
+  electron-builder's product name, `Fugaro Console`. Neither is the CLI's
+  `fugaro`, and `test/unit/installations-store.test.ts` reads both names from
+  `package.json` and checks them. It is written `0600` inside a `0700`
+  directory.
+- **Tuples only** — `id`, `project`, `binaryPath`, an optional `configPath` and
+  an optional `checkout`. **Never a credential**, and **never read from the
+  operator's CLI config**: rule 7 forbids that outright, and the store's only
+  touch of a config path is a `stat` (see `test/unit/configread.test.ts`).
+- **It refuses to live under the CLI's own configuration.** `installationStorePath`
+  throws if `userData` is inside `~/.config/fugaro`, `$XDG_CONFIG_HOME/fugaro`
+  or the directory `$FUGARO_CONFIG` names, so the console's file and the CLI's
+  cannot be confused for one another. The picker catches that refusal: the
+  console still starts, with **no store**, and the picker and the dashboard say
+  why (a `$FUGARO_CONFIG` of `~/fugaro.yaml` inherited from a shell is the case
+  that reaches it, since every `userData` is under the home directory). `cliConfigDirectories` takes `home` as an
+  argument rather than calling `homedir()`, because the console's own guard
+  forbids that call outside binary resolution.
+- **Schema-checked on read, and closed.** `readInstallationFile` refuses a file
+  whose top-level keys are not exactly `version`, `active`, `installations`, an
+  entry with a key outside `INSTALLATION_KEYS`, a duplicate id, an id that is
+  not 16 hex characters, a project name that is not one, a path that is not
+  absolute or is too long — **an unknown key refuses the whole file** rather
+  than being ignored, because a file the console only partly understands is a
+  file it must not act on. A missing file is an empty list, not a failure.
+- **A regular file, or nothing.** The read `lstat`s the name and refuses a
+  symbolic link, a FIFO or anything else that is not a regular file, then opens
+  it `O_NOFOLLOW | O_NONBLOCK`, re-checks it with `fstat`, and reads at most one
+  byte past the bound from that descriptor — so a FIFO cannot hang startup and
+  a file that grows between the checks is still refused.
+- **Bounded.** `MAX_INSTALLATIONS` (16) and `MAX_INSTALLATION_FILE_BYTES`
+  (64 KiB, refused unread past it). The bound is re-checked **after** the
+  `await` in `add`, because validation spawns a child process and two adds can
+  be in flight at once — the pre-await check alone let a 17th through.
+- **Written atomically.** A temporary file in the same directory, then a
+  `rename` over the old one, so a crash mid-write leaves the previous list
+  intact rather than a truncated one. The test that proves it injects an `fs`
+  whose `rename` throws `ENOSPC` and asserts the previous bytes are untouched.
+- **Nothing is written on the refusing path, and nothing on a read.** The
+  `recordingFs()` in `test/unit/installations-store.test.ts` asserts **no write
+  at all** until an `add`, a `choose` or a `remove` — a load, a `list` and a
+  `current` write nothing.
+
+The file is Electron-free, and the store's filesystem is injected as
+`InstallationFs`, so every property above is a plain-Node unit test.
+
+### Validation: the binary is proved, not trusted
+
+`validateInstallation` refuses anything that is not an **absolute** path to a
+file that **exists**, is a **file** and is **executable**, and then runs that
+installation's own `version` handshake through `probeInstallation` — so a
+candidate is stored with the `CliCompatibility` the console actually read from
+*that* binary, not from whichever `fugaro` happens to be on `PATH` (rule 4). A
+binary below the hard floor is refused and **nothing is stored**; a binary in
+the reduced range is stored and its row says `reduced`. The CLI's own pairing
+check (`doctor --json`) then runs on every add as one allow-listed spawn, and a
+checkout that belongs to another project is refused **with the CLI's sentence
+shown** and not stored — the console never reads `fugaro.yaml` itself (rule 7).
+Every probe of an add or a choose runs from the checkout when one is given and
+from the console's private directory otherwise — never from the binary's own
+directory — and is in the spawn log, with the candidate's project, when the
+operator has turned the log on.
+
+`isProjectName` is deliberately **stricter** than the spawn layer's
+`isSafeInstallationValue`: the latter allows a space, because a path may contain
+one, while a project name may not.
+
+### D13's semantics, which the store implements
+
+`--project` is passed on **every allow-listed command except `version`** — and
+`--config` follows it whenever the installation declares one and is not the
+ambient installation. The `version` handshake stays bare (`COMMANDS_WITHOUT_PROJECT`),
+because `newVersionCmd` is `cobra.NoArgs` with no flags, so `--project` on it
+would be refused by the CLI rather than ignored.
+
+### The picker: a separate window, its own document, its own preload (C9)
+
+The owner fixed the shape on 2026-10-18 (**C9**): the installation picker is
+**its own small window, opened from the app menu** — not a control in the
+dashboard's header. `src/main/picker.ts` builds it:
+
+- `installations.html` is a **second document on the same origin**
+  (`app://console`), served by the same protocol handler, with the same
+  byte-identical CSP and the same hardened `webPreferences`. It needs no
+  protocol change: the bundle handler already serves any path under the root.
+- **Its own preload**, `src/preload/installations.ts`, exposing exactly the
+  eight rows of `INSTALLATION_OPERATIONS` under `fugaroInstallations`. It
+  imports nothing from `src/main/` — the mirror is written out a second time,
+  the same way the dashboard's preload is, and `test/unit/installations-ipc.test.ts`
+  asserts the two lists are equal.
+- **The channels are `fugaro:installations/…`, and the sender gate is
+  per-document.** The two documents share an origin, so an origin check alone
+  would let the dashboard's frame call the picker's channels and vice versa.
+  `isSenderOnDocument(event, entryUrl)` adds the document path to the check, and
+  the test drives it **both ways**: every picker channel refuses the dashboard's
+  frame, every dashboard channel refuses the picker's.
+- **The renderer never names a path.** `add` takes its three paths as **pick
+  tokens** — single-use, kind-bound capabilities the main process issues for a
+  path *it* chose in a native dialog. A literal path is refused by shape
+  (`binary is not a path this console offered`) before any redemption, and a
+  replayed token is refused (`binary is not an outstanding choice`). At most
+  `MAX_OUTSTANDING_PICKS` (8) are outstanding, the oldest is dropped past the
+  bound, and every token is dropped when the window closes.
+- **The menu is the only way in.** `installationsMenuTemplate` adds
+  `Installations…` (and `Quit`), beside Electron's own Edit and Window menus so
+  the editing and window shortcuts keep working; the window is opened by that
+  item and by the first run (`openOnFirstRun`, which opens only when no
+  installation has been chosen).
+- **One mutation at a time.** An add, a choose or a remove runs only after the
+  one before it has finished — for a choose, after the window it asked for is
+  up — and the picker's controls are disabled while a request is in flight, so
+  two quick chooses cannot leave two dashboards open.
+
+`src/main/index.ts` wires it in: `installInstallationPicker(...)` with Electron's
+own `BrowserWindow`, `session.defaultSession`, `ipcMain`, `dialog`, `Menu` and
+`app`, then `installMenu()`, then `openOnFirstRun()` after the handshake has
+settled. The picker keeps the registry, and `picker.installation()` is the
+seam the renderer entry (Task 3.4a) needs to answer the dashboard's
+`installation.current` row.
+
+### What is deliberately not here
+
+- **The dashboard's join, and the choose.** `src/source/source.ts` answers
+  `installation.current` from an **optional** `installation` dep, defaulting to
+  D13's "no installation has been chosen" state; since the merge with Task
+  3.4a, `src/main/index.ts` passes `picker.installation` in. A choose runs the
+  handshake for that installation in the picker and hands the answer to
+  `lifecycle.choose` (`src/main/window.ts`), which registers the surface if it
+  was not yet and reopens the window through `openWindowFor`. The startup
+  handshake reads the stored active installation's binary — **that binary and
+  no other**: a stored binary that is missing or not executable is a refusal,
+  never a fall through to another `fugaro` on the machine — with its project,
+  and its answer is what `installation.current` and the picker's rows report
+  (an installation nothing has read in this run says `unknown`, never `ok`).
+  The dashboard draws one line from that read and no figure: the project, the
+  binary, the version and mode, or the no-installation sentence and, when the
+  store's file was refused, its path and why. Binding
+  a `CliSource` to it is Task 3.4c's: until then the dashboard's reads answer
+  `NO_ACTIVE_INSTALLATION`.
+- **`build.files`.** The packaged app must carry everything it loads at runtime.
+  Task 4.1 (#540) wrote the list and Task 3.4a moved the served root to the
+  bundler's output; this task adds its two files to it. `build.files` carries
+  the documents the handler serves, as the bundler's copies of
+  `src/renderer/index.html`, `src/renderer/refusal.html` and
+  `src/renderer/installations.html` in `dist/bundle/`; the two bundles,
+  `dist/bundle/console.js` and `dist/bundle/installations.js`; the two preloads
+  a window loads by absolute path, `dist/preload/index.js` and
+  `dist/preload/installations.js`; and the compiled main process, shared and
+  source modules under `dist/**` except the two Task 4.1 excludes by name.
+  `test/unit/build-files.test.ts` reads that list off the tree rather than
+  repeating it, so a third document or a third preload is covered when it is
+  added, and a file that works here but is missing from the shipped bundle
+  fails a named test instead of shipping.
+- **The picker's bundle entry** is the bundler's second entry
+  (`pickerBundlePaths` in `tools/bundle-renderer/index.ts`): `npm run build`
+  writes `dist/bundle/installations.js` beside `console.js`, each bundle step
+  told the other's name so the served root still refuses any file it did not
+  write, and `SERVED_FILES` names both documents and both scripts.
+- **A picker e2e spec.** The picker's coverage is
+  `test/unit/installations-store.test.ts`, `test/unit/installations-ipc.test.ts`
+  and `test/unit/installations-view.test.ts` (the last drives the view over a
+  fake document built from the ids `installations.html` declares, because the
+  console has no jsdom dependency);
+  a Playwright spec that drives the second window is a follow-up, because a
+  window-opening spec cannot be checked by hand in a worker with no display.
+
 ## `docs/pending-workflows/console-tests.yml`
 
 The console's own CI is **staged, not applied**, and Task 1.4 is the task that
@@ -1718,10 +1895,16 @@ console needs `src/renderer` on disk". Task 4.1 settles it by naming the file
 rather than moving it: `build.files` is
 
 ```json
-["dist/main/**/*.js", "!dist/main/fuses.js", "dist/preload/**/*.js",
- "dist/shared/**/*.js", "dist/source/**/*.js", "!dist/source/fixture.js",
- "src/renderer/index.html"]
+["dist/main/**/*.js", "!dist/main/fuses.js", "dist/preload/index.js",
+ "dist/preload/installations.js", "dist/shared/**/*.js", "dist/source/**/*.js",
+ "!dist/source/fixture.js", "dist/bundle/console.js", "dist/bundle/index.html",
+ "dist/bundle/installations.html", "dist/bundle/installations.js",
+ "dist/bundle/refusal.html"]
 ```
+
+(as amended when Task 3.4a moved the served root to `dist/bundle/` and Task
+3.4b added the picker's document, script and preload; the paragraph below is
+Task 4.1's record of its own first list)
 
 — the compiled main process, preload, shared and source modules, the document
 the window actually loads, and nothing else. Two compiled files are excluded by

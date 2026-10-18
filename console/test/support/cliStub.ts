@@ -36,10 +36,11 @@
 // their machine, and `resolveConsoleBinary` below is what lets a spec say so
 // instead of failing on a missing element.
 
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { INSTALLATIONS_FILE_NAME, INSTALLATION_FILE_VERSION, serializeInstallationFile } from '../../src/main/installations'
 import { privateWorkingDirectory, resolveBinary } from '../../src/main/spawn'
 import type { BinaryResolution, SpawnTarget } from '../../src/main/spawn'
 import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
@@ -65,6 +66,35 @@ export interface CliStub {
    * absent rather than `undefined`, which is both what a child process actually
    * receives and what Playwright's `env` option takes. */
   readonly env: Record<string, string>
+  /** userData is the seed for every launch's scratch `--user-data-dir` (Task
+   * 3.4b): `seedInstallations` writes `installations.json` here and
+   * `launchArgs` copies it into a fresh profile, so no spec reads or writes the
+   * machine's own console profile. Unseeded, it is D13's first run: no
+   * installation, and the picker opens. */
+  readonly userData: string
+  /** launchArgs is `electron.launch`'s `args`: the app directory, and a
+   * **fresh** scratch `--user-data-dir` per launch, holding a copy of the seeded
+   * `installations.json` (if any). Fresh, because Chromium locks a profile to
+   * one process: a launch that reused the profile of an app still shutting down
+   * would hand itself to that process and exit, and the spec would wait for a
+   * window that never comes. */
+  launchArgs(consoleDir: string): string[]
+  /** seedActiveInstallation writes one installation naming this stub as the
+   * active one, so the handshake's configured path is the stub (rule 4 puts it
+   * first, so it wins even over a machine's own `fugaro`) and the picker does
+   * not open. It is for the specs whose subject is the dashboard, not the first
+   * run. */
+  seedActiveInstallation(project?: string, binaryPath?: string): void
+  /** seedInstallations writes `installations.json` with these entries and
+   * `active` (Task 3.4b), for a spec that needs more than one installation. */
+  seedInstallations(
+    entries: readonly { readonly id: string; readonly project: string; readonly binaryPath: string }[],
+    active: string | null,
+  ): void
+  /** extraStub installs one more stub, printing `line`, in its own directory
+   * under this scratch tree -- **not** on the app's `PATH` -- and answers its
+   * path. It is a second CLI an installation can name. */
+  extraStub(name: string, line: string): string
   /** setVersion rewrites the line the stub prints (`'0.8.1\n'`, `'banana\n'`, a
    * hostile line), in both places the stub was installed. */
   setVersion(line: string): void
@@ -81,6 +111,8 @@ export function installCliStub(line: string): CliStub {
   const scratch = mkdtempSync(join(tmpdir(), 'fugaro-cli-stub-'))
   const dir = join(scratch, 'bin')
   const home = join(scratch, 'home')
+  const userData = join(scratch, 'user-data')
+  mkdirSync(userData, { recursive: true, mode: 0o700 })
   const wellKnown = join(home, '.local', 'bin')
   for (const where of [dir, wellKnown]) {
     mkdirSync(where, { recursive: true })
@@ -102,7 +134,41 @@ export function installCliStub(line: string): CliStub {
   const stub: CliStub = {
     dir,
     home,
+    userData,
     env,
+    launchArgs(consoleDir: string): string[] {
+      const profile = mkdtempSync(join(scratch, 'profile-'))
+      chmodSync(profile, 0o700)
+      const seededFile = join(userData, INSTALLATIONS_FILE_NAME)
+      if (existsSync(seededFile)) {
+        copyFileSync(seededFile, join(profile, INSTALLATIONS_FILE_NAME))
+        chmodSync(join(profile, INSTALLATIONS_FILE_NAME), 0o600)
+      }
+      return [consoleDir, `--user-data-dir=${profile}`]
+    },
+    seedActiveInstallation(project = 'e2e', binaryPath = join(dir, 'fugaro')): void {
+      const id = '0123456789abcdef'
+      stub.seedInstallations([{ id, project, binaryPath }], id)
+    },
+    seedInstallations(entries, active): void {
+      writeFileSync(
+        join(userData, INSTALLATIONS_FILE_NAME),
+        serializeInstallationFile({
+          version: INSTALLATION_FILE_VERSION as 1,
+          active,
+          installations: entries.map((entry) => ({ id: entry.id, project: entry.project, binaryPath: entry.binaryPath })),
+        }),
+        { mode: 0o600 },
+      )
+    },
+    extraStub(name: string, next: string): string {
+      const where = join(scratch, name)
+      mkdirSync(where, { recursive: true })
+      copyFileSync(CLI_STUB, join(where, 'fugaro'))
+      chmodSync(join(where, 'fugaro'), 0o755)
+      writeFileSync(join(where, 'version.txt'), `${next}\n`)
+      return join(where, 'fugaro')
+    },
     setVersion(next: string): void {
       for (const where of [dir, wellKnown]) {
         writeFileSync(join(where, 'version.txt'), `${next}\n`)

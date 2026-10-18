@@ -417,7 +417,12 @@ test.describe('the Run detail screen', () => {
     // an in-range one it opens the refusal document, and the dashboard document
     // this spec mounts into would never be loaded.
     cli = inRangeCliStub()
-    app = await electron.launch({ args: [consoleDir], env: cli.env })
+    // A scratch profile with the stub as the active installation (Task 3.4b):
+    // the dashboard is this spec's subject, so the first run's picker -- which
+    // opens when no installation is chosen -- is not, and no spec touches the
+    // machine's own console profile.
+    cli.seedActiveInstallation()
+    app = await electron.launch({ args: cli.launchArgs(consoleDir), env: cli.env })
     page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
   })

@@ -399,7 +399,30 @@ async function buildConsoleWindow(
 ): Promise<BrowserWindow> {
   const webPreferences =
     entryUrl === APP_ENTRY_URL ? dashboardWebPreferences(deps.preloadPath) : consoleWebPreferences()
-  const window = new deps.BrowserWindow(consoleWindowOptions(compatibility, webPreferences))
+  return buildHardenedWindow(deps, consoleWindowOptions(compatibility, webPreferences), entryUrl)
+}
+
+/**
+ * buildHardenedWindow is the one construction path every window of this app
+ * goes through -- the dashboard's, the refusal screen's and, since Task 3.4b,
+ * the installation picker's (`src/main/picker.ts`): the options it is given, the
+ * three denials on its `webContents`, every permission denied for the session,
+ * the page refused the title, shown only when ready, and then the single load.
+ *
+ * The options are the caller's, and that is the only thing that differs between
+ * windows: each caller builds them from `consoleWebPreferences()` (plus at most
+ * a `preload`), so the hardened flags stay in one place. `beforeLoad` runs after
+ * construction and before the load, which is where a caller that must hold the
+ * window while its document loads (the picker, whose `closed` listener drops its
+ * pick tokens) attaches its own listeners.
+ */
+export async function buildHardenedWindow(
+  deps: { readonly BrowserWindow: new (options: BrowserWindowConstructorOptions) => BrowserWindow; readonly session: Session },
+  options: BrowserWindowConstructorOptions,
+  entryUrl: string,
+  beforeLoad?: (window: BrowserWindow) => void,
+): Promise<BrowserWindow> {
+  const window = new deps.BrowserWindow(options)
 
   installWebContentsSecurity(window.webContents)
   denyEveryPermission(deps.session)
@@ -419,6 +442,7 @@ async function buildConsoleWindow(
   window.once('ready-to-show', () => {
     window.show()
   })
+  beforeLoad?.(window)
   await window.loadURL(entryUrl)
 
   return window
@@ -678,7 +702,9 @@ export interface ConsoleLifecycleDeps {
    * answer, before any window is built (Task 3.4a). `activate` does **not** call
    * it again: the answer it stored is the one it already reported, and a second
    * registration is what this callback's caller would do twice if it were called
-   * per window.
+   * per window. `choose` (Task 3.4b) does call it, once per new answer, because a
+   * new installation's answer is a new decision; the caller's registration is
+   * once-only on its own side.
    */
   readonly onDecided?: (compatibility: CliCompatibility) => void
 }
@@ -691,6 +717,18 @@ export interface ConsoleLifecycle {
   /** activate is macOS's dock-icon click: a window for the stored answer when
    * none is open, and nothing otherwise. */
   activate(): Promise<void>
+  /**
+   * choose is a new answer for a newly chosen installation (Task 3.4b, step 5):
+   * the picker has already run that installation's handshake and refused to
+   * choose a `refused` one. It waits for the startup, replaces the stored answer,
+   * hands it to `onDecided` -- the same callback the startup ran, so the surface
+   * is registered if it was not yet and never twice -- and reopens the console's
+   * window through `openWindowFor`, closing the one it replaces. A
+   * refused-to-ok switch therefore replaces the refusal window with the
+   * dashboard; the reverse is not a door this offers, because the picker does
+   * not choose a refused installation.
+   */
+  choose(compatibility: CliCompatibility): Promise<void>
 }
 
 /**
@@ -714,6 +752,9 @@ export interface ConsoleLifecycle {
 export function createConsoleLifecycle(deps: ConsoleLifecycleDeps): ConsoleLifecycle {
   let startup: Promise<CliCompatibility> | null = null
   let decided: CliCompatibility | null = null
+  // shown is the console window this lifecycle opened last (the dashboard or the
+  // refusal screen, never the picker's), so `choose` closes the one it replaces.
+  let shown: BrowserWindow | null = null
 
   const start = (): Promise<CliCompatibility> => {
     if (startup === null) {
@@ -724,6 +765,7 @@ export function createConsoleLifecycle(deps: ConsoleLifecycleDeps): ConsoleLifec
       }).then(
         (opened) => {
           decided = opened.compatibility
+          shown = opened.window
           return opened.compatibility
         },
       )
@@ -747,8 +789,32 @@ export function createConsoleLifecycle(deps: ConsoleLifecycleDeps): ConsoleLifec
     // A window is constructed synchronously inside `openWindowFor` (before its
     // first `await`), so a second click in the same turn already sees it here.
     if (deps.openWindowCount() > 0) return
-    await openWindowFor(deps.windowDeps(), decided)
+    shown = await openWindowFor(deps.windowDeps(), decided)
   }
 
-  return { start, activate }
+  // choosing is the chain every `choose` runs on (review S6). Each one reads
+  // `previous = shown` and then awaits the new window; two of them interleaved
+  // would both capture the same old window and leave **two** dashboards open.
+  // Run one after the other, each closes the window the one before it opened.
+  let choosing: Promise<void> = Promise.resolve()
+
+  const chooseNow = async (compatibility: CliCompatibility): Promise<void> => {
+    if (startup !== null) await startup
+    decided = compatibility
+    deps.onDecided?.(compatibility)
+    const previous = shown
+    shown = await openWindowFor(deps.windowDeps(), compatibility)
+    if (previous !== null && !previous.isDestroyed()) previous.close()
+  }
+
+  const choose = (compatibility: CliCompatibility): Promise<void> => {
+    const next = choosing.then(
+      () => chooseNow(compatibility),
+      () => chooseNow(compatibility),
+    )
+    choosing = next.catch(() => undefined)
+    return next
+  }
+
+  return { start, activate, choose }
 }

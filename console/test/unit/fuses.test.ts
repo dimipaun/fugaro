@@ -404,9 +404,10 @@ describe('the packaging configuration the fuses belong to', () => {
     // src/main/index.ts, Task 3.4a): `npm run build` writes the one script and
     // copies the two documents there, and those three files -- `SERVED_FILES`
     // in src/main/protocol.ts -- are listed by name, or a packaged console
-    // opens a window with no page in it. The preload is named exactly: the
-    // dashboard window loads `dist/preload/index.js` and nothing else under
-    // that directory. Only `.js` and the two documents are shipped, so no
+    // opens a window with no page in it. The preloads are named exactly: the
+    // dashboard window loads `dist/preload/index.js` and the picker's window
+    // `dist/preload/installations.js` (Task 3.4b), and nothing else under that
+    // directory ships. Only `.js` and the two documents are shipped, so no
     // source map is; `dist/renderer` is the bundler's input, not served, so it
     // is not shipped; and the two compiled files the app never loads -- the
     // packing hook (it needs a devDependency) and the fixture loader (tests and
@@ -415,11 +416,14 @@ describe('the packaging configuration the fuses belong to', () => {
       'dist/main/**/*.js',
       '!dist/main/fuses.js',
       'dist/preload/index.js',
+      'dist/preload/installations.js',
       'dist/shared/**/*.js',
       'dist/source/**/*.js',
       '!dist/source/fixture.js',
       'dist/bundle/console.js',
       'dist/bundle/index.html',
+      'dist/bundle/installations.html',
+      'dist/bundle/installations.js',
       'dist/bundle/refusal.html',
     ])
   })
@@ -462,6 +466,7 @@ describe('the packaging configuration the fuses belong to', () => {
     }
     visit('src/main/index.ts')
     visit('src/preload/index.ts')
+    visit('src/preload/installations.ts')
     expect(closure.size, 'the closure walk found nothing: the regex no longer reads the imports').toBeGreaterThan(2)
     const missing = [...closure]
       .map((source) => source.replace(/^src\//, 'dist/').replace(/\.ts$/, '.js'))
@@ -484,7 +489,7 @@ describe('the packaging configuration the fuses belong to', () => {
   it('ships no source map', () => {
     // The build emits them (tsconfig.build.json sets sourceMap), and a map in
     // the asar is a full copy of the sources with a pointer to it. Every
-    // include in the list ends in `.js` or names one of the two `.html`
+    // include in the list ends in `.js` or names one of the `.html`
     // documents, so no map matches.
     for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html)$/)
   })

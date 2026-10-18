@@ -41,6 +41,7 @@ import {
   BundleRefusal,
   bundleRenderer,
   consoleBundlePaths,
+  consoleBundles,
   consoleRootHere,
   isEntryPoint,
   isRelative,
@@ -64,12 +65,12 @@ describe('the served root npm run build leaves', () => {
     // The non-vacuity guard first: an empty list would make the comparison
     // below pass against an empty directory, and the list is what the handler's
     // root is supposed to be.
-    expect(SERVED_FILES.length, 'SERVED_FILES names nothing: the comparison below would be vacuous').toBe(3)
+    expect(SERVED_FILES.length, 'SERVED_FILES names nothing: the comparison below would be vacuous').toBe(5)
     expect(builtListing('bundle')).toEqual(servedNames())
   })
 
   it('holds the documents the sources hold, byte for byte', () => {
-    for (const name of ['index.html', 'refusal.html']) {
+    for (const name of ['index.html', 'installations.html', 'refusal.html']) {
       const source = readFileSync(join(CONSOLE_ROOT, 'src', 'renderer', name), 'utf8')
       // Byte for byte, and not merely equal after parsing: the CSP `<meta>`
       // copy in each document is compared with the header
@@ -82,6 +83,27 @@ describe('the served root npm run build leaves', () => {
   it('holds a bundle the entry was compiled into', () => {
     expect(builtFile('renderer/entry.js').length, 'tsc emitted no entry for the bundler to walk').toBeGreaterThan(0)
     expect(builtFile('bundle/console.js').length, 'the bundle is empty').toBeGreaterThan(0)
+  })
+
+  it('holds the picker’s bundle, the second entry (Task 3.4b), with its own closure and nothing else', () => {
+    const picker = builtFile('bundle/installations.js')
+    const closure = moduleClosure(builtPath('renderer/installations.js'))
+    expect(closure.length, 'the picker closure is the entry alone').toBeGreaterThan(1)
+    for (const module of closure) {
+      expect(picker, `${module.key} is not in the picker bundle`).toContain(
+        `registry[${JSON.stringify(module.key)}] = function (exports, require, module) {`,
+      )
+    }
+    expect(closure[closure.length - 1]?.key).toBe('/renderer/installations.js')
+    const specifiers = requireSpecifiers(picker)
+    for (const specifier of specifiers) expect(isRelative(specifier ?? '')).toBe(true)
+    expect(picker).not.toMatch(/\beval\s*\(/)
+    expect(picker).not.toMatch(/new\s+Function\s*\(/)
+    // The build writes both, each told the other's name and nothing else.
+    expect(consoleBundles(CONSOLE_ROOT).map((bundle) => [bundle.out, bundle.siblings])).toEqual([
+      [join(CONSOLE_ROOT, 'dist', 'bundle', 'console.js'), ['installations.js']],
+      [join(CONSOLE_ROOT, 'dist', 'bundle', 'installations.js'), ['console.js']],
+    ])
   })
 })
 
@@ -163,11 +185,12 @@ describe('the bundle', () => {
     }
     const required = [
       'dist/preload/index.js',
+      'dist/preload/installations.js',
       ...SERVED_FILES.map((path) => `dist/bundle${path}`),
     ]
     // Non-vacuity: an empty `SERVED_FILES` would make the loop below assert
     // nothing at all, and the loop is the whole claim.
-    expect(required.length, 'SERVED_FILES names nothing: the check below would be vacuous').toBe(4)
+    expect(required.length, 'SERVED_FILES names nothing: the check below would be vacuous').toBe(7)
     const files = pkg.build?.files
     if (files === undefined) {
       context.skip(
@@ -332,15 +355,18 @@ function aReducedCompatibility(): Record<string, unknown> {
  */
 async function runBundle(
   reply: Readonly<Record<string, unknown>> | undefined,
+  installation: Readonly<Record<string, unknown>> = { ok: true, data: { chosen: false, sentence: 'no installation has been chosen' } },
 ): Promise<{ document: FakeDocument; asked: () => number }> {
   const document = new FakeDocument()
   const sandbox: Record<string, unknown> = { document, TextEncoder, TextDecoder, atob, btoa }
   const context = createContext(sandbox)
   if (reply !== undefined) {
     sandbox['REPLY'] = JSON.stringify(reply)
+    sandbox['INSTALLATION'] = JSON.stringify(installation)
     runInContext(
       'var asked = 0;\n' +
-        'var fugaro = { getCompatibility: function () { asked += 1; return Promise.resolve(JSON.parse(REPLY)); } };\n',
+        'var fugaro = { getCompatibility: function () { asked += 1; return Promise.resolve(JSON.parse(REPLY)); },\n' +
+        '  getInstallation: function () { return Promise.resolve(JSON.parse(INSTALLATION)); } };\n',
       context,
     )
   }
@@ -352,13 +378,52 @@ async function runBundle(
 }
 
 describe('the bundle in a document', () => {
-  it('draws nothing for an in-range fugaro, and asks before it decides', async () => {
+  it('draws no figure for an in-range fugaro -- only the installation state -- and asks before it decides', async () => {
     const { document, asked } = await runBundle({ ok: true, data: anOkCompatibility() })
-    // The non-vacuity guard: "drew nothing" is only an answer if the entry ran.
+    // The non-vacuity guard: "drew no figure" is only an answer if the entry ran.
     // A bundle that threw on load, or one whose guard skipped it, draws nothing
     // too -- and this says which happened.
     expect(asked(), 'the entry never asked the bridge: nothing here was drawn or refused').toBe(1)
-    expect(document.body.children).toEqual([])
+    // One drawing: D13's no-installation state (Task 3.4b, step 4), naming no
+    // figure.
+    expect(document.body.children).toHaveLength(1)
+    const root = document.body.children[0] as FakeNode
+    expect(root.attributes.get('class')).toBe('console-installation')
+    expect(root.attributes.get('data-installation')).toBe('none')
+    expect(textOf(root)).toContain('no installation has been chosen')
+  })
+
+  it('names the file and why, when the store refused it (review S5)', async () => {
+    const { document } = await runBundle(
+      { ok: true, data: anOkCompatibility() },
+      {
+        ok: true,
+        data: {
+          chosen: false,
+          sentence: 'no installation has been chosen',
+          refusal: 'the file is not JSON',
+          path: '/home/owner/.config/fugaro-console/installations.json',
+        },
+      },
+    )
+    const text = textOf(document.body.children[0] as FakeNode)
+    expect(text).toContain('/home/owner/.config/fugaro-console/installations.json could not be read: the file is not JSON')
+  })
+
+  it('names the chosen installation’s project, binary, version and mode', async () => {
+    const { document } = await runBundle(
+      { ok: true, data: aReducedCompatibility() },
+      {
+        ok: true,
+        data: { chosen: true, id: '0123456789abcdef', project: 'acme', binary: '/opt/fugaro/bin/fugaro', cliVersion: '9.9.9', mode: 'reduced' },
+      },
+    )
+    // The banner first, then the installation.
+    const section = document.body.children[1] as FakeNode
+    expect(section.attributes.get('data-installation')).toBe('chosen')
+    expect(section.attributes.get('data-mode')).toBe('reduced')
+    const lines = section.children.map((child) => child.textContent)
+    expect(lines).toEqual(['acme', '/opt/fugaro/bin/fugaro', '9.9.9 · reduced'])
   })
 
   it('draws the reduced banner, with the withheld views named', async () => {
@@ -498,6 +563,25 @@ describe('the bundler', () => {
       expect(() => {
         bundleRenderer(pathsOf(root))
       }).toThrow(/leftover\.js/)
+    })
+  })
+
+  it('owns a sibling bundle it is told about, and still refuses anything else', () => {
+    withPlanted({ 'entry.js': `'use strict';\n` }, (root) => {
+      mkdirSync(join(root, 'dist', 'bundle'), { recursive: true })
+      writeFileSync(join(root, 'dist', 'bundle', 'installations.js'), 'the other bundle\n')
+      bundleRenderer({ ...pathsOf(root), siblings: ['installations.js'] })
+      writeFileSync(join(root, 'dist', 'bundle', 'leftover.js'), 'stale\n')
+      expect(() => {
+        bundleRenderer({ ...pathsOf(root), siblings: ['installations.js'] })
+      }).toThrow(/leftover\.js/)
+    })
+    withPlanted({ 'entry.js': `'use strict';\n` }, (root) => {
+      mkdirSync(join(root, 'dist', 'bundle'), { recursive: true })
+      writeFileSync(join(root, 'dist', 'bundle', 'installations.js'), 'the other bundle\n')
+      expect(() => {
+        bundleRenderer(pathsOf(root))
+      }).toThrow(/installations\.js/)
     })
   })
 

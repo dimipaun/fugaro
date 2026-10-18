@@ -92,6 +92,7 @@ import {
   channelForOperation,
   isConsoleSender,
   isConsoleSenderUrl,
+  isSenderOnDocument,
   isNeverReachable,
   readStoredCompatibility,
   reducedModeHandlers,
@@ -658,19 +659,22 @@ describe("the allow-list's read-only invariant", () => {
     expect([...driven].sort()).toEqual([...DESIGN_ARGV].sort())
   })
 
-  it('has exactly two operations spawn nothing at all: the link, and the handshake’s answer', () => {
-    // Task 3.3 added the second one, and the number is the claim: this row is
-    // the console's own startup state, and a third operation with no command
-    // would be a surface that answers something no CLI read produced.
+  it('has exactly three operations spawn nothing at all: the link, the handshake’s answer and the active installation', () => {
+    // Task 3.3 added the second one and Task 3.4b the third (`installation.current`,
+    // plan step 6: "added to SHIPPED_SURFACE deliberately"), and the number is the
+    // claim: these rows are the console's own state, and a fourth operation with
+    // no command would be a surface that answers something no CLI read produced.
     const withoutCommand = CONSOLE_OPERATIONS.filter((operation) => operation.command === null)
     expect(withoutCommand.map((operation) => operation.name)).toEqual([
       'startup.compatibility',
+      'installation.current',
       'link.openExternal',
     ])
-    // Both of them, by name, so the test fails naming the row rather than on a
+    // Each of them, by name, so the test fails naming the row rather than on a
     // list that a reader has to diff.
     expect(withoutCommand.map((operation) => operation.method)).toEqual([
       'getCompatibility',
+      'getInstallation',
       'openExternal',
     ])
   })
@@ -931,6 +935,7 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'accounts.inventory': { repo: 'acme/app' },
   'cli.version': {},
   'startup.compatibility': {},
+  'installation.current': {},
   'environment.report': {},
   'link.openExternal': { url: 'https://github.com/acme/app/pull/1' },
 }
@@ -1550,13 +1555,15 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these thirteen, and no others".
+ * channel. The claim is "these fourteen, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
- * the handshake's answer the renderer gates on) and left the other twelve
- * exactly where they were. Read that as a diff against the previous version of
- * this list: one row, in one place, and no method renamed.
+ * the handshake's answer the renderer gates on); Task 3.4b added the fourteenth
+ * (`installation.current` / `getInstallation`, the installation the operator
+ * chose, which the header names) and left the other thirteen exactly where they
+ * were. Read that as a diff against the previous version of this list: one row,
+ * in one place, and no method renamed.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -1570,6 +1577,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['accounts.inventory', 'listAccounts'],
   ['cli.version', 'cliVersion'],
   ['startup.compatibility', 'getCompatibility'],
+  ['installation.current', 'getInstallation'],
   ['environment.report', 'environmentReport'],
   ['link.openExternal', 'openExternal'],
 ]
@@ -1602,7 +1610,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these thirteen, with `spend.report` on `runReport` and the handshake on `getCompatibility`', () => {
+  it('is exactly these fourteen, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the chosen installation on `getInstallation`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -1619,11 +1627,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A fourteenth channel: what the task added must stay one row, and the next
+    // A fifteenth channel: what each task added must stay one row, and the next
     // task that adds a read cannot do it quietly.
-    const fourteenth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(fourteenth).toContain('fleet.report: a channel this console does not ship')
-    expect(fourteenth).toContain('14 rows, and this console ships 13')
+    const fifteenth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(fifteenth).toContain('fleet.report: a channel this console does not ship')
+    expect(fifteenth).toContain('15 rows, and this console ships 14')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -1637,7 +1645,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('12 rows, and this console ships 13')
+    expect(withoutTheNewRow).toContain('13 rows, and this console ships 14')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -1652,8 +1660,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the thirteen methods and nothing else', () => {
-    // The bridge the window is handed: the thirteen methods and the names, with
+  it('is frozen, and hands the window a bridge with the fourteen methods and nothing else', () => {
+    // The bridge the window is handed: the fourteen methods and the names, with
     // no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -2228,7 +2236,7 @@ describe('the registrar', () => {
     )
   })
 
-  it('registers the thirteen channels and ignores a handler that is not an operation', () => {
+  it('registers every channel in the table and ignores a handler that is not an operation', () => {
     // The control for the missing-handler test above: a table that is fine
     // registers, and a stray key in the handler object changes nothing -- the
     // surface is the table, not the object.
@@ -2431,6 +2439,33 @@ describe('the sender gate', () => {
     for (const [value, accepted, why] of cases) {
       expect(isConsoleSenderUrl(value), `${JSON.stringify(value)} (${why})`).toBe(accepted)
     }
+  })
+
+  it('refuses a frame on another document of the same origin', async () => {
+    // Task 3.4b serves a second document from `app://console` -- the
+    // installation picker -- and the origin check alone cannot tell it from the
+    // dashboard. The gate is therefore the *path*, and this is the test that
+    // makes the picker's document a sender this surface refuses.
+    for (const url of ['app://console/installations.html', 'app://console/installations.html#top', 'app://console/other.html']) {
+      const frame = { url }
+      expect(isConsoleSender({ senderFrame: frame, sender: { mainFrame: frame } }), url).toBe(true)
+      expect(isSenderOnDocument({ senderFrame: frame, sender: { mainFrame: frame } }, APP_ENTRY_URL), url).toBe(false)
+    }
+    // ...and the dashboard's own document, fragment included, is the one it
+    // answers -- asserted here so the test above cannot pass on a gate that
+    // refused everything.
+    for (const url of [APP_ENTRY_URL, `${APP_ENTRY_URL}#spend`, `${APP_ENTRY_URL}?x=1`]) {
+      const frame = { url }
+      expect(isSenderOnDocument({ senderFrame: frame, sender: { mainFrame: frame } }, APP_ENTRY_URL), url).toBe(true)
+    }
+    // A frame whose getter throws refuses, exactly as it does at the origin.
+    const throwing = {
+      get url(): never {
+        throw new Error('Render frame was disposed')
+      },
+    }
+    expect(isSenderOnDocument({ senderFrame: throwing, sender: { mainFrame: throwing } }, APP_ENTRY_URL)).toBe(false)
+    expect(isSenderOnDocument(null, APP_ENTRY_URL)).toBe(false)
   })
 })
 
@@ -2646,11 +2681,13 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: ten of the surface's thirteen operations, all of
-    // them reachable in a reduced mode (the thirteenth is the handshake, which
-    // the loop skips and its own test covers). A wrapper that refused the whole
-    // surface would fail here.
-    expect(THE_OPEN_OPERATIONS.length).toBe(10)
+    // The non-vacuity half: eleven of the surface's fourteen operations, all of
+    // them reachable in a reduced mode (the handshake is the one the loop skips
+    // and its own test covers; `installation.current`, Task 3.4b, is among the
+    // eleven, because a reduced console's header still names its installation).
+    // A wrapper that refused the whole surface would fail here.
+    expect(THE_OPEN_OPERATIONS.length).toBe(11)
+    expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(
         (bridge as unknown as Record<string, unknown>)[methodFor(name)],

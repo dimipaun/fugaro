@@ -26,11 +26,13 @@
 // machine's binary instead. `test/support/cliStub.ts`'s `resolveConsoleBinary`
 // asks the app's own question with the app's own arguments, so this file knows
 // which of the two it is in and asserts the document that binary calls for.
-// The stub-driven cases below -- below the floor, an unparsable line, an empty
-// one, a hostile one, an in-range one and a degraded one -- therefore skip with
-// that reason printed when the stub is not the winner, which is the case on a
-// developer machine with a `fugaro` installed and never the case in CI (no
-// well-known prefix holds one there).
+// The first case is that first-run resolution, and it asserts whatever document
+// the binary it found calls for. The stub-driven cases below -- below the
+// floor, an unparsable line, an empty one, a hostile one, an in-range one and a
+// degraded one -- are about the *document a version calls for*, not about the
+// resolution, so since Task 3.4b they run against a second scratch profile
+// seeded with an active installation naming the stub: the handshake reads that
+// binary and no other, and they run on any machine (review S3).
 //
 // Nothing here reaches the network and nothing here runs a real `fugaro` read:
 // the stub answers `version` and refuses every other argv, so a console that
@@ -49,6 +51,7 @@ import { CLI_VERSION_BUILT_AGAINST, SKEW_HEADLINES, classifyCliVersion } from '.
 import type { CliCompatibilityMode } from '../../src/shared/version'
 import { installCliStub, resolveConsoleBinary } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { dismissFirstRunPicker } from '../support/firstRun'
 import type { BinaryResolution } from '../../src/main/spawn'
 
 // The console's own directory, from this file's location, as in the other
@@ -101,7 +104,22 @@ interface Launched {
 /** launch starts the app the way a user starts it, with the stub's environment
  * (or the machine's, when a case wants the machine's own binary). */
 async function launch(env: Record<string, string>): Promise<Launched> {
-  const app = await electron.launch({ args: [consoleDir], env })
+  // A scratch profile with no installation (Task 3.4b): this spec's subject is
+  // the first run's handshake, rule 4's resolution with nothing chosen, so the
+  // picker opens beside the window under test and is dismissed before any
+  // assertion about that window (`dismissFirstRunPicker`).
+  const app = await electron.launch({ args: stub.launchArgs(consoleDir), env })
+  const page = await app.firstWindow()
+  await page.waitForLoadState('domcontentloaded')
+  await dismissFirstRunPicker(app, page)
+  return { app, page }
+}
+
+/** launchSeeded starts the app against the seeded profile: one active
+ * installation naming `seeded`'s stub, so the handshake reads exactly that
+ * binary and no picker opens. */
+async function launchSeeded(): Promise<Launched> {
+  const app = await electron.launch({ args: seeded.launchArgs(consoleDir), env: seeded.env })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
   return { app, page }
@@ -130,10 +148,8 @@ function pageShape(page: Page): Promise<{ url: string; text: string; dataShapes:
 
 let stub: CliStub
 let winner: BinaryResolution
-/** stubWins is true when the resolution this launch will run picks the stub --
- * see this file's header for why it may not. */
-let stubWins = false
-let whyNotTheStub = ''
+/** seeded is the stub the version cases read, through an active installation. */
+let seeded: CliStub
 
 test.describe('the startup handshake, in the real app', () => {
   test.describe.configure({ mode: 'serial' })
@@ -141,16 +157,13 @@ test.describe('the startup handshake, in the real app', () => {
   test.beforeAll(async () => {
     stub = installCliStub(CLI_VERSION_BUILT_AGAINST)
     winner = await resolveConsoleBinary(stub.env)
-    stubWins = winner.ok && winner.path === join(stub.dir, 'fugaro')
-    whyNotTheStub =
-      `the console will resolve ${winner.ok ? winner.path : 'no binary at all'} rather than the stub: ` +
-      'the well-known prefixes (/opt/homebrew/bin, /usr/local/bin, ~/.local/bin) are searched before any ' +
-      'PATH entry, and there is no FUGARO_BIN by design. This case needs a machine with no fugaro in those ' +
-      'directories -- CI has none.'
+    seeded = installCliStub(CLI_VERSION_BUILT_AGAINST)
+    seeded.seedActiveInstallation('e2e')
   })
 
   test.afterAll(() => {
     stub?.remove()
+    seeded?.remove()
   })
 
   test('opens exactly one window, on the document the fugaro it found calls for', async () => {
@@ -188,9 +201,8 @@ test.describe('the startup handshake, in the real app', () => {
   })
 
   test('a stub below the floor shows the refusal document and never the dashboard', async () => {
-    test.skip(!stubWins, whyNotTheStub)
-    stub.setVersion('0.5.0')
-    const { app, page } = await launch(stub.env)
+    seeded.setVersion('0.5.0')
+    const { app, page } = await launchSeeded()
     try {
       expect(app.windows()).toHaveLength(1)
       expect(await windowTitles(app)).toEqual([`${CONSOLE_WINDOW_TITLE} — ${SKEW_HEADLINES.refused}`])
@@ -208,14 +220,13 @@ test.describe('the startup handshake, in the real app', () => {
   })
 
   test('a stub with no placeable version is refused too, and draws no dashboard', async () => {
-    test.skip(!stubWins, whyNotTheStub)
     // The three lines a binary can print that are not a version: a word, an
     // empty line, and a line longer than the console will read. All three are
     // refused rather than "probably fine", which is what rule 4 says about a
     // binary the console cannot identify.
     for (const line of ['banana', '', 'x'.repeat(10_000)]) {
-      stub.setVersion(line)
-      const { app, page } = await launch(stub.env)
+      seeded.setVersion(line)
+      const { app, page } = await launchSeeded()
       try {
         const shape = await pageShape(page)
         expect(shape.url, JSON.stringify(line.slice(0, 40))).toBe(REFUSAL_ENTRY_URL)
@@ -236,9 +247,8 @@ test.describe('the startup handshake, in the real app', () => {
   })
 
   test('a hostile line leaves nothing live on the screen, or in the title', async () => {
-    test.skip(!stubWins, whyNotTheStub)
-    stub.setVersion(HOSTILE)
-    const { app, page } = await launch(stub.env)
+    seeded.setVersion(HOSTILE)
+    const { app, page } = await launchSeeded()
     try {
       const shape = await pageShape(page)
       expect(shape.url).toBe(REFUSAL_ENTRY_URL)
@@ -267,9 +277,8 @@ test.describe('the startup handshake, in the real app', () => {
   })
 
   test('a stub inside the range shows the dashboard document', async () => {
-    test.skip(!stubWins, whyNotTheStub)
-    stub.setVersion(CLI_VERSION_BUILT_AGAINST)
-    const { app, page } = await launch(stub.env)
+    seeded.setVersion(CLI_VERSION_BUILT_AGAINST)
+    const { app, page } = await launchSeeded()
     try {
       expect(app.windows()).toHaveLength(1)
       expect(await windowTitles(app)).toEqual([CONSOLE_WINDOW_TITLE])
@@ -282,9 +291,8 @@ test.describe('the startup handshake, in the real app', () => {
   })
 
   test('a stub in the degraded band opens the dashboard, and says which console it is', async () => {
-    test.skip(!stubWins, whyNotTheStub)
-    stub.setVersion('0.9.0')
-    const { app, page } = await launch(stub.env)
+    seeded.setVersion('0.9.0')
+    const { app, page } = await launchSeeded()
     try {
       expect(app.windows()).toHaveLength(1)
       // The reduced mode is a console, so the dashboard document loads -- and the

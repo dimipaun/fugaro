@@ -76,6 +76,11 @@ export class BundleRefusal extends Error {
 export interface BundleOptions {
   readonly entry: string
   readonly out: string
+  /** siblings are the file names of the *other* bundles this build writes into
+   * the same directory (Task 3.4b: the picker's `installations.js` beside the
+   * dashboard's `console.js`). They are owned, so a second bundle step does not
+   * refuse the first one's output as foreign; anything else still is. */
+  readonly siblings?: readonly string[]
 }
 
 /** BundledModule is one module of the closure: the file it was read from, and
@@ -287,7 +292,11 @@ export function bundleRenderer(options: BundleOptions): void {
   const out = resolve(options.out)
   const directory = dirname(out)
   const documents = documentsOf(options.entry)
-  const owned = new Set<string>([basename(out), ...documents.map((file) => basename(file))])
+  const owned = new Set<string>([
+    basename(out),
+    ...(options.siblings ?? []),
+    ...documents.map((file) => basename(file)),
+  ])
 
   let existing: string[] = []
   try {
@@ -322,6 +331,26 @@ export function consoleBundlePaths(consoleRoot: string): { readonly entry: strin
   }
 }
 
+/** pickerBundlePaths is the second entry (Task 3.4b): the picker's document
+ * script, `dist/renderer/installations.js`, into `dist/bundle/installations.js`
+ * beside the dashboard's bundle. */
+export function pickerBundlePaths(consoleRoot: string): { readonly entry: string; readonly out: string } {
+  return {
+    entry: join(consoleRoot, 'dist', 'renderer', 'installations.js'),
+    out: join(consoleRoot, 'dist', 'bundle', 'installations.js'),
+  }
+}
+
+/** consoleBundles is every bundle `npm run build` writes, each told the others'
+ * names so the served root's foreign-file refusal still holds for anything else. */
+export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
+  const all = [consoleBundlePaths(consoleRoot), pickerBundlePaths(consoleRoot)]
+  return all.map((bundle) => ({
+    ...bundle,
+    siblings: all.filter((other) => other !== bundle).map((other) => basename(other.out)),
+  }))
+}
+
 /** consoleRootHere is the package `npm run build` runs in. It is read from the
  * working directory and **checked**, rather than guessed from this module's own
  * location: `package.json`'s name is the one thing that says a directory is this
@@ -350,7 +379,7 @@ export function isEntryPoint(argv1: string | undefined): boolean {
 
 if (isEntryPoint(process.argv[1])) {
   try {
-    bundleRenderer(consoleBundlePaths(consoleRootHere(process.cwd())))
+    for (const bundle of consoleBundles(consoleRootHere(process.cwd()))) bundleRenderer(bundle)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
     process.stderr.write(`${message}\n`)
