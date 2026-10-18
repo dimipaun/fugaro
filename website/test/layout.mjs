@@ -423,21 +423,27 @@ test('a comment that mentions the sitemap package does not make the head point a
   assert.ok(!builtPage(built).includes('rel="sitemap"'), 'the page points at a sitemap the build does not produce')
 })
 
-test("the page description is README.md's own tagline line", async (t) => {
+test("the page description is README.md's own subline", async (t) => {
   const built = buildWith(t, () => {})
   const page = builtPage(built)
 
-  // The line under README.md's `# Fugaro` title, read here from the README rather than
-  // from the build: the site's tagline is the README's, and it is not a second copy of it
-  // (F48, D102). The README's markdown emphasis is not part of the sentence.
+  // The **second** line under README.md's `# Fugaro` title — the sentence under the
+  // headline — read here from the README rather than from the build: the site's promise is
+  // the README's, and it is not a second copy of it (F48, D102). The changes spec of
+  // 2026-10-18 (item 2) puts the subline in the description and not the headline, which is
+  // four words with no verb in them; this test is the named test change that moved with it.
+  // The README's markdown emphasis is not part of the sentence.
   const readme = repoFile('README.md').split('\n')
   const title = readme.findIndex((line) => line.trim() === '# Fugaro')
-  const tagline = readme
+  const subline = readme
     .slice(title + 1)
-    .find((line) => line.trim() !== '')
+    .filter((line) => line.trim() !== '')[1]
     .trim()
     .replace(/^\*\*(.+)\*\*$/, '$1')
     .trim()
 
-  assert.ok(page.includes(`<meta name="description" content="${tagline}"`), `the page's description is not the README's tagline ${JSON.stringify(tagline)}`)
+  assert.ok(
+    page.includes(`<meta name="description" content="${subline}"`),
+    `the page's description is not the README's subline ${JSON.stringify(subline)}: the description is the sentence under the headline, and a page that describes itself with the headline tells a search engine four words (changes spec item 2)`,
+  )
 })

@@ -5,12 +5,15 @@
  * The first screen of the site, and the one place where a marketing site is most tempted to
  * write its own words. So it writes none:
  *
- *   1. **The tagline is README.md's line**, read through the content pipeline (W1.3) and
+ *   1. **The headline is README.md's line**, read through the content pipeline (W1.3) and
  *      rendered byte for byte — not typed in here, which is what the red step of this task
- *      was (F48, D102).
- *   2. **The lead sentence is README.md's sentence** rather than a paraphrase, for the same
+ *      was (F48, D102). It is `Lambdas for coding agents` since the changes spec of
+ *      2026-10-18 (item 2), and it is the README's line that says so.
+ *   2. **The subline is README.md's next line** rather than a paraphrase, for the same
  *      reason: every sentence the site publishes is traceable to a document, and a sentence
- *      written for the page is the one nobody maintains (D102, Global Constraint 6).
+ *      written for the page is the one nobody maintains (D102, Global Constraint 6). It is
+ *      the promise under the headline, the site's default description and the cards' — one
+ *      line in the README, three places on the site (changes spec item 2).
  *   3. **The install commands are `website/data/install.yaml`'s commands**, rendered from
  *      the file rather than copied out of it (W0.1, W1.4 step 1). Each path also renders the
  *      note that file carries, so the dev-only path says so where it is offered.
@@ -29,14 +32,16 @@ const site = loadSite()
 const facts = site.facts
 const install = site.install
 
-// The tagline: the pipeline reads it from under README.md's "# Fugaro" title (F48, D102).
+// The headline: the pipeline reads README.md's tagline line, under its "# Fugaro" title,
+// and it is the page's `h1` (F48, D102; changes spec item 2).
 const tagline = site.tagline
 
-// One sentence of what Fugaro is. It is README.md's own sentence, kept whole: the sentence
-// that follows the Latin gloss rather than a shorter one written here, because the site
-// publishes the README's words and `website/test/home.mjs` holds this one to the README.
-const LEAD =
-  'Fugaro runs long, self-contained coding-agent loops (implement, test, review, fix, compile, open a pull request) in throwaway cloud containers instead of on your laptop.'
+// The subline: the one sentence under the headline, read from the same place and rendered
+// whole — the hero's lead, the site's default description and the cards' description are
+// one string in the README rather than three copies of a sentence typed here (changes spec
+// item 2, D102). `website/test/home.mjs` holds this page to the README's line, and
+// `website/test/layout.mjs` holds the head to the same one.
+const LEAD = site.subline
 
 // The two install paths the hero shows: the two that install the CLI with a command. The
 // archive and the cosign block are on the getting-started page, where their notes have room

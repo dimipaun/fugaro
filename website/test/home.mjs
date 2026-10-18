@@ -141,12 +141,27 @@ function normalize(markdown) {
 
 /** README.md's tagline: the line under its `# Fugaro` title, emphasis stripped (F48). */
 function readmeTagline() {
+  return promiseLines()[0]
+}
+
+/**
+ * README.md's subline: the line under its tagline, emphasis stripped (changes spec item 2).
+ * It is the promise the hero leads with and the sentence the head describes the site with,
+ * and this check reads it from the README for the same reason the tagline's is read there:
+ * the two lines are the README's, and neither is a second copy typed into a page.
+ */
+function readmeSubline() {
+  return promiseLines()[1]
+}
+
+/** The two non-empty lines under README.md's `# Fugaro` title: the tagline, then the subline. */
+function promiseLines() {
   const lines = repoFile('README.md').split('\n')
   const title = lines.findIndex((line) => line.trim() === '# Fugaro')
-  assert.notEqual(title, -1, 'README.md carries no "# Fugaro" title, and the site\'s tagline is the line under it')
-  const line = lines.slice(title + 1).find((candidate) => candidate.trim() !== '')
-  assert.ok(line, 'README.md\'s "# Fugaro" title is the last thing in the file, and the tagline is the line under it')
-  return line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim()
+  assert.notEqual(title, -1, 'README.md carries no "# Fugaro" title, and the site\'s promise is the two lines under it')
+  const under = lines.slice(title + 1).filter((candidate) => candidate.trim() !== '').slice(0, 2)
+  assert.equal(under.length, 2, 'README.md\'s "# Fugaro" title is followed by fewer than two non-empty lines, and the site renders the promise the two of them state (changes spec item 2)')
+  return under.map((line) => line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim())
 }
 
 /** One `## <heading>` section of README.md, up to the next `## `. */
@@ -466,25 +481,52 @@ function fixtureSteps() {
   ]
 }
 
-test("the hero tagline is README.md's tagline line, byte for byte", () => {
+test("the hero headline is README.md's tagline line, byte for byte", () => {
   const tagline = readmeTagline()
   const hero = classText(builtPage(''), 'hero-tagline')
 
-  assert.equal(hero, tagline, 'hero tagline differs from the tagline line under README.md\'s "# Fugaro" title')
+  assert.equal(hero, tagline, 'hero headline differs from the tagline line under README.md\'s "# Fugaro" title')
 })
 
-test("the hero's lead sentence is a sentence of README.md", () => {
-  // The tagline is the README's line; the sentence under it is what Fugaro is, and D102
-  // requires every other sentence on the site to be traceable to a document. It is read
-  // from the built page and held against the README, so the component carries one copy and
-  // this check is what keeps it the README's copy.
+test("the hero's subline is README.md's subline, byte for byte", () => {
+  // The headline is the README's first line and the promise under it is the README's
+  // second, and D102 requires every other sentence on the site to be traceable to a
+  // document. Both are read from the built page and held against the README, so the
+  // component carries no copy of its own and this check is what keeps it the README's
+  // (changes spec item 2, W1.4 step 1).
+  const subline = readmeSubline()
   const lead = classText(builtPage(''), 'hero-lead')
 
-  assert.ok(lead, 'the hero renders no lead sentence, and a reader who has read the tagline needs one sentence saying what Fugaro is')
+  assert.ok(lead, 'the hero renders no lead sentence, and a reader who has read the headline needs one sentence saying what Fugaro is')
+  assert.equal(lead, subline, "the hero's lead is not README.md's subline, the sentence under the headline")
   assert.ok(
     normalize(repoFile('README.md')).includes(normalize(lead)),
     `the hero's lead sentence ${JSON.stringify(lead)} is not a sentence of README.md: every sentence on the site is traceable to a document (D102, W1.4 step 1)`,
   )
+})
+
+test('the homepage names the promise in its title, its description and its cards', () => {
+  // Item 2's list of places the new promise goes: the home hero (the two tests above), the
+  // `<title>`, the meta description, and the OpenGraph and Twitter cards. All four are read
+  // out of the built page and held to the README's two lines rather than to what the page
+  // says they are, so a page that renamed itself is a failure and not a second opinion.
+  const page = builtPage('')
+  const tagline = readmeTagline()
+  const subline = readmeSubline()
+  const content = (pattern, what) => {
+    const m = pattern.exec(page)
+    assert.ok(m, `the homepage carries no ${what}, and the head is where a search engine and a card read the promise (changes spec item 2)`)
+    return m[1]
+  }
+
+  assert.equal(content(/<title>([^<]*)<\/title>/, '`<title>`'), `Fugaro — ${tagline}`)
+  assert.equal(content(/<meta name="description" content="([^"]*)"/, 'meta description'), subline)
+  assert.equal(content(/<meta property="og:title" content="([^"]*)"/, '`og:title`'), `Fugaro — ${tagline}`)
+  assert.equal(content(/<meta property="og:description" content="([^"]*)"/, '`og:description`'), subline)
+  assert.equal(content(/<meta name="twitter:card" content="([^"]*)"/, 'Twitter card'), 'summary')
+  // The card's description is the OG description: Astro's layout emits one `twitter:card`
+  // and no second description tag, and `layout.mjs` owns the head's tag list.
+  assert.equal((page.match(/<meta name="twitter:description"/g) ?? []).length, 0)
 })
 
 test('the hero renders the install commands install.yaml carries, and types none of them', () => {
