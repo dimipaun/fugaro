@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -279,5 +280,66 @@ func TestConfigListReportsAnUnreadableConfig(t *testing.T) {
 	}
 	if len(doc.Warnings) == 0 || !strings.Contains(strings.Join(doc.Warnings, "\n"), "bramble") {
 		t.Errorf("warnings = %q, want the unreadable config named", doc.Warnings)
+	}
+}
+
+// treeState is every file under root with its size, mode, mtime and content,
+// so a read that wrote, touched or removed anything shows up as a difference.
+func treeState(t *testing.T, root string) map[string]string {
+	t.Helper()
+	state := map[string]string{}
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		fi, err := d.Info()
+		if err != nil {
+			return err
+		}
+		data := ""
+		if fi.Mode().IsRegular() {
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			data = string(b)
+		}
+		state[p] = fmt.Sprintf("%v %d %d %q", fi.Mode(), fi.Size(), fi.ModTime().UnixNano(), data)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+// TestConsoleV2ReadsWriteNothing: `config list` and `plan graph` are reads the
+// console spawns, and a read the console spawns changes nothing — not the
+// project configs, not the shared-config cache, not the checkout. Every file
+// under the config home, the cache home and the plan's directory is the same
+// after both commands, in both output forms.
+func TestConsoleV2ReadsWriteNothing(t *testing.T) {
+	dir, _, _ := configListFixture(t)
+	if err := localcfg.SaveSharedCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "aurora-gcp", Bucket: "fugaro-runs-aurora-gcp",
+		Generation: 7, CheckedAt: time.Now().Add(-30 * time.Hour).UTC(), YAML: "name: aurora\ngcp_project: aurora-gcp\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	planDir, planPath := planGraphFixture(t, planGraphDoc)
+	before, beforePlan := treeState(t, dir), treeState(t, planDir)
+	for _, args := range [][]string{
+		{"config", "list", "--json"}, {"config", "list"},
+		{"plan", "graph", "--plan", planPath, "--json"}, {"plan", "graph", "--plan", planPath},
+	} {
+		if _, _, err := execute(t, args...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	if after := treeState(t, dir); !reflect.DeepEqual(before, after) {
+		t.Errorf("config list or plan graph changed the config or cache home:\nbefore %v\nafter  %v", before, after)
+	}
+	if after := treeState(t, planDir); !reflect.DeepEqual(beforePlan, after) {
+		t.Errorf("plan graph changed the checkout:\nbefore %v\nafter  %v", beforePlan, after)
 	}
 }
