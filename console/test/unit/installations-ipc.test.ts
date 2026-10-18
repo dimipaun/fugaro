@@ -144,6 +144,7 @@ function pickerOver(
     readonly appEnv?: Readonly<Record<string, string | undefined>>
     readonly home?: string
     readonly onChosen?: Parameters<typeof createInstallationPicker>[0]['onChosen']
+    readonly onRemoved?: Parameters<typeof createInstallationPicker>[0]['onRemoved']
   } = {},
 ) {
   const ipcMain = fakeIpcMain()
@@ -176,6 +177,7 @@ function pickerOver(
     appPath: '/work/repo/console',
     appEnv: options.appEnv ?? {},
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
+    ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
   })
   return { picker, ipcMain, windows, menu: () => applicationMenu }
 }
@@ -519,6 +521,7 @@ describe('the picker’s add', () => {
 function seededPicker(
   versions: readonly string[],
   onChosen?: Parameters<typeof createInstallationPicker>[0]['onChosen'],
+  onRemoved?: Parameters<typeof createInstallationPicker>[0]['onRemoved'],
 ) {
   const root = freshDirectory()
   const userData = join(root, 'user-data')
@@ -534,7 +537,7 @@ function seededPicker(
     serializeInstallationFile({ version: 1, active: entries[0]?.id ?? null, installations: entries }),
     { mode: 0o600 },
   )
-  return { ...pickerOver({ userData, ...(onChosen === undefined ? {} : { onChosen }) }), entries }
+  return { ...pickerOver({ userData, ...(onChosen === undefined ? {} : { onChosen }), ...(onRemoved === undefined ? {} : { onRemoved }) }), entries }
 }
 
 describe('the picker’s choose', () => {
@@ -587,6 +590,44 @@ describe('the picker’s choose', () => {
     const current = picker.installation()
     expect(current.chosen && current.id).toBe(entries[1]?.id)
   }, 20_000)
+})
+
+describe('the picker’s remove', () => {
+  it('tells the window when the active installation was removed, and only then (finding 2)', async () => {
+    // The seam the dashboard's header depends on: `onRemoved` fires only when a
+    // removal took the **active** installation away, because that is the one the
+    // header names. A removal of another row leaves the active installation in
+    // place, so the console still has something to drive and the seam must stay
+    // silent -- firing it would tell the consumer it has no installation while
+    // `active` still names one (picker.ts's own comment). Before the entry point
+    // passed the seam, it was declared and fired with no production caller, and
+    // the header kept naming the removed installation for the rest of the
+    // session (finding 2).
+    const removed: string[] = []
+    const { picker, ipcMain, entries } = seededPicker(
+      [CLI_VERSION_BUILT_AGAINST, CLI_VERSION_BUILT_AGAINST],
+      undefined,
+      (id) => {
+        removed.push(id)
+      },
+    )
+    const remove = ipcMain.listeners.get(installationChannel('remove'))
+    const active = entries[0]?.id ?? ''
+    const inactive = entries[1]?.id ?? ''
+
+    // A non-active row: removed from the store, and the window told nothing.
+    const other = (await remove?.(eventFor(PICKER_ENTRY_URL), { id: inactive })) as ConsoleReply
+    expect(other.ok).toBe(true)
+    expect(removed).toEqual([])
+    expect(picker.installation()).toMatchObject({ chosen: true, id: active })
+
+    // The active row: the removal is persisted *and* the window is told, with
+    // the id, and the console reads back as having no installation.
+    const reply = (await remove?.(eventFor(PICKER_ENTRY_URL), { id: active })) as ConsoleReply
+    expect(reply.ok).toBe(true)
+    expect(removed).toEqual([active])
+    expect(picker.installation().chosen).toBe(false)
+  })
 })
 
 describe('a store the path rule refuses', () => {

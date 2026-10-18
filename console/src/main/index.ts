@@ -369,7 +369,6 @@ function onDecided(compatibility: CliCompatibility): void {
 const lifecycle = createConsoleLifecycle({
   windowDeps,
   readVersion: readCliVersion,
-  openWindowCount: () => BrowserWindow.getAllWindows().length,
   onDecided,
 })
 
@@ -420,6 +419,22 @@ async function main(): Promise<void> {
     // The picker awaits this inside its own serial chain (review S6), so a
     // second choose cannot start until the window this one asked for is up.
     onChosen: (chosen) => lifecycle.choose(chosen.compatibility).catch(reportAndQuit),
+    // Removing the **active** installation takes it away from the dashboard,
+    // whose header names the installation it read once at load (`bootDashboard`
+    // in `src/renderer/entry.ts` reads `installation.current` and never asks
+    // again). The tree's one path for an installation change to reach the
+    // renderer is a fresh dashboard window: `onChosen` above reopens it through
+    // `lifecycle.choose`, whose `openWindowFor`/`bootDashboard` re-reads the
+    // store. So a removal reuses that path with the answer already stored --
+    // same console, reopened now that `installation.current` reads the removed
+    // installation as gone -- rather than a second notification path that could
+    // drift from it (finding 2). Before this wiring, `onRemoved` was declared
+    // and fired but no production caller passed it, so the header kept naming
+    // the removed installation for the rest of the session.
+    onRemoved: () => {
+      if (current === null) return
+      lifecycle.choose(current).catch(reportAndQuit)
+    },
   })
   // The menu is installed in **every** mode, `refused` included: choosing an
   // installation is how an operator gets out of a refusal, and a console that

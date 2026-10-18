@@ -283,7 +283,14 @@ export interface RunReplay {
   readonly scrubbedBecause: string | null
 }
 
-/** RunModel is the whole screen. */
+/** RunModel is the whole screen. It carries no `warnings` list of its own
+ * (finding 4): the first version collected `document['warnings']` and
+ * `row['warnings']`, and neither key exists on any document this screen is
+ * given -- `diagnose RUN --json` carries `reported_warning` and `pin_warnings`
+ * (both read into `RunDiagnosis` below and drawn by `diagnosePanel`), and
+ * `runview.Row` has no `warnings` field at all. A root list built from the two
+ * real keys would draw those warnings a second time, so the dead read is gone
+ * rather than repointed at them. */
 export interface RunModel {
   readonly row: RunRow
   readonly ledger: RunLedger
@@ -293,7 +300,6 @@ export interface RunModel {
   readonly logs: RunLogs
   readonly diagnosis: RunDiagnosis
   readonly replay: RunReplay
-  readonly warnings: readonly string[]
 }
 
 /**
@@ -661,7 +667,6 @@ export function buildRunModel(inputs: RunInputs): RunModel {
             ? `the ring holds nothing at or before ${scrubAt}`
             : null,
     },
-    warnings: [...textsAt(document['warnings']), ...textsAt(row['warnings'])],
   }
 }
 
@@ -1014,8 +1019,10 @@ export function renderRun(factory: ScreenFactory, model: RunModel, theme: RunThe
   root.append(logsPanel(factory, model.logs))
   root.append(diagnosePanel(factory, model))
   root.append(replayPanel(factory, model.replay))
-  for (const warning of model.warnings) {
-    textCell(root, factory, 'p', warning, 'sentence', 'warnings[]', 'run-warning')
-  }
+  // No root-level `warnings` list (finding 4): the two warnings the document
+  // carries are `diagnosis.reportedWarning` and `diagnosis.pinWarnings`, drawn
+  // by `diagnosePanel` above from the keys the wire actually names. A loop here
+  // over a model `warnings` field drew nothing at all, because the key it read
+  // is on no document this screen is given.
   return root
 }
