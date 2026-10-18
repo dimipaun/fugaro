@@ -36,6 +36,9 @@ deadline=$(($(date +%s) + wait_seconds))
 # CLI-only releases included. Both legs are required, and check_state's own
 # rule (every completed run of the name must be successful) is what makes the
 # two platforms one requirement rather than two.
+# The console legs exist as check runs on `main` only once the `console`
+# branch (which brings console-tests.yml with this list) is merged into `main`
+# and a push has run that workflow: do not run this gate on a commit before it.
 #
 # The five `#   ` lines below are this list in prose, and
 # TestReleaseGateRequiresTheConsoleCheck reads both and asserts they name the

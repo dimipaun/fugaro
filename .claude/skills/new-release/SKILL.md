@@ -19,7 +19,7 @@ Procedure for one Fugaro release. Detail lives in `docs/release.md` (read it fir
 ## 1. Preflight
 
 - `git switch main && git fetch --prune --tags`; `git status --porcelain` must be empty and `main` must equal `origin/main`. Untracked files count and make `scripts/release.sh` refuse (an untracked `.claude/` did once): list them in `.git/info/exclude`, never commit someone else's files.
-- Main's checks (`test`, `terraform`, `rules` and both console check runs, `console (ubuntu-latest)` and `console (macos-latest)`) green: `gh run list --branch main --limit 5`. The script waits for running ones.
+- Main's checks (`test`, `terraform`, `rules` and both console check runs, `console (ubuntu-latest)` and `console (macos-latest)`) green: `gh run list --branch main --limit 5`. The script waits for running ones. The console check runs exist on `main` only once `console` is merged into `main` and a push has run them; before that the gate refuses every tag, so do not release until they have run on main.
 - The version is the next semver after `git tag --list 'v*' --sort=-v:refname | head -1`. New features mean a minor bump (0.y.0), fixes only a patch; ask the user if unclear. Strict `X.Y.Z`, no `v`.
 - `gcpProjectFieldSince` in `internal/cli/init_fugaroyaml.go` must equal the first release containing the `gcp_project:` field (today `"0.4.0"`). If this release is that one, or the value is wrong, fix it in a PR and merge it BEFORE continuing.
 - Other checklist items of `docs/release.md` ("Before you tag"): `internal/pricing` `checkedAt`, tag protection and immutable releases (owner setting, only mention if unset).

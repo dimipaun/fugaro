@@ -3157,7 +3157,18 @@ func readReleaseGate(t *testing.T) (string, []string, []string) {
 // are written.
 func consoleGateCheckNames(t *testing.T) []string {
 	t.Helper()
-	text := readDoc(t, appliedConsoleTestsPath)
+	names, err := deriveConsoleCheckNames(readDoc(t, appliedConsoleTestsPath))
+	if err != nil {
+		t.Fatalf("%s: %v", appliedConsoleTestsPath, err)
+	}
+	return names
+}
+
+// deriveConsoleCheckNames is consoleGateCheckNames over a workflow's text, so
+// the derivation itself can be run against a workflow whose matrix differs
+// (TestConsoleCheckNamesFollowTheMatrix): a derivation that ignored the matrix
+// would otherwise agree with the gate for as long as the matrix never moved.
+func deriveConsoleCheckNames(text string) ([]string, error) {
 	var wf struct {
 		Jobs map[string]struct {
 			Name     string `yaml:"name"`
@@ -3167,7 +3178,7 @@ func consoleGateCheckNames(t *testing.T) []string {
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
-		t.Fatalf("%s is not valid YAML: %v", appliedConsoleTestsPath, err)
+		return nil, fmt.Errorf("not valid YAML, or a matrix this derivation does not read (include/exclude): %v", err)
 	}
 	if len(wf.Jobs) != 1 {
 		var keys []string
@@ -3175,7 +3186,7 @@ func consoleGateCheckNames(t *testing.T) []string {
 			keys = append(keys, k)
 		}
 		slices.Sort(keys)
-		t.Fatalf("%s has jobs %v: the release gate requires the checks of the console's tests, and this test cannot tell which of several jobs that is", appliedConsoleTestsPath, keys)
+		return nil, fmt.Errorf("has jobs %v: the release gate requires the checks of the console's tests, and this test cannot tell which of several jobs that is", keys)
 	}
 	var key string
 	for k := range wf.Jobs {
@@ -3186,13 +3197,19 @@ func consoleGateCheckNames(t *testing.T) []string {
 	if display == "" {
 		display = key
 	}
+	// GitHub appends the matrix values only to a name that does not use them
+	// itself; a name with an expression in it is a shape this derivation would
+	// get wrong, so it refuses rather than guessing.
+	if strings.Contains(display, "${{") {
+		return nil, fmt.Errorf("the %s job's name %q carries an expression: GitHub then does not append the matrix values, and this derivation does not evaluate expressions", key, display)
+	}
 	var keys []string
 	for k := range job.Strategy.Matrix {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
 	if len(keys) == 0 || len(job.Strategy.Matrix[keys[0]]) == 0 {
-		t.Fatalf("%s's %s job has no matrix values (%v): without them it reports one check run named %q, which is not the shape scripts/release-gate.sh requires", appliedConsoleTestsPath, key, job.Strategy.Matrix, display)
+		return nil, fmt.Errorf("the %s job has no matrix values (%v): without them it reports one check run named %q, which is not the shape scripts/release-gate.sh requires", key, job.Strategy.Matrix, display)
 	}
 	legs := [][]string{{}}
 	for _, k := range keys {
@@ -3209,7 +3226,52 @@ func consoleGateCheckNames(t *testing.T) []string {
 		names = append(names, display+" ("+strings.Join(leg, ", ")+")")
 	}
 	slices.Sort(names)
-	return names
+	return names, nil
+}
+
+// TestConsoleCheckNamesFollowTheMatrix runs the derivation the gate test relies
+// on against workflows that differ from the applied one, so the console names
+// are shown to come from the job key and the matrix rather than from a list
+// that happens to match today: an added platform, a renamed job and a job with
+// no matrix each change the answer or are refused.
+func TestConsoleCheckNamesFollowTheMatrix(t *testing.T) {
+	wf := func(job, name, oses string) string {
+		out := "on: [push]\njobs:\n  " + job + ":\n"
+		if name != "" {
+			out += "    name: " + name + "\n"
+		}
+		if oses != "" {
+			out += "    strategy:\n      matrix:\n        os: [" + oses + "]\n"
+		}
+		return out + "    runs-on: ubuntu-latest\n    steps: [{run: 'true'}]\n"
+	}
+	for _, c := range []struct {
+		label string
+		text  string
+		want  []string
+	}{
+		{"the applied shape", wf("console", "console", "ubuntu-latest, macos-latest"), []string{"console (macos-latest)", "console (ubuntu-latest)"}},
+		{"an added platform", wf("console", "console", "ubuntu-latest, macos-latest, windows-latest"), []string{"console (macos-latest)", "console (ubuntu-latest)", "console (windows-latest)"}},
+		{"a renamed job with no name", wf("desktop", "", "ubuntu-latest"), []string{"desktop (ubuntu-latest)"}},
+		{"a display name over the key", wf("console", "console-ui", "macos-latest"), []string{"console-ui (macos-latest)"}},
+	} {
+		got, err := deriveConsoleCheckNames(c.text)
+		if err != nil {
+			t.Errorf("%s: %v", c.label, err)
+			continue
+		}
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s: derived %v, want %v", c.label, got, c.want)
+		}
+	}
+	for _, c := range []struct{ label, text string }{
+		{"no matrix", wf("console", "console", "")},
+		{"a name with an expression", wf("console", "'console ${{ matrix.os }}'", "ubuntu-latest")},
+	} {
+		if got, err := deriveConsoleCheckNames(c.text); err == nil {
+			t.Errorf("%s: derived %v, want a refusal", c.label, got)
+		}
+	}
 }
 
 // TestReleaseGateRequiresTheConsoleCheck holds scripts/release-gate.sh to the
@@ -3265,6 +3327,21 @@ func TestReleaseGateRequiresTheConsoleCheck(t *testing.T) {
 		t.Errorf("%s still packs the first pending check into one \"$name $state\" string: a console leg's name carries a space, so the message would print it split at the wrong one", releaseGatePath)
 	}
 
+	// The documents that state the gate's check list name both legs, and say
+	// that the legs exist on main only once console is merged into main and a
+	// push has run them: a gate run before that refuses every tag.
+	for _, doc := range []string{"docs/release.md", ".claude/skills/new-release/SKILL.md", releaseGatePath} {
+		text := readDoc(t, doc)
+		for _, name := range consoleNames {
+			if doc != releaseGatePath && !strings.Contains(text, name) {
+				t.Errorf("%s does not name the required check %q", doc, name)
+			}
+		}
+		if !strings.Contains(text, "merged into `main`") {
+			t.Errorf("%s does not say the console check runs exist on main only once console is merged into main (and a push has run them)", doc)
+		}
+	}
+
 	if len(consoleNames) != 2 {
 		t.Fatalf("%s's console job reports %v: this test's cases are written for two legs, and a third platform must be a deliberate edit here", appliedConsoleTestsPath, consoleNames)
 	}
@@ -3317,29 +3394,43 @@ func TestReleaseGateRequiresTheConsoleCheck(t *testing.T) {
 	// that is not there and a run that belongs to another app are both "missing"
 	// to the gate, which selects on the name and the app slug together. The
 	// labels are derived from the legs above, like everything else here.
-	for _, c := range []struct {
+	type refusal struct {
 		name  string
 		leg   string
 		app   string
 		state string
 		drop  bool
-	}{
-		{fmt.Sprintf("%s is missing", legA), legA, "", "", true},
-		{fmt.Sprintf("%s is still running", legA), legA, "github-actions", "pending", false},
-		{fmt.Sprintf("%s failed", legA), legA, "github-actions", "failed", false},
-		{fmt.Sprintf("%s was cancelled", legA), legA, "github-actions", "cancelled", false},
-		{fmt.Sprintf("%s is missing", legB), legB, "", "", true},
-		{fmt.Sprintf("%s is still running", legB), legB, "github-actions", "pending", false},
-		{fmt.Sprintf("%s failed", legB), legB, "github-actions", "failed", false},
-		{fmt.Sprintf("%s was cancelled", legB), legB, "github-actions", "cancelled", false},
-		{fmt.Sprintf("%s is green, but from another app", legB), legB, "some-other-app", "success", false},
-	} {
+		// want is the state the gate reports, when it is not the fixture's own
+		// (a queued run is pending; skipped, neutral and timed-out runs are
+		// completed without success, so failed).
+		want string
+	}
+	var refusals []refusal
+	// Every leg and every non-green shape, and the three CLI checks too: the
+	// set those three were held to before this task must hold exactly as it did.
+	for _, leg := range append([]string{legA, legB}, "test", "terraform", "rules") {
+		refusals = append(refusals,
+			refusal{name: fmt.Sprintf("%s is missing", leg), leg: leg, drop: true},
+			refusal{name: fmt.Sprintf("%s is still running", leg), leg: leg, app: "github-actions", state: "pending"},
+			refusal{name: fmt.Sprintf("%s is queued", leg), leg: leg, app: "github-actions", state: "queued", want: "pending"},
+			refusal{name: fmt.Sprintf("%s failed", leg), leg: leg, app: "github-actions", state: "failed"},
+			refusal{name: fmt.Sprintf("%s was cancelled", leg), leg: leg, app: "github-actions", state: "cancelled"},
+			refusal{name: fmt.Sprintf("%s was skipped", leg), leg: leg, app: "github-actions", state: "skipped", want: "failed"},
+			refusal{name: fmt.Sprintf("%s is neutral", leg), leg: leg, app: "github-actions", state: "neutral", want: "failed"},
+			refusal{name: fmt.Sprintf("%s timed out", leg), leg: leg, app: "github-actions", state: "timed_out", want: "failed"},
+			refusal{name: fmt.Sprintf("%s is green, but from another app", leg), leg: leg, app: "some-other-app", state: "success"},
+		)
+	}
+	for _, c := range refusals {
 		t.Run(c.name+" is refused", func(t *testing.T) {
 			leg := c.leg
 			// What the gate's own rules make of the case: a run that is not there
 			// and a run that belongs to another app are both "missing", because
 			// check_state selects on the name **and** on the app slug.
 			state := c.state
+			if c.want != "" {
+				state = c.want
+			}
 			if c.drop || c.app != "github-actions" {
 				state = "missing"
 			}
@@ -3451,6 +3542,30 @@ func TestReleaseGateRequiresTheConsoleCheck(t *testing.T) {
 		}
 	})
 
+	for _, c := range []struct {
+		label, leg, app, state string
+	}{
+		{"pending " + legA, legA, "github-actions", "pending"},
+		{"skipped " + legA, legA, "github-actions", "skipped"},
+		{legB + " green only from another app", legB, "some-other-app", "success"},
+		{"failed terraform", "terraform", "github-actions", "failed"},
+	} {
+		t.Run("the identical-tree fallback refuses a head with "+c.label, func(t *testing.T) {
+			h := newGateHarness(t)
+			head := h.identicalTreeHead(t)
+			h.setTargetChecks(t, nil)
+			h.setHeadChecks(t, requiredChecks(c.leg, c.app, c.state, false))
+			h.setMergedPR(t, h.sha, head)
+			ok, out := h.run(t)
+			if ok {
+				t.Fatalf("the gate passed on a head with %s:\n%s", c.label, out)
+			}
+			if strings.Contains(out, "identical tree") {
+				t.Errorf("the head's checks must not vouch:\n%s", out)
+			}
+		})
+	}
+
 	t.Run("the identical-tree fallback refuses a head without a console leg", func(t *testing.T) {
 		h := newGateHarness(t)
 		head := h.identicalTreeHead(t)
@@ -3506,8 +3621,13 @@ check_runs_json() {
      | {name: .[0], app: {slug: .[1]}, state: .[2]}
      | . + (if .state == "pending" then {status: "in_progress", conclusion: null}
             elif .state == "failed" then {status: "completed", conclusion: "failure"}
+            elif .state == "queued" then {status: "queued", conclusion: null}
             elif .state == "cancelled" then {status: "completed", conclusion: "cancelled"}
-            else {status: "completed", conclusion: "success"} end)]
+            elif .state == "skipped" then {status: "completed", conclusion: "skipped"}
+            elif .state == "neutral" then {status: "completed", conclusion: "neutral"}
+            elif .state == "timed_out" then {status: "completed", conclusion: "timed_out"}
+            elif .state == "success" then {status: "completed", conclusion: "success"}
+            else error("fake gh: unknown check state \(.state)") end)]
     | {check_runs: .}' <"$1"
 }
 
