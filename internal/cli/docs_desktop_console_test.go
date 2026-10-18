@@ -2537,14 +2537,18 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		t.Errorf("%s's signing step packs before it has written the key file, handed on its path and unset the certificate", consoleReleaseWorkflowPath)
 	}
 	at(`APP="release/mac-universal/Fugaro Console.app"`, false)
-	staple := at(`if ! retry_apple_network xcrun stapler staple "$APP" ||`, false)
-	if staple >= 0 && (staple+3 >= len(lines) ||
-		lines[staple+1] != `! retry_apple_network xcrun stapler validate "$APP"; then` ||
-		!strings.HasPrefix(lines[staple+2], `echo "::error::`) || lines[staple+3] != "exit 1") {
-		t.Errorf("%s's signing step does not refuse an unstapled bundle, after retrying its staple and its validation", consoleReleaseWorkflowPath)
+	staple := at(`if ! retry_apple_network xcrun stapler validate "$APP"; then`, false)
+	if staple < 0 || staple+2 >= len(lines) || !strings.HasPrefix(lines[staple+1], `echo "::error::`) || lines[staple+2] != "exit 1" {
+		t.Errorf("%s's signing step does not refuse an unstapled bundle, after retrying its validation", consoleReleaseWorkflowPath)
 	}
-	if staple < 0 {
-		t.Errorf("%s's signing step does not retry the .app's staple and validation: a lost connection to Apple's ticket service would fail the release on the first attempt", consoleReleaseWorkflowPath)
+	// The .app's staple is the packer's, inside `npm run package`, and is
+	// deliberately not repeated here: the .dmg and the .zip were built from the
+	// bundle before this point, so stapling this loose copy would not reach the
+	// copies that ship, and it would add a network call that can refuse a build
+	// which is already correct. What guards the shipped copies is the retried
+	// validation inside them in the verification step.
+	if strings.Contains(sign.Run, `stapler staple "$APP"`) {
+		t.Errorf("%s's signing step staples the loose .app: the .dmg and the .zip were packed from it already, so that call cannot attach a ticket to what ships -- the packer's own staple is the .app's, and the verification step's retried validations are the shipped copies' guard", consoleReleaseWorkflowPath)
 	}
 	if strings.Contains(text, "mac-*") || strings.Contains(text, "mac-arm64") {
 		t.Errorf("%s globs or names a thin-arch output directory: the build is universal, release/mac-universal", consoleReleaseWorkflowPath)
@@ -2598,18 +2602,26 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		t.Errorf("%s does not upload the verified assets as the console-release-assets artifact right after verifying them", consoleReleaseWorkflowPath)
 	}
 
-	// **The Apple-network calls are retried, bounded, and nothing else is.**
-	// `xcrun stapler staple` and `xcrun stapler validate` reach Apple's
+	// **Every `xcrun stapler` call is retried, bounded -- and no other call
+	// is.** `xcrun stapler staple` and `xcrun stapler validate` reach Apple's
 	// ticket-delivery service over the network, and three consecutive release
 	// runs in October 2026 failed there with `NSURLErrorDomain Code=-1005 "The
 	// network connection was lost"` -- a lost connection, not a rejected
 	// notarisation. One helper, defined once in each of the two steps that call
-	// it and character for character the same in both, retries those calls; the
-	// mutations this clause is proved against are removing the helper from
-	// either step (the definition and call-site clauses below), wrapping
-	// `codesign`, `notarytool submit` or a check in it (the "nothing else"
-	// clause), and lowering the attempt bound or the pauses (the bound clause,
-	// and TestDocsConsoleReleaseRetryHelperIsBounded, which runs the helper).
+	// it and character for character the same in both, retries those calls.
+	// **The other Apple-network calls are deliberately left alone**, and the
+	// clauses below hold that too: `xcrun notarytool submit --wait` is the
+	// submission (a rejection is final; its exact line is still pinned above),
+	// and the packer's own notarise-and-staple is inside `npm run package`,
+	// with every codesign, so it cannot be retried on its own.
+	//
+	// The mutations this is proved against: removing the helper from either
+	// step (the definition clause), wrapping `codesign`, `notarytool submit` or
+	// a check in it (the "nothing else" clause), adding a fresh un-retried
+	// `xcrun stapler validate` to either step (the both-directions clause,
+	// which an allow-list alone does not catch), and lowering the attempt bound
+	// or the pauses (the bound clause, and
+	// TestDocsConsoleReleaseRetryHelperIsBounded, which runs the helper).
 	signHelper := consoleRetryHelper(t, "the signing step", sign.Run)
 	verifyHelper := consoleRetryHelper(t, "the verification step", verify.Run)
 	if signHelper != verifyHelper {
@@ -2617,8 +2629,7 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	}
 	retryCalls := map[string][]string{
 		consoleReleaseSigningStep: {
-			`if ! retry_apple_network xcrun stapler staple "$APP" ||`,
-			`! retry_apple_network xcrun stapler validate "$APP"; then`,
+			`if ! retry_apple_network xcrun stapler validate "$APP"; then`,
 			`retry_apple_network xcrun stapler staple "$DMG"`,
 		},
 		consoleReleaseVerifyStep: {
@@ -2630,7 +2641,16 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	for _, j := range jobs {
 		for _, step := range j.job.Steps {
 			stepLines := consoleRunLines(step.Run)
+			// Both directions. A line that names the helper is one of the calls
+			// above, and -- the half an allow-list alone misses -- **every line
+			// that calls `xcrun stapler` names it**: a fresh, un-retried
+			// `xcrun stapler validate` added to either step is a call that goes
+			// without the retry this change exists for, and would otherwise
+			// satisfy every other clause here.
 			for _, line := range stepLines {
+				if strings.Contains(line, "xcrun stapler") && !strings.Contains(line, consoleRetryHelperName) {
+					t.Errorf("%s's step %q calls %q without the retry: every `xcrun stapler` call in this file is retried, and a new one that is not is the lost-connection failure coming back", consoleReleaseWorkflowPath, step.Name, line)
+				}
 				if !strings.Contains(line, consoleRetryHelperName) {
 					continue
 				}
@@ -2641,12 +2661,12 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 					continue
 				}
 				if !slices.Contains(retryCalls[step.Name], line) {
-					t.Errorf("%s's step %q retries %q: the helper wraps `xcrun stapler staple` and `xcrun stapler validate` and nothing else -- behind codesign, a notarytool submission, the gate, the team check or the secret check it would retry something that has already decided", consoleReleaseWorkflowPath, step.Name, line)
+					t.Errorf("%s's step %q retries %q: the helper wraps the `xcrun stapler` calls this file makes (%s) and nothing else -- behind codesign, a notarytool submission, the gate, the team check, the secret check or a staple of the loose .app it would retry something that has already decided, or attach a ticket to a copy nobody downloads", consoleReleaseWorkflowPath, step.Name, line, strings.Join(retryCalls[step.Name], ", "))
 				}
 			}
 			for _, want := range retryCalls[step.Name] {
 				if !slices.Contains(stepLines, want) {
-					t.Errorf("%s's step %q does not run %q: every Apple-network call it makes is retried", consoleReleaseWorkflowPath, step.Name, want)
+					t.Errorf("%s's step %q does not run %q: every `xcrun stapler` call it makes is retried", consoleReleaseWorkflowPath, step.Name, want)
 				}
 			}
 		}
@@ -2762,16 +2782,70 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	}
 
 	// And while both files exist, they are the same file.
+	//
+	// This clause is the one that goes red when a staged change has not been
+	// copied in yet, and its failure is not a nuisance to be silenced: CI's
+	// `test` job is red on every push to main while it holds, and
+	// scripts/release-gate.sh requires a check run named `test`, so every tag
+	// is refused -- the CLI's releases included -- until the owner copies the
+	// staged file in. Stop the merge, do not delete the assertion.
 	if _, statErr := os.Stat(filepath.Join("..", "..", appliedConsoleReleasePath)); statErr == nil {
 		applied, err := os.ReadFile(filepath.Join("..", "..", appliedConsoleReleasePath))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if string(applied) != text {
-			t.Errorf("%s differs from the staged %s", appliedConsoleReleasePath, consoleReleaseWorkflowPath)
+			t.Errorf("%s differs from the staged %s: the staged file has a change the owner has not copied in yet. Do not merge before running `cp %s %s` and committing it -- until then main's `test` job is red and scripts/release-gate.sh refuses every tag, the CLI's included (docs/pending-workflows/README.md, %q)",
+				appliedConsoleReleasePath, consoleReleaseWorkflowPath, consoleReleaseWorkflowPath, appliedConsoleReleasePath, "## `console-release.yml`")
 		}
 	} else if !os.IsNotExist(statErr) {
 		t.Fatal(statErr)
+	}
+}
+
+// TestDocsConsoleReleaseStagedChangeSaysItNeedsACopyIn is the human half of the
+// byte-identity clause above. While the staged file differs from the applied
+// one, `docs/pending-workflows/README.md`'s `console-release.yml` section must
+// say so in the owner's own terms: that this is the state and not drift, that
+// the applied copy is the older text, and the one command that fixes it. The
+// failure of the byte-identity clause is a red test; this one is why a reader
+// of the staging directory -- the person who has to act -- is told, without
+// having to run the tests.
+//
+// The mutation that proves it: deleting the "Re-copy required" paragraph from
+// that section while the two files differ makes this red. Once the owner has
+// copied the file in, the two are identical and this test asserts nothing, as
+// it should.
+func TestDocsConsoleReleaseStagedChangeSaysItNeedsACopyIn(t *testing.T) {
+	staged, err := os.ReadFile(filepath.Join("..", "..", consoleReleaseWorkflowPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, err := os.ReadFile(filepath.Join("..", "..", appliedConsoleReleasePath))
+	if os.IsNotExist(err) {
+		t.Skipf("%s does not exist yet: there is nothing to copy in, and nothing for the README to say", appliedConsoleReleasePath)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(staged) == string(applied) {
+		return
+	}
+	section := consoleReadmeSection(t, readDoc(t, "docs/pending-workflows/README.md"), "## `console-release.yml`")
+	for _, want := range []string{
+		// That the staged file has a change the applied copy does not.
+		"Re-copy required",
+		// That it is the applied copy which is behind, not the staged one.
+		"the applied copy is the older text",
+		// Why the reader is looking at a red test rather than at a silently
+		// drifted file, and where that test is.
+		"TestDocsConsoleReleaseWorkflowIsStagedAndPinned",
+		// And the one command that fixes it.
+		"cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("docs/pending-workflows/README.md's `console-release.yml` section lacks %q, and the staged file differs from the applied %s: the owner is the one who has to copy it in, and this is where they read it", want, appliedConsoleReleasePath)
+		}
 	}
 }
 

@@ -106,19 +106,27 @@
 #     triple is in its environment. The .dmg is then signed (electron-builder
 #     leaves `dmg.sign` false), notarised and stapled here, because the disk
 #     image is its own artifact and Gatekeeper assesses it on open.
-#   - **Every Apple-network call is retried, bounded.** `xcrun stapler staple`
-#     and `xcrun stapler validate` reach Apple's ticket-delivery service over
-#     the network, and three consecutive release runs in October 2026 failed
-#     there with `NSURLErrorDomain Code=-1005 "The network connection was
-#     lost"` against `.../com.apple.gk.ticket-delivery/...` -- a lost
-#     connection, not a rejected notarisation. `retry_apple_network`, defined
-#     once in each of the two steps that call it, retries those calls up to
-#     five times with a growing pause (15, 30, 60, 90 seconds), printing each
-#     attempt's number and exit code, and returns the failure only after the
-#     fifth -- so a ticket that is genuinely absent still refuses to publish.
-#     **Nothing else is retried**: codesign, notarytool's submission and its
-#     `--wait` result, the team checks, the gate and the fail-closed secret
-#     check all fail at once, exactly as before.
+#   - **Every `xcrun stapler` call is retried, bounded -- and nothing else
+#     is.** `xcrun stapler staple` and `xcrun stapler validate` reach Apple's
+#     ticket-delivery service over the network, and three consecutive release
+#     runs in October 2026 failed there with `NSURLErrorDomain Code=-1005
+#     "The network connection was lost"` against
+#     `.../com.apple.gk.ticket-delivery/...` -- a lost connection, not a
+#     rejected notarisation. `retry_apple_network`, defined once in each of the
+#     two steps that call it, retries those calls up to five times with a
+#     growing pause (15, 30, 60, 90 seconds), printing each attempt's number
+#     and exit code, and returns the failure only after the fifth -- so a
+#     ticket that is genuinely absent still refuses to publish.
+#     **The other Apple-network calls are deliberately not retried**, because
+#     none of them can be separated from work that must not be repeated:
+#     `xcrun notarytool submit --wait` is the submission itself (a rejection is
+#     final, and re-submitting is not this file's business), and the packer's
+#     own notarise-and-staple runs inside `npm run package`, in the same
+#     command as every codesign. So codesign, the submission and its `--wait`
+#     result, the team checks, the gate and the fail-closed secret check all
+#     fail at once, exactly as before, and the retried validations in the
+#     verification step are what guard the copies of the bundle that actually
+#     ship, inside the .dmg and the .zip.
 #   - The signing, notarising, stapling and verifying are `run:` calls to
 #     xcrun, codesign, security and the macOS runner's own tools, **not
 #     actions**. The actions the file uses -- checkout and setup-node before
@@ -428,12 +436,14 @@ jobs:
           }
 
           # The packer notarised and stapled the .app before it built the
-          # targets; this is where that stops being an assumption. The staple
-          # is the packer's own staple re-affirmed -- on a ticket the network
-          # left unattached it is what attaches it -- and the validation is the
-          # check that a ticket is really there.
-          if ! retry_apple_network xcrun stapler staple "$APP" ||
-            ! retry_apple_network xcrun stapler validate "$APP"; then
+          # targets; this is where that stops being an assumption. Only the
+          # validation is retried: the packer's staple happens inside
+          # `npm run package`, and re-stapling this loose .app here would not
+          # touch the copies already inside the .dmg and the .zip (those are
+          # guarded by the retried validations in the verification step), so it
+          # would only add a network call that can refuse a build which is
+          # already correct.
+          if ! retry_apple_network xcrun stapler validate "$APP"; then
             echo "::error::$APP carries no stapled ticket: refusing to publish artifacts that would carry it unstapled"
             exit 1
           fi

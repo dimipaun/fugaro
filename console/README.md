@@ -2073,26 +2073,39 @@ an unstapled bundle (the review of Task 4.2 caught it). The disk image is then
 it, and a hardened runtime is for executables, not a `.dmg`), submitted with
 `xcrun notarytool submit --wait` and stapled.
 
-**Every Apple-network call is retried, bounded — added 2026-10-18, after three
-consecutive release runs failed there.** `xcrun stapler staple` and `xcrun
-stapler validate` reach Apple's ticket-delivery service over the network, and
-the three runs printed `CloudKit … error is Error Domain=NSURLErrorDomain
-Code=-1005 "The network connection was lost"` against
+**Every `xcrun stapler` call is retried, bounded — added 2026-10-18, after
+three consecutive release runs failed there.** `xcrun stapler staple` and
+`xcrun stapler validate` reach Apple's ticket-delivery service over the
+network, and the three runs printed `CloudKit … error is Error
+Domain=NSURLErrorDomain Code=-1005 "The network connection was lost"` against
 `.../com.apple.gk.ticket-delivery/production/public/records/lookup`, after
 which the signing step refused with "carries no stapled ticket: refusing to
 publish artifacts that would carry it unstapled". The notarisation itself had
 been accepted: what was lost was the connection, not the ticket. So one shell
 function, `retry_apple_network`, defined once in the signing step and once —
 character for character the same — in the verification step, makes up to five
-attempts at those calls with a growing pause between them (15, 30, 60, 90
-seconds), printing each attempt's number and exit code, and returns the failure
-only after the fifth: a ticket that is genuinely absent still refuses to
-publish, and so does a rejected notarisation. **It wraps the staple and
-validate calls and nothing else** — `codesign`, `xcrun notarytool submit
---wait`, the TeamIdentifier checks, `scripts/release-gate.sh` and the
-fail-closed secret check all still fail at once, with no retry — and in the
-verification step the calls sit inside `record`, so every attempt is in
-`console-verification.txt` too.
+attempts at the `xcrun stapler` calls with a growing pause between them (15, 30,
+60, 90 seconds), printing each attempt's number and exit code, and returns the
+failure only after the fifth: a ticket that is genuinely absent still refuses to
+publish, and so does a rejected notarisation. In the verification step the calls
+sit inside `record`, so every attempt is in `console-verification.txt` too.
+
+**The other Apple-network calls are deliberately not retried, and the file is
+not pretending otherwise.** `xcrun notarytool submit --wait` is the submission
+itself — a rejection is final — and the `.app`'s own notarise and staple happen
+inside `npm run package`, in the same command as every `codesign`, so neither
+can be retried on its own. That is also why the signing step retries only the
+`.app`'s **validation**: the `.dmg` and the `.zip` were packed from that bundle
+before this point, so re-stapling the loose `.app` would attach a ticket to a
+copy nobody downloads while adding a network call that can refuse a build which
+is already correct. What guards the copies that do ship is the verification
+step's retried validations, inside the mounted `.dmg` and the extracted `.zip`.
+**Nothing outside the `xcrun stapler` calls is retried at all** — `codesign`,
+`xcrun notarytool submit --wait`, the TeamIdentifier checks,
+`scripts/release-gate.sh` and the fail-closed secret check all still fail at
+once, with no retry — and the test reads it both ways: every line naming the
+helper is one of those calls, and every line that calls `xcrun stapler` names
+the helper.
 
 **The environment is `console-release`, and the owner creates it before the
 copy-in.** Required reviewers on the owner, deployment branches restricted to
@@ -2185,8 +2198,11 @@ with `CSC_KEYCHAIN`; that codesign signs with only `apple-tool:,apple:` in the
 partition list; that the warm-up pack leaves everything the signed pack needs
 in the cache; that `-c.extraMetadata.version` reaches the bundle's version
 and the artifact names as described; and that the signed, stapled DMG passes
-`spctl --assess --type open --context context:primary-signature`. None of
-these can be checked offline. **Accepted residuals:** `security` takes the
+`spctl --assess --type open --context context:primary-signature`. To that the
+2026-10-18 retry adds one more: that a `xcrun stapler` call which really does
+meet a transient CloudKit failure recovers inside the five attempts. It adds no
+new command — the calls it wraps are the ones the file already made — so there
+is no new idempotency to establish. None of these can be checked offline. **Accepted residuals:** `security` takes the
 keychain password (`create-keychain -p`, `unlock-keychain -p`,
 `set-key-partition-list -k`) and the `.p12` password (`import -P`) only on its
 command line, so another process of the same user can read them in the process
@@ -2273,4 +2289,7 @@ a scratch copy of the staged file and turned the named test red:
 | the attempt bound lowered to 3, in one step only | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the two definitions differing, and on the five-attempt clause; and `TestDocsConsoleReleaseRetryHelperIsBounded`, on the fifth attempt never being made |
 | the first pause changed (15 → 5) in both steps | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the pause clause; and `TestDocsConsoleReleaseRetryHelperIsBounded`, on the pause the helper asked for |
 | the helper made to return after its first failure | `TestDocsConsoleReleaseRetryHelperIsBounded`, on the retried case and on the five-attempt case (both stop after one attempt) |
-| the `exit 1` after the `.app`'s staple-and-validate removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the refusal's lines |
+| the `exit 1` after the `.app`'s retried validation removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the refusal's lines |
+| a fresh, un-retried `xcrun stapler validate "$DMG"` added to a step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on every `xcrun stapler` line having to name the helper |
+| the loose `.app` re-stapled (`xcrun stapler staple "$APP"`) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the shipped copies' guard being the verification step's validations, not a ticket attached to a copy nobody downloads |
+| the "Re-copy required" note deleted from `docs/pending-workflows/README.md` while the staged and applied files differ | `TestDocsConsoleReleaseStagedChangeSaysItNeedsACopyIn`: the owner is the one who has to copy the file in, and that section is where they read it |

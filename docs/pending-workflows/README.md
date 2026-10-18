@@ -187,25 +187,50 @@ file in, `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`'s byte-identity
 clause fails** (its last assertion compares the two files and says they
 differ). That red test is the intended state of this change: the fix cannot be
 delivered by an agent, because GitHub rejects a Fugaro push that touches
-`.github/workflows/**`.
+`.github/workflows/**`. **So do not merge a staged change before the copy-in.**
+While the two files differ, CI's `test` job is red on every push to `main`, and
+`scripts/release-gate.sh` requires a check run named `test` — so every tag is
+refused, **the CLI's releases included**, until the owner copies the staged
+file in. The PR carrying this change is a draft for exactly that reason, and
+its own CI is red until then.
 
-**Every Apple-network call is retried, bounded; nothing else is.** One shell
-function, `retry_apple_network`, is defined once in the signing step and once —
-character for character the same — in the verification step, and it wraps the
-`xcrun stapler staple` (the `.app`'s and the `.dmg`'s) and `xcrun stapler
-validate` calls (the `.app`'s in the signing step; the bundle inside the
-mounted `.dmg`, the one inside the extracted `.zip` and the disk image itself
-in the verification step). It makes up to **five** attempts with a growing
-pause between them (**15, 30, 60, 90** seconds), prints each attempt's number
-and exit code (`apple-network attempt 2 of 5: … exited 68`), and returns the
-failure only after the fifth — so a ticket that is genuinely absent, or a
-notarisation that was really rejected, still refuses to publish. In the
-verification step each call is inside `record`, so the attempts land in
-`console-verification.txt` with the rest of the evidence. **It wraps nothing
-else**: `codesign`, `xcrun notarytool submit --wait`, the TeamIdentifier check,
-`scripts/release-gate.sh`, the fail-closed secret check and the `spctl`/`hdiutil`
-assessments all fail at once, exactly as before, and the function is called
-nowhere else in either job.
+**Every `xcrun stapler` call is retried, bounded — and no other call is.** One
+shell function, `retry_apple_network`, is defined once in the signing step and
+once — character for character the same — in the verification step, and it
+wraps the two `xcrun stapler` calls this file makes: `xcrun stapler staple "$DMG"`
+(the disk image's, which is this file's own) and `xcrun stapler validate` (the
+`.app`'s in the signing step; the bundle inside the mounted `.dmg`, the one
+inside the extracted `.zip` and the disk image itself in the verification
+step). It makes up to **five** attempts with a growing pause between them
+(**15, 30, 60, 90** seconds), prints each attempt's number and exit code
+(`apple-network attempt 2 of 5: … exited 68`), and returns the failure only
+after the fifth — so a ticket that is genuinely absent, or a notarisation that
+was really rejected, still refuses to publish. In the verification step each
+call is inside `record`, so the attempts land in `console-verification.txt`
+with the rest of the evidence.
+
+**The other Apple-network calls are deliberately not retried, and that is not
+an oversight.** `xcrun notarytool submit --wait` *is* the submission: a
+rejection is final, re-submitting is not this file's business, and the line
+after it (`retry_apple_network xcrun stapler staple "$DMG"`) is where a
+rejected .dmg still refuses, five attempts later. The `.app`'s own notarise and
+staple happen inside `npm run package`, in the same command as every
+`codesign`, so they cannot be retried on their own — and the copies of that
+bundle which actually ship are the ones inside the `.dmg` and the `.zip`,
+already built by then, which the verification step's retried validations
+guard. The signing step therefore retries only the `.app`'s **validation**, and
+does not re-staple the loose `.app`: that would attach a ticket to a copy
+nobody downloads, while adding a network call that can refuse a build which is
+already correct.
+
+**Nothing outside those two calls is retried at all**: `codesign`, the
+TeamIdentifier checks, `scripts/release-gate.sh`, the fail-closed secret check
+and the `spctl`/`hdiutil`/`ditto` assessments all fail at once, exactly as
+before, and the helper is called nowhere else in either job. The test reads
+this both ways: every line naming the helper is one of the retried calls, and
+**every line that calls `xcrun stapler` names it**, so a fresh, un-retried
+`xcrun stapler validate` added to either step fails the test rather than
+quietly missing the retry.
 
 The `publish` job (`needs: release`) downloads that artifact (download-artifact
 at the pin `images.yml` uses), re-checks every asset with `sha256sum --strict
@@ -350,15 +375,16 @@ that `-c.extraMetadata.version` reaches the bundle's version and the
 artifact names as described; and that the signed, stapled DMG passes
 `spctl --assess --type open --context context:primary-signature`.
 
-The 2026-10-18 retry adds two more things for Check 59a to confirm on a real
-runner, because neither can be observed here: that `xcrun stapler staple` on
-the `.app` the packer has *already* stapled succeeds (it is idempotent as far
-as this repository can tell, and it is what attaches the ticket when the
-packer's own attempt lost the connection), and that a stapler call that does
-meet a transient CloudKit failure recovers inside the five attempts. What is
+The 2026-10-18 retry leaves one thing for Check 59a to confirm on a real runner,
+because it cannot be observed here: that a `xcrun stapler` call which does meet
+a transient CloudKit failure recovers inside the five attempts. What is
 verified offline is the helper's own behaviour — its bound, its pauses, its
 per-attempt reporting and its returning the failure only after the fifth — run
-under bash with a fake `sleep`; the real service's timing is not.
+under bash with a fake `sleep`; the real service's timing is not. The retry
+adds no new command to the pipeline: the three `xcrun stapler validate` calls,
+the `.dmg`'s `xcrun stapler staple` and the `.app`'s staple inside
+`npm run package` are the ones it already made, and the first four are what the
+helper wraps.
 
 Two things a reader must not take from those tests: the pinned SHAs are read
 against upstream by the person copying the file in (see "Before you copy" below —
