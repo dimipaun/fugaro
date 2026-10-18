@@ -14,6 +14,7 @@ import (
 	// Aliased: this package's own tests already declare a local helper named
 	// config (managed_apply_test.go), so the import cannot take that name.
 	fugaroconfig "github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // installationFixture is the installation root's golden tfvars (the one
@@ -370,7 +371,7 @@ func TestGoldenAccountJobMountsOnlyItsOwnToken(t *testing.T) {
 				c.job, varName, got, c.account, logical)
 		}
 		job := resource(t, p, mod+".google_cloud_run_v2_job.this")
-		_, secret := jobEnvOf(t, job)
+		plain, secret := jobEnvOf(t, job)
 		if got := secret[varName]; got != want {
 			t.Errorf("%s mounts %s from %q, want the account %q's own container %q",
 				mod, varName, got, c.account, want)
@@ -391,6 +392,24 @@ func TestGoldenAccountJobMountsOnlyItsOwnToken(t *testing.T) {
 			if got := secret[varName]; got == container[other] {
 				t.Errorf("%s mounts %s from %q, which is the account %q's token", mod, varName, got, other)
 			}
+		}
+
+		// And what the runner redacts is what the job mounts: the plan's two
+		// halves of the same env — the variables resolved from a secret, and
+		// the list runner.SecretEnvsVar names — are one list. A job whose
+		// token is not in that list publishes it the moment a run prints its
+		// environment, whatever that run's agent.auth is: an api-key or Vertex
+		// run of a profile that lists the default account holds the token just
+		// the same, and SECURITY.md's claim that the redactor masks what
+		// Fugaro publishes is what this makes true.
+		//
+		// Mutation (run, restore): revert this golden to the plan generated
+		// before ProjectJobs set the variable, and the deployed job carries no
+		// list at all; the check fails on both jobs.
+		wantRegistered := strings.Join(slices.Sorted(maps.Keys(secret)), ",")
+		if got := plain[runner.SecretEnvsVar]; got != wantRegistered {
+			t.Errorf("%s sets %s = %q, want %q: the variables this job mounts secrets as are what the runner registers with its redactor",
+				mod, runner.SecretEnvsVar, got, wantRegistered)
 		}
 
 		// The grant: the module's secret grants are exactly the containers

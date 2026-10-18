@@ -108,7 +108,7 @@ func dropMount(ws WorkflowSpec, logical string) {
 	}
 	delete(ws.SecretIDs, logical)
 	if ws.Env != nil {
-		ws.Env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(ws.SecretEnv)), ",")
+		ws.Env[runner.SecretEnvsVar] = redactionEnvs(ws.SecretEnv)
 	}
 }
 
@@ -454,7 +454,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				}
 			}
 			if out.Check.Env != nil {
-				out.Check.Env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(out.Check.SecretEnv)), ",")
+				out.Check.Env[runner.SecretEnvsVar] = redactionEnvs(out.Check.SecretEnv)
 			}
 		}
 		out.Check.DeployJob = ready || ex.CheckJob
