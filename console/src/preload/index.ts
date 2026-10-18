@@ -210,11 +210,20 @@ export interface ContextBridgeLike {
  * and the console draws what it was given -- but a bridge that forwarded
  * `undefined`, or an object shaped like something else, would put a value in the
  * renderer that no screen's code was written for.
+ *
+ * The shape is the whole envelope, not just the discriminant: an `ok: true`
+ * reply must carry a `data` property, and an `ok: false` one a string `reason`,
+ * because a screen reads `reply.data.runs` or `reply.reason` directly. Checking
+ * only that `ok` is a boolean let `{ ok: true }` and `{ ok: false }` through and
+ * threw where a screen drew; `isInstallationReply` in the sibling preload
+ * (`src/preload/installations.ts`) already required exactly this, and the two
+ * doors now agree (review finding, preload/index.ts:214).
  */
 function isConsoleReply(value: unknown): value is ConsoleReply {
   if (typeof value !== 'object' || value === null) return false
-  const ok: unknown = (value as { ok?: unknown }).ok
-  return typeof ok === 'boolean'
+  const reply = value as { ok?: unknown; data?: unknown; reason?: unknown }
+  if (reply.ok === true) return Object.prototype.hasOwnProperty.call(reply, 'data')
+  return reply.ok === false && typeof reply.reason === 'string'
 }
 
 /**

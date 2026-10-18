@@ -339,6 +339,43 @@ describe('the redactor', () => {
     expect(obj(obj(out, 'wibble'), 'nested')).toEqual([ADDRESS_MARKER])
   })
 
+  it('classifies a reserved key spelled with an invisible character, so its class still applies', () => {
+    // A reserved key is classified in `keyForm` -- `normaliseKey` of the
+    // prepared key -- so a zero-width space (U+200B is category `Cf`, not `\s`,
+    // and `normaliseKey` alone leaves it in), a soft hyphen (U+00AD) and a
+    // fullwidth spelling (which needs NFKC) all still reach their field class.
+    // While the classification read the raw key, `classFor` returned `undefined`
+    // and this value was written into the fixture verbatim -- the bug class the
+    // `INVISIBLE_RE` comment records as fixed once for the audit (review finding,
+    // redact.ts:474).
+    const spelled: readonly (readonly [string, string])[] = [
+      ['a zero-width space', 'requested​_by'],
+      ['a soft hyphen', 'requested­_by'],
+      ['a fullwidth spelling', 'ｒｅｑｕｅｓｔｅｄ＿ｂｙ'],
+    ]
+    for (const [what, key] of spelled) {
+      const out = doc({ [key]: 'ana smith' })
+      expect(str(out, key), what).toMatch(PERSON_PSEUDONYM_RE)
+      expect(str(out, key), what).not.toContain('ana smith')
+    }
+    // The NFKC half: a fullwidth spelling of a `path` key takes the path marker,
+    // not a value left as written.
+    const pathKey = 'ｐａｔｈ'
+    const pathOut = doc({ [pathKey]: '/Users/ana/src' })
+    expect(str(pathOut, pathKey)).toBe(PATH_MARKER)
+  })
+
+  it('the audit classifies a reserved key in its prepared form too', () => {
+    // The other half of the same finding: `auditProblems` reaches its child
+    // class through the same `classFor`, so a hand-edited fixture whose
+    // invisible-character-spelled reserved key still carries an identity must be
+    // refused -- otherwise the loader's audit would pass the very value
+    // redaction had leaked. Each value below is one no pattern class finds, so
+    // only the class check can refuse it.
+    expect(() => { assertRedacted({ 'requested​_by': 'ana smith' }) }).toThrow(RedactionRefusal)
+    expect(() => { assertRedacted({ 'ｐａｔｈ': 'some-dir' }) }).toThrow(RedactionRefusal)
+  })
+
   it('leaves absence and numbers alone', () => {
     const value = {
       project: '',

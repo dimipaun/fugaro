@@ -1474,9 +1474,14 @@ export function readStoredCompatibility(value: unknown): CliCompatibility {
 
   const mode = value['mode']
   if (mode !== 'ok' && mode !== 'reduced' && mode !== 'refused') return unreadable()
-  // `skew` is drawn as a `data-skew` attribute and never as a sentence, and its
+  // `skew` is drawn both as a `data-skew` attribute and, two lines away in
+  // `skewSentence` (`src/shared/version.ts`), as the banner's sentence -- so the
+  // old comment here that said it is "never drawn as a sentence" was false. The
   // closed list lives in a type (`CliSkewName`) rather than in a value, so what
-  // is checked here is that it is a short string -- the same verdict the
+  // is checked here is that it is a short string, and an unrecognised value is
+  // safe by construction: `skewSentence` has a total return with a `default`
+  // arm, so an unknown skew draws a sentence of the console's own rather than
+  // `undefined` (review finding, version.ts:463). This is the same verdict the
   // renderer's own check reaches, which `test/unit/ipc.test.ts` holds both to.
   const skew = value['skew']
   if (typeof skew !== 'string' || skew === '' || skew.length > MAX_COMPATIBILITY_FIELD_LENGTH) {

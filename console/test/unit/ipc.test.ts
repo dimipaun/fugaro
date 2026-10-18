@@ -106,6 +106,7 @@ import type {
   ConsoleHandlers,
   ConsoleOperation,
   ConsoleReply,
+  ArgumentSpec,
   OperationName,
 } from '../../src/main/ipc'
 import { APP_ENTRY_URL } from '../../src/main/protocol'
@@ -124,6 +125,7 @@ import type {
   ExposedName,
   RendererLike,
 } from '../../src/preload/index'
+import { createInstallationBridge } from '../../src/preload/installations'
 import { RENDERER_UNREADABLE, compatibilityFrom } from '../../src/renderer/app'
 import {
   REDUCED_VIEWS,
@@ -494,7 +496,13 @@ describe('the frozen surface the preload exposes', () => {
   })
 
   it('refuses a reply that is not a console reply', async () => {
-    for (const nonsense of [undefined, null, 42, 'ok', [], { data: 1 }, { ok: 'yes' }]) {
+    // The last two carry the discriminant but not the rest of the envelope: a
+    // screen reads `reply.data.runs` or `reply.reason` directly, so `{ ok: true }`
+    // and `{ ok: false }` are not replies. Checking only that `ok` is a boolean
+    // accepted both, and the throw moved to a screen; `isInstallationReply` in
+    // the picker preload already required the full shape (review finding,
+    // preload/index.ts:214).
+    for (const nonsense of [undefined, null, 42, 'ok', [], { data: 1 }, { ok: 'yes' }, { ok: true }, { ok: false }]) {
       const bridge = createConsoleBridge(fakeRenderer(() => nonsense))
       const reply = await asCallable(bridge.subscribeLive)({})
       expect(reply.ok, `${JSON.stringify(nonsense) ?? 'undefined'} is not a reply`).toBe(false)
@@ -513,6 +521,29 @@ describe('the frozen surface the preload exposes', () => {
     expect(hasRendererContext({ window: {}, document: {} })).toBe(true)
     expect(hasRendererContext({ window: {} })).toBe(false)
     expect((globalThis as { fugaro?: unknown }).fugaro).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The picker preload's reply boundary
+// ---------------------------------------------------------------------------
+
+describe('the picker preload’s reply boundary', () => {
+  it('answers a constant when the picker cannot be reached, never the error’s own message', async () => {
+    // The catch path used to interpolate `error.message`, whose source in
+    // `src/main/picker.ts` is a raw main-process sentence; the dashboard's
+    // preload answers a fixed sentence for the same case and `main/ipc.ts`'s
+    // `boundReason` exists so that no path, invisible character or oversized
+    // string crosses a reply (review finding, installations.ts:133). A
+    // regression would put the marker below in front of a screen.
+    const bridge = createInstallationBridge({
+      async invoke(): Promise<unknown> {
+        throw new Error('/Users/ana/secret/leaky-reason')
+      },
+    })
+    const reply = await bridge.list()
+    expect(reply).toEqual({ ok: false, reason: 'the picker could not be reached' })
+    expect(JSON.stringify(reply)).not.toContain('leaky-reason')
   })
 })
 
@@ -942,6 +973,18 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
 
 const RUN_ID = '20261016-121029-4a1b'
 
+/** firstStringSpec is the first argument of an operation that carries a string
+ * (every kind but a `flag` and a `pullRequest`). A hostile-value test must send
+ * its value under a key the operation **declares**: a payload like
+ * `{repo, run, url}` is refused by the undeclared-key branch before any value is
+ * read, so the test passes however the value's own branch behaves (review
+ * finding, ipc.test.ts:1122). An operation with no string argument
+ * (`cli.version`, the handshake, `installation.current`, `environment.report`)
+ * is skipped -- there is no string for it to carry. */
+function firstStringSpec(operation: ConsoleOperation): ArgumentSpec | undefined {
+  return operation.args.find((spec) => spec.kind !== 'flag' && spec.kind !== 'pullRequest')
+}
+
 describe('the argument schemas', () => {
   it('accepts the well-formed payload of every operation', () => {
     for (const operation of CONSOLE_OPERATIONS) {
@@ -1069,6 +1112,13 @@ describe('the argument schemas', () => {
   })
 
   it('never echoes the value it refused, so a refusal cannot be made to repeat a payload', () => {
+    // Each value goes under a key the operation **declares** (`firstStringSpec`).
+    // The old payload `{repo, run, url}` was refused by the undeclared-key branch
+    // before any value was read, so its reason could never contain the value and
+    // `not.toContain` held for a validator that did anything at all -- an
+    // unfalsifiable assertion. Under a declared key the reason comes from
+    // `validateValue`, which names the value's class and never the value (review
+    // finding, ipc.test.ts:1122).
     const hostile = [
       '/etc/passwd',
       'acme/app‮',
@@ -1078,9 +1128,15 @@ describe('the argument schemas', () => {
     ]
     for (const value of hostile) {
       for (const operation of CONSOLE_OPERATIONS) {
-        const decision = validateArguments(operation.name, { repo: value, run: value, url: value })
-        expect(decision.ok, `${operation.name} accepted ${value}`).toBe(false)
+        const spec = firstStringSpec(operation)
+        if (spec === undefined) continue
+        const decision = validateArguments(operation.name, { [spec.key]: value })
+        expect(decision.ok, `${operation.name}.${spec.key} accepted ${value}`).toBe(false)
         if (decision.ok) continue
+        // The reason names the declared key, which is the proof the value
+        // reached `validateValue` rather than the undeclared-key branch, and it
+        // never repeats the value.
+        expect(decision.reason, value).toContain(spec.key)
         expect(decision.reason, value).not.toContain(value)
       }
     }
@@ -1120,45 +1176,76 @@ describe('the argument schemas', () => {
   })
 
   it('refuses a string carrying a control character, wherever it goes', () => {
-    for (const value of ['acme/app\n', 'acme/app\u0000', 'acme/app\r\n', '\u007facme/app']) {
+    // Each value is sent under a key the operation declares, and the assertion
+    // names the control-character branch (with its code point) that must refuse
+    // it. The old payload `{repo, run, by, scope, url}` was refused by the
+    // undeclared-key branch first, so deleting the control-character branch
+    // (ipc.ts:981) broke no test; here its removal changes the reason to a
+    // grammar's and fails. `U+0085` is the C1 arm of the same branch (review
+    // finding, ipc.test.ts:1122).
+    const controls: readonly (readonly [string, string])[] = [
+      ['app\n', 'U+000A'],
+      ['app\u0000', 'U+0000'],
+      ['app\r\n', 'U+000D'],
+      ['app\u007f', 'U+007F'],
+      ['app\u0085', 'U+0085'],
+    ]
+    for (const [value, point] of controls) {
       for (const operation of CONSOLE_OPERATIONS) {
-        const decision = validateArguments(operation.name, {
-          repo: value,
-          run: value,
-          by: value,
-          scope: value,
-          url: value,
-        })
-        expect(decision.ok, `${operation.name} accepted ${JSON.stringify(value)}`).toBe(false)
+        const spec = firstStringSpec(operation)
+        if (spec === undefined) continue
+        const decision = validateArguments(operation.name, { [spec.key]: value })
+        expect(decision.ok, `${operation.name}.${spec.key} accepted ${JSON.stringify(value)}`).toBe(false)
+        if (decision.ok) continue
+        expect(decision.reason, `${operation.name}.${spec.key}`).toContain('control character')
+        expect(decision.reason, `${operation.name}.${spec.key}`).toContain(point)
       }
     }
   })
 
-  it('refuses a string carrying an invisible format character', () => {
+  it('refuses a string carrying an invisible format character, wherever it goes', () => {
     // Each of these renders as an ordinary string: a bidi override reorders what
     // a repository looks like, a zero-width space makes two different values
     // print identically, a BOM hides at the front of a URL. `new URL` parses the
-    // last one happily, which is why this check runs before the parser.
-    const invisible = [
-      'acme/app‮',
-      'acme/app​',
-      '﻿acme/app',
-      'acme/⁦app',
-      'acme­/app',
-      'acme⁩/app',
+    // last one happily, which is why this check runs before the parser. The
+    // values go under declared keys and the reason names the format-character
+    // branch and its code point, so deleting it fails a test (review finding,
+    // ipc.test.ts:1122).
+    const invisible: readonly (readonly [string, string])[] = [
+      ['app‮', 'U+202E'],
+      ['app​', 'U+200B'],
+      ['﻿app', 'U+FEFF'],
+      ['app⁦', 'U+2066'],
+      ['app­', 'U+00AD'],
+      ['app⁩', 'U+2069'],
     ]
-    for (const value of invisible) {
+    for (const [value, point] of invisible) {
       for (const operation of CONSOLE_OPERATIONS) {
-        const decision = validateArguments(operation.name, { repo: value, run: value, url: value })
-        expect(decision.ok, `${operation.name} accepted U+${(value.codePointAt(value.length - 1) ?? 0).toString(16)}`).toBe(false)
+        const spec = firstStringSpec(operation)
+        if (spec === undefined) continue
+        const decision = validateArguments(operation.name, { [spec.key]: value })
+        expect(decision.ok, `${operation.name}.${spec.key} accepted ${JSON.stringify(value)}`).toBe(false)
+        if (decision.ok) continue
+        expect(decision.reason, `${operation.name}.${spec.key}`).toContain('invisible format character')
+        expect(decision.reason, `${operation.name}.${spec.key}`).toContain(point)
       }
     }
   })
 
-  it('refuses an unpaired surrogate', () => {
-    for (const operation of CONSOLE_OPERATIONS) {
-      const decision = validateArguments(operation.name, { repo: 'acme/\ud800app', url: 'https://github.com/\ud800' })
-      expect(decision.ok, operation.name).toBe(false)
+  it('refuses an unpaired surrogate, wherever a string goes', () => {
+    // Under declared keys, and with the reason named: the old payload
+    // `{repo, url}` was refused before the surrogate branch (ipc.ts:988) ran,
+    // so deleting that branch broke no test (review finding, ipc.test.ts:1122).
+    const surrogates = ['app\ud800', 'a\udc00']
+    for (const value of surrogates) {
+      for (const operation of CONSOLE_OPERATIONS) {
+        const spec = firstStringSpec(operation)
+        if (spec === undefined) continue
+        const decision = validateArguments(operation.name, { [spec.key]: value })
+        expect(decision.ok, `${operation.name}.${spec.key} accepted ${JSON.stringify(value)}`).toBe(false)
+        if (decision.ok) continue
+        expect(decision.reason, `${operation.name}.${spec.key}`).toContain('unpaired surrogate')
+      }
     }
   })
 })

@@ -247,6 +247,16 @@ export interface ScreenGate {
  * dashboard on the strength of a value nobody checked. What it answers for a
  * value it accepts is a fresh, frozen object built from the checked fields, so
  * no unchecked key reaches the gate.
+ *
+ * `skew` is checked for type and length and not against its closed list, because
+ * the list lives in a type (`CliSkewName`) rather than in a value: a short
+ * string this console does not know gets through, on both sides of the seam
+ * (`src/main/ipc.ts`'s `readStoredCompatibility` makes the same check). That is
+ * safe because `skewSentence` (`src/shared/version.ts`) is total, with a
+ * `default` arm that draws a sentence of the console's own for an unknown skew --
+ * without it the banner read the literal word "undefined" (review finding,
+ * version.ts:463). This comment used to justify the weak check by saying `skew`
+ * is drawn as a `data-skew` attribute and never as a sentence, which was false.
  */
 export function compatibilityFrom(answer: unknown): CliCompatibility {
   const refused = (): CliCompatibility => unreadableCompatibility(RENDERER_UNREADABLE)

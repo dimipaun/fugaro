@@ -358,8 +358,8 @@ type FieldClass =
  * a reviewer can read. A key not on this table still goes through every pattern
  * class, and a key on it is *stricter*: its value must come out as that class's
  * marker, and the audit refuses the document if it does not. Keys are matched
- * lower-cased; `classFor` adds the suffix rules (`*_by`, `*_branch`, `*_url`,
- * `*_email`, `*_token`, `*_secret`, `*_password`).
+ * in `keyForm` (prepared, then lower-cased); `classFor` adds the suffix rules
+ * (`*_by`, `*_branch`, `*_url`, `*_email`, `*_token`, `*_secret`, `*_password`).
  *
  * **Free text is not on this table** -- `title`, `message`, `halted`, `reason`,
  * `queued_note`, `outcome`, `detail` go through the pattern classes, which keep
@@ -465,15 +465,38 @@ function normaliseKey(rawKey: string): string {
     .toLowerCase()
 }
 
+/**
+ * keyForm is the form every *classification* reads a key in: `normaliseKey` of
+ * the **prepared** key -- NFKC, terminal sequences gone, invisible characters
+ * gone -- exactly the form the value beside it is read in. **A key is a string
+ * too**, and a reserved key spelled with an invisible character walks past a
+ * rule that reads the raw form: a zero-width space (U+200B is category `Cf`,
+ * not `\s`, so `normaliseKey` alone leaves it in), a soft hyphen (U+00AD) or a
+ * fullwidth spelling (no NFKC fold) matches nothing, so `classFor` returned
+ * `undefined`, the field class was never applied, and the unredacted value was
+ * written into the committed fixture while the audit -- which reaches the same
+ * `classFor` -- did not require it to be the class's marker either. This is the
+ * bug class the `INVISIBLE_RE` comment above records as already fixed once
+ * (redact.ts:181-184): that fix prepared the key for the audit's own name and
+ * pattern rules but left the *classification* path reading the raw key (review
+ * finding, redact.ts:474).
+ */
+function keyForm(rawKey: string): string {
+  return normaliseKey(prepare(rawKey))
+}
+
 /** CREDENTIAL_KEY_RE is the suffix rule for a key that names a credential. It
  * ends at the word: `input_tokens` and `max_tokens` are counts, not tokens. */
 const CREDENTIAL_KEY_RE =
   /(?:^|_)(?:token|secret|password|passwd|api_?key|private_key(?:_id)?|session_?id|session_token|credentials?|cookie|authorization|bearer)$/
 
-/** classFor is the field class of one key in its object. */
+/** classFor is the field class of one key in its object. The key -- and the
+ * parent key `by` reads -- is read in `keyForm`, the prepared form, so an
+ * invisible character or a fullwidth spelling cannot keep a reserved key from
+ * its class. */
 function classFor(rawKey: string, parentKey: string | null): FieldClass | undefined {
-  const key = normaliseKey(rawKey)
-  if (key === 'by') return parentKey !== null && normaliseKey(parentKey) === 'kill' ? 'person' : 'by'
+  const key = keyForm(rawKey)
+  if (key === 'by') return parentKey !== null && keyForm(parentKey) === 'kill' ? 'person' : 'by'
   // An own property only: `constructor` and `toString` are keys a document may
   // hold, and the table's prototype is not a class.
   if (Object.hasOwn(FIELD_CLASSES, key)) return FIELD_CLASSES[key]
@@ -1167,9 +1190,11 @@ const CONTRACT_WORDS: ReadonlySet<string> = new Set([
   'live', 'stale', 'api', 'oauth', 'observe', 'enforce', 'pass', 'fail', 'tests',
 ])
 
-/** isContractKey answers whether a key is one of `CONTRACT_KEYS`. */
+/** isContractKey answers whether a key is one of `CONTRACT_KEYS`. It reads the
+ * key in `keyForm` for the same reason `classFor` does: a keyword spelled with
+ * an invisible character is the same contract key. */
 function isContractKey(key: string | null): boolean {
-  return key !== null && CONTRACT_KEYS.has(normaliseKey(key))
+  return key !== null && CONTRACT_KEYS.has(keyForm(key))
 }
 
 /** PLACEHOLDER is the CLI's "nothing here" (`-`): kept as written in a slug or

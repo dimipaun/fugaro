@@ -476,6 +476,25 @@ describe('skewSentence', () => {
     expect(sentence).not.toContain('0.8.1-3')
   })
 
+  it('renders a sentence for a skew it does not know, rather than the word "undefined"', () => {
+    // `skew` is checked for type and length on both sides of the seam and not
+    // against the closed list, so a short string the console does not know
+    // reaches the drawing. Without a `default` arm `skewSentence` returns
+    // `undefined` and `renderVersionSkew` assigns it to `textContent`, drawing
+    // the literal word "undefined"; the arm makes the sentence total (review
+    // finding, version.ts:463).
+    const unknown = { ...classifyCliVersion('0.8.1'), skew: 'future-state' } as unknown as CliCompatibility
+    const sentence = skewSentence(unknown)
+    expect(sentence).not.toBe('undefined')
+    expect(sentence).toContain(CLI_VERSION_BUILT_AGAINST)
+    expect(sentence).toContain(SUPPORTED_CLI_MINORS.join(', '))
+    // The banner's own cell draws the same sentence, so the paragraph never
+    // reads "undefined".
+    const root = renderVersionSkew(factory, unknown, 'light')
+    expect(one(root, 'skew-sentence').textContent).toBe(sentence)
+    expect(one(root, 'skew-sentence').textContent).not.toBe('undefined')
+  })
+
   it('has a headline for every mode, and a word for every withheld view', () => {
     expect(Object.keys(SKEW_HEADLINES).sort()).toEqual(['ok', 'reduced', 'refused'])
     for (const view of REDUCED_VIEWS) {
