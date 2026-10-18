@@ -26,7 +26,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { MemorySettingsStore, SETTINGS_CODES, SettingsStore, isSettingsKey, secretShaped } from './settings.js';
+import { isAccountId } from './account.js';
+import {
+  FORBIDDEN_KEY_SEGMENTS,
+  MemorySettingsStore,
+  SETTINGS_CODES,
+  SettingsStore,
+  isSettingsKey,
+  secretShaped,
+} from './settings.js';
 import { SECRET_ITEMS, secret } from './secret.js';
 
 const ID_TOKEN = 'synthetic-id-token';
@@ -131,11 +139,16 @@ test('a key that names an item, or the secure store\'s namespace, is refused', a
   const cases = [
     ['fugaro.account.laptop.idToken', SETTINGS_CODES.RESERVED_KEY],
     ['token', SETTINGS_CODES.SECRET_KEY],
-    ['account.idToken', SETTINGS_CODES.SECRET_KEY],
-    ['account.macKey', SETTINGS_CODES.SECRET_KEY],
-    ['account.password', SETTINGS_CODES.SECRET_KEY],
-    ['account.privateKey', SETTINGS_CODES.SECRET_KEY],
-    ['account.secret', SETTINGS_CODES.SECRET_KEY],
+    ['ui.idToken', SETTINGS_CODES.SECRET_KEY],
+    ['ui.macKey', SETTINGS_CODES.SECRET_KEY],
+    ['password', SETTINGS_CODES.SECRET_KEY],
+    ['ui.privateKey', SETTINGS_CODES.SECRET_KEY],
+    ['secret', SETTINGS_CODES.SECRET_KEY],
+    // An account key is `account.<id>` and nothing more: the id alphabet has
+    // no `.`, so a smuggled name is a key this store does not own.
+    ['account.laptop.token', SETTINGS_CODES.BAD_KEY],
+    ['account.laptop.idToken', SETTINGS_CODES.BAD_KEY],
+    ['account.', SETTINGS_CODES.BAD_KEY],
     ['', SETTINGS_CODES.BAD_KEY],
     ['has space', SETTINGS_CODES.BAD_KEY],
     ['a/b', SETTINGS_CODES.BAD_KEY],
@@ -153,18 +166,41 @@ test('a key that names an item, or the secure store\'s namespace, is refused', a
 
 test('the key fence covers D111\'s item names, derived and not repeated', async () => {
   const { store } = makeStore();
-  // The property rather than the example: EVERY name in `SECRET_ITEMS`, under
-  // any account, is refused as a settings key. The list in `settings.js` is
-  // built from these names, so a third item added to D111 is fenced the moment
-  // it is declared -- and this loop fails if that derivation is ever dropped,
-  // which is exactly the "one list of names, in one place" rule.
+  // The property rather than the example: EVERY name in `SECRET_ITEMS`, as a
+  // key or as a segment of one that is not an account key, is refused. The
+  // list in `settings.js` is built from these names, so a third item added to
+  // D111 is fenced the moment it is declared -- and this loop fails if that
+  // derivation is ever dropped, which is the "one list of names, in one place"
+  // rule.
   for (const item of SECRET_ITEMS) {
-    for (const key of [`account.laptop.${item}`, `account.${item}`]) {
+    for (const key of [`ui.${item}`, item]) {
       const result = await store.set(key, 'synthetic');
       assert.equal(result.code, SETTINGS_CODES.SECRET_KEY, key);
     }
   }
   assert.equal(SECRET_ITEMS.length, 2, 'D111: exactly two items');
+});
+
+test('every forbidden word is still a name the owner may give an installation', async () => {
+  const { store } = makeStore();
+  // Review finding: `#judgeKey` split the caller's key on `.` and refused any
+  // segment in the word list, so the ACCOUNT STORE's own key -- `account.<id>`,
+  // where the id is the owner's word -- was judged by it. An installation
+  // called `token`, `secret`, `password`, `apiKey`, `idToken`, `macKey` and the
+  // rest was refused with `secret-key`: the same fault as `mac`, fixed one word
+  // short. This walks the whole list rather than the one word that was noticed,
+  // so the next word added to the fence is covered by this test on the day it
+  // is added.
+  for (const word of [...FORBIDDEN_KEY_SEGMENTS, ...SECRET_ITEMS, 'mac', 'belong']) {
+    assert.equal(isAccountId(word), true, `${word} is a legal account id`);
+    // The account store's own key is accepted, whatever the word is ...
+    assert.equal((await store.set(`account.${word}`, TUPLE)).ok, true, word);
+    assert.equal((await store.get(`account.${word}`)).ok, true, word);
+    // ... and a key that is NOT an account key still may not use it.
+    if (FORBIDDEN_KEY_SEGMENTS.includes(word.toLowerCase())) {
+      assert.equal((await store.set(word, TUPLE)).code, SETTINGS_CODES.SECRET_KEY, word);
+    }
+  }
 });
 
 test('a fence that refused the owner\'s own installation would be the wrong fence', async () => {

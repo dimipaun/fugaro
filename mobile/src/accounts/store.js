@@ -46,9 +46,15 @@
 import { isAccountId, sameInstallation, validateAccount } from './account.js';
 import { isSecretItem } from './secret.js';
 import { RESOURCE_CODES } from './resources.js';
+import { ACCOUNT_KEY_PREFIX } from './settings.js';
 
-/** The settings key prefix an account tuple is stored under. */
-export const ACCOUNT_KEY_PREFIX = 'account.';
+/**
+ * The settings key prefix an account tuple is stored under, re-exported (it is
+ * declared in `settings.js`, which owns settings keys, and its key fence has to
+ * know the same string this module composes with). One value, one name, and the
+ * module's door exports it from here so callers need not know about the split.
+ */
+export { ACCOUNT_KEY_PREFIX };
 
 /** The refusal codes this module returns. */
 export const STORE_CODES = Object.freeze({

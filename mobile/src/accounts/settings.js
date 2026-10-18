@@ -35,10 +35,19 @@
 // revealed value has to be written down in a word a reviewer can see). This
 // module does not pretend the shape list is the whole fence.
 
+import { isAccountId } from './account.js';
 import { SECRET_ITEMS } from './secret.js';
 
 /** The prefix a settings key is stored under. */
 export const SETTINGS_KEY_PREFIX = 'fugaro.settings.';
+
+/**
+ * The key an account's tuple is stored under, `<this><id>`. It lives here
+ * rather than in `store.js` because it is a SETTINGS KEY and the fence that
+ * judges settings keys has to know it; `store.js` imports it from here and the
+ * module's door re-exports it, so callers see one name and one value.
+ */
+export const ACCOUNT_KEY_PREFIX = 'account.';
 
 /** The longest settings key, in code units. */
 export const SETTINGS_KEY_MAX = 128;
@@ -65,14 +74,17 @@ export const SETTINGS_CODES = Object.freeze({
  * declared -- and `settings.test.js` asserts that property for each of them,
  * so removing the derivation is red rather than silent.
  *
- * The list deliberately does NOT contain `mac`. An account is named by the
- * owner, and `mac` is what the owner's own installation is most likely to be
- * called (`account.mac`); refusing it would mean a fence that breaks the
- * person it is protecting -- and a fence someone has to work around is a
- * fence that gets deleted. `macKey` is the name that matters, and it is here,
+ * The list applies to keys that are NOT account keys (`#judgeKey` says why: an
+ * account id is the owner's own word). It is exported so that the test which
+ * walks every word as a candidate account id can ask for the list instead of
+ * repeating it -- the same one-list-in-one-place rule as `SECRET_ITEMS` above.
+ *
+ * It deliberately does NOT contain `mac`, even though `mac` is a name an owner
+ * might give an installation: the alphabet rule already keeps account ids out
+ * of this list's way, and `macKey` -- the name that matters -- is here,
  * derived.
  */
-const FORBIDDEN_KEY_SEGMENTS = Object.freeze([
+export const FORBIDDEN_KEY_SEGMENTS = Object.freeze([
   'token',
   'secret',
   'password',
@@ -226,10 +238,30 @@ export class SettingsStore {
    * is a key whose segment names one of the forbidden words (D111's item names
    * among them -- that list is where the coupling lives), and `bad-key` is
    * everything else that is not a key.
+   *
+   * **An account key is judged as a key, not by its words.** `account.<id>` is
+   * the account store's own key, and `<id>` is a word the OWNER chose: a
+   * segment-by-segment check against the word list refused an installation
+   * called `token`, `secret`, `password`, `apiKey`, `idToken`, `macKey` and the
+   * rest -- the same "fence that refused the owner's own installation" fault as
+   * `mac`, one word short of the fix. So the account branch is separate and
+   * stricter: the remainder after `account.` must be a valid account id
+   * (`isAccountId`, whose alphabet has no `.` in it) and nothing else. That
+   * admits every name the owner can type, and refuses `account.<id>.token` --
+   * a smuggled name -- as a key this store does not own.
+   *
+   * The word list still protects everything else: a key that is not an account
+   * key may not use one of the words, and the VALUE fences (`Secret`, shape)
+   * apply to account keys exactly as to any other.
    */
   #judgeKey(key) {
     if (!isSettingsKey(key)) return refuse(SETTINGS_CODES.BAD_KEY, 'key');
     if (key.startsWith(SECRET_PREFIX)) return refuse(SETTINGS_CODES.RESERVED_KEY, 'key');
+    if (key.startsWith(ACCOUNT_KEY_PREFIX)) {
+      const accountId = key.slice(ACCOUNT_KEY_PREFIX.length);
+      if (!isAccountId(accountId)) return refuse(SETTINGS_CODES.BAD_KEY, 'key');
+      return null;
+    }
     const segments = key.toLowerCase().split('.');
     for (const segment of segments) {
       if (FORBIDDEN_KEY_SEGMENTS.includes(segment)) {

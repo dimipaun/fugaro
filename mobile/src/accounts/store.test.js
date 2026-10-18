@@ -29,8 +29,8 @@ import test from 'node:test';
 import { ACCOUNT_FIELDS } from './account.js';
 import { ResourceRegistry } from './resources.js';
 import { MemorySecureStore, SECRET_KEY_PREFIX, SecretStore } from './secure-store.js';
-import { secret } from './secret.js';
-import { MemorySettingsStore, SETTINGS_KEY_PREFIX, SettingsStore } from './settings.js';
+import { SECRET_ITEMS, secret } from './secret.js';
+import { FORBIDDEN_KEY_SEGMENTS, MemorySettingsStore, SETTINGS_KEY_PREFIX, SettingsStore } from './settings.js';
 import { ACCOUNT_KEY_PREFIX, STORE_CODES, AccountStore } from './store.js';
 
 const LAPTOP = Object.freeze({
@@ -89,6 +89,29 @@ test('adding an installation lists it, as D114\'s tuple and nothing else', async
   assert.equal(Object.isFrozen(listed.accounts[0]), true);
   const one = await store.account('laptop');
   assert.deepEqual(one.account, LAPTOP);
+});
+
+test('the owner may name an installation any word the alphabet allows', async () => {
+  // Review finding, end to end: these are exactly the ids `add` used to refuse
+  // with `secret-key`, because the settings key fence was judging the owner's
+  // own word with its own word list. Verified by running `add` with each of
+  // them, and walked over the list rather than over the one word that was
+  // noticed.
+  const { store } = makeStore();
+  for (const id of [...FORBIDDEN_KEY_SEGMENTS, ...SECRET_ITEMS, 'mac', 'belong']) {
+    const installation = {
+      id,
+      firebaseProjectId: `project-for-${id}`,
+      authUid: `uid-${id}`,
+      fugaroProject: `fugaro-${id}`,
+    };
+    const added = await store.add(installation);
+    assert.equal(added.ok, true, `${id}: ${added.code ?? ''}`);
+    assert.deepEqual((await store.account(id)).account, installation);
+    // The tuple round-trips through the disk, so the key it was written under
+    // is one the store can read back -- not merely one it accepted.
+    assert.ok((await store.list()).accounts.some((held) => held.id === id), id);
+  }
 });
 
 test('a tuple that is not an installation is refused, with its own code', async () => {
