@@ -2106,6 +2106,10 @@ func (r *run) logTail(ready bool, records []verify.Record) *LogTail {
 
 func (r *run) finalize(ctx context.Context) error {
 	r.rec.Stage = "finalize"
+	// The paths this run changed, recorded before anything else saves the
+	// record, so every run that reaches finalize carries them — the ones
+	// that end without a pull request included (design D27, V2.1.2).
+	r.recordChangedFiles(ctx)
 	r.save(ctx)
 	if r.skipPR {
 		// The check gate already ended the run (gate.go: endWithoutPR or
