@@ -261,7 +261,7 @@ function of the prompt's `at`, the TTL and the consumer's clock", written agains
 that never expires anything and failing on it. It is `mutation-proof.sh`'s first guard, so it stays
 re-runnable rather than living only in a pull-request transcript.
 
-`mutation-proof.sh` plants 57 one-line bugs in `index.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 58 one-line bugs in `index.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. It
