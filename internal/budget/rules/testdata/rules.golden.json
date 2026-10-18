@@ -346,7 +346,7 @@
                 ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')"
               },
               "target": {
-                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : (newData.hasChildren(['run']) || newData.hasChildren(['repo', 'pr']))))",
+                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : ((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()))))",
                 "run": {
                   ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 200 && newData.val().matches(/^[A-Za-z0-9_:][A-Za-z0-9._:-]*$/))"
                 },
@@ -428,7 +428,7 @@
                 ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')"
               },
               "target": {
-                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : (newData.hasChildren(['run']) || newData.hasChildren(['repo', 'pr']))))",
+                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : ((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()))))",
                 "run": {
                   ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 200 && newData.val().matches(/^[A-Za-z0-9_:][A-Za-z0-9._:-]*$/))"
                 },

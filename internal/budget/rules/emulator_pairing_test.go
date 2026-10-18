@@ -259,11 +259,32 @@ func TestPairingSessionWritesItsRequestOnceAndReadsOnlyItsDelivery(t *testing.T)
 	h.set(delivery(notPairUid), map[string]any{"token": "sealed"})
 	h.mustReadDenied(h.pairing(notPairUid), delivery(notPairUid))
 
-	// The pu claim has to name the token's own uid, exactly as mu does.
+	// The pu claim has to name the token's own uid, exactly as mu does. This
+	// token's pu is one session's and its uid is another's, and the path is a
+	// third — so the location wildcard refuses the write before the claim's
+	// second conjunct is ever reached.
 	mismatched := h.as(claims{pu: uid, uid: pairUid2, fp: "-"})
 	h.mustDeny(mismatched, "a request under a pu claim that is not this token's uid",
 		put(request(uid+"-mm"), aRequest()))
 	h.mustReadDenied(mismatched, delivery(uid))
+
+	// Which means the case above does not isolate `pu == auth.uid` on its own:
+	// drop that conjunct and it still passes, because `$uid == auth.uid` is
+	// false too. This is the case that does isolate it — the write is at the
+	// token's OWN uid, so the wildcard holds and the claim is the only thing
+	// left that can refuse it.
+	isolated := uid + "-iso"
+	crossed := h.as(claims{pu: pairUid2, uid: isolated, fp: "-"})
+	h.mustDeny(crossed, "a request at the token's own uid under another session's pu claim",
+		put(request(isolated), aRequest()))
+	h.mustReadDenied(crossed, delivery(uid))
+	// The control, so the two refusals above are refusals of the claim and not
+	// of the path: the same request, at the same uid, under its own claim — and
+	// the delivery of that uid, which this token may not read either.
+	h.mustAllow(h.pairing(isolated), "the same request under its own pu claim",
+		put(request(isolated), aRequest()))
+	h.set(delivery(isolated), map[string]any{"token": "sealed", "key": "sealed"})
+	h.mustRead(h.pairing(isolated), delivery(isolated))
 }
 
 // TestMailboxMessagesRequireTheTag is D169/D171/O7's field, at the database:
@@ -450,6 +471,25 @@ func TestMailboxActionRecordShape(t *testing.T) {
 	}
 	h.mustAllow(alice, "a confirm action on a pull request",
 		put(inbox(mbAlice, "a4"), actionMessage("a4", mbAlice, confirmRepo)))
+
+	// A confirm resolves to a run or to a pull request, never to both: a target
+	// carrying both shapes is one whose meaning the consumer has to guess at, on
+	// the verb that authorises a destructive action (D169, G11). The merge case
+	// further down does not cover this — a merge is refused a `run` by its own
+	// arm. `{run, repo}` is the shape an either-shape test written as `||` lets
+	// through, which is what this arm used to be.
+	for i, tgt := range []map[string]any{
+		{"run": "r1", "repo": "dimipaun/fugaro", "pr": 7},
+		{"run": "r1", "repo": "dimipaun/fugaro"},
+	} {
+		rec := map[string]any{
+			"id": "act-both", "verb": "confirm", "target": tgt,
+			"confirmation": map[string]any{"id": "cfm-both", "at": msgAt},
+		}
+		id := "a5-" + string(rune('a'+i))
+		h.mustDeny(alice, "a confirm whose target carries both shapes",
+			put(inbox(mbAlice, id), actionMessage(id, mbAlice, rec)))
+	}
 
 	// The record's required fields, one missing at a time — `confirmation`
 	// first, because that is the field the whole kind exists for.

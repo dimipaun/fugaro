@@ -595,10 +595,18 @@ func wordMacro(m string, depth int) (string, error) {
 		// resolves to a repository and a pull request, `cancel` to a run,
 		// `confirm` to either. A target that carries both shapes, or neither,
 		// is refused on both sides.
+		//
+		// Every arm is *exclusive*: the node has exactly the fields its shape
+		// names and none of the other shape's. The negative half is not
+		// decoration — a `confirm` written as `hasChildren(['run']) ||
+		// hasChildren(['repo', 'pr'])` accepts `{run, repo, pr}`, which is a
+		// target whose resolution the consumer has to guess at, on the one verb
+		// that authorises a destructive action (G11).
 		v := "newData.parent().child('verb').val()"
-		return "(" + v + " == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (" +
-			v + " == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : " +
-			"(newData.hasChildren(['run']) || newData.hasChildren(['repo', 'pr']))))", nil
+		run := "(newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists())"
+		pull := "(newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists())"
+		return "(" + v + " == 'merge' ? " + pull + " : (" +
+			v + " == 'cancel' ? " + run + " : (" + run + " || " + pull + ")))", nil
 	case "SHAOK":
 		// A merge's head SHA: present only on a merge (the record has no field
 		// for it on any other verb), and one of Git's two object-name lengths.

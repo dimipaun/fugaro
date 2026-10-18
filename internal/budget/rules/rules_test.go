@@ -1339,3 +1339,32 @@ func wantFrag(t *testing.T, paths map[string]map[string]any, path, frag string) 
 		t.Errorf("/%s .validate = %q, want it to carry %q", path, v, frag)
 	}
 }
+
+// TestConfirmTargetsCarryOneShape pins TARGETOK's per-verb arms, and the
+// `confirm` arm in particular.
+//
+// A `confirm` is the verb that authorises a destructive action (D169, G11), and
+// its target resolves to a run or to a repository and a pull request. Both
+// shapes are legal; a target carrying *both* is not, because "which one did
+// they mean?" is a question the consumer would have to answer by guessing. An
+// arm written as an either-shape test — `hasChildren(['run']) ||
+// hasChildren(['repo', 'pr'])` — answers yes to `{run, repo, pr}` and to
+// `{run, repo}`, and the emulator accepts both. The negative half of each arm
+// is what refuses them, so each arm is pinned whole.
+//
+// This is the static half: `emulator_pairing_test.go` writes the two both-shapes
+// targets and watches the database refuse them.
+func TestConfirmTargetsCarryOneShape(t *testing.T) {
+	paths := generatedPaths(t)
+	for _, dir := range []string{"inbox", "outbox"} {
+		p := `mailbox/$mb/` + dir + `/$msg/action/target`
+		for _, c := range []struct{ verb, frag string }{
+			{"merge", "== 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists())"},
+			{"cancel", "== 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists())"},
+			{"confirm", "((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()))"},
+		} {
+			wantFrag(t, paths, p, c.frag)
+			t.Logf("/%s: the %s arm carries %s", p, c.verb, c.frag)
+		}
+	}
+}
