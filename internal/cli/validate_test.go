@@ -901,6 +901,73 @@ func TestValidateNotesProvidersOpenToEveryRepository(t *testing.T) {
 	}
 }
 
+// TestValidateWarnsProviderSecretOffConvention (owner ruling of 2026-10-18):
+// a provider's key is named after its entry — <provider>-api-key — and a key
+// stored under any other name is WARNED about, never refused. The file stays
+// valid, the key keeps working, and nothing is renamed or migrated (which is
+// why this is a warning and not a problem: an installation that named its key
+// `openrouter-key` yesterday must not lose its validate exit code today).
+func TestValidateWarnsProviderSecretOffConvention(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n"
+	const coder = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5 }"
+	for name, tc := range map[string]struct {
+		block, want string
+	}{
+		// The convention's own spelling: the example block every other
+		// provider test uses, which must stay silent.
+		"on convention": {validateProviderBlock, ""},
+		"off convention": {strings.Replace(validateProviderBlock, "secret: openrouter-api-key", "secret: openrouter-key", 1),
+			`providers.openrouter.secret: its key is stored under the name openrouter-key; the convention names a provider's key after its entry in the local config, so this one's is openrouter-api-key`},
+	} {
+		inCheckoutOf(t, "acme/sandbox")
+		path := budgetProject(t, budget+tc.block, coder)
+		out, errOut, err := execute(t, "validate", path)
+		if err != nil || !strings.Contains(out, "is valid") {
+			t.Fatalf("%s: validate must not refuse an off-convention name: err %v\nout: %s\nerr: %s", name, err, out, errOut)
+		}
+		if tc.want == "" {
+			if strings.Contains(errOut, "providers.openrouter.secret") {
+				t.Fatalf("%s: warned though the key is on convention: %s", name, errOut)
+			}
+			continue
+		}
+		if !strings.Contains(errOut, "warning: "+tc.want) {
+			t.Fatalf("%s: no warning naming the entry and the convention's name:\n%s", name, errOut)
+		}
+		// The two halves that make it a warning: the key keeps working (so
+		// nobody renames a live secret because of this line), and the
+		// conventional name is reserved for that provider either way (so
+		// nobody reads "not required" as "up for grabs").
+		for _, want := range []string{"nothing is renamed", "stays reserved for it either way"} {
+			if !strings.Contains(errOut, want) {
+				t.Errorf("%s: the warning does not say %q:\n%s", name, want, errOut)
+			}
+		}
+	}
+	// --json carries the same half: a warning, never a problem, so `valid`
+	// stays true for a file a script gates on.
+	inCheckoutOf(t, "acme/sandbox")
+	off := strings.Replace(validateProviderBlock, "secret: openrouter-api-key", "secret: openrouter-key", 1)
+	path := budgetProject(t, budget+off, coder)
+	out, _, err := execute(t, "validate", path, "--json")
+	if err != nil {
+		t.Fatalf("validate --json: %v", err)
+	}
+	var doc validateOutput
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	found := false
+	for _, w := range doc.Warnings {
+		if w.Path == "providers.openrouter.secret" {
+			found = true
+		}
+	}
+	if !doc.Valid || len(doc.Problems) != 0 || !found {
+		t.Fatalf("valid=%v problems=%+v warnings=%+v", doc.Valid, doc.Problems, doc.Warnings)
+	}
+}
+
 // TestValidateNotesAnthropicKeyNeededOffline (design
 // docs/design/project-centric.md §6.1): a pin that goes direct to Anthropic
 // needs the Anthropic key, and validate says so offline -- whether the secret

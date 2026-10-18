@@ -339,6 +339,14 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	for _, name := range config.OpenProviders(claimed) {
 		warnings = append(warnings, config.Problem{Path: "providers." + name, Message: claimed[name].OpenToEveryRepoReason()})
 	}
+	// The naming convention (owner ruling of 2026-10-18): a provider's key is
+	// named after its entry, <provider>-api-key. A key stored under any other
+	// name keeps working — nothing is renamed and nothing is migrated — so
+	// this is a warning, never a problem: the file stays valid, and the line
+	// names the entry, the name the key has and the name the convention gives
+	// it. The conventional name stays reserved for that provider either way
+	// (config.ReservedProviderSecret, which the write paths enforce).
+	warnings = append(warnings, config.ProviderSecretWarnings(claimed)...)
 	problems = append(problems, config.CheckProviderAuth(cfg.Agent, claimed)...)
 	agent := cfg.Agent
 	agent.Models.Background = config.EffectiveBackground(agent, claimed)

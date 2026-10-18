@@ -678,7 +678,7 @@ func TestInitNeverPromptsForWorkflowDeclaredClaudeOAuthName(t *testing.T) {
 	}
 }
 
-// TestAllowedClaudeOAuthMountsDropsDisallowedNames is a surgical,
+// TestAllowedHarnessOAuthMountsDropsDisallowedNames is a surgical,
 // bypass-the-YAML-pipeline unit test of resolve()'s defense-in-depth
 // filter: config.Validate is supposed to stop infra.SecretMounts from ever
 // carrying a claude-oauth-token-<name> entry a workflow declared itself
@@ -686,28 +686,46 @@ func TestInitNeverPromptsForWorkflowDeclaredClaudeOAuthName(t *testing.T) {
 // to end), but this filter must not assume that upstream refusal ran —
 // constructing the mounts slice directly, as SecretMounts would return it
 // for an (otherwise impossible, post-Validate) workflow secret of that
-// shape, proves the filter itself drops it independently.
-func TestAllowedClaudeOAuthMountsDropsDisallowedNames(t *testing.T) {
+// shape, proves the filter itself drops it independently. The Codex names
+// (codex-oauth-token, reserved ahead of the harness) and the name reserved
+// for a configured provider's key are dropped by the same filter, and the
+// provider's *own* key mount (the conventional name, actually in use) is
+// kept.
+func TestAllowedHarnessOAuthMountsDropsDisallowedNames(t *testing.T) {
 	accounts := map[string]config.ClaudeAccount{
 		"acme-personal": {AllowDataTo: []string{"acme/app"}},
 		"other-team":    {AllowDataTo: []string{"acme/other"}}, // not acme/app
 	}
+	providers := map[string]config.ModelProvider{
+		// Its key IS the conventional name: the mount SecretMounts builds for
+		// it must survive the filter.
+		"openrouter": {Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/app"}},
+		// Its key is not: `deepseek-api-key` is reserved for it and belongs to
+		// no mount of anyone else's.
+		"deepseek": {Kind: config.ModelProviderKind, BaseURL: "https://api.deepseek.com/anthropic", Auth: "bearer",
+			Secret: "ds-key", Models: []string{"qwen/*"}, AllowDataTo: []string{"acme/app"}},
+	}
 	mounts := []infra.SecretMount{
 		{Logical: "github-app-key", Env: "FUGARO_GITHUB_APP_PRIVATE_KEY"},
 		{Logical: "claude-oauth-token", Env: "CLAUDE_CODE_OAUTH_TOKEN"},
-		{Logical: "claude-oauth-token-acme-personal", Env: "SHOULD_NOT_APPEAR"}, // allowed
-		{Logical: "claude-oauth-token-other-team", Env: "FOO_TOKEN"},            // configured, not allowed here
-		{Logical: "claude-oauth-token-nobody", Env: "BAR_TOKEN"},                // not configured at all
-		{Logical: "npm-token", Env: "NPM_TOKEN"},                                // an ordinary workflow secret, untouched
+		{Logical: "claude-oauth-token-acme-personal", Env: "SHOULD_NOT_APPEAR"},        // allowed
+		{Logical: "claude-oauth-token-other-team", Env: "FOO_TOKEN"},                   // configured, not allowed here
+		{Logical: "claude-oauth-token-nobody", Env: "BAR_TOKEN"},                       // not configured at all
+		{Logical: "codex-oauth-token", Env: "CODEX_TOKEN"},                             // reserved: no Codex harness
+		{Logical: "codex-oauth-token-acme", Env: "CODEX_ACME_TOKEN"},                   // reserved: not a workflow's
+		{Logical: "deepseek-api-key", Env: "DS_TOKEN"},                                 // reserved for deepseek's key
+		{Logical: "openrouter-api-key", Env: "FUGARO_PROVIDER_KEY_OPENROUTER_API_KEY"}, // openrouter's own key
+		{Logical: "npm-token", Env: "NPM_TOKEN"},                                       // an ordinary workflow secret, untouched
 	}
-	got := allowedClaudeOAuthMounts(accounts, "acme/app", mounts)
+	got := allowedHarnessOAuthMounts(&localcfg.Config{ClaudeAccounts: accounts, Providers: providers}, "acme/app", mounts)
 	var logicals []string
 	for _, m := range got {
 		logicals = append(logicals, m.Logical)
 	}
-	want := []string{"github-app-key", "claude-oauth-token", "claude-oauth-token-acme-personal", "npm-token"}
+	want := []string{"github-app-key", "claude-oauth-token", "claude-oauth-token-acme-personal", "openrouter-api-key", "npm-token"}
 	if strings.Join(logicals, ",") != strings.Join(want, ",") {
-		t.Fatalf("allowedClaudeOAuthMounts = %v, want %v", logicals, want)
+		t.Fatalf("allowedHarnessOAuthMounts = %v, want %v", logicals, want)
 	}
 }
 

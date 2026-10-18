@@ -78,6 +78,29 @@ func doctorOpenProvidersCheck(lc *localcfg.Config) *doctorCheck {
 		Fix:     "to narrow it, list the repositories in that provider's allow_data_to and run " + selfCommand() + " init --repo in each one (a deployed job keeps the key's mount and the routes it was applied with until then)"}
 }
 
+// doctorProviderSecretNamesCheck is doctor's "provider-secret-name" finding:
+// every provider of the local config whose key is not stored under the name
+// the convention gives it (<provider>-api-key, providerSecretConvention in
+// internal/config). Informational, like doctorOpenProvidersCheck and for the
+// same reason: the state is the owner's and it is valid — the key works, and
+// nothing is renamed or migrated (the owner's ruling of 2026-10-18) — so this
+// only makes the difference visible, and it never fails doctor, --strict
+// included. It reads the local config alone: no cloud call, no value.
+func doctorProviderSecretNamesCheck(lc *localcfg.Config) *doctorCheck {
+	var lines []string
+	for _, name := range slices.Sorted(maps.Keys(lc.Providers)) {
+		if msg := config.SecretNameOffConvention(name, lc.Providers[name]); msg != "" {
+			lines = append(lines, "provider "+pluginwire.Printable(name)+" "+msg)
+		}
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	return &doctorCheck{ID: "provider-secret-name", Severity: "info",
+		Problem: strings.Join(lines, "; "),
+		Fix:     "rename nothing: a name the platform already stores keeps working. Name a *new* provider's key <provider>-api-key, and note the conventional name is reserved for that provider, so no workflow secret can be stored under it"}
+}
+
 // cliVersionCheck is doctor's "cli-version" check: whether this binary is
 // the latest stable fugaro release. Unlike the background nag
 // (warnUpdateAvailable), it always attempts the (cached, bounded) lookup
@@ -294,6 +317,9 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, *c)
 	}
 	if c := doctorOpenProvidersCheck(lc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
+	if c := doctorProviderSecretNamesCheck(lc); c != nil {
 		o.Checks = append(o.Checks, *c)
 	}
 	// The checkout and its fugaro.yaml are resolved here, before the policy
