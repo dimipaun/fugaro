@@ -842,6 +842,65 @@ test('the privacy page states what is collected in the state the site is built i
   assert.match(on, new RegExp(CONSENT_KEY), 'the privacy page does not say where the choice is stored')
 })
 
+/**
+ * The options of the site's one `gtag('config', …)` call, as the script writes them: read out
+ * of the file rather than assumed, because the point of the case below is that the privacy
+ * page and the call move together.
+ */
+function configOptions(source) {
+  const call = /gtag\(\s*'config'\s*,\s*id\s*,\s*\{([^}]*)\}\s*\)/.exec(source)
+  assert.ok(call, "the site's script makes no `gtag('config', id, {…})` call this reader can find, so the page's stated defaults have nothing to be held to")
+  const options = new Map()
+  for (const m of call[1].matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(true|false)/g)) options.set(m[1], m[2] === 'true')
+  return options
+}
+
+test("the privacy defaults the page states are the ones the site's script makes", () => {
+  const text = textOf(parse(pageOf(SHIPPED, 'privacy/index.html')))
+  const script = readFileSync(path.join(DIST, SITE_SCRIPT.replace(/^\//, '')), 'utf8')
+  const options = configOptions(script)
+
+  // Both directions, because either half can drift out from under the other: an option the
+  // script sets is a sentence the page owes the reader, and an option the script stops setting
+  // is a sentence the page may not keep. The pair is the whole of what the call sets, so a
+  // third option fails here until the page discloses it — which is the only way a setting can
+  // reach the measurement without the statement changing with it.
+  assert.deepEqual(
+    [...options].sort(),
+    [
+      ['allow_ad_personalization_signals', false],
+      ['allow_google_signals', false],
+    ],
+    "the script's config call sets an option this case does not hold the privacy page to: add the sentence that discloses it, or take the option out (W3.2)",
+  )
+  assert.match(text, /Google Signals/i, 'the script turns Google Signals off and the privacy page no longer says so')
+  assert.match(text, /ads personalisation off/i, 'the script turns ads personalisation off and the privacy page no longer says so')
+
+  // The two defaults whose other half is the script's text rather than its options table.
+  assert.match(text, /one page view per page/i, 'the privacy page no longer says how much is asked for')
+  assert.ok(
+    !/gtag\(\s*['"]event['"]/.test(script),
+    "the script queues an `event` call and the privacy page says one page view per page is all it asks for",
+  )
+  assert.match(text, /no user id/i, 'the privacy page no longer says it sends no user id')
+  assert.ok(
+    !/user_id|user_pseudo_id/.test(script),
+    'the script names a user id and the privacy page says it sends none: the page is the claim and this file is the fact',
+  )
+
+  // And the vendor the page names: the gate loads from the origin the banner's own markup
+  // carries, so the origin has to be Google's while the page says Google Analytics. A gate
+  // pointed at another vendor would leave the page's first sentence standing and untrue.
+  const banner = findAll(parse(pageOf(SHIPPED, 'index.html')), (el) => el.attrs.has('data-analytics-origin'))[0]
+  assert.ok(banner, 'the built home page carries no banner configuration to read the gate\'s origin from')
+  const origin = banner.attrs.get('data-analytics-origin')
+  assert.match(
+    origin,
+    /^https:\/\/[a-z0-9.-]*google[a-z0-9.-]*\.(?:com|com\.[a-z]{2})$/,
+    `the gate loads its script from ${origin} while the privacy page names Google Analytics: the name and the origin have to be the same vendor (W3.2)`,
+  )
+})
+
 test('the claims the privacy page makes about the site are held to the artifact', () => {
   for (const page of [...SHIPPED]) {
     for (const el of walk(parse(page.html))) {

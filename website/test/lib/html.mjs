@@ -379,11 +379,6 @@ export function servedFile(dist, pathname) {
 
 // ---- site.yaml, the part the gates need --------------------------------------------------
 
-/**
- * `allowed_hosts`, `canonical_url` and `analytics.enabled` from site.yaml. A strict reader
- * of exactly those three keys: the Go boundary test pins their shape (bare lowercase hosts,
- * a quoted-or-bare URL, a boolean), and anything else in their place is refused.
- */
 /** The Content-Security-Policy `firebase.json` serves, as one string (W3.2). */
 export function deployedCSP(repo = REPO) {
   const config = JSON.parse(readFileSync(path.join(repo, 'firebase.json'), 'utf8'))
@@ -393,6 +388,20 @@ export function deployedCSP(repo = REPO) {
   return csp.value
 }
 
+/**
+ * The four facts the gates need from site.yaml: `canonical_url` (and the host it names),
+ * `allowed_hosts`, `analytics.enabled` and `analytics.measurement_id`. A strict reader of
+ * exactly those keys — the Go boundary test pins their shape (bare lowercase hosts, a
+ * quoted-or-bare URL, a boolean, a quoted id) and anything else in their place is refused
+ * here rather than read as something it is not.
+ *
+ * `analyticsMeasurementID` is the property the site reports to, and it is **empty while the
+ * flag is off**: the two move together (the boundary test holds them to it), and it requires
+ * a **quoted** `measurement_id` — the id is a string a browser would stringify anyway, and an
+ * unquoted one is refused rather than turned into a number or a boolean by a YAML reader.
+ * A test that reads the built page's own configuration compares it with this rather than with
+ * a literal of its own, so the value lives in site.yaml alone (W3.2).
+ */
 export function siteFacts(siteYAML = readFileSync(path.join(SITE, 'data', 'site.yaml'), 'utf8')) {
   const lines = siteYAML.split('\n')
   const canonical = lines.map((l) => /^canonical_url:\s*"?([^"\s#]+)"?\s*(#.*)?$/.exec(l)).find(Boolean)
@@ -421,9 +430,6 @@ export function siteFacts(siteYAML = readFileSync(path.join(SITE, 'data', 'site.
     canonicalHost: canonicalURL.host,
     allowedHosts: new Set(hosts),
     analyticsEnabled: enabled[1] === 'true',
-    // The property the site reports to, empty while the flag is off: the two move together
-    // (the boundary test holds them to it), and a test that reads the built page's own
-    // configuration compares it with this rather than with a literal of its own (W3.2).
     analyticsMeasurementID: id[1],
   }
 }
