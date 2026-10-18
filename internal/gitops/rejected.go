@@ -128,11 +128,21 @@ const workflowRoot = ".github/workflows"
 
 // The check reads every commit of the range, not the net diff at its ends,
 // so a workflow file an early commit changed and a later one put back still
-// counts. One shape is left to GitHub's own refusal: a workflow change made
-// only in a merge commit's conflict resolution, which merges are skipped
-// for (a merge brings the base branch's own commits with it, and their
-// changes are not the run's).
+// counts. A merge counts for what its own tree changes against every one of
+// its parents (git log -c): a clean merge of the base branch changes nothing
+// the base did not, and a change made only in a merge — an evil merge, a
+// conflict resolution — is the run's.
 //
+// The checkout's refs and configuration are the agent's, so nothing it can
+// set decides what is read: every commit of the range is walked whatever
+// the paths (--full-history: by default git log drops the side of a merge
+// that leaves the paths as one parent had them, so a commit behind a
+// `merge -s ours` would go unread), a root commit is diffed against the
+// empty tree whatever log.showRoot says, a submodule standing at the
+// directory is reported whatever diff.ignoreSubmodules says, refs/replace/
+// cannot stand a harmless commit in for the one that is pushed, and the
+// directory is matched without regard to case (a case variant is refused
+// rather than argued about: no real repository needs one).
 // WorkflowFiles lists, sorted, the files under .github/workflows/ that the
 // commits since changed. since is the commit the run was cut from — the
 // task's ref as bootstrap read it for a first run, the commit a follow-up
@@ -190,16 +200,16 @@ func (r *Repo) WorkflowFilesInExcept(ctx context.Context, since, except, until s
 }
 
 // workflowFiles lists, sorted and without duplicates, the files under
-// .github/workflows/ changed by the commits of since..until that except —
-// when it names a revision — does not have. Merge commits are skipped: a
-// merge of the base branch changes what the base branch changed.
+// .github/workflows/ (in any case) changed by the commits of since..until
+// that except — when it names a revision — does not have, a merge for what
+// it changes against all of its parents.
 func (r *Repo) workflowFiles(ctx context.Context, since, until, except string) ([]string, error) {
-	revs := []string{"log", "--format=", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-merges",
-		"--end-of-options", since + ".." + until}
+	revs := []string{"--no-replace-objects", "log", "--format=", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv",
+		"-c", "--full-history", "--root", "--ignore-submodules=none", "--end-of-options", since + ".." + until}
 	if except != "" {
 		revs = append(revs, "^"+except)
 	}
-	revs = append(revs, "--", workflowRoot)
+	revs = append(revs, "--", ":(icase)"+workflowRoot)
 	out, err := r.gitRaw(ctx, revs...)
 	if err != nil {
 		if except == "" {
@@ -214,7 +224,7 @@ func (r *Repo) workflowFiles(ctx context.Context, since, until, except string) (
 	seen := make(map[string]bool)
 	var files []string
 	for _, f := range strings.Split(string(out), "\x00") {
-		if f != workflowRoot && !strings.HasPrefix(f, WorkflowDir) {
+		if !strings.EqualFold(f, workflowRoot) && !hasPrefixFold(f, WorkflowDir) {
 			continue
 		}
 		if !seen[f] {
@@ -224,6 +234,11 @@ func (r *Repo) workflowFiles(ctx context.Context, since, until, except string) (
 	}
 	slices.Sort(files) // a commit's own files come sorted, the commits do not
 	return files, nil
+}
+
+// hasPrefixFold is strings.HasPrefix without regard to ASCII case.
+func hasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
 }
 
 // MaxBundleBytes caps the bundle of a run's work that is saved.

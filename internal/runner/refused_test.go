@@ -108,6 +108,30 @@ func TestWorkflowChangesOnTheRunsOwnRefAreRefused(t *testing.T) {
 			"git mv pipeline.yml .github/workflows/pipeline.yml && git commit -qm 'Move it in'",
 			".github/workflows/pipeline.yml", ".github/workflows/console-tests.yml",
 		},
+		{
+			// The base branch is only ever subtracted, and the agent's git
+			// can repoint its local copy at the run's own tip: what is
+			// subtracted is the base as the remote has it.
+			"with the local base repointed at the run's tip",
+			"echo 'on: pull_request' >> .github/workflows/console-tests.yml && git commit -qam 'Edit CI' && git update-ref refs/remotes/origin/main HEAD",
+			".github/workflows/console-tests.yml", ".github/workflows/console-release.yml",
+		},
+		{
+			"a commit a later one undoes",
+			"echo 'on: pull_request' >> .github/workflows/console-tests.yml && git commit -qam 'Edit CI' && git revert --no-edit HEAD >/dev/null",
+			".github/workflows/console-tests.yml", ".github/workflows/console-release.yml",
+		},
+		{
+			"behind a merge that keeps the run's side",
+			"b=$(git branch --show-current) && git checkout -qb side && echo 'on: pull_request' >> .github/workflows/console-tests.yml && " +
+				"git commit -qam 'Edit CI' && git checkout -q \"$b\" && git merge -q -s ours side -m m",
+			".github/workflows/console-tests.yml", ".github/workflows/console-release.yml",
+		},
+		{
+			"mode only",
+			"git update-index --chmod=-x .github/workflows/console-release.yml && git commit -qm 'chmod'",
+			".github/workflows/console-release.yml", ".github/workflows/console-tests.yml",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

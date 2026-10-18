@@ -49,12 +49,8 @@ func (r *run) workBase() string {
 	return r.baseRef()
 }
 
-// baseRef is the base branch as the checkout sees it. It is only ever the
-// second half of a comparison — the base branch's own commits, which a run
-// that merged or rebased it in carries but did not make — never the bound
-// that decides what the run changed: it is a ref the agent's own git could
-// repoint, while the run's own side of that comparison is a commit read
-// before the agent ran.
+// baseRef is the base branch as the checkout sees it: the bound a run
+// without a start commit falls back to (workBase).
 func (r *run) baseRef() string {
 	return "origin/" + r.cfg.Git.BaseBranch
 }
@@ -65,21 +61,36 @@ func (r *run) baseRef() string {
 // start commit (startErr) the base branch is all there is to measure
 // against, as before.
 func (r *run) runCommits(ctx context.Context) (int, error) {
-	since, except := r.guardBounds()
+	since, except := r.guardBounds(ctx)
 	return r.repo.CommitsAhead(ctx, since, except)
 }
 
 // guardBounds are the two revisions the run's own work is read between: the
 // commit the run was cut from (workBase), and the base branch, whose own
 // commits are the base's even when the agent merged or rebased them in.
-// They are the same revision for a start that has no start commit (startErr:
-// workBase falls back to the base branch), and then only one bound is left.
-func (r *run) guardBounds() (since, except string) {
-	since, except = r.workBase(), r.baseRef()
-	if since == except {
-		except = ""
+//
+// The base branch is read from the remote, as a commit SHA, at the moment
+// of the check — never the checkout's origin/<base>, which the agent's own
+// git can repoint (at the run's own tip, say, which would subtract every
+// commit the run made and pass any workflow change). It can only ever make
+// the list shorter, so when the remote cannot say, or the checkout lacks the
+// commit it names (the agent never brought that base in), it is left out and
+// the comparison is the stricter one against the start commit alone. For a
+// start that has no start commit (startErr: workBase falls back to the base
+// branch) there is only the one bound.
+func (r *run) guardBounds(ctx context.Context) (since, except string) {
+	since = r.workBase()
+	if since == r.baseRef() {
+		return since, ""
 	}
-	return since, except
+	tip, err := r.repo.RemoteTip(ctx, r.cfg.Git.BaseBranch)
+	if err != nil || !gitops.IsFullSHA(tip) {
+		if err != nil {
+			r.d.Log.Warn("reading the base branch on origin failed; the run's work is measured against the commit it was cut from alone", "err", r.redact(err.Error()))
+		}
+		return since, ""
+	}
+	return since, tip
 }
 
 // workflowGuard returns the refusal GitHub is certain to give, without the
@@ -95,7 +106,7 @@ func (r *run) workflowGuard(ctx context.Context) *gitops.PushRejected {
 	if r.providerKind != gitprov.KindGitHub {
 		return nil
 	}
-	since, except := r.guardBounds()
+	since, except := r.guardBounds(ctx)
 	files, err := r.repo.WorkflowFilesExcept(ctx, since, except)
 	return r.workflowRefusal(files, err)
 }
@@ -114,7 +125,7 @@ func (r *run) workflowGuardAt(ctx context.Context, since, until string) *gitops.
 	if r.providerKind != gitprov.KindGitHub {
 		return nil
 	}
-	if _, except := r.guardBounds(); except != "" {
+	if _, except := r.guardBounds(ctx); except != "" {
 		files, err := r.repo.WorkflowFilesInExcept(ctx, since, except, until)
 		return r.workflowRefusal(files, err)
 	}

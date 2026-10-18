@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -374,6 +375,11 @@ func TestCommitsAheadCountsOnlyTheRunsOwnCommits(t *testing.T) {
 	if n, err := repo.CommitsAhead(ctx, start, ""); err != nil || n != 2 {
 		t.Fatalf("CommitsAhead without a base = %d, %v; want 2", n, err)
 	}
+	// A base commit the checkout does not have (origin names a tip the
+	// agent never fetched) subtracts nothing rather than failing finalize.
+	if n, err := repo.CommitsAhead(ctx, start, "1111111111111111111111111111111111111111"); err != nil || n != 2 {
+		t.Fatalf("CommitsAhead with a base the checkout lacks = %d, %v; want 2", n, err)
+	}
 }
 
 func TestBundleHoldsOnlyTheRunsCommits(t *testing.T) {
@@ -668,5 +674,76 @@ func TestWorkflowFilesSinceAFollowUpStart(t *testing.T) {
 	}
 	if got, _ := repo.WorkflowFiles(ctx, "origin/main"); len(got) != 1 {
 		t.Fatalf("since the base: %v", got)
+	}
+}
+
+// Every commit the push adds is read, whatever the agent does to hide one,
+// and whatever its own git configuration says: GitHub refuses a push for a
+// workflow change in any commit it adds, not only in the tip's tree. The
+// checkout's config and refs are the agent's, so each case is a way it
+// could make git leave a commit or a path out.
+func TestWorkflowFilesSeesWhatTheAgentHides(t *testing.T) {
+	const ci = ".github/workflows/ci.yml"
+	sh := func(t *testing.T, repo *Repo, script string) {
+		t.Helper()
+		cmd := exec.Command("sh", "-c", script)
+		cmd.Dir, cmd.Env = repo.Dir, repo.Environ()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v: %s", script, err, out)
+		}
+	}
+	cases := []struct {
+		name, script, want string
+	}{
+		{"mode only", "git update-index --chmod=-x " + ci + " && git commit -qm 'chmod'", ci},
+		{"changed, then reverted", "echo evil >> " + ci + " && git commit -qam w && git revert --no-edit HEAD >/dev/null", ci},
+		{"behind a merge that keeps one side", "git checkout -qb side && echo evil >> " + ci + " && git commit -qam w && " +
+			"git checkout -q fugaro/x && git merge -q -s ours side -m m", ci},
+		{"only in a merge's own tree", "git checkout -qb side && git commit -q --allow-empty -m s && git checkout -q fugaro/x && " +
+			"git commit -q --allow-empty -m mine && git merge -q --no-ff --no-commit side && echo x > .github/workflows/evil.yml && " +
+			"git add -A && git commit -qm m", ".github/workflows/evil.yml"},
+		{"in a root commit, with log.showRoot off", "git config log.showRoot false && echo x > .github/workflows/evil.yml && git add -A && " +
+			"git reset -q --hard $(git commit-tree $(git write-tree) -m root)", ".github/workflows/evil.yml"},
+		{"under a replace ref", "echo evil >> " + ci + " && git commit -qam w && " +
+			"git replace HEAD $(git commit-tree HEAD~1^{tree} -p HEAD~1 -m fake)", ci},
+		{"a gitlink, with diff.ignoreSubmodules all", "git config diff.ignoreSubmodules all && git rm -rq --cached .github/workflows && " +
+			"git update-index --add --cacheinfo 160000,1111111111111111111111111111111111111111,.github/workflows && git commit -qm g", workflowRoot},
+		{"a case variant of the directory", "git update-index --add --cacheinfo 100644,$(git hash-object -w " + ci + "),.GitHub/Workflows/x.yml && " +
+			"git commit -qm c", ".GitHub/Workflows/x.yml"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo, _ := setup(t)
+			if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+				t.Fatal(err)
+			}
+			testutil.WriteFiles(t, repo.Dir, map[string]string{ci: "on: push\n"})
+			if _, err := repo.CommitAll(ctx, "a person's CI"); err != nil {
+				t.Fatal(err)
+			}
+			base, err := repo.HeadSHA(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sh(t, repo, c.script)
+			head, err := repo.HeadSHA(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, list := range map[string]func() ([]string, error){
+				"WorkflowFiles":         func() ([]string, error) { return repo.WorkflowFiles(ctx, base) },
+				"WorkflowFilesIn":       func() ([]string, error) { return repo.WorkflowFilesIn(ctx, base, head) },
+				"WorkflowFilesExcept":   func() ([]string, error) { return repo.WorkflowFilesExcept(ctx, base, base) },
+				"WorkflowFilesInExcept": func() ([]string, error) { return repo.WorkflowFilesInExcept(ctx, base, base, head) },
+			} {
+				got, err := list()
+				if err != nil {
+					t.Fatalf("%s: %v", name, err)
+				}
+				if !slices.Contains(got, c.want) {
+					t.Errorf("%s = %v, want it to name %s", name, got, c.want)
+				}
+			}
+		})
 	}
 }
