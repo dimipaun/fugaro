@@ -115,6 +115,7 @@ the app's source, four rules, each with an allow-list, a self-exemption and a
 | `reveal(` | `src/accounts/secret.js`, `src/accounts/secure-store.js` (and tests) | the material is handed to a store in exactly one place; a screen that reveals a token is one refactor from printing it |
 | `fugaro.account.` | `src/accounts/secure-store.js`, `src/accounts/settings.js` | a second module that knows the namespace can address an item |
 | `console.` | nothing (tests only) | D111's "never logged" is kept by having no logger |
+| an import path that resolves outside `mobile/` | nothing but `shared/` (D119) | the app does not build through the CLI's or the console's tree (D125); tests are scanned too |
 
 Each rule is mutation-proven — the bug was planted, the run went red, the bug
 was removed. The mutations, in the order they were run:
@@ -140,6 +141,10 @@ was removed. The mutations, in the order they were run:
 | the settings key fence stops exempting the account id | `every forbidden word is still a name the owner may give an installation`, `the owner may name an installation any word the alphabet allows` |
 | `closeCurrent` leaves `#current` set | both `closeCurrent` tests |
 | `closeCurrent` reports `changed` when nothing was open | `closing with nothing open is a no-op` |
+| `#read` hands out a stored tuple that fails validation | `a stored tuple that is malformed is refused on every read path, never handed out` |
+| the store's mutations stop queueing (`#serial` calls `fn` directly) | the two concurrent-`add`, switch-racing-removal and write-racing-removal tests |
+| `switchTo` closes only the account it recorded, not every open one | `a switch closes every account open in the registry, not only the one it recorded` |
+| an import of `../console/…` planted in `index.js` | `the app imports nothing outside mobile/ but the shared package` |
 | `closeCurrent` swallows a failed teardown | `a close whose teardown failed still leaves no account open` |
 | the settings word list regains `mac` | `a fence that refused the owner's own installation would be the wrong fence` |
 | the Keychain port hardcodes the accessibility instead of reading it from the module | three adapter tests |

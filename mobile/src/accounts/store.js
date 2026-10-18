@@ -84,6 +84,18 @@ export class AccountStore {
   #settings;
   #registry;
   #current = null;
+  /**
+   * The tail of the queue every MUTATING method runs on. Each of them awaits a
+   * store between its check and its act (`add` lists and then writes, `remove`
+   * forgets and then deletes, `switchTo` reads and then opens), so two of them
+   * interleaved could each pass the other's check: two entries for one
+   * installation, a removed account opened by a switch that read its tuple a
+   * moment earlier, or a secret written after `remove` forgot the account's
+   * items -- a credential with no owner. Running them one at a time makes each
+   * check and its act one step. Reads (`list`, `account`, `secret`, `items`)
+   * do not queue: they change nothing.
+   */
+  #queue = Promise.resolve();
 
   constructor({ secrets, settings, registry }) {
     if (secrets === null || typeof secrets !== 'object') throw new TypeError('a secret store is required');
@@ -92,6 +104,39 @@ export class AccountStore {
     this.#secrets = secrets;
     this.#settings = settings;
     this.#registry = registry;
+  }
+
+  /** Run `fn` after every mutation queued before it, and before any queued
+   * after it. A failure in one does not stall the queue. */
+  #serial(fn) {
+    const run = this.#queue.then(fn, fn);
+    this.#queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /**
+   * Close EVERY account the registry holds open, not only the one this store
+   * recorded as current. The registry is shared (a later task's reader is
+   * handed it), so an account opened on it behind this store's back would
+   * otherwise survive a switch -- two installations live at once, the state
+   * D114 forbids. Returns the first account whose teardown failed, if any,
+   * and the total failure count; leaves no account open and none current.
+   */
+  #closeEverything() {
+    let failedAccount = null;
+    let failures = 0;
+    for (const accountId of this.#registry.openAccounts()) {
+      const closed = this.#registry.close(accountId);
+      if (!closed.ok) {
+        failedAccount ??= accountId;
+        failures += closed.failures ?? 1;
+      }
+    }
+    this.#current = null;
+    return { failedAccount, failures };
   }
 
   static #keyOf(accountId) {
@@ -149,6 +194,10 @@ export class AccountStore {
    * which is D114's "non-overlapping" broken in the quiet direction.
    */
   async add(value) {
+    return this.#serial(() => this.#add(value));
+  }
+
+  async #add(value) {
     const valid = validateAccount(value);
     if (!valid.ok) return valid;
     const { account } = valid;
@@ -170,6 +219,10 @@ export class AccountStore {
    * then the tuple (see the header for why that order).
    */
   async remove(accountId) {
+    return this.#serial(() => this.#remove(accountId));
+  }
+
+  async #remove(accountId) {
     const held = await this.#read(accountId);
     if (!held.ok) return held;
     const forgotten = await this.#secrets.forget(accountId);
@@ -199,26 +252,28 @@ export class AccountStore {
    * with two installations live.
    */
   async switchTo(accountId) {
+    return this.#serial(() => this.#switchTo(accountId));
+  }
+
+  async #switchTo(accountId) {
     const held = await this.#read(accountId);
     if (!held.ok) return held;
-    if (this.#current === accountId && this.#registry.isOpen(accountId)) {
+    const open = this.#registry.openAccounts();
+    if (this.#current === accountId && open.length === 1 && open[0] === accountId) {
       return Object.freeze({ ok: true, changed: false, account: held.account });
     }
-    if (this.#current !== null) {
-      const previous = this.#current;
-      const closed = this.#registry.close(previous);
-      this.#current = null;
-      if (!closed.ok) {
-        // The previous account is closed (its listeners are stopped and its
-        // cache is empty) but something inside it failed. Opening the next one
-        // now would be the two-live-accounts state; refuse instead.
-        return Object.freeze({
-          ok: false,
-          code: STORE_CODES.TEARDOWN_FAILED,
-          accountId: previous,
-          failures: closed.failures,
-        });
-      }
+    const previous = this.#current;
+    const { failedAccount, failures } = this.#closeEverything();
+    if (failures > 0) {
+      // Every open account is closed (its listeners are stopped and its cache
+      // is empty) but something inside one failed. Opening the next one now
+      // would be the two-live-accounts state; refuse instead.
+      return Object.freeze({
+        ok: false,
+        code: STORE_CODES.TEARDOWN_FAILED,
+        accountId: previous ?? failedAccount,
+        failures,
+      });
     }
     const opened = this.#registry.open(accountId);
     if (!opened.ok) return opened;
@@ -228,12 +283,17 @@ export class AccountStore {
 
   /** Close the current account, leaving none open. */
   async closeCurrent() {
-    if (this.#current === null) return Object.freeze({ ok: true, changed: false });
+    return this.#serial(() => this.#closeCurrent());
+  }
+
+  #closeCurrent() {
+    if (this.#current === null && this.#registry.openAccounts().length === 0) {
+      return Object.freeze({ ok: true, changed: false });
+    }
     const previous = this.#current;
-    const closed = this.#registry.close(previous);
-    this.#current = null;
-    if (!closed.ok) {
-      return Object.freeze({ ok: false, code: STORE_CODES.TEARDOWN_FAILED, accountId: previous, failures: closed.failures });
+    const { failedAccount, failures } = this.#closeEverything();
+    if (failures > 0) {
+      return Object.freeze({ ok: false, code: STORE_CODES.TEARDOWN_FAILED, accountId: previous ?? failedAccount, failures });
     }
     return Object.freeze({ ok: true, changed: true });
   }
@@ -244,6 +304,10 @@ export class AccountStore {
    * does not list is a credential with no owner.
    */
   async setSecret(accountId, item, value) {
+    return this.#serial(() => this.#setSecret(accountId, item, value));
+  }
+
+  async #setSecret(accountId, item, value) {
     const held = await this.#read(accountId);
     if (!held.ok) return held;
     if (!isSecretItem(item)) return refuse('unknown-item', 'item');

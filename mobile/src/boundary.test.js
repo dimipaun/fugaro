@@ -45,7 +45,7 @@
 
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import test from 'node:test';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -176,3 +176,73 @@ function control(rule) {
       return "console.log('x')";
   }
 }
+
+// **Rule 5: the app imports nothing from the CLI or the console.** D125 makes
+// the app its own artifact, and D119 gives it exactly one sibling it may reach:
+// the top-level pure-logic package `shared/`. An import that resolves anywhere
+// else outside `mobile/` -- `console/`, `internal/`, `cmd/`, `website/` -- is
+// the build coupling D119 and D125 rule out, so every relative or absolute
+// specifier is resolved and judged by where it lands.
+
+/** Every module specifier a file's code names: static imports, re-exports,
+ * side-effect imports, dynamic imports and `require`. */
+function specifiers(text) {
+  const src = code(text);
+  const found = [];
+  for (const re of [
+    /\b(?:import|export)\s[^'"`;]*?\bfrom\s*['"]([^'"]+)['"]/g,
+    /\bimport\s*['"]([^'"]+)['"]/g,
+    /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+  ]) {
+    for (const match of src.matchAll(re)) found.push(match[1]);
+  }
+  return found;
+}
+
+/** The specifiers in `file` (app-relative) that leave `mobile/` for anywhere
+ * but `shared/`. */
+function escapes(file, text) {
+  const repo = join(ROOT, '..');
+  const bad = [];
+  for (const spec of specifiers(text)) {
+    const isPath = spec.startsWith('.') || spec.startsWith('/');
+    if (!isPath) continue; // a package name resolves into node_modules
+    const target = resolve(join(ROOT, dirname(file)), spec);
+    const inApp = target === ROOT || target.startsWith(ROOT + sep);
+    const sharedDir = join(repo, 'shared');
+    const inShared = target === sharedDir || target.startsWith(sharedDir + sep);
+    if (!inApp && !inShared) bad.push(`${file}: ${spec}`);
+  }
+  return bad;
+}
+
+test('the app imports nothing outside mobile/ but the shared package (D119, D125)', () => {
+  // Positive controls: each forbidden shape is flagged, in each import form.
+  for (const line of [
+    "import { x } from '../console/src/main.js';",
+    "export { x } from '../../internal/cli/x.js';",
+    "import '../cmd/fugaro/main.js';",
+    "const m = await import('../website/x.js');",
+    "const m = require('/etc/x.js');",
+  ]) {
+    assert.deepEqual(escapes('index.js', `${line}\n`), [`index.js: ${line.match(/['"]([^'"]+)['"]/)[1]}`], line);
+  }
+  // ... and the allowed ones are not: the app's own tree, the shared package,
+  // a package name, and a forbidden path that is only prose.
+  assert.deepEqual(
+    escapes(
+      'src/accounts/x.js',
+      "import a from './account.js';\nimport b from '../../../shared/url/index.js';\nimport c from 'expo';\n// import d from '../../../console/x.js';\n",
+    ),
+    [],
+  );
+
+  // Test files are scanned too (a test that imports the console couples the
+  // app's CI to it just the same); this file exempts itself, once, because
+  // its controls above are the forbidden specifiers written as strings.
+  const offenders = sourceFiles()
+    .filter((file) => file !== SELF)
+    .flatMap((file) => escapes(file, readFileSync(join(ROOT, file), 'utf8')));
+  assert.deepEqual(offenders, [], 'an import leaves the app for a sibling other than shared/');
+});

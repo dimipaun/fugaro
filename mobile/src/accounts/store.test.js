@@ -423,3 +423,118 @@ test('a stored tuple this module could not have written fails the whole list', a
   assert.equal(listed.ok, false);
   assert.equal(listed.code, STORE_CODES.UNREADABLE_ACCOUNT);
 });
+
+test('a stored tuple that is malformed is refused on every read path, never handed out', async () => {
+  // Each record below is valid JSON and passes the settings store's own
+  // fences, so only the account store's re-validation stands between it and
+  // a caller: an extra field, a missing field, a field of the wrong type and a
+  // padded field. (An extra field NAMED like an item is caught a layer earlier,
+  // by the settings store's key-word fence.)
+  const malformed = [
+    { ...PHONE, endpoint: 'https://example.invalid' },
+    { id: PHONE.id, firebaseProjectId: PHONE.firebaseProjectId, authUid: PHONE.authUid },
+    { ...PHONE, authUid: 2 },
+    { ...PHONE, fugaroProject: ' sandbox' },
+  ];
+  for (const record of malformed) {
+    const { store, settingsPort, registry } = makeStore();
+    await settingsPort.setItem(`${SETTINGS_KEY_PREFIX}${ACCOUNT_KEY_PREFIX}phone`, JSON.stringify(record));
+    const label = JSON.stringify(record);
+    assert.equal((await store.account('phone')).code, STORE_CODES.UNREADABLE_ACCOUNT, label);
+    assert.equal((await store.list()).code, STORE_CODES.UNREADABLE_ACCOUNT, label);
+    const switched = await store.switchTo('phone');
+    assert.equal(switched.code, STORE_CODES.UNREADABLE_ACCOUNT, label);
+    assert.equal(store.current(), null, label);
+    assert.deepEqual(registry.openAccounts(), [], label);
+    assert.equal((await store.secret('phone', 'idToken')).code, STORE_CODES.UNREADABLE_ACCOUNT, label);
+  }
+});
+
+test('two concurrent adds of one installation admit exactly one entry', async () => {
+  const { store } = makeStore();
+  const results = await Promise.all([store.add(LAPTOP), store.add({ ...LAPTOP, id: 'laptop-again' })]);
+  assert.deepEqual(
+    results.map((r) => r.ok).sort(),
+    [false, true],
+    'one add wins and the other is refused, whatever the interleaving',
+  );
+  assert.equal(results.find((r) => !r.ok).code, STORE_CODES.DUPLICATE_INSTALLATION);
+  assert.equal((await store.list()).accounts.length, 1);
+});
+
+test('a switch racing a removal never leaves the removed account open', async () => {
+  const { store, registry } = makeStore();
+  await store.add(LAPTOP);
+  await store.add(PHONE);
+  await store.switchTo('phone');
+  // The removal starts first; the switch to the same account is issued while
+  // the removal is still awaiting the stores.
+  const [removed, switched] = await Promise.all([store.remove('laptop'), store.switchTo('laptop')]);
+  assert.equal(removed.ok, true);
+  assert.equal(switched.ok, false, 'the switch sees the account already removed');
+  assert.equal(switched.code, STORE_CODES.UNKNOWN_ACCOUNT);
+  assert.equal(registry.isOpen('laptop'), false);
+  assert.notEqual(store.current(), 'laptop');
+  assert.deepEqual([...(await store.list()).accounts].map((a) => a.id), ['phone']);
+});
+
+test('a switch closes every account open in the registry, not only the one it recorded', async () => {
+  const trace = [];
+  const { store, registry } = makeStore({ trace });
+  await store.add(LAPTOP);
+  await store.add(PHONE);
+  // An account opened on the registry behind the store's back (a later
+  // task's reader, or a bug) must not survive the next switch.
+  registry.open('phone');
+  const stopped = [];
+  registry.add('phone', () => stopped.push('phone-listener'));
+
+  const switched = await store.switchTo('laptop');
+  assert.equal(switched.ok, true);
+  assert.deepEqual(stopped, ['phone-listener']);
+  assert.deepEqual(registry.openAccounts(), ['laptop']);
+  assert.deepEqual(trace.slice(-2), [
+    ['close', 'phone'],
+    ['open', 'laptop'],
+  ]);
+
+  // ... and closeCurrent leaves nothing open either.
+  registry.open('phone');
+  const closed = await store.closeCurrent();
+  assert.equal(closed.ok, true);
+  assert.deepEqual(registry.openAccounts(), []);
+  assert.equal(store.current(), null);
+});
+
+test('a secret written while the account is being removed leaves no orphan credential', async () => {
+  // The removal is held at its last step -- the tuple's delete -- after it has
+  // already forgotten the account's items. A write issued at that moment
+  // reads a tuple that is still there; unless it waits for the removal, it
+  // puts a credential in the Keychain for an account about to vanish.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let reachedDelete;
+  const atDelete = new Promise((resolve) => { reachedDelete = resolve; });
+  class HeldSettings extends MemorySettingsStore {
+    async deleteItem(key) {
+      reachedDelete();
+      await gate;
+      return super.deleteItem(key);
+    }
+  }
+  const secretPort = new MemorySecureStore();
+  const store = new AccountStore({
+    secrets: new SecretStore(secretPort),
+    settings: new SettingsStore(new HeldSettings()),
+    registry: new ResourceRegistry(),
+  });
+  await store.add(LAPTOP);
+  const removal = store.remove('laptop');
+  await atDelete;
+  const write = store.setSecret('laptop', 'idToken', secret('idToken', LAPTOP_TOKEN).secret);
+  release();
+  const [removed, written] = await Promise.all([removal, write]);
+  assert.equal(removed.ok, true);
+  assert.equal(written.ok, false, 'the write sees the account already removed');
+  assert.deepEqual(secretPort.keys(), [], 'no Keychain item outlives its account');
+});
