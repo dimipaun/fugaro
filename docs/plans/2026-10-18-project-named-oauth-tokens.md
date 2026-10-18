@@ -32,7 +32,7 @@ call, no secret read):
   the default account's needs an explicit `project_secrets:` entry
   (`internal/config/project_secrets.go:63-71`).
 - The agent's environment is an allow-list keyed on auth (`internal/agent/env.go:103-137`).
-- No launcher can read a secret value (`internal/backend/gcp/run.go:361-373`, `SECURITY.md:56`),
+- No launcher can read a secret value (`internal/backend/gcp/run.go:361-373`, `SECURITY.md:65`),
   and nothing under `internal/` calls `AccessSecretVersion`.
 - The policy's profile decoder refuses unknown fields and its rule is "a newer profile field bumps
   Version" (`internal/projectpolicy/policy.go:501-519`); `Version = 2`
@@ -226,7 +226,7 @@ read through the launcher's existing list permission, never a value), with
 `claude-accounts-stored`'s severity discipline (`internal/cli/doctor.go:1201-1279`). SECURITY.md
 gains design §6.1 (D8) — no launcher read; every run of an account's job holds its token; a
 hostile run can use it during its own run; the account is the blast radius; a stopgap pending the
-security service — and keeps `SECURITY.md:56`'s "only the job and build accounts hold" sentence.
+security service — and keeps `SECURITY.md:65`'s "only the job and build accounts hold" sentence.
 It ships here because the wording is the feature's cost.
 
 **Review (independent, opus):** does every §4.4 row refuse; can any path run an OAuth run on the

@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -122,12 +123,56 @@ func TestDocsBudgetTokenChannelCitationsExist(t *testing.T) {
 	if i < 0 || !strings.Contains(checklist, "| 60 | The sealed budget token") {
 		t.Fatalf("docs/gcp-live-checklist.md does not carry Check 60 for %s (its section and its summary row)", path)
 	}
+	// The section runs to the NEXT check's heading, not to the end of the
+	// file: the file holds every check, and a slice that ran on would let a
+	// later check's words answer for this one's — "run by you" and "NOT RUN"
+	// are in the heading of every check that has not run, Check 69a's and
+	// 69b's included, so two of these six assertions could not fail.
 	section := checklist[i:]
+	if j := strings.Index(section[1:], "\n## Check "); j >= 0 {
+		section = section[:j+1]
+	}
 	for _, want := range []string{"never `belong`", "run by you", "NOT RUN", "**No agent runs any step of this check**", "P=fugaro-dev", "never a token, a key"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 60 does not say %q", want)
 		}
 	}
+
+	// And the ROW above has to render as a row of the summary table, which a
+	// substring match cannot see: every check's row is one line of one GFM
+	// table, and a blank line inside that table ends it — everything below the
+	// gap then renders as literal text beside the table, so a check's row (and
+	// every row after it) stops being a row at all while the strings this test
+	// greps for are still in the file. A blank line between two check rows is
+	// therefore its own failure, and this is the file-wide scan for one: the
+	// table has no such gap today, and the check these assertions are about is
+	// the one whose row lost its table when it appeared.
+	assertCheckRowsAreOneTable(t, "docs/gcp-live-checklist.md", checklist)
+}
+
+// assertCheckRowsAreOneTable refuses a blank line that sits between two rows of
+// the live checklist's summary table — the shape that silently ends a GFM table
+// and turns every row below the gap into plain text.
+func assertCheckRowsAreOneTable(t *testing.T, path, doc string) {
+	t.Helper()
+	lines := strings.Split(doc, "\n")
+	row := regexp.MustCompile(`^\| [0-9]+[a-z]? \| `)
+	for i := 1; i+1 < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "" || !row.MatchString(lines[i-1]) || !row.MatchString(lines[i+1]) {
+			continue
+		}
+		t.Errorf("%s:%d: a blank line between the check rows %q and %q ends the summary table, so every row below the gap renders as literal text instead of a table row",
+			path, i+1, firstField(lines[i-1]), firstField(lines[i+1]))
+	}
+}
+
+// firstField is a table row's first cell — the check's number — for a message
+// that names the two rows the gap is between.
+func firstField(row string) string {
+	if cells := strings.Split(row, "|"); len(cells) > 1 {
+		return strings.TrimSpace(cells[1])
+	}
+	return row
 }
 
 // TestDocsSecurityMdPointsAtTheTokenChannelDesign: the trust model's reader can

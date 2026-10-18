@@ -1313,7 +1313,11 @@ produced (out), and files an operator handed to a model-driven job (in).
    - **the run's own auth route**, whenever any of the run's models is *not*
      claimed by one of those providers: `Google Vertex AI` under `agent.auth`
      `vertex` (the default), `Anthropic (direct)` under `api-key`, and
-     `Anthropic (oauth token)` under `oauth`.
+     `Anthropic (claude-oauth-token)` under `oauth` — the label names the secret
+     the token is stored under (`config.ClaudeOAuthToken`), because a bare
+     "oauth token" names a credential the owner cannot find and cannot tell
+     from the next harness's (`config.CodexOAuthToken`, owner ruling of
+     2026-10-18).
 
    **The correction the review asked for:** `lc.Providers` is documented as
    **"the non-Anthropic backends models may be routed to"**
