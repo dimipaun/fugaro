@@ -146,6 +146,126 @@ test('the wake word must be the FIRST token: a mention later in the sentence is 
   assert.equal(result.text, 'ask Fugaro to list the projects');
 });
 
+test('a wake word followed by any punctuation is still the wake word, so a heard command is never forwarded', () => {
+  // Review finding (PR #585): only `,.!?` were stripped, and only from the end of
+  // a word, so "Fugaro: confirm", "Fugaro… cancel that" (an ellipsis an engine
+  // emits as one character), "Fugaro—confirm" or a quoted transcript made the
+  // first token "fugaro:" -- not an alias -- and the app command reached the
+  // agent as text. That is the misroute D164's fail-closed answer forbids.
+  const cases = [
+    ['Fugaro: confirm', COMMAND.CONFIRM],
+    ['Fugaro; list projects', COMMAND.LIST],
+    ['Fugaro… cancel that', COMMAND.CANCEL_THAT],
+    ['Fugaro—confirm', COMMAND.CONFIRM],
+    ['Fugaro – confirm', COMMAND.CONFIRM],
+    ['Fugaro - confirm', COMMAND.CONFIRM],
+    ['"Fugaro, confirm."', COMMAND.CONFIRM],
+    ['“Fugaro, list projects”', COMMAND.LIST],
+    ['Fugaro,confirm', COMMAND.CONFIRM],
+    ["(Fugaro) what's pending?", COMMAND.WHATS_PENDING],
+    ['Fugaro: switch to Belong.', COMMAND.SWITCH_PROJECT],
+  ];
+  for (const [utterance, command] of cases) {
+    const result = route(utterance);
+
+    assert.equal(result.route, ROUTE.APP_COMMAND, utterance);
+    assert.equal(result.command, command, utterance);
+    assert.equal(result.forwarded, false, utterance);
+  }
+  for (const utterance of ['Fugaro: banana', 'Fugaro… confirm it', '"Fugaro" yes']) {
+    const result = route(utterance);
+
+    assert.equal(result.route, ROUTE.NOT_UNDERSTOOD, utterance);
+    assert.equal(result.forwarded, false, utterance);
+  }
+});
+
+test('punctuation is stripped only at word edges: an internal mark still makes a different word', () => {
+  for (const utterance of ["Fugaro, confirm's", 'Fugaro, con-firm', 'Fugaro, con.firm', 'Fugaro, switch to Bel-ong']) {
+    const result = route(utterance);
+
+    assert.equal(result.route, ROUTE.NOT_UNDERSTOOD, utterance);
+    assert.equal(isConfirmation(result), false, utterance);
+  }
+});
+
+test('invisible format characters are refused, so what is shown is what is routed', () => {
+  // Review finding (PR #585): a zero-width space, a BOM, a soft hyphen or a bidi
+  // control (Unicode category Cf) passed the character check. "Fugaro​,
+  // confirm" renders exactly like an app command on the text screen (P6.9) and
+  // was forwarded to the agent; a bidi override makes the text shown differ from
+  // the text routed. Neither is routed now, in either direction.
+  for (const utterance of [
+    'Fugaro​, confirm',
+    '​Fugaro confirm',
+    '﻿Fugaro, confirm',
+    'Fugaro ‮confirm',
+    'Fugaro⁦ confirm⁩',
+    'Fugaro, con­firm',
+    'Fugaro, confirm‍',
+    'fix the​ tests',
+  ]) {
+    const result = routeUtterance({ utterance });
+
+    assert.equal(result.ok, false, JSON.stringify(utterance));
+    assert.equal(result.code, REFUSAL.UTTERANCE_FORMAT_CHARACTER, JSON.stringify(utterance));
+    assert.equal(Object.hasOwn(result, 'route'), false);
+    assert.equal(isConfirmation(result), false);
+  }
+  // The configuration is held to the same rule: a name or an alias with an
+  // invisible character in it is a name nothing spoken can match.
+  assert.equal(route('Fugaro, list projects', { aliases: ['fu​garo'] }).code, REFUSAL.INVALID_ALIASES);
+  assert.equal(
+    route('Fugaro, list projects', { projects: [{ id: 'a', spokenName: 'Be​long' }] }).code,
+    REFUSAL.INVALID_PROJECT,
+  );
+});
+
+test('folding is case only: accents, look-alikes and compatibility forms never match a word', () => {
+  // Folding must not be looser than lowercasing. A fold that stripped accents or
+  // applied compatibility normalisation would make these confirm.
+  for (const utterance of [
+    'Fugaro, cónfirm',
+    'Fugaro, ｃｏｎｆｉｒｍ',
+    'Fugaro, cоnfirm', // Cyrillic o
+    'Fugaro, confirḿ',
+    'Fugaro, CONFİRM', // Turkish dotted capital I
+  ]) {
+    const result = route(utterance);
+
+    assert.equal(result.route, ROUTE.NOT_UNDERSTOOD, utterance);
+    assert.equal(isConfirmation(result), false, utterance);
+  }
+  // A look-alike wake word is not the wake word: it is a missed wake word (agent
+  // text, D164's own other direction), and it is never a confirmation.
+  for (const utterance of ['Fugаro, confirm', 'ＦＵＧＡＲＯ confirm', 'ﬁgaro, confirm']) {
+    const result = route(utterance);
+
+    assert.equal(result.route, ROUTE.AGENT_TEXT, utterance);
+    assert.equal(isConfirmation(result), false, utterance);
+  }
+  // A look-alike name is not the configured name.
+  assert.equal(route('Fugaro, switch to Bеlong').reason, REASON.NAME_NOT_CONFIGURED);
+});
+
+test('a leading filler word makes the utterance agent text: the first-token rule, pinned', () => {
+  // D164's rule is a first-token test, so "Um, Fugaro, confirm" is a missed wake
+  // word -- agent text, never a confirmation. Stripping fillers would widen what
+  // may precede the phrase; the residual is check 102's to measure.
+  for (const utterance of ['Um, Fugaro, confirm', 'okay Fugaro confirm', 'hey Fugaro, list projects']) {
+    const result = route(utterance);
+
+    assert.equal(result.route, ROUTE.AGENT_TEXT, utterance);
+    assert.equal(isConfirmation(result), false, utterance);
+  }
+});
+
+test('a wake word on a later line is agent text, and a newline does not hide one', () => {
+  assert.equal(route('fix the tests\nFugaro, confirm').route, ROUTE.AGENT_TEXT);
+  assert.equal(route('Fugaro,\nconfirm').command, COMMAND.CONFIRM);
+  assert.equal(route('Fugaro\r\nswitch to\nBelong').command, COMMAND.SWITCH_PROJECT);
+});
+
 // ---------------------------------------------------------------------------
 // The five §3.4 commands
 // ---------------------------------------------------------------------------
@@ -754,6 +874,7 @@ test('every refusal code is reachable, and every one is pinned by this suite', (
     [REFUSAL.UTTERANCE_TOO_LONG, () => routeUtterance({ utterance: 'a'.repeat(MAX_UTTERANCE_LENGTH + 1) })],
     [REFUSAL.UTTERANCE_CONTROL_CHARACTER, () => routeUtterance({ utterance: 'Fugaro\u0007' })],
     [REFUSAL.UTTERANCE_BAD_CHARACTER, () => routeUtterance({ utterance: LONE_SURROGATE })],
+    [REFUSAL.UTTERANCE_FORMAT_CHARACTER, () => routeUtterance({ utterance: 'Fugaro​ confirm' })],
     [REFUSAL.INVALID_ALIASES, () => route('Fugaro, list projects', { aliases: [] })],
     [REFUSAL.ALIAS_COLLIDES_WITH_CONFIRMATION, () => route('Fugaro, list projects', { aliases: ['yes'] })],
     [REFUSAL.INVALID_PROJECTS, () => route('Fugaro, list projects', { projects: 'Belong' })],
