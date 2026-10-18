@@ -42,9 +42,12 @@ is still no dependency: nothing is installed, nothing is fetched. Note that P6.3
 the schema, and P6.4 has since carried it into
 `internal/budget/rules`' template: the mailbox subtree now gates the same field set —
 `mac` required on every message of every kind and on the heartbeat — and
-`TestMailboxRulesAgreeWithTheSharedSchema` holds the two artifacts' bounds together. What
-the rules still cannot do is check a tag's characters or its value: they hold no key
-(P6.7 does).
+`TestMailboxRulesAgreeWithTheSharedSchema` holds the two artifacts' bounds together, and
+`TestMailboxRulesCheckTheSchemasCharacters` holds the rules' character patterns to this
+module's own byte for byte. What the rules still cannot do — and cannot be made to do —
+is check a tag's **value**: they hold no key, the key is D171's and never passes through
+the database, so P6.7 (`fugaro mailbox`) is what verifies a tag rather than merely
+requiring a well-formed one.
 
 `command/` (P6.1) is the wake-word router and the app-command grammar: built, with its own tests and its own mutation proof; see `command/README.md`.
 

@@ -29,9 +29,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 )
 
-// The pairing identities. The `p~` prefix is P6.6's naming convention for the
-// uid it mints and nothing in the rules depends on it — the rules read the pu
-// claim — so this file uses plain uids and would pass with any others.
+// The pairing identities. They are `p~` uids because the rules now require one:
+// PAIRING reads the pu claim *and* tests `auth.uid.beginsWith('p~')`, so a pu
+// claim minted onto an account's or a device's uid opens no pairing node. P6.6
+// mints the claim and the `p~` uid together — that is the contract, and the
+// `beginsWith` half is why the uid's shape is part of the rules rather than a
+// naming convention nothing checks.
 const (
 	pairUid  = "p~alice-pairing"
 	pairUid2 = "p~bob-pairing"

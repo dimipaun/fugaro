@@ -612,10 +612,12 @@ func wordMacro(m string, depth int) (string, error) {
 		// for it on any other verb), and one of Git's two object-name lengths.
 		return fmt.Sprintf("(newData.parent().child('verb').val() == 'merge' && newData.isString() && (newData.val().length == %d || newData.val().length == %d) && newData.val().matches(%s))", MinShaLength, MaxShaLength, patternHex), nil
 	case "MACOK":
-		// A tag's shape: a string of exactly MAC_MAX characters. Not the
-		// characters themselves — see MaxMacLength — and never the value:
-		// verifying a tag needs the key, which is D171's, and the rules have
-		// none (P6.7 verifies; the rules can only require the field).
+		// A tag's shape: a string of exactly MAC_MAX characters, every one of
+		// them the schema's lowercase hex (HEX_PATTERN). The characters are
+		// checked; the *value* never is, and cannot be: verifying a tag needs
+		// the key, which is D171's and never passes through the database, so the
+		// rules can require a well-formed tag and nothing more (P6.7 is what
+		// verifies one).
 		return fmt.Sprintf("(newData.isString() && newData.val().length == %d && newData.val().matches(%s))", MaxMacLength, patternHex), nil
 	case "AGENTID":
 		// An agent id: the schema's identity, at most AGENT_MAX.
