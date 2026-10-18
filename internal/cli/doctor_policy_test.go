@@ -172,6 +172,13 @@ func TestDoctorPolicyChecks(t *testing.T) {
 	})
 
 	t.Run("a policy newer than the binary", func(t *testing.T) {
+		// The node is Version+1, a version projectpolicy.VersionSince has no row for
+		// (the table stops at the version this binary writes): doctor can meet
+		// this version through its own read, and a version above every row is
+		// answered with the remedy alone rather than with a release that is
+		// already installed — the naming half of the fix is pinned by
+		// TestDoctorNewerThanBinaryNamesTheReleaseThatIntroducedTheVersion
+		// below, on the version error itself.
 		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
 		db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version + 1})
 		c, ok := doctorChecksByID(t)["policy-newer-than-binary"]
@@ -180,6 +187,12 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 		if !strings.Contains(c.Problem, "upgrade Fugaro") {
 			t.Errorf("the check does not name the fix: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "upgrade Fugaro") {
+			t.Errorf("the fix line does not name the move at all: %+v", c)
+		}
+		if strings.Contains(c.Fix, policySince) {
+			t.Errorf("the fix names the release the policy model ships in (%s) for a node above this binary: %+v", policySince, c)
 		}
 	})
 
@@ -339,6 +352,9 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 		if !strings.Contains(c.Fix, "newer Fugaro") {
 			t.Errorf("the fix does not warn that the rules may be a newer release's, which this template would replace: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "fugaro >= "+policySince+" ") {
+			t.Errorf("the fix does not quote the release the policy model ships in (%s), a model-level fact: %+v", policySince, c)
 		}
 	})
 
@@ -589,7 +605,70 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Fix, "fugaro init --firebase") {
 			t.Errorf("the check does not name the fix that writes the marker: %+v", c)
 		}
+		// A model-level fix: the rules and the marker are the model's, so the
+		// release it quotes is policySince and never a row of the per-version
+		// table (projectpolicy.VersionSince), which answers a different question.
+		if !strings.Contains(c.Fix, "fugaro >= "+policySince+" ") {
+			t.Errorf("the fix does not quote the release the policy model ships in (%s): %+v", policySince, c)
+		}
 	})
+}
+
+// TestDoctorNewerThanBinaryNamesTheReleaseThatIntroducedTheVersion: doctor's
+// fix for a policy node written by a newer Fugaro must name the release that
+// introduced the version *on the node*, not the release the policy model
+// ships in. The two stopped being the same release when the version was
+// bumped to 2 for the profile gate (plan task 3.3): an 0.8.1 binary meeting a
+// version-2 node was told to "upgrade Fugaro" with 0.8.0 quoted beside it —
+// a release it already runs — and the operator had no way to tell which
+// release actually reads the node.
+//
+// The check is called on the version error rather than through doctor's own
+// read because no node can reach this branch with a version that has a table
+// row: a node above the version this binary writes is Version+1, and the
+// table deliberately has no row for a version no release has shipped. The
+// branch is reached in production by a binary of an older line — one that
+// understands version 1 meeting a version-2 node, which is exactly the state
+// the complaint is about — and the row for 2 is what that binary answers
+// from.
+//
+// Mutation (verified, run and restored): make policyTooNewFix return the
+// plain "upgrade Fugaro to a release that understands version %d" line — the
+// first subtest fails, finding no release named for a version the table
+// knows. Mutation: return policySince from it — the same subtest fails on the
+// release it must not name, and the "version 3" subtest fails too, naming
+// 0.8.0 for a version no row holds.
+func TestDoctorNewerThanBinaryNamesTheReleaseThatIntroducedTheVersion(t *testing.T) {
+	shared := projectpolicy.PathShared()
+
+	c := policyNewerThanBinaryCheck(&projectpolicy.VersionError{Found: 2, Understood: 1}, shared)
+	if c.ID != "policy-newer-than-binary" || c.Severity != "warning" {
+		t.Fatalf("check = %+v, want the policy-newer-than-binary warning", c)
+	}
+	if !strings.Contains(c.Fix, "fugaro 0.8.5") {
+		t.Errorf("the fix does not name the release that introduced version 2 (0.8.5): %+v", c)
+	}
+	if !strings.Contains(c.Fix, "version 2") || !strings.Contains(c.Fix, "upgrade Fugaro") {
+		t.Errorf("the fix does not say which version, and that the move is an upgrade: %+v", c)
+	}
+	if strings.Contains(c.Fix, policySince) {
+		t.Errorf("the fix names the release the policy model ships in (%s) for a node ahead of this binary: %+v", policySince, c)
+	}
+	if !strings.Contains(c.Problem, "the project policy is version 2") || !strings.Contains(c.Problem, "understands version 1") {
+		t.Errorf("the problem line does not carry both versions: %+v", c)
+	}
+
+	// A version no row names: no release is quoted for it, because every
+	// release this binary has heard of would be one the operator already runs.
+	c = policyNewerThanBinaryCheck(&projectpolicy.VersionError{Found: 99, Understood: 1}, shared)
+	if !strings.Contains(c.Fix, "upgrade Fugaro") || !strings.Contains(c.Fix, "version 99") {
+		t.Errorf("the fix for a version no release names does not say what to do: %+v", c)
+	}
+	for _, rel := range projectpolicy.VersionSince {
+		if strings.Contains(c.Fix, rel) {
+			t.Errorf("the fix names %s for a version no row holds: %+v", rel, c)
+		}
+	}
 }
 
 // TestDoctorPolicyChecksAreReadOnly: the five checks read the database and

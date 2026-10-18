@@ -8,6 +8,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -88,11 +89,22 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 	// A project job serves exactly its profile's provider: the provider is an
 	// axis of the job's name, and the runner binds the run's slug — computed
 	// with the repository's own provider — against the job it runs on. A
-	// repository on another provider (in phase 3: every Bitbucket repository,
-	// since no shared job serves bitbucket — design §4.5, D5 as amended, and
-	// internal/infra's ProjectJobs) stays on its per-repository job, decided
+	// repository on another provider stays on its per-repository job, decided
 	// here before any claim is taken or budget token minted.
-	if provider := e.repoProvider(spec.Repo, co); provider != pr.Provider {
+	//
+	// And a profile of a provider no shared job serves is no job at all, so a
+	// repository that selects one — its provider agrees with the profile's, and
+	// the runner is content because the policy defines the profile — stays on
+	// its per-repository job too. In phase 3 that is every Bitbucket profile:
+	// internal/infra's ProjectJobs skips one (a Bitbucket credential cannot be
+	// scoped to one project's repositories, the owner's ruling of 2026-10-15,
+	// so no shared job holds one), and infra.SharedJobProvider is the one place
+	// both sides read that fact. Without it this launch computed the name of a
+	// job no installation has, spent the claim and the budget token, and had
+	// Cloud Run answer 404 — the backend's missing job — for a repository that
+	// is supposed to keep the job it has always had (design §4.5, D5 as
+	// amended; docs/project-layer.md).
+	if provider := e.repoProvider(spec.Repo, co); provider != pr.Provider || !infra.SharedJobProvider(pr.Provider) {
 		return nil, nil
 	}
 	account, _ := config.ClaudeAccountOfSecrets(pr.Secrets)

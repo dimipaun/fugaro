@@ -1288,7 +1288,13 @@ func (c ManagedCover) managedGrant(rc ResourceChange) string {
 			return fmt.Sprintf("grants to %s, which is not a user or a group", m)
 		}
 	default:
-		return fmt.Sprintf("grants to %s, who is not on the review screen and is not a service account of the managed project", m)
+		// The lists the member has to be on are the installation's own — the
+		// launchers, operators and budget admins its configuration records
+		// (internal/cli's managedCover, the only place a ManagedCover is built)
+		// — and the refusal names them rather than a review screen, which a
+		// managed apply has none of: the operator of `fugaro managed apply`
+		// never saw one, and the sentence has to say which list to edit.
+		return fmt.Sprintf("grants to %s, who is on none of the lists this installation's configuration records (launchers, operators, budget admins) and is not a service account of the managed project", m)
 	}
 	if unknown(ch, "role") {
 		return "a role that is not known"
