@@ -392,6 +392,25 @@ reads:
 | `stale_draft` | bool | **yes** | the record is not final but its draft's status section is old, or the execution is gone: the run probably died |
 | `artifact_count` | int | **yes** | what an artifact run's record says it delivered; absent for every run that has none, and the count `runs ls`'s `ARTIFACTS` column shows — its total is `artifact_bytes` |
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
+| `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
+
+**`changed_files` is the run's own account, and it is bounded.** The runner
+reads the paths of the run's own commits (`origin/<base>...HEAD` for a first
+run, its start commit for a follow-up — `gitops.ChangedFiles`) and stores at
+most `runstore.MaxChangedFiles` = **200** of them, or
+`runstore.MaxChangedPathBytes` = **16 KiB** of path, whichever comes first:
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `paths` | `[]string` | no | sorted, as git listed them; **`[]` when the run changed no path — never null** |
+| `total` | int | no | **how many paths the run really changed**, so a truncated record still says how big the set it is part of was |
+| `truncated` | bool | **yes** | set **only** when `paths` is shorter than `total` — a console that renders a truncated set as the whole set is showing a number the record does not support |
+
+**Paths only.** No contents, no diff, no commit message, no line counts: a
+path can name a client, a person or a project, so the record holds the least
+that answers "did these two runs touch the same file". A rename is recorded as
+the delete and the add it is, because a path that moved is a path two runs can
+collide on.
 
 `runview.Totals` (`runview.go:436`): `runs` int, `model_usd` float64,
 `model_notional_usd` float64 (**notional** — kept apart from `model_usd` by
