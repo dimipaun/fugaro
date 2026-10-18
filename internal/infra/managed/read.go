@@ -117,16 +117,44 @@ func IsManaged(ctx context.Context, s *storage.Service, c *crm.Service, project,
 // nil error and a reason saying so, which is the fail-closed answer for a
 // caller that needs a line to compare against — an absent amount is not an
 // unlimited one.
+//
+// One ok=false answer carries a figure: a version-2 marker whose recorded
+// budget fails Budget.Check comes back with that refused figure (and the
+// reason), so the caller can report "the recorded budget is invalid" rather
+// than "not managed". The figure is never valid when ok is false; a caller
+// that needs a line reads it only when ok is true.
 func ReadBudget(ctx context.Context, s *storage.Service, c *crm.Service, project, gcpProject string) (budget Budget, ok bool, reason string, err error) {
-	defer func() { reason = safetext.OneLine(reason) }()
+	a, err := ReadBudgetAnswer(ctx, s, c, project, gcpProject)
+	return a.Budget, a.OK, a.Reason, err
+}
+
+// BudgetAnswer is ReadBudget's answer with the one thing its four return
+// values cannot say: Invalid is true exactly when the object is a version-2
+// marker about this project whose recorded figure fails Budget.Check —
+// including an empty one ("budget":{}), whose figure is the zero Budget and so
+// cannot be told from "no figure" by the figure alone. Budget then holds the
+// refused figure; it is never valid unless OK.
+type BudgetAnswer struct {
+	Budget  Budget
+	OK      bool
+	Invalid bool
+	Reason  string
+}
+
+// ReadBudgetAnswer is ReadBudget, answering with a BudgetAnswer.
+func ReadBudgetAnswer(ctx context.Context, s *storage.Service, c *crm.Service, project, gcpProject string) (a BudgetAnswer, err error) {
+	defer func() { a.Reason = safetext.OneLine(a.Reason) }()
 	m, managed, reason, err := readFact(ctx, s, c, project, gcpProject)
 	if err != nil || !managed {
-		return Budget{}, false, reason, err
+		if err == nil && m.Budget != nil && m.Budget.Check() != nil {
+			return BudgetAnswer{Budget: *m.Budget, Invalid: true, Reason: reason}, nil
+		}
+		return BudgetAnswer{Reason: reason}, err
 	}
 	if m.Budget == nil {
-		return Budget{}, false, fmt.Sprintf("gs://%s/%s records no budget amount for %s: the creation fact is version %d, which is a creation this task's amount was never required for", runsBucketName(gcpProject), MarkerObject, project, m.Version), nil
+		return BudgetAnswer{Reason: fmt.Sprintf("gs://%s/%s records no budget amount for %s: the creation fact is version %d, which is a creation this task's amount was never required for", runsBucketName(gcpProject), MarkerObject, project, m.Version)}, nil
 	}
-	return *m.Budget, true, "", nil
+	return BudgetAnswer{Budget: *m.Budget, OK: true}, nil
 }
 
 // readFact is the read both above are: the creation fact of gcpProject, as
@@ -218,6 +246,12 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	if err := checkMarkerShape(data, m.Version); err != nil {
 		return Marker{}, false, fmt.Sprintf("gs://%s/%s is not a marker for %s: %v", bucket, MarkerObject, project, err), nil
 	}
+	// The project it names first: a fact about another project is that,
+	// whatever else is wrong with it, so its budget is never judged (or
+	// handed back as this project's invalid figure) before the name is.
+	if m.GCPProject != gcpProject {
+		return Marker{}, false, fmt.Sprintf("gs://%s/%s names project %s, not %s: the fact is about another project, so %s is not managed", bucket, MarkerObject, m.GCPProject, gcpProject, project), nil
+	}
 	// The versions this build knows, each with what it has to carry. Any
 	// other version is refused rather than partly believed, which is the
 	// fail-closed direction for an object someone else may have written: a
@@ -247,13 +281,14 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 		// figure this build wrote, so the object is refused whole rather
 		// than believed with a line nothing should be compared against.
 		if err := m.Budget.Check(); err != nil {
-			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount a managed creation could have chosen (%v), so %s is not managed by it", bucket, MarkerObject, m.Version, err, project), nil
+			// The refused figure is handed back beside ok=false (and only
+			// here) so ReadBudget's caller can say the recorded budget is
+			// invalid rather than that the project is not managed; IsManaged
+			// ignores it, and it is never believed as a line.
+			return Marker{Budget: m.Budget}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount a managed creation could have chosen (%v), so %s is not managed by it", bucket, MarkerObject, m.Version, err, project), nil
 		}
 	default:
 		return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d, and this build knows versions %d and %d, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersion, MarkerVersionBudget, project), nil
-	}
-	if m.GCPProject != gcpProject {
-		return Marker{}, false, fmt.Sprintf("gs://%s/%s names project %s, not %s: the fact is about another project, so %s is not managed", bucket, MarkerObject, m.GCPProject, gcpProject, project), nil
 	}
 	return m, true, "", nil
 }

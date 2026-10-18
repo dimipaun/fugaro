@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,9 +20,13 @@ import (
 
 	"github.com/spf13/pflag"
 	"golang.org/x/oauth2"
+	"google.golang.org/api/googleapi"
+	"google.golang.org/api/option"
+	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -27,14 +34,14 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// The command's own tests, and what they are about: this release ships
-// `fugaro managed apply` INERT (managed.Shipped is closed, Task 4.4 opens it),
-// so most of what a live apply would do cannot be reached through the command
-// tree here. Two things can be, and they are the two that matter for the
-// release: the refusal is the first thing the command does — before a project
-// is selected, before a bucket is read and before terraform is launched — and
-// every piece of the wiring underneath it decides in the fail-closed
-// direction, which is asserted directly on those pieces.
+// The command's own tests, and what they are about: the gate that admits an
+// apply is the apply-time budget read (Task 4.4), so whether a plan is ever
+// gated, assumed and applied turns on what the project's creation fact
+// records. The cases below are the ways that read fails, through the real
+// ReadBudget, the real marker object and this rig's fakes: each leaves the gate
+// closed, refuses with its own sentence, and reaches terraform at no point.
+// Every piece of the wiring underneath decides in the fail-closed direction
+// too, and that is asserted directly on those pieces.
 //
 // A test fixture is not a credential, and a string that looks like one stops a
 // run at push protection, so every token below is built here by repetition.
@@ -43,55 +50,382 @@ import (
 // one, and built rather than written as a literal.
 func fixtureToken(kind string) string { return kind + strings.Repeat("0", 24) }
 
-// TestManagedApplyIsInertAndReadsNothing: in this release the managed apply is
-// refused by config, and the refusal happens before the command has read
-// anything at all. That is asserted the way it can fail: the exit code, the
-// plan's own sentence, and the fakes' records — no request reached GCS, the
-// Resource Manager or the IAM fake, no terraform was launched, and the
-// workdir was never made. An inertness that skipped a read on the way to the
-// refusal would pass a test that only read the message.
-func TestManagedApplyIsInertAndReadsNothing(t *testing.T) {
-	noAgentSession(t)
+// managedBudgetRig is the command's fixtures for the apply-time budget read: a
+// rig whose installed runs bucket exists and is the project's own (the
+// project-number proof ReadBudget makes first), and a root inside the
+// project's own checkout, which the command resolves before the gate.
+func managedBudgetRig(t *testing.T) (*initRig, string) {
+	t.Helper()
+	testutil.IsolateGit(t)
 	r := newInitRig(t)
-	root := t.TempDir() // a root that exists: the refusal is not about it
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"),
+		[]byte("project: "+initProjectName+"\ngcp_project: "+initProject+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "infra")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
+	return r, root
+}
 
-	out, errOut, err := execute(t, "managed", "apply", root)
-	if err == nil {
-		t.Fatalf("the managed apply ran to completion with the gate closed:\n%s\n%s", out, errOut)
-	}
-	if got := ExitCode(err); got != ExitUserError {
-		t.Errorf("exit %d, want %d: a refused apply is the user's to act on", got, ExitUserError)
-	}
-	if !strings.Contains(err.Error(), managedmode.NotEnabled) {
-		t.Errorf("the refusal is not the plan's own sentence:\n%v", err)
-	}
-	if !strings.Contains(err.Error(), "nothing was applied") {
-		t.Errorf("the refusal does not say that nothing happened:\n%v", err)
-	}
-	// The refusal names no flag this command lacks, and this command has none
-	// to name: no way to pass a delete address, no way to skip a prompt.
-	assertNamesNoFlagItLacks(t, newManagedApplyCmd(), err)
-	// Nothing was read: not a bucket, not a project, not an IAM policy.
-	for name, reqs := range map[string]int{
-		"storage":        len(r.gcs.Requests()),
-		"resource (CRM)": len(r.crm.Requests()),
-		"iam":            len(r.iam.Requests()),
+// noWriteAcrossFakes is the task's own "no write is made" assertion, read off
+// the fakes' call logs rather than off the command's word: over every call the
+// GCS, CRM and IAM fakes received, a refused apply made none that is not a
+// read. The command holds no Budgets client at all — it makes no billing call
+// by construction, and the read it does make is the marker's own reader — so
+// what this pins is the direction that matters: a refusal that created a
+// bucket, put an object, wrote an IAM policy or set a project label fails here
+// even when its sentence is right.
+func noWriteAcrossFakes(t *testing.T, r *initRig) {
+	t.Helper()
+	for _, f := range []struct {
+		what string
+		reqs []gcpfake.Request
+	}{
+		{"GCS", r.gcs.Requests()},
+		{"CRM", r.crm.Requests()},
+		{"IAM", r.iam.Requests()},
 	} {
-		if reqs != 0 {
-			t.Errorf("the refused apply made %d %s request(s): the gate is the first thing the command reads", reqs, name)
+		for _, req := range f.reqs {
+			if req.Method != http.MethodGet && req.Method != http.MethodHead {
+				t.Errorf("the refused apply sent a %s to the %s fake (%s), and a refusal writes nothing",
+					req.Method, f.what, req.Path)
+			}
 		}
 	}
-	// And nothing ran: no terraform call was logged, and the workdir the apply
-	// would have copied the root into does not exist.
-	if _, err := os.Stat(r.log); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("terraform was launched on the way to the refusal (%s: %v)", r.log, err)
+}
+
+// TestManagedApplyRefusesWhenNoBudgetReadOpensTheGate: every way the
+// apply-time budget read fails, end to end. What each case asserts is the way
+// each one can fail — the exit code, the sentence the owner acts on, and the
+// fakes' records: no terraform was launched and the workdir was never made, so
+// a refusal that got as far as copying the root, assuming the deployer or
+// planning would fail the test rather than pass a message-only check.
+//
+// The nine are the task's own list. "unreadable" is the object that exists and
+// the identity may not read it (the fake answers 403 for it), which is the
+// shape a real project's revocation takes; a read that fails at the API — a
+// 5xx — is the same refusal and is asserted in internal/managed's own table.
+func TestManagedApplyRefusesWhenNoBudgetReadOpensTheGate(t *testing.T) {
+	noAgentSession(t)
+	const v2 = `{"version":2,"gcp_project":"proj-1234","budget":{"amount":5000,"currency":"USD"}}`
+	for _, tc := range []struct {
+		what       string
+		marker     []byte
+		unreadable bool
+		want       []string
+	}{
+		{"the marker is version 1: managed, and no amount recorded",
+			[]byte(`{"version":1,"gcp_project":"proj-1234"}`), false,
+			[]string{"has no budget recorded", "this release cannot add a budget to an existing project", "fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID"}},
+		{"there is no marker at all", nil, false, []string{"is not managed", "is not there"}},
+		{"the marker exists and cannot be read", []byte(v2), true, []string{"is not managed", "cannot be read"}},
+		// A version-2 marker whose figure fails Budget.Check is reported as an
+		// invalid recorded budget (L3), never as "is not managed".
+		{"the amount is zero",
+			[]byte(`{"version":2,"gcp_project":"proj-1234","budget":{"amount":0,"currency":"USD"}}`), false,
+			[]string{"the budget recorded in the marker of aurora is invalid", "amount 0 is outside"}},
+		{"the amount is negative",
+			[]byte(`{"version":2,"gcp_project":"proj-1234","budget":{"amount":-5,"currency":"USD"}}`), false,
+			[]string{"is invalid", "amount -5 is outside"}},
+		{"the currency is not there",
+			[]byte(`{"version":2,"gcp_project":"proj-1234","budget":{"amount":5000,"currency":""}}`), false,
+			[]string{"is invalid", "not three ASCII uppercase letters"}},
+		// H1: each passed the old "amount above 0 and a currency" rule.
+		{"the currency is lowercase",
+			[]byte(`{"version":2,"gcp_project":"proj-1234","budget":{"amount":5000,"currency":"usd"}}`), false,
+			[]string{"is invalid", "not three ASCII uppercase letters"}},
+		{"the currency carries a newline",
+			[]byte(`{"version":2,"gcp_project":"proj-1234","budget":{"amount":5000,"currency":"US\n"}}`), false,
+			[]string{"is invalid", "not three ASCII uppercase letters"}},
+		{"the currency is four letters",
+			[]byte(`{"version":2,"gcp_project":"proj-1234","budget":{"amount":5000,"currency":"EURO"}}`), false,
+			[]string{"is invalid", "not three ASCII uppercase letters"}},
+		{"the budget is empty",
+			[]byte(`{"version":2,"gcp_project":"proj-1234","budget":{}}`), false,
+			[]string{"is invalid", "amount 0 is outside"}},
+		{"an invalid figure in a marker naming another project",
+			[]byte(`{"version":2,"gcp_project":"proj-9999","budget":{"amount":5000,"currency":"usd"}}`), false,
+			[]string{"is not managed", "names project proj-9999"}},
+		{"the amount is above ten million",
+			[]byte(`{"version":2,"gcp_project":"proj-1234","budget":{"amount":10000001,"currency":"USD"}}`), false,
+			[]string{"is invalid", "amount 10000001 is outside"}},
+		{"the marker names another project",
+			[]byte(`{"version":2,"gcp_project":"proj-9999","budget":{"amount":5000,"currency":"USD"}}`), false,
+			[]string{"is not managed", "names project proj-9999"}},
+		{"the marker is malformed", []byte(`{"version":2,`), false, []string{"is not managed", "is not a marker"}},
+		{"the marker is oversized", bytes.Repeat([]byte("x"), 4097), false, []string{"is not managed", "bigger than any marker"}},
+		{"the marker has trailing data", append([]byte(v2), []byte("{\"x\":1}")...), false,
+			[]string{"is not managed", "more than one JSON value"}},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r, root := managedBudgetRig(t)
+			// Past the gate the command asks who is running (managedCaller):
+			// a refusal must never get that far.
+			callerAsked := false
+			oldCaller := managedCaller
+			managedCaller = func(context.Context, *localcfg.Config) (string, oauth2.TokenSource, error) {
+				callerAsked = true
+				return "", nil, errors.New("the caller was asked past a closed gate")
+			}
+			t.Cleanup(func() { managedCaller = oldCaller })
+			if tc.marker != nil {
+				r.gcs.Put(initRunsBucket, "fugaro/managed.json", tc.marker)
+			}
+			if tc.unreadable {
+				r.gcs.FailObjectGetsAfter(initRunsBucket, "fugaro/managed.json", 0)
+			}
+			out, errOut, err := execute(t, "managed", "apply", root)
+			if err == nil {
+				t.Fatalf("the managed apply ran to completion with the gate closed:\n%s\n%s", out, errOut)
+			}
+			if got := ExitCode(err); got != ExitUserError {
+				t.Errorf("exit %d, want %d: a refused apply is the user's to act on", got, ExitUserError)
+			}
+			// The command's refusals cross the CLI boundary as userErr, which
+			// keeps the sentence and not the chain, so the sentinel is read
+			// out of the message (internal/managed's own table asserts the
+			// chain).
+			if !strings.Contains(err.Error(), managedmode.ErrNotEnabled.Error()) {
+				t.Errorf("the refusal %v is not the gate's", err)
+			}
+			if !strings.Contains(err.Error(), "nothing was applied") {
+				t.Errorf("the refusal does not say that nothing happened:\n%v", err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal %v does not carry %q", err, want)
+				}
+			}
+			// Nothing ran: no terraform call was logged, and the workdir the
+			// apply would have copied the root into does not exist.
+			if _, err := os.Stat(r.log); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("terraform was launched on the way to the refusal (%s: %v)", r.log, err)
+			}
+			wd, err := infra.ManagedWorkdir(os.Getenv, initProject)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(wd); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("the managed workdir %s exists after a refused apply", wd)
+			}
+			// And nothing was written anywhere: the refusal's cloud calls are
+			// reads, from the fakes' own logs.
+			noWriteAcrossFakes(t, r)
+			// Nor did it reach the steps behind the gate: the owner's delete
+			// list was never read and nobody was asked who is running.
+			if readAllowList(r) {
+				t.Error("the delete list was read past a closed gate")
+			}
+			if callerAsked {
+				t.Error("the caller's identity was asked past a closed gate")
+			}
+		})
 	}
-	wd, err := infra.ManagedWorkdir(os.Getenv, initProject)
+}
+
+// readAllowList reports whether the GCS fake was asked for the owner's
+// delete list.
+func readAllowList(r *initRig) bool {
+	for _, req := range r.gcs.Requests() {
+		if strings.Contains(req.Path, "allow-delete.json") || strings.Contains(req.Path, "allow-delete") {
+			return true
+		}
+	}
+	return false
+}
+
+// TestManagedApplyRunsPastAnOpenGate (M5): with a valid version-2 marker the
+// command goes on past the gate, over the fakes, to the steps the gate guards:
+// the owner's delete list is read, the deployer account is assumed through the
+// impersonation API, and terraform is launched (the fake's init). The run need
+// not finish — what is pinned is that an open gate is not a dead end, which the
+// refusal table above (none of these reached) cannot show on its own.
+func TestManagedApplyRunsPastAnOpenGate(t *testing.T) {
+	noAgentSession(t)
+	r, root := managedBudgetRig(t)
+	r.gcs.Put(initRunsBucket, "fugaro/managed.json",
+		[]byte(`{"version":2,"gcp_project":"proj-1234","budget":{"amount":5000,"currency":"USD"}}`))
+	if err := os.WriteFile(filepath.Join(root, "main.tf"), []byte("resource \"google_storage_bucket\" \"data\" {\n  name = \"x\"\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const operator = "user:operator@example.com"
+	account := managedmode.DeployerAccount(initProject)
+	r.iam.AddServiceAccount(initProject, account, "fugaro deployer")
+	r.iam.SetServiceAccountPolicy(initProject, account, gcpfake.Binding{Role: tf.DeployerTokenCreatorRole, Members: []string{operator}})
+	operatorADC(t)
+	isolateCredentialDir(t)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	oldCaller := managedCaller
+	managedCaller = func(context.Context, *localcfg.Config) (string, oauth2.TokenSource, error) {
+		return operator, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: fixtureToken("op-")}), nil
+	}
+	t.Cleanup(func() { managedCaller = oldCaller })
+	var (
+		mu    sync.Mutex
+		mints []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		mints = append(mints, req.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(req.URL.Path, ":generateAccessToken"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": fixtureToken("minted-"), "expireTime": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
+		case strings.HasSuffix(req.URL.Path, ":generateIdToken"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": idToken(account)})
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	oldEndpoint := impersonationEndpoint
+	impersonationEndpoint = srv.URL
+	t.Cleanup(func() { impersonationEndpoint = oldEndpoint })
+
+	_, _, _ = execute(t, "managed", "apply", root)
+
+	if !readAllowList(r) {
+		t.Error("an open gate did not go on to read the owner's delete list")
+	}
+	mu.Lock()
+	minted := slices.ContainsFunc(mints, func(p string) bool { return strings.HasSuffix(p, ":generateAccessToken") })
+	mu.Unlock()
+	if !minted {
+		t.Errorf("an open gate did not go on to assume the deployer (impersonation calls: %v)", mints)
+	}
+	var verbs []string
+	initWithCred := false
+	for _, c := range r.fakeCalls(t) {
+		verbs = append(verbs, c.Args[0])
+		if c.Args[0] == "init" && c.Credentials {
+			initWithCred = true
+		}
+	}
+	if !initWithCred {
+		t.Fatalf("an open gate did not go on to launch terraform's init with the deployer's credential file (calls: %v)", verbs)
+	}
+}
+
+// L2: the second read managedBudgetGate makes (IsManaged, asked only when
+// ReadBudget answered with no amount) fails: the gate stays closed and the
+// refusal says the read could not be made — a read that answered once and
+// failed the second time is believed neither way.
+func TestManagedBudgetGateRefusesWhenTheSecondReadFails(t *testing.T) {
+	r, _ := managedBudgetRig(t)
+	// A version-1 marker: ReadBudget answers no amount and no error, so the
+	// second read is made — and the transport fails every marker content read
+	// after the first with a 500.
+	r.gcs.Put(initRunsBucket, "fugaro/managed.json", []byte(`{"version":1,"gcp_project":"proj-1234"}`))
+	lc, err := localcfg.Load(r.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(wd); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("the managed workdir %s exists after a refused apply", wd)
+	c, err := newInitClients(t.Context(), lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing := &failMarkerAfter{base: http.DefaultTransport, after: 1}
+	s, err := storage.NewService(t.Context(), option.WithEndpoint(c.Storage.BasePath),
+		option.WithHTTPClient(&http.Client{Transport: failing}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Storage = s
+	gate, _, err := managedBudgetGate(t.Context(), c, lc)
+	if err == nil || gate.Open() {
+		t.Fatalf("a failed second read opened the gate (err %v)", err)
+	}
+	if !errors.Is(err, managedmode.ErrNotEnabled) || !strings.Contains(err.Error(), "could not be made") {
+		t.Errorf("the refusal %v does not say the read could not be made", err)
+	}
+	if failing.seen < 2 {
+		t.Errorf("the marker was read %d time(s): the second read was never made", failing.seen)
+	}
+}
+
+// failMarkerAfter answers every content read of the marker after the first
+// `after` with a 500, and passes everything else through.
+type failMarkerAfter struct {
+	base  http.RoundTripper
+	after int
+	mu    sync.Mutex
+	seen  int
+}
+
+func (f *failMarkerAfter) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.Contains(req.URL.Path, "managed.json") && req.URL.Query().Get("alt") == "media" {
+		f.mu.Lock()
+		f.seen++
+		n := f.seen
+		f.mu.Unlock()
+		if n > f.after {
+			return &http.Response{StatusCode: http.StatusInternalServerError, Status: "500 Internal Server Error",
+				Header: http.Header{"Content-Type": {"application/json"}}, Request: req,
+				Body: io.NopCloser(strings.NewReader(`{"error":{"code":500,"status":"INTERNAL","message":"backend error"}}`))}, nil
+		}
+	}
+	return f.base.RoundTrip(req)
+}
+
+// L2: a marker read that fails at the API (a 5xx) refuses the command with the
+// read's own error carried (BudgetRead.Err), exit 1, and nothing launched.
+func TestManagedApplyRefusesA5xxMarkerRead(t *testing.T) {
+	noAgentSession(t)
+	r, root := managedBudgetRig(t)
+	r.gcs.Put(initRunsBucket, "fugaro/managed.json", []byte(`{"version":2,"gcp_project":"proj-1234","budget":{"amount":5000,"currency":"USD"}}`))
+	r.gcs.RefusePath("managed.json", http.StatusInternalServerError, "INTERNAL", "", "backend error")
+	_, _, err := execute(t, "managed", "apply", root)
+	if err == nil {
+		t.Fatal("a 5xx marker read did not refuse the apply")
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("exit %d, want %d", got, ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "could not be made") || !strings.Contains(err.Error(), "500") {
+		t.Errorf("the refusal does not carry the read's own failure: %v", err)
+	}
+	if _, serr := os.Stat(r.log); !errors.Is(serr, os.ErrNotExist) {
+		t.Error("terraform was launched after a failed marker read")
+	}
+}
+
+// And the other direction, on the one function that decides: a creation fact
+// that records an amount and a currency opens the gate the apply runs behind,
+// with the owner's own pair carried, and the fact handed on as managed.
+func TestManagedBudgetGateOpensOnARecordedAmount(t *testing.T) {
+	r, _ := managedBudgetRig(t)
+	r.gcs.Put(initRunsBucket, "fugaro/managed.json",
+		[]byte(`{"version":2,"gcp_project":"proj-1234","budget":{"amount":5000,"currency":"USD"}}`))
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := newInitClients(t.Context(), lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate, fact, err := managedBudgetGate(t.Context(), c, lc)
+	if err != nil {
+		t.Fatalf("a marker that records an amount was refused: %v", err)
+	}
+	if !gate.Open() {
+		t.Fatal("the gate is closed after a read that answered with an amount")
+	}
+	if gate.Budget().Amount != 5000 || gate.Budget().Currency != "USD" {
+		t.Errorf("the gate carries %+v, want the marker's own 5000 USD", gate.Budget())
+	}
+	if !fact.Managed {
+		t.Error("the fact handed to the apply is not managed, and the confirmation rule reads it")
+	}
+	if err := gate.Refuse(); err != nil {
+		t.Errorf("the open gate refused: %v", err)
 	}
 }
 
@@ -905,3 +1239,40 @@ func sorted(in []string) []string { return slices.Sorted(slices.Values(in)) }
 
 // slicesEqual is a and b with the same entries in the same order.
 func slicesEqual(a, b []string) bool { return slices.Equal(a, b) }
+
+// M4: the delete list's read errors are interpolated through safetext.Field,
+// for both the refused-list and the access-denied branch: a C1 CSI, a bidi
+// override, a newline and a 10,000-character string in the error each come out
+// neutralised and cut.
+func TestManagedListErrSanitisesTheReadError(t *testing.T) {
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject}
+	for _, payload := range []string{"csi\u009b31m", "bidi‮evil", "line\nforged", strings.Repeat("z", 10000)} {
+		for name, err := range map[string]error{
+			"refused":       fmt.Errorf("%w: %s", managed.ErrRefused, payload),
+			"access denied": &googleapi.Error{Code: http.StatusForbidden, Message: payload},
+		} {
+			got := managedListErr(lc, initRunsBucket, err).Error()
+			if strings.ContainsAny(got, "\u009b‮\n") {
+				t.Errorf("%s: the refusal carries a raw control, bidi or newline: %q", name, got)
+			}
+			if len([]rune(got)) > 1000 {
+				t.Errorf("%s: the refusal is %d runes: the error was not cut", name, len([]rune(got)))
+			}
+		}
+	}
+}
+
+// Round 3, L2: a failed project-number read is reported through
+// safetext.Field: the API's own text (a body) cannot reach the terminal raw.
+func TestManagedApplyProjectNumberErrorIsSanitised(t *testing.T) {
+	noAgentSession(t)
+	r, root := managedBudgetRig(t)
+	r.crm.Refuse(http.StatusBadRequest, "INVALID_ARGUMENT", "", "csi\u009b31m bidi‮ line\nforged "+strings.Repeat("z", 5000))
+	_, _, err := execute(t, "managed", "apply", root)
+	if err == nil {
+		t.Fatal("a failed number read did not refuse")
+	}
+	if got := err.Error(); strings.ContainsAny(got, "\u009b‮\n") || len([]rune(got)) > 1500 || !strings.Contains(got, "reading the number") {
+		t.Errorf("the refusal carries the raw API text or is not the number read's: %q", got[:min(len(got), 300)])
+	}
+}

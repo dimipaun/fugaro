@@ -20,7 +20,9 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	crm "google.golang.org/api/cloudresourcemanager/v1"
 	iam "google.golang.org/api/iam/v1"
+	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	managed "github.com/dimipaun/fugaro/internal/infra/managed"
@@ -28,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // fugaro managed apply (docs/design/managed-projects.md, D76) applies the
@@ -55,11 +58,26 @@ import (
 // owner's own rules admit, and applies it as an identity that holds no
 // project-level IAM permission and no write path to the runs bucket.
 //
-// And it is INERT in this release: managedmode.Shipped is closed, and the gate
-// is the first thing this command reads — before a project is selected, before
-// a bucket is read and before terraform runs — so what this release ships is a
-// command that refuses and does nothing else. Task 4.4 is the task that opens
-// it, in internal/managed/enable.go and nowhere else.
+// And the gate it runs behind is the apply-time budget read (Task 4.4), not a
+// release switch: managedmode's Enable is opened by one thing and that thing is
+// the read of the project's creation fact through internal/infra/managed's
+// ReadBudget, which must answer with an amount above 0 and a currency. No
+// constant in the build opens it any more, and every other answer — no marker
+// at all, a version-1 marker with no amount recorded, a read that failed, a
+// malformed, oversized or trailing-data object, a marker naming another
+// project, an amount or a currency the marker's own reader refuses — is a hard
+// refusal.
+//
+// Where in this command's order that read happens, stated because it is not
+// first and was: the flags, the checkout and the cloud clients come first (the
+// command cannot read anything about the project before it knows which one),
+// then the runs bucket is pinned to its default name and the project number is
+// read, and only then the apply-time budget read and the gate it opens — after
+// which come the owner's delete list, the workdir and terraform. A read that
+// does not answer therefore stops the command before a plan exists, before the
+// root is copied, before terraform is looked for and before the deployer is
+// assumed. managed.Apply refuses the same value again as its own first step, so
+// neither check can be left out.
 
 // newManagedCmd is `fugaro managed`: the noun group D76 answers with, which
 // leaves room for the plan's Task 6.1 flagging command under the same noun. It
@@ -122,23 +140,16 @@ of the four is a boundary against a session that goes around this program.`,
 }
 
 // managedApply is newManagedApplyCmd's body. The order is the whole of the
-// design: the config gate, then the local checks, then the reads, then the
-// apply — and every refusal before the apply is a hard return.
+// design: the local checks, then the project and its number, then the
+// apply-time budget read and the gate it opens (Task 4.4), then the reads the
+// apply itself trusts, then the apply — and every refusal before the apply is a
+// hard return.
 func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	ctx := cmd.Context()
 	// A credential leak first, before anything opens the cloud: GODEBUG is
 	// read before main runs, so it cannot be unset in time (refuseHTTP2Debug).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
-	}
-	// And then the config gate, before the project is selected and before a
-	// single cloud call: in this release the managed apply is refused by
-	// config, and a refused command must not read a bucket, assume an account
-	// or run terraform on its way to the refusal. The same value is handed to
-	// the apply below, which refuses again (managed.Apply's own first step):
-	// two checks of one value, so neither can be left out.
-	if err := managedmode.Shipped().Refuse(); err != nil {
-		return userErr("nothing was applied: %v", err)
 	}
 	_, lc, err := selectProject(ctx, o)
 	if err != nil {
@@ -167,18 +178,16 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	// bucket name is global), and both reads below prove it with.
 	number, err := infra.ProjectNumber(ctx, c, lc.GCPProject)
 	if err != nil {
-		return remote(err)
+		// The API's own text can carry a body: one sanitised line.
+		return remote(fmt.Errorf("reading the number of GCP project %s: %s", lc.GCPProject, safetext.Field(err.Error())))
 	}
-	// The creation fact: whether this project is managed at all, and the one
-	// line that says why when it is not. The read is fail-closed, and the
-	// apply refuses an unreadable marker or a reason nobody can read.
-	isManaged, reason, err := managed.IsManaged(ctx, c.Storage, c.CRM, lc.Name, lc.GCPProject)
-	fact := managedmode.Fact{Managed: isManaged, Reason: reason, Err: err}
-	if fact.Err != nil {
-		return userErr("nothing was applied: the creation fact of %s could not be read, and an unreadable marker is not an apply: %v", lc.Name, fact.Err)
-	}
-	if !fact.Managed {
-		return userErr("nothing was applied: %s is not managed (%s), so its plans keep the coding agent's refusal and are applied by fugaro init's own path with its confirmation", lc.Name, reason)
+	// The apply-time budget read, and the gate it opens (Task 4.4). Both
+	// happen here, after the project and its number are known and before
+	// anything is assumed or planned, and a refusal ends the command: a gate
+	// that did not open runs no terraform at all.
+	gate, fact, err := managedBudgetGate(ctx, c, lc)
+	if err != nil {
+		return userErr("nothing was applied: %v", err)
 	}
 	// The addresses the owner approved, read fail-closed from the owner's own
 	// object. The applying command names none — this command registers no
@@ -219,10 +228,10 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	}
 	imp := deployerImpersonator{self: self, ts: ts, endpoint: impersonationEndpoint, hc: impersonationHTTPClient()}
 	res, err := managedmode.Apply(ctx, managedmode.Request{
-		// The gate as this release ships it: closed. The check above is the
-		// same value, and this one is what makes the apply itself refuse
-		// however it is called.
-		Enable:  managedmode.Shipped(),
+		// The gate the budget read above opened, handed over rather than
+		// rebuilt: managed.Apply refuses a closed one as its own first step,
+		// so the value is checked twice and neither check can be left out.
+		Enable:  gate,
 		Project: lc.Name, GCPProject: lc.GCPProject,
 		Fact:    fact,
 		Workdir: wd,
@@ -912,15 +921,74 @@ func (a deployerAccess) TokenCreator(ctx context.Context, account, member string
 	return false, nil
 }
 
+// managedBudgetGate makes the apply-time budget read and turns it into the gate
+// the apply runs behind (Task 4.4). It is the one place the managed apply — and
+// a restore, which applies through this command's own path (Task 5.2) — opens
+// that gate, and every way of not answering with an amount leaves it closed.
+//
+// The read is internal/infra/managed.ReadBudget and never IsManaged alone: what
+// the gate needs is the amount the creation fact records, and ReadBudget is the
+// read that proves the bucket is the project's own before it answers with one.
+// It is made here rather than in internal/managed because the storage and
+// Resource Manager clients live on this side of the boundary, which is the
+// split Fact already follows.
+//
+// The second read below is the one thing ReadBudget cannot answer on its own.
+// When it answers with no amount and no error, the object is either a managed
+// creation that recorded none (the marker's version 1) or not a managed
+// creation at all, and its own one-line reason does not say which; IsManaged is
+// the same read over the same object asking the other question, and it is made
+// only in that case, and only so the refusal names the right one of the two.
+// Nothing is applied either way.
+func managedBudgetGate(ctx context.Context, c *infra.Clients, lc *localcfg.Config) (managedmode.Enable, managedmode.Fact, error) {
+	var s *storage.Service
+	var r *crm.Service
+	if c != nil {
+		s, r = c.Storage, c.CRM
+	}
+	return managedBudgetGateOf(ctx, s, r, lc.Name, lc.GCPProject)
+}
+
+// managedBudgetGateOf is managedBudgetGate for a named GCP project rather than
+// the selected config's: `fugaro restore` asks it of the NEW project right
+// after the creation, so a creation that wrote no valid version-2 marker stops
+// before the checkout line moves. One function, so the restore's check and
+// the apply's gate are the same read and the same decision.
+func managedBudgetGateOf(ctx context.Context, s *storage.Service, r *crm.Service, name, gcpProject string) (managedmode.Enable, managedmode.Fact, error) {
+	answer, err := managed.ReadBudgetAnswer(ctx, s, r, name, gcpProject)
+	read := managedmode.BudgetRead{
+		Project: name, Amount: answer.Budget.Amount, Currency: answer.Budget.Currency,
+		OK: answer.OK, Reason: answer.Reason, Err: err, Invalid: answer.Invalid,
+	}
+	if !answer.OK && !answer.Invalid && err == nil {
+		isManaged, managedReason, managedErr := managed.IsManaged(ctx, s, r, name, gcpProject)
+		read.Managed, read.ManagedReason = isManaged, managedReason
+		if managedErr != nil {
+			// A read that answered once and failed the second time is believed
+			// neither way; the refusal then says the read could not be made.
+			read.Err = managedErr
+		}
+	}
+	gate, err := managedmode.ApplyGate(read)
+	if err != nil {
+		// The fact is not passed on: the command ends here.
+		return managedmode.Enable{}, managedmode.Fact{}, err
+	}
+	// The gate is open, so the creation fact was read and believed — ReadBudget
+	// answers OK only for a marker readFact accepted — and the confirmation
+	// rule of D55 gets that fact rather than a second read of it.
+	return gate, managedmode.Fact{Managed: true}, nil
+}
+
 // managedListErr is the owner's object that could not be read, in the words the
 // owner can act on: the read is fail-closed, so an object this command cannot
 // read is no approval at all and every delete is refused.
 func managedListErr(lc *localcfg.Config, bucket string, err error) error {
 	switch {
 	case errors.Is(err, managed.ErrRefused):
-		return userErr("nothing was applied: the delete list of %s could not be read, and an unreadable list approves nothing: %v", lc.Name, err)
+		return userErr("nothing was applied: the delete list of %s could not be read, and an unreadable list approves nothing: %s", lc.Name, safetext.Field(err.Error()))
 	case isAccessDenied(err):
-		return userErr("nothing was applied: gs://%s/%s could not be read with this run's credentials: %v", bucket, managed.AllowDeleteObject, err)
+		return userErr("nothing was applied: gs://%s/%s could not be read with this run's credentials: %s", bucket, managed.AllowDeleteObject, safetext.Field(err.Error()))
 	default:
 		return remote(fmt.Errorf("reading gs://%s/%s for %s: %w", bucket, managed.AllowDeleteObject, lc.Name, err))
 	}

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -30,15 +29,14 @@ import (
 // The restore's tests (plan Task 5.2, design D66): a from-zero apply of a
 // managed project into a fresh GCP project ID.
 //
-// This release ships `fugaro restore` INERT, for the same reason `fugaro
-// managed apply` is (internal/managed/enable.go): the restore's last step IS
-// that apply, and a restore that had created a project on billing and stopped
-// before applying anything would leave a half-restored installation, which is
-// worse than the installation it started from. So the command refuses before
-// it reads anything, and that is the first thing asserted here.
+// Task 4.4 removed the constant gate that shipped `fugaro restore` inert: the
+// command now refuses a coding agent's session FIRST, then refuses on its
+// merits (restorePreflight), then — after the creation and before the
+// checkout's line moves — reads the NEW project's creation fact through the
+// managed apply's own budget gate (a valid version-2 marker, or a refusal),
+// and ends in managedApply, which opens that gate again on the new project.
 //
-// Everything the sequence is made of after that refusal is unreachable through
-// the command tree, and is asserted the way the managed apply's own pieces are
+// The sequence is asserted the way the managed apply's own pieces are
 // (managed_apply_test.go): directly, over the fakes. What a reviewer should be
 // able to check from this file is the set of decisions the restore IS — a
 // fresh ID and no other, an amount that comes from the old project's own
@@ -51,41 +49,22 @@ import (
 // reserved about 30 days, so a restore always takes a new one.
 const restoreNewProj = "fugaro-restored-5678"
 
-// TestRestoreIsInertAndReadsNothing: in this release the restore is refused by
-// the gate the managed apply ships behind, and the refusal happens before the
-// command has read anything at all. Asserted the way the refusals beside it
-// are: the exit code, the gate's own sentence, and the fakes' records — no
-// request reached GCS, the Resource Manager or IAM, no project was created,
-// and no terraform ran.
-func TestRestoreIsInertAndReadsNothing(t *testing.T) {
+// TestRestoreIsNoLongerInert: the constant gate is gone, so a restore run
+// through the command tree with no agent marker is no longer refused by a
+// release gate — it reaches its own preflight (here, the real-terminal rule,
+// since the test's stdin is not one) — and nothing is created on the way.
+func TestRestoreIsNoLongerInert(t *testing.T) {
 	noAgentSession(t)
 	r := newInitRig(t)
-	root := t.TempDir() // a root that exists: the refusal is not about it
-
-	out, errOut, err := execute(t, "restore", restoreNewProj, root)
+	out, errOut, err := execute(t, "restore", restoreNewProj, t.TempDir())
 	if err == nil {
-		t.Fatalf("fugaro restore ran to completion with the gate closed:\n%s\n%s", out, errOut)
+		t.Fatalf("fugaro restore ran to completion without a terminal:\n%s\n%s", out, errOut)
 	}
-	if got := ExitCode(err); got != ExitUserError {
-		t.Errorf("exit %d, want %d: a refused restore is the user's to act on", got, ExitUserError)
+	if strings.Contains(err.Error(), managedmode.NotEnabled) || strings.Contains(err.Error(), managedmode.ErrNotEnabled.Error()) {
+		t.Errorf("the restore is still refused by a gate before its preflight:\n%v", err)
 	}
-	if !strings.Contains(err.Error(), managedmode.NotEnabled) {
-		t.Errorf("the refusal is not the gate's own sentence:\n%v", err)
-	}
-	if !strings.Contains(err.Error(), "nothing was restored") {
-		t.Errorf("the refusal does not say that nothing happened:\n%v", err)
-	}
-	// The refusal names no flag this command lacks, and there is none to name:
-	// no address, and no way past a typed confirmation.
-	assertNamesNoFlagItLacks(t, newRestoreCmd(), err)
-	for name, reqs := range map[string]int{
-		"storage":        len(r.gcs.Requests()),
-		"resource (CRM)": len(r.crm.Requests()),
-		"iam":            len(r.iam.Requests()),
-	} {
-		if reqs != 0 {
-			t.Errorf("the refused restore made %d %s request(s): the gate is the first thing the command reads", reqs, name)
-		}
+	if !strings.Contains(err.Error(), "terminal") {
+		t.Errorf("want the preflight's terminal refusal, got:\n%v", err)
 	}
 	if n := len(r.crm.Creates()); n != 0 {
 		t.Errorf("the refused restore created %d project(s)", n)
@@ -1318,6 +1297,11 @@ func TestRestoreVerifiesTheCreatedProjectIsManaged(t *testing.T) {
 		"this run created it and wrote its own fact": {good, ours, true},
 		"a fact about another":                       {`{"version":2,"gcp_project":"someone-else-1","budget":{"amount":7,"currency":"USD"}}`, ours, false},
 		"no fact":                                    {"", ours, false},
+		// The budget gate, not IsManaged alone: a fact the managed apply's
+		// gate would refuse stops the restore here too.
+		"a version 1 fact":            {`{"version":1,"gcp_project":"` + newProj + `"}`, ours, false},
+		"a fact with a bad currency":  {`{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"usd"}}`, ours, false},
+		"a fact with too large a sum": {`{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":10000001,"currency":"USD"}}`, ours, false},
 		// The binding: a valid fact in the new project's bucket is not
 		// enough. A planted fact beside a run that adopted the project, that
 		// created nothing, or whose own marker write did not happen (the
@@ -1440,25 +1424,69 @@ func TestRestoreAProjectThatAppearsDuringTheConfirmationIsNotAdopted(t *testing.
 	}
 }
 
-// TestRestoreClosedGateRefusesBeforeAnything: the gate is asked before the
-// project is selected; a closed one (here injected, with a sentence of its
-// own) refuses with nothing read and nothing created.
-func TestRestoreClosedGateRefusesBeforeAnything(t *testing.T) {
+// TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget: the creation ran
+// and this run marked the project, but the marker in the new project's bucket
+// does not open the managed apply's gate (a version 1, or a version 2 whose
+// figure fails Budget.Check). The restore stops at verifyCreated — before the
+// checkout's line moves and before the apply; the config stays moved (L4).
+// The marker is overwritten after the real creating path ran, which is the
+// shape of an owner or an agent with bucket write changing it in between.
+func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
 	noAgentSession(t)
-	r := newInitRig(t)
-	old := restoreGate
-	restoreGate = func() error { return errors.New("the injected gate is closed") }
-	t.Cleanup(func() { restoreGate = old })
-	cfg := mustRead(t, r.cfg)
-	_, _, err := execute(t, "restore", restoreNewProj, t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "the injected gate is closed") {
-		t.Fatalf("want the gate's refusal, got %v", err)
-	}
-	if n := len(r.gcs.Requests()) + len(r.crm.Requests()); n != 0 {
-		t.Errorf("a closed gate read the cloud %d time(s)", n)
-	}
-	if len(r.crm.Creates()) != 0 || !bytes.Equal(mustRead(t, r.cfg), cfg) {
-		t.Error("a closed gate created a project or changed the config")
+	for name, tc := range map[string]struct {
+		marker string
+		want   string
+	}{
+		"version 1":            {`{"version":1,"gcp_project":"` + newProj + `"}`, "has no budget recorded"},
+		"a lowercase currency": {`{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"usd"}}`, "the budget recorded in the marker"},
+		"above ten million":    {`{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":10000001,"currency":"USD"}}`, "the budget recorded in the marker"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, _ := newRestoreRig(t)
+			restoreManagedOld(r)
+			calls := recordRestoreApply(t, r)
+			old := restoreInitCmd
+			restoreInitCmd = func(o *initOptions) *cobra.Command {
+				c := newInitCmdWith(o)
+				inner := c.RunE
+				c.RunE = func(cmd *cobra.Command, args []string) error {
+					err := inner(cmd, args)
+					r.gcs.Put("fugaro-runs-"+newProj, managed.MarkerObject, []byte(tc.marker))
+					return err
+				}
+				return c
+			}
+			t.Cleanup(func() { restoreInitCmd = old })
+			checkout, root := restoreCheckout(t)
+			before, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
+			out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+			if err == nil || !strings.Contains(err.Error(), "does not open the managed apply") || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want verifyCreated's budget-gate refusal carrying %q, got %v\n%s", tc.want, err, out)
+			}
+			// L4: the project exists and is this run's, so the message says
+			// so and how to finish it, or when another ID is right — and the
+			// config is NOT put back (it names the real new project).
+			for _, want := range []string{newProj + " exists", "fugaro managed apply " + root, "another NEW_PROJECT_ID", "Task 6.1"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q:\n%v", want, err)
+				}
+			}
+			if strings.Contains(err.Error(), "is back as it was") {
+				t.Errorf("the refusal says the config was put back:\n%v", err)
+			}
+			if len(r.crm.Creates()) != 1 {
+				t.Errorf("%d creation(s), want 1", len(r.crm.Creates()))
+			}
+			if len(*calls) != 0 {
+				t.Errorf("a project with no valid budget reached the apply %d time(s)", len(*calls))
+			}
+			if bytes.Equal(mustRead(t, r.cfg), before) || !strings.Contains(string(mustRead(t, r.cfg)), newProj) {
+				t.Error("the project config was put back although the new project exists and is this run's")
+			}
+			if !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
+				t.Error("the checkout moved for a project with no valid budget")
+			}
+		})
 	}
 }
 
@@ -1484,7 +1512,7 @@ func TestRestorePreflightRefusesEachBadInputWithoutASideEffect(t *testing.T) {
 		"an amount over the cap":   {o: restoreOptions{budget: managed.MaxBudgetAmount + 1, budgetCurrency: "EUR", billingAccount: billingAcc}, reason: "outside"},
 		"a fact with a bad currency": {o: restoreOptions{billingAccount: billingAcc}, setup: func(_ *testing.T, r *projectRig, _ string) {
 			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":2,"gcp_project":"`+initProject+`","budget":{"amount":7,"currency":"usd"}}`))
-		}, reason: "not managed"},
+		}, reason: "is invalid"},
 		"an old project that is not managed": {o: flags, setup: func(_ *testing.T, r *projectRig, _ string) {
 			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{}`))
 		}, reason: "not managed"},
@@ -1675,11 +1703,121 @@ func TestRestorePutBackThatFailsSaysSo(t *testing.T) {
 func TestRestoreSeamsAreProductionsFunctions(t *testing.T) {
 	for name, pair := range map[string][2]any{
 		"restoreManagedApply": {restoreManagedApply, managedApply},
-		"restoreGate":         {restoreGate, restoreGateClosed},
 		"restoreInitCmd":      {restoreInitCmd, newInitCmdWith},
 	} {
 		if reflect.ValueOf(pair[0]).Pointer() != reflect.ValueOf(pair[1]).Pointer() {
 			t.Errorf("%s is not its production function", name)
 		}
 	}
+}
+
+// restoreBudgetOf runs budgetOf over the init rig with o, capturing stderr.
+func restoreBudgetOf(t *testing.T, r *initRig, o restoreOptions) (*managed.Budget, string, error) {
+	t.Helper()
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := newInitClients(t.Context(), lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd, _ := restoreTestCmd("")
+	var errOut bytes.Buffer
+	cmd.SetErr(&errOut)
+	b, err := (&restoreRun{cmd: cmd, o: o, lc: lc, newID: restoreNewProj}).budgetOf(t.Context(), c)
+	return b, errOut.String(), err
+}
+
+// Round 3, L1: the not-managed refusal carries the read's reason through
+// safetext.Field — the reason can name a project read out of the marker, so a
+// 3,900-character name is cut rather than printed whole.
+func TestRestoreNotManagedReasonIsCut(t *testing.T) {
+	r := newInitRig(t)
+	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+	r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":1,"gcp_project":"`+strings.Repeat("a", 3900)+`"}`))
+	_, _, err := restoreBudgetOf(t, r, restoreOptions{billingAccount: billingAcc})
+	if err == nil || !strings.Contains(err.Error(), "is not managed") {
+		t.Fatalf("want the not-managed refusal, got %v", err)
+	}
+	if n := len([]rune(err.Error())); n > 1500 {
+		t.Errorf("the refusal is %d runes: the reason was not cut", n)
+	}
+}
+
+// Round 3, L3: a version-2 fact about the old project whose figure fails
+// Check — the empty "budget":{} included — is refused as an invalid recorded
+// budget, with or without flags, never as "not managed".
+func TestRestoreRefusesAnInvalidOldBudget(t *testing.T) {
+	for _, fact := range []string{
+		`{"version":2,"gcp_project":"` + initProject + `","budget":{}}`,
+		`{"version":2,"gcp_project":"` + initProject + `","budget":{"amount":7,"currency":"usd"}}`,
+	} {
+		for name, o := range map[string]restoreOptions{
+			"no flags":   {billingAccount: billingAcc},
+			"with flags": {budget: 9, budgetCurrency: "EUR", billingAccount: billingAcc},
+		} {
+			r := newInitRig(t)
+			r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
+			_, _, err := restoreBudgetOf(t, r, o)
+			if err == nil || !strings.Contains(err.Error(), "is invalid") || strings.Contains(err.Error(), "not managed") {
+				t.Errorf("%s, %s: want the invalid-budget refusal, got %v", fact, name, err)
+			}
+		}
+	}
+}
+
+// Round 3, L5: flags that differ from a readable old fact win, and one line
+// says what the old fact recorded; flags that agree say nothing.
+func TestRestoreSaysWhenTheFlagsDifferFromTheOldFact(t *testing.T) {
+	for name, tc := range map[string]struct {
+		o    restoreOptions
+		want bool
+	}{
+		"different": {restoreOptions{budget: 9, budgetCurrency: "EUR", billingAccount: billingAcc}, true},
+		"the same":  {restoreOptions{budget: 7, budgetCurrency: "USD", billingAccount: billingAcc}, false},
+	} {
+		r := newInitRig(t)
+		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":2,"gcp_project":"`+initProject+`","budget":{"amount":7,"currency":"USD"}}`))
+		b, errOut, err := restoreBudgetOf(t, r, tc.o)
+		if err != nil || b.Amount != tc.o.budget {
+			t.Fatalf("%s: %v, %+v", name, err, b)
+		}
+		said := strings.Contains(errOut, "records 7 USD") && strings.Contains(errOut, "9 EUR")
+		if said != tc.want || (!tc.want && errOut != "") {
+			t.Errorf("%s: stderr %q", name, errOut)
+		}
+	}
+}
+
+// Round 3, L2: the API's own error text in the restore's two read refusals
+// (whether NEW_PROJECT_ID exists, whether the old project can be read) is
+// safetext.Field'd: a C1 CSI, a bidi override, a newline and a long body.
+func TestRestoreReadErrorsAreSanitised(t *testing.T) {
+	payload := "csi\u009b31m bidi\u202e line\nforged " + strings.Repeat("z", 5000)
+	check := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("no refusal")
+		}
+		if strings.ContainsAny(err.Error(), "\u009b\u202e\n") || len([]rune(err.Error())) > 1500 {
+			t.Errorf("the refusal carries the raw API text: %q", err.Error()[:min(len(err.Error()), 300)])
+		}
+	}
+	t.Run("the new project's existence", func(t *testing.T) {
+		r, lc := newRestoreRig(t)
+		r.crm.Refuse(http.StatusBadRequest, "INVALID_ARGUMENT", "", payload)
+		check(t, (&restoreRun{lc: lc, newID: restoreNewProj}).refuseExisting(t.Context()))
+	})
+	t.Run("the old project's readability", func(t *testing.T) {
+		r := newInitRig(t)
+		r.crm.Refuse(http.StatusBadRequest, "INVALID_ARGUMENT", "", payload)
+		_, _, err := restoreBudgetOf(t, r, restoreOptions{billingAccount: billingAcc})
+		check(t, err)
+		if err != nil && !strings.Contains(err.Error(), "did not get an answer") {
+			t.Errorf("not the readability refusal: %v", err)
+		}
+	})
 }

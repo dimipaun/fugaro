@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -235,7 +236,10 @@ func (r *applyRig) request(t *testing.T) Request {
 	t.Helper()
 	_, access, imp, _ := deployRig()
 	return Request{
-		Enable:     Enable{Open: true},
+		// The gate a successful apply-time budget read opens (Task 4.4): the
+		// only value Apply admits, so every test below runs the sequence the
+		// command runs once its read answered with an amount.
+		Enable:     Enable{budget: Budget{Amount: 5000, Currency: "USD"}, read: true},
 		Project:    project,
 		GCPProject: gcpProject,
 		Fact:       Fact{Managed: true},
@@ -782,15 +786,18 @@ func TestApplyAsksD55sRuleForTheSessionsOwnConditions(t *testing.T) {
 	}
 }
 
-// The apply is inert until phase 4 lands: with the config gate as this release
-// ships it, no combination of the run's conditions, the marker read and the
-// verdict reaches an apply at all — and the case the predicate WOULD proceed
-// in, with phase 4's gate open, is the case this release must not reach. That
-// second half is what makes the closed gate the whole of the difference rather
-// than an untested claim.
+// The apply is unreachable while no budget read opened the gate, and the gate
+// is the whole of the difference: no combination of the run's conditions, the
+// marker read and the verdict reaches an apply at all, and the case the
+// predicate WOULD proceed in is an apply the moment a read has opened it. Task
+// 3.1 shipped that gate closed behind Shipped; Task 4.4 removed the constant
+// and left one thing that opens it, a budget read that answered with an amount
+// (budget_test.go), so what this test pins now is that the constant is gone
+// and the closed value still refuses every row.
 func TestApplyIsNotReachableWhileTheGateIsClosed(t *testing.T) {
-	if Shipped().Open {
-		t.Fatal("the shipped gate is open, and phase 4's three safeguards are not in this release")
+	closed, err := ApplyGate(BudgetRead{Project: project})
+	if err == nil || closed.read {
+		t.Fatalf("a read that answered nothing produced %+v (err %v), want a closed gate", closed, err)
 	}
 	n, wouldProceed, opened := 0, 0, 0
 	for _, c := range allConditions() {
@@ -808,7 +815,7 @@ func TestApplyIsNotReachableWhileTheGateIsClosed(t *testing.T) {
 					r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
 				}
 				req := r.request(t)
-				req.Enable = Shipped()
+				req.Enable = closed
 				req.Fact = Fact{Managed: managed}
 				res, err := Apply(context.Background(), req)
 				if !errors.Is(err, ErrNotEnabled) {
@@ -1320,4 +1327,51 @@ func TestEveryManagedRefusalSiteBoundsUntrustedText(t *testing.T) {
 			t.Errorf("%s: the refused apply applied something: %v", name, applied)
 		}
 	}
+}
+
+// TestApplyConsultsNoInventory pins the accepted gap of the owner's ruling of
+// 2026-10-18: the whole-project inventory (Task 4.1) is built and tested but
+// the managed apply does not consult it in 0.8.5, so a resource created
+// outside Fugaro is not detected by the apply. Request carries no Inventory,
+// Assets or Decision, at any depth a field can hold one; wiring the inventory
+// in (Task 4.5, unscheduled, 0.9.0 with Task 6.1) has to change this test on
+// purpose rather than slip in or out unnoticed.
+func TestApplyConsultsNoInventory(t *testing.T) {
+	banned := map[reflect.Type]bool{
+		reflect.TypeOf(Inventory{}):           true,
+		reflect.TypeOf(Decision{}):            true,
+		reflect.TypeOf((*Assets)(nil)).Elem(): true,
+	}
+	seen := map[reflect.Type]bool{}
+	var walk func(reflect.Type, string)
+	walk = func(ty reflect.Type, path string) {
+		if seen[ty] {
+			return
+		}
+		seen[ty] = true
+		if banned[ty] {
+			t.Errorf("managed.Request reaches %s at %s: the apply now consults the inventory — update the ruling's docs (D59, Task 4.5) with it", ty, path)
+			return
+		}
+		switch ty.Kind() {
+		case reflect.Struct:
+			for i := 0; i < ty.NumField(); i++ {
+				walk(ty.Field(i).Type, path+"."+ty.Field(i).Name)
+			}
+		case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Map, reflect.Chan:
+			walk(ty.Elem(), path+"[]")
+		case reflect.Interface:
+			for i := 0; i < ty.NumMethod(); i++ {
+				walk(ty.Method(i).Type, path+"."+ty.Method(i).Name)
+			}
+		case reflect.Func:
+			for i := 0; i < ty.NumIn(); i++ {
+				walk(ty.In(i), path+"(in)")
+			}
+			for i := 0; i < ty.NumOut(); i++ {
+				walk(ty.Out(i), path+"(out)")
+			}
+		}
+	}
+	walk(reflect.TypeOf(Request{}), "Request")
 }

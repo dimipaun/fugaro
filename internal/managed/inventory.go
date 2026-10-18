@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -146,6 +147,13 @@ type Inventory struct {
 	// Project is the Fugaro project's name and GCPProject its GCP project ID.
 	// They name the project in the warning; GCPProject is what is read.
 	Project, GCPProject string
+	// ProjectNumber is GCPProject's number, from the caller's own Resource
+	// Manager read (the read every managed command already makes to prove a
+	// bucket is the project's own). The service accounts GCP names by the
+	// number are ignored only when the number in the name IS this one; with
+	// a zero ProjectNumber none of them is, so they are foreign and the run
+	// falls back to confirmations — the safe direction.
+	ProjectNumber int64
 	// Assets is the read. A nil read falls back rather than reading as clean:
 	// a check that could not run means ask for confirmation (Global
 	// Constraint 3).
@@ -274,16 +282,182 @@ func (in Inventory) fallback(cause Cause, detail string) Decision {
 			in.what(), cause, detail)}
 }
 
-// foreign is the listed assets the state does not account for, in the order
-// the read returned them.
+// foreign is the listed assets the state does not account for — and that GCP
+// did not create itself — in the order the read returned them.
 func (in Inventory) foreign(listed []Asset) []Asset {
 	var out []Asset
 	for _, a := range listed {
-		if !in.accounted(a) {
+		if !in.gcpCreated(a) && !in.accounted(a) {
 			out = append(out, a)
 		}
 	}
 	return out
+}
+
+// gcpCreated is the second half of what a clean project is, and it is the
+// half that makes the check usable at all (Task 4.4's required precursor,
+// recorded on #489's review of 2026-10-17).
+//
+// A whole-project read lists everything, and a real project always holds
+// resources GCP created and no Terraform state can account for. One of them is
+// always the project itself and one is each service it has enabled, so
+// without this list EVERY read of a real managed project falls back — and D59's
+// own "never halt, ask for a confirmation" would turn the managed apply's gate
+// into a prompt on every run, which is the failure mode the gate exists to
+// remove. Several of these are named by the project NUMBER, which no state id
+// carries, so no Accounted entry could ever match them.
+//
+// The list is CLOSED, and that is the direction that matters: a type GCP adds
+// later is foreign until it is named here, and a foreign resource is one
+// confirmation. The two shared types — a service account, a log bucket or sink
+// — are ignored by the NAME GCP gives its own, never by type alone, because a
+// service account or a sink an operator created in the project is exactly the
+// "single purpose" case D59 is about. Anything that is not one of these is
+// still foreign.
+func (in Inventory) gcpCreated(a Asset) bool {
+	switch a.Type {
+	case
+		// The project itself: "//cloudresourcemanager.googleapis.com/projects/<p>".
+		// Created by whoever created the project, and the resource the whole
+		// read is made about.
+		"cloudresourcemanager.googleapis.com/Project",
+		// The services the project has enabled, which fugaro init enables with
+		// the installation and which the deployment in progress enables for
+		// itself: "//serviceusage.googleapis.com/projects/<number>/services/<api>".
+		// Named by the project NUMBER, never by its id.
+		"serviceusage.googleapis.com/Service",
+		// Cloud Run's revisions and executions: created by the service or job
+		// they belong to, never by a plan of their own, and unaccountable — a
+		// revision's name carries a generated suffix.
+		"run.googleapis.com/Revision",
+		"run.googleapis.com/Execution",
+		// The images a build pushes into the project's own Artifact Registry:
+		// the output of the pipeline, not a resource a plan declares, and named
+		// by digest.
+		"artifactregistry.googleapis.com/DockerImage":
+		return true
+	case
+		// The "_Default" and "_Required" log buckets and sinks: GCP reserves
+		// both names, so neither can be an operator's. A bucket or sink of
+		// another name is not this and stays foreign.
+		"logging.googleapis.com/LogBucket",
+		"logging.googleapis.com/LogSink":
+		return lastSegment(a.Name) == "_Default" || lastSegment(a.Name) == "_Required"
+	case "iam.googleapis.com/ServiceAccount":
+		return in.gcpServiceAccount(a)
+	}
+	return false
+}
+
+// gcpServiceAccount reports whether a service account is one GCP itself
+// created for THIS project — the default ones and the Google-managed agents,
+// whose names GCP assigns and which a project of the installation's kind has
+// whether or not any plan mentions it. Each form is matched exactly, against
+// this project's own id and number, and nothing else is: an account an
+// operator or an agent created — even one whose local part borrows an agent's
+// shape, such as service-1@<p>.iam.gserviceaccount.com — and a default
+// account of another project are resources the state does not account for and
+// stay foreign, which is what keeps D59's fallback to confirmations reachable.
+//
+// The forms, with <N> this project's number (Inventory.ProjectNumber) and <p>
+// its id (Inventory.GCPProject):
+//
+//   - <N>-compute@developer.gserviceaccount.com — the Compute Engine default.
+//   - <N>@cloudservices.gserviceaccount.com — the Google APIs service agent:
+//     the identity the API calls made on the project's behalf run as.
+//   - service-<N>@gcp-sa-<agent>.iam.gserviceaccount.com — the Google-managed
+//     agents GCP creates as services are used (Firebase's, Artifact
+//     Registry's), and service-<N>@<d>.iam.gserviceaccount.com for the closed
+//     list of older agent domains in legacyAgentDomains (Cloud Run's
+//     serverless-robot-prod among them). The domain is never <p>'s own: an
+//     account under <p>.iam.gserviceaccount.com is one somebody created in
+//     the project, whatever it is called.
+//   - <p>@appspot.gserviceaccount.com — the App Engine default, which the
+//     project has once Firebase is added to it; <p> must be this project's id
+//     and the asset must be filed under it.
+//
+// The number in the first three is why no Accounted entry could carry them:
+// the installation's state knows the project by its id, and these are named by
+// its number — and why the number is checked: any run of digits would also
+// match another project's default account.
+func (in Inventory) gcpServiceAccount(a Asset) bool {
+	local, domain, ok := strings.Cut(lastSegment(a.Name), "@")
+	if !ok || local == "" {
+		return false
+	}
+	number := ""
+	if in.ProjectNumber > 0 {
+		number = strconv.FormatInt(in.ProjectNumber, 10)
+	}
+	ours := func(n string) bool { return number != "" && n == number }
+	switch domain {
+	case "developer.gserviceaccount.com":
+		n, ok := strings.CutSuffix(local, "-compute")
+		return ok && ours(n)
+	case "cloudservices.gserviceaccount.com":
+		return ours(local)
+	case "appspot.gserviceaccount.com":
+		// The id is checked twice: it is this project's, and the asset is
+		// filed under it ("projects/<p>/...").
+		return in.GCPProject != "" && local == in.GCPProject && pathSegment(a.Name, "projects") == in.GCPProject
+	}
+	sub, ok := strings.CutSuffix(domain, ".iam.gserviceaccount.com")
+	if !ok || sub == "" || sub == in.GCPProject {
+		return false
+	}
+	if !strings.HasPrefix(sub, "gcp-sa-") && !legacyAgentDomains[sub] {
+		return false
+	}
+	n, ok := strings.CutPrefix(local, "service-")
+	return ok && ours(n)
+}
+
+// legacyAgentDomains are the Google-managed service agents' domains that
+// predate the gcp-sa-* naming, closed as gcpCreated's list is: an agent whose
+// domain is not here and not gcp-sa-* is foreign until it is named.
+var legacyAgentDomains = map[string]bool{
+	"serverless-robot-prod": true, // Cloud Run
+	"gcf-admin-robot":       true, // Cloud Functions
+	"firebase-rules":        true, // Firebase Rules
+	"compute-system":        true, // Compute Engine
+	"containerregistry":     true, // Container Registry
+}
+
+// pathSegment is the segment of a full resource name that follows key: with
+// the name "//iam.googleapis.com/projects/<p>/serviceAccounts/<email>", the
+// project id is pathSegment(name, "projects"). It is empty when the name does
+// not carry the key, which makes a comparison against it fail.
+func pathSegment(name, key string) string {
+	seg := strings.Split(assetPath(name), "/")
+	for i, s := range seg {
+		if s == key && i+1 < len(seg) {
+			return seg[i+1]
+		}
+	}
+	return ""
+}
+
+// digits reports whether s is a non-empty run of ASCII digits: a project
+// number, and never the empty string a name with no number would leave.
+func digits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// lastSegment is the part of a full resource name after its last "/": the
+// bucket, sink or service account's own name.
+func lastSegment(name string) string {
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		return name[i+1:]
+	}
+	return name
 }
 
 // accounted reports whether a listed asset is a resource the state accounts

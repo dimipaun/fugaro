@@ -43,8 +43,11 @@ func listed(name, typ string) Asset { return Asset{Name: name, Type: typ} }
 // inventory is the check under test, for a project whose state accounts for
 // accounted and whose whole-project read answers with assets.
 func inventory(a Assets, accounted ...StateResource) Inventory {
-	return Inventory{Project: project, GCPProject: gcpProject, Assets: a, Accounted: accounted}
+	return Inventory{Project: project, GCPProject: gcpProject, ProjectNumber: testProjectNumber, Assets: a, Accounted: accounted}
 }
+
+// testProjectNumber is gcpProject's number in these tests.
+const testProjectNumber = 123456789012
 
 // A resource the state does not account for falls the run back to
 // confirmations and is named: never a halt, never a delete (D59).
@@ -668,5 +671,150 @@ func TestInventoryErrorOnLaterPageFallsBack(t *testing.T) {
 	d := inventory(c).Check(context.Background())
 	if !d.Fallback || d.Cause != CauseUnreadable || len(d.Foreign) != 0 {
 		t.Errorf("a page-2 error decided %+v, want a fallback with cause %q and nothing foreign", d, CauseUnreadable)
+	}
+}
+
+// The assets GCP itself creates, and the list the whole-project read ignores
+// (Task 4.4's REQUIRED precursor, recorded on #489's review of 2026-10-17).
+//
+// A real managed project always holds resources GCP created and no Terraform
+// state accounts for: the project itself, the services it has enabled, the
+// _Default and _Required log buckets and sinks, the default and Google-managed
+// service accounts, Cloud Run's revisions and executions, and the images a
+// build pushes into Artifact Registry — several of them named by the project
+// NUMBER, which the state's ids never carry. Without this list every read of a
+// real project falls back, so the apply the gate opens would ask for a
+// confirmation every time and 67a's "no fallback" step could not pass.
+//
+// Each entry is asserted on its own, so a type that stops being ignored fails
+// the subtest named for it rather than a listing of thirteen.
+func TestInventoryIgnoresTheAssetsGCPItselfCreates(t *testing.T) {
+	const number = "123456789012"
+	runs := StateResource{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + gcpProject}
+	runsName := "//storage.googleapis.com/projects/_/buckets/fugaro-runs-" + gcpProject
+
+	for _, tc := range []struct {
+		what  string
+		asset Asset
+	}{
+		{"the project itself",
+			listed("//cloudresourcemanager.googleapis.com/projects/"+gcpProject, "cloudresourcemanager.googleapis.com/Project")},
+		{"an enabled service",
+			listed("//serviceusage.googleapis.com/projects/"+number+"/services/run.googleapis.com", "serviceusage.googleapis.com/Service")},
+		{"the _Default log bucket",
+			listed("//logging.googleapis.com/projects/"+gcpProject+"/locations/global/buckets/_Default", "logging.googleapis.com/LogBucket")},
+		{"the _Required log bucket",
+			listed("//logging.googleapis.com/projects/"+gcpProject+"/locations/global/buckets/_Required", "logging.googleapis.com/LogBucket")},
+		{"the _Default log sink",
+			listed("//logging.googleapis.com/projects/"+gcpProject+"/sinks/_Default", "logging.googleapis.com/LogSink")},
+		{"the _Required log sink",
+			listed("//logging.googleapis.com/projects/"+gcpProject+"/sinks/_Required", "logging.googleapis.com/LogSink")},
+		{"the Compute default service account",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/"+number+"-compute@developer.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"the Google APIs service agent",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/"+number+"@cloudservices.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"a Google-managed service agent",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/service-"+number+"@gcp-sa-firebase.iam.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"Cloud Run's service agent (a legacy agent domain)",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/service-"+number+"@serverless-robot-prod.iam.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"the App Engine default service account",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/"+gcpProject+"@appspot.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"a Cloud Run revision",
+			listed("//run.googleapis.com/projects/"+gcpProject+"/locations/us-east5/revisions/check-00001-abc", "run.googleapis.com/Revision")},
+		{"a Cloud Run execution",
+			listed("//run.googleapis.com/projects/"+gcpProject+"/locations/us-east5/executions/check-abc", "run.googleapis.com/Execution")},
+		{"an image a build pushed",
+			listed("//artifactregistry.googleapis.com/projects/"+gcpProject+"/locations/us-east5/repositories/fugaro/dockerImages/sha256:abc", "artifactregistry.googleapis.com/DockerImage")},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			a := &fakeAssets{assets: []Asset{tc.asset, listed(runsName, "storage.googleapis.com/Bucket")}}
+			d := inventory(a, runs).Check(context.Background())
+			if d.Fallback {
+				t.Fatalf("a project holding only %s and its accounted bucket fell the run back: %s", tc.what, d.Why)
+			}
+		})
+	}
+}
+
+// The other direction, and the one that matters more: a type the list does not
+// name is still foreign, and a resource of a SHARED type that GCP did not name
+// is still foreign. The list is closed on purpose — a type GCP adds later is
+// foreign until it is named here — and it ignores the shared types by the
+// name GCP gives them, never by type alone, because a service account or a log
+// sink an operator created is a resource the state does not account for.
+func TestInventoryStillForeignWhatGCPDidNotCreate(t *testing.T) {
+	runs := StateResource{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + gcpProject}
+	runsName := "//storage.googleapis.com/projects/_/buckets/fugaro-runs-" + gcpProject
+
+	for _, tc := range []struct {
+		what  string
+		asset Asset
+	}{
+		{"a type the list does not name",
+			listed("//compute.googleapis.com/projects/"+gcpProject+"/zones/us-east5-a/instances/somebody-elses", "compute.googleapis.com/Instance")},
+		{"a service account an operator created",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/fugaro-build@"+gcpProject+".iam.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"a service account that merely borrows the prefix",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/deployer@fugaro.example.com", "iam.googleapis.com/ServiceAccount")},
+		{"a log sink an operator created",
+			listed("//logging.googleapis.com/projects/"+gcpProject+"/sinks/audit-export", "logging.googleapis.com/LogSink")},
+		{"a log bucket an operator created",
+			listed("//logging.googleapis.com/projects/"+gcpProject+"/locations/us-east5/buckets/archive", "logging.googleapis.com/LogBucket")},
+		// M1: the service-account forms are matched against THIS project's id
+		// and number, never against any run of digits or any domain.
+		{"a user-created account named like a service agent, in this project",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/service-1@"+gcpProject+".iam.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"a user-created account carrying this project's number, in this project",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/service-123456789012@"+gcpProject+".iam.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"an account of a foreign project named like a service agent",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/service-123456789012@other-proj-9.iam.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"a service agent whose digits are not this project's number",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/service-999999999999@gcp-sa-firebase.iam.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"another project's Compute default",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/999999999999-compute@developer.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"another project's Google APIs service agent",
+			listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/999999999999@cloudservices.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+		{"another project's App Engine default",
+			listed("//iam.googleapis.com/projects/other-proj-9/serviceAccounts/other-proj-9@appspot.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			a := &fakeAssets{assets: []Asset{tc.asset, listed(runsName, "storage.googleapis.com/Bucket")}}
+			d := inventory(a, runs).Check(context.Background())
+			if !d.Fallback || d.Cause != CauseForeign {
+				t.Fatalf("%s decided %+v, want a fallback with cause %q", tc.what, d, CauseForeign)
+			}
+			if len(d.Foreign) != 1 || d.Foreign[0].Name != tc.asset.Name {
+				t.Errorf("Foreign = %+v, want only %s", d.Foreign, tc.asset.Name)
+			}
+		})
+	}
+}
+
+// M1: with no project number the number-named accounts are not this
+// project's, so they are foreign and the run falls back — the safe direction
+// for a caller that did not read the number.
+func TestInventoryWithoutANumberIgnoresNoNumberNamedAccount(t *testing.T) {
+	runs := StateResource{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + gcpProject}
+	runsName := "//storage.googleapis.com/projects/_/buckets/fugaro-runs-" + gcpProject
+	sa := listed("//iam.googleapis.com/projects/"+gcpProject+"/serviceAccounts/123456789012-compute@developer.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")
+	in := inventory(&fakeAssets{assets: []Asset{sa, listed(runsName, "storage.googleapis.com/Bucket")}}, runs)
+	in.ProjectNumber = 0
+	if d := in.Check(context.Background()); !d.Fallback || d.Cause != CauseForeign {
+		t.Fatalf("a number-named account with no project number decided %+v, want a foreign fallback", d)
+	}
+}
+
+// M1: an account under the project's own domain is one somebody created in
+// it, even when the project id itself has the agents' gcp-sa- shape: the
+// domain check is on this project's id, not only on the prefix.
+func TestInventoryNeverIgnoresAnAccountUnderTheProjectsOwnDomain(t *testing.T) {
+	const pid = "gcp-sa-lookalike1"
+	runsName := "//storage.googleapis.com/projects/_/buckets/fugaro-runs-" + pid
+	sa := listed("//iam.googleapis.com/projects/"+pid+"/serviceAccounts/service-123456789012@"+pid+".iam.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")
+	in := Inventory{Project: project, GCPProject: pid, ProjectNumber: testProjectNumber,
+		Assets:    &fakeAssets{assets: []Asset{sa, listed(runsName, "storage.googleapis.com/Bucket")}},
+		Accounted: []StateResource{{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + pid}}}
+	if d := in.Check(context.Background()); !d.Fallback || d.Cause != CauseForeign {
+		t.Fatalf("an account under %s's own domain decided %+v, want a foreign fallback", pid, d)
 	}
 }
