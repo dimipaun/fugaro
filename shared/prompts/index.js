@@ -391,10 +391,16 @@ function reminderAt(at, stage) {
  * announcement made after a reminder's due time counts as that reminder's, so a
  * prompt announced late is not announced twice for one stage.
  */
+// A prompt announced before its first reminder is not due again until the hour
+// has passed, and the arithmetic says so on its own: at stage 0 the reminder
+// time is `at - 23h`, which no announcement can precede -- an announcement is
+// made at the queue's own `now`, and a prompt's `at` is never more than the
+// future tolerance above it. So there is no stage-0 branch here to be
+// redundant; a guard that cannot be told apart from the fall-through is a
+// guard no test can defend.
 function isDue(entry, now) {
   if (entry.announcedAt === null) return true;
   const stage = reminderStage(entry.prompt.at, now);
-  if (stage === 0) return false;
   return entry.announcedAt < reminderAt(entry.prompt.at, stage);
 }
 

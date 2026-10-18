@@ -772,9 +772,15 @@ test('only D160\'s set interrupts, and the switch decides which part of it', () 
 });
 
 test('widening adds "any prompt", and only when one is due', () => {
-  let queue = enqueueOne(makeQueue()).queue;
-  assert.equal(policy({ queue, switch: SWITCH.WIDEN }).reason, INTERRUPT.PROMPT);
-  assert.equal(policy({ queue, switch: SWITCH.WIDEN, switch2: 1 }).ok, false);
+  const fresh = enqueueOne(makeQueue()).queue;
+  assert.equal(policy({ queue: fresh, switch: SWITCH.WIDEN }).reason, INTERRUPT.PROMPT);
+  assert.equal(policy({ queue: fresh, switch: SWITCH.WIDEN, switch2: 1 }).ok, false);
+  // The default set does NOT include a waiting prompt: widening is the only
+  // setting under which a question of its own is a reason to speak over
+  // someone, and off-by-default is what keeps the queue quiet.
+  assert.equal(policy({ queue: fresh, switch: SWITCH.DEFAULT }).reason, null);
+  assert.equal(policy({ queue: fresh, switch: SWITCH.NARROW }).reason, null);
+  let queue = fresh;
 
   // A prompt already spoken is not a reason to speak over the user again: what
   // widening adds is a question the user has not heard.
@@ -881,6 +887,14 @@ test('the queue module holds no clock: an unchanged input is unchanged output', 
   const first = announcement([queue], { now: T0 + HOUR });
   const second = announcement([queue], { now: T0 + HOUR });
   assert.deepEqual(first, second);
+  // Every answer and every refusal is frozen, so a caller that mutates one it
+  // was handed is a caller whose next call this module refuses rather than
+  // answers from a value it never read.
+  assert.ok(Object.isFrozen(first));
+  assert.ok(Object.isFrozen(first.due));
+  assert.ok(Object.isFrozen(enqueue(queue, { now: T0, prompt: promptMessage({ text: '' }) })));
+  assert.ok(Object.isFrozen(policy({})));
+  assert.ok(Object.isFrozen(isExpired(T0, T0, HOUR)));
 });
 
 test('a queue handed back mutated is refused, not trusted', () => {
