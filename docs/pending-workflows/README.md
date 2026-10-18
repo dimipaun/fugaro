@@ -270,8 +270,9 @@ produce some problem, so no check can rot unnoticed — and
 `TestImagesWorkflowPublishesAMultiArchBase`,
 `TestImagesWorkflowBuildsTheBaseAndHistory` and
 `images/verify_public_test.go`'s
-`TestImagesWorkflowPublishesAndVerifiesEveryImage` keep passing unmodified
-against this file (`readImagesWorkflow` reads this pending copy first).
+`TestImagesWorkflowPublishesAndVerifiesEveryImage` kept passing unmodified
+against this file (`readImagesWorkflow` read the pending copy first; it reads
+the real `.github/workflows/images.yml` now that the copy has landed).
 
 ### Why it was staged here, and the timing it had to meet
 
