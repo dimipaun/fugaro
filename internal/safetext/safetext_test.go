@@ -208,3 +208,33 @@ func TestFieldListBoundsEveryEntryAndTheCount(t *testing.T) {
 		}
 	})
 }
+
+// TestFieldKeepsALegitimateAddressAndIsIdempotent: the bound is for display,
+// and a display that reads differently from the address it shows is a listing
+// of something the owner never wrote. A plan's addresses carry brackets,
+// quotes, slashes, colons, dashes, at-signs and non-ASCII letters, and every
+// one of them reads back exactly; and bounding a bounded value changes
+// nothing, so a value bounded at two layers (an error FieldErr'd and then
+// quoted by its caller) reads the same as one bounded once.
+func TestFieldKeepsALegitimateAddressAndIsIdempotent(t *testing.T) {
+	for _, a := range []string{
+		`google_storage_bucket.data`,
+		`module.net["eu-west1"].google_compute_network.vpc[0]`,
+		`google_project_iam_member.m["roles/viewer:user:a@example.com"]`,
+		`module.a.module.b.google_cloud_run_v2_job.web["café_ü-1"]`,
+		`data.google_project.p`,
+	} {
+		if got := Field(a); got != a {
+			t.Errorf("Field(%q) = %q, want the address unchanged", a, got)
+		}
+	}
+	for _, in := range []string{
+		"plain", "a\nb\tc", "a" + string(rune(0x202e)) + "b", strings.Repeat("x", 10000),
+		strings.Repeat("y", FieldMax+1), "  lead and trail  ", "a\x1b]8;;http://x\x07b",
+	} {
+		once := Field(in)
+		if twice := Field(once); twice != once {
+			t.Errorf("Field is not idempotent on %.40q: once %.60q, twice %.60q", in, once, twice)
+		}
+	}
+}
