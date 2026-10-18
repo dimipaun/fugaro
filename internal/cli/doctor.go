@@ -1410,11 +1410,11 @@ func projectAccountReach(j projectAccountJob) string {
 // job (D5), and a static secret_env mount is in the container before the run
 // starts, so EVERY run of that job holds the token — including a run whose
 // agent.auth is not oauth, which authenticates with its own credential and
-// never reads it, and including a run whose own agent.auth is vertex. Nothing
-// refuses those runs (design §4.3: such a profile's runs are OAuth or Vertex
-// ones, never API-key ones, and the non-OAuth ones are legitimate), so the
-// reach is documented rather than gated — and doctor is where an owner reads
-// it. The residual itself is SECURITY.md's (D8).
+// never reads it — a Vertex one, and an api-key one under the gateway, whose
+// Anthropic key is optional there (agent.BuildEnv). Nothing refuses those runs
+// (design §4.3: the non-OAuth ones are legitimate), so the reach is documented
+// rather than gated — and doctor is where an owner reads it. The residual
+// itself is SECURITY.md's (D8).
 func defaultAccountNote(jobs []projectAccountJob) string {
 	var lines []string
 	for _, j := range jobs {

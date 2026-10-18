@@ -59,7 +59,16 @@ func TestDocsProjectNamedOAuthTokensSecurityMdResidual(t *testing.T) {
 		// The default account's case: documented, not refused.
 		"A profile that lists `default` gives that token to every run of its no-account job, whatever that run's `agent.auth` is",
 		"documented rather than refused",
-		"never API-key ones",
+		// Where the D4 pair is actually refused, and the api-key runs that are
+		// admitted here all the same: an api-key run whose models go through
+		// the gateway mounts no Anthropic key and needs none
+		// (agent.BuildEnv's api-key arm), so "never API-key ones" is not this
+		// document's to say — and the refusal is not `fugaro validate`'s,
+		// which reads no policy node at all.
+		"`projectpolicy.validProfileAccounts`",
+		"`fugaro validate` reads no policy node and is not one of the three",
+		"or api-key runs under the gateway",
+		"`agent.BuildEnv`",
 		"fugaro doctor",
 		// The swap's own destination, so the stopgap names what replaces it.
 		"docs/credentials-service/README.md",
