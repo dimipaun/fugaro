@@ -30,7 +30,7 @@ approved, and this directory is not evidence that one is.
 `mailbox-schema/` (P0.2, extended by P6.3) is the message schema and its validation, and
 now the required `mac` on every message of every kind, the `agent`, `kind`, `options`,
 `reply_to` and action-record fields, the canonical serialisation the tag covers and its
-vectors: built, with its own tests, its own mutation proof (67 guards) and
+vectors: built, with its own tests, its own mutation proof (72 guards) and
 `vectors.json`, the contract the Go consumer reimplements against; see
 `mailbox-schema/README.md`. The package has one builtin import — `node:crypto`, for
 HMAC-SHA-256 — and it is deliberately **not** in the module's entry point: it is in
