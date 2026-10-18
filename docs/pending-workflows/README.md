@@ -1,7 +1,8 @@
 # Pending workflow changes
 
-**Nothing is pending.** (`ci.yml` was copied in on 2026-10-17, #504, and its staged copy removed in #508; `images.yml` was copied in earlier.) A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+**One file is pending: `shared-tests.yml`.** With it: `ci.yml` was copied in on 2026-10-17 (#504) and its staged copy removed in #508; `images.yml` was copied in earlier. A future workflow change that a run needs is staged here as the whole file, and the owner copies it in.
 
+- **`shared-tests.yml`** — the whole CI job for `shared/`'s tests, mobile plan Task **P4.3**: a `main`-filtered push and pull request under `shared/**`, `contents: read`, `npm ci` and `npm test` on Node 22 and Node 26, and the package's four mutation-proof scripts, every action pinned by full commit SHA. `shared/` is outside the Go module, so no job in `ci.yml` runs it. Staged by a Fugaro run that cannot push a `.github/workflows/**` change; see `## shared-tests.yml` below, which also records what the job will report on `main` today.
 - **`images.yml`** — the signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`. It was staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Copy it in before the release's version-bump merge commit is created** (the timing is load-bearing: see `## images.yml` below), then `git rm` the pending file, as the procedure below describes.
 
 The most recent copy that *was* applied (`images.yml` for the 0.7.0 hard cut, commit `838e0b0`) is the reason the file below has no legacy per-kind `base` job; that section's older text was replaced by this one when the file became pending again.
@@ -47,6 +48,54 @@ copy exists it is what the root loop is checked against, and once it is gone
 the real `ci.yml` must name every root under `deploy/terraform/gcp/roots/`
 on its own, so a copy that dropped `compute` (or a later deletion of it)
 fails that test rather than leaving the root untested.
+
+## `shared-tests.yml`
+
+**A new file**, so nothing is replaced: it stages `.github/workflows/shared-tests.yml` entire, the CI job for `shared/`'s tests (mobile plan Task **P4.3**). The plan describes that job as a change to `ci.yml`, and it is a file of its own here because the brief for this run asked for the job "as a whole new workflow file"; the job's content is the plan's either way.
+
+**Why `shared/` needs a job of its own.** `shared/` (P0.1-P1.5) is a second artifact outside the Go module, like `console/` and `website/`: `go build ./...`, `go vet ./...`, `gofmt -l .` and every job in `ci.yml` take no notice of it, so until this file exists the package's tests run **only where someone runs them**. That is the gap `docs/mobile/implementation-plan.md` records as open item 4 and `shared/README.md` states under "Two honest gaps". The package has no dependencies at all, so `npm ci` here is the check that the committed `package-lock.json` is installable rather than a download.
+
+What the job is, in one line: on a push or pull request to `main` that touches `shared/**` or this workflow's own path, run `npm ci` then `npm test` in `shared/` on **Node 22 and Node 26**, then run each of the package's four `shared/*/mutation-proof.sh` scripts; `contents: read`, one cancelling run per ref, every action pinned by full commit SHA, no secret anywhere.
+
+**The owner's steps, exactly:**
+
+```sh
+# 1. Review this file, then copy it in.
+cp docs/pending-workflows/shared-tests.yml .github/workflows/shared-tests.yml
+git add .github/workflows/shared-tests.yml
+# 2. The git rm is load-bearing, not cleanup: while this file exists,
+#    internal/cli/docs_shared_tests_workflow_test.go reads IT, so leaving it
+#    in place would freeze those assertions on its bytes and hide a later edit
+#    or deletion of the real file's job.
+git rm docs/pending-workflows/shared-tests.yml
+git commit -m "shared: run the shared package's tests"
+```
+
+There is no timing constraint, unlike `images.yml` below: the job is not part of any release path, and nothing else reads it.
+
+**Before copying: check the pins.** Dependabot does not watch this directory, so the two pins here can lag `main`'s. The file uses the SHAs `main` had on 2026-10-18 — `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1, `ci.yml`'s pin) and `actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1` (v7.1.0, `ci.yml`'s pin) — both verified against their tags with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` when the file was staged. Compare them with `grep -h 'uses:' docs/pending-workflows/shared-tests.yml .github/workflows/*.yml | sort -u` and keep the newer SHA. Once the staged copy is gone, `internal/cli/docs_shared_tests_workflow_test.go`'s `TestSharedTestsWorkflowPinsAgreeWithTheOtherWorkflows` enforces that agreement itself; while it is pending, that test skips and says so.
+
+### What this job will report on `main` today
+
+**The Node 22 leg will be red, and not because of this job.** The package's suite is 289 tests, and on the Node 22 line **one of them fails**: `shared/url/index.test.js` expects `https://xn--github-9d0c.com/a` to be refused as `punycode-host`, and Node 22's host parser refuses the string itself instead, so the module answers `not-a-url`. Node 26 parses it and the test passes: **289 pass / 0 fail on 26.12.0, 288 pass / 1 fail on 22.23.3**. The difference is the runner's, not the package's:
+
+```console
+$ node -e 'try { console.log("ok", new URL("https://xn--github-9d0c.com/a").hostname) } catch (e) { console.log("throws:", e.message) }'
+# node 22.23.3:  throws: Invalid URL
+# node 26.12.0:  ok xn--github-9d0c.com
+```
+
+That failure is **pre-existing and already recorded** — `shared/mailbox/README.md` and `shared/mailbox-sim/README.md` both name it, and it is the stated reason their mutation proofs run their own module's suite rather than the package's. It has a second consequence the job inherits: the mutation proofs of `shared/mailbox-schema/` and `shared/lease/` run the **whole package's** `npm test` as their positive control, so on Node 22 they refuse (exit 2, "the suite does not pass on the pristine …") rather than reporting mutations they never ran. On Node 26 all four scripts pass and kill 197 guards between them (109 + 45 + 19 + 24); on Node 22 two pass (109 + 45) and two refuse.
+
+**Nothing in the workflow hides this**, and it must not be edited to: skipping the failing file, softening the step or dropping the Node 22 leg would delete the evidence rather than the defect. The fix belongs to P0.3's module (`shared/url/`, and the expectation in `index.test.js`), which is a different task with its own review tier; the owner's two live options are to fix `shared/url` first, or to copy the job in with its Node 22 leg red — which is the honest state, and the point of running both lines.
+
+One further honest note: `shared/package.json`'s `engines` is `>=22 <23`, so the Node 26 leg makes npm print an `EBADENGINE` **warning** on `npm ci` (npm 11.20.0) and nothing else — the install and the suite both succeed. Widening `engines` would be a change to P0.1's manifest, not to this file, and is not made here.
+
+### Not verified
+
+**This file has never run in GitHub Actions.** No workflow was dispatched and no job was executed; what is verified is the YAML's shape, through `internal/cli/docs_shared_tests_workflow_test.go` (the triggers, the permissions, the pins and their version comments, both Node lines, the path filter, the two runner commands, the proof step, the absence of a secret and of the dangerous trigger events and permission grants), and the two `run:` steps by hand, in this container, on both Node lines — the same commands, from `shared/`, with Node 22.23.3 and 26.12.0 installed through `mise`, which is what produced every number above.
+
+What that cannot show: that GitHub's own event filtering and matrix behave as the YAML says, that `actions/setup-node` resolves `"22"` and `"26"` to the lines used here, or that the job's runtime, caching and permissions behave in a hosted runner. Those are CI's to show, once the file is copied in.
 
 ## `images.yml`
 
@@ -253,4 +302,4 @@ Copied in on 2026-10-17 (#504): `.github/workflows/ci.yml`'s `terraform` job now
 
 ## Before you copy: check the action pins
 
-Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so the pins in `images.yml` here can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` here to be a full commit SHA; once the pending file is gone it also requires the real file's pins to agree with the other workflows. Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/images.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.
+Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so a pin in `images.yml` or `shared-tests.yml` here can differ from the one `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` in `images.yml` to be a full commit SHA, and `TestSharedTestsWorkflowIsStagedAndPinned` requires the same of `shared-tests.yml` (with its `# vX.Y.Z` beside it); once a pending file is gone, its own test also requires the real file's pins to agree with the other workflows'. Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/*.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.
