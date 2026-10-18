@@ -30,17 +30,27 @@ import (
 // does not is that second list, and the pair of rules that hold a profile to
 // it: the profile writes exact allow_repos, every account it lists covers
 // every repository on that list, and no Anthropic API key is mounted beside
-// them. A version-2 reader knows nothing of either — its Profile carrier has
-// no claude_accounts member, and the accounts block is a top-level key it
-// would file under UnknownKeys and drop (P8) — so a node whose profile names
-// accounts would reach it as a profile whose own allow_repos is the only gate,
-// on a job that was chosen for an account: the run would be admitted by a list
-// that is not the account's. The bump is what refuses that node instead
-// (RunnerSkew on the job side, CLISkew on the operator's), and the rules
-// themselves ship in the same release as this constant: an account job's
-// enforcement is plan task 3, and until it lands no OAuth launch reaches such
-// a job at all (checkProjectJobOAuth). The shape is version 2's; only what a
-// runner must enforce changed.
+// them. Such a node carries two keys a version-2 reader does not know, and
+// they are worth telling apart because only one of them is tolerated: the
+// accounts block is a top-level key, which it would merely list in
+// UnknownKeys and decode past (P8), and claude_accounts is a member INSIDE a
+// profile entry, which its Profile carrier does not have and which its own
+// profile decode refuses — entries are decoded with DisallowUnknownFields, the
+// rule the decoder states for a new profile field ("a newer profile field
+// bumps Version, which is what refuses a node this binary cannot read"), and
+// the rule the design's schema section cites for this bump. So a node whose
+// profile names accounts is unreadable to a version-2 reader whether or not
+// its version field said 3: the field is what makes it unreadable, and the
+// bump is what makes that refusal the documented one. The version check
+// answers first, with a VersionError and therefore with the remedy that fits
+// the direction (RunnerSkew on the job side, CLISkew on the operator's),
+// instead of an unknown-field decode error that names a field and no move. It
+// also states in the node which enforcement a reader must have, which is what
+// a version is for. The rules themselves ship in the
+// same release as this constant: an account job's enforcement is plan task 3,
+// and until it lands no OAuth launch reaches such a job at all
+// (checkProjectJobOAuth). The shape is version 2's; only what a runner must
+// enforce changed.
 const Version = 3
 
 // PolicyRulesVersion is the generation of the Realtime Database security rules

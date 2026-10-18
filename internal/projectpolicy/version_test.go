@@ -26,14 +26,17 @@ func TestSkewMessagesShareTheSentence(t *testing.T) {
 
 // TestTheProfileGateIsVersioned: a profile's own allow_repos is enforced by a
 // version-2 runner and its accounts by a version-3 one, and the bump is what
-// makes a reader that lacks either refuse the node rather than run past it
-// (plan task 3.3, and project-named-oauth-tokens task 1). A runner of version
-// 1 decodes the profiles block and ignores it, so a launcher that points a run
-// of a profile's job at another repository of the project's allow_repos would
-// get the profile's secrets from it — and the same asymmetry is what version 3
-// closes for the accounts block: a version-2 reader would hold the run to the
-// profile's list alone, which the profile must keep covered by its accounts
-// but which is not the account's own.
+// makes a reader that lacks either refuse the node with a remedy rather than
+// run past it (plan task 3.3, and project-named-oauth-tokens task 1). A runner
+// of version 1 has no profiles block at all — the key is top-level, so it
+// would list it in UnknownKeys and decode past it (P8) — and a launcher that
+// pointed a run of a profile's job at another repository of the project's
+// allow_repos would then get the profile's secrets from it. Version 3's case
+// is the other one: claude_accounts sits INSIDE a profile entry, which every
+// reader from version 2 on decodes with DisallowUnknownFields, so a version-2
+// reader refuses such a node as unreadable rather than reading a profile whose
+// own allow_repos would be the only gate. Either way the node is refused, and
+// the version is what decides whether the refusal is the documented skew.
 //
 // What this pins is the mechanism, not the number: a node below the version
 // this binary understands is refused as a skew (VersionError, with both
