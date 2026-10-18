@@ -224,6 +224,52 @@ test('switching closes the previous account before it opens the next', async () 
   assert.deepEqual(registry.openAccounts(), ['phone']);
 });
 
+test('closing with nothing open is a no-op, and closes nothing', async () => {
+  // Review finding: this was the only public method on the store with no test
+  // — and it is the second entrance to the same close-before-open teardown
+  // `switchTo` has, reached when the app goes to the background.
+  const trace = [];
+  const { store, registry } = makeStore({ trace });
+  const closed = await store.closeCurrent();
+  assert.equal(closed.ok, true);
+  assert.equal(closed.changed, false, 'there was nothing to close');
+  assert.deepEqual(trace, [], 'and nothing was torn down to say so');
+  assert.equal(store.current(), null);
+
+  await store.add(LAPTOP);
+  await store.switchTo('laptop');
+  registry.add('laptop', () => {});
+  const once = await store.closeCurrent();
+  assert.equal(once.changed, true);
+  assert.equal(store.current(), null);
+  assert.equal(registry.liveCount('laptop'), 0);
+  assert.equal(registry.cacheFor('laptop').code, 'not-open');
+  // Idempotent from here on: a second close changes nothing.
+  assert.equal((await store.closeCurrent()).changed, false);
+});
+
+test('a close whose teardown failed still leaves no account open', async () => {
+  const { store, registry } = makeStore();
+  await store.add(LAPTOP);
+  await store.switchTo('laptop');
+  registry.add('laptop', () => { throw new Error('socket already gone'); });
+
+  const closed = await store.closeCurrent();
+  assert.equal(closed.ok, false);
+  assert.equal(closed.code, STORE_CODES.TEARDOWN_FAILED);
+  assert.equal(closed.accountId, 'laptop');
+  assert.equal(closed.failures, 1);
+  // The invariant the whole module rests on: a failed teardown is never a
+  // reason to say an account is open when nothing is subscribed. Fail closed
+  // in the direction that has no listener alive.
+  assert.equal(store.current(), null);
+  assert.deepEqual(registry.openAccounts(), []);
+  assert.equal(registry.liveCount('laptop'), 0);
+  // ... and the failure is reported, not remembered as an open account: the
+  // next close has nothing left to do.
+  assert.equal((await store.closeCurrent()).changed, false);
+});
+
 test('switching to the account that is already open changes nothing', async () => {
   const trace = [];
   const { store, registry } = makeStore({ trace });

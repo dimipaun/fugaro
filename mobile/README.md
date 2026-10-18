@@ -89,6 +89,15 @@ and a prompt per refresh is a prompt the owner switches off.
   reached by its own id or by nothing. `AccountStore.secret(id, item)` is the
   only call that returns material, it needs the account and the item both, and
   `list()`/`account()` return D114's tuple and no secret.
+* **No orphan, ever.** `SecretStore.forget` attempts the delete of every item
+  D111 declares **unconditionally**, and never gates it on a successful read —
+  a Keychain read fails exactly when the phone is locked, which is the state
+  the port's own `WHEN_UNLOCKED_THIS_DEVICE_ONLY` creates, so a read-gated
+  delete would leave both items in the Keychain under an account
+  `AccountStore.remove` had just deleted, with no code path able to reach them.
+  A delete needs no read and no unlock and is idempotent; a delete that *fails*
+  is a `store-failed` refusal, which makes `remove` keep the tuple so the
+  removal can be run again once the phone is unlocked.
 * **No `belong`.** The `belong` installation is added by the owner by hand
   (D114, Global Constraint 11); no fixture here is recorded from it, and no
   agent touches it. `app.json` ships with no installation in it at all.
@@ -125,6 +134,13 @@ was removed. The mutations, in the order they were run:
 | the settings key fence stops refusing the item names | the derivation test and two more |
 | `items()` probes one of D111's two items instead of the list | three tests, including the derivation one |
 | `forget()` forgets one of D111's two items | the derivation test and `forget removes both items of ONE account` |
+| `forget()` gates the delete on a successful read (the orphan bug) | `forget deletes items it cannot READ`, `a removal while the keychain is locked leaves no credential behind` |
+| `forget()` swallows a failed delete | `a removal whose secret round fails removes nothing at all` |
+| `forget()` stops counting an unreadable item as present | `forget deletes a value it cannot re-validate, and says it was there` |
+| the settings key fence stops exempting the account id | `every forbidden word is still a name the owner may give an installation`, `the owner may name an installation any word the alphabet allows` |
+| `closeCurrent` leaves `#current` set | both `closeCurrent` tests |
+| `closeCurrent` reports `changed` when nothing was open | `closing with nothing open is a no-op` |
+| `closeCurrent` swallows a failed teardown | `a close whose teardown failed still leaves no account open` |
 | the settings word list regains `mac` | `a fence that refused the owner's own installation would be the wrong fence` |
 | the Keychain port hardcodes the accessibility instead of reading it from the module | three adapter tests |
 | the Keychain port writes without the accessibility option | three adapter tests |
@@ -142,6 +158,21 @@ three were fixed rather than kept — and the same fix was then applied to
 (`secure-store.js`'s `items()` and `forget()`): the list lives in one place, so
 a third item is probed, forgotten and fenced by every module at once instead of
 looking exactly like an item the owner never paired.
+
+**A review of this task then found three more, and each one is worth reading as
+a class rather than as an incident:**
+
+* the read-gated delete above — a "cautious-looking" `if (!read.ok) continue`
+  that produced the exact outcome the module exists to prevent;
+* the `mac` fault again, one word short: the account id, which is the owner's
+  word, was still being judged by the settings word list, so an installation
+  called `token` or `apiKey` was refused. The account branch of the key fence is
+  now its own rule, and the tests walk the **whole** word list as candidate ids
+  rather than the one word that was noticed;
+* `closeCurrent` had no test at all, and it is the second entrance to the same
+  teardown `switchTo` is tested for. Its `changed: false` case, its
+  teardown-failed case and the `current() === null` invariant are now asserted,
+  and all three are mutations in the table above.
 
 ## What is not verified here
 
