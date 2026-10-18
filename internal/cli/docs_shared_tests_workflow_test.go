@@ -1,0 +1,446 @@
+package cli
+
+// The staged CI job for the shared package's tests (mobile plan, Task P4.3).
+//
+// shared/ (P0.1-P1.5) is a second artifact outside the Go module -- `go test
+// ./...`, `go vet` and `gofmt -l .` take no notice of it -- so nothing on
+// `main` runs its tests. P4.3 is the job that would, and it is **owner-made**:
+// no agent may write or edit `.github/workflows/**` (the mobile plan's Global
+// Constraint 8; GitHub refuses Fugaro's push of a workflow change), so the
+// file is staged as docs/pending-workflows/shared-tests.yml for the owner to
+// copy in by hand, the way images.yml is staged in this directory.
+//
+// "Staged for a human to copy" is only safe if the staged bytes are pinned by
+// something a human cannot forget to update, so this file holds the staged
+// YAML to the properties that make it harmless to run on a public repository:
+//
+//   - TestSharedTestsWorkflowIsStagedAndPinned: the triggers are a `main` push
+//     and a `main` pull request filtered to `shared/**` and the workflow's own
+//     path, and nothing else; the permissions are `contents: read` and no
+//     more; every `uses:` is a full 40-hex commit with its `# vX.Y.Z` beside
+//     it; the test script runs on both Node lines the job declares; the
+//     package's mutation proofs are run; the file references no secret and
+//     carries no literal that could be one; and `pull_request_target` appears
+//     nowhere in it.
+//   - TestSharedTestsWorkflowPinsAgreeWithTheOtherWorkflows: once the copy has
+//     been made and the staged file removed, the pins cannot drift from the
+//     other workflows' pins of the same actions (while it is pending they can:
+//     Dependabot does not watch docs/pending-workflows/, so the person copying
+//     it compares, as the README beside it says).
+//
+// What this test cannot do is run the job. Nothing here executes GitHub
+// Actions, so the job's own behaviour in CI -- the two Node legs, the install,
+// the proofs -- is unverified until the owner copies the file in and pushes.
+// The one thing that *can* be checked about the versions is checked: the
+// runner commands in the file are the ones this repository uses everywhere
+// else (`npm ci --ignore-scripts --no-audit --no-fund`), and the version
+// matrix names the two lines the plan asks for.
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"regexp"
+	"slices"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	// stagedSharedTestsWorkflowPath is the file this task writes: the whole
+	// workflow, in the directory an agent is allowed to write.
+	stagedSharedTestsWorkflowPath = "docs/pending-workflows/shared-tests.yml"
+	// realSharedTestsWorkflowPath is where the owner copies it to. This test
+	// reads which of the two exists rather than assuming either: while the
+	// file is pending, the staged copy is what is checked; once it is copied
+	// in and the staged copy removed, the real file must stand on its own.
+	realSharedTestsWorkflowPath = ".github/workflows/shared-tests.yml"
+	// sharedTestsWorkflowMarker is what the real file must contain once the
+	// staged copy is gone: the job's own name, so a copy that landed empty, or
+	// a file renamed over it, is refused rather than passing vacuously.
+	sharedTestsWorkflowMarker = "shared/*/mutation-proof.sh"
+)
+
+// sharedTestsWorkflow is docs/pending-workflows/shared-tests.yml, decoded with
+// unknown fields refused: a key nobody reads is a key nobody pins. `on` is
+// spelled out as two named triggers rather than a map, so a third trigger --
+// `workflow_dispatch`, `workflow_run`, `pull_request_target` -- is a decode
+// error here rather than a line the assertions below have to remember to
+// refuse.
+type sharedTestsWorkflow struct {
+	Name        string                      `yaml:"name"`
+	On          sharedTestsWorkflowTriggers `yaml:"on"`
+	Permissions map[string]string           `yaml:"permissions"`
+	Concurrency struct {
+		Group            string `yaml:"group"`
+		CancelInProgress bool   `yaml:"cancel-in-progress"`
+	} `yaml:"concurrency"`
+	Jobs map[string]sharedTestsJob `yaml:"jobs"`
+}
+
+type sharedTestsWorkflowTriggers struct {
+	Push        *sharedTestsWorkflowTrigger `yaml:"push"`
+	PullRequest *sharedTestsWorkflowTrigger `yaml:"pull_request"`
+}
+
+type sharedTestsWorkflowTrigger struct {
+	Branches []string `yaml:"branches"`
+	Paths    []string `yaml:"paths"`
+}
+
+type sharedTestsJob struct {
+	RunsOn         string            `yaml:"runs-on"`
+	TimeoutMinutes int               `yaml:"timeout-minutes"`
+	Permissions    map[string]string `yaml:"permissions"`
+	Strategy       struct {
+		FailFast bool `yaml:"fail-fast"`
+		Matrix   struct {
+			Node []string `yaml:"node"`
+		} `yaml:"matrix"`
+	} `yaml:"strategy"`
+	Steps []sharedTestsStep `yaml:"steps"`
+}
+
+type sharedTestsStep struct {
+	Name             string            `yaml:"name"`
+	Uses             string            `yaml:"uses"`
+	Run              string            `yaml:"run"`
+	WorkingDirectory string            `yaml:"working-directory"`
+	With             map[string]any    `yaml:"with"`
+	Env              map[string]string `yaml:"env"`
+}
+
+// readSharedTestsWorkflow returns the workflow's bytes and the path they came
+// from, reading the staged copy while it exists and the real file after the
+// copy-in.
+//
+// Byte-identity is asserted here, while both exist, and it is the weaker half
+// of the pair on purpose: it says the file under `.github/workflows/` is the
+// reviewed staged one rather than something hand-written, which is what makes
+// the staged copy worth reviewing. It is deliberately not an assertion that
+// the real file is *absent*: Task P4.3's whole point is that the owner copies
+// it in, so absence would turn this test red the moment they did. Once the
+// staged copy is gone the real file is read alone and must carry the marker,
+// so a copy that lost the job (or a file renamed over it) fails here.
+func readSharedTestsWorkflow(t *testing.T) (sharedTestsWorkflow, []byte, string) {
+	t.Helper()
+	staged, stagedErr := os.ReadFile("../../" + stagedSharedTestsWorkflowPath)
+	real, realErr := os.ReadFile("../../" + realSharedTestsWorkflowPath)
+	switch {
+	case stagedErr == nil && realErr == nil:
+		if !bytes.Equal(staged, real) {
+			t.Errorf("%s and %s both exist and differ: the copied-in file is not the reviewed staged one (docs/pending-workflows/README.md says to copy the file in and `git rm` the staged copy, and until it is removed nothing here can see an edit to the real file)",
+				realSharedTestsWorkflowPath, stagedSharedTestsWorkflowPath)
+		}
+	case stagedErr == nil:
+		real = staged
+		realErr = nil
+	case os.IsNotExist(stagedErr) && realErr == nil:
+		if !strings.Contains(string(real), sharedTestsWorkflowMarker) {
+			t.Fatalf("%s does not contain %q and %s no longer exists: was the staged file removed without its content reaching the real file?",
+				realSharedTestsWorkflowPath, sharedTestsWorkflowMarker, stagedSharedTestsWorkflowPath)
+		}
+	default:
+		t.Fatalf("neither %s nor %s is readable: %v", stagedSharedTestsWorkflowPath, realSharedTestsWorkflowPath, stagedErr)
+	}
+
+	var wf sharedTestsWorkflow
+	dec := yaml.NewDecoder(bytes.NewReader(real))
+	dec.KnownFields(true)
+	if err := dec.Decode(&wf); err != nil {
+		t.Fatalf("decode %s: %v", pathFor(stagedErr), err)
+	}
+	return wf, real, pathFor(stagedErr)
+}
+
+// pathFor names the copy that was read, from the staged read's error: for a
+// failure message, so a red run says which of the two files it judged.
+func pathFor(stagedErr error) string {
+	if stagedErr == nil {
+		return stagedSharedTestsWorkflowPath
+	}
+	return realSharedTestsWorkflowPath
+}
+
+// usesRE and shaRE are the pin check's whole vocabulary: a `uses:` line -- the
+// action and its ref, then the `# vX.Y.Z` comment that makes the SHA readable,
+// both required by the `$` anchor so a trailing word cannot slip past -- and
+// the 40-hex commit a ref must be.
+var (
+	sharedTestsUsesRE = regexp.MustCompile(`(?m)^\s*-?\s*uses:\s*(\S+)(?:\s+#\s*v(\S+))?\s*$`)
+	sharedTestsShaRE  = regexp.MustCompile(`^[0-9a-f]{40}$`)
+)
+
+// TestSharedTestsWorkflowIsStagedAndPinned: the staged job is safe to copy in.
+// Every assertion below is a property a later edit could silently drop, and
+// each was planted and seen red while this test was written.
+func TestSharedTestsWorkflowIsStagedAndPinned(t *testing.T) {
+	wf, raw, path := readSharedTestsWorkflow(t)
+	text := string(raw)
+
+	if wf.Name != "shared-tests" {
+		t.Errorf("%s is named %q; the job's name is what a branch protection rule and a badge would name", path, wf.Name)
+	}
+
+	// --- The trigger surface ------------------------------------------------
+	// A `main` push and a `main` pull request, filtered to the package and to
+	// this file. The decode above refuses a third trigger; these assertions
+	// refuse a weakened or missing filter, which is the half that decides
+	// whether the job runs on a change that cannot affect it.
+	if wf.On.Push == nil || wf.On.PullRequest == nil {
+		t.Fatalf("%s must trigger on both a push and a pull request to main (push %v, pull_request %v)", path, wf.On.Push != nil, wf.On.PullRequest != nil)
+	}
+	wantPaths := []string{"shared/**", ".github/workflows/shared-tests.yml"}
+	for _, tr := range []struct {
+		what string
+		tr   *sharedTestsWorkflowTrigger
+	}{{"push", wf.On.Push}, {"pull_request", wf.On.PullRequest}} {
+		if !slices.Equal(tr.tr.Branches, []string{"main"}) {
+			t.Errorf("the %s trigger is for branches %q, not [main]: this job is about main's shared package", tr.what, tr.tr.Branches)
+		}
+		if !slices.Equal(sortedCopy(tr.tr.Paths), sortedCopy(wantPaths)) {
+			t.Errorf("the %s trigger's path filter is %q, not %q: without the workflow's own path a change to the job is the one change it does not run on, and without any filter it runs on every unrelated push", tr.what, tr.tr.Paths, wantPaths)
+		}
+	}
+	// The brief's own named refusal, scanned in the bytes as well as decoded:
+	// `pull_request_target` runs with a read/write token and the repository's
+	// secrets even for a fork's pull request, which is exactly what this job
+	// must never be. It is asserted over the text so it cannot be smuggled in
+	// as a third trigger key, a job-level `if:` or a comment's instruction.
+	for _, banned := range []string{"pull_request_target", "workflow_run", "write-all"} {
+		if strings.Contains(text, banned) {
+			t.Errorf("%s carries %q; this job reads the repository, writes nothing and must not be reachable with a write token or a secret", path, banned)
+		}
+	}
+
+	// --- Permissions --------------------------------------------------------
+	// `contents: read` at the top, so no job can widen it by omission, and no
+	// scope beside it.
+	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
+		t.Errorf("%s's workflow-level permissions are %v, not exactly {contents: read}: the package's tests read the repository and write nothing", path, wf.Permissions)
+	}
+	for name, job := range wf.Jobs {
+		if len(job.Permissions) != 0 {
+			t.Errorf("job %q declares permissions %v; the workflow-level `contents: read` is the whole grant this job needs, and a job-level block is where a widening hides", name, job.Permissions)
+		}
+	}
+
+	// --- No secrets ---------------------------------------------------------
+	// Nothing here needs one: the package has no dependencies, no network use
+	// and no credential, and a secret referenced by a job that does not need
+	// it is a secret in a public repository's log.
+	if strings.Contains(text, "secrets.") {
+		t.Errorf("%s references a secret; this job needs none, and the reference itself is what would make one reachable here", path)
+	}
+	for _, lit := range []string{"-----BEGIN", "private_key", "password:"} {
+		if strings.Contains(text, lit) {
+			t.Errorf("%s carries %q, which is the shape of a literal secret", path, lit)
+		}
+	}
+
+	// --- Concurrency --------------------------------------------------------
+	// One run per ref, the newer superseding the older: two pushes to one
+	// branch must not both finish.
+	if !strings.Contains(wf.Concurrency.Group, "github.ref") {
+		t.Errorf("the concurrency group is %q, which is not keyed on the ref: two branches would cancel each other's runs", wf.Concurrency.Group)
+	}
+	if !wf.Concurrency.CancelInProgress {
+		t.Error("concurrency.cancel-in-progress is not true: a superseded run would keep running beside its replacement")
+	}
+
+	// --- The job, the two Node lines, and the steps -------------------------
+	if len(wf.Jobs) != 1 {
+		t.Fatalf("%s has %d jobs; the shared package's tests are one job with a version matrix", path, len(wf.Jobs))
+	}
+	job, ok := wf.Jobs["shared"]
+	if !ok {
+		t.Fatalf("%s carries no `shared` job: %v", path, keys(wf.Jobs))
+	}
+	if got := sortedCopy(job.Strategy.Matrix.Node); !slices.Equal(got, []string{"22", "26"}) {
+		t.Errorf("the job's node matrix is %q, not [22 26]: 22 is the line shared/package.json declares and 26 is the current line, and dropping either makes the other's result the only one this job ever reports", got)
+	}
+	if job.Strategy.FailFast {
+		t.Error("strategy.fail-fast is true: the first Node leg to fail would cancel the other, so the job would report one runner's answer instead of two")
+	}
+
+	// The steps, in order: checkout, setup-node, install, test, proofs. The
+	// order matters -- the proofs mutate the package's own source with `git
+	// checkout` to restore it, so they run after the suite, not beside it.
+	var uses []string
+	var installs, tests, proofs int
+	for i, step := range job.Steps {
+		if step.Uses != "" {
+			uses = append(uses, step.Uses)
+		}
+		switch step.Run {
+		case "npm ci --ignore-scripts --no-audit --no-fund":
+			installs++
+			if step.WorkingDirectory != "shared" {
+				t.Errorf("step %d installs with working-directory %q, not shared: `npm ci` outside the package installs nothing it needs", i, step.WorkingDirectory)
+			}
+		case "npm test":
+			tests++
+			if step.WorkingDirectory != "shared" {
+				t.Errorf("step %d runs the suite with working-directory %q, not shared: `npm test` runs the package's script, and that is the directory it is relative to", i, step.WorkingDirectory)
+			}
+			if i == 0 || job.Steps[i-1].Run != "npm ci --ignore-scripts --no-audit --no-fund" {
+				t.Error("the suite does not follow the install: the package's lockfile is committed and `npm ci` is what proves it is installable")
+			}
+		default:
+			if strings.Contains(step.Run, sharedTestsWorkflowMarker) {
+				proofs++
+				if !strings.Contains(step.Run, `bash "$p"`) {
+					t.Error("the mutation-proof step names the scripts but does not run each one: a listed script that is never executed is a proof that never happened")
+				}
+				if !strings.Contains(step.Run, "exit 1") {
+					t.Error("the mutation-proof step does not fail when the glob matches nothing: `nullglob` would leave an empty list and the step would pass having run nothing")
+				}
+				if i != len(job.Steps)-1 {
+					t.Errorf("the mutation-proof step is step %d of %d; it restores the package's source with `git checkout` after each mutation, so it goes last, where nothing runs beside it", i, len(job.Steps))
+				}
+			}
+		}
+	}
+	if installs != 1 {
+		t.Errorf("%s carries %d `npm ci ...` install steps, not one", path, installs)
+	}
+	if tests != 1 {
+		t.Errorf("%s carries %d `npm test` steps, not one", path, tests)
+	}
+	if proofs != 1 {
+		t.Errorf("%s carries %d steps running the package's mutation proofs, not one", path, proofs)
+	}
+	for _, banned := range []string{"npm install", "npx "} {
+		if strings.Contains(text, banned) {
+			t.Errorf("%s carries %q: the package has no dependencies, so an install that resolves them at run time is an unpinned one", path, banned)
+		}
+	}
+
+	// --- The pins -----------------------------------------------------------
+	// Every action by full commit SHA with its version beside it, and the two
+	// steps that need one are exactly the two that are there: a floating ref
+	// (`@v7`) is a mutable tag on someone else's repository, and this job's
+	// whole surface is what runs on a public repository's main branch.
+	if len(uses) != 2 {
+		t.Errorf("%s uses %d actions (%q); the job needs a checkout and a node", path, len(uses), uses)
+	}
+	pins := sharedTestsUsesRE.FindAllStringSubmatch(text, -1)
+	if len(pins) != len(uses) {
+		t.Errorf("%s has %d `uses:` steps but %d match the pinned form `uses: <action>@<sha> # v<version>`: an unpinned or oddly written one is listed here rather than judged", path, len(uses), len(pins))
+	}
+	for _, m := range pins {
+		action, ref, version := m[1], "", m[2]
+		if i := strings.LastIndex(m[1], "@"); i < 0 {
+			t.Errorf("uses %q has no version at all: the action is not pinned to anything", m[1])
+			continue
+		} else {
+			action, ref = m[1][:i], m[1][i+1:]
+		}
+		if !sharedTestsShaRE.MatchString(ref) {
+			t.Errorf("uses %s@%s is not pinned by a full commit SHA: a tag is a mutable name on a repository this one does not control", action, ref)
+		}
+		if version == "" {
+			t.Errorf("uses %s@%s carries no `# vX.Y.Z` beside it: a bare SHA is a pin nobody can read or compare", action, ref)
+		}
+	}
+	for _, want := range []string{"actions/checkout@", "actions/setup-node@"} {
+		found := false
+		for _, u := range uses {
+			if strings.HasPrefix(u, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s never uses %s: the job cannot check out the package or select a node line without it", path, want)
+		}
+	}
+	// ... and setup-node must take its version from the matrix, not a literal:
+	// a literal beside a matrix means one of the two legs is not the line it
+	// claims to be.
+	var sawMatrixVersion bool
+	for _, step := range job.Steps {
+		if strings.HasPrefix(step.Uses, "actions/setup-node@") {
+			if got := fmt.Sprintf("%v", step.With["node-version"]); got == "${{ matrix.node }}" {
+				sawMatrixVersion = true
+			} else {
+				t.Errorf("setup-node's node-version is %q, not ${{ matrix.node }}: the matrix's two lines are the whole reason there are two legs", got)
+			}
+		}
+		if strings.HasPrefix(step.Uses, "actions/checkout@") {
+			if !strings.Contains(fmt.Sprintf("%v", step.With["persist-credentials"]), "false") {
+				t.Error("the checkout keeps the persisted credentials: this job only reads the repository")
+			}
+		}
+	}
+	if !sawMatrixVersion {
+		t.Error("no setup-node step takes node-version from the matrix")
+	}
+}
+
+// TestSharedTestsWorkflowPinsAgreeWithTheOtherWorkflows: once the staged copy
+// has been copied in and removed, this workflow's pins cannot drift from the
+// other workflows' pins of the same action. While it is pending the comparison
+// is skipped, and says so: Dependabot does not watch docs/pending-workflows/,
+// so the pins here can legitimately lag main's bumps, and the README beside the
+// file makes the person copying it check the drift (the same rule
+// images.yml's own pin test uses).
+func TestSharedTestsWorkflowPinsAgreeWithTheOtherWorkflows(t *testing.T) {
+	if _, err := os.Stat("../../" + stagedSharedTestsWorkflowPath); err == nil {
+		t.Skipf("%s is still pending: Dependabot does not watch it, so a pin that lags main is expected and the copy-in compares the two (docs/pending-workflows/README.md)", stagedSharedTestsWorkflowPath)
+	}
+	_, raw, path := readSharedTestsWorkflow(t)
+	mine := workflowPins(string(raw))
+	others, err := os.ReadDir("../../.github/workflows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range others {
+		name := entry.Name()
+		if name == "shared-tests.yml" || !strings.HasSuffix(name, ".yml") {
+			continue
+		}
+		data, err := os.ReadFile("../../.github/workflows/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for action, ref := range workflowPins(string(data)) {
+			if other, ok := mine[action]; ok && other != ref {
+				t.Errorf("%s pins %s to %s and %s pins it to %s: the two must be the same commit, or one of them is an older tag of the same action", path, action, other, name, ref)
+			}
+		}
+	}
+}
+
+// workflowPins returns every `action@ref` a document's `uses:` lines carry,
+// last occurrence winning, which is what a drift comparison needs.
+func workflowPins(text string) map[string]string {
+	out := map[string]string{}
+	for _, m := range sharedTestsUsesRE.FindAllStringSubmatch(text, -1) {
+		u := m[1]
+		if i := strings.LastIndex(u, "@"); i >= 0 {
+			out[u[:i]] = u[i+1:]
+		}
+	}
+	return out
+}
+
+// sortedCopy returns a copy of in sorted, so two lists are compared as sets:
+// the order of a YAML list is not a property this file's assertions are about.
+func sortedCopy(in []string) []string {
+	out := slices.Clone(in)
+	slices.Sort(out)
+	return out
+}
+
+// keys returns a map's keys sorted, for a failure message that names what was
+// there instead.
+func keys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}
