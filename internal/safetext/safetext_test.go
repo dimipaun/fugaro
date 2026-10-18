@@ -1,9 +1,60 @@
 package safetext
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
+
+// exitErr is a stand-in for a typed error a caller decides on (tf.ExitError is
+// the real one): FieldErr must not cost it.
+type exitErr struct{ code int }
+
+func (e *exitErr) Error() string { return "exit status 1" }
+
+// TestFieldErrBoundsTheMessageAndKeepsTheCause: an error's own words are
+// bounded like any other untrusted value, and errors.Is/errors.As still reach
+// through the bound — a wrapper that dropped them would change which exit code
+// a caller reads.
+func TestFieldErrBoundsTheMessageAndKeepsTheCause(t *testing.T) {
+	if FieldErr(nil) != nil {
+		t.Error("FieldErr(nil) is not nil")
+	}
+	cause := &exitErr{code: 1}
+	err := FieldErr(fmt.Errorf("reading the marker of p: %w", cause))
+	if !errors.Is(err, cause) {
+		t.Error("errors.Is does not reach the cause through FieldErr")
+	}
+	var typed *exitErr
+	if !errors.As(err, &typed) || typed.code != 1 {
+		t.Errorf("errors.As through FieldErr = %v, %v", typed, err)
+	}
+	if !strings.Contains(err.Error(), "reading the marker of p") {
+		t.Errorf("FieldErr dropped the wrapping sentence: %q", err.Error())
+	}
+	// A second wrap keeps the bound and the chain.
+	twice := fmt.Errorf("terraform: %w", err)
+	if !errors.Is(twice, cause) {
+		t.Error("a wrap of a FieldErr does not reach the cause")
+	}
+	if !strings.HasSuffix(twice.Error(), "exit status 1") {
+		t.Errorf("twice = %q", twice.Error())
+	}
+
+	// A multi-line, escape-laden, enormous message comes out as one bounded
+	// field, with none of it left to reach a terminal.
+	hostile := errors.New("a\nforged line\x1b[2J‮reversed " + strings.Repeat("x", 10000))
+	got := FieldErr(hostile).Error()
+	for _, bad := range []string{"\n", "\x1b", "‮"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("FieldErr left %q in %q", bad, got)
+		}
+	}
+	if n := len([]rune(got)); n != FieldMax || !strings.HasSuffix(got, "…") {
+		t.Errorf("FieldErr of a 10k message is %d runes (want %d, ending in an ellipsis)", n, FieldMax)
+	}
+}
 
 func TestStripDropsWhatOneLineMarks(t *testing.T) {
 	in := "a\x1b]52;c;AAAA\x07b\r\nc​d‮e\x00\xff\tf g"

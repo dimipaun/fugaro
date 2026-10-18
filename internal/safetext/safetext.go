@@ -210,3 +210,27 @@ func Field(s string) string {
 	}
 	return s
 }
+
+// fieldErr is an error whose message is a field (Field) and whose cause is
+// still the error it was made from.
+type fieldErr struct{ err error }
+
+func (e fieldErr) Error() string { return Field(e.err.Error()) }
+
+func (e fieldErr) Unwrap() error { return e.err }
+
+// FieldErr is err with Field applied to its message: the words an error
+// carries are as often another program's as this one's — a provider's, an
+// API's, terraform's own output — and a sentence a person reads must not take
+// that error's lines, controls or length from it. The bound is on the text and
+// never on the identity: errors.Is and errors.As still reach err through
+// Unwrap, so a caller that reads an exit code off a typed error inside it (a
+// *tf.ExitError, say) keeps reading it.
+//
+// A nil error stays nil, so a returning site can wrap unconditionally.
+func FieldErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fieldErr{err}
+}
