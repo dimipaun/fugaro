@@ -62,3 +62,16 @@ to copy). No cloud action of any kind, no secret read or written, and `belong`, 
 and EdgeServer are never touched. The strict CSP (`script-src 'self'`, no remote origins)
 and the origins gate stay; the JavaScript budget and the 0-byte-JS prose change only
 deliberately, with their tests, as the owner's ruling of 2026-10-18 requires.
+
+## Owner rulings (2026-10-18)
+
+The owner accepted every recommendation of D180 to D192, as written in `reconciliation.md`:
+
+- **D180** the accent is the logo's hue, `#17A8E6`, as a fourth palette file; **D181** the warning colour moves to amber `#F5A524`.
+- **D182** the menu is three groups of three (Product, Reference, Project), a drawer on mobile.
+- **D183** the JavaScript is one first-party file, `website/public/scripts/site.js`; no inline script, no CSP edit.
+- **D184** the homepage animation shows the README's documented sequence, held to the file at build time, captioned as the documented sequence.
+- **D185** How It Works uses the brief's four steps, each captioned by a quoted line.
+- **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog).
+- **D187** the fold is checked by the word ceiling plus one owner-run live check (70b).
+- **D189** long-page summaries are rendered from files; **D190** the design lives in the owner's tool, the repository keeps `design.md`, screenshots are regenerated and never committed; **D191** the redesign goes first; **D192** the byte budgets are re-derived in the commit that ships the script.
