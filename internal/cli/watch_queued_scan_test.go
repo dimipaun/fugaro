@@ -480,14 +480,68 @@ func TestScanCachesFinishedRunsAcrossPolls(t *testing.T) {
 func TestPruneFinishedCacheDropsStaleEntries(t *testing.T) {
 	sc := newQueuedScanner(&localcfg.Config{}, "")
 	now := time.Now()
-	sc.cacheFinished("acme-a/old", watch.FinishedRun{FinishedAt: now.Add(-finishedLookback - time.Minute)})
-	sc.cacheFinished("acme-a/new", watch.FinishedRun{FinishedAt: now.Add(-time.Hour)})
+	sc.cacheFinished("acme-a/old", watch.FinishedRun{FinishedAt: now.Add(-finishedLookback - time.Minute)}, "old-job")
+	sc.cacheFinished("acme-a/new", watch.FinishedRun{FinishedAt: now.Add(-time.Hour)}, "new-job")
 	sc.pruneFinishedCache(now.Add(-finishedLookback))
 	if _, ok := sc.cachedFinished("acme-a/old"); ok {
 		t.Fatal("an entry older than the lookback must be pruned")
 	}
 	if _, ok := sc.cachedFinished("acme-a/new"); !ok {
 		t.Fatal("an entry within the lookback must survive pruning")
+	}
+}
+
+// A finished run keeps its job on every poll after the one that read it.
+//
+// A reader follows a run from runs[] into finished[] and must not lose the job
+// it ran on (the contract JSONFinished's own comment states, watch/json.go):
+// watch.MergeJobs stamps a row's job, profile,
+// provider and account from the scan's jobs map, which the scan rebuilds from
+// the runs it *read*. The finished cache exists so a later scan does not re-read
+// an object it has already read — and a cache hit rebuilt the row as
+// {IsFinished, Finished} with no Job, so the scan that first saw a run finish
+// yielded a row with all four fields and every scan afterwards yielded the same
+// row with all four gone, for the whole 24h finishedLookback (this round's
+// medium finding).
+//
+// Mutation (run, restored): cache the entry without its job (cacheFinished with
+// "" as the job) — scan 2's finished row is left unstamped and this fails.
+func TestFinishedCacheKeepsTheJob(t *testing.T) {
+	ctx := context.Background()
+	g := gcpfake.NewGCS(t)
+	put := func(key string, data []byte) { g.Put("runs", key, data) }
+	at := time.Now().Add(-time.Minute)
+	id := at.UTC().Format("20060102-150405") + "-aaaa"
+	putQueued(t, put, "acme-a", id, at) // task.json and launch.json ("job": "j")
+	putFinished(t, put, "acme-a", id, "succeeded", at.Add(time.Second))
+
+	sc := openedScanner(g.Bucket(t, "runs").Bucket)
+	sc.slugs = func(context.Context, *cloudEnv) ([]string, error) { return []string{"acme-a"}, nil }
+
+	stamped := func(scan int, fin []watch.FinishedRun) string {
+		t.Helper()
+		if len(fin) != 1 {
+			t.Fatalf("scan %d: finished = %+v, want the one finished run", scan, fin)
+		}
+		// The two steps a frame makes of the scan's rows, in watch.go's own
+		// order (MergeFinished, then MergeJobs).
+		v := watch.MergeFinished(watch.View{}, watch.Config{}, fin, time.Now())
+		v = watch.MergeJobs(v, sc.Jobs())
+		return v.Repos[0].Finished[0].Job
+	}
+	_, fin1, _, err := sc.scan(ctx)
+	if err != nil {
+		t.Fatalf("scan 1: %v", err)
+	}
+	if got := stamped(1, fin1); got != "j" {
+		t.Fatalf("scan 1: the finished row's job = %q, want j: the scan read launch.json", got)
+	}
+	_, fin2, _, err := sc.scan(ctx)
+	if err != nil {
+		t.Fatalf("scan 2: %v", err)
+	}
+	if got := stamped(2, fin2); got != "j" {
+		t.Fatalf("scan 2: the finished row's job = %q, want j: a cached finished row must carry what the read one carried, or every poll after the first drops a finished run's job (watch.MergeJobs)", got)
 	}
 }
 
