@@ -27,7 +27,7 @@ Procedure for one Fugaro release. Detail lives in `docs/release.md` (read it fir
 ## 2. Highlights (required from 0.4.0)
 
 - Collect the changes: `git log vPREV..main --oneline` and `gh pr list --state merged --search "merged:>=<date of vPREV>" --limit 100`. Read the PRs, not just titles.
-- Write `docs/releases/vX.Y.Z.md` per `docs/releases/README.md`: 3 to 6 user-facing bullets, one sentence each, no commit-title echo, nothing internal-only (CI, tests, refactors). Add `### For operators` with ordered steps when a rollout order matters (shared config: upgrade CLIs and CI pins, rebuild images, then merge `gcp_project:`; `fugaro init --publish-config` is run by the user in their own terminal).
+- Write `docs/releases/vX.Y.Z.md` per `docs/releases/README.md`: 3 to 6 user-facing bullets, one sentence each, no commit-title echo, nothing internal-only (CI, tests, refactors). Add `### For operators` with ordered steps when a rollout order matters (shared config: upgrade CLIs and CI pins, rebuild images, then merge `gcp_project:`; `fugaro init --publish-config` is run by the user in their own terminal). Add `### Known limits` with what this release does not do, does not stop or leaves to a later one: a release ships with its known limits in its notes, so the section is written unless the release genuinely has none. Both sections are `###` and either may stand without the other; the website's changelog page renders them.
 - Branch, commit, push, open a PR; after the user's go-ahead, merge it (squash) once its checks pass; then `git switch main && git pull --ff-only`.
 
 ## 3. Dry run
