@@ -33,7 +33,7 @@
 // which `settings.js` enforces by refusing the prefix.
 
 import { isAccountId } from './account.js';
-import { SECRET_VALUE_MAX, isSecret, isSecretItem, secret } from './secret.js';
+import { SECRET_ITEMS, SECRET_VALUE_MAX, isSecret, isSecretItem, secret } from './secret.js';
 
 /** The prefix every secret key carries, and no settings key may. */
 export const SECRET_KEY_PREFIX = 'fugaro.account.';
@@ -158,14 +158,20 @@ export class SecretStore {
   }
 
   /**
-   * Which of the two items this account has. Probes both names rather than
-   * enumerating (the platform cannot), and reports presence only: the values
-   * are read to answer the question and are not returned.
+   * Which of the two items this account has. Probes every name `SECRET_ITEMS`
+   * declares rather than enumerating (the platform cannot), and reports
+   * presence only: the values are read to answer the question and are not
+   * returned.
+   *
+   * The list is the one in `secret.js`, not a copy of it here. A third item
+   * added to D111 is then probed, forgotten and fenced by every module at
+   * once, instead of being silently missing from this loop -- which would look
+   * exactly like an item the owner never paired.
    */
   async items(accountId) {
     if (!isAccountId(accountId)) return refuse(SECURE_STORE_CODES.BAD_ACCOUNT, 'accountId');
     const present = [];
-    for (const item of ['idToken', 'macKey']) {
+    for (const item of SECRET_ITEMS) {
       const read = await this.get(accountId, item);
       if (read.ok) present.push(item);
     }
@@ -181,7 +187,7 @@ export class SecretStore {
   async forget(accountId) {
     if (!isAccountId(accountId)) return refuse(SECURE_STORE_CODES.BAD_ACCOUNT, 'accountId');
     const removed = [];
-    for (const item of ['idToken', 'macKey']) {
+    for (const item of SECRET_ITEMS) {
       const read = await this.get(accountId, item);
       if (!read.ok) continue;
       try {

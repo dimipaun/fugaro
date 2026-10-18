@@ -32,7 +32,7 @@ import {
   SecretStore,
   secretKey,
 } from './secure-store.js';
-import { Secret, secret } from './secret.js';
+import { SECRET_ITEMS, Secret, secret } from './secret.js';
 
 const ID_TOKEN = 'synthetic-id-token';
 const MAC_KEY = 'synthetic-mac-key';
@@ -139,6 +139,22 @@ test('items() reports presence, and reads both names and no others', async () =>
   await store.put('laptop', 'idToken', secret('idToken', ID_TOKEN).secret);
   assert.deepEqual((await store.items('laptop')).items, ['idToken', 'macKey']);
   assert.deepEqual(port.keys(), [keyOf('laptop', 'idToken'), keyOf('laptop', 'macKey')]);
+});
+
+test('every item D111 declares is probed and forgotten, from the one list', async () => {
+  const { port, store } = makeStore();
+  // The property, over `SECRET_ITEMS` rather than over the two names written
+  // out again: a third item added to D111 is probed and forgotten by this
+  // module without an edit here. A copy of the list in `secure-store.js` would
+  // make a missing item look exactly like one the owner never paired.
+  for (const item of SECRET_ITEMS) {
+    await store.put('laptop', item, secret(item, `synthetic-${item}`).secret);
+  }
+  assert.deepEqual((await store.items('laptop')).items, [...SECRET_ITEMS]);
+  assert.deepEqual(port.keys(), SECRET_ITEMS.map((item) => keyOf('laptop', item)).sort());
+  assert.deepEqual([...(await store.forget('laptop')).removed], [...SECRET_ITEMS]);
+  assert.deepEqual(port.keys(), []);
+  assert.equal(SECRET_ITEMS.length, 2, 'D111: exactly two items');
 });
 
 test('forget removes both items of ONE account and touches no other', async () => {

@@ -123,6 +123,8 @@ was removed. The mutations, in the order they were run:
 | `Secret.toString`/`toJSON`/`toPrimitive`/`inspect` returns the material | `printing a secret prints the placeholder, in every conversion` |
 | the settings store stops refusing a `Secret` value | `a Secret is refused as a value, whatever its shape` |
 | the settings key fence stops refusing the item names | the derivation test and two more |
+| `items()` probes one of D111's two items instead of the list | three tests, including the derivation one |
+| `forget()` forgets one of D111's two items | the derivation test and `forget removes both items of ONE account` |
 | the settings word list regains `mac` | `a fence that refused the owner's own installation would be the wrong fence` |
 | the Keychain port hardcodes the accessibility instead of reading it from the module | three adapter tests |
 | the Keychain port writes without the accessibility option | three adapter tests |
@@ -135,7 +137,11 @@ Three of those mutations found tests that **could not have failed**: `toString`
 was shadowed by `Symbol.toPrimitive`, the settings item-name branch was dead
 (both names were already in the word list), and the word list refused
 `account.mac`, which is what the owner is likely to call their own machine. All
-three were fixed rather than kept.
+three were fixed rather than kept — and the same fix was then applied to
+`secret.js`'s two names wherever they had been written out again
+(`secure-store.js`'s `items()` and `forget()`): the list lives in one place, so
+a third item is probed, forgotten and fenced by every module at once instead of
+looking exactly like an item the owner never paired.
 
 ## What is not verified here
 
