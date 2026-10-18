@@ -131,7 +131,7 @@ func TestDocsBudgetTokenChannelCitationsExist(t *testing.T) {
 	// A step's commands have to be commands: `fugaro status` never existed
 	// (internal/cli/root.go adds no such command), and the one run's own record
 	// is `fugaro diagnose RUN --json`, whose row carries the execution
-	// (internal/cli/diagnose.go's diagnoseOut.Row).
+	// (internal/cli/diagnose.go's Diagnosis.Row).
 	for _, want := range []string{"fugaro diagnose", "fugaro runs ls", ".row.execution"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 60 does not read a run through a command that exists: it does not say %q", want)

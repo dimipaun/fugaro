@@ -4003,7 +4003,7 @@ FACT: the run's outcome (`fugaro runs ls --project fugaro`, or `fugaro diagnose 
 
 ### 3. The object is worthless without the key, and where the key is (design steps 2 and 3)
 
-**Which job `SANDBOX_JOB` is.** The one step 2's run launched on, which is not always the sandbox repository's own job: a `checkout: clone` workflow of a project whose published policy defines the profile it selects launches on the **shared project job** (`internal/cli/project_job.go`'s `launchProjectJobFor` — the clone path only, and only once the project has published that profile), and a baked workflow, or a project that has published none, keeps the repository's own job. Read it off the run's own launch record, and use that job in every step below that names it (3, and 5 to 9):
+**Which job `SANDBOX_JOB` is.** The one step 2's run launched on, which is not always the sandbox repository's own job: a `checkout: clone` workflow of a project whose published policy defines the profile it selects launches on the **shared project job** (`internal/cli/project_job.go`'s `launchProjectJobFor` — the clone path only, and only once the project has published that profile), and a baked workflow, or a project that has published none, keeps the repository's own job. Read it off the run's own launch record, and use that job in every step below that names it (3 to 7, and 9 — step 4's audit-log filter carries it too, and a filter left on the repository's own job would return nothing and record a false FACT):
 
 ```bash
 gcloud storage cat "gs://${SANDBOX_BUCKET:?}/runs/${SLUG:?}/${RUN2:?}/launch.json" --project="${P:?}" | jq -r .job
