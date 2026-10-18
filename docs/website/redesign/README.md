@@ -1,6 +1,8 @@
 # Website redesign
 
-**Status: plan only; nothing of the redesign is implemented.**
+**Status: plan only, except items 2, 3 and 4 of
+[the changes spec](changes-spec-2026-10-18.md), which are implemented — the plan's own
+parts (`P1`–`P9`) are not.**
 
 The site itself, however, **is** built: `website/` holds an eleven-route Astro site whose
 hermetic gates pass (179 tests, `npm run check`, measured 2026-10-18). The three
@@ -112,3 +114,43 @@ here.
   command that pins the plugin and moves the job images onto a release's base image is
   `fugaro upgrade` (`README.md` `## Upgrading`). Where the spec writes `update`, this work
   writes `upgrade`.
+
+## Implementing items 2, 3 and 4: what those three items settle
+
+Items 2, 3 and 4 of the changes spec are implemented in this branch's pull request. Four
+readings the spec does not spell out are recorded here, so that a later reader of the site
+does not have to guess them from the markup.
+
+- **Item 4's four steps are the spec's, and they supersede D185's names.** D185 ruled that
+  How It Works uses "the brief's four steps, each captioned by a quoted line"; item 4 of the
+  changes spec is the later brief and names them itself (`1 Your agent`, `2 Fugaro`,
+  `3 Ephemeral cloud job`, `4 Pull request`), so the flow is drawn from those names, one
+  line each — and `website/test/home.mjs` reads them out of the spec's own item 4 rather
+  than out of a copy in the component, so the picture and the ruling cannot drift.
+- **The two facts D185 put in the captions move to the detail.** Item 4 asks for "one short
+  line each" in one bold picture, so neither the caches nor the trust boundary is a caption:
+  the caches stay in the README's own step 2, and "The trust boundary is the container, not
+  the process." (`docs/design/v1.md` §6.1) is the note under the How It Works detail. Both
+  facts are still on the site; neither is inside the four boxes.
+- **The chat's pull requests are text, not links.** Item 3 asks the agent to report back
+  with pull request links, and a run that has not happened has no pull request to link to:
+  a URL written for the page is the invented fact this line of work may not publish (Global
+  Constraints 6 and 9). The three results are named as the batch's own pieces (`Pull
+  request 1 of 3`), and the sentence above them is the `working` skill's own line about what
+  a run ends with. Everything else the chat shows is quoted the same way — the request from
+  item 3, the agent's two answers from `plugin/skills/parallelism/SKILL.md` and
+  `plugin/skills/working/SKILL.md`, and the launch from the invocation the `parallelism`
+  skill documents, with its own `<name>` and `<id>` placeholders — and the build holds each
+  line to its document, in that document's order. A copy of the repository staged for a test
+  build therefore carries `plugin/skills/`.
+- **The hero offers one command to copy, and the screenshot's place is empty.** Item 3's
+  acceptance is that the only command a reader is likely to type is `fugaro watch`, so the
+  `fugaro run` transcript the homepage carried (`Terminal.astro`, D184) is removed from it —
+  `fugaro run` stays in the documentation as the manual path — and the snippet that keeps
+  `fugaro watch` is a command block like every other one on the site, with its own copy
+  control and the skill's own line about what the screen shows under it. The agent's launch
+  is a quiet line inside a turn rather than a command block, because the reader did not type
+  it. Item 5's screenshot is a separate task: this pull request leaves
+  `[data-slot="watch-screenshot"]` right after the chat and commits **no image**, and
+  `website/test/home.mjs` holds that slot to being empty and the homepage to its one picture
+  (the wordmark).
