@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -74,6 +75,14 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	if err := projectpolicy.CheckProfiles(profilesAsPolicy(lc.Profiles)); err != nil {
 		return nil, userErr("%v", err)
 	}
+	// Every project job is a github one in this phase (the bitbucket refusal
+	// below is why), so the App's ID is resolved once, for all of them: the
+	// project has one App (design §4.5), and a job that carries it must carry
+	// the same one as its neighbours.
+	appID, err := projectJobGitHubAppID(lc)
+	if err != nil {
+		return nil, err
+	}
 	out := make(map[string]ProjectJob, len(lc.Profiles))
 	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
 		pr := lc.Profiles[name]
@@ -93,6 +102,15 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 			return nil, userErr("profiles.%s.timeout_class: %v", name, err)
 		}
 		env := projectJobEnv(lc, bucket, vertex)
+		if pr.Provider == githubProvider {
+			// The App's ID, non-secret, beside the key the profile mounts as
+			// the github-app-key secret (owner ruling of 2026-10-17, plan
+			// task 3.5 step 4). The per-repository path sets the same
+			// variable from the same field (spec.go's ws.Env), and the
+			// runner's github provider refuses to build without it, so both
+			// halves are needed for a job to start under any run.
+			env[providers.EnvGitHubAppID] = appID
+		}
 		secretEnv, err := projectJobSecrets(lc, name, env, pr)
 		if err != nil {
 			return nil, err
@@ -127,6 +145,60 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 		}
 	}
 	return out, nil
+}
+
+// githubProvider is the provider kind a shared job serves in phase 3
+// (config.Providers' spelling, and the value config.JobProfile.Provider
+// holds). Bitbucket is refused above, so it is also the only one a project
+// job is ever built for.
+const githubProvider = "github"
+
+// projectJobGitHubAppID is the GitHub App ID every project job carries in its
+// environment, resolved from the installation's own configuration (owner
+// ruling of 2026-10-17, plan task 3.5 step 4).
+//
+// It is the field each GitHub repository records (localcfg.Repo.GitHubAppID),
+// which `fugaro init --repo --github-app-id` writes and the per-repository
+// path reads to set the same variable (spec.go's ws.Env) — there is no second
+// place an App ID is recorded, and it is not a secret. The key stays the
+// github-app-key Secret Manager secret the profile mounts.
+//
+// One App serves the project (design §4.5: the runner mints a token per
+// repository from the project's App), so every GitHub repository the config
+// records must name the same ID: the job every repository of a profile runs
+// on holds one App's ID and one App key, which is why a project that uses
+// several Apps cannot share jobs. Two IDs are refused rather than one of them
+// chosen, because either choice deploys a job the other's repositories cannot
+// run on — and the failure would be at run time, in the credential, not here.
+//
+// Nothing recorded at all is refused too, and it is the state a project that
+// declares profiles before it has onboarded a GitHub repository is in: a
+// shared job runs on the github provider, and providers.EnvGitHubAppID is
+// what the runner's github provider is built from, so a job deployed without
+// it would halt every run it started. The fix is the one the per-repository
+// path asks for at the repository stage ("is on GitHub and has no GitHub App
+// ID: pass --github-app-id"): record it, in the local config, once.
+func projectJobGitHubAppID(lc *localcfg.Config) (string, error) {
+	id, holder := "", ""
+	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
+		r := lc.Repos[name]
+		if r.Provider != githubProvider || r.GitHubAppID == "" {
+			continue
+		}
+		if id == "" {
+			id, holder = r.GitHubAppID, name
+			continue
+		}
+		if id != r.GitHubAppID {
+			return "", userErr("the local config records two GitHub Apps: %s has %s and %s has %s. A shared project job runs every repository admitted to its profile on one job, and that job holds one App's ID and one github-app-key secret, so a project that uses several Apps cannot share jobs (design docs/design/project-centric.md §4.5): put the repositories a profile admits on one App, or keep the others on per-repository jobs (a profile is what a repository with checkout: clone selects, so a profile left out of the repository's fugaro.yaml keeps its own job)",
+				holder, id, name, r.GitHubAppID)
+		}
+	}
+	if id == "" {
+		return "", userErr("this project's local config declares job profiles and records no GitHub App ID: a shared project job therefore cannot be deployed. A project job runs on the github provider, and the runner builds that provider from %s (the App's ID, which is not a secret), refusing to start without it — so a job deployed without it would halt every run it started. Record the App's ID by onboarding the repository the App serves (fugaro init --repo <owner/name> --github-app-id <id>), which writes it to the local config, then run fugaro init again",
+			providers.EnvGitHubAppID)
+	}
+	return id, nil
 }
 
 // profilesAsPolicy is the local config's profiles as the policy carries them
