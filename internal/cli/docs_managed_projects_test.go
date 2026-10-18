@@ -349,7 +349,51 @@ func TestChecklistHasCheck67a(t *testing.T) {
 		t.Error("Check 67a's Restore does not delete the throwaway project by its variable")
 	}
 
-	// 7. The commands. Every gcloud command names its project with
+	// 7. The four commands this check is unrunnable without, each one a
+	// refusal the owner would hit on the check's first minutes. Every one of
+	// them was missing from an earlier draft of this section, so they are
+	// pinned here rather than left to a reader to notice:
+	//
+	//   - `--managed` refuses without `--billing-account` (the budget is built
+	//     from it, `internal/cli/init_project.go:66`), so a creation that
+	//     passes only `--link-billing` is refused before anything exists;
+	//   - the second checkout has to move `gcp_project:` as well as `project:`
+	//     (`setGCPProjectLine`, `init_fugaroyaml.go:76`; `restoreGCPProjectLine`,
+	//     `restore.go:1040`, refuse a differing value rather than resolving it),
+	//     or step 2's own onboarding and 67b's restore both stop;
+	//   - the marker's ORIGINAL bytes have to be copied before the doctored
+	//     ones are uploaded, or the restore the section instructs has nothing
+	//     to restore from and steps 5 to 7 run against a marker that reads as
+	//     not managed;
+	//   - the Restore has to be conditional, because 68 and 67b both need the
+	//     project and the checkout it deletes.
+	for _, want := range []string{
+		"--billing-account ${ACCOUNT_ID:?} --budget ${AMOUNT:?} --budget-currency USD --link-billing ${ACCOUNT_ID:?}",
+		`sed -i -e 's/^project: .*/project: '"${F:?}"'/' -e 's/^gcp_project: .*/gcp_project: '"${M:?}"'/' fugaro.yaml`,
+		`cp /tmp/chk67-marker.orig.json /tmp/chk67-marker-bad.json`,
+		`gcloud storage cp /tmp/chk67-marker.orig.json "gs://${B:?}/fugaro/managed.json" --project="${M:?}"`,
+		"ONLY if Check 68 and Check 67b are not going to run",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 67a does not carry %q", want)
+		}
+	}
+	// The shapes those four replaced, each one a dead end the section must not
+	// go back to: a creation with no --billing-account, a sed that moves only
+	// the installation's name, a copy named after the doctored file, and a
+	// Restore that deletes what the next two checks run on.
+	for _, bad := range []string{
+		"--managed --name \"${F:?}\" --gcp-project \"${M:?}\" --region \"${L:?}\" \\\n  --link-billing",
+		"'s/^project: .*/project: fugaro-managed/'",
+		"/tmp/chk67-marker.json",
+		"rm -rf /tmp/chk67-managed /tmp/chk67-marker.json",
+	} {
+		if strings.Contains(section, bad) {
+			t.Errorf("Check 67a still carries the dead end %q", bad)
+		}
+	}
+
+	// 8. The commands. Every gcloud command names its project with
 	// `--project=`; every fugaro command names its installation with
 	// `--project`, with exactly one exception this check spells out (the
 	// creating `fugaro init`, which takes `--name` because no config of that

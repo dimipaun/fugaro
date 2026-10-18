@@ -4311,13 +4311,13 @@ git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
 
 **Every `gcloud` command names its project with `--project=`**, and the variable it names is the project the step acts on — `${P:?}` for the sandbox installation's project and `${M:?}` for the managed one — so no argument is ever empty and no ambient default is ever reached. **Every `fugaro` command names its installation with `--project`** (`fugaro` for the sandbox one, `${F:?}` for the managed one), with **one exception this check spells out**: the `fugaro init` that *creates* the managed installation takes `--name "${F:?}"`, because the config does not exist yet and `--project` names an existing one (`internal/cli/init.go`'s `--name` description; `internal/localcfg/select.go:219`).
 
-**(1) The throwaway managed project and its installation** — **once per installation.** This is a real project creation on a real billing account, with typed confirmations; `--managed` requires the monthly amount with no default (`--budget`, `--budget-currency` and `--billing-account` together, D64), and the amount and currency are recorded in the project's creation fact.
+**(1) The throwaway managed project and its installation** — **once per installation.** This is a real project creation on a real billing account, with typed confirmations. `--managed` requires the monthly amount with **no default**, and the refusal names all three flags it wants together: `--budget <amount> --budget-currency <code> --billing-account <id>` (`internal/cli/init_project.go:66`, D64) — `--budget` alone is not enough, and the budget is built from `--billing-account`, so leaving it out refuses the command before anything is created. `--link-billing` is the separate flag that links the account to the project (its own typed confirmation), and both are given the same account ID here.
 
 ```bash
 gcloud projects describe "${M:?}" --project="${M:?}" >/dev/null 2>&1 \
   && { echo "Check 67a stopped: ${M:?} already exists; a managed creation never adopts one, and this check's project must be one it created" >&2; exit 1; }
 fugaro init --create-project --managed --name "${F:?}" --gcp-project "${M:?}" --region "${L:?}" \
-  --link-billing ${ACCOUNT_ID:?} --budget ${AMOUNT:?} --budget-currency USD
+  --billing-account ${ACCOUNT_ID:?} --budget ${AMOUNT:?} --budget-currency USD --link-billing ${ACCOUNT_ID:?}
 fugaro doctor --project "${F:?}"
 ```
 
@@ -4325,11 +4325,13 @@ fugaro doctor --project "${F:?}"
 
 **(2) The managed installation's own checkout** — **once per repo checkout, and the step this check cannot settle for you.** `fugaro managed apply ROOT` works in the checkout whose `fugaro.yaml` names the project (`internal/cli/managed_apply.go`), and the sandbox checkout names `fugaro`. Make the managed installation's working tree and record what the tree answers.
 
+**Both naming lines move, not just `project:`** — and that is not cosmetic: `gcp_project:` is what every cloud call reads, and a checkout whose two lines disagree is refused rather than resolved. `fugaro init --repo .` writes the line only when the file has none (`setGCPProjectLine`, `internal/cli/init_fugaroyaml.go:76` — *"fugaro.yaml has gcp_project: \<cur\>, not \<id\>: not rewritten; change it by hand if that is intended"*), and `fugaro restore` refuses the same way (`restoreGCPProjectLine`, `internal/cli/restore.go:1040`). So a checkout left at `gcp_project: fugaro-dev` fails at step 2's own onboarding and again in 67b.
+
 ```bash
 git clone "$(git remote get-url origin)" /tmp/chk67-managed            # a second working tree of the sandbox repository
 cd /tmp/chk67-managed
-sed -i 's/^project: .*/project: fugaro-managed/' fugaro.yaml           # the only line that names the installation
-git diff -- fugaro.yaml                                                # ⚠ record it: this is the whole of the change
+sed -i -e 's/^project: .*/project: '"${F:?}"'/' -e 's/^gcp_project: .*/gcp_project: '"${M:?}"'/' fugaro.yaml
+git diff -- fugaro.yaml                                                # ⚠ record it: these two lines are the whole of the change
 fugaro init --repo . --project "${F:?}"                                # ⚠ CONFIRM: the secrets stage and the first image build are the owner's, and billable
 ```
 
@@ -4348,15 +4350,18 @@ fugaro managed apply ./managed-root --project "${F:?}"
 **(4) A marker that names another project reads as not managed** — **once per repo checkout.**
 
 ```bash
-gcloud storage cp "gs://${B:?}/fugaro/managed.json" /tmp/chk67-marker.json --project="${M:?}"
-python3 -c 'import json,sys; p="/tmp/chk67-marker.json"; m=json.load(open(p)); m["gcp_project"]="'"${P:?}"'"; json.dump(m,open(p,"w"))'
-gcloud storage cp /tmp/chk67-marker.json "gs://${B:?}/fugaro/managed.json" --project="${M:?}"   # ⚠ CONFIRM: this writes the marker, with YOUR credentials
+gcloud storage cp "gs://${B:?}/fugaro/managed.json" /tmp/chk67-marker.orig.json --project="${M:?}"   # the ORIGINAL, kept untouched
+cp /tmp/chk67-marker.orig.json /tmp/chk67-marker-bad.json                                            # doctor a COPY, never the original
+python3 -c 'import json; p="/tmp/chk67-marker-bad.json"; m=json.load(open(p)); m["gcp_project"]="'"${P:?}"'"; json.dump(m,open(p,"w"))'
+gcloud storage cp /tmp/chk67-marker-bad.json "gs://${B:?}/fugaro/managed.json" --project="${M:?}"   # ⚠ CONFIRM: this writes the marker, with YOUR credentials
 fugaro managed apply ./managed-root --project "${F:?}"      # expect: refused, "names project <P>, not <M> ... not managed"
-gcloud storage cp "gs://${B:?}/fugaro/managed.json" /tmp/chk67-marker-bad.json --project="${M:?}"   # keep the doctored copy as the FACT
-MOD=$(git -C /tmp/chk67-managed rev-parse --show-toplevel)/../chk67-marker.orig.json   # set by this step: keep the ORIGINAL below
+gcloud storage cp /tmp/chk67-marker.orig.json "gs://${B:?}/fugaro/managed.json" --project="${M:?}"  # ⚠ CONFIRM: put the creation fact back, from the bytes you kept
+gcloud storage cat "gs://${B:?}/fugaro/managed.json" --project="${M:?}"                             # FACT: version 2 and your amount are back
 ```
 
-**What this step also demonstrates, and why it is written down rather than glossed:** the `gcloud storage cp` above succeeded **as you**, because the operator's own identity is wider than the deployer's and can write `fugaro/managed.json` directly. That is the residual width the design's §6 item 4 carries and `SECURITY.md` records; it is not a failure of the check, it is the fact the check exists to keep visible. **Restore the original marker bytes before step 5** (`gcloud storage cp` the copy you kept), and record that the restore read back version 2 with your amount.
+**Why the original is copied FIRST, and why that ordering is the step.** The doctored marker is a live object naming the sandbox installation's project, so a check that loses the original leaves steps 5 to 7 applying against a marker that reads as **not managed** — every later step then fails for a reason that is this step's own doing, and the project is left mislabelled for the next run of the check. The original is therefore copied to `/tmp/chk67-marker.orig.json` **before** anything is doctored, the doctored bytes go to a separate file, and the last command above puts the creation fact back from the copy that was never edited. If the last command is skipped or fails, **stop** and restore the object by hand from `/tmp/chk67-marker.orig.json`; do not continue with a doctored marker in the bucket.
+
+**What this step also demonstrates, and why it is written down rather than glossed:** the `gcloud storage cp` above succeeded **as you**, because the operator's own identity is wider than the deployer's and can write `fugaro/managed.json` directly. That is the residual width the design's §6 item 4 carries and `SECURITY.md` records; it is not a failure of the check, it is the fact the check exists to keep visible. Record that the restore read back version 2 with your amount — that read-back is what says the creation fact is whole again, and it is the FACT the rest of the check rests on.
 
 **FACT lines:** the doctored marker's own `gcp_project` value; the refusal's verbatim text naming both projects; and the version and amount read back after the restore.
 
@@ -4422,15 +4427,21 @@ gcloud asset search-all-resources --scope="projects/${M:?}" --project="${M:?}" -
 
 **FACT lines:** that the read answered at all, and the asset types it returned. **What is UNVERIFIED here, and is recorded rather than guessed:** the direction Task 4.1's D59 fallback describes — a foreign resource making a **managed apply** fall back to a confirmation and name it — is **not wired into the managed apply in this release**: `managed.Apply` consults no inventory (`internal/managed/apply.go`, `TestApplyConsultsNoInventory`), the owner ruled on 2026-10-18 that the inventory is built and tested but not consulted, and wiring it is the plan's **Task 4.5, unscheduled**. So this step exercises the read and its role live; the fallback half of D59 stays **UNVERIFIED** until Task 4.5, and a check that asserted it today would fail against the shipped binary. If the read answers `SERVICE_DISABLED`, record **which project the answer names** — it may be the ADC quota project, not `${M:?}`.
 
-**Restore — once per installation, and it deletes only what this check created.**
+**Restore — once per installation, and it deletes only what this check created.** It is **conditional**, exactly as Check 68's is, because 67a is the first of three checks over one throwaway project: **Check 68 needs the project and the checkout below** (its step 5 applies a root from `/tmp/chk67-managed`), and **Check 67b destroys the project itself as its own step 1**. So the order is **67a, then 68, then 67b** — and the deletes here belong to whichever of the two is last.
 
 ```bash
+# ONLY if Check 68 and Check 67b are not going to run: both need this project
+# (68 reads its IAM and applies from the checkout below; 67b destroys it as its
+# own step 1 and deletes it in its own Restore). If they are, skip the first
+# line and let 67b's Restore delete the project.
 gcloud projects delete "${M:?}" --project="${M:?}"     # ⚠ CONFIRM: the whole throwaway managed project, and only it (billing stops; the ID is reserved about 30 days)
-rm -rf /tmp/chk67-managed /tmp/chk67-marker.json /tmp/chk67-marker-bad.json /tmp/chk67-marker.orig.json
+# ONLY after 67b's Restore has run, or if you are stopping at 67a: 68 step 5
+# cds into this checkout, and 67b restores into it.
+rm -rf /tmp/chk67-managed /tmp/chk67-marker.orig.json /tmp/chk67-marker-bad.json
 gcloud config unset auth/impersonate_service_account 2>/dev/null || true
 ```
 
-**It ends in an assertion whose every line must read `0` — a count, not an empty-looking line** (the shape Check 57's restore uses). Write each line as a count of what must be gone, and paste the numbers, not a blank: the managed project, the two objects it held, the checkout at `/tmp/chk67-managed`, and the files step 4 and step 8 wrote. **What the Restore must not touch:** the sandbox installation `fugaro`, `fugaro-dev`, the sandbox repository's default branch, and any other installation — a delete or an edit that reaches any of those is a failure of the check, not of the feature.
+**It ends in an assertion whose every line must read `0` — a count, not an empty-looking line** (the shape Check 57's restore uses). Write each line as a count of what must be gone, and paste the numbers, not a blank: the managed project, the two objects it held, the checkout at `/tmp/chk67-managed`, and the files step 4 and step 8 wrote. **What the Restore must not touch:** the sandbox installation `fugaro`, `fugaro-dev`, the sandbox repository's default branch, and any other installation — a delete or an edit that reaches any of those is a failure of the check, not of the feature. **What it must not delete early** is the other half of the same rule: a project deleted here that Check 68 or 67b still needs turns a passing check into three that cannot run, which is why the guard above is written as a condition rather than as a note.
 
 **Passes when:** a managed project's plan applied with **no confirmation**; a non-managed project was refused by `fugaro managed apply` and still asked for its confirmation through `fugaro init`; a plan naming a second project was refused; a delete was refused with an empty list and applied once the one address was written by the owner's own command; a marker naming another project read as not managed; the run's job credential failed to write both objects; and the Cloud Asset read answered with the real role.
 
