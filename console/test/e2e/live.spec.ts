@@ -40,6 +40,32 @@
 // `FUGARO_CONSOLE_GOLDENS=skip`, which skips exactly the golden tests and says
 // so in the report; nothing skips them silently.
 //
+// **What the frame is: the mount, not the page.** The golden is taken of
+// `#live-mount`, the host this spec draws its screen into, and never of the
+// whole window. The window's own entry (Task 3.4c) draws a *second* dashboard
+// beside this mount, out of the live CLI, and two of that drawing's strings can
+// never be identical in two runs:
+//
+//   - the installation header draws the active installation's **absolute binary
+//     path** (`drawInstallation` in `src/renderer/entry.ts`), which is this
+//     spec's own scratch directory -- a `mkdtemp` name no two runs share, on any
+//     machine, so a committed baseline could not match the run that compares
+//     against it (and would not match a second machine's either);
+//   - the Live screen the entry draws carries the console's own reading of when
+//     the last frame **arrived** (`live-since-at` and `live-since-age`, from
+//     `feedHealthOf(envelope['receivedAt'], nowStamp())`), which is a reading of
+//     the console's wall clock and not of any document's timestamps.
+//
+// Both are the product behaving correctly -- the console stamping a frame's
+// arrival with its own clock is what makes the 45 s stale condition mean
+// anything -- and neither is this spec's subject: the reading tests above take
+// every reading *inside* the mount for the same reason. The screen under test is
+// drawn from the fixture and from nothing else, and every time-derived label on
+// it is measured against the fixture's own clock (`document.now`: `buildLiveModel`
+// measures each run's age from it, and `BurnHistory.window` windows at the stamp
+// its caller names), so its frame is the same pixels on every run and on every
+// machine that draws the same fonts.
+//
 // Nothing here reaches the network or the CLI: the document is the committed
 // synthetic fixture, read from disk, and every string it holds was already
 // redacted when the fixture was written (Task 1.4).
@@ -156,16 +182,26 @@ function domFactory() {
 `
 
 /** draw is the expression the window evaluates: load the compiled screen, build
- * the model from one document, and mount what it draws. */
-function draw(document: JSONDoc, theme: string): string {
+ * the model from these documents **in order, through one `BurnHistory`** -- which
+ * is what a live screen is, a window kept across frames rather than a reading of
+ * one (design section 6.3) -- and mount what the last of them draws. One document
+ * is the usual case; a sequence is how a test can see the burn window itself,
+ * whose bars depend on the clock the model was built at. */
+function draw(frames: readonly JSONDoc[], theme: string): string {
   return `(function () {
 ${LOADER}${MODULES.map(moduleSource).join('\n')}${FACTORY}
 var live = load('/renderer/screens/live.js');
 var schema = load('/shared/schema.js');
-var decoded = schema.decodeSnapshot(${JSON.stringify(document)}, 'the fixture frame');
-if (!decoded.ok) return { error: decoded.skew.because };
+var history = new live.BurnHistory();
 var factory = domFactory();
-var tree = live.renderLive(factory, live.buildLiveModel(decoded.value, new live.BurnHistory()), ${JSON.stringify(theme)});
+var tree = null;
+var frames = ${JSON.stringify(frames)};
+for (var i = 0; i < frames.length; i++) {
+  var decoded = schema.decodeSnapshot(frames[i], 'the fixture frame');
+  if (!decoded.ok) return { error: decoded.skew.because };
+  var model = live.buildLiveModel(decoded.value, history);
+  if (i === frames.length - 1) tree = live.renderLive(factory, model, ${JSON.stringify(theme)});
+}
 var previous = document.getElementById('live-mount');
 if (previous) previous.remove();
 var host = document.createElement('div');
@@ -194,6 +230,9 @@ interface Screen {
   readonly killText: string | null
   readonly flags: readonly string[]
   readonly sparkBars: number
+  /** each sparkline bar's own height, as drawn (`data-height`): the reading a
+   * clock that moved the burn window's cut would change */
+  readonly sparkHeights: readonly (string | null)[]
   readonly anchors: number
   readonly text: string
 }
@@ -226,6 +265,7 @@ function screen(page: Page): Promise<Screen> {
       killText: scope.querySelector('.live-kill')?.textContent ?? null,
       flags: texts('.live-run-flag'),
       sparkBars: all('.live-burn-bar').length,
+      sparkHeights: attributes('.live-burn-bar', 'data-height'),
       anchors: all('a').length,
       text: document.getElementById('live-mount')?.textContent ?? '',
     }
@@ -250,6 +290,24 @@ function theLastFrame(): JSONDoc {
   const last = frames[frames.length - 1]
   if (last === undefined) throw new Error('the fixture has no documents')
   return last
+}
+
+/** THE_MOUNT is where this spec draws the screen, and therefore what the goldens
+ * frame: the mount and never the page (see this file's header). */
+const THE_MOUNT = '#live-mount'
+
+/** atAClock is one frame with its own `now` -- the document's clock, the stamp
+ * this screen measures its burn window at -- moved by `seconds`. It is how a
+ * test changes "what time the document says it is" without touching the wall
+ * clock the spec runs on: a fixture is replayed, and a replay is read at the
+ * timestamps it carries, so moving the document's own clock is the only way a
+ * drawing derived from it can be made to move. */
+function atAClock(frame: JSONDoc, seconds: number): JSONDoc {
+  const now = frame['now']
+  if (typeof now !== 'string') throw new Error('the frame carries no clock reading')
+  const moved = Date.parse(now) + seconds * 1000
+  if (Number.isNaN(moved)) throw new Error(`the frame's clock reading is not a stamp: ${now}`)
+  return { ...frame, now: new Date(moved).toISOString().replace(/\.\d{3}Z$/, 'Z') }
 }
 
 /** withAKill is the last frame with its repository's switch thrown, which the
@@ -304,14 +362,16 @@ test.describe('the Live screen', () => {
     cli.remove()
   })
 
-  /** mount draws one document and fails with the window's own words if the
-   * console's decoder refused it. */
-  async function mount(document: JSONDoc, theme: string): Promise<void> {
+  /** mount draws these documents -- one, or a sequence observed through one
+   * `BurnHistory` -- and fails with the window's own words if the console's
+   * decoder refused any of them. */
+  async function mount(document: JSONDoc | readonly JSONDoc[], theme: string): Promise<void> {
+    const frames = Array.isArray(document) ? document : [document]
     const result = await app.evaluate(async ({ BrowserWindow }, source) => {
       const window = BrowserWindow.getAllWindows()[0]
       if (window === undefined) return { error: 'the console has no window' }
       return (await window.webContents.executeJavaScript(source, true)) as { error?: string }
-    }, draw(document, theme))
+    }, draw(frames, theme))
     expect(result.error).toBeUndefined()
   }
 
@@ -358,7 +418,7 @@ test.describe('the Live screen', () => {
   test('draws the live fixture', async () => {
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
     await mount(theLastFrame(), 'light')
-    await expect(page).toHaveScreenshot('live-light.png')
+    await expect(page.locator(THE_MOUNT)).toHaveScreenshot('live-light.png')
   })
 
   test('draws the live fixture in the dark theme', async () => {
@@ -366,7 +426,54 @@ test.describe('the Live screen', () => {
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await expect(page).toHaveScreenshot('live-dark.png')
+    await expect(page.locator(THE_MOUNT)).toHaveScreenshot('live-dark.png')
+  })
+
+  test('windows the burn sparkline at the document\'s own clock', async () => {
+    // The clock seam, proved in the window rather than read for. What this
+    // screen draws from a clock is the burn window: `sparkline` is a rate over
+    // the last `BurnWindow` **ending at the stamp its caller names**, and the one
+    // this screen names is the document's own `now` (`screens/live.ts`:
+    // `sparkline(history, repo.slug, document.now)`, with the history observed at
+    // the same stamp). So two frames observed through one history and drawn at
+    // their own clock are the fixture's picture of that window; the same two
+    // frames with the document's clock moved an hour past the window's end are a
+    // window with nothing left in it.
+    //
+    // Mutation: a window cut at the renderer's wall clock instead (a `Date.now()`
+    // in `BurnHistory.window` or at its call site) draws the SAME bars for both
+    // mounts below -- the fixture's stamps are three days old, so every sample
+    // falls out of a window ending at "now" in both mounts -- and the last
+    // assertion below fails.
+    const observed = theFrames().slice(-2)
+    expect(observed).toHaveLength(2)
+
+    await mount(observed, 'light')
+    const asRecorded = await screen(page)
+    // The fixture's last two documents are one second apart (12:04:20Z and
+    // 12:04:21Z), so both samples are inside the window ending at the frame's own
+    // clock: two bars, each with the height it was measured at.
+    expect(asRecorded.sparkBars).toBe(2)
+
+    // The same documents with the last one's own clock an hour later: the window
+    // it is drawn at is `13:04:21Z` minus `BurnWindow`, the sample the earlier
+    // document stamped at `12:04:20Z` is outside it, and the console says it has
+    // seen nothing for the window it is drawing rather than drawing a bar it has
+    // no reading for.
+    await mount([observed[0] as JSONDoc, atAClock(observed[1] as JSONDoc, 60 * 60)], 'light')
+    const anHourLater = await screen(page)
+    expect(anHourLater.sparkBars).toBe(1)
+    expect(anHourLater.sparkHeights.length).toBeLessThan(asRecorded.sparkHeights.length)
+
+    // And the same two frames, at the same clock reading, draw the same screen
+    // twice: the frame a golden is taken from is a function of the documents and
+    // of nothing else -- which is what makes a committed baseline comparable at
+    // all.
+    await mount(observed, 'light')
+    const again = await screen(page)
+    expect(again.sparkHeights).toEqual(asRecorded.sparkHeights)
+    expect(again.text).toBe(asRecorded.text)
+    expect(again.runs).toEqual(asRecorded.runs)
   })
 
   test('has a golden for each theme the design names', () => {
