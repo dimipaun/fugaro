@@ -35,8 +35,11 @@ authenticated data, `ParseKey`/`EncodeKey`), `PutObject`/`TakeObject` understand
 refusal §7.4 lists, the
 runner's strict parse of the marker's value with `"1"` still accepted as the one-bit marker, the key
 registered with the runner's redactor before anything can print it, the marker stripped from every
-git call's environment beside the model credentials, and the `%q` leak gone — no code
-path prints the marker's value. **Slice B follows, and is not in this change:** the launcher seals
+git call's environment — unconditionally, beside the provider keys, and not through the caller's
+`Repo.StripEnv` list, which a `Repo` built without it would silently miss — and the `%q` leak gone:
+no code path prints the marker's value. That strip is hygiene rather than a boundary, and §7.1 says
+why: the run's own agent shares the container and its user with the runner and can read the marker
+from the runner's `/proc` whatever git's environment holds. **Slice B follows, and is not in this change:** the launcher seals
 and hands its key to the execution it starts, a `--retry` re-mints and re-seals under a new key
 (D17), the object moves to `tokens/` with the grant that reads it (D16, Task 3.2), and SECURITY.md's
 two sentences are rewritten with the launcher's seal (D15). Until Slice B the launcher still writes
