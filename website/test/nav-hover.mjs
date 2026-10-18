@@ -514,6 +514,22 @@ test('a submenu closes a moment after the pointer leaves, and a pointer that com
   page.moveTo(page.find('main')[0])
   page.runTimers()
   assert.equal(group.open, false, 'a submenu the pointer has left stayed open')
+
+  // A close that lands while the focus is on a link inside the list hands that focus back to
+  // the trigger rather than leaving it on an element the browser has stopped drawing — the
+  // same courtesy Escape pays, and the reason the focus handed back does not reopen the group.
+  const link = group.querySelector('a')
+  page.moveTo(summary)
+  page.focus(link)
+  assert.ok(page.document.activeElement === link, 'the stub would not focus a link inside an open submenu')
+  page.moveTo(page.find('main')[0])
+  page.runTimers()
+  assert.equal(group.open, false, 'the submenu the pointer left stayed open under a focused link')
+  assert.ok(
+    page.document.activeElement === summary,
+    'the close left the focus on a link the browser no longer draws: it belongs back on the trigger',
+  )
+  assert.equal(group.open, false, 'the focus handed back to the trigger reopened the submenu the pointer had closed')
 })
 
 test('the click the menu was built on still toggles a group', () => {
