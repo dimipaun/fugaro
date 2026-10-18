@@ -442,17 +442,18 @@ func Apply(ctx context.Context, r Request) (Result, error) {
 // all — a refusal that named one would be read by the session it refuses as a
 // thing to pass.
 func (r Request) refuseSession() error {
-	// Each address is the applying session's own argument and is bounded like
-	// every other untrusted value before it is interpolated: a refusal that a
-	// newline in an argument could turn into a line of its own is a refusal the
-	// session it refuses can write the rest of.
-	named := make([]string, 0, len(r.Session))
-	for _, a := range r.Session {
-		named = append(named, safetext.Field(a))
-	}
+	// The addresses are the applying session's own arguments and are bounded
+	// like every other untrusted value before they are interpolated: a refusal
+	// that a newline in an argument could turn into a line of its own is a
+	// refusal the session it refuses can write the rest of. The listing is
+	// capped as its source is — a command line holds as many arguments as the
+	// session passed — and the entries it leaves out are counted rather than
+	// silently dropped (safetext.FieldListLine).
+	named := slices.Clone(r.Session)
 	slices.Sort(named)
+	line := safetext.FieldListLine(named)
 	return fmt.Errorf("%w: refusing the addresses this command's own command line named (%s): in a managed project the addresses a run may delete or replace come from the owner's own list at gs://%s/%s, written with the operator's credentials by fugaro allow-delete, never from the arguments of the command that applies the plan; ask the owner to approve %s",
-		ErrSessionAddresses, strings.Join(named, ", "), r.runsBucket(), "fugaro/allow-delete.json", strings.Join(named, ", "))
+		ErrSessionAddresses, line, r.runsBucket(), "fugaro/allow-delete.json", line)
 }
 
 // fact is the creation fact's own rule: this command applies only for a
@@ -746,7 +747,11 @@ func TerraformEnv(parent []string, workdir, cache string) ([]string, error) {
 		return nil, err
 	}
 	if k := providerSettingIn(env); k != "" {
-		return nil, fmt.Errorf("%w: %s is set in terraform's environment, and the credential terraform runs with is this command's own (the deployer account's): unset it", ErrProviderSetting, k)
+		// The name is a variable name out of the environment this command
+		// inherited — the one thing in the sentence that is not this
+		// program's, and a name that may hold anything but "=" and NUL — so it
+		// is one bounded field (safetext.Field) before it is interpolated.
+		return nil, fmt.Errorf("%w: %s is set in terraform's environment, and the credential terraform runs with is this command's own (the deployer account's): unset it", ErrProviderSetting, safetext.Field(k))
 	}
 	return env, nil
 }

@@ -134,3 +134,77 @@ func TestFieldIsOneBoundedPlainLine(t *testing.T) {
 		t.Error("a value at the cap was cut")
 	}
 }
+
+// FieldList is the listing every printed list of untrusted values goes
+// through: each entry a Field, at most FieldListMax of them, and an honest
+// count of the rest.
+func TestFieldListBoundsEveryEntryAndTheCount(t *testing.T) {
+	hostile := []string{"ok.a", "csi" + string(rune(0x9b)) + "31m.b", "bidi" + string(rune(0x202e)) + ".c",
+		"forged\nd.e", strings.Repeat("z", 10000)}
+
+	t.Run("under the cap", func(t *testing.T) {
+		shown, omitted := FieldList(hostile)
+		if len(shown) != len(hostile) || omitted != 0 {
+			t.Fatalf("FieldList showed %d and left out %d, want %d and 0", len(shown), omitted, len(hostile))
+		}
+		if shown[0] != "ok.a" {
+			t.Errorf("an ordinary entry reads as %q, want it unchanged", shown[0])
+		}
+		for i, s := range shown {
+			if s != Field(hostile[i]) {
+				t.Errorf("entry %d = %q, want Field of it (%q)", i, s, Field(hostile[i]))
+			}
+		}
+		if n := len([]rune(shown[4])); n != FieldMax {
+			t.Errorf("the 10k entry is %d runes, want %d", n, FieldMax)
+		}
+		if FieldListNote(omitted) != "" {
+			t.Errorf("a listing that left nothing out carries a note: %q", FieldListNote(omitted))
+		}
+	})
+
+	t.Run("over the cap", func(t *testing.T) {
+		many := make([]string, FieldListMax+5)
+		for i := range many {
+			many[i] = fmt.Sprintf("google_storage_bucket.a%d", i)
+		}
+		shown, omitted := FieldList(many)
+		if len(shown) != FieldListMax || omitted != 5 {
+			t.Fatalf("FieldList showed %d and left out %d, want %d and 5", len(shown), omitted, FieldListMax)
+		}
+		if shown[FieldListMax-1] != many[FieldListMax-1] {
+			t.Errorf("the last shown entry is %q, want %q", shown[FieldListMax-1], many[FieldListMax-1])
+		}
+		if note := FieldListNote(omitted); note != "and 5 more, not listed here" {
+			t.Errorf("FieldListNote(5) = %q", note)
+		}
+		line := FieldListLine(many)
+		note := " (" + "and 5 more, not listed here" + ")"
+		if !strings.HasSuffix(line, note) {
+			t.Errorf("FieldListLine does not flag the truncation: %q", line)
+		}
+		// The listing itself, without the note's own comma: one separator per
+		// shown entry but the last, so no entry past the cap reached the line.
+		if n := strings.Count(strings.TrimSuffix(line, note), ","); n != FieldListMax-1 {
+			t.Errorf("the line carries %d separators, want %d (one per shown entry)", n, FieldListMax-1)
+		}
+	})
+
+	t.Run("the boundary", func(t *testing.T) {
+		exact := make([]string, FieldListMax)
+		for i := range exact {
+			exact[i] = "a"
+		}
+		shown, omitted := FieldList(exact)
+		if len(shown) != FieldListMax || omitted != 0 {
+			t.Errorf("a list of exactly FieldListMax is shown as %d with %d left out", len(shown), omitted)
+		}
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		shown, omitted := FieldList(nil)
+		if len(shown) != 0 || omitted != 0 || FieldListLine(nil) != "" {
+			t.Errorf("an empty list is shown as %q with %d left out", shown, omitted)
+		}
+	})
+}

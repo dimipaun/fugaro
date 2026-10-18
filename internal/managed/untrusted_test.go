@@ -308,3 +308,33 @@ func TestTheInventorysWarningIsBoundedWhereItIsPrinted(t *testing.T) {
 		})
 	}
 }
+
+// TestTheRefusalsListingIsCappedAndSaysWhatItLeftOut: the addresses a session's
+// own command line named are listed back in refuseSession's refusal, and a
+// command line holds as many arguments as the session passed — so the listing
+// is capped and the entries it did not show are counted. A listing that
+// silently stopped would read as the whole list, and the refusal is what its
+// reader acts on.
+func TestTheRefusalsListingIsCappedAndSaysWhatItLeftOut(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	req := r.request(t)
+	const n = safetext.FieldListMax + 5
+	for i := 0; i < n; i++ {
+		req.Session = append(req.Session, fmt.Sprintf("google_storage_bucket.a%02d", i))
+	}
+	_, err := Apply(context.Background(), req)
+	if !errors.Is(err, ErrSessionAddresses) {
+		t.Fatalf("a session with addresses got %v, want the session's refusal", err)
+	}
+	msg := err.Error()
+	bounded(t, "the capped listing", msg, 1)
+	if note := safetext.FieldListNote(5); !strings.Contains(msg, note) {
+		t.Errorf("the refusal does not say it left five out (%q):\n%q", note, msg)
+	}
+	if !strings.Contains(msg, "google_storage_bucket.a00") || !strings.Contains(msg, fmt.Sprintf("google_storage_bucket.a%02d", safetext.FieldListMax-1)) {
+		t.Errorf("the refusal does not carry the entries inside the cap:\n%q", msg)
+	}
+	if last := fmt.Sprintf("google_storage_bucket.a%02d", n-1); strings.Contains(msg, last) {
+		t.Errorf("the refusal carries %s, past the cap, so the listing is not capped:\n%q", last, msg)
+	}
+}
