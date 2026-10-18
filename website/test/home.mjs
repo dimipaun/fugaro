@@ -447,6 +447,17 @@ test("the flow carries D185's four steps, in order, with the two annotations on 
   assert.equal(ruling.steps.length, 4, `D185's row names ${ruling.steps.length} steps, and the brief draws four (spec item 4, P8)`)
   assert.equal(ruling.annotations.length, 2, `D185's row names ${ruling.annotations.length} annotations, and the ruling keeps two (P8)`)
 
+  // The homepage's flow sits under the hero, which is where D185 puts it: the picture of a
+  // run above the tagline would be the first thing a reader meets, before anything has said
+  // what Fugaro is.
+  const home = builtPage('')
+  const hero = home.indexOf('<section class="hero"')
+  const flow = home.indexOf('<figure class="flow"')
+  assert.ok(
+    hero !== -1 && flow > hero,
+    `the homepage renders its flow ${flow === -1 ? 'nowhere' : 'above the hero'}: D185 places the picture of the run below the hero (P8)`,
+  )
+
   // Both pages, because the same flow is placed on the homepage as the brief's item 5 "good
   // images or diagrams that show how the system works" (RF21, D185): a check that read only
   // How It Works would not notice the homepage losing the picture.
