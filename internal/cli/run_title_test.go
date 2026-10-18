@@ -190,6 +190,37 @@ func TestRunAttemptsCarryTheTitleOnEveryAttempt(t *testing.T) {
 	}
 }
 
+// A --batch launch (one run under a batch label) carries its title the same
+// way: the label groups runs, and the title still names this one.
+func TestRunBatchCarriesTheTitle(t *testing.T) {
+	f := newCloudFixture(t)
+	spec := runTitle(t, f, "20261018-120000-abcd",
+		[]string{"--batch", "nightly", "--title", "Ship the flaky-test fix"},
+		"Read the plan first.\n\nThen fix it.")
+	if spec.Title != "Ship the flaky-test fix" || spec.Batch != "nightly" {
+		t.Fatalf("title = %q, batch = %q", spec.Title, spec.Batch)
+	}
+}
+
+// A review-mode launch (--recipe review-only --pr N, a first-run-shaped task
+// of its own) carries its title too: the flag names any launch that stores a
+// task, and a review of several pull requests is exactly the shape whose rows
+// would otherwise all read alike.
+//
+// Mutation (drop Title from reviewSpec's spec literal): the stored task has
+// no title and this test fails.
+func TestReviewLaunchCarriesTheTitle(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release090)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261018-120000-abcd",
+		"--recipe", "review-only", "--pr", "7", "--title", "Review the flaky-test PRs"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, "20261018-120000-abcd").Title; got != "Review the flaky-test PRs" {
+		t.Fatalf("title = %q, want the flag's", got)
+	}
+}
+
 // A follow-up keeps its run's title: --pr without --title inherits the title
 // the previous run of the chain carries, so a chain of follow-ups stays one
 // job in fugaro watch. An explicit --title overrides it.
