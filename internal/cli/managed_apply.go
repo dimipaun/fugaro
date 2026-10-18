@@ -129,7 +129,15 @@ prompt, and what replaces the prompt is the gate (a refused plan is not
 applied), the marker (an unreadable one is not an apply), the owner's list (an
 address the owner did not approve is refused) and the deployer account (which
 holds no project-level IAM permission and cannot write the runs bucket). None
-of the four is a boundary against a session that goes around this program.`,
+of the four is a boundary against a session that goes around this program.
+
+The prompt comes back whenever the whole-project inventory does not clear the
+project: before anything is planned, this command reads every resource of the
+GCP project (Cloud Asset, with the operator's own credential) and compares it
+with what the installation's Terraform states account for. A resource nothing
+accounts for, or an inventory that cannot be read, keeps this run's
+confirmation: a coding agent's session is refused and a person is asked, with
+the reason printed first. Nothing is halted and nothing is deleted.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return managedApply(cmd, o, args[0])
