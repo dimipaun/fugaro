@@ -730,7 +730,7 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		// never finished. An empty Created alone cannot tell them apart.
 		if r.o.managed {
 			if r.projectExisted {
-				r.warn(fmt.Sprintf("--managed was not applied: project %s already existed, so this run created nothing and no creation fact was written; it is not managed", r.gcpProject))
+				r.warn(fmt.Sprintf("--managed was not applied: project %s already existed, so this run created nothing and no creation fact was written; it is not managed, and the owner flags it with `fugaro managed flag %s --budget N --budget-currency CCC` at their own terminal if they want it to be", r.gcpProject, r.gcpProject))
 			} else {
 				r.warn(fmt.Sprintf("--managed was not applied: this run created no project (it stopped before creating one, or the creation did not finish), so no creation fact was written and %s is not managed", r.gcpProject))
 			}
