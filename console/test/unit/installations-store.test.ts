@@ -49,6 +49,10 @@ import {
   installationOperationFor,
 } from '../../src/main/installations'
 import type { InstallationFs, StoredInstallation } from '../../src/main/installations'
+// The pairing check the store runs is the **source layer's own**
+// `verifyCandidate`, so the refusal test drives the real one rather than a stub
+// that returns the sentence it is asserting.
+import { verifyCandidate } from '../../src/source/cli'
 import { installStub } from './stub'
 
 const HOME = '/Users/owner'
@@ -443,15 +447,33 @@ describe('validation', () => {
   })
 
   it('shows the CLI’s own refusal when the pairing check fails, and stores nothing', async () => {
+    // The pairing check is **the real one**: `verifyCandidate` against the stub
+    // binary, so the sentence asserted below is the one the CLI printed rather
+    // than a string this test handed in. `verifyCandidate` signals a refusal by
+    // *throwing*, so this case also pins the contract that `validateInstallation`
+    // turns that throw into `{ ok: false, reason }` instead of letting it escape
+    // -- a `validateInstallation` that propagated it would fail here as a
+    // rejected promise, and one that swallowed it would fail on `result.ok`.
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: { version: { stdout: '1.4.2\n' }, doctor: { code: 1, stderr: 'fugaro: this checkout belongs to project acme; --project says fugaro\n' } },
     })
-    const result = await validateInstallation({ project: 'fugaro', binaryPath: stub.binary, checkout: directory }, {
-      appEnv: {},
-    })
+    let stored = 0
+    const result = await validateInstallation(
+      { project: 'fugaro', binaryPath: stub.binary, checkout: directory },
+      {
+        appEnv: {},
+        verify: async (candidate) => {
+          stored += 1
+          await verifyCandidate(candidate, { appEnv: {}, home: directory })
+        },
+      },
+    )
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toContain('this checkout belongs to project acme')
+    // The check ran, and nothing came of it: `validateInstallation` answers a
+    // value, so no caller can be the one that decides to store a refused one.
+    expect(stored).toBe(1)
   })
 })
 

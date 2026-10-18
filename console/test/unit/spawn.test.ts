@@ -87,6 +87,7 @@ import type { SpawnLogWriter } from '../../src/main/spawnlog'
 import { validateArguments } from '../../src/main/ipc'
 import type { OperationName, ValidatedArguments } from '../../src/main/ipc'
 import { CliSource, LOG_WINDOW_MAX_ENTRIES, MAX_LIVE_FEEDS, createInstallationStore, parseLogEntries } from '../../src/source/cli'
+import type { InstallationCandidate } from '../../src/source/cli'
 import { RUN_LOG_CAP, buildRunModel } from '../../src/renderer/screens/run'
 import { SourceRefusal, handlersFor } from '../../src/source/source'
 import { installStub } from './stub'
@@ -1787,6 +1788,75 @@ describe('the installation store', () => {
     // *config-shaped* path anywhere -- is `test/unit/configread.test.ts`'s scan,
     // which walks the same tree and holds the mutation as a fixture.
     expect(stub.reports().at(-1)?.cwd).toBe(checkout)
+  })
+
+  // The `persistence` seam (plan Task 3.4b, step 3: "`createInstallationStore`
+  // gains a persistence seam (`load`/`save` dependencies) so its verification
+  // logic stays the one in `cli.ts`"). It is what `src/main/installations.ts`
+  // hands in, so the store's **ordering** -- load first, check, push, then save
+  // -- is the part worth pinning: each of the three tests below fails for a
+  // store that got one of those four moves in the wrong place.
+  it('starts from what it loaded, and saves the whole list after a verified add', async () => {
+    const directory = freshDirectory()
+    const checkout = freshDirectory('fugaro-checkout-')
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
+    const held: InstallationCandidate = { project: 'held', binaryPath: stub.binary }
+    const saved: (readonly InstallationCandidate[])[] = []
+    const store = createInstallationStore({
+      appEnv: {},
+      persistence: { load: () => [held], save: (list) => void saved.push([...list]) },
+    })
+    // The load is what the store starts from, and it is a copy: a `save` that
+    // mutated the list it was handed could not reach back into the store.
+    expect(store.list()).toEqual([held])
+    await store.add({ project: PROJECT, binaryPath: stub.binary, checkout })
+    expect(store.list()).toEqual([held, { project: PROJECT, binaryPath: stub.binary, checkout }])
+    expect(saved).toEqual([[held, { project: PROJECT, binaryPath: stub.binary, checkout }]])
+  })
+
+  it('writes nothing when the check refuses, and nothing before the check', async () => {
+    const directory = freshDirectory()
+    const checkout = freshDirectory('fugaro-checkout-')
+    const stub = installStub(directory, {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        doctor: { stderr: 'fugaro: this checkout belongs to project acme; --project says fugaro\n', code: 1 },
+      },
+    })
+    let saves = 0
+    const store = createInstallationStore({
+      appEnv: {},
+      persistence: { load: () => [], save: () => void (saves += 1) },
+    })
+    await expect(store.add({ project: PROJECT, binaryPath: stub.binary, checkout })).rejects.toThrow(
+      'this checkout belongs to project acme',
+    )
+    // A store that saved before it checked -- or saved on the refusing path --
+    // would have written an installation the CLI just refused.
+    expect(saves).toBe(0)
+    expect(store.list()).toEqual([])
+  })
+
+  it('has the installation in memory when the save itself fails', async () => {
+    // The order in the store is: check, push, save. A `save` that throws
+    // therefore leaves the two halves disagreeing in the one direction that is
+    // safe -- the list has the installation, the file does not, and the next
+    // add re-verifies it. A store that pushed *after* saving would lose it, and
+    // the assertion below is what says so.
+    const directory = freshDirectory()
+    const checkout = freshDirectory('fugaro-checkout-')
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
+    const store = createInstallationStore({
+      appEnv: {},
+      persistence: {
+        load: () => [],
+        save: () => {
+          throw new Error('ENOSPC: no space left on device')
+        },
+      },
+    })
+    await expect(store.add({ project: PROJECT, binaryPath: stub.binary, checkout })).rejects.toThrow('ENOSPC')
+    expect(store.list()).toEqual([{ project: PROJECT, binaryPath: stub.binary, checkout }])
   })
 })
 

@@ -43,13 +43,16 @@ import {
 import { createInstallationPicker } from '../../src/main/picker'
 import { INSTALLATIONS_MENU_LABEL, PICKER_ENTRY_URL } from '../../src/main/picker'
 import {
-  APP_ENTRY_URL,
   CONSOLE_OPERATION_NAMES,
   SENDER_REFUSAL,
   channelForOperation,
   registerConsoleHandlers,
 } from '../../src/main/ipc'
-import { CONTENT_SECURITY_POLICY } from '../../src/main/protocol'
+// `APP_ENTRY_URL` is the **protocol** module's constant; `ipc.ts` only imports
+// it to pass to `isSenderOnDocument`. Importing it from `ipc.ts` would be an
+// undefined binding, and the two tests below that build a dashboard frame would
+// then pass for the wrong reason (a garbage frame is refused too).
+import { APP_ENTRY_URL, CONTENT_SECURITY_POLICY } from '../../src/main/protocol'
 import type { ConsoleEventLike, ConsoleHandlers, ConsoleReply, IpcMainLike } from '../../src/main/ipc'
 
 function freshDirectory(): string {

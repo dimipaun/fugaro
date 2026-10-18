@@ -6,7 +6,7 @@
 // This module is the whole of the store, and it is deliberately **free of
 // Electron and of `node:fs`**: the paths it touches arrive as arguments, the
 // filesystem arrives as `InstallationFs`, and the one check that needs the CLI
-// arrives as `deps.verify`. That is what lets `test/unit/installations-store.ts`
+// arrives as `deps.verify`. That is what lets `test/unit/installations-store.test.ts`
 // hold the 0600 mode, the atomic rename and every refusal against a recording
 // filesystem under plain Node, and it is also what keeps the module inside
 // design section 3.4 rule 7: there is no `homedir()` here, no environment read
@@ -48,7 +48,7 @@ import type { InstallationCandidate } from '../source/cli'
  * CONSOLE_APP_NAME is the app's own name, and it is the reason the store is
  * outside the CLI's config directory rather than beside it: `~/.config/fugaro`
  * belongs to the CLI, and an app named `fugaro` on Linux would put its
- * `userData` exactly there. `test/unit/installations-store.ts` pins that this
+ * `userData` exactly there. `test/unit/installations-store.test.ts` pins that this
  * name lands outside all three of the CLI's config directories on every
  * platform the console ships on.
  */
@@ -578,8 +578,17 @@ export async function validateInstallation(
   }
 
   // 6. The one allow-listed read that proves the pairing. Its refusal is the
-  // CLI's own sentence, passed through unchanged.
-  await deps.verify({ project, binaryPath, ...(configPath === undefined ? {} : { configPath }), ...(checkout === undefined ? {} : { checkout }) })
+  // CLI's own sentence, passed through unchanged -- and a refusal is a **value**
+  // here, not a throw: `deps.verify` is `verifyCandidate`, which signals a
+  // refusal by throwing a `SourceRefusal` whose message *is* the CLI's line.
+  // Letting it escape would give the picker an unhandled rejection instead of
+  // the sentence the operator needs to read, and would make the "nothing is
+  // stored" guarantee depend on a caller's `catch` rather than on this step.
+  try {
+    await deps.verify({ project, binaryPath, ...(configPath === undefined ? {} : { configPath }), ...(checkout === undefined ? {} : { checkout }) })
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : 'the pairing check refused this installation' }
+  }
 
   return {
     ok: true,

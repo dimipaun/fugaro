@@ -87,8 +87,11 @@ export type InstallationBridge = {
 }
 
 /** INSTALLATION_BRIDGE_PREFIX is the channel prefix, and it must match
- * `INSTALLATION_CHANNEL_PREFIX` in `src/main/installations.ts`. */
-const INSTALLATION_BRIDGE_PREFIX = 'fugaro:installations/'
+ * `INSTALLATION_CHANNEL_PREFIX` in `src/main/installations.ts`. It is exported
+ * so `test/unit/installations-ipc.test.ts` can hold the two prefixes to each
+ * other: the sandboxed preload cannot import the main process's module, so the
+ * constant is duplicated on purpose, and a duplicate nobody compares drifts. */
+export const INSTALLATION_BRIDGE_PREFIX = 'fugaro:installations/'
 
 /** RendererLike is the slice of Electron's `ipcRenderer` this module uses: one
  * `invoke`, and nothing else exists to use. */

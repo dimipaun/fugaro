@@ -279,7 +279,7 @@ export interface ConsoleOperation {
 }
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Thirteen operations, and the table is
+ * CONSOLE_OPERATIONS is the whole surface. Fourteen operations, and the table is
  * the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -290,7 +290,11 @@ export interface ConsoleOperation {
  * that is not a command: `openExternal`, whose URL argument goes
  * through `validateExternalUrl` -- `https:` only, no credentials, no port, host
  * on `ALLOWED_EXTERNAL_HOSTS` -- so the renderer's only way out of the console
- * is a link the console would have opened anyway.
+ * is a link the console would have opened anyway. The fourteenth
+ * (`installation.current`) is the dashboard's read of the installation the
+ * operator chose in the picker window, or D13's no-installation state; its
+ * handler is `handlersFor`'s **optional** `installation` dep, so a build without
+ * a picker answers it with that state rather than failing to register.
  *
  * Two operations share one command and differ by their flags, deliberately:
  * `run.logs` is `logs RUN --json` and `run.logLink` is `logs RUN --url`. They

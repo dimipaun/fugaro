@@ -46,10 +46,17 @@ function relativeRequires(module: string, code: string): readonly string[] {
   return out
 }
 
+// Sorted by name, because `readdirSync` order is unspecified -- ext4 returns
+// hash order, APFS returns something else again -- and the non-vacuity check
+// below compares this list with a derived set by `toEqual`, which is
+// order-sensitive. An unsorted side would make the guard fail on a filesystem
+// that happened to enumerate the directory differently, for no reason that has
+// anything to do with a registry.
 const specs = readdirSync(e2eDir)
   .filter((name) => name.endsWith('.spec.ts'))
   .map((name) => ({ name, registry: registryOf(readFileSync(join(e2eDir, name), 'utf8')) }))
   .filter((spec): spec is { name: string; registry: readonly string[] } => spec.registry !== null)
+  .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
 
 test.describe('the hand-built module registries', () => {
   test('there are registries to check, and this guard names every one of them', () => {

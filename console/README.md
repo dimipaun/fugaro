@@ -1478,10 +1478,16 @@ seam the renderer entry (Task 3.4a) needs to answer the dashboard's
   root becomes the bundler's output directory — and its **second entry**, the
   picker's, is the one line this task needs from it. The tag is written now, in
   this task's own new file, so the bundler has one entry per document and no
-  document is waiting on a script nobody built; until it lands the page draws
-  its heading, its status line and an empty list, and reaches for nothing.
+  document is waiting on a script nobody built. The view the tag will load is
+  written and tested (`src/renderer/installations.ts`); what is missing until
+  3.4a lands is the file, so the served page today is the static document — its
+  heading, its status line, its list and its add form — and it reaches for
+  nothing.
 - **A picker e2e spec.** The picker's coverage is
-  `test/unit/installations-store.test.ts` and `test/unit/installations-ipc.test.ts`;
+  `test/unit/installations-store.test.ts`, `test/unit/installations-ipc.test.ts`
+  and `test/unit/installations-view.test.ts` (the last drives the view over a
+  fake document built from the ids `installations.html` declares, because the
+  console has no jsdom dependency);
   a Playwright spec that drives the second window is a follow-up, because a
   window-opening spec cannot be checked by hand in a worker with no display.
 

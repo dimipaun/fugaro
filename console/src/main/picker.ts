@@ -353,8 +353,20 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
       case 'remove': {
         const id = args['id'] ?? ''
         if (!registry.rows().some((row) => row.id === id)) return { ok: false, reason: 'no such installation' }
+        // `onRemoved` is the seam that tells the dashboard it has **no**
+        // installation, so it fires only when the removal took the active one
+        // away -- `registry.remove` already decided that, and its answer says
+        // which. Firing it for a non-active row would tell 3.4a's consumer it
+        // has nothing to drive while `active` still names an installation the
+        // operator can use; that is a dashboard showing D13's no-installation
+        // state over a console that is bound and working.
+        const before = current()
         registry.remove(id)
-        deps.onRemoved?.(id)
+        if (before.chosen && before.id === id) deps.onRemoved?.(id)
+        // The removal is persisted either way -- only the *notification* is
+        // conditional -- and the reply carries `current()`, read back from the
+        // store after the write, so the window redraws what is on disk rather
+        // than what the request asked for.
         return { ok: true, data: { rows: rows(), active: current() } }
       }
     }
