@@ -582,17 +582,20 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 	})
 }
 
-// TestRunsStatsHelpAndContractStateThePrivateViewsThreeWays is the prose half
-// of the ruling. The code has three states here, and both texts a reader
-// learns them from must have them too: an identity the CLI cannot resolve at
-// all -- the local config's user: empty and git config user.email answering
-// nothing -- is refused (no document at all, an error naming --all-users), an
-// identity with nothing printable left in it is shown an empty table, and so
-// is one whose own text reads as the unattributed key. Folding the refusal in
-// with the empty table is the mistake this pins: a reader told "no row at all"
-// about a case the command will not run for them has been told the wrong thing
-// about the one output they read first.
-func TestRunsStatsHelpAndContractStateThePrivateViewsThreeWays(t *testing.T) {
+// TestRunsStatsHelpStatesThePrivateViewsThreeWays is the help's half of the
+// ruling. The code has three states here, and the help a reader gets first
+// must have them too: an identity the CLI cannot resolve at all -- the local
+// config's user: empty and git config user.email answering nothing -- is
+// refused (no document at all, an error naming --all-users), an identity with
+// nothing printable left in it is shown an empty table, and so is one whose
+// own text reads as the unattributed key. Folding the refusal in with the
+// empty table is the mistake this pins: a reader told "no row at all" about a
+// case the command will not run for them has been told the wrong thing about
+// the one output they read first. The contract's paragraph on the same three
+// states is pinned by
+// TestDocsDesktopConsoleContractStatesTheRunsStatsOwnViewRefusal, in the one
+// file the console boundary lets read the contract.
+func TestRunsStatsHelpStatesThePrivateViewsThreeWays(t *testing.T) {
 	help := newRunsStatsCmd().Long
 	for _, want := range []string{
 		"the local config names nobody",
@@ -606,37 +609,15 @@ func TestRunsStatsHelpAndContractStateThePrivateViewsThreeWays(t *testing.T) {
 		}
 	}
 
-	// The contract's own paragraph, from its heading to the shape table that
-	// follows it.
-	doc := readDoc(t, "console/docs/json-contract.md")
-	start := strings.Index(doc, "**The `\"own\"` view filters a read that is not its own.**")
-	end := strings.Index(doc, "`userstats.Row`")
-	if start < 0 || end < 0 || end <= start {
-		t.Fatal("console/docs/json-contract.md's own-view paragraph was renamed or reordered; update this test's markers")
-	}
-	para := doc[start:end]
-	if !strings.Contains(para, "`rows: []`") {
-		t.Fatalf("the contract's own-view paragraph no longer names the empty table:\n%s", para)
-	}
-	for _, want := range []string{
-		"nothing printable in it",
-		"**refused**",
-		"`--all-users`",
-	} {
-		if !strings.Contains(para, want) {
-			t.Errorf("the contract's own-view paragraph does not say %q:\n%s", want, para)
-		}
-	}
-
-	// The code's own answer to that case, so the words above are read against
-	// it rather than against each other.
+	// The code's own answer to the first of the three, so the words above are
+	// read against it rather than against each other.
 	f := newCloudFixture(t)
 	userStatsPlace(t, f, "", nil, nil)
 	testutil.IsolateGit(t)
 	t.Setenv("GIT_DIR", t.TempDir())
 	out, _, err := execute(t, "runs", "stats", "--json")
 	if err == nil || !strings.Contains(err.Error(), "--all-users") {
-		t.Fatalf("no identity: err = %v, want the refusal the help and the contract describe (out: %s)", err, out)
+		t.Fatalf("no identity: err = %v, want the refusal the help describes (out: %s)", err, out)
 	}
 }
 
