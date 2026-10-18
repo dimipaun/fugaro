@@ -304,3 +304,21 @@ test('the module judges its own output', () => {
   assert.deepEqual(figures(null), []);
   assert.equal(isFigure(measured(1)), true);
 });
+
+test('a judged document carries the connection itself, not the judge of it', () => {
+  // The shape a reader downstream walks: `document.connection.state`, with no
+  // wrapper in between. A wrapper left in (the judgement `{ok, connection}`
+  // stored as the connection) makes every state read as `undefined`, and a
+  // reader that falls back to `live` would report a quiet feed as healthy.
+  const document = validateDocument(wire({ connection: { state: 'stale', reason: 'quiet', age_seconds: 50 } })).document;
+  assert.deepEqual(document.connection, { state: 'stale', reason: 'quiet', ageSeconds: 50 });
+  assert.equal(document.connection.state, 'stale');
+  assert.equal(document.connection.ageSeconds, 50);
+  assert.equal(document.connection.ok, undefined, 'no judgement wrapper survives into the document');
+  // ... and the same for a repository block, whose figures are unwrapped too.
+  const withRepo = validateDocument(wire({ repos: [{ slug: 'a-repo-0123456789abcdef', counted_usd: 2 }] })).document;
+  assert.equal(withRepo.repos[0].counted.value, 2);
+  assert.equal(withRepo.repos[0].ok, undefined);
+  assert.equal(withRepo.total.counted.value, 12.5);
+  assert.equal(withRepo.total.ok, undefined);
+});

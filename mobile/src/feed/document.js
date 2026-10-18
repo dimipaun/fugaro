@@ -351,7 +351,7 @@ export function validateDocument(value) {
       mode: value.mode,
       day,
       now,
-      connection,
+      connection: connection.connection,
       total: totals,
       repos,
       queuedNote: text(value.queued_note),
