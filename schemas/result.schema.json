@@ -19,6 +19,7 @@
     "reason": { "type": "string" },
     "branch": { "type": "string" },
     "base_branch": { "type": "string", "minLength": 1, "description": "The base the run's pull request targets: git.base_branch of the config it ran with. A follow-up takes it as its ref." },
+    "start_sha": { "type": "string", "description": "The commit the run's branch was cut from (the task's ref as bootstrap read it), which is the base every question of what this run changed is measured against. A follow-up records it as follow_up.start_sha instead; a mode: review run has no branch." },
     "head_sha": { "type": "string" },
     "pr": {
       "type": "object",

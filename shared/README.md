@@ -45,6 +45,8 @@ the schema and not
 
 `command/` (P6.1) is the wake-word router and the app-command grammar: built, with its own tests and its own mutation proof; see `command/README.md`.
 
+`confirm/` (P6.2) is the spoken-confirmation state machine — the read-back, the fixed phrase, the timeout, the replay ledger and D128's refusals — with its own tests, its own mutation proof and `vectors.json` for P6.7's Go parity test; see `confirm/README.md`. It reuses `lease/`'s timestamp bound, recognises the phrase through `command/` (P6.1) and authorises `mailbox-schema/`'s action record (P6.3) field for field.
+
 `prompts/` (P6.5) is the prompt queue — queue by default, the count across accounts at a
 natural pause, "what's pending" per installation, expiry at D118's mailbox TTL, D173's two
 windows, the reminder schedule and the pending cap — and the interrupt policy: D160's set of
