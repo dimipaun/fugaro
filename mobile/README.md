@@ -247,6 +247,7 @@ review" under them):
 | the assembly does not judge its instant | `a clock that is not an instant is refused…` |
 | `stop` keeps the session | `stop forgets the session, and a restart does not inherit it` |
 | `check()` relabels every figure `measured` | `the codes are the refusal vocabulary a caller matches on` |
+| a refusal (or a failed read) resets the connection's age to zero | `a permission error is refused, and a failure to connect is not` |
 
 **Two of those mutations were found by writing the tests, and both were real
 bugs rather than test faults.** The first: the wire document's `kill` carries no
@@ -303,11 +304,15 @@ same tree.
   dropping the state for any caller that reads `.figure`. `measured` is a claim
   about who read the number, not a default.
 
-Each fix has its own test, and each test was mutation-proven (the twelve rows
-above). One divergence of the same class was found while fixing these and is
-**not** in the review: `State.record` clears the burn window when a counter goes
+Each fix has its own test, and each test was mutation-proven (the thirteen rows
+above). Two divergences of the same class were found while fixing these and are
+**not** in the review. `State.record` clears the burn window when a counter goes
 backwards, where this sampler kept the reading it went back from — so the fix
-for the first finding carries the second with it.
+for the first finding carries the second with it. And `State.conn` sets `Age`
+whenever **any** stream has been heard, in every branch, so a refusal or a
+failed read does not reset the clock: this reader was reporting an age of zero
+for a refusal, which tells a screen the feed has just been heard from when the
+truth is that the last thing heard was an hour ago and it was a rejection.
 
 ## Which files may write a credential
 

@@ -510,10 +510,24 @@ test('a permission error is refused, and a failure to connect is not', () => {
   assert.equal(failed.state, 'offline');
   assert.equal(failed.reason, 'the read failed');
   assert.equal(JSON.stringify(failed).includes('network'), false, 'the port\'s message is not this app\'s sentence');
+  // ... and the same age in that state: `State.conn` sets `Age` for **every**
+  // branch once anything has been heard, so a broken stream does not report a
+  // feed that has just spoken either.
+  const agedFailure = feed.failed(path, { code: 'UNAVAILABLE' }, T0 + 45_000).document.connection;
+  assert.equal(agedFailure.state, 'offline');
+  assert.equal(agedFailure.ageSeconds, 45, 'the last thing heard was 45 s ago, and the failure is not a hearing');
 
   // ... and a refusal is a different state, which is the whole point.
   port.listeners.get(path).onError({ code: 'PERMISSION_DENIED' });
   assert.equal(feed.snapshot({ nowMs: T0 }).document.connection.state, 'refused');
+  // `ageSeconds` -- the judged document's own spelling of the wire's
+  // `age_seconds` -- is the oldest stream's age in **every** state: `State.conn`
+  // sets `Age` whenever any stream has been heard, and a refusal does not reset
+  // the clock. Reported at zero, a refusal would tell the screen the feed had
+  // just been heard from.
+  const aged = feed.failed(path, { code: 'PERMISSION_DENIED' }, T0 + 45_000).document.connection;
+  assert.equal(aged.state, 'refused');
+  assert.equal(aged.ageSeconds, 45, 'the last thing heard was 45 s ago, and the refusal is not a hearing');
   // A refusal outranks a failure when both are on the wire: `State.conn` asks
   // for the permission error first.
   port.listeners.get(other).onError({ code: 'UNAVAILABLE' });

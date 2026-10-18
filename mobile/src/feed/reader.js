@@ -592,21 +592,26 @@ export class FeedReader {
    * have.
    */
   #connection(nowMs) {
-    if (this.#refused.size > 0) {
-      return { state: 'refused', reason: CONNECTION_REASONS.refused, age_seconds: 0 };
-    }
-    if (this.#errored.size > 0) {
-      return { state: 'offline', reason: CONNECTION_REASONS.failed, age_seconds: 0 };
-    }
+    // The oldest node that has delivered, and the age that comes off it --
+    // computed **before** the state, because `State.conn` sets `Age` whenever
+    // any stream has been heard, whatever the state is: a refusal does not
+    // reset the clock, and reporting one at an age of zero would tell the
+    // screen the feed had just been heard from.
     let oldest = null;
     for (const at of this.#lastEvent.values()) {
       if (oldest === null || at < oldest) oldest = at;
     }
+    const age_seconds = this.#ageSeconds(nowMs, oldest);
+    if (this.#refused.size > 0) {
+      return { state: 'refused', reason: CONNECTION_REASONS.refused, age_seconds };
+    }
+    if (this.#errored.size > 0) {
+      return { state: 'offline', reason: CONNECTION_REASONS.failed, age_seconds };
+    }
     if (this.#lastEvent.size < this.#paths.length) {
-      return { state: 'offline', reason: CONNECTION_REASONS.connecting, age_seconds: this.#ageSeconds(nowMs, oldest) };
+      return { state: 'offline', reason: CONNECTION_REASONS.connecting, age_seconds };
     }
     const ageMs = oldest === null ? 0 : Math.max(nowMs - oldest, 0);
-    const age_seconds = ageMs / 1000;
     if (ageMs > STALE_AFTER_MS) return { state: 'stale', reason: CONNECTION_REASONS.quiet, age_seconds };
     if (this.#port?.polling === true) return { state: 'polling', reason: CONNECTION_REASONS.polling, age_seconds };
     return { state: 'live', reason: null, age_seconds };
