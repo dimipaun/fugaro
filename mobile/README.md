@@ -4,12 +4,14 @@ The Expo (React Native) app for the phone. It is **its own artifact**: outside
 the Go module, with its own release path, and it merges without touching the
 CLI (mobile plan D125, Phase 3).
 
-**Status.** Phase 3, task **P3.1** only — the app skeleton and the account
-store ([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)
-line 455). P3.2 (the feed reader), P3.3 (the job list), P3.4 (the audio
-interfaces), P3.5 (the voice screen) and P3.6 (the mailbox client) are not
-here. What exists is the shell, the account model, the two device ports and the
-fences around them.
+**Status.** Phase 3, tasks **P3.1** and **P3.4** — the app skeleton and the
+account store
+([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)
+line 455), and the audio interfaces. P3.2 (the feed reader), P3.3 (the job
+list), P3.5 (the voice screen) and P3.6 (the mailbox client) are not here. What
+exists is the shell, the account model, the two device ports and the fences
+around them, and the three voice ports with the fakes the voice screen's logic
+is written and tested against.
 
 ## Running the tests
 
@@ -39,6 +41,7 @@ module plugged in by `index.js` at the bottom of the tree.
 | `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from. |
+| `src/audio/` | The voice ports and their fakes (P3.4): the capture path (`audio-in.js`), transcription (`stt.js`), speech output (`tts.js`), the transcript-to-message rule (`message.js`) and the pipeline that wires them (`pipeline.js`). **No engine, no device, no SDK**: `index.js` is the one door, and its test scans the directory for exactly that. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
 | `src/skeleton/` | The trivial module and test that proved the runner runs (P3.1's red step). |
 
@@ -179,6 +182,114 @@ a class rather than as an incident:**
   teardown-failed case and the `current() === null` invariant are now asserted,
   and all three are mutations in the table above.
 
+## The audio interfaces (P3.4)
+
+Three ports, three fakes, and the thin pipeline that makes the plan's
+verification a test rather than a claim. The plan's sentence is the whole
+scope: *the interfaces exist (AudioIn, STT, TTS) and their fakes are used by at
+least one test that exercises the voice pipeline's logic with no device and no
+audio: a fake transcript becomes a message; a fake reply becomes an utterance;
+an interrupted utterance is reported as interrupted.* Those three sentences are
+the first three tests of `src/audio/pipeline.test.js`, in that order.
+
+| Port | Methods | What it answers |
+| --- | --- | --- |
+| **AudioIn** (`audio-in.js`) | `start()`, `stop()`, `running()`, `on(kind, handler)` | `{ ok: true, changed }`, or **D122**'s `microphone-denied` / `background-audio-denied`; events `speech-start`, `speech-end`, `barge-in` |
+| **SpeechToText** (`stt.js`) | `begin()`, `end()`, `cancel()`, `listening()`, `on(kind, handler)` | one turn at a time, `partial` events while the user speaks, one `final` per turn |
+| **TextToSpeech** (`tts.js`) | `speak(text)`, `cancel()`, `speaking()` | `{ ok: true, spoken: true }`, `interrupted`, or a `bad-text` / `already-speaking` refusal |
+
+**The fakes are the point, not a convenience.** D52 requires them from the
+first task and Global Constraint 10 requires the voice logic to be in CI: every
+test in `src/audio/` runs against `FakeAudioIn`, `FakeStt` and `FakeTts`, with
+**no microphone, no synthesizer and no audio anywhere**. There is no timer in
+any of them — a test decides when an utterance ends and when the engine
+answers — so a barge-in is asserted at the exact moment it is decided, and the
+~300 ms of §5 is the owner-run half (check 86). One fake is deliberately
+*honest about the hard case*: `FakeStt.lateFinal()` delivers a final with no
+turn open, which is what a real engine's flush does when it races a cancel, so
+the pipeline's protection against it is a test rather than a comment.
+
+**The three rules the pipeline holds**, each with its own test:
+
+1. **A partial is not a message.** §5's screen shows what the user is still
+   saying; only a `final` is composed by `message.js` and handed to the shared
+   schema (P0.2), whose verdict is passed through unchanged. A transcript the
+   schema refuses — the cough that produced the empty string — is a `refused`
+   event and no message at all.
+2. **A final with no turn open is dropped, before an id is drawn.** The engine's
+   flush after a `stop()`, or racing a cancel, must not become a message: §5's
+   grace period exists so that "cancel that" is possible, and this is the line
+   that makes it true.
+3. **Any speech during playback interrupts it** — both of the capture path's
+   two ways of saying that. `barge-in` is the echo-cancelled signal; a plain
+   `speech-start` is all a simpler path can say, and a pipeline that honoured
+   only the first would be one where the assistant talks over the user on
+   exactly the devices that can least afford it.
+
+**The turn outlives the end of speech.** The pipeline's state is `idle` /
+`open` / `flushing`, mirroring the port: `speech-end` flushes the engine and
+the engine's `final` is what ends the turn. A pipeline that closed its turn on
+`speech-end` would drop every final — every message, always — which is the
+first mutation in the table below.
+
+**What the module deliberately does not have.** No capture path, no speech
+engine, no audio decoder: D123 inherits Voice D46 (on-device engines only,
+chosen by a bake-off measured on the oldest supported device — owner-run check
+**85**, phase 5), and a cloud engine needs a second explicit owner decision.
+`src/audio/index.test.js` is what keeps that true — the directory's files are a
+literal list, the door's exports are a literal list, and the code is scanned
+for the things an engine would need:
+
+| Rule | Why |
+| --- | --- |
+| no package import at all (production files) | an SDK here *is* the engine; the tests may import `node:` builtins and this directory only |
+| no clock, no random source | D117's clock and the message id are injected (`now`, `newId`), which is what keeps every test deterministic |
+| no timer | §5's grace period and any silence timeout are the engine's business |
+| no network | D123/D46: on-device only |
+| no device API (`getUserMedia`, `MediaRecorder`, `AudioContext`, `navigator`) | D122: the microphone is reached through the port, and the OS permission through whoever implements it |
+| no samples, in any encoding (`pcm`, `samples`, `ArrayBuffer`, `Float32Array`, `Blob`, `base64`) | D118/F26: text crosses these ports and audio never does — so there is no buffer here to leak one through |
+| no `console.` | a transcript in a log line is a transcript outside the mailbox |
+| no `process.env` | an engine chosen by an environment variable is a configuration this module cannot see or test |
+
+Every rule has a **positive control** (it must match a planted line of real
+code) and a **prose control** (it must not match the same line in a comment),
+which is what lets these files' headers explain the rules they are held to.
+
+### Mutations run against this task
+
+Each was planted, the run went red on the named test, and the bug was removed.
+The tests are run with `node --test "src/**/*.test.js"` (178 tests, all
+passing); the first three sentences of `pipeline.test.js` are the plan's own
+verification.
+
+| Mutation | Went red |
+| --- | --- |
+| `endTurn` closes the turn instead of flushing it | the plan's sentence one, and six more |
+| the `barge-in` signal is not wired to the speech handler | the plan's sentence three, and fifteen more (the file's tests cancel as a promise never settles) |
+| speech no longer cancels the playback it interrupts | the plan's sentence three, `the barge-in is a speech-start too` |
+| a partial is composed into a message | `a partial is shown and is never sent` |
+| the `idle` guard is removed from `onFinal` | `a final with no turn open is dropped` |
+| an empty transcript is repaired (`\|\| ' '`) instead of refused | `a transcript the schema refuses is refused here too` |
+| the `unavailable` event loses the OS code | `D122: the OS refusing the microphone…` |
+| every message reuses one id | `each message is its own id, sender and clock` |
+| `FakeStt.end()` closes the turn (the engine's final has nowhere to land) | eight tests, including `the end of speech flushes the turn` |
+| a partial is allowed out of a flushed turn | `the end of speech flushes the turn` |
+| an interrupted utterance settles as finished | four tests, including the plan's sentence three |
+| a second utterance is queued instead of refused | `one utterance at a time` and the pipeline's refusal test |
+| the two OS denials collapse into one code | both D122 tests |
+| an event carries `samples: []` | `an event carries the event, and never anything heard`, and the no-samples rule |
+| a draft accepts a field the protocol does not have | `a field this draft does not have is refused with the protocol's own code` |
+| `refuse()` stops freezing its verdict | `a refusal is a frozen value with a code` |
+| the door grows one more export | `the door exports exactly this` |
+| a production file imports `@react-native-voice/voice` | three test files fail to load (module resolution) — the suite goes red before the rule can report it; the rule's own positive control is what proves the pattern matches |
+| `Date.now()` planted in `pipeline.js` | `no clock` |
+
+One mutation found a bug in the **tests**: `messageDraft` was composing
+`{ id: draft.id, … }`, so an absent field reached the schema as an explicit
+`undefined` and its refusal was `wrong-type` rather than `missing-field` — the
+caller would have been told the wrong fault. The draft now preserves presence,
+and `missing-field` is reachable and asserted.
+
 ## What is not verified here
 
 * **The Expo/Metro toolchain.** It is not installed in the environment this was
@@ -197,6 +308,22 @@ a class rather than as an incident:**
   The port refuses to construct if the constant is missing, so an SDK rename is
   a loud failure rather than a silent downgrade to the platform default — but
   the constant has not been seen on a device here.
+* **Every speech engine, and every acoustic behaviour.** Nothing under
+  `src/audio/` is an engine: the ports are contracts and the tests drive them
+  with fakes, which is D52's rule and P3.4's whole scope. Which engine is
+  chosen is **owner-run check 85** (the bake-off, measured on the oldest
+  supported device, local candidates only — D123/D46, phase 5), and the
+  hands-free behaviour with its ~300 ms barge-in is **check 86**. So the
+  microphone permission prompt, echo cancellation, the background audio mode
+  and the actual interruption latency have not been exercised anywhere: D122's
+  two denials are tested as *values the port returns*, which is what P3.5's
+  "tap to speak" fallback is built on, not as an OS behaviour.
+* **The voice screen (P3.5) and the mailbox client (P3.6).** Neither is here.
+  The pipeline takes the message's `sender`, `newId` and `now` as injected
+  values precisely because P3.6 owns them (D117's server-anchored clock, the
+  account's identity), and **redaction, the MAC and the write are P3.6's**:
+  `message.js` composes a message and the shared schema validates it, and
+  nothing under `src/audio/` writes, signs or stores anything.
 * **The release path and the checks that need a device.** Checks **80–89** are
   owner-run; **87** (multi-account switching with no cross-leakage) needs two
   real installations, one of them `belong`, and **89** is the store identity.
