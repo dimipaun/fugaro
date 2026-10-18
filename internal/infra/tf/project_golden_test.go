@@ -34,6 +34,7 @@ type projectJobFixture struct {
 		Title      string `json:"title"`
 		Expression string `json:"expression"`
 	} `json:"bucket_condition"`
+	Env map[string]string `json:"env"`
 }
 
 func installationGoldenFixture(t *testing.T) installationFixture {
@@ -146,6 +147,105 @@ func TestGoldenInstallationHasOneProjectJobPerTriple(t *testing.T) {
 	if len(projectSAs) != len(f.ProjectJobs) {
 		t.Errorf("the plan creates %d project accounts for %d jobs: %v", len(projectSAs), len(f.ProjectJobs), slices.Sorted(maps.Keys(projectSAs)))
 	}
+}
+
+// jobEnvOf is a Cloud Run job resource's container environment by variable
+// name, and its secret references by variable name: the two halves the golden
+// plan writes (modules/project/job.tf's two dynamic env blocks).
+func jobEnvOf(t *testing.T, job ResourceChange) (plain, secret map[string]string) {
+	t.Helper()
+	plain, secret = map[string]string{}, map[string]string{}
+	tpl := objects(job.Change.After["template"])
+	if len(tpl) != 1 {
+		t.Fatalf("%s has %d templates, want one", job.Address, len(tpl))
+	}
+	for _, task := range objects(tpl[0]["template"]) {
+		for _, c := range objects(task["containers"]) {
+			for _, e := range objects(c["env"]) {
+				name := str(e["name"])
+				if name == "" {
+					t.Errorf("%s sets an environment variable with no name: %v", job.Address, e)
+					continue
+				}
+				if refs := objects(e["value_source"]); len(refs) == 1 {
+					for _, r := range objects(refs[0]["secret_key_ref"]) {
+						secret[name] = str(r["secret"])
+						if v := str(e["value"]); v != "" {
+							t.Errorf("%s sets %s both plainly (%q) and from a secret", job.Address, name, v)
+						}
+					}
+					continue
+				}
+				plain[name] = str(e["value"])
+			}
+		}
+	}
+	return plain, secret
+}
+
+// The owner's ruling of 2026-10-17 (plan task 3.5 step 4): a shared job on the
+// github provider carries the GitHub App's ID in its environment — the ID is
+// not a secret, and the runner's github provider refuses to build without it
+// (internal/gitprov/providers), so a job that mounts the key and not the ID
+// fails every run it starts. The key stays a Secret Manager secret, and it is
+// mounted as one: no env value in the plan is key material.
+//
+// The fixture's own env is what internal/infra writes (ProjectJob.Env), and
+// the plan is what Terraform makes of it, so both sides are checked: a value
+// the Go code sets but the module drops would pass a fixture-only assertion.
+func TestProjectJobCarriesTheGitHubAppID(t *testing.T) {
+	f := installationGoldenFixture(t)
+	if len(f.ProjectJobs) == 0 {
+		t.Fatalf("the installation golden declares no project job: regenerate it as TestGoldenInstallationHasOneProjectJobPerTriple says")
+	}
+	p := goldenPlan(t, "installation")
+	seen := 0
+	for name, j := range f.ProjectJobs {
+		if j.Provider != "github" {
+			continue
+		}
+		seen++
+		id, ok := j.Env["FUGARO_GITHUB_APP_ID"]
+		if !ok || !appIDShape.MatchString(id) {
+			t.Errorf("the fixture's job %s carries FUGARO_GITHUB_APP_ID=%q, want the App's ID (1 to 20 digits): the runner's github provider refuses to start without it", name, id)
+		}
+		mod := `module.project["` + name + `"]`
+		plain, secret := jobEnvOf(t, resource(t, p, mod+".google_cloud_run_v2_job.this"))
+		if got := plain["FUGARO_GITHUB_APP_ID"]; got != id {
+			t.Errorf("%s deploys FUGARO_GITHUB_APP_ID=%q, want the fixture's %q", mod, got, id)
+		}
+		// The key is mounted from the project-wide container the installation
+		// module names (fugaro-project-<fugaro project>-github-app-key-<hash>),
+		// by reference — the ID is resolved at plan time and is not this
+		// test's to spell.
+		if got := secret["FUGARO_GITHUB_APP_PRIVATE_KEY"]; !strings.Contains(got, "github-app-key") {
+			t.Errorf("%s mounts the App key from %q, want a github-app-key secret container", mod, got)
+		}
+		// No value anywhere in the job is key material: the key is a secret
+		// reference and nothing else (design §12a item 7 — a key in a job's
+		// plain environment is a key Cloud Run hands to the console and to
+		// every reader of a job description).
+		for k, v := range plain {
+			if keyMaterial(v) {
+				t.Errorf("%s sets %s to what looks like key material: the App's private key is a Secret Manager secret, never an environment value", mod, k)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatalf("the installation golden has no github project job, so this pins nothing: %v", f.ProjectJobs)
+	}
+}
+
+// appIDShape is the GitHub App ID's shape (internal/infra's appIDRE and
+// internal/gitprov's own check): 1 to 20 digits.
+var appIDShape = regexp.MustCompile(`^[0-9]{1,20}$`)
+
+// keyMaterial reports whether s looks like a private key rather than an ID, a
+// URL or a path: the markers a PEM or a raw base64 body carries.
+func keyMaterial(s string) bool {
+	return strings.Contains(s, "PRIVATE KEY") || strings.Contains(s, "BEGIN RSA") ||
+		strings.Contains(s, "BEGIN EC") || strings.Contains(s, "BEGIN OPENSSH") ||
+		strings.Contains(s, "MIIE")
 }
 
 // slugClause is a clause of the per-repository condition
