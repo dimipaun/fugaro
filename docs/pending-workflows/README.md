@@ -1,8 +1,10 @@
 # Pending workflow changes
 
-**One file is pending: `console-tests.yml`.** (`ci.yml` was copied in on 2026-10-17, #504, and its staged copy removed in #508; `images.yml` was copied in earlier and is no longer staged. The `## images.yml` section below is kept as the record of that change.) A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+**Two files are pending: `console-tests.yml` and `console-release.yml`.** (`ci.yml` was copied in on 2026-10-17, #504, and its staged copy removed in #508; `images.yml` was copied in earlier and is no longer staged. The `## images.yml` section below is kept as the record of that change.) A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
 **`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, it runs unconditionally on every pull request and every push to `main`, and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
+
+**`console-release.yml`** — the desktop console's signing, notarisation and stapling pipeline, staged by Task 4.2 of the same plan and applied by the owner as Task 4.5, together with the protected GitHub environment its secrets live in. **It is a separate file from the tests workflow on purpose, and the split is a security boundary rather than tidiness**: this job reads the Apple signing certificate and the App Store Connect key, and a branch of this repository can open a pull request, so a job holding that material must never sit in a file that runs on every pull request. Its staged copy is kept after the copy-in too: see `## console-release.yml` below.
 
 The most recent copy that *was* applied (`images.yml` for the 0.7.0 hard cut, commit `838e0b0`) is the reason the file below has no legacy per-kind `base` job; that section's older text was replaced by this one when the file became pending again.
 
@@ -98,6 +100,197 @@ After the copy-in, `console/README.md` gains a line naming the applying commit
 commits had CI and which did not: **Tasks 1.0 to 1.4 merged with no console CI
 at all**, and that gap is a fact about this repository's history rather than
 something the plan claims away.
+
+## `console-release.yml`
+
+The desktop console's signing, notarisation and stapling pipeline, staged by
+Task 4.2 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner
+as Task 4.5. Triggered by a **`push` of a strict `vX.Y.Z` tag and nothing
+else** — never a pull request, never a `pull_request_target`, never a
+`workflow_run`, never a `workflow_dispatch`. **Two jobs, and the write token is
+never in the job that runs the packer:** `release`, on the pinned `macos-15`
+runner (never `macos-latest`: the runner image is the signing toolchain), holds
+the protected environment, the Apple secrets and `contents: read` +
+`checks: read` only; `publish`, on `ubuntu-24.04`, holds `contents: write` and
+nothing else — no environment, no Apple secret, no checkout, no packer.
+`GH_TOKEN` is in two steps' `env:`: the gate's (read-only) and the publish
+step's. The `release` job, in order:
+
+1. checks the tagged commit is reachable from `origin/main`, refuses any tag
+   that is not a strict `vX.Y.Z` (its X.Y.Z becomes the app's version), then
+   runs `scripts/release-gate.sh`, exactly as `release.yml` and `images.yml` do;
+2. with **no secret placed in any step's environment or on disk** (the runner
+   process receives the environment's secrets at job start; what the file
+   controls is where they are exposed): setup-node (no `cache:`: a restored
+   cache is written by other runs), `npm ci --ignore-scripts
+   --no-audit --no-fund` from the lockfile (the packer is the pinned
+   `electron-builder` devDependency), Electron's own download
+   (`node node_modules/electron/install.js`) and an unsigned warm-up
+   `npm run package` whose output is deleted (stamped with the tag's version
+   like the signed one), so the two Electron archives and
+   the packer's DMG and zip toolsets are downloaded here and not later;
+3. **one step holds all six secrets** and does everything that needs them:
+   the fail-closed check, a temporary keychain, the `.p8` key file (both
+   created under `umask 077`), the certificate's team checked against
+   `APPLE_TEAM_ID` before anything is signed, `npm run package` (Task 4.1's
+   script: `--mac --universal --publish never`, the hardened runtime,
+   `console/entitlements.mac.plist`, `-c.extraMetadata.version=X.Y.Z` from the
+   tag; electron-builder notarises and staples the
+   `.app` **before** it builds the `.dmg` and the `.zip`), the signature's
+   TeamIdentifier and the bundle's staple checked, then the `.dmg` signed with
+   `codesign --timestamp`, submitted with `xcrun notarytool submit --wait` and
+   stapled; its exit trap removes the key material;
+4. verifies what ships — the SHA-256 of the `.dmg` and the `.zip`, the bundle
+   inside the mounted `.dmg` and the extracted `.zip` (`codesign --verify
+   --deep --strict`, `spctl --assess --type execute`, `xcrun stapler
+   validate`), and the disk image itself (`spctl --assess --type open`) — into
+   `console-verification.txt`, and uploads the `.dmg`, the `.zip`, the record
+   and `console-sha256sums.txt` as the workflow artifact
+   `console-release-assets` (upload-artifact at the pin `release.yml` and
+   `images.yml` use).
+
+The `publish` job (`needs: release`) downloads that artifact (download-artifact
+at the pin `images.yml` uses), re-checks every asset with `sha256sum --strict
+--check` and that the `.dmg` and `.zip` are named for the tag's version, and
+publishes the console's **own release, `console-vX.Y.Z`**, never touching the
+CLI's.
+
+**The version is the tag's.** `console/package.json` says `0.0.0` and nothing
+in it is a release version, so both packs are stamped with
+`-c.extraMetadata.version=X.Y.Z` (through `env:`, never an inlined `${{ }}`):
+the `.dmg` and `.zip` file names carry the real version (`Fugaro
+Console-X.Y.Z-universal.dmg`), the app's version is it, the job refuses
+artifacts not named for it, and the update feed of plan Tasks 4.3/4.4 depends
+on it.
+
+**Its own release, never the CLI's (the owner's ruling of 2026-10-17,
+"Separate console release").** GoReleaser publishes the CLI's `vX.Y.Z` release
+from the same tag push, and with immutable releases on (`docs/release.md`,
+"Before you tag") nothing can be added to a release once it is published. So
+the `publish` job creates `console-vX.Y.Z` — X.Y.Z from the CLI tag that triggered it,
+the same commit and the same gate (D11) — as a **draft**, uploads the `.dmg`,
+the `.zip`, `console-verification.txt` and `console-sha256sums.txt` to it, and
+publishes it (`gh release edit --draft=false`) in the same step, with
+`--latest=false` so the CLI's release stays the repository's latest. A re-run
+never clobbers: an existing `console-vX.Y.Z` release (published, or a draft
+left by an earlier attempt, which the owner deletes before re-running) or tag
+stops the job with a message. The tag ruleset must let the workflow create
+`console-v*` tags. The console's Homebrew cask, when it exists, points at this
+release (a later task).
+
+**The real control is the environment's reviewer and a tag ruleset, not the
+file's own gate.** A tag push runs this file as the tagged commit holds it, so a
+tag on a branch whose copy of the workflow or of `scripts/release-gate.sh` was
+edited runs the edited copy. The `console-release` environment's required
+reviewer and a ruleset restricting who may create `v*` tags are what stop that;
+**the approver confirms the tag's commit is on `main` before approving the
+deployment**. The in-job ancestry check catches a mistake, not an attacker.
+
+**It reads its secrets through a job-level `environment: console-release`** —
+the protected GitHub environment the owner creates in the same step: required
+reviewers = the owner, deployment branches restricted to tags. A staging file
+cannot create an environment, so the copy-in and the environment have to be done
+together. The environment holds exactly these six, and the workflow names them
+and nothing else:
+
+| Secret | What it is |
+|---|---|
+| `APPLE_CERTIFICATE` | base64 of the Developer ID Application `.p12`, one line (the G2 Sub-CA certificate) |
+| `APPLE_CERTIFICATE_PASSWORD` | that `.p12`'s password |
+| `APPLE_TEAM_ID` | the team identifier (`ZM8Y2LC7JL`); the workflow checks the certificate names it before packing, and the signature after |
+| `APPLE_API_KEY` | the App Store Connect API key's `.p8` contents |
+| `APPLE_API_KEY_ID` | the key's id |
+| `APPLE_API_ISSUER` | the issuer uuid |
+
+**The notarisation credential is the App Store Connect API key, not an
+app-specific password.** D4 settles that signing is required and that the
+pipeline is tag-only behind the gate and a protected environment, but it does not
+choose between the API key and an app-specific password; the decision recorded
+here is the API key, so `APPLE_ID` and `APPLE_APP_PASSWORD` are deliberately
+absent, and a row naming either of them is a defect.
+
+**It fails closed.** The signing step's first act is to refuse to continue
+unless all six are non-empty, naming the missing one, so an absent secret stops
+the job rather than silently skipping the signing — an unsigned console
+published under a signed release's name is the worst outcome this file can
+produce. No step carries an `if:` except the cleanup's `always()`, nothing
+carries `continue-on-error`, and `|| true` is the cleanup's alone. No value of
+any secret appears in the file: each is referenced as `${{ secrets.NAME }}` in
+the `env:` of **exactly one step**, bound to a variable of the same name — never
+a workflow- or job-level `env:` — which is what
+`TestDocsConsoleReleaseWorkflowIsStagedAndPinned` parses. The certificate goes
+into a keychain the step creates (a random password from `openssl rand`,
+`security create-keychain`, `security import -T /usr/bin/codesign` — and not
+`-T /usr/bin/security`, which would let any later command export the key —
+and `security set-key-partition-list -S apple-tool:,apple:`); the notarisation
+key file is handed on as a *path* (`APPLE_API_KEY` is a file to
+electron-builder, `--key` is a file to notarytool), never as a value; the
+step's exit trap removes both, and an `if: always()` step at the end is the
+backstop.
+
+The owner applies it with one command, from the repository root:
+
+```sh
+cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml
+git add .github/workflows/console-release.yml
+git commit -m "console: sign and notarise the console on a version tag (plan Task 4.5)"
+```
+
+and, in Settings, Environments, creates `console-release` with the owner as a
+required reviewer and its deployment branches restricted to tags. **Both are
+required before the first tag that ships the console**: a tag push runs the
+workflow exactly as the tagged commit holds it, and the workflow is only as safe
+as the environment its secrets live in.
+
+**Unlike `images.yml`, the staged copy is not deleted after the copy-in.**
+`TestDocsConsoleReleaseWorkflowIsStagedAndPinned` reads the staged file and asserts
+the one under `.github/workflows/` is byte-identical to it, so a hand-edited or
+hand-written workflow there is a red test rather than something nobody reads.
+
+### Not verified
+
+This file has never run, and no signing step under it has ever run either: no
+certificate, no App Store Connect key, no notary submission and no Mac were
+available or permitted in the run that wrote it, and no agent run in this
+repository builds, signs, notarises or verifies a bundle. What *is* verified is
+its text,
+through `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` and
+`TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger`, `TestDocsConsoleReleasePublishRefusesToClobber` and
+`TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions` (both run the staged scripts under bash with a faked `gh`) in
+`internal/cli/docs_desktop_console_test.go` (both picked up by the
+`-run 'Docs|Lint'` filter): the trigger surface, the ancestry check and the
+gate first, every install and download before the one step that holds the
+secrets, the secret names and their bindings, the fail-closed check, no `if:`,
+`continue-on-error`, stray `|| true`, inlined `${{ }}` or shell tracing, no
+line that prints the key material, the keychain and its trust list, the team
+checks, the packed bundle's staple, the disk image's signature, notarisation
+and staple, the verification and its checksums, the separate `console-vX.Y.Z`
+release and its re-run refusals, the two-job split and each job's token,
+the version stamp on both packs, the four action pins, the permissions, and
+byte-identity with the copy under `.github/workflows/` once it exists.
+
+Accepted residuals: the keychain password (`security create-keychain -p`,
+`unlock-keychain -p`, `set-key-partition-list -k`) and the `.p12` password
+(`security import -P`) are on `security`'s argv, which has no stdin form for
+them, so another process of the same user can read them in the process list
+for the moments those commands run; the `unset` before packing keeps the
+certificate, its password and the key's contents out of the packer's
+environment but not out of the signing shell's own starting environment, which
+the same user can read (`ps -E`) while the step runs. The runner is a
+single-tenant, single-job VM.
+
+Unverified offline and left to Check 59a: that electron-builder accepts
+`CSC_NAME` as a certificate's SHA-1 together with `CSC_KEYCHAIN`; that
+`codesign` signs with only `apple-tool:,apple:` in the partition list; that the
+unsigned warm-up pack leaves everything the signed pack needs in the cache; and
+that `-c.extraMetadata.version` reaches the bundle's version and the
+artifact names as described; and that the signed, stapled DMG passes
+`spctl --assess --type open --context context:primary-signature`.
+
+Two things a reader must not take from those tests: the pinned SHAs are read
+against upstream by the person copying the file in (see "Before you copy" below —
+Dependabot does not watch this directory), and the first real run is Check 59a's
+and 59b's (plan Task 4.3), which are owner-run on a Mac.
 
 ## `images.yml`
 

@@ -12,12 +12,14 @@
 // version here too, with its own table of refusals ("*", "latest", ">=0",
 // ">=22.12.0"). A range there would have been the one float left.
 //
-// The runtime `dependencies` section is one entry long and that entry is
-// asserted by name below: electron-updater, the main process's auto-update
-// client, whose pin Task 4.4 assigns to this task. It is not a renderer
-// dependency — design D9's "no framework runtime, no charting library" is about
-// what the renderer bundles — and the test says so rather than forbidding a
-// runtime dependency outright.
+// The runtime `dependencies` section is empty, and that is asserted below.
+// Task 1.0 pinned electron-updater there for Task 4.4's auto-update, but Task
+// 4.1's review found it shipped in the bundle with nothing importing it while
+// this release has no auto-update; it was removed (Task 4.1, review round 2),
+// and Task 4.4 re-adds it, exactly pinned, when it writes the code that uses
+// it -- an edit to the allow-list below. Design D9's "no framework runtime, no
+// charting library" is about what the renderer bundles, so the test allows a
+// main-process runtime dependency by name rather than forbidding one outright.
 //
 // The test is written in two halves on purpose. The first half is the checker
 // against a table of specifiers it must accept and specifiers it must refuse:
@@ -222,29 +224,26 @@ describe('console/package.json', () => {
   // Design D9 is a claim about the RENDERER -- it bundles no framework runtime
   // and no charting library -- and section 5.2 applies the pinning rule to
   // "dependencies and devDependencies alike", so a runtime dependency is
-  // allowed as long as it is exact and belongs to the main process. Exactly one
-  // does: the auto-update client, whose pin Task 4.4 assigns to this task
-  // ("The pinned electron-updater version is part of Task 1.0's exact pins,
-  // since it is the component that downloads and installs code"). Anything else
-  // arriving here -- above all a renderer framework or a charting library -- is
-  // a design change, so it has to be a deliberate edit to the list below.
-  const runtimeDependencyAllowList = ['electron-updater']
+  // allowed as long as it is exact and belongs to the main process. Today there
+  // is none: everything a `dependencies` entry names is packed into the shipped
+  // asar, and the one Task 1.0 pinned (electron-updater, for Task 4.4) had no
+  // importer, so it shipped dead code that downloads and installs code. Task
+  // 4.4 adds it back here, with the code that uses it.
+  const runtimeDependencyAllowList: string[] = []
 
   it('ships exactly the main process runtime dependencies it names', () => {
     const runtime = Object.keys((pkg.dependencies ?? {}) as Record<string, string>).toSorted()
     expect(
       runtime,
-      `console/package.json's runtime dependencies are ${JSON.stringify(runtime)}. The list is ${JSON.stringify(runtimeDependencyAllowList)}: the renderer bundles no framework runtime and no charting library (design D9), so the only runtime dependency is the main process's update client. A new one is a deliberate edit here, with the case for it written down (plan Task 4.4 names electron-updater's pin as Task 1.0's).`,
+      `console/package.json's runtime dependencies are ${JSON.stringify(runtime)}. The list is ${JSON.stringify(runtimeDependencyAllowList)}: every runtime dependency is packed into the shipped bundle, the renderer bundles no framework runtime and no charting library (design D9), and the update client arrives with Task 4.4. A new one is a deliberate edit here, with the case for it written down.`,
     ).toEqual(runtimeDependencyAllowList.toSorted())
   })
 
-  it('pins electron-updater, the component that downloads and installs code', () => {
-    // Named separately from the list above, so the one dependency whose whole
-    // job is fetching and installing a new bundle cannot leave the pins by a
-    // quiet edit to the allow-list.
+  it('ships no update client until Task 4.4 writes the code that uses it', () => {
+    // Named separately from the list above: the one package whose whole job is
+    // fetching and installing a new bundle must not ride along unused.
     const runtime = (pkg.dependencies ?? {}) as Record<string, string>
-    expect(runtime['electron-updater']).toBeTruthy()
-    expect(pinViolation(runtime['electron-updater'] ?? '')).toBeNull()
+    expect(runtime).not.toHaveProperty('electron-updater')
   })
 
   // One test per section, each naming its own offender, so "a ^ was added to
@@ -275,7 +274,7 @@ describe('console/package.json', () => {
     // Named here rather than only in the README, so removing Electron from the
     // pinned toolchain is a failing test and not a quiet edit.
     const dev = (pkg.devDependencies ?? {}) as Record<string, string>
-    for (const name of ['electron', 'typescript', 'vitest', '@playwright/test', '@types/node']) {
+    for (const name of ['electron', 'electron-builder', 'typescript', 'vitest', '@playwright/test', '@types/node']) {
       expect(Object.keys(dev), `${name} is not pinned in devDependencies`).toContain(name)
     }
   })

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	The entitlements the Fugaro console is signed with (desktop-console plan
+	Task 4.1; design sections 5.1 rule 9 and 7.2, and section 12's item 4, which
+	leaves this set unverified until a signed build has been run).
+
+	The rule this file is written under is "the minimum": **no entitlement the
+	app does not demonstrably use**. One key is granted, and it is granted for a
+	reason that can be checked rather than assumed.
+
+	com.apple.security.cs.allow-jit — granted. The hardened runtime denies a
+	process the right to allocate memory that is both writable and executable,
+	and V8 needs exactly that for its just-in-time compiler. Without the key the
+	app is not merely slower: Electron aborts at startup on arm64. The console
+	does not have its own JIT — this is V8's, inside the Electron framework it
+	is built on.
+
+	Granted this and deliberately **not**:
+
+	com.apple.security.cs.disable-library-validation — withheld. It is the key
+	every Electron tutorial adds "just in case", and the only thing it buys is
+	loading a library that is not signed by the same team. The console loads no
+	plug-in and no native module of its own: its whole runtime surface is Node's
+	own modules, the Electron framework and the processes of the CLI it spawns.
+	The one dependency that could have forced it — electron-builder, which is a
+	packer and not a runtime dependency — is not even installed here (see
+	console/README.md). If a signed build ever fails without it, the failure is
+	a fact this comment does not have, and the fix is an edit here with the
+	codesign error quoted in the message.
+
+	com.apple.security.cs.allow-unsigned-executable-memory — withheld. It is
+	granted alongside disable-library-validation, for plug-ins that bring their
+	own JIT, and the reason it is absent is the same one, one step further: we
+	have a JIT (allow-jit above) and no plug-in to hand memory to.
+
+	com.apple.security.cs.allow-dyld-environment-variables — withheld. It lets
+	DYLD_* reach the process, which is the macOS twin of the NODE_OPTIONS hole
+	the fuses close on the Node side (design section 5.1 rule 4): an environment
+	variable that turns into code in our process.
+
+	com.apple.security.cs.debugger and com.apple.security.get-task-allow —
+	both withheld. Both let another process attach to a hardened-runtime app.
+	get-task-allow is a development entitlement: a shipped build carrying it is
+	debuggable by anything running as the user, whatever the binary's signature
+	says. Nothing in this repository builds a debug variant that would need it.
+
+	com.apple.security.app-sandbox — withheld. The console is not a Mac App
+	Store build (design D4): it is signed with a Developer ID outside the store,
+	and a sandbox key without a container and its file entitlements is a claim
+	with nothing behind it.
+
+	The device and network entitlements (com.apple.security.device.*,
+	com.apple.security.network.client/server, the file-access keys) — all
+	withheld, and they are withheld by design rather than by omission: the
+	renderer reaches no network and no device, every permission request is denied
+	by the main process rather than granted (design section 5.1 rule 9), and the
+	only process in this application that talks to a network or reads a
+	checkout's files is the CLI, which is a separate binary and brings its own
+	signature.
+
+	**Unverified, and named as such.** This repository has never produced a
+	signed build: that is Check 59a, owner-run, on a Mac with a Developer ID
+	certificate. Until it has run, the claim above is an argument from the
+	bundle's contents — the app loads no plug-in, so it needs no plug-in key —
+	rather than a measurement. Check 59a is where it becomes one, and a failure
+	there is the signal to revisit this file rather than to widen it quietly.
+
+	test/unit/entitlements.test.ts parses this file and asserts the set above
+	exactly, with a named test per withheld key, so a widening here is a red test
+	rather than a diff nobody reads.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+</dict>
+</plist>

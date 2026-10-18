@@ -83,8 +83,8 @@ from its own download host rather than from npm, so the pin, the download and
 the checksum get the hand-bumped, documented treatment the repository already
 gives the Trivy digest and the Dockerfile frontend digest (design section 5.2).
 
-The rest of the pinned set, all exact. One of them is a runtime dependency and
-the rest are build and test tooling:
+The rest of the pinned set, all exact, all build and test tooling (there is no
+runtime dependency today; see below):
 
 | Package | Version | Where | Why it is here |
 |---|---|---|---|
@@ -93,14 +93,16 @@ the rest are build and test tooling:
 | `vitest` | `5.0.5` | `devDependencies` | `npm run test:unit` |
 | `@playwright/test` | `1.64.1` | `devDependencies` | `npm run test:e2e`, Electron driven by `electron.launch` (Task 1.1) |
 | `@types/node` | `22.20.5` | `devDependencies` | the Node the main process and the tests run on |
-| `electron-updater` | `6.8.9` | `dependencies` | the auto-update client (Task 4.4) — the one runtime dependency, pinned here because the plan puts its pin in this task: "the component that downloads and installs code" |
+| `@electron/fuses` | `2.0.0` | `devDependencies` | the `afterPack` hook's fuse writer (Task 4.1) |
+| `electron-builder` | `26.17.0` | `devDependencies` | the packer, run from its local binary by `npm run package` (Task 4.1) |
 
-`electron-updater` is the only entry in `dependencies`, and that is a decision
-rather than a symptom: the renderer bundles no framework runtime and no charting
-library (design D9), so nothing the renderer needs is a runtime dependency, and
-the pinning test asserts the `dependencies` set is exactly the one name above.
-`6.8.9` is the version npm's `latest` tag resolves to; `6.8.10` is published
-under a `v26` tag and is deliberately not taken here.
+`dependencies` is empty, and that is a decision rather than a symptom: the
+renderer bundles no framework runtime and no charting library (design D9), and
+everything a `dependencies` entry names is packed into the shipped asar. Task 1.0
+pinned `electron-updater` there for Task 4.4's auto-update; Task 4.1's review
+found it shipped in the bundle with nothing importing it, so it was removed, and
+Task 4.4 adds it back, exactly pinned, with the code that uses it. The pinning
+test asserts the `dependencies` set is exactly empty until then.
 
 **The Node is pinned exactly too: `engines.node` is `22.23.3`, not a range.**
 It is the version every command in this task was run on, and it is a member of
@@ -561,7 +563,10 @@ array as spawned with the binary's absolute path first, `cwd` is absolute, and
 `project` is the installation's project name — **the value passed as
 `--project`, so the bare `version` handshake still records which installation it
 was for**. It holds no command output, no environment, no credential and nothing
-a job wrote. It is **bounded at 1000 records**: at the 1001st spawn the writer
+a job wrote. **A spawn that produced no process records nothing**: the line is
+written when the child's own `spawn` event says the process exists, so a binary
+that is missing or not executable — which `spawn` answers with a `ChildProcess`
+and then an `error`, never with a throw — is not a line in this file. It is **bounded at 1000 records**: at the 1001st spawn the writer
 appends one `{"truncated":true,"limit":1000}` line and stops, rather than
 rotating or truncating in place. It is never read back, never rotated, never
 deleted and never transmitted — `test/unit/spawnlog.test.ts` holds the first and
@@ -1373,3 +1378,686 @@ fixtures were written, reviewed and merged on the strength of a reviewer's
 machine, and no workflow ran a console test on any of their pull requests.
 
 Tests workflow applied at commit 8a17d941 (`Add console workflow`, on the `console` branch): the owner copied `docs/pending-workflows/console-tests.yml` to `.github/workflows/console-tests.yml` unchanged. Tasks 1.0 to 1.4 merged before that commit and had no console CI; commits after it are covered by the `console` check.
+
+## The macOS bundle, its entitlements and its fuses (Task 4.1)
+
+The console is packaged by **electron-builder**, configured entirely in
+`package.json`'s `build` key, and `src/main/fuses.ts` is the `afterPack` hook
+that flips the Electron fuses into the binary before the packer signs it.
+`test/unit/entitlements.test.ts` and `test/unit/fuses.test.ts` assert every part
+of that: the entitlement set exactly, each fuse by name, what the hook passes
+and what it verifies, and the rest of the build configuration.
+
+### The minimum entitlements, and why each withheld key is withheld
+
+`entitlements.mac.plist` grants **one** entitlement:
+
+| Key | Why |
+|---|---|
+| `com.apple.security.cs.allow-jit` | The hardened runtime denies memory that is both writable and executable, and V8 needs it for its JIT — without it Electron aborts at startup on arm64. The JIT is V8's, inside the framework this app is built on; the console has none of its own. |
+
+Everything else is deliberately absent, and the plist says so in its own comment
+rather than leaving a reader to infer it from a short file — the argument for
+each, in one line:
+
+- **`com.apple.security.cs.disable-library-validation`** and
+  **`com.apple.security.cs.allow-unsigned-executable-memory`** are the pair every
+  Electron tutorial adds "just in case", for plug-ins that load their own
+  libraries and bring their own JIT. The console loads **no plug-in and no native
+  module of its own**: its runtime surface is Node's own modules, the Electron
+  framework, and the processes of the CLI it spawns. This is the entitlement the
+  design's §12 item 4 leaves open, and the answer here is "not needed, and here
+  is the reason" — not "probably not needed".
+- **`com.apple.security.cs.allow-dyld-environment-variables`** is the macOS twin
+  of the `NODE_OPTIONS` hole the fuses close: an environment variable that turns
+  into code in our process.
+- **`com.apple.security.cs.debugger`** and **`com.apple.security.get-task-allow`**
+  let another process attach to a hardened-runtime app; `get-task-allow` is a
+  development entitlement, and nothing here builds a debug variant.
+- **`com.apple.security.app-sandbox`** is a Mac App Store key (§D4), and a
+  sandbox key with no container and no file entitlements is a claim with nothing
+  behind it.
+- **The device, network and file keys** are refused by design rather than
+  omitted: the renderer reaches no network and no device and every permission
+  request is denied in the main process (§5.1 rule 9), and the only process that
+  talks to a network or reads a checkout is the CLI, which is a separate binary
+  with its own signature.
+
+`entitlementsInherit` points at the **same file**, and that is what makes the
+minimum a property of the whole bundle rather than of its outermost binary:
+electron-builder's own `templates/entitlements.mac.plist` — the file it uses for
+**both** `entitlements` and `entitlementsInherit` when neither is set
+(`macPackager.js`, `getEntitlements`/`getEntitlementsInherit`) — grants all
+three of `allow-jit`, `allow-unsigned-executable-memory` and
+`disable-library-validation`. Naming this file for both is therefore the edit
+that takes the plug-in pair out of the signature, not a tidiness preference; the
+suite asserts both keys, so deleting one is a red test rather than a quiet
+return to the template.
+
+**Unverified, and named as such in the plist.** This repository has never
+produced a signed build. The claim above is an argument from the bundle's
+contents; Check 59a — owner-run, on a Mac with a Developer ID certificate — is
+where it becomes a measurement, and `codesign -d --entitlements -` on the built
+bundle is the command that prints what was actually granted.
+
+### The six fuses, and the two left alone
+
+Flipped in `afterPack` over `@electron/fuses` 2.0.0, and these are the six the
+design's §5.1 rule 4 names — with the two this build does *not* touch named too,
+because "left at its upstream default" is a decision and not an oversight:
+
+| Fuse | Value | Why |
+|---|---|---|
+| `RunAsNode` | **disabled** | `ELECTRON_RUN_AS_NODE=1` must not turn the shipped console into a Node interpreter — for anyone who can execute the file, not just the owner. |
+| `EnableNodeOptionsEnvironmentVariable` | **disabled** | `NODE_OPTIONS=--require …` is code injected through the environment. |
+| `EnableNodeCliInspectArguments` | **disabled** | `--inspect` must not attach a debugger. |
+| `EnableEmbeddedAsarIntegrityValidation` | **enabled** | The app loads only if its asar is the one that was packed. |
+| `OnlyLoadAppFromAsar` | **enabled** | The app loads from `app.asar` and nowhere else. |
+| `GrantFileProtocolExtraPrivileges` | **disabled** | `file://` keeps no extra privileges; the console serves itself over `app://` (Task 1.1). |
+| `EnableCookieEncryption` | *left alone* | The console keeps no cookie store: no sign-in is stored. |
+| `LoadBrowserProcessSpecificV8Snapshot` | *left alone* | A startup optimisation for a browser process that loads web content. |
+| `WasmTrapHandlers` (index 8) | *left alone, enabled* | Beyond the pin: Electron 44.7.2's wire holds **nine** fuses and `@electron/fuses` 2.0.0 names eight, so this one cannot be set through the pinned package at all. It is V8's WebAssembly bounds-check strategy: it loads no code, reads no environment variable or flag, and the console runs no WebAssembly. `BEYOND_PIN_FUSES` in `fuses.ts` records it with its default, and the hook verifies the default. |
+
+Three properties of the hook are worth stating here, because they are what make
+the six a fact rather than an intention:
+
+- **It verifies what it wrote.** `flipFuses` reports how many fuses it changed,
+  not what the binary now holds — so a table entry carrying the index of the fuse
+  above it flips the wrong byte with nothing from the packer to say so. The hook
+  reads the fuse wire back and fails — naming the fuse and the binary — if a flip
+  did not take. (It is *not* a guard against a path that is not an Electron
+  binary: the pinned `@electron/fuses` refuses that itself, both calls rejecting
+  with "Could not find sentinel in the provided Electron binary", which
+  `fuses.test.ts` asserts rather than assumes.)
+- **It refuses a platform that is not darwin** instead of skipping. A build on
+  any other platform would produce no `Contents/MacOS` bundle to flip, and a
+  silently skipped hook is the one outcome that ships the fuses unset.
+- **It refuses a wire it has not accounted for.** After the flips, the hook
+  compares the wire's length with the fuses `fuses.ts` decides about (six
+  flipped, two left alone, one beyond the pin: nine) and stops the build if they
+  differ, so an Electron bump that adds a fuse cannot reach the signer
+  unexamined. The three fuses it leaves alone are checked **by value** too: the
+  two left-alone fuses must still be disabled and `WasmTrapHandlers` enabled,
+  the defaults the pinned Electron 44.7.2 ships, or the build stops.
+  `fuses.test.ts` also reads the real binary's wire when
+  `node_modules/electron/dist` is installed, and on macOS runs the real hook over
+  a copy of it in a temporary directory; without the binary those two tests skip
+  and say why. **CI never runs those two**: the console job's unit step runs
+  after `npm ci --ignore-scripts` and before anything downloads Electron, so
+  there they skip. They are owner-run verification: step 2 of the owner's
+  commands below runs them by name, on the Mac, after the download.
+- **It is the only flipper.** `build.electronFuses` is deliberately unset, so
+  electron-builder's own fuse support cannot run a second, untested
+  configuration over the same binary.
+
+`resetAdHocDarwinSignature` is deliberately **not** set, and the reason is an
+ordering fact: `@electron/fuses` requires it only when the app is not signed
+immediately after the flip ("otherwise the app will refuse to launch with code
+signature validation errors" — its README, Apple Silicon section), and
+electron-builder signs *after* the `afterPack` hook, in the same run. The
+consequence for the owner is the next section's first line.
+
+### The owner's commands, exactly
+
+Run from `console/` on the Mac that holds the Developer ID certificate. The
+variables are **names only** — no value of any of them appears in this
+repository, and `package.json` names no signing identity at all. The order is
+the point: everything that installs or downloads runs **first**, in a shell with
+no secret in it, and the signing material exists only in the environment of the
+one command that packages — an environment built from nothing (`env -i`), so an
+ambient `GH_TOKEN`, a cloud credential or anything else the owner's login shell
+carries is not in it.
+
+```sh
+# 1. Install, with no secret in the environment. Lifecycle scripts stay off:
+#    every package, the packer included, comes from package-lock.json (exact
+#    version, integrity hash, registry host -- lockfile.test.ts).
+npm ci --ignore-scripts --no-audit --no-fund
+
+# 2. The one install step the tree needs, run explicitly: Electron's own
+#    download of its distribution, verified against the checksums.json in the
+#    pinned package. Packaging does not use it (see below); the tests do.
+node node_modules/electron/install.js
+npm run test:unit
+# The two real-binary fuse tests, on their own: they need the distribution
+# step 2 downloaded, and CI never runs them (its unit job runs before anything
+# downloads Electron, so there they skip). The output must read
+# "2 passed", with neither skipped.
+npm run test:unit -- test/unit/fuses.test.ts -t 'the pinned Electron binary itself'
+
+# 3. Package, in a subshell (so the `exit` below ends it, not your terminal),
+#    with an environment built from nothing. Only files and identifiers go on
+#    a command line: CSC_LINK is a FILE PATH to the exported .p12 (Developer ID
+#    Application), never its base64 inline, and APPLE_API_KEY is the path of the
+#    .p8. The one secret VALUE, the certificate's password, never touches argv:
+#    the inner shell reads it from the terminal and exports it to the packager.
+#    Notarisation activates by itself when one credential triple is present
+#    (electron-builder 26 has no "turn it on" flag, only a disable switch); the
+#    App Store Connect API key is the recommended one -- the alternatives are
+#    APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID, or APPLE_KEYCHAIN +
+#    APPLE_KEYCHAIN_PROFILE: one triple, not three.
+(
+  test ! -e electron-builder.env || { echo 'remove console/electron-builder.env first' >&2; exit 1; }
+  env -i \
+    PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin" \
+    HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" \
+    NO_UPDATE_NOTIFIER=1 CI=1 \
+    CSC_LINK="$HOME/<private dir>/developer-id-application.p12" \
+    APPLE_API_KEY="$HOME/<private dir>/AuthKey_<key id>.p8" \
+    APPLE_API_KEY_ID="<key id>" \
+    APPLE_API_ISSUER="<issuer uuid>" \
+    /bin/bash --noprofile --norc -c '
+      IFS= read -rs -p "Developer ID certificate password: " CSC_KEY_PASSWORD </dev/tty
+      echo >&2
+      export CSC_KEY_PASSWORD
+      exec npm run package   # npm run build && electron-builder --mac --universal --publish never
+    '
+)
+```
+
+Why each of the variables that are not secrets is there:
+
+- `NO_UPDATE_NOTIFIER=1` and `CI=1`: electron-builder's CLI (`cli-util.js`)
+  runs `simple-update-notifier`, which contacts `registry.npmjs.org` from the
+  shell holding the secrets, unless `NO_UPDATE_NOTIFIER` is set or `ci-info`
+  reports CI. Both are set; `CI` turns nothing on here that matters, because
+  publishing is off from both sides (below).
+- `PATH` is the Node that installed the tree plus the system directories
+  `codesign`, `xcrun` and `hdiutil` live in, and nothing from the owner's
+  profile.
+
+**`console/electron-builder.env` must not exist.** The same `cli-util.js` loads
+`electron-builder.env` from the working directory into the environment before
+it builds, so a file there would add variables the `env -i` above was written to
+keep out — and, if it held secrets, put them in a file in the checkout.
+`fuses.test.ts` asserts the file is absent and that `build.files` could not
+ship it.
+
+**The window that remains, said plainly.** The password is in the environment
+of the packaging processes (the inner shell, npm, `tsc`, electron-builder and
+what they start) for the length of the build, where any process running as the
+owner's user can read it (`ps eww`, for one); and electron-builder itself hands
+it to `/usr/bin/security import … -P <password>` on a command line for the
+moment it imports the certificate into its temporary keychain
+(`codeSign/macCodeSign.js`), which the pinned packer does and this repository
+cannot change. The `.p12` and the `.p8` are files whose paths, not contents,
+are passed; keep them `0600` in a directory only the owner can read.
+
+**What still runs with the secrets present**, said plainly: `npm run package`
+runs `tsc` (`npm run build`) and then the whole electron-builder tree, and every
+line of both can read the environment. The mitigation is the pins, not
+isolation: the tree is exactly the lockfile's (exact versions, integrity
+hashes, one registry host, installed with scripts off in step 1, before any
+secret existed), `npmRebuild` is off so no install script runs at pack time,
+the Electron archives are checked against the pinned hashes, and the toolsets
+the packer fetches are checked against hashes inside the locked packages.
+
+**The build is universal (arm64 + x64)**, by `--universal` in the script, so one
+DMG and one zip run on every Mac this release supports. electron-builder packs
+each architecture from the official Electron archive for that architecture,
+verifies both archives against the two hashes in `build.electronDownload` (which
+`fuses.test.ts` requires to equal the pinned `electron` package's own
+`checksums.json`, so they move with the Electron pin and nowhere else), and
+merges the two apps with `@electron/universal`. The archives are downloaded at
+pack time, once, into electron-builder's cache, and a mismatched hash stops the
+build (mutation-checked: a zeroed x64 hash fails with "Generated checksum …
+did not match expected checksum"). The `afterPack` hook runs on each thin app
+and again on the merged one, before signing. An unsigned universal pack of this
+configuration was run locally (`-c.mac.identity=null`, no credentials in the
+environment): it produced the artifacts below, the asar held exactly the files
+`build.files` names, the merged app's fuse wire read
+`0,0,0,0,1,1,0,0,1` for indices 0 to 8 (six flipped, the cookie and snapshot
+fuses at Electron's defaults, `WasmTrapHandlers` on), `Info.plist` carried the
+merged asar's integrity hash, and `Contents/Resources` held no `app-update.yml`.
+
+`npm run package` therefore produces:
+
+- `release/mac-universal/Fugaro Console.app` — signed with the hardened runtime
+  and this directory's entitlements, **notarised and stapled by electron-builder**
+  (it submits the `.app` through `@electron/notarize` and staples the ticket to
+  the `.app`);
+- `release/Fugaro Console-<version>-universal.dmg` and
+  `release/Fugaro Console-<version>-universal-mac.zip` — built from that stapled
+  app. **electron-builder 26 neither signs (`dmg.sign` defaults to false), nor
+  notarises, nor staples the DMG itself.** Notarising and stapling the DMG is
+  Task 4.2's workflow step: `xcrun notarytool submit` the DMG `--wait`, then
+  `xcrun stapler staple` it.
+
+**The certificate has to be in the packaging command's environment**: the fuses are flipped
+before the packer signs, and a bundle left with the ad-hoc signature the fuse
+flip invalidated will not launch on arm64. A build with no signing material is a
+build with no signature and no notarisation — `spctl` refuses it, which is the
+correct outcome and not a failure of this configuration.
+
+Then, on the artifact (these are also the FACT lines Check 59a is written
+around, and the checks Task 4.5 re-runs after installing):
+
+```sh
+APP="release/mac-universal/Fugaro Console.app"
+codesign --verify --deep --strict --verbose=2 "$APP"
+codesign -d --entitlements - "$APP"          # must print allow-jit and nothing else
+xcrun stapler validate "$APP"
+spctl --assess --type execute --verbose=4 "$APP"
+lipo -archs "$APP/Contents/MacOS/Fugaro Console"   # x86_64 arm64
+# The DMG checks hold only after Task 4.2's notarise-and-staple step on the DMG:
+#   xcrun stapler validate release/*.dmg
+#   spctl --assess --type open --context context:primary-signature -v release/*.dmg
+```
+
+Two things this section is *not*: it is not Task 4.2's workflow (the staged
+`docs/pending-workflows/console-release.yml` names its own secrets and runs the
+same steps in CI, and it is the owner who copies it in), and it is not a claim
+that a *signed* build has run — no agent has signed or notarised a bundle in
+this repository; the unsigned pack above is the most that ran.
+
+### The hook's import: what was run rather than assumed
+
+`src/main/fuses.ts` imports `@electron/fuses`, which is an ES module, and the
+console's build emits CommonJS — so `tsc` refuses that import for its *format*
+(TS1479) in `tsconfig.build.json`, while the type checker (`tsconfig.json`,
+`module: ESNext` + `moduleResolution: bundler`) resolves it and reports nothing.
+The import therefore carries a `@ts-ignore`, which is why it is `@ts-ignore` and
+not `@ts-expect-error`: the expect-error form fails the type checker as *unused*.
+It suppresses the format rule and nothing else — the package's types still land
+on every binding — but a suppressed import line is one `tsc` will not flag if
+this package changes its API, so `fuses.test.ts` carries that check instead: it
+imports the same package and asserts both calls are exported, that every fuse
+name in the table maps to the index the table gives it, and that the wire states
+the verification compares against are still spelled the same way.
+
+The two facts this rests on were **run, not assumed**, after `npm run build`:
+
+```sh
+$ node -e "console.log(Object.keys(require('./dist/main/fuses.js')).join(','))"
+FLIPPED_FUSES,LEFT_ALONE_FUSES,afterPack,fuseConfig,macExecutable
+$ node -e "console.log(JSON.stringify(require('./dist/main/fuses.js').fuseConfig()))"
+{"0":false,"2":false,"3":false,"4":true,"5":true,"7":false,"version":"1"}
+```
+
+— the emitted `require("@electron/fuses")` resolves under Node 22.12+'s
+`require(esm)` (it is the same mechanism electron-builder's own fuse support
+uses), the six flips arrive at their documented indices with nothing else set,
+and calling the hook for a darwin context reaches the real `flipFuses` rather
+than a stub: it failed inside the Electron framework lookup for a path that has
+no bundle, which is what a real flip attempt against a non-bundle path does.
+
+### The packer is a pinned devDependency, and nothing it installs runs
+
+`electron-builder` `26.17.0` is in `devDependencies`, recorded in
+`package-lock.json` with its whole tree (exact versions, integrity hashes, every
+entry from `https://registry.npmjs.org/`), and `npm run package` runs its local
+binary — never `npx`, which resolves a tree outside the lockfile and runs its
+install scripts in the shell the signing secrets are exported into. An earlier
+revision did exactly that (`npx --yes electron-builder@26.0.12`), because the
+26.0 line's tree carried a git-sourced `@electron/node-gyp` that
+`lockfile.test.ts` refuses; from the 26.1 line the packer depends on `@electron/rebuild`
+4, whose `node-gyp` comes from the registry, so the 26.17.0 tree passes the
+lockfile test with no exception and none was added. Three settings keep the
+packer from reaching outside what is pinned:
+
+- `npmRebuild: false` — the console has no native module, and a rebuild runs
+  `node-gyp` and install scripts;
+- `electronDownload.checksums` — the two Electron archives a universal build
+  downloads are verified against hashes in this file, equal to the pinned
+  `electron` package's `checksums.json`;
+- the toolsets the packer fetches for the DMG and the zip (`dmgbuild`, `7zip`)
+  are verified against SHA-256 hashes hard-coded in the locked `dmg-builder` and
+  `app-builder-lib` packages.
+
+**Publishing is off from both sides.** `build.publish` is `null`, not merely
+absent — absent, electron-builder infers a GitHub provider whenever `GH_TOKEN` or
+`GITHUB_TOKEN` is in the environment, writes `app-update.yml` into the bundle and
+uploads on a CI tag — and the script passes `--publish never`.
+
+### The seam Task 1.1 left, settled
+
+Task 1.1's section above records the one thing it handed to packaging: `tsc`
+emits JavaScript into `dist/` and copies nothing, while the protocol handler
+serves `src/renderer` (`rendererRoot` in `src/main/index.ts`), so "a packaged
+console needs `src/renderer` on disk". Task 4.1 settles it by naming the file
+rather than moving it: `build.files` is
+
+```json
+["dist/main/**/*.js", "!dist/main/fuses.js", "dist/preload/**/*.js",
+ "dist/shared/**/*.js", "dist/source/**/*.js", "!dist/source/fixture.js",
+ "src/renderer/index.html"]
+```
+
+— the compiled main process, preload, shared and source modules, the document
+the window actually loads, and nothing else. Two compiled files are excluded by
+name because the app never loads them: `dist/main/fuses.js` is the packing hook
+(the packer loads it from the project directory, and it needs a devDependency)
+and `dist/source/fixture.js` is the fixture loader the tests and the recorder
+use. No source map ships (every include names `.js` or one `.html` file, and a
+map in the asar is a second copy of the sources with a pointer to it).
+`fuses.test.ts` walks the import closure of `src/main/index.ts` and
+`src/preload/index.ts` and asserts every module in it is shipped and the two
+excluded files are not. The
+renderer's *scripts* are compiled into `dist/renderer/` and are not served from
+there: no task serves a script to the document yet (the e2e specs draw their
+screens through `executeJavaScript`), and whichever task does it has to put the
+compiled file inside the served root — the allow-list above is where that
+becomes visible rather than being discovered by an empty packaged window.
+
+Two smaller decisions belong to this list. `directories.output` is `release`
+rather than electron-builder's default `dist`, because `dist` is the compiler's
+output directory here — the packer would otherwise write the app it is packing
+into the tree it is packing from — and `release/` is in `.gitignore` for the
+same reason. `appId` is `io.github.dimipaun.fugaro-console`: electron-builder's
+default is `com.electron.<name>`, which claims upstream's namespace, and this
+repository has no domain, so the project's GitHub home reversed is the honest
+choice. It is a deliberate edit if it ever changes, because the bundle id is the
+identity Gatekeeper and the notary record keep.
+
+### What is deliberately not here
+
+- **A signing workflow.** Task 4.2 stages it under `docs/pending-workflows/`,
+  and that task's file, not this one, names the CI secrets. This section's
+  commands are the owner's local run.
+- **Automatic updates.** `build.publish` is `null`, the script passes
+  `--publish never`, there is no feed, and `electron-updater` is not a
+  dependency: Task 4.4 is the auto-update task and brings all of that with it.
+- **An icon.** There is no `build/icon.icns`, so the bundle carries Electron's
+  default icon. It is a packaging wart, not a security property, and it needs an
+  asset file that no task has produced.
+- **Any signed build.** No bundle has been signed or notarised here; one
+  unsigned universal pack was run (above). The signed build is Check 59a's job,
+  and design §12 item 4 stays open until it has run.
+
+### The properties are tests, and each one fails under a mutation
+
+Every claim above is asserted, and the two that matter most were re-run by hand
+against a planted change in the shipped files — recorded here the way the other
+tasks record theirs, because a test that has never been seen red is a test
+nobody should trust:
+
+| Mutation | What went red |
+|---|---|
+| `com.apple.security.cs.disable-library-validation` added to `entitlements.mac.plist` | three named tests: "grants com.apple.security.cs.allow-jit and nothing else", "grants nothing that the set above does not name", and the named test for that one key |
+| `RunAsNode` flipped to `true` in `FLIPPED_FUSES` | "leaves RunAsNode disabled: the binary is never a Node interpreter", and the wire-verification test (the fake wire now agrees with the mutated configuration, so the hook no longer refuses it) |
+| `EnableNodeCliInspectArguments` given the index of the fuse above it (a copy-paste) | four named tests, including "knows every fuse this build names, at the index this build names it at" and "accounts for every fuse this pin knows" |
+| a value the plist parser does not understand (`<integer>`, a nested dict, a root array) | the parser fixtures: each throws rather than reporting an empty set |
+| a wire with `RunAsNode` left enabled, or with a fuse "removed" rather than set | the two `afterPack` verification tests, whose failure messages name the fuse and the binary |
+| `electronPlatformName: 'linux'` handed to the hook | "refuses a platform that is not darwin…", and `flipFuses` is never called |
+| any entry added to `build.files`, or `asar` turned off, or `afterPack` repointed, or `productName` renamed | the packaging-configuration tests in `fuses.test.ts`, one named test each |
+| `asarUnpack: ["**/*"]`, `extraResources`, `extraFiles` or a `mas` block added to `build`; `extraResources` added to `build.mac` | "has exactly the build keys this task decided…" / "has exactly the mac keys this task decided" |
+| `publish` deleted (absent rather than `null`) | "publishes nowhere: publish is null, not merely absent" and the exact-keys test |
+| the `package` script back to `npx --yes electron-builder@26.0.12 …`, or `--publish always` | "packages with the pinned local electron-builder, universal, and never publishing" |
+| `dist/renderer/**/*.js` added to `build.files`, or `!dist/source/fixture.js` removed | the exact-list test and "ships every module the main process and the preload load, and neither excluded file" |
+| a zeroed Electron x64 hash in `electronDownload`; `npmRebuild: true` | the checksum test (and, at pack time, electron-builder's own "did not match expected checksum"); the rebuild test |
+| `BEYOND_PIN_FUSES` emptied (WasmTrapHandlers undecided) | five tests, including both real-binary tests: the wire holds 9 fuses and the file accounts for 8 |
+
+## The signing and notarisation pipeline, staged (Task 4.2)
+
+The workflow that signs, notarises and staples this bundle is **staged, not
+applied**: `docs/pending-workflows/console-release.yml`, copied into
+`.github/workflows/` by the owner as Task 4.5, with the file's row, the one
+command that applies it and its "Not verified" note in
+`docs/pending-workflows/README.md`. What belongs *here* is the part that is
+about this directory: what the workflow has to line up with, what the owner has
+to create before it can run, and what nobody has run yet.
+
+**It is a separate file from `console-tests.yml`, and that separation is the
+security boundary, not tidiness.** The release workflow reads the Apple signing
+certificate and the App Store Connect key; the tests workflow runs on every pull
+request from any branch of this repository and holds no secret at all. One file
+carrying both jobs would put the signing job's definition next to a job any
+branch can run, where the only thing between them is GitHub's rule about
+*forks* — and a branch is not a fork (design §9.4). So the release file's `on:`
+is one event, the push of a strict `vX.Y.Z` tag, and it carries no
+`pull_request`, `pull_request_target`, `workflow_run` or `workflow_dispatch`
+trigger of any kind.
+
+**The six secrets, by name.** These are the names the workflow reads, the names
+the protected environment holds, and the names listed in
+`docs/pending-workflows/README.md`. No value of any of them is in this
+repository, in the workflow, or in any run an agent performs:
+
+| Secret | What it is |
+|---|---|
+| `APPLE_CERTIFICATE` | base64 of the Developer ID Application `.p12`, one line (the G2 Sub-CA certificate) |
+| `APPLE_CERTIFICATE_PASSWORD` | that `.p12`'s password |
+| `APPLE_TEAM_ID` | the team identifier `ZM8Y2LC7JL` — an identifier and not a credential, which is why the workflow can check it against the signature it built |
+| `APPLE_API_KEY` | the App Store Connect API key's `.p8` contents |
+| `APPLE_API_KEY_ID` | the key's id |
+| `APPLE_API_ISSUER` | the issuer uuid |
+
+**The notarisation credential is the App Store Connect API key, not an
+app-specific password.** D4 leaves the choice open; this is the decision, so
+`APPLE_ID` and `APPLE_APP_PASSWORD` are deliberately absent. The workflow
+writes the `.p8` under `umask 077` (created private, never tightened after) in
+the runner's temp directory and hands on its *path*, which is what both
+readers take: `APPLE_API_KEY` is a file to electron-builder and `--key` is a
+file to notarytool. The key's value never reaches a command line.
+
+**Two jobs, and the write token is never in the job that runs the packer.**
+`release` (the protected environment, the Apple secrets, the packer, on
+`macos-15`) holds `contents: read` and `checks: read` only: it gates, builds,
+signs, notarises, staples, verifies, and uploads the `.dmg`, the `.zip`, the
+record and the SHA-256 sums as the workflow artifact `console-release-assets`.
+`publish` (`needs: release`, on `ubuntu-24.04`: no environment, no Apple
+secret, no checkout, no packer) is the only job with `contents: write`: it
+downloads the artifact, re-checks every file with `sha256sum --strict --check`
+and that the `.dmg` and `.zip` are named for the tag's version, and publishes.
+The artifact actions carry the pins `release.yml` and `images.yml` already use.
+`GH_TOKEN` is in exactly two steps' `env:`: the gate (read-only) and the
+publish step.
+
+**The version is the tag's.** `package.json` says `0.0.0` and nothing in it is
+a release version, so a step before anything is built refuses a tag that is
+not a strict `vX.Y.Z`, and both packs are stamped with
+`-c.extraMetadata.version=X.Y.Z` (through `env:`). The `.dmg` and `.zip` names
+therefore carry the real version (`Fugaro Console-X.Y.Z-universal.dmg`,
+`…-universal-mac.zip`), the signing step refuses artifacts not named for it,
+and the update feed of plan Tasks 4.3/4.4 depends on it: a console that called
+itself 0.0.0 would never see an update as newer.
+
+**No secret is placed in any step's environment or on disk while anything
+installs or downloads, and one step holds all six.** (The runner process
+receives the environment's secrets when the job starts; what the file controls
+is where they are exposed.) The checkout, setup-node (no `cache:`: a restored
+cache is written by other runs), `npm ci --ignore-scripts --no-audit
+--no-fund`, Electron's own download (`node node_modules/electron/install.js`)
+and an unsigned warm-up `npm run package -- -c.mac.identity=null
+-c.extraMetadata.version=X.Y.Z` (whose output is deleted) run first, with no
+secret in any step's environment: the warm-up is what downloads the two Electron archives the
+universal build needs and the packer's DMG and zip toolsets, into the packer's
+cache. Then **one step** — `Sign, notarise and staple the console` — reads the
+six secrets into its own `env:` (never a workflow- or job-level `env:`) and
+does everything that needs them, in this order: the fail-closed check, the
+temporary keychain, the certificate's team checked against `APPLE_TEAM_ID`,
+the `.p8` file, `npm run package` (with the certificate, its password and the
+key's contents unset — which keeps them out of the packer's environment, not
+out of the signing shell's own starting environment — and `APPLE_API_KEY`
+re-exported as the key file's path),
+the signature's TeamIdentifier and the bundle's staple checked, then the
+`.dmg` signed, notarised and stapled. Its exit trap deletes the keychain and
+both key files whether it passed or failed, so no later step runs with key
+material on disk; an `if: always()` step at the end is the backstop.
+
+**The order inside that step is the load-bearing part: the bundle is notarised
+and stapled *before* the `.dmg` and the `.zip` are built, and what is verified
+is the bundle inside them.** `npm run package` is one command that does both,
+and electron-builder notarises and staples the `.app` while packing it —
+before it builds the targets — when the App Store Connect triple is in its
+environment. That is the owner's own flow above: notarising after packing,
+which an earlier revision of the staged file did, ships two artifacts carrying
+an unstapled bundle (the review of Task 4.2 caught it). The disk image is then
+**signed** (`codesign --sign <identity> --timestamp`: electron-builder leaves
+`dmg.sign` false, Apple's guidance is to sign a disk image before notarising
+it, and a hardened runtime is for executables, not a `.dmg`), submitted with
+`xcrun notarytool submit --wait` and stapled.
+
+**The environment is `console-release`, and the owner creates it before the
+copy-in.** Required reviewers on the owner, deployment branches restricted to
+tags. A staging file cannot create an environment, which is why Task 4.5 is the
+copy-in *and* the environment. **That reviewer, with a tag ruleset, is the real
+control, not the file's gate**: a tag push runs the workflow as the *tagged*
+commit holds it, so a tag on a branch whose copy of the workflow or of
+`scripts/release-gate.sh` was edited runs the edited copy. The approver
+confirms the tag's commit is on `main` before approving the deployment. The
+job's first step checks the same (`git merge-base --is-ancestor "$GITHUB_SHA"
+origin/main`), which catches a mistake, not someone who controls the tagged
+tree.
+
+**It fails closed, and that is the first property to check when reading it.**
+The signing step's first act is to refuse to continue unless all six secrets
+are non-empty, naming the missing one. No step carries an `if:` except the
+cleanup's `always()`, nothing carries `continue-on-error`, and `|| true` is the
+cleanup's alone: a signing job that skipped its signing when a secret was
+absent would publish an **unsigned** console under a signed release's name —
+worse than publishing nothing.
+
+**Two signing paths, documented separately, and neither borrows the other's
+mechanism.** The **owner's manual packaging** is Task 4.1's "The owner's
+commands, exactly" above: on the owner's Mac, `npm run package` under `env -i`,
+`CSC_LINK` the *file path* of the `.p12`, and the certificate's password read
+from the terminal inside that `env -i` shell. The **CI workflow** is this
+section: on the `macos-15` runner, the `.p12` imported from the
+`APPLE_CERTIFICATE` secret into a temporary keychain, and the identity named
+with `CSC_NAME` + `CSC_KEYCHAIN`; `CSC_LINK` and `CSC_KEY_PASSWORD` are never
+set there. Nothing in this section changes the owner's commands, and they are
+not a fallback for the workflow.
+
+**Where the two agree, and where the workflow deliberately differs.** Both call
+the same script, `npm run package` (the pinned local electron-builder, `--mac
+--universal --publish never`), so the hardened runtime, the `.dmg` and `.zip`
+targets, `entitlements.mac.plist` and the fuse hook are one configuration and
+not two. The differences are on purpose:
+
+- **The certificate goes into a keychain the step creates**, never the runner's
+  login keychain: a random password from `openssl rand`, `security
+  create-keychain`, `security import -T /usr/bin/codesign`, `security
+  set-key-partition-list -S apple-tool:,apple:` (codesign is an Apple-signed
+  tool). `/usr/bin/security` is deliberately **not** a trusted application of
+  the key: with it, any later command could `security export` the private key
+  without a prompt.
+- **The signing identity is named explicitly**, through `CSC_NAME` set to the
+  SHA-1 of the identity in that keychain (`CSC_KEYCHAIN`). The SHA-1 of a
+  certificate is public; a runner carrying more than one identity cannot pick
+  another.
+- **The team is checked before the notary is spent**: the identity's name must
+  end in `(APPLE_TEAM_ID)` before anything is packed, and `codesign -dv` must
+  report the same TeamIdentifier on the bundle after, so a development
+  certificate or another team's is refused rather than submitted.
+
+**The verification is recorded, not just performed, and it is about the
+shipped bytes.** The SHA-256 of the `.dmg` and the `.zip` opens the record
+(and is published as `console-sha256sums.txt`), so the record is tied to the
+files a user downloads. The `.dmg` is mounted read-only and the bundle inside it
+is what `codesign --verify --deep --strict`, `codesign -d --entitlements -`,
+`spctl --assess --type execute` and `xcrun stapler validate` run against; the
+`.zip` is extracted and its bundle gets the same treatment; the disk image's own
+signature, ticket and Gatekeeper assessment (`codesign --verify`, `xcrun
+stapler validate`, `spctl --assess --type open`) close it. All of it, with the
+commands' real output, goes into `console-verification.txt`. Each command must
+succeed: `record()` exits 1 on the first failure.
+
+**The console publishes its own release, `console-vX.Y.Z`, and never touches
+the CLI's** (the owner's ruling of 2026-10-17, "Separate console release").
+GoReleaser publishes the CLI's `vX.Y.Z` release from the same tag push, and
+with immutable releases on nothing can be added to it once published. So the
+`publish` job creates `console-vX.Y.Z` — X.Y.Z from the CLI tag that triggered it, the
+same commit and the same gate (D11: one gate, the CLI's tag; its own release) —
+as a **draft**, puts the `.dmg`, the `.zip`, the verification record and the
+sums on it, and publishes it in the same step (`gh release edit --draft=false`,
+`--latest=false` so the CLI's release stays the latest). A re-run never
+clobbers: an existing `console-vX.Y.Z` (published, or a draft left by a failed
+attempt, which the owner deletes before re-running) or tag stops the job, and
+only a 404 counts as "no such tag": any other answer (a 5xx, a rate limit)
+stops it too rather than publishing on a guess. The
+tag ruleset must let the workflow create `console-v*` tags. The console's
+Homebrew cask, when there is one, points at this release.
+
+**Nothing about it has run, and this section claims nothing else.** No bundle
+has been signed, notarised or verified by any agent, here or in CI: the
+workflow has never been applied. Check 59a and 59b (plan Task 4.3, owner-run)
+are the first real run, and the workflow's own `Not verified` note in
+`docs/pending-workflows/README.md` says the same. **Not verified, and Check
+59a's to settle:** that electron-builder accepts `CSC_NAME` as a SHA-1 together
+with `CSC_KEYCHAIN`; that codesign signs with only `apple-tool:,apple:` in the
+partition list; that the warm-up pack leaves everything the signed pack needs
+in the cache; that `-c.extraMetadata.version` reaches the bundle's version
+and the artifact names as described; and that the signed, stapled DMG passes
+`spctl --assess --type open --context context:primary-signature`. None of
+these can be checked offline. **Accepted residuals:** `security` takes the
+keychain password (`create-keychain -p`, `unlock-keychain -p`,
+`set-key-partition-list -k`) and the `.p12` password (`import -P`) only on its
+command line, so another process of the same user can read them in the process
+list while those commands run, and the signing shell's starting environment
+holds the six secrets for the step's lifetime (`ps -E`, same user); the runner
+is a single-job VM and the packer is the only third-party code in that window.
+
+### What is deliberately not here (Task 4.2)
+
+- **A `workflow_dispatch` trigger**, or any other way to run the signing job by
+  hand. A manual trigger is a second way into a job that reads a private key,
+  and the release train this repository already has — one tag, `release.yml` and
+  `images.yml` and now this — does not need one.
+- **Any action that could see the key material.** The signing, notarising,
+  stapling and verifying are `run:` calls to `xcrun`, `codesign`, `security`
+  and `openssl`. Checkout and setup-node run before the signing step;
+  upload-artifact runs after it, when its exit trap has removed the key
+  material; download-artifact runs in `publish`. All four are pinned to full
+  commits with version comments, the artifact pair at the pins the applied
+  workflows already use.
+- **An auto-update feed.** `build.publish` is `null` and this workflow publishes
+  the console's own release and nowhere else: Task 4.4 is the auto-update task
+  and it is not part of this MVP.
+- **A copy under `.github/workflows/`.** No agent creates, edits, renames or
+  deletes anything there — GitHub rejects a push that touches it, so the copy-in
+  is the owner's Task 4.5. While both files exist,
+  `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` asserts they are
+  byte-identical, so an edit to one without the other fails a named test rather
+  than drifting silently.
+
+### The properties are tests, and each one fails under a mutation (Task 4.2)
+
+Every claim above is asserted in
+`internal/cli/docs_desktop_console_test.go` (`TestDocsConsoleReleaseWorkflowIsStagedAndPinned`,
+`TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger`,
+`TestDocsConsoleReleasePublishRefusesToClobber` and
+`TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions` (these two run the
+staged scripts under bash with a faked `gh`), and
+`TestDocsPendingWorkflowsReadmeNamesTheConsoleRows`, all selected by the
+`-run 'Docs|Lint'` filter), reading the file structurally with yaml.v3 where a
+substring scan would let a mutation through. Each mutation below was applied to
+a scratch copy of the staged file and turned the named test red:
+
+| Mutation | What went red |
+|---|---|
+| `pull_request:` added to the staged file's `on:` | `TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger`, on the trigger block's own text and on the parsed trigger keys |
+| `uses: actions/checkout@v5` (a tag instead of a full commit) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`'s pin scan |
+| `if [ -n "$missing" ]` changed to `if false` in the fail-closed check; or its `exit 1` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the fail-closed lines read in order |
+| `if: false` on the ancestry step, the gate or the signing step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the parsed steps: no `if:` except the cleanup's `always()` |
+| `continue-on-error: true` on a step or on the job | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the parsed step and job keys, and on the text |
+| `|| true` added in the verification or the signing step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `|| true` outside the cleanup step |
+| a workflow-level or job-level `env:` holding a secret; a secret in the warm-up step's `env:` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the parsed `env:` levels, and on secrets being in exactly one step |
+| `${{ github.ref_name }}` or a `${{ steps.… }}` output inlined into a `run:` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on any `${{` in a script |
+| `set -x` / `set -eux` added | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the shell-trace scan |
+| `exit 1` removed from `record()` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `record()`'s body, line by line |
+| `cat "$KEY"`, or `echo "$APPLE_CERTIFICATE_PASSWORD"`, added | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the allow-list of lines that may name the key material |
+| `-T /usr/bin/security` added to the import | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the import line and the text scan |
+| the `.p8` written then `chmod 600` (not under `umask 077`) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the umask line |
+| the `.dmg` `codesign --sign` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the disk image's sign, notarise, staple order |
+| the packer back to `npx --yes electron-builder@26.0.12` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `npx` / `electron-builder` in any script |
+| `runs-on: macos-latest` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the pinned `macos-15` |
+| the app path back to `release/mac-*` with `head -n1` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the exact `release/mac-universal` path |
+| the ancestry check replaced with `if false` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the first run step |
+| `gh release upload "$TAG" --clobber` added (the CLI's release) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `gh release upload`, `--clobber` and the CLI tag |
+| the published-release refusal's `exit 1` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on each re-run refusal |
+| the certificate's team check emptied (team checked only after notarising) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the team check before `npm run package` |
+| the SHA-256 line removed from the record | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on `record cat "$SUMS"` |
+| the signing step moved before the install and the warm-up | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the step order |
+| the version stamp removed from the signed pack, or from the warm-up pack | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on every `npm run package` carrying `-c.extraMetadata.version="$VERSION"` |
+| the tag-shape check disabled (`if false && [[ … ]]`) | `TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions`, on `v1.2` passing |
+| the version-named-artifact check disabled | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the signing step's refusal |
+| a pass-all `*) ;;` default in the existing-release `case` | `TestDocsConsoleReleasePublishRefusesToClobber`, on publishing over a published release and a draft |
+| the tag lookup replaced by `if false` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the tag refusal's shape |
+| a 5xx tag lookup read as "absent" (`*) ;;` in the answer `case`) | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on that `case`'s default branch |
+| `contents: write` on the release job; `GH_TOKEN` in the warm-up step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on each job's permissions and on which steps hold the token |
+| `environment: console-release` on the publish job | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the publish job holding no environment |
+| `cache: npm` restored on setup-node | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on setup-node's keys |
+| `curl … | sh`, `eval`, `env`, `printenv | sort`, `set | grep` added | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the download-and-run and environment-dump scans |
+| the publish job's `sha256sum --strict --check` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the publish job's steps |
+| the upload-artifact pin changed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the repository's existing pin |

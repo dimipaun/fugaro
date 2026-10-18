@@ -1,5 +1,8 @@
 node_modules/
 dist/
+# The packer's output (`build.directories.output`, Task 4.1): the dmg, the zip
+# and the unpacked bundle. Build artifacts, never committed.
+release/
 test-results/
 playwright-report/
 # The recorder's build output (`tsconfig.record-fixture.json`, Task 1.4): the
