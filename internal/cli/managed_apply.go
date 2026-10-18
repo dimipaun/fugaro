@@ -96,7 +96,7 @@ This is not fugaro project (the project's own configuration) and not fugaro
 init (which creates and re-installs an installation): a managed project's
 agent-authored root is applied by fugaro managed apply.`,
 	}
-	cmd.AddCommand(newManagedApplyCmd())
+	cmd.AddCommand(newManagedApplyCmd(), newManagedFlagCmd())
 	return cmd
 }
 
