@@ -174,6 +174,18 @@ func TestWorkflowFilesSeesEveryKindOfChange(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, []string{".github/workflows/pipeline.yml"}},
+		{"renamed within", func(t *testing.T, repo *Repo) {
+			testutil.Git(t, repo.Dir, "mv", ".github/workflows/ci.yml", ".github/workflows/ci2.yml")
+			if _, err := repo.CommitAll(ctx, "rename it"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/ci.yml", ".github/workflows/ci2.yml"}},
+		{"moved out", func(t *testing.T, repo *Repo) {
+			testutil.Git(t, repo.Dir, "mv", ".github/workflows/ci.yml", "ci.yml")
+			if _, err := repo.CommitAll(ctx, "move it out"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/ci.yml"}},
 		{"a file swapped for a symlink", func(t *testing.T, repo *Repo) {
 			if err := os.Remove(filepath.Join(repo.Dir, ".github", "workflows", "ci.yml")); err != nil {
 				t.Fatal(err)
