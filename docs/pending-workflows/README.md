@@ -162,9 +162,11 @@ first real run is what settles those.
 `.github/workflows/images.yml` and the staged file removed in `6b57ba9`
 ("Update workflow rules", #385), so what this section describes is what the
 repository runs today, and the Go tests named below read the real file on its
-own. The section is kept as the record of *what* that change was and *why*, in
-the tense it was staged in; a future change to `images.yml` would replace it
-with a new one, the way it replaced the sections before it.
+own. The section is kept as the record of *what* that change was and *why* —
+its tense corrected only where the change has since landed, and left as written
+where it describes the file's shape, which has not changed. A future change to
+`images.yml` would replace it with a new one, the way it replaced the sections
+before it.
 
 It replaced `.github/workflows/images.yml` with the same file plus Task 1 of
 `docs/plans/2026-10-13-retire-image-mirror.md`: `publish-base` also began to
