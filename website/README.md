@@ -265,7 +265,7 @@ check until this document says the same thing.
 | `content/cli-reference.md` | the command tree, `internal/cli.NewRootCmd` | `go run ./internal/clidoc` |
 | `content/security.md` | `SECURITY.md`, byte for byte below the title | `go run ./internal/clidoc` |
 | `content/costs.json` | `fugaro stats runs --project <installation> --json`, and it is the aggregation's output verbatim | owner-run: `fugaro stats runs --project <installation> --json > website/content/costs.json` |
-| `content/downloads.json` | hand-kept, not generated: W3.1 fills it from the console's release artifacts; a placeholder with `available: false` until then | none: hand-kept |
+| `content/downloads.json` | hand-kept, not generated: the console's facts and the release's own published names, with `{version}` where the version goes — the URLs are derived from them (below), and `available: false` until the console ships | none: hand-kept |
 
 Three things about those commands are worth stating rather than leaving to the table:
 
@@ -282,7 +282,9 @@ Three things about those commands are worth stating rather than leaving to the t
   `install.yaml` is held to `README.md`, `docs/release.md` and `.goreleaser.yaml` by
   `internal/cli/docs_website_install_test.go`, and `site.yaml` to `go.mod`, the
   repository's decisions and the site's own host list by the boundary test. Change the
-  fact in the repository, then the value here, in one commit.
+  fact in the repository, then the value here, in one commit. `site.yaml`'s
+  `features.console_downloads` is held to the hand-kept `content/downloads.json`'s
+  `available` by the build itself, which refuses the two disagreeing (below).
 
 ## The changelog is built, never committed
 
@@ -292,6 +294,38 @@ what it returns. Nothing is written to disk, so a Highlights file that lands on 
 before its tag exists leaves no stale copy behind — and no date is taken from a tag,
 because a shallow checkout has no tags and the newest entry a reader sees has none yet
 (D100). `website/test/changelog.mjs` holds that.
+
+## The console's downloads are derived, never written down
+
+`content/downloads.json` is hand-kept and carries the console's facts, and the one rule about
+it is the flag: `site.yaml`'s `features.console_downloads` is what the repository's own
+boundary test reads (`internal/cli/docs_website_boundary_test.go`), and while it is false **no
+file under `website/` may carry a download URL** (Global Constraint 9, finding 25). The data
+file therefore carries the release's *published names* rather than a URL: `release.tag_prefix`,
+`release.version`, and one `file` per asset with `{version}` where the version goes.
+`src/lib/console-downloads.mjs` composes each URL at build time from those, from the tag
+(`console-vX.Y.Z`, cut from the CLI's own `vX.Y.Z` tag) and from `site.yaml`'s `repository` —
+that module is the one reader of the file, and each page renders what it returns.
+
+Two pages offer the console from those facts: the console page's own Downloads section (W1.6)
+and Getting Started's console option, beside the CLI (the owner's changes spec of 2026-10-18,
+item 6). In both, the unreleased state is **structural rather than editorial**: the download
+list is rendered from `available`'s branch and nothing else, so an unreleased console has no
+link to follow even though its assets' names are already in the data file — and the option's
+only link is the way to `/console/`. `website/test/console.mjs` holds the console page to that,
+and `website/test/console-option.mjs` holds Getting Started to it in **both** states: the
+shipped one, read off the built page, and the released one, read off a build of a copy with the
+flag flipped. That second case also runs the budget gate over the flag-on build
+(`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started sits at
+D188's 250-word ceiling — the owner's flip has to be the whole change and may not be the change
+that breaks the ceiling. A data file that says the console has shipped while the flag says it
+has not stops the build, naming both files: they are one fact.
+
+**The flip, in full:** `site.yaml`'s `features.console_downloads: true`, `downloads.json`'s
+`available: true`, and `release.version` bumped — nothing else. The console is built for macOS
+and nothing else (`console/README.md`, `.github/workflows/console-release.yml`: one universal
+`.dmg` and one `.zip`), which is why the platform, and not an invented second one, is the word
+each button carries.
 
 ## The rule this directory is written to
 
