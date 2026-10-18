@@ -317,37 +317,43 @@ describe('the dashboard the entry mounts', () => {
     })
 
     it('keeps at most one live.watch in flight, however many ticks go by', async () => {
+      // The first read answers at once, so the poll starts; every read after it
+      // is held open, which is the state a slow watch leaves the console in.
       const held: (() => void)[] = []
       const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+      let made = 0
       const { bridge, calls } = fakeBridge({
         replies: {
-          subscribeLive: () =>
-            new Promise((resolve) => {
+          subscribeLive: () => {
+            made += 1
+            if (made === 1) return Promise.resolve(snapshotReply(frame))
+            return new Promise((resolve) => {
               held.push(() => {
                 resolve(snapshotReply(frame))
               })
-            }),
+            })
+          },
         },
       })
-      const document = new FakeDocument()
-      const booting = bootDashboard({ fugaro: bridge, document: document as unknown as Document })
-      // The first read is made, and it is still outstanding.
-      await vi.advanceTimersByTimeAsync(0)
+      await boot(bridge, new FakeDocument())
       expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+
+      // One tick: a second read is made, and it does not answer.
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'subscribeLive'])
       expect(held).toHaveLength(1)
 
-      // Three ticks of the interval, one outstanding read: no second call. This
-      // is the claim the flag exists for -- a slow read cannot be overtaken by
-      // the next tick, so the console never has two watches of one installation
-      // in flight at once.
+      // Three more ticks with that read outstanding: **no third call**. This is
+      // the claim the flag exists for -- a slow read cannot be overtaken by the
+      // next tick, so the console never has two watches of one installation in
+      // flight at once.
       await vi.advanceTimersByTimeAsync(LIVE_POLL_MS * 3)
-      expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'subscribeLive'])
 
       // Once it answers, the next tick is a new read.
       held[0]?.()
-      await booting
       await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
-      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'subscribeLive'])
+      expect(calls.map((call) => call.name)).toHaveLength(3)
     })
 
     it('stops polling while the window is not visible, and starts again when it is', async () => {
