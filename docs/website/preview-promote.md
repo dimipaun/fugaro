@@ -1,9 +1,9 @@
 # The website's preview and promote workflows
 
-**Status: staged, not copied in, never run.** The two workflows live at
-[`docs/pending-workflows/website-preview.yml`](../pending-workflows/website-preview.yml)
-and [`docs/pending-workflows/website-promote.yml`](../pending-workflows/website-promote.yml)
-because **no Fugaro run may create or edit a file under `.github/workflows/`**
+**Status: copied in by the owner (the staged copies are removed), never run.** The two workflows live at
+[`.github/workflows/website-preview.yml`](../../.github/workflows/website-preview.yml)
+and [`.github/workflows/website-promote.yml`](../../.github/workflows/website-promote.yml);
+they were staged under `docs/pending-workflows/` first because **no Fugaro run may create or edit a file under `.github/workflows/`**
 (GitHub rejects the push; website plan Global Constraint 2, finding F4). The
 owner copies them in — [the copy procedure](../pending-workflows/README.md) is
 the one that directory already documents — and **everything in "One-time setup"
