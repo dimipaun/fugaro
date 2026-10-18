@@ -59,8 +59,15 @@ import type { BinaryResolution } from '../../src/main/spawn'
 // these specs as CommonJS.
 const consoleDir = join(__dirname, '..', '..')
 
+/** withoutComments is a bundled document's bytes, with the prose taken out:
+ * every marker below is read from markup, and a marker that could match a
+ * comment would be a marker that matches nothing on screen. */
+function withoutComments(file: string): string {
+  return readFileSync(join(consoleDir, 'src', 'renderer', file), 'utf8').replace(/<!--[\s\S]*?-->/g, '')
+}
+
 /**
- * documentMarker is the sentence a bundled document carries, **read out of the
+ * sentenceMarker is the sentence a bundled document carries, **read out of the
  * document itself** rather than retyped here.
  *
  * That is the fix for a real defect in the first version of this file: the
@@ -72,12 +79,8 @@ const consoleDir = join(__dirname, '..', '..')
  * cannot match would have made the claim unasserted while the suite stayed
  * green. Reading the bytes is what makes the two sides the same string.
  */
-function documentMarker(file: string): string {
-  const html = readFileSync(join(consoleDir, 'src', 'renderer', file), 'utf8').replace(
-    /<!--[\s\S]*?-->/g,
-    '',
-  )
-  const paragraph = /<main>[\s\S]*?<p>([^<]+)<\/p>/.exec(html)
+function sentenceMarker(file: string): string {
+  const paragraph = /<main>[\s\S]*?<p>([^<]+)<\/p>/.exec(withoutComments(file))
   const sentence = paragraph?.[1]?.trim()
   if (sentence === undefined || sentence === '') {
     throw new Error(`${file} carries no <p> in its <main>: this spec's markers are read from the documents`)
@@ -85,11 +88,40 @@ function documentMarker(file: string): string {
   return sentence
 }
 
-/** DASHBOARD_MARKER is the sentence `src/renderer/index.html` carries and the
- * refusal document does not: the one string that tells the two documents apart
- * from inside the page, whatever a later task's renderer does to either. */
-const DASHBOARD_MARKER = documentMarker('index.html')
-const REFUSAL_MARKER = documentMarker('refusal.html')
+/** entryScriptOf is the one script a bundled document loads, or null when it
+ * loads none -- read from the bytes, for the same reason `sentenceMarker` is. */
+function entryScriptOf(file: string): string | null {
+  return /<script[^>]*\bsrc="([^"]+)"/.exec(withoutComments(file))?.[1] ?? null
+}
+
+/** REFUSAL_MARKER is the sentence `src/renderer/refusal.html` carries: the whole
+ * of what a refused console shows, and the half of the pair that is still a
+ * sentence on screen. */
+const REFUSAL_MARKER = sentenceMarker('refusal.html')
+
+/**
+ * DASHBOARD_MARKER is what `src/renderer/index.html` carries and the refusal
+ * document does not: **the one script it loads**.
+ *
+ * It was the dashboard's placeholder sentence ("The console's window is up. It
+ * has no data yet.") until Task 3.4c, and it cannot be a sentence any more. That
+ * task emptied the dashboard document's body so the entry could fill it: what
+ * the dashboard says on screen is now the entry's -- a later task's renderer
+ * reading over IPC -- and not the document's, so a sentence read from
+ * `index.html` would have been a sentence the window does not show. What
+ * survives, and is a stronger claim than the sentence was, is the difference the
+ * two documents exist for: this one runs the console's entry, and the refusal
+ * document runs nothing at all. `test/unit/csp-document.test.ts` holds both
+ * halves of that (exactly one `./console.js` in this document, no script element
+ * in the other), and the string is read from the bytes here, so the marker the
+ * assertions use cannot drift from the document that carries it.
+ */
+const DASHBOARD_MARKER = entryScriptOf('index.html')
+if (DASHBOARD_MARKER === null) {
+  throw new Error(
+    'src/renderer/index.html loads no script: this spec has no marker for the dashboard document',
+  )
+}
 
 /** HOSTILE is the line the plan asks for: an ANSI escape, a markup tag and a
  * version-shaped run, in one line a binary chose. Nothing of it may be live on
@@ -133,11 +165,19 @@ function windowTitles(app: ElectronApplication): Promise<string[]> {
 }
 
 /** pageShape is the loaded document, read from inside the frame: its URL, its
- * text, and the shapes a dashboard view would need. */
-function pageShape(page: Page): Promise<{ url: string; text: string; dataShapes: number }> {
+ * text, the script it runs and the shapes a dashboard view would need. */
+function pageShape(
+  page: Page,
+): Promise<{ url: string; text: string; entryScript: string | null; dataShapes: number }> {
   return page.evaluate(() => ({
     url: window.location.href,
     text: document.body.innerText,
+    // Which document this is, as `DASHBOARD_MARKER` defines it: the dashboard
+    // document is the one that runs the entry, and the refusal document runs no
+    // script at all. Read from the page rather than from the URL, so a window
+    // that loaded the dashboard's URL and drew the refusal's document would fail
+    // here.
+    entryScript: document.querySelector('script[src]')?.getAttribute('src') ?? null,
     // Every view this console draws is a list, a table, a `<canvas>` or an
     // `<svg>`; the refusal document has none of them, which is D7's claim on the
     // document rather than on the renderer: there is nothing to draw a figure
@@ -184,15 +224,15 @@ test.describe('the startup handshake, in the real app', () => {
       if (mode === 'refused') {
         expect(shape.url).toBe(REFUSAL_ENTRY_URL)
         expect(shape.text).toContain(REFUSAL_MARKER)
-        expect(shape.text).not.toContain(DASHBOARD_MARKER)
+        expect(shape.entryScript, 'the refused window ran the dashboard’s entry').toBeNull()
         expect(shape.dataShapes).toBe(0)
       } else {
         expect(shape.url).toBe(APP_ENTRY_URL)
-        expect(shape.text).toContain(DASHBOARD_MARKER)
+        expect(shape.entryScript).toBe(DASHBOARD_MARKER)
         // Both markers, each against the other document: this is the pair that
-        // makes the `not.toContain(DASHBOARD_MARKER)` above a claim rather than
-        // a spelling mistake. A dashboard that carried the refusal's sentence
-        // (or a marker that matched nothing) fails here.
+        // makes the `toBeNull()` above a claim rather than a spelling mistake. A
+        // dashboard that carried the refusal's sentence (or a marker that
+        // matched nothing) fails here.
         expect(shape.text).not.toContain(REFUSAL_MARKER)
       }
     } finally {
@@ -210,7 +250,7 @@ test.describe('the startup handshake, in the real app', () => {
       expect(shape.url).toBe(REFUSAL_ENTRY_URL)
       expect(shape.url).not.toBe(APP_ENTRY_URL)
       expect(shape.text).toContain(REFUSAL_MARKER)
-      expect(shape.text).not.toContain(DASHBOARD_MARKER)
+      expect(shape.entryScript, 'the refused window ran the dashboard’s entry').toBeNull()
       // No list, no table, no canvas: there is nothing in this document a spend
       // figure could be drawn into even if a renderer tried.
       expect(shape.dataShapes).toBe(0)
@@ -230,7 +270,10 @@ test.describe('the startup handshake, in the real app', () => {
       try {
         const shape = await pageShape(page)
         expect(shape.url, JSON.stringify(line.slice(0, 40))).toBe(REFUSAL_ENTRY_URL)
-        expect(shape.text, JSON.stringify(line.slice(0, 40))).not.toContain(DASHBOARD_MARKER)
+        expect(
+          shape.entryScript,
+          `the refused window ran the dashboard's entry on ${JSON.stringify(line.slice(0, 40))}`,
+        ).toBeNull()
         // The line itself is nowhere: the refusal document is the console's own
         // sentence, and it never carries what the binary printed. The empty
         // line is the one case this cannot be asked of -- every string contains
@@ -284,7 +327,7 @@ test.describe('the startup handshake, in the real app', () => {
       expect(await windowTitles(app)).toEqual([CONSOLE_WINDOW_TITLE])
       const shape = await pageShape(page)
       expect(shape.url).toBe(APP_ENTRY_URL)
-      expect(shape.text).toContain(DASHBOARD_MARKER)
+      expect(shape.entryScript).toBe(DASHBOARD_MARKER)
     } finally {
       await app.close()
     }
