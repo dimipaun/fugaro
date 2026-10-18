@@ -316,10 +316,10 @@ func validProfiles(profiles map[string]Profile, accounts map[string]Account) err
 					at, i, pattern, head, pr.Provider)
 			}
 		}
-		// The accounts the profile serves, judged last: the rules below read
-		// the profile's own allow_repos, and this is the point at which that
-		// list has been checked (so a refusal about a pattern is about the
-		// pattern, not about the subset rule).
+		// The accounts the profile serves, judged last: validProfileAccounts'
+		// subset rule reads the profile's own allow_repos, and this is the
+		// point at which that list has been checked — so a refusal about a
+		// pattern is about the pattern, and not about what the accounts cover.
 		if err := validProfileAccounts(at, pr, accounts); err != nil {
 			return err
 		}
