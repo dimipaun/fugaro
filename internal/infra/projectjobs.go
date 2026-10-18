@@ -73,10 +73,17 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 		// ruled on 2026-10-15 (probe U1) that a Bitbucket credential cannot
 		// be scoped to one project's repositories, so a job every repository
 		// of a profile shares must never hold one (plan Task 3.0 step 2, D5
-		// amended). The policy may still name such a profile; no job is
-		// deployed for it.
-		if pr.Provider == "bitbucket" {
-			return nil, userErr("profiles.%s.provider: a shared job never serves bitbucket in phase 3: a Bitbucket credential cannot be scoped to one project's repositories (the owner's ruling of 2026-10-15), so Bitbucket repositories stay on their per-repository jobs. Remove the profile or make it a github one", name)
+		// amended). A Bitbucket profile is therefore skipped, not refused: the
+		// policy may name one — projectpolicy admits it, a Bitbucket
+		// repository's workflow may select it, and the runner only requires a
+		// selected profile to be defined — and the installation's other
+		// profiles are deployed as they are. No job is deployed for it, which
+		// is the fact the launcher reads the same predicate for
+		// (SharedJobProvider, and internal/cli's launchProjectJobFor): a
+		// repository selecting such a profile keeps its per-repository job
+		// rather than being launched onto a job that does not exist.
+		if !SharedJobProvider(pr.Provider) {
+			continue
 		}
 		timeout, err := config.ParseDuration(pr.TimeoutClass)
 		if err != nil {
@@ -116,6 +123,36 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	}
 	return out, nil
 }
+
+// SharedJobProvider reports whether a shared project job serves that git
+// provider kind in phase 3, and it is the one place the answer lives: the
+// deployer (ProjectJobs, which skips a profile of a provider it does not
+// serve) and the launcher (internal/cli's launchProjectJobFor, which keeps
+// such a repository on its per-repository job) both ask it, so the job a
+// launch computes is always a job this package deployed.
+//
+// It is github alone, and that is the owner's ruling of 2026-10-15 on probe
+// U1 rather than a gap: a Bitbucket credential cannot be scoped to one
+// project's repositories, and a shared job holds one credential for every
+// repository it serves, so Bitbucket stays on the per-repository path (plan
+// Task 3.0 step 2, D5 as amended, and docs/project-layer.md's "Bitbucket
+// repositories never reach one"). Nothing about a Bitbucket profile is
+// refused: the profile is a document the policy carries, and skipping it here
+// is what makes "no job is deployed for it" true rather than an installation
+// `fugaro init` refuses whole.
+//
+// Every kind of config.Providers is answered — the list is the kinds a
+// repository may use — and the test beside this file pins that the two agree,
+// so a provider added to that list is not silently given a shared job by a
+// forgotten line here.
+func SharedJobProvider(provider string) bool {
+	return slices.Contains(sharedJobProviders, provider)
+}
+
+// sharedJobProviders are the provider kinds a shared project job serves
+// (SharedJobProvider). It is a list rather than a comparison so that the test
+// can walk it, and it holds kinds of config.Providers.
+var sharedJobProviders = []string{"github"}
 
 // profilesAsPolicy is the local config's profiles as the policy carries them
 // (projectpolicy.Profile embeds config.JobProfile), so ProjectJobs checks
