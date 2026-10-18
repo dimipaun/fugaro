@@ -43,6 +43,7 @@ The plan takes **check 69 and up** (written as 69a–69c) for the site's live ch
 
 ## See also
 
+- [preview-promote.md](preview-promote.md) — the site's two deploy workflows (a manual preview and an owner-only promote), staged under `docs/pending-workflows/` for the owner to copy in, and the owner-only one-time setup they need (the Workload Identity Federation pool and provider, the deployer service account, the `website-live` environment, the repository variables). **Nothing in it has been run.**
 - [docs/release.md](../release.md) — what a tag publishes, and how a user verifies it (the site's install text is pinned to this file, W0.1)
 - [docs/design/desktop-console.md](../design/desktop-console.md) — D2, D4, D10 and D11, which the console section reads and does not reopen
 - [docs/gcp-setup.md](../gcp-setup.md) — `## Adoption`, where the one-Firebase-per-installation rule is stated

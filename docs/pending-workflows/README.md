@@ -1,7 +1,8 @@
 # Pending workflow changes
 
-**Nothing is pending.** (`ci.yml` was copied in on 2026-10-17, #504, and its staged copy removed in #508; `images.yml` was copied in earlier.) A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+**Three files are pending**: `website-preview.yml`, `website-promote.yml` (both new — the website's manual deploy workflows, below) and `images.yml` (a change to an existing workflow). (`ci.yml` was copied in on 2026-10-17, #504, and its staged copy removed in #508; an earlier `images.yml` was copied in at the 0.7.0 cut, `838e0b0`.) A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
+- **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
 - **`images.yml`** — the signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`. It was staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Copy it in before the release's version-bump merge commit is created** (the timing is load-bearing: see `## images.yml` below), then `git rm` the pending file, as the procedure below describes.
 
 The most recent copy that *was* applied (`images.yml` for the 0.7.0 hard cut, commit `838e0b0`) is the reason the file below has no legacy per-kind `base` job; that section's older text was replaced by this one when the file became pending again.
@@ -14,11 +15,30 @@ the same name, for a human to copy in by hand after reviewing it.
 **Copying a file in:**
 
 ```sh
+cp docs/pending-workflows/website-preview.yml .github/workflows/website-preview.yml
+cp docs/pending-workflows/website-promote.yml .github/workflows/website-promote.yml
+git add .github/workflows/website-preview.yml .github/workflows/website-promote.yml
+git rm docs/pending-workflows/website-preview.yml docs/pending-workflows/website-promote.yml
+git commit -m "..."
+
+# and, separately, for the images change (its own timing, below):
 cp docs/pending-workflows/images.yml .github/workflows/images.yml
 git add .github/workflows/images.yml
 git rm docs/pending-workflows/images.yml
 git commit -m "..."
 ```
+
+**The website pair's own copy-in steps, in order.** (1) Do the one-time setup
+in `docs/website/preview-promote.md` first — the workflows refuse to run
+without the three repository variables, and the promote job needs the
+`website-live` environment to exist before GitHub can hold it for approval.
+(2) Copy both files in with the two commands above, in **one** commit: they
+are a pair (a preview that cannot be promoted is not the feature), and the
+`git rm` is load-bearing for the same reason it is for `images.yml` — while a
+staged copy exists, `internal/cli/docs_website_deploy_test.go` reads *it*, so
+leaving one in place would freeze those checks on a file nobody deploys from.
+(3) Start `website-preview` by hand for a ref and a channel, open the URL it
+prints in the run summary, and only then start `website-promote`.
 
 The `git rm` is not cleanup, it's load-bearing: the static Go tests that pin
 these workflows' shape (`images/base_workflow_test.go`'s `readWorkflow`,
@@ -47,6 +67,92 @@ copy exists it is what the root loop is checked against, and once it is gone
 the real `ci.yml` must name every root under `deploy/terraform/gcp/roots/`
 on its own, so a copy that dropped `compute` (or a later deletion of it)
 fails that test rather than leaving the root untested.
+
+## `website-preview.yml` and `website-promote.yml`
+
+Two **new** workflows, both `workflow_dispatch`-only, staged by the run that
+wrote the website's deploy path (website plan Task W2.1, D91, D109, F14). They
+replace nothing: `.github/workflows/` holds `ci.yml`, `images.yml` and
+`release.yml` today, and neither staged file touches the release train.
+
+- **`website-preview.yml`** builds a chosen ref (`ref`, default `main`), runs
+  the site's own gate (`npm run check` in `website/`: the Astro build plus
+  every `website/test/*.mjs`), and deploys the result to a **preview channel**
+  of the website's own Firebase project with `firebase hosting:channel:deploy
+  --expires 7d --json`. It writes the channel, the URL, the ref and the commit
+  into the job summary, because the URL is the run's whole output. The live
+  channel is never touched. **A preview is public**: anyone with the URL can
+  read it.
+- **`website-promote.yml`** copies an existing preview channel's current
+  version onto the live channel with `firebase hosting:clone` — the bytes the
+  owner already looked at, rebuilt nowhere — and it is the owner's alone, twice
+  over: the job carries `environment: website-live` (whose only required
+  reviewer is the owner, so GitHub holds the job for approval) and its `if:`
+  refuses any actor but the owner, so a dispatch by anyone else never even
+  queues an approval request. A second step checks the actor again, so a later
+  edit that lost the `if:` still stops rather than asking for approval.
+
+**Neither file holds a credential, and neither reads a secret.** Authentication
+to Google is Workload Identity Federation (`google-github-actions/auth`, pinned
+by SHA): the run's own OIDC token is exchanged for a short-lived access token
+for a deployer service account that holds only Firebase Hosting roles on the
+site's project. No service account key, no key file, no `FIREBASE_TOKEN`, no
+`secrets.` reference at all — the three values both files read
+(`FIREBASE_PROJECT_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`,
+`GCP_DEPLOYER_SERVICE_ACCOUNT`) are repository **variables**, which are
+identifiers rather than credentials. **No Firebase project id is committed by
+either file**: the project is named on the firebase CLI's command line from the
+variable, exactly as `scripts/deploy-website.sh` names it from its own
+`--project` argument, and there is no `.firebaserc`.
+
+**The channel-name pattern is the script's, character for character.**
+`^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$`, the pattern
+`scripts/deploy-website.sh` validates `--channel` against, is written into each
+workflow's validation step and read back out of both files by
+`internal/cli/docs_website_deploy_test.go`, which fails if the two ever drift.
+
+`internal/cli/docs_website_deploy_test.go` is the static check these two files
+have: it parses each staged YAML (the fields GitHub executes, not strings in
+comments) and requires `workflow_dispatch` to be the **only** trigger, no
+`pull_request_target` anywhere, every `uses:` pinned to a full commit SHA with
+its version comment, an explicit least-privilege `permissions:` block on the
+workflow and on every job, the environment and the owner guard on the promote
+job, the channel pattern above, the preview URL written to
+`$GITHUB_STEP_SUMMARY`, and **no key-file credential** — no `credentials_json`,
+no token flag, and no `secrets.` reference — in any of them. A companion test
+feeds that checker a planted weakening per rule and requires each to be
+reported, so no check can rot unnoticed.
+
+**The owner's one-time setup is `docs/website/preview-promote.md`**, and it is
+the owner's alone: the WIF pool and provider, the deployer service account and
+its roles, the `website-live` environment and the three repository variables.
+No agent creates any of it and no agent runs any of its commands. Until it is
+done, both workflows stop at their first validation step with a message naming
+the missing variable.
+
+### Not verified
+
+Neither file has ever run in GitHub Actions. No deploy, no `firebase` command
+and no Google API call of any kind were made by the run that staged them: what
+is verified is their YAML shape, through the Go test named above, and that
+`actionlint` (if present) parses them.
+
+Two things the run that staged them *did* check, short of running anything:
+the two global CLI options both workflows rely on (`-P, --project` and
+`-j, --json`) exist in the pinned firebase-tools v15.19.0, and the shapes read
+back out of that version's own source — `hosting:channel:deploy --json` prints
+`{"status": "success", "result": …}` with `result` keyed by the site id and
+carrying `url` (the summary step's `to_entries[0].value.url`), and
+`hosting:clone` refuses a source channel the project has not got, and one with
+no version on it, with its own message. What remains unexercised is everything
+that needs a live project: that firebase-tools authenticates from the
+credential file google-github-actions/auth writes (a WIF `external_account`,
+not a key) — and that `roles/firebasehosting.admin` alone is enough for a
+deploy, which is the narrowest predefined Firebase Hosting role (the role list
+has exactly two: `firebasehosting.admin` and `firebasehosting.viewer`); a
+permission error naming another API points at the two add-on roles
+`docs/website/preview-promote.md` lists. The copy-in is the owner's, and the
+first real run is what settles those.
 
 ## `images.yml`
 
@@ -253,4 +359,4 @@ Copied in on 2026-10-17 (#504): `.github/workflows/ci.yml`'s `terraform` job now
 
 ## Before you copy: check the action pins
 
-Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so the pins in `images.yml` here can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` here to be a full commit SHA; once the pending file is gone it also requires the real file's pins to agree with the other workflows. Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/images.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.
+Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so the pins in `images.yml` here can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` here to be a full commit SHA; once the pending file is gone it also requires the real file's pins to agree with the other workflows. Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/*.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.

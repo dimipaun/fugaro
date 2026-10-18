@@ -1,0 +1,213 @@
+# website-preview -- copy to .github/workflows/website-preview.yml
+# (docs/pending-workflows/README.md has the copy procedure, and
+# docs/website/preview-promote.md the owner-only one-time setup this file
+# needs before it can run.)
+#
+# WHAT THIS IS. A MANUAL (workflow_dispatch) workflow that builds the website
+# from a chosen ref, runs the site's own gates, and deploys the result to a
+# Firebase Hosting PREVIEW channel of the website's own Firebase project
+# (fugaro-prod, D91 -- the project created for the site only; the project id
+# reaches this file through the FIREBASE_PROJECT_ID repository variable and is
+# named nowhere inside it). The preview's URL is printed in the run's job
+# summary, where the owner can copy it.
+#
+# WHY MANUAL, AND WHY A PREVIEW. Nothing deploys because a branch moved: this
+# is the only trigger, so a merge to main deploys nothing by itself and the
+# live site moves only when the owner promotes (website-promote.yml). A
+# preview is a second, independent URL -- the live channel is untouched -- and
+# **a preview is public**: anyone with the URL can read it, so nothing that
+# must not be public belongs in a build that is deployed here.
+#
+# THE CREDENTIAL. There is none in this file, and none in the repository: the
+# job authenticates to Google through Workload Identity Federation
+# (google-github-actions/auth, below), exchanging this run's own OIDC token for
+# a short-lived access token for a deployer service account that holds only
+# Firebase Hosting roles on the site's project. No key file, no service account
+# key, no FIREBASE_TOKEN, and no `secrets.` reference of any kind: the only
+# values this file reads are repository *variables*, which are identifiers
+# rather than credentials. `fugaro-prod`'s deployer service account is never an
+# installation's, and no credential a Fugaro run holds is used here: this
+# workflow runs no Fugaro command and is invoked by no Fugaro command.
+#
+# THE PROJECT ID. Never committed here and never defaulted: the job refuses to
+# run without FIREBASE_PROJECT_ID (see docs/website/preview-promote.md for the
+# variable, whose value is the site's own project). scripts/deploy-website.sh
+# carries the same id as its own --project default for a human at a terminal;
+# this workflow takes it from the variable so a clone names no project.
+name: website-preview
+
+on:
+  # The one and only trigger. No push, no schedule, no pull_request, no
+  # pull_request_target, no repository_dispatch: a pull request from a fork
+  # reaches no part of this file, and nothing here runs on an event nobody
+  # asked for.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "the ref to build and deploy (a branch, a tag or a full commit SHA)"
+        required: true
+        default: main
+        type: string
+      channel:
+        description: "the preview channel to deploy to (letters, digits, - and _, up to 63 characters)"
+        required: true
+        type: string
+
+# Least privilege, declared rather than inherited from the repository's
+# default: reading this repository's contents is the checkout's need, and each
+# job adds `id-token: write` -- and only that -- for the federation exchange.
+# Nothing here needs `workflows: write`, and no job holds `contents: write`.
+permissions:
+  contents: read
+
+# One deploy per channel. A second dispatch for the same channel cancels the
+# first, so the newest ref wins the channel instead of two deploys racing over
+# it; a different channel is a different group and is not cancelled.
+concurrency:
+  group: website-preview-${{ inputs.channel }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # The federation exchange: this run's OIDC token, minted by GitHub, is
+      # what Google's security token service trades for the short-lived
+      # access token the deploy uses. Nothing else in this job needs it.
+      id-token: write
+    env:
+      # The inputs, and the three repository variables this workflow must be
+      # given (docs/website/preview-promote.md). They are passed as environment
+      # variables rather than interpolated into a shell, so no input can change
+      # the shape of a command.
+      CHANNEL: ${{ inputs.channel }}
+      REF: ${{ inputs.ref }}
+      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+    steps:
+      # Everything is refused before a single tool runs or a byte is checked
+      # out, so a typo is a clear message rather than a half-done deploy.
+      - name: validate the inputs
+        run: |
+          set -euo pipefail
+          die() { echo "website-preview: $*" >&2; exit 1; }
+          [[ -n ${REF:-} ]] || die "no ref was given"
+          # The ref goes to git: an empty one, or one starting with a hyphen
+          # (which git would read as an option), is refused here.
+          [[ ${REF:0:1} != - ]] || die "a ref may not start with a hyphen: $REF"
+          [[ -n ${CHANNEL:-} ]] || die "no channel was given"
+          # THE CHANNEL PATTERN IS scripts/deploy-website.sh's OWN, character
+          # for character: 1 to 63 characters, letters, digits, hyphen and
+          # underscore, starting with a letter or a digit. The two are kept
+          # identical on purpose -- this workflow deploys through the same CLI
+          # the script does -- and internal/cli/docs_website_deploy_test.go
+          # reads both files and fails if they ever drift apart.
+          [[ $CHANNEL =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$ ]] || die "not a valid channel name: $CHANNEL"
+          # A preview is not the live channel, and this workflow never writes
+          # live: promoting is the owner's other, approved workflow.
+          [[ $CHANNEL != live ]] || die "live is not a preview channel: use website-promote to move the live site"
+          [[ -n ${FIREBASE_PROJECT_ID:-} ]] || die "the repository variable FIREBASE_PROJECT_ID is not set (docs/website/preview-promote.md)"
+          [[ -n ${GCP_WORKLOAD_IDENTITY_PROVIDER:-} ]] || die "the repository variable GCP_WORKLOAD_IDENTITY_PROVIDER is not set (docs/website/preview-promote.md)"
+          [[ -n ${GCP_DEPLOYER_SERVICE_ACCOUNT:-} ]] || die "the repository variable GCP_DEPLOYER_SERVICE_ACCOUNT is not set (docs/website/preview-promote.md)"
+
+      - name: check out the requested ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          # The deploy needs no git credential, and no later step should hold
+          # one in .git/config.
+          persist-credentials: false
+
+      - name: set up the site's Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      # The same pin ci.yml's rules job applies, for the same reason: the
+      # lockfile is written by npm 11.19.0 and the npm that ships with Node 22
+      # resolves one optional peer differently.
+      - name: pin npm to the version that wrote the lockfile
+        run: npm install --global npm@11.19.0
+
+      - name: install the pinned dependency tree
+        working-directory: website
+        run: npm ci --no-audit --no-fund
+
+      # The site's own gate, exactly as scripts/deploy-website.sh runs it: the
+      # Astro build and every website/test/*.mjs -- the link and anchor checks,
+      # the origins list, accessibility, the byte budget and the consent gate.
+      # A site that fails its own checks is never deployed.
+      - name: build and check the site (npm run check)
+        working-directory: website
+        run: npm run check
+
+      - name: the build produced a non-empty dist/
+        working-directory: website
+        run: |
+          set -euo pipefail
+          [[ -d dist && -n $(ls -A dist) ]] || { echo "website/dist is missing or empty: the build produced nothing to deploy" >&2; exit 1; }
+
+      # The federation exchange. No credentials_json, no key file: the action
+      # writes a short-lived credential file from the token Google's STS
+      # issues, and removes it when the job ends. It reads three repository
+      # *variables* -- the WIF provider, the deployer service account and the
+      # project id -- and the project id is also what firebase.json's deploy
+      # below names on its command line.
+      - name: authenticate to Google through Workload Identity Federation
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          project_id: ${{ vars.FIREBASE_PROJECT_ID }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      # The CLI scripts/deploy-website.sh uses, at the version this repository
+      # already pins for the rules tests (internal/budget/rules/emulator), so
+      # there is one firebase-tools version in the tree rather than two.
+      - name: install the pinned firebase CLI
+        run: npm install --global --no-audit --no-fund firebase-tools@15.19.0
+
+      - name: deploy the build to the preview channel
+        run: |
+          set -euo pipefail
+          # `hosting:channel:deploy` creates the channel on first use and
+          # deploys a new version into it: the live channel is not read, not
+          # written and not touched. The project is named on the command line
+          # and nowhere else (there is no .firebaserc, deliberately), exactly
+          # as scripts/deploy-website.sh does it; firebase.json at the
+          # repository root is the hosting configuration it reads.
+          firebase hosting:channel:deploy "$CHANNEL" \
+            --project "$FIREBASE_PROJECT_ID" \
+            --expires 7d \
+            --json > "$RUNNER_TEMP/preview.json"
+          url=$(jq -r 'if .status == "success" then (.result | to_entries[0].value.url) else "" end' "$RUNNER_TEMP/preview.json")
+          case $url in
+            "" | null)
+              echo "the deploy reported no preview URL; its own output follows" >&2
+              cat "$RUNNER_TEMP/preview.json" >&2
+              exit 1
+              ;;
+          esac
+          # The summary is the point of the run: the URL, the channel and the
+          # commit, so the owner can open the preview without reading the log.
+          # NOTHING secret can reach it: this job holds no secret at all.
+          {
+            echo "## Website preview"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| channel | \`$CHANNEL\` |"
+            echo "| url | $url |"
+            echo "| ref | \`$REF\` |"
+            echo "| commit | \`$GITHUB_SHA\` |"
+            echo ""
+            echo "**The preview is public**: anyone with the URL can read it. It"
+            echo "expires 7 days after this deploy unless it is deployed again,"
+            echo "and the live site is unchanged. Promote it with the"
+            echo "\`website-promote\` workflow (docs/website/preview-promote.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "website-preview: $url"
