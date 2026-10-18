@@ -863,6 +863,16 @@ export function flowA11yFailures(html) {
         'the flow is hidden from assistive technology (aria-hidden="true" on the list or on something above it): the steps are the whole content of the picture, and a reader left with an empty figure is exactly what this case is for',
       )
     }
+    // The figure is the flow's one name: a figure with neither a figcaption nor an aria-label
+    // is a list of four steps announced as nothing in particular.
+    const figure = (() => {
+      for (let node = flow.parent; node; node = node.parent) if (node.name === 'figure') return node
+      return null
+    })()
+    const named = figure && (figure.attrs.get('aria-label') || figure.attrs.get('aria-labelledby') || findAll(figure, (el) => el.name === 'figcaption').length > 0)
+    if (!named) {
+      out.push('the flow has no accessible name (its <figure> carries no <figcaption>, aria-label or aria-labelledby): the list of steps is the text alternative, and it needs a name a screen reader announces it by')
+    }
     const direct = flow.children.filter((child) => child.name === 'li' && classList(child).includes('flow-step'))
     for (const step of [...walk(flow)].filter((el) => el.name === 'li' && classList(el).includes('flow-step'))) {
       const name = step.attrs.get('data-step') ?? '(a step with no data-step)'
@@ -906,7 +916,7 @@ test('the flow is an ordered list a screen reader reads in order, and its arrows
 test('the flow refusals fire on the defect each one names', () => {
   // A page carrying the flow in the shape the component writes it, which passes; each
   // fixture below breaks one thing in it, so the check above cannot pass by reading nothing.
-  const flow = ({ captionOutside = false, arrowHidden = true, hiddenAt = '' } = {}) => {
+  const flow = ({ captionOutside = false, arrowHidden = true, hiddenAt = '', unnamed = false } = {}) => {
     const arrow = arrowHidden
       ? '<svg class="step-arrow" aria-hidden="true" focusable="false"><path d="M1 1"></path></svg>'
       : '<svg class="step-arrow"><path d="M1 1"></path></svg>'
@@ -914,7 +924,7 @@ test('the flow refusals fire on the defect each one names', () => {
     const step = (n, body, svg = '', extra = '') => `<li class="flow-step"${extra} data-step="step ${n}"><div class="step-card">${body}</div>${svg}</li>`
     return [
       '<!DOCTYPE html><html lang="en"><head><title>T</title></head><body><main id="main"><h1>T</h1>',
-      `<figure class="flow"${hiddenAt === 'figure' ? ' aria-hidden="true"' : ''}><ol class="flow-steps"${hiddenAt === 'list' ? ' aria-hidden="true"' : ''}>`,
+      `<figure class="flow"${hiddenAt === 'figure' ? ' aria-hidden="true"' : ''}>${unnamed ? '' : '<figcaption>Flow</figcaption>'}<ol class="flow-steps"${hiddenAt === 'list' ? ' aria-hidden="true"' : ''}>`,
       step(1, '<h2>One</h2><p class="step-caption">first</p>', arrow, hiddenAt === 'step' ? ' aria-hidden="true"' : ''),
       step(2, captionOutside ? '<h2>Two</h2>' : '<h2>Two</h2><p class="step-caption">second</p>'),
       captionOutside ? '<p class="step-caption">second</p>' : '',
@@ -930,6 +940,10 @@ test('the flow refusals fire on the defect each one names', () => {
   assert.ok(
     flowA11yFailures(flow({ arrowHidden: false })).some((line) => /is not marked as decoration/.test(line)),
     'an arrow that is not aria-hidden passes: a screen reader would read the picture the steps already say',
+  )
+  assert.ok(
+    flowA11yFailures(flow({ unnamed: true })).some((line) => /no accessible name/.test(line)),
+    'a flow whose figure has no figcaption or aria-label passes: the list would be announced with no name',
   )
   // The flow's words are the flow: hidden at the list or at the figure above it, the page is
   // a picture with nothing behind it, and every other gate in this file still passes.
