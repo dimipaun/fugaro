@@ -536,13 +536,28 @@ test('site.js names nothing that evaluates, writes markup or fetches', () => {
     [/document\.write/, 'document.write'],
     [/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|\bimport\s*\(/, 'a request'],
     [/setTimeout\s*\(\s*['"`]/, 'a string timer'],
-    [/:\/\/|sessionStorage|document\.cookie|indexedDB|\bcaches\b/, 'a URL or storage other than the consent decision'],
+    [/:\/\/|sessionStorage|indexedDB|\bcaches\b/, 'a URL or storage other than the consent decision'],
   ]
   for (const [pattern, what] of banned) assert.ok(!pattern.test(code), `public/scripts/site.js uses ${what}: the site's one script copies text, closes menus and runs the consent gate, and nothing else (D183, W3.2)`)
 
-  // The one storage this file touches is the consent decision, and it names no key of its
-  // own: the key is an attribute of the banner's markup, so the script cannot store under a
-  // key the page does not carry, and a flag-off artifact has nothing to store under.
+  // `document.cookie` used to be refused outright, because the site set no cookie of its own.
+  // The owner's ruling of 2026-10-18 gives the withdrawal a second duty — deleting the cookies
+  // GA4 set while the visitor had accepted — so the file touches cookies again, and only to
+  // delete them: every write carries the expiry that removes a cookie, and a write that left
+  // one behind is the defect this rule refuses. `consent.mjs` runs the file and reads the jar
+  // it leaves; this is the same promise said in the source a reader reads.
+  const cookieWrites = [...code.matchAll(/document\.cookie\s*=[^\n]*/g)].map((m) => m[0])
+  assert.ok(cookieWrites.length > 0, 'site.js no longer touches document.cookie, so the withdrawal cannot delete the cookies GA4 set (owner\'s ruling, 2026-10-18)')
+  for (const write of cookieWrites) {
+    assert.ok(
+      /EXPIRED/.test(write),
+      `site.js writes document.cookie without the expiry that removes it (${write.trim()}): a withdrawal deletes the cookies GA4 set and sets none of its own`,
+    )
+  }
+
+  // The storage this file touches beyond that is the consent decision, and it names no key of
+  // its own: the key is an attribute of the banner's markup, so the script cannot store under
+  // a key the page does not carry, and a flag-off artifact has nothing to store under.
   const keys = [...code.matchAll(/localStorage\.(?:get|set|remove)Item\s*\(\s*([^,)]*)/g)].map((m) => m[1].trim())
   assert.ok(keys.length > 0, 'site.js no longer reads or writes the consent decision at all')
   for (const key of keys) {
