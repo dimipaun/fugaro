@@ -371,16 +371,16 @@ id, a wrong type, an oversize body and an unknown field refused; a well-formed m
 accepted) plus the fail-closed families above and P6.3's kind, action, tag and
 canonical-byte cases: 51 tests in this module's test file.
 
-**Every guard is mutation-proved**, not merely covered — 72 guards over `index.js` and
+**Every guard is mutation-proved**, not merely covered — 78 guards over `index.js` and
 `mac.js`, one mutation each:
 
 ```sh
 shared/mailbox-schema/mutation-proof.sh
-# control       the pristine suite passes, 376 tests, 0 failures
+# control       the pristine suite passes, 380 tests, 0 failures
 # killed        control: refuse() always succeeds (must be killed)
 # killed        not-an-object guard (null/array/primitive)
-# ...                                                        (70 more)
-# --- control killed; 72 guards: 72 killed, 0 survived, 0 not applied
+# ...                                                        (76 more)
+# --- control killed; 78 guards: 78 killed, 0 survived, 0 not applied
 ```
 
 The script disables one guard at a time — the object check, the unknown-field check,
