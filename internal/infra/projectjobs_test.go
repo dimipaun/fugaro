@@ -3,6 +3,9 @@ package infra
 import (
 	"bytes"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"maps"
 	"os"
@@ -1015,5 +1018,95 @@ func TestProjectJobDeletesAreRefusedUntilRetirementExists(t *testing.T) {
 	}
 	if hints := DeleteHints(planDeleting(job), nil); len(hints) != 1 || !strings.Contains(hints[0], "profiles") {
 		t.Errorf("hints = %v, want one naming the local config's profiles", hints)
+	}
+}
+
+// TestProjectAccountMountIsTheOneSeam: the Claude token reaches a shared job
+// through projectAccountMount and nowhere else in the deployer (design §4.6:
+// the security service replaces that one function). No other function of
+// projectjobs.go may name an account's secret or the token's variable, and
+// ProjectJobs must call it: a mount written anywhere else is a second carrier
+// the swap would leave behind.
+//
+// Mutation (run, restore): inline the mount in ProjectJobs' loop (the same
+// secret_env, by another path) — every behavioural test still passes, and this
+// one fails naming ProjectJobs.
+func TestProjectAccountMountIsTheOneSeam(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "projectjobs.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := false
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.SelectorExpr:
+				if id, ok := x.X.(*ast.Ident); ok && id.Name == "config" &&
+					(x.Sel.Name == "ClaudeAccountSecret" || x.Sel.Name == "ClaudeOAuthToken") && fn.Name.Name != "projectAccountMount" {
+					t.Errorf("%s: %s names config.%s: the Claude token's mount belongs to projectAccountMount alone", fset.Position(x.Pos()), fn.Name.Name, x.Sel.Name)
+				}
+			case *ast.CallExpr:
+				if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "projectAccountMount" && fn.Name.Name == "ProjectJobs" {
+					calls = true
+				}
+			}
+			return true
+		})
+	}
+	if !calls {
+		t.Error("ProjectJobs does not call projectAccountMount: the account jobs' token reaches them by some other path")
+	}
+}
+
+// TestProjectAccountMountRefusesAnOccupiedVariable: the mount never
+// overwrites a CLAUDE_CODE_OAUTH_TOKEN entry already in the job's secret_env.
+// The profile rules refuse a Claude token among a profile's secrets, so this
+// cannot be reached through ProjectJobs today; a silent overwrite would still
+// replace one credential with another without a word if that rule ever moved.
+//
+// Mutation (run, restore): drop the occupied check — the mount replaces the
+// planted entry and this fails.
+func TestProjectAccountMountRefusesAnOccupiedVariable(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountAxisLC)
+	v := config.ReservedSecrets[config.ClaudeOAuthToken]
+	secretEnv := map[string]string{v: "github-app-key"}
+	err := projectAccountMount(lc, "standard", lc.Profiles["standard"], "acme-personal", secretEnv, map[string]string{})
+	if err == nil {
+		t.Fatalf("the mount replaced an existing %s entry: secret_env = %v", v, secretEnv)
+	}
+	if secretEnv[v] != "github-app-key" {
+		t.Errorf("a refused mount still wrote secret_env: %v", secretEnv)
+	}
+}
+
+// TestAddProjectJobRefusesACollision: two (profile, provider, account) triples
+// that derive the same job name or the same service account ID are refused,
+// never one silently replacing the other in the job set. Each derivation
+// carries a short hash (12 hex for a job, 8 for an account), so a collision is
+// improbable, not impossible; a replaced entry would deploy one account's job
+// under another's name, or two jobs as one account that reads both tokens.
+//
+// Mutation (run, restore): drop either check in addProjectJob — the job set
+// keeps the second entry and this fails.
+func TestAddProjectJobRefusesACollision(t *testing.T) {
+	a := ProjectJob{Profile: "p", Account: "", Job: "fugaro-p-x", ServiceAccount: ServiceAccount{AccountID: "fugaro-p-sa-1"}}
+	sameJob := ProjectJob{Profile: "p", Account: "acme-work", Job: "fugaro-p-x", ServiceAccount: ServiceAccount{AccountID: "fugaro-p-sa-2"}}
+	sameSA := ProjectJob{Profile: "p", Account: "acme-home", Job: "fugaro-p-y", ServiceAccount: ServiceAccount{AccountID: "fugaro-p-sa-1"}}
+	for _, b := range []ProjectJob{sameJob, sameSA} {
+		out := map[string]ProjectJob{}
+		if err := addProjectJob(out, a); err != nil {
+			t.Fatal(err)
+		}
+		if err := addProjectJob(out, b); err == nil {
+			t.Errorf("the account %q's job (%s, %s) was added beside %s (%s): a collision must be refused", b.Account, b.Job, b.ServiceAccount.AccountID, a.Job, a.ServiceAccount.AccountID)
+		}
+		if out[a.Job].Account != a.Account || len(out) != 1 {
+			t.Errorf("the job set moved on a refused add: %v", out)
+		}
 	}
 }

@@ -68,7 +68,7 @@ func TestFirebaseTfvarsGolden(t *testing.T) {
 	// job and one job service account per (profile, provider, account), and
 	// no repository ever reaches this root.
 	//
-	// The third is the account axis's (plan task 4.2): one profile serving a
+	// The third is the account axis's (plan task 2): one profile serving a
 	// named Claude account beside the default one, so the fixture and its
 	// golden plan hold an account job whose token is a secret mount. It is a
 	// fixture of its own, and not a case of the second, so that the two plans

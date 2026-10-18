@@ -297,7 +297,7 @@ func keyMaterial(s string) bool {
 		strings.Contains(s, "MIIE")
 }
 
-// The account axis's real plan (plan task 4.2 step 2; design §8, D5, D9): a
+// The account axis's real plan (plan task 2; design §8, D5, D9): a
 // profile serving a named Claude account deploys a job of its own, and the one
 // token that job can read is its own account's — mounted as a secret reference
 // on that job, and granted to that job's service account alone.
