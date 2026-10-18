@@ -554,6 +554,7 @@ import {
   cssDeclarations,
   cssRules,
   filesUnder,
+  findAll,
   hasAncestor,
   parse,
   servedFile,
@@ -813,6 +814,105 @@ export function artifactA11yFailures(dist = DIST) {
 test('every built page meets the accessibility contract: landmarks, headings, names, keyboard, motion, contrast', () => {
   const failures = artifactA11yFailures()
   assert.deepEqual(failures, [], `the built site breaks the accessibility contract (D105):\n  ${failures.join('\n  ')}`)
+})
+
+// ---- the flow (P8, D185) ------------------------------------------------------------------
+//
+// The flow on How It Works and on the homepage is four steps and three arrows. Its text is
+// the whole content — a screen reader reads the steps, in order — and its arrows are
+// decoration, which is a claim only this file can hold it to: the generic contract above
+// refuses a *focusable* element hidden with aria-hidden, and says nothing about art that
+// should have been hidden and was not. The motion path is the generic one (every animation
+// in a built page's CSS has to be gated or neutralised, D105), so it is not repeated here.
+
+/** The classes on an element, as a list. */
+function classList(el) {
+  return (el.attrs.get('class') ?? '').split(/\s+/)
+}
+
+/** Every flow step of a page, in the order the list gives them. */
+export function flowStepsOf(html) {
+  const doc = parse(html)
+  const flows = findAll(doc, (el) => el.name === 'ol' && classList(el).includes('flow-steps'))
+  return flows.flatMap((flow) => [...walk(flow)].filter((el) => el.name === 'li' && classList(el).includes('flow-step')))
+}
+
+/**
+ * What a screen reader would get wrong in a page's flow, as the lines a reader sees: a step
+ * that is not a list item of the flow's own list, a step whose caption is outside it (so the
+ * list reads the step names and then, somewhere else, their captions), or art inside the
+ * flow that is not hidden from one.
+ */
+export function flowA11yFailures(html) {
+  const out = []
+  const doc = parse(html)
+  const flows = findAll(doc, (el) => el.name === 'ol' && classList(el).includes('flow-steps'))
+  for (const flow of flows) {
+    const direct = flow.children.filter((child) => child.name === 'li' && classList(child).includes('flow-step'))
+    for (const step of [...walk(flow)].filter((el) => el.name === 'li' && classList(el).includes('flow-step'))) {
+      const name = step.attrs.get('data-step') ?? '(a step with no data-step)'
+      if (!direct.includes(step)) {
+        out.push(`the ${name} step is not an item of the flow's list: the flow is an ordered list, and a step nested anywhere else is read in whatever order the markup happens to give`)
+      }
+      const heading = [...walk(step)].find((el) => /^h[1-6]$/.test(el.name))
+      const caption = [...walk(step)].find((el) => classList(el).includes('step-caption'))
+      if (!heading) out.push(`the ${name} step has no heading: a screen reader lists the steps by their headings`)
+      if (!caption) out.push(`the ${name} step carries no caption inside it: the caption is what the step says, and a caption outside the step is read apart from the step it belongs to`)
+      for (const el of walk(step)) {
+        if (el.name !== 'svg') continue
+        if (el.attrs.get('aria-hidden') !== 'true' || el.attrs.get('focusable') !== 'false') {
+          out.push(`a <svg> in the ${name} step is not marked as decoration (aria-hidden="true" focusable="false"): the arrows draw the flow and add nothing a screen reader should have to read`)
+        }
+      }
+    }
+  }
+  return out
+}
+
+test('the flow is an ordered list a screen reader reads in order, and its arrows are decoration', () => {
+  // Both pages carry the flow (D185 places it on the homepage too), so both are checked —
+  // and the two are held to four steps each, or a page that rendered no flow at all would
+  // pass a check that read nothing.
+  for (const page of builtPages()) {
+    const steps = flowStepsOf(page.html)
+    const failures = flowA11yFailures(page.html)
+    assert.deepEqual(failures, [], `${page.rel}: the flow is not readable in order:\n  ${failures.join('\n  ')}`)
+    if (page.rel === 'index.html' || page.rel === 'how-it-works/index.html') {
+      assert.equal(steps.length, 4, `${page.rel} carries ${steps.length} flow steps, and D185's flow is the brief's four (P8)`)
+    } else {
+      assert.equal(steps.length, 0, `${page.rel} carries a flow, and D185 places it on How It Works and on the homepage`)
+    }
+  }
+})
+
+test('the flow refusals fire on the defect each one names', () => {
+  // A page carrying the flow in the shape the component writes it, which passes; each
+  // fixture below breaks one thing in it, so the check above cannot pass by reading nothing.
+  const flow = ({ captionOutside = false, arrowHidden = true } = {}) => {
+    const arrow = arrowHidden
+      ? '<svg class="step-arrow" aria-hidden="true" focusable="false"><path d="M1 1"></path></svg>'
+      : '<svg class="step-arrow"><path d="M1 1"></path></svg>'
+    // The arrow is the component's own placement: inside the step, after its card.
+    const step = (n, body, svg = '') => `<li class="flow-step" data-step="step ${n}"><div class="step-card">${body}</div>${svg}</li>`
+    return [
+      '<!DOCTYPE html><html lang="en"><head><title>T</title></head><body><main id="main"><h1>T</h1>',
+      '<figure class="flow"><ol class="flow-steps">',
+      step(1, '<h2>One</h2><p class="step-caption">first</p>', arrow),
+      step(2, captionOutside ? '<h2>Two</h2>' : '<h2>Two</h2><p class="step-caption">second</p>'),
+      captionOutside ? '<p class="step-caption">second</p>' : '',
+      '</ol></figure></main></body></html>',
+    ].join('')
+  }
+
+  assert.deepEqual(flowA11yFailures(flow()), [], 'the fixture page does not pass the check it is the control for')
+  assert.ok(
+    flowA11yFailures(flow({ captionOutside: true })).some((line) => /carries no caption inside it/.test(line)),
+    'a caption outside its step passes: the list would read the step names and, apart from them, their captions',
+  )
+  assert.ok(
+    flowA11yFailures(flow({ arrowHidden: false })).some((line) => /is not marked as decoration/.test(line)),
+    'an arrow that is not aria-hidden passes: a screen reader would read the picture the steps already say',
+  )
 })
 
 test('the recorded heading-order defect on the docs page is still real, so its exception is still needed', () => {
