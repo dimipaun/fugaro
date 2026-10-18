@@ -77,7 +77,8 @@ questions:
     question: What can a run never change?
     answer: >-
       Your workflow files. On GitHub the App holds four repository permissions -- Contents,
-      Pull requests, Issues and Metadata -- and never Workflows.
+      Pull requests, Issues and Metadata -- and never Workflows. Bitbucket has no equivalent
+      guard.
     source: README.md
 
   - id: security-limits
