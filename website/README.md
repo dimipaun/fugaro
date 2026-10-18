@@ -65,7 +65,7 @@ asserts the same over the built HTML's script, link, iframe and image origins.
 
 ## The gates
 
-Four checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Five checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network:
 
 - `test/linkcheck.mjs` — every internal link and asset resolves to a built file, every
@@ -113,6 +113,14 @@ with fixtures that keep its refusals running, and none of them needs the network
     The ceiling is set against the site as it was measured before the redesign
     (`docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
     getting-started 431, privacy 277, community 268 — every one of them over it).
+- `test/meta.mjs` — the provenance-phrase gate (D186): a page must not explain why its own
+  text exists, so D186's phrase list (`rendered from`, `generated rather than written`, …) is
+  refused in the text a reader reads, on every built page. It is the one defect the other
+  four cannot see — a sentence about the build is short, well-formed and honest — and it is
+  the sentence the redesign removes. Naming a document is not provenance text: the docs hub
+  names each guide's file, a page may link to `SECURITY.md`, and the changelog renders the
+  release files' own lines, which is why D186 chose an explicit list over a rule about
+  naming a repository file.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
