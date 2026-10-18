@@ -6,7 +6,7 @@
 // gate's verdict decides what is offered, every read goes through the bridge the
 // way the preload would answer it, and the poll is a clock the test owns.
 //
-// Five claims are held here, and each of them is a claim about a decision the
+// Six claims are held here, and each of them is a claim about a decision the
 // entry makes rather than about a drawing a screen makes:
 //
 //   1. **A refused handshake mounts no screen and makes no read at all.** D7's
@@ -17,17 +17,22 @@
 //      and `showBudget` are not called -- not on a click, not on a poll.
 //   3. **A reply the console cannot read draws the unavailable state.** An
 //      undecodable `live.watch` document is a refusal screen with the schema's
-//      own sentence in it, and no figure anywhere.
+//      own sentence in it, and no figure anywhere -- and so is a read that
+//      rejected instead of answering, which is the other way a read fails.
 //   4. **The Live screen is the frame, and a run row is a door.** The committed
 //      synthetic recording's repository and runs are drawn, and clicking a run
 //      row asks for that run's diagnosis and logs.
 //   5. **At most one `live.watch` is in flight, and polling stops when nobody is
 //      looking.** The interval is not a second read while one is outstanding,
-//      and a hidden window or a view other than Live stops it.
+//      and a hidden window, a view other than Live, or an open run stops it.
+//   6. **A read that lands after the operator moved on is not drawn.** The panel
+//      is the view they chose: a spend report or a live frame that answered late
+//      does not replace it.
 //
 // And one grep: **the fixture source is not reachable from the shipped code.**
 // `src/source/fixture.ts` is the unit tests' source, reached only through the
-// `sourceFor` they inject; nothing under `src/` imports it.
+// `sourceFor` they inject; nothing under `src/` imports it, however the import
+// is spelled.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -37,6 +42,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { loadFixture } from '../../src/source/fixture'
 import {
   LIVE_POLL_MS,
+  READ_UNREADABLE,
   VIEW_BUTTON_CLASS,
   VIEW_NAV_CLASS,
   VIEW_PANEL_CLASS,
@@ -231,6 +237,33 @@ describe('the dashboard the entry mounts', () => {
     // repository row, no run and no reading to mistake for a measurement.
     expect(classed(panel, 'live-repo-name')).toEqual([])
     expect(classed(panel, 'live-run')).toEqual([])
+  })
+
+  it('draws the sentence when a read rejects instead of answering', async () => {
+    // A read can fail to answer two ways: the member throws before it returns,
+    // and the promise it returned rejects. `invoke` on a channel with nothing
+    // behind it is the second, and it is the one a `try`/`catch` around the call
+    // does not see. Both are "the console could not read this": the screen draws
+    // the sentence it draws for any other unreadable answer, rather than keeping
+    // the previous screen while a rejection nobody caught floats away.
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () =>
+          snapshotReply(syntheticDocuments()[0] as Readonly<Record<string, unknown>>),
+        showBudget: () => Promise.reject(new Error('no handler registered for budget.show')),
+        runReport: () => Promise.reject(new Error('no handler registered for spend.report')),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    buttonFor(document, 'spend').click()
+    await flush()
+
+    const drawn = panel.children[0] as FakeNode
+    expect(drawn.attributes.get('class')).toBe('console-unavailable')
+    expect(drawn.attributes.get('data-kind')).toBe('refused')
+    expect(classed(drawn, 'unavailable-operation')[0]?.textContent).toBe('spend.report')
+    expect(textOf(drawn)).toContain(READ_UNREADABLE)
   })
 
   it('draws the synthetic frame’s repository and runs, and opens Run detail from a run row', async () => {
@@ -526,11 +559,18 @@ describe('the dashboard the entry mounts', () => {
  * `require`, which is what "imports nothing from" is a claim about. A mention in
  * prose is not an import -- several of these files name `src/source/fixture.ts`
  * in a comment, on purpose -- so this reads the specifiers and not the text.
+ *
+ * All three spellings are read: `from '...'` (a static import or a re-export),
+ * `require('...')` and `import('...')`. Both quoting styles are read too: a
+ * scan that knew only one of them would be a scan that a differently quoted
+ * import of the fixture source walks past, which is the claim this makes.
  */
 function importsOf(source: string): readonly string[] {
   const found: string[] = []
-  for (const match of source.matchAll(/from\s+'([^']+)'|require\('([^']+)'\)/g)) {
-    found.push((match[1] ?? match[2]) as string)
+  for (const match of source.matchAll(
+    /(?:\bfrom\s*|\brequire\s*\(\s*|\bimport\s*\(\s*)['"]([^'"]+)['"]/g,
+  )) {
+    found.push(match[1] as string)
   }
   return found
 }
@@ -548,11 +588,16 @@ function everySource(directory: string): readonly string[] {
 
 describe('the fixture source', () => {
   it('is imported by nothing under src/ but itself', () => {
-    // The probe: this scan is only about imports if it finds them.
-    expect(importsOf(`import { a } from '../source/fixture'\nrequire('./x')\n`)).toEqual([
-      '../source/fixture',
-      './x',
-    ])
+    // The probe: this scan is only about imports if it finds them -- and it
+    // finds them however they are written. A scan that only read one quoting
+    // style would be a scan a double-quoted import walks past, which is the
+    // whole of the claim it is here to make.
+    expect(
+      importsOf(
+        `import { a } from '../source/fixture'\nrequire('./x')\n` +
+          `import type { B } from "../source/fixture"\nconst c = await import("./fixture")\n`,
+      ),
+    ).toEqual(['../source/fixture', './x', '../source/fixture', './fixture'])
     const files = everySource(join(CONSOLE_ROOT, 'src'))
     expect(files.length, 'the scan found no sources: it would pass by finding nothing').toBeGreaterThan(20)
     const importers = files

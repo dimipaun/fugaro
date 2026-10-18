@@ -270,15 +270,21 @@ export interface ReadBridge {
 }
 
 /** readBridgeFrom is the seven reads over the structural bridge. A missing
- * member answers `null` rather than rejecting, and so does a member that throws
- * before it answers: both are "the console could not read this", which
- * `replyData` turns into the sentence every screen draws in place of a figure. */
+ * member answers `null` rather than rejecting, and so does a member that fails
+ * to answer -- by throwing before it returns, or by returning a promise that
+ * rejects, which is what `invoke` does on a channel with nothing behind it.
+ * Both are "the console could not read this", which `replyData` turns into the
+ * sentence every screen draws in place of a figure. */
 export function readBridgeFrom(fugaro: unknown): ReadBridge {
   const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => {
     const member = methodOf(fugaro, name)
     if (member === null) return Promise.resolve(null)
     try {
-      return Promise.resolve(member(args))
+      // The rejection is the half a `try`/`catch` around the call cannot see:
+      // the call returned before it failed. Left alone it is an unhandled
+      // rejection and a screen that silently keeps whatever was drawn before
+      // it, so the read that failed to answer answers `null` like the rest.
+      return Promise.resolve(member(args)).catch(() => null)
     } catch {
       return Promise.resolve(null)
     }
@@ -876,7 +882,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
     const reader: SpendReader = async (args) => {
       const answer = documentOf(await bridge.runReport(args))
-      if (!answer.ok) throw new Error(answer.sentence)
+      // The sentence travels on the thrown value, which is how `readSpend`
+      // reads a refusal (`refusalSentence` takes `cause.sentence`, the shape
+      // `CliSource` throws). A read the console could not make at all -- a
+      // rejection, an answer that is not a reply -- must be drawn with *that*
+      // sentence, not as a read the CLI refused and printed nothing for.
+      if (!answer.ok) throw { sentence: answer.sentence }
       return answer.data
     }
 
