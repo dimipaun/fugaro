@@ -1119,3 +1119,183 @@ test('a queue handed back mutated is refused, not trusted', () => {
     REFUSAL.INVALID_QUEUE,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Hostile inputs: a refusal, never an exception (the package's convention)
+// ---------------------------------------------------------------------------
+
+/** A name the module must never repeat back: whatever the trap was handed. */
+const SECRET = 'a name this module must not repeat';
+
+/** A proxy whose every trap throws SECRET. */
+function hostile() {
+  const trap = () => {
+    throw new Error(SECRET);
+  };
+  return new Proxy({}, {
+    getPrototypeOf: trap,
+    ownKeys: trap,
+    getOwnPropertyDescriptor: trap,
+    get: trap,
+    has: trap,
+  });
+}
+
+/** A revoked proxy: every trap throws, and `IsArray` throws too. */
+function revoked() {
+  const held = Proxy.revocable({}, {});
+  held.revoke();
+  return held.proxy;
+}
+
+test('an exception from a hostile input is a refusal, and what was thrown is never echoed', () => {
+  // P1.1 and P6.2 both answer a frozen `internal-error` refusal where an input
+  // makes them throw, and document it; a hostile value is an input like any
+  // other. This module is reachable from the same places -- a queue is local
+  // state the app hands back, and a digest, a message and a switch come from
+  // elsewhere -- so it answers the same way, and what was thrown is never
+  // echoed: it may carry whatever the input put in it, including a key.
+  const queue = enqueueOne(makeQueue()).queue;
+  const calls = [
+    ['initialQueue(options)', () => initialQueue(hostile())],
+    ['initialQueue(revoked)', () => initialQueue(revoked())],
+    ['enqueue(queue)', () => enqueue(hostile(), { now: T0, prompt: promptMessage() })],
+    ['enqueue(revoked queue)', () => enqueue(revoked(), { now: T0, prompt: promptMessage() })],
+    ['enqueue(event)', () => enqueue(queue, hostile())],
+    ['enqueue(revoked event)', () => enqueue(queue, revoked())],
+    ['expire(event)', () => expire(queue, hostile())],
+    ['expire(revoked queue)', () => expire(revoked(), { now: T0 })],
+    ['answer(event)', () => answer(queue, hostile())],
+    ['answer(revoked queue)', () => answer(revoked(), { now: T0, answer: answerMessage() })],
+    ['pending(queue)', () => pending(hostile(), { now: T0 })],
+    ['announce(event)', () => announce(queue, revoked())],
+    ['pendingAcross(queues)', () => pendingAcross([hostile()], { now: T0 })],
+    ['pendingAcross(revoked)', () => pendingAcross(revoked(), { now: T0 })],
+    ['announcement(queues)', () => announcement([hostile()], { now: T0 })],
+    ['announcement(revoked)', () => announcement(revoked(), { now: T0 })],
+    ['evaluateInterrupt(input)', () => evaluateInterrupt(hostile())],
+    ['evaluateInterrupt(revoked)', () => evaluateInterrupt(revoked())],
+    // A queue whose own entries are hostile: the throw happens deeper in, in
+    // the reader that re-validates each held prompt.
+    ['pending(a hostile entry)', () => pending({ ...queue, prompts: [hostile()] }, { now: T0 })],
+    // The two predicates do arithmetic on their values, so a value in place of
+    // a number can throw inside them: they answer the same refusal rather than
+    // throwing, and `false` is NOT the answer -- false means "still alive".
+    ['isExpired(hostile)', () => isExpired(revoked(), T0, HOUR)],
+    ['reminderStage(hostile)', () => reminderStage(revoked(), T0)],
+  ];
+
+  for (const [what, call] of calls) {
+    let result;
+    try {
+      result = call();
+    } catch (error) {
+      assert.fail(`${what} threw instead of refusing: ${error && error.message}`);
+    }
+    assert.equal(result.ok, false, what);
+    assert.equal(result.code, REFUSAL.INTERNAL_ERROR, what);
+    assert.equal(result.field, null, what);
+    assert.ok(Object.isFrozen(result), what);
+    assert.equal(JSON.stringify(result).includes(SECRET), false, `${what}: ${JSON.stringify(result)}`);
+  }
+});
+
+test('no entry point throws, whatever it is handed', () => {
+  // The same claim over the WHOLE exported surface, including the helpers that
+  // answer a bare value rather than a result: a caller can hold a function of
+  // this module and a value from anywhere, and neither the exception nor the
+  // module's header should be a surprise.
+  const queue = enqueueOne(makeQueue()).queue;
+  const surface = {
+    initialQueue: () => initialQueue(revoked()),
+    enqueue: () => enqueue(revoked(), revoked()),
+    expire: () => expire(revoked(), revoked()),
+    answer: () => answer(revoked(), revoked()),
+    pending: () => pending(revoked(), revoked()),
+    announce: () => announce(revoked(), revoked()),
+    pendingAcross: () => pendingAcross(revoked(), { now: T0 }),
+    announcement: () => announcement(revoked(), { now: T0 }),
+    evaluateInterrupt: () => evaluateInterrupt(revoked()),
+    isExpired: () => isExpired(hostile(), hostile(), hostile()),
+    reminderStage: () => reminderStage(hostile(), hostile()),
+    waitingSentence: () => waitingSentence(hostile()),
+    acceptanceKind: () => acceptanceKind(hostile()),
+  };
+  for (const [name, call] of Object.entries(surface)) {
+    assert.doesNotThrow(call, `${name} must not throw`);
+  }
+  // The two that cannot throw are asserted to be what they always were: a
+  // hostile count is not a sentence, and a hostile flag is still a flag.
+  assert.equal(waitingSentence(revoked()), null);
+  assert.equal(acceptanceKind(revoked()), MAILBOX_KIND.COMMAND);
+  assert.equal(queue.prompts.length, 1, 'and none of this touched the queue');
+});
+
+test('reminderStage is monotone in `at`, which is why the listing is the queue order', () => {
+  // The premise behind two things that are one thing: escalation is monotone in
+  // a prompt's `at` (an older prompt has waited at least as long), and the queue
+  // is stored `at`,id-ordered -- so listing the most escalated first IS listing
+  // the oldest first, and `pending` needs no stage rule of its own. Asserted
+  // here rather than assumed, because a rule that cannot differ from the order
+  // it sits on is a rule nothing defends.
+  let previous = -Infinity;
+  for (let offset = 0; offset <= 5 * DAY; offset += 17 * MINUTE) {
+    const stage = reminderStage(T0 - offset, T0);
+    assert.ok(
+      stage >= previous,
+      `stage(${offset} ms old) = ${stage} must not be lower than stage(${offset - 17 * MINUTE} ms old) = ${previous}`,
+    );
+    previous = stage;
+  }
+});
+
+test('expire reports the deaths oldest first, which is the order they are held in', () => {
+  // No sort, and none needed: the queue is stored `at`,id-ordered, the expired
+  // list is built by walking it, and the listing order is that order (previous
+  // test). An orchestrator waiting the longest hears first.
+  const queue = enqueue(
+    enqueue(
+      enqueue(makeQueue({ promptTtlMs: HOUR }), { now: T0, prompt: promptMessage({ id: 'p1' }) }).queue,
+      { now: T0, prompt: promptMessage({ id: 'p2', at: T0 + MINUTE }) },
+    ).queue,
+    { now: T0, prompt: promptMessage({ id: 'p3', at: T0 + 2 * MINUTE }) },
+  ).queue;
+  const swept = expire(queue, { now: T0 + 2 * HOUR });
+  assert.equal(swept.ok, true, JSON.stringify(swept));
+  assert.deepEqual(swept.expired.map((entry) => entry.id), ['p1', 'p2', 'p3']);
+  assert.deepEqual(swept.expired.map((entry) => entry.at), [T0, T0 + MINUTE, T0 + 2 * MINUTE]);
+});
+
+test('the digest is read through its own descriptor: an accessor is refused, not called', () => {
+  // `severity` is the one field of P1.3's digest the policy reads, and it is
+  // read like every other field this module reads -- once, through its own
+  // descriptor. A getter here would be called and believed, which is the one
+  // thing the module's whole answer is not allowed to do: it decides whether
+  // the app may speak over the user.
+  let called = 0;
+  const digest = { project: 'fugaro', total: 1, items: [] };
+  Object.defineProperty(digest, 'severity', {
+    enumerable: true,
+    get() {
+      called += 1;
+      return SEVERITY.kill;
+    },
+  });
+  const queue = enqueueOne(makeQueue()).queue;
+  const result = evaluateInterrupt({ queue, digest, switch: SWITCH.DEFAULT, now: T0 });
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.code, REFUSAL.ACCESSOR_PROPERTY);
+  assert.equal(result.field, 'digest.severity');
+  assert.equal(called, 0, 'the getter must not be called: a value read twice is not a value');
+
+  // And the field the module does read is still read: P1.3's own digest shape
+  // (project, total, severity, items) is accepted whole.
+  assert.equal(
+    evaluateInterrupt({ queue, digest: digestOf(SEVERITY.kill), switch: SWITCH.DEFAULT, now: T0 }).reason,
+    INTERRUPT.KILL,
+  );
+  assert.equal(
+    evaluateInterrupt({ queue, digest: digestOf(SEVERITY.info), switch: SWITCH.DEFAULT, now: T0 }).interrupt,
+    false,
+  );
+});

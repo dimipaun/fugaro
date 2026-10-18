@@ -24,7 +24,9 @@
 //
 // The owner first answered "never expire", then amended it the same day: a
 // prompt's lifetime is **D118's mailbox TTL**, which the owner set to **72
-// hours** (O5, 2026-10-17, inside P1.1's seven-day cap). So
+// hours** (O5, 2026-10-17, inside P1.1's thirty-day ceiling for a prompt's TTL,
+// `MAX_PROMPT_TTL_MS` -- not the seven days P1.1 caps the six-hour command
+// window's `windowMs` at). So
 //
 //     expired(prompt, now)  ==  now - prompt.at > promptTtlMs
 //
@@ -98,7 +100,11 @@
 // Nothing here reads a clock, a file, the network or a random source, and the
 // only imports are the merged pure modules this task builds on: P1.1's windows
 // and kind vocabulary, P1.3's severity ladder, P1.4's state names and P6.3's
-// schema. `shared/prompts/README.md` is the module's own contract, and
+// schema. Nothing here raises either: every entry point is wrapped in `guarded`
+// (see below), so a hostile value -- a revoked Proxy, or one whose traps throw
+// -- is answered as the frozen `internal-error` refusal, the same code P1.1 and
+// P6.2 answer for the same reason.
+// `shared/prompts/README.md` is the module's own contract, and
 // `../../docs/mobile/implementation-plan.md`'s P6.5 is this module's task.
 
 import { severityRank, SEVERITY } from '../digest/severity.js';
@@ -225,6 +231,7 @@ export const REFUSAL = Object.freeze({
   INPUT_NOT_AN_OBJECT: 'input-not-an-object',
   UNKNOWN_FIELD: 'unknown-field',
   ACCESSOR_PROPERTY: 'accessor-property',
+  INTERNAL_ERROR: 'internal-error',
 
   INVALID_NOW: 'invalid-now',
   NOW_WENT_BACKWARDS: 'now-went-backwards',
@@ -325,6 +332,35 @@ function refuse(code, field) {
 }
 
 /**
+ * guarded makes an entry point total: every exported function below is wrapped
+ * in it, so a hostile value -- a revoked Proxy, or one whose traps throw -- is
+ * answered as the frozen `internal-error` refusal instead of raising out of a
+ * module whose whole contract is to decide, not to fail.
+ *
+ * The reason it is one function rather than a copy per entry point is this
+ * module's own: two copies of one rule are two behaviours waiting to differ.
+ * P1.1 (`shared/mailbox/index.js`, `step` and `initialState`) and P6.2
+ * (`shared/confirm/index.js`, `initialState`, `step`, `deliver`) answer the same
+ * code for the same reason, and the code is spelled the same, so a caller can
+ * branch on either module's answer.
+ *
+ * What was thrown is **never echoed** and nothing of the exception is read:
+ * the value carries whatever the input put in it, which on this module's inputs
+ * could be a name out of a key or a document, and a refusal is not a place to
+ * repeat it. `field` is therefore `null`: which field was at fault is exactly
+ * what could not be determined.
+ */
+function guarded(fn) {
+  return function (...args) {
+    try {
+      return fn(...args);
+    } catch {
+      return refuse(REFUSAL.INTERNAL_ERROR, null);
+    }
+  };
+}
+
+/**
  * readFields reads exactly the named fields into a null-prototype snapshot,
  * each field once, through its own descriptor.
  *
@@ -367,8 +403,16 @@ function readFields(value, names, where) {
  *
  * Strictly greater: a prompt of age exactly the TTL is still alive, which is
  * exactly where P1.1's `deliver` stops accepting it (`now - at > window`).
+ *
+ * Guarded like every entry point (see `guarded`): three values that are not
+ * numbers -- a hostile Proxy in place of one -- answer the `internal-error`
+ * refusal rather than raising. `false` would be the other possible answer, and
+ * it is the one a predicate that cannot run must not give: `false` says "still
+ * alive", which would hand the user a question the TTL has already ended.
  */
-export function isExpired(at, now, promptTtlMs) {
+export const isExpired = guarded(isExpiredUnguarded);
+
+function isExpiredUnguarded(at, now, promptTtlMs) {
   return now - at > promptTtlMs;
 }
 
@@ -380,7 +424,9 @@ export function isExpired(at, now, promptTtlMs) {
  * entry's local `announcedAt`, because this module cannot know when the app's
  * natural pauses were.
  */
-export function reminderStage(at, now) {
+export const reminderStage = guarded(reminderStageUnguarded);
+
+function reminderStageUnguarded(at, now) {
   const waited = now - at;
   if (waited < REMINDER_AFTER_MS) return 0;
   return 1 + Math.floor((waited - REMINDER_AFTER_MS) / REMINDER_INTERVAL_MS);
@@ -432,13 +478,17 @@ function isDue(entry, now) {
  * 72 hours (O5); `windowMs` defaults to P1.1's command window, imported rather
  * than restated, because an answer to a destructive prompt takes it (D173).
  *
- * It returns a frozen `{ ok: true, queue }` or a refusal; it never throws.
+ * It returns a frozen `{ ok: true, queue }` or a refusal; it never throws — a
+ * hostile value that makes it raise is answered as `internal-error`, like every
+ * other entry point here (`guarded`).
  *
  * @param {{ now: number, account: string, promptTtlMs?: number, windowMs?: number,
  *           maxPending?: number, futureToleranceMs?: number }} [options]
  * @returns {{ ok: true, queue: object } | { ok: false, code: string, field: string | null }}
  */
-export function initialQueue(options = {}) {
+export const initialQueue = guarded(initialQueueUnguarded);
+
+function initialQueueUnguarded(options = {}) {
   const read = readFields(
     options,
     QUEUE_FIELDS.filter((field) => field !== 'prompts'),
@@ -717,7 +767,9 @@ function open(queue, event, names, where) {
  * @param {{ now: number, prompt: object, destructive?: boolean, safe?: string }} event
  * @returns {object} `{ ok: true, outcome, queue, ... }` or a refusal
  */
-export function enqueue(queue, event) {
+export const enqueue = guarded(enqueueUnguarded);
+
+function enqueueUnguarded(queue, event) {
   const opened = open(queue, event, DELIVERY_FIELDS, 'event');
   if (!opened.ok) return opened;
   const { queue: current, values } = opened;
@@ -831,7 +883,9 @@ function expiryOf(entry) {
  *
  * @returns `{ ok: true, queue, expired: [...] }` or a refusal
  */
-export function expire(queue, event = {}) {
+export const expire = guarded(expireUnguarded);
+
+function expireUnguarded(queue, event = {}) {
   const opened = open(queue, event, TIME_ONLY_FIELDS, 'event');
   if (!opened.ok) return opened;
   const { queue: current, values } = opened;
@@ -845,10 +899,15 @@ export function expire(queue, event = {}) {
       kept.push(entry);
     }
   }
-  // The listing order, not the storage order: an expired question that had
-  // escalated is the one the orchestrator has been waiting on the longest.
-  expired.sort((left, right) => compareForListing(left, values.now, right, values.now));
-
+  // No sort, and none is needed: this walk is over `current.prompts`, which is
+  // held in the queue's canonical order (`at`, then id), and that order IS the
+  // listing order -- escalation is monotone in `at` (an older prompt has waited
+  // at least as long, see `reminderStage`), so the most escalated question is
+  // already the first one the walk meets. `index.test.js` asserts both halves:
+  // the monotonicity, and that this list comes back oldest-first. An earlier
+  // version sorted here with a comment claiming the listing order differed from
+  // the storage order; it cannot differ, and a rule nothing can tell apart is a
+  // rule no test defends.
   return Object.freeze({
     ok: true,
     queue: freezeQueue({ ...current, now: values.now, prompts: kept }),
@@ -883,7 +942,9 @@ export function expire(queue, event = {}) {
  *
  * @returns `{ ok: true, outcome: 'answered', queue, ... }` or a refusal
  */
-export function answer(queue, event = {}) {
+export const answer = guarded(answerUnguarded);
+
+function answerUnguarded(queue, event = {}) {
   const opened = open(queue, event, ANSWER_EVENT_FIELDS, 'event');
   if (!opened.ok) return opened;
   const { queue: current, values } = opened;
@@ -975,7 +1036,9 @@ function windowFor(queue, kind) {
  * prompt's lifetime is its TTL. Exported so P6.7's consumer passes exactly the
  * kind this module judged with -- the two ends cannot pick different windows.
  */
-export function acceptanceKind(destructive) {
+export const acceptanceKind = guarded(acceptanceKindUnguarded);
+
+function acceptanceKindUnguarded(destructive) {
   return destructive ? KIND.COMMAND : KIND.PROMPT;
 }
 
@@ -1017,14 +1080,19 @@ function spokenItem(entry, now) {
 }
 
 /**
- * The listing order: the most escalated first -- a re-announced prompt is
- * "listed first in what's pending" (§3.4) -- then the oldest, then the id,
- * which makes the order total and independent of arrival.
+ * The listing order: the oldest first, then the id, which makes the order total
+ * and independent of arrival -- the queue's own canonical order, applied to
+ * either shape this module lists (an entry, which carries its `prompt`, or the
+ * flat expiry record `expiryOf` returns).
+ *
+ * "The most escalated first" (§3.4's "listed first in what's pending") is this
+ * same order and not a second rule: `reminderStage` is monotone in `at` (an
+ * older prompt has waited at least as long), so a stage rule here would order
+ * the list exactly as the `at` comparison already does. `index.test.js` asserts
+ * the monotonicity that makes the two one rule, because a rule that cannot
+ * differ from the order beneath it cannot be tested through this function.
  */
-function compareForListing(left, leftNow, right, rightNow) {
-  const leftStage = reminderStage(left.prompt ? left.prompt.at : left.at, leftNow);
-  const rightStage = reminderStage(right.prompt ? right.prompt.at : right.at, rightNow);
-  if (leftStage !== rightStage) return rightStage - leftStage;
+function compareForListing(left, right) {
   const leftAt = left.prompt ? left.prompt.at : left.at;
   const rightAt = right.prompt ? right.prompt.at : right.at;
   if (leftAt !== rightAt) return leftAt < rightAt ? -1 : 1;
@@ -1045,13 +1113,15 @@ function compareForListing(left, leftNow, right, rightNow) {
  *
  * @returns `{ ok: true, pending: [...] }` or a refusal
  */
-export function pending(queue, event = {}) {
+export const pending = guarded(pendingUnguarded);
+
+function pendingUnguarded(queue, event = {}) {
   const opened = open(queue, event, TIME_ONLY_FIELDS, 'event');
   if (!opened.ok) return opened;
   const { queue: current, values } = opened;
   const list = current.prompts
     .map((entry) => listing(entry, values.now))
-    .sort((left, right) => compareForListing(left, values.now, right, values.now));
+    .sort(compareForListing);
   return Object.freeze({ ok: true, queue: current, pending: Object.freeze(list) });
 }
 
@@ -1070,14 +1140,16 @@ export function pending(queue, event = {}) {
  *
  * @returns `{ ok: true, queue, spoken: [...] }` or a refusal
  */
-export function announce(queue, event = {}) {
+export const announce = guarded(announceUnguarded);
+
+function announceUnguarded(queue, event = {}) {
   const opened = open(queue, event, TIME_ONLY_FIELDS, 'event');
   if (!opened.ok) return opened;
   const { queue: current, values } = opened;
 
   const due = current.prompts
     .filter((entry) => isDue(entry, values.now))
-    .sort((left, right) => compareForListing(left, values.now, right, values.now));
+    .sort(compareForListing);
 
   // The entries are marked first and the `spoken` list is read from the marked
   // ones, so what the caller is handed is what the queue now holds: the
@@ -1126,7 +1198,9 @@ const NUMBER_WORDS = Object.freeze([
  * fallback exists for several installations at their cap, and that many
  * questions is a number a person wants to hear exactly.
  */
-export function waitingSentence(count) {
+export const waitingSentence = guarded(waitingSentenceUnguarded);
+
+function waitingSentenceUnguarded(count) {
   if (!Number.isSafeInteger(count) || count < 0) return null;
   if (count === 0) return null;
   const word = count < NUMBER_WORDS.length ? NUMBER_WORDS[count] : String(count);
@@ -1166,7 +1240,9 @@ function readQueues(queues, where) {
  *
  * @returns `{ ok: true, count, accounts: [{ account, pending }] }` or a refusal
  */
-export function pendingAcross(queues, event = {}) {
+export const pendingAcross = guarded(pendingAcrossUnguarded);
+
+function pendingAcrossUnguarded(queues, event = {}) {
   const read = readQueues(queues, 'queues');
   if (!read.ok) return read;
   const time = readFields(event, TIME_ONLY_FIELDS, 'event');
@@ -1180,7 +1256,7 @@ export function pendingAcross(queues, event = {}) {
     if (now < queue.now) return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');
     const list = queue.prompts
       .map((entry) => listing(entry, now))
-      .sort((left, right) => compareForListing(left, now, right, now));
+      .sort(compareForListing);
     count += list.length;
     accounts.push(Object.freeze({ account: queue.account, pending: Object.freeze(list) }));
   }
@@ -1202,7 +1278,9 @@ export function pendingAcross(queues, event = {}) {
  * with its account, so the app can say which installation is asking before it
  * reads the question out.
  */
-export function announcement(queues, event = {}) {
+export const announcement = guarded(announcementUnguarded);
+
+function announcementUnguarded(queues, event = {}) {
   const read = readQueues(queues, 'queues');
   if (!read.ok) return read;
   const time = readFields(event, TIME_ONLY_FIELDS, 'event');
@@ -1217,7 +1295,7 @@ export function announcement(queues, event = {}) {
     count += queue.prompts.length;
     const mine = queue.prompts
       .filter((entry) => isDue(entry, now))
-      .sort((left, right) => compareForListing(left, now, right, now));
+      .sort(compareForListing);
     for (const entry of mine) {
       due.push(Object.freeze({ account: queue.account, ...listing(entry, now) }));
     }
@@ -1270,7 +1348,9 @@ const CAP_FIELDS = Object.freeze(['reached', 'near']);
  *
  * @returns `{ ok: true, interrupt, reason, pending }` or a refusal
  */
-export function evaluateInterrupt(input = {}) {
+export const evaluateInterrupt = guarded(evaluateInterruptUnguarded);
+
+function evaluateInterruptUnguarded(input = {}) {
   const read = readFields(input, POLICY_FIELDS, 'input');
   if (!read.ok) return read;
   const values = read.values;
@@ -1329,11 +1409,26 @@ function decide({ kill, reached, near, offline, due, setting }) {
   return null;
 }
 
-/** The kill-switch signal: P1.3's ladder's top rung, or nothing. */
+/**
+ * The kill-switch signal: P1.3's ladder's top rung, or nothing.
+ *
+ * `severity` is the one field of another module's result this policy reads, and
+ * it is read exactly as this module reads its own fields: once, through its own
+ * descriptor. A plain `digest.severity` would CALL a getter and believe what it
+ * answered -- and a getter can answer differently each time, which is the one
+ * thing an answer about whether the app may speak over the user cannot be built
+ * on. The other keys are P1.3's business (`project`, `total`, `items`), so no
+ * vocabulary is imposed on them here: this is `readFields`' discipline without
+ * `readFields`' key list, for a value this module does not own.
+ */
 function readKill(digest) {
   if (digest === undefined || digest === null) return { value: false };
   if (!isPlainObject(digest)) return { bad: refuse(REFUSAL.INVALID_SEVERITY, 'digest') };
-  const severity = digest.severity;
+  const descriptor = Object.getOwnPropertyDescriptor(digest, 'severity');
+  if (descriptor !== undefined && !Object.hasOwn(descriptor, 'value')) {
+    return { bad: refuse(REFUSAL.ACCESSOR_PROPERTY, 'digest.severity') };
+  }
+  const severity = descriptor === undefined ? undefined : descriptor.value;
   if (severity === undefined) return { bad: refuse(REFUSAL.INVALID_SEVERITY, 'digest.severity') };
   try {
     severityRank(severity);

@@ -382,11 +382,20 @@ run "a prompt whose reminder has come round is due again" \
   "  return entry.announcedAt < reminderAt(entry.prompt.at, stage);" \
   "  return false;"
 
-# The listing order: the most escalated first, because a re-announced prompt is
-# the one the user has been ignoring longest.
-run "the listing puts the escalated prompt first" \
-  "  if (leftStage !== rightStage) return rightStage - leftStage;" \
-  "  if (leftStage !== rightStage) return leftStage - rightStage;"
+# The listing order is the queue's own order -- oldest first, then the id --
+# because escalation is monotone in `at` and the queue is already held `at`,id.
+# There is no stage rule left to mutate: the guard that used to sit here (flip
+# the stage comparison) could not be told apart from the `at` comparison below
+# it, which is exactly why the rule was deleted. What defends the equivalence is
+# the monotonicity of `reminderStage`, mutated next, and the expired list's
+# order, after it.
+run "the reminder schedule never goes backwards as a prompt ages" \
+  "  return 1 + Math.floor((waited - REMINDER_AFTER_MS) / REMINDER_INTERVAL_MS);" \
+  "  return 1 + Math.floor((waited - REMINDER_AFTER_MS) / REMINDER_INTERVAL_MS) - (waited > 3 * REMINDER_INTERVAL_MS ? 2 : 0);"
+
+run "an expiry list is reported oldest first" \
+  "      expired.push(expiryOf(entry));" \
+  "      expired.unshift(expiryOf(entry));"
 
 # The count is across accounts (D168's "Two questions waiting", one sentence for
 # the phone), and nothing waiting is an announcement of nothing.
@@ -493,13 +502,50 @@ run "an answered prompt leaves the queue" \
   "  const prompts = current.prompts.filter((_, position) => position !== index);" \
   "  const prompts = current.prompts;"
 
-# The module reads no clock of its own: every entry point takes its `now`. This
-# mutation is semantically inert -- `void globalThis` decides nothing -- and is
-# here to prove that the source scan in index.test.js is what catches a reach
-# for a global, a clock or a builtin, not a change in behaviour.
+# The module reaches for no global, no clock and no builtin: this mutation is
+# semantically inert -- `void globalThis` decides nothing -- and is here to prove
+# that the source scan in index.test.js is what catches a reach for a global, a
+# clock or a builtin, not a change in behaviour.
 run "the module reaches for no global, no clock and no builtin" \
   "  const waited = now - at;" \
   "  const waited = now - at; void globalThis;"
+
+# An exception from a hostile input is a refusal, not an exception: the try/catch
+# is the whole of that promise, and deleting it fails the suite on the first
+# Proxy. P1.1 and P6.2 answer the same code the same way.
+run "a hostile input is refused, not raised" \
+  "    try {
+      return fn(...args);
+    } catch {
+      return refuse(REFUSAL.INTERNAL_ERROR, null);
+    }" \
+  "    return fn(...args);"
+
+# And what was thrown is never echoed: it may carry whatever the input put in
+# it, which on these inputs could be a name out of a key or a document.
+run "the refusal never echoes what was thrown" \
+  "    try {
+      return fn(...args);
+    } catch {
+      return refuse(REFUSAL.INTERNAL_ERROR, null);
+    }" \
+  "    try {
+      return fn(...args);
+    } catch (error) {
+      return refuse(REFUSAL.INTERNAL_ERROR, String(error && error.message));
+    }"
+
+# The digest is another module's result, and the one field this policy reads is
+# still read through its own descriptor: a plain `digest.severity` calls a getter
+# and believes it, which is the one thing an answer about speaking over the user
+# cannot rest on.
+run "the digest's severity is read through its own descriptor" \
+  "  const descriptor = Object.getOwnPropertyDescriptor(digest, 'severity');
+  if (descriptor !== undefined && !Object.hasOwn(descriptor, 'value')) {
+    return { bad: refuse(REFUSAL.ACCESSOR_PROPERTY, 'digest.severity') };
+  }
+  const severity = descriptor === undefined ? undefined : descriptor.value;" \
+  "  const severity = digest.severity;"
 
 git checkout -- "$F"
 echo "--- control killed; $guards guards: $killed killed, $survivors survived, $unapplied not applied"

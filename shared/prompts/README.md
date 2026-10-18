@@ -124,6 +124,12 @@ re-announced after **one hour** and once a **day** after that, and it is listed 
 pending". The schedule is anchored to the prompt's own `at` — `reminderStage(at, now)` is a pure
 function of the clock — while whether it has been **spoken** is the entry's `announcedAt`. An
 announcement made late counts for the reminder it was late for, so a stage is never spoken twice.
+The listing order is the queue's own order — oldest first, then the id — and that *is* §3.4's
+escalated-first order: `reminderStage` is monotone in `at`, so the prompt that has waited longest is
+the most escalated one, and the two rules are one rule here. `index.test.js` asserts the
+monotonicity rather than assuming it, because a rule that cannot order a list differently from the
+order beneath it is a rule no test could defend — and one that used to sit in this module was
+deleted for exactly that reason.
 
 **The cap bounds storage.** One consumer may hold `maxPending` prompts (16 by default, an
 operator-movable number rather than a measurement). The prompt past the cap is **refused, never
@@ -173,11 +179,24 @@ Every way an input can fail to be this module's input has its own code, exported
 codes P6.3's validator raises are propagated with a `prompt.` or `answer.` prefix, because a stored
 prompt is re-validated by that validator and the two must not disagree about what a prompt is.
 
+**And an input that makes this module raise is one of those ways.** Every exported function is
+wrapped in `guarded`: a hostile value — a revoked `Proxy`, or one whose traps throw — is answered as
+a frozen `internal-error` refusal rather than an exception out of a module whose contract is to
+decide, not to fail. P1.1's `step`/`initialState` and P6.2's `initialState`/`step`/`deliver` do the
+same with the same code, so a caller can branch on either module's answer. **What was thrown is
+never echoed**, and nothing of the exception is read: it may carry whatever the input put in it,
+which on these inputs could be a name out of a key or a document; `field` is therefore `null`,
+because which field was at fault is exactly what could not be determined. `index.test.js` asserts
+this against every entry point, `guarded` is mutation-proved both ways (the `try` deleted, the
+caught value echoed), and the predicates are covered too: `isExpired` answers the refusal rather
+than `false` for a value that is not a number, because `false` means "still alive" and would hand
+the user a question the TTL has already ended.
+
 | Code | When |
 |---|---|
 | `input-not-an-object` | a queue, an event or the policy's input is not a plain object |
 | `unknown-field` | a value carries a field this module does not read — a value is never a bag |
-| `accessor-property` | a field this module does read is an accessor, so it is refused without ever being called (P1.1's code, spelled the same) |
+| `accessor-property` | a field this module does read is an accessor, so it is refused without ever being called (P1.1's code, spelled the same) — including `digest.severity`, the one field this module reads out of P1.3's result |
 | `invalid-now` | `now` is not a positive safe integer |
 | `now-went-backwards` | `now` is earlier than the queue's own, so expiry would run in reverse |
 | `invalid-account` | the installation id is not 1..64 characters |
@@ -200,6 +219,7 @@ prompt is re-validated by that validator and the two must not disagree about wha
 | `id-conflict` | a held id under a different sender or `at` |
 | `queue-full` | the cap — carries `QUEUE_FULL_REPLY` for the orchestrator |
 | `unknown-prompt` | the answer names a prompt this queue does not hold |
+| `internal-error` | an entry point was handed a value that made it raise — a revoked `Proxy`, or one whose traps throw. Frozen, `field: null`, and what was thrown is never echoed (P1.1's and P6.2's code, spelled the same) |
 | `invalid-switch` / `invalid-severity` / `invalid-presence` / `invalid-caps` | the policy was handed a value outside the vocabulary it reads — an unknown severity is refused, never ranked as "not a kill" |
 
 ## Who consumes it
@@ -226,17 +246,22 @@ expiry at D118's TTL with the answer it yields — asserted against P1.1's own `
 replay and accepts as a prompt), the refusal code an over-age answer takes following P1.1's kind
 mapping, the reminder schedule and a pause's three behaviours (speak, stay quiet, escalate), a
 redelivery that cannot clear an announcement beside the answer that leaves the queue (the two
-halves of one honest limit), the cap at its boundary, and the interrupt table exhaustively. One
-test is not about values at all: it scans `index.js` and refuses a clock, a file, a network, a
-process handle, a global, a `node:` builtin or an import that resolves outside `shared/`, because
-the module's header claims all of that and a claim nothing checks is a comment.
+halves of one honest limit), the cap at its boundary, and the interrupt table exhaustively. Three
+tests pin the rules that were *removed* rather than kept: `reminderStage` is monotone in `at` (which
+is why the listing needs no stage rule of its own), an expiry list comes back oldest-first (which is
+why `expire` needs no sort), and `digest.severity` is read through its own descriptor (which is why
+`readKill` has no plain property access). One test is not about values at all: it scans `index.js`
+and refuses a clock, a file, a network, a process handle, a global, a `node:` builtin or an import
+that resolves outside `shared/`, because the module's header claims all of that and a claim nothing
+checks is a comment. And one test walks every exported function with a hostile `Proxy` — alive and
+revoked — asserting no entry point raises and that a refusal never repeats what was thrown.
 
 **The red step** is P6.5's own: "an unanswered prompt expires at D118's mailbox TTL, as a pure
 function of the prompt's `at`, the TTL and the consumer's clock", written against a stub consumer
 that never expires anything and failing on it. It is `mutation-proof.sh`'s first guard, so it stays
 re-runnable rather than living only in a pull-request transcript.
 
-`mutation-proof.sh` plants 54 one-line bugs in `index.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 57 one-line bugs in `index.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. It
