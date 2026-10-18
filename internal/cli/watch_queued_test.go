@@ -677,3 +677,67 @@ func TestWatchJSONCarriesProfileAndAccount(t *testing.T) {
 		}
 	}
 }
+
+// A job name is launch.json's — an object every launcher, and on a shared job
+// every run, can write (D4) — so it is display text: stripped of escapes like
+// every other string the bucket gives watch, and never given a triple the
+// published policy does not compute for it. And the account of a project job
+// is absent from the JSON while its profile and provider are present: phase 3
+// refuses a profile that mounts a Claude OAuth token (projectpolicy, design
+// D2), so every project job's account is the API-key one, "".
+func TestWatchJSONHostileJobNameIsTextOnly(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version": projectpolicy.Version,
+		"profiles": map[string]any{
+			"standard": map[string]any{"provider": "github", "cpu": 2, "memory": "8Gi", "timeout_class": "6h"},
+		},
+	})
+	job := gcp.ProjectJobName("standard", "github", "")
+	now := time.Now()
+	named, hostile := runID(2*time.Minute, "f001"), runID(time.Minute, "f002")
+	f.writeTask(t, appSlug, named, "")
+	f.writeLaunchJob(t, appSlug, named, job, now.Add(-2*time.Minute))
+	f.writeTask(t, appSlug, hostile, "")
+	f.writeLaunchJob(t, appSlug, hostile, job+"\x1b]0;PWNED\x07\u009b2J", now.Add(-time.Minute))
+
+	out, _, err := execute(t, "watch", "--once", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Runs []map[string]any `json:"runs"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("watch --once --json is not JSON: %v\n%s", err, out)
+	}
+	seen := 0
+	for _, r := range doc.Runs {
+		switch r["run"] {
+		case named:
+			seen++
+			if r["job"] != job || r["profile"] != "standard" || r["provider"] != "github" {
+				t.Errorf("the run on the project job = %v, want job %s and (standard, github)", r, job)
+			}
+			if _, ok := r["account"]; ok {
+				t.Errorf("an API-key project job's run carries an account: %v", r)
+			}
+		case hostile:
+			seen++
+			j, _ := r["job"].(string)
+			if strings.ContainsAny(j, "\x1b\x07\u009b") {
+				t.Errorf("a control character leaked into the job: %q", j)
+			}
+			for _, k := range []string{"profile", "provider", "account"} {
+				if _, ok := r[k]; ok {
+					t.Errorf("a job name no profile computes was given a %s: %v", k, r)
+				}
+			}
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("saw %d of the two runs in %s", seen, out)
+	}
+}

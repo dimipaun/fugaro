@@ -69,6 +69,30 @@ run "project_job" {
     source = "../../modules/project"
   }
 
+  # The account's computed identity, fixed at plan time, so the grants below
+  # can be pinned to *this* account rather than to whatever member they name.
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-p-standard-git-63f23ec6@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-p-standard-git-63f23ec6@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  # Every grant to the job's account is to this account, and the operator's
+  # actAs is on this account: none may name another (a launcher, a wildcard,
+  # a neighbour's account).
+  assert {
+    condition     = google_storage_bucket_iam_member.job.member == "serviceAccount:fugaro-p-standard-git-63f23ec6@proj-1234.iam.gserviceaccount.com"
+    error_message = "the runs-bucket grant must be to the job's own account"
+  }
+  assert {
+    condition = alltrue([for m in google_service_account_iam_member.operator :
+    m.service_account_id == "projects/proj-1234/serviceAccounts/fugaro-p-standard-git-63f23ec6@proj-1234.iam.gserviceaccount.com"])
+    error_message = "an operator's serviceAccountUser must be on the job's own account and no other"
+  }
+
   # The launcher grant: exactly the launchers, the job-runner role, on this
   # job alone, and no condition — a job's name is the whole of what limits it.
   assert {
@@ -109,6 +133,27 @@ run "project_job" {
       strcontains(google_storage_bucket_iam_member.job.condition[0].expression,
     "projects/_/buckets/fugaro-runs-proj-1234/objects/${p}/")])
     error_message = "a project job's bucket condition must cover the whole of runs/, cache/ and locks/ (D4, accepted 2026-10-17)"
+  }
+  # And exactly that condition, byte for byte: three prefix clauses and
+  # nothing else, so no clause can widen it (an `|| true`, another prefix,
+  # the bucket root) and none can be dropped.
+  assert {
+    condition = google_storage_bucket_iam_member.job.condition[0].expression == join(" || ", [
+      "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")",
+      "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/cache/\")",
+      "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/locks/\")",
+    ])
+    error_message = "a project job's bucket condition must be exactly the three prefix clauses gcp.ProjectBucketCondition writes"
+  }
+  assert {
+    condition     = google_storage_bucket_iam_member.job.bucket == "fugaro-runs-proj-1234" && google_storage_bucket_iam_member.job.condition[0].title == "fugaro-project-job-runs"
+    error_message = "a project job's bucket grant must be on the runs bucket, under the title internal/infra gave it"
+  }
+  # The rest of the job account's grant surface, for a profile that mounts no
+  # secret and does not use Vertex AI: nothing.
+  assert {
+    condition     = length(google_secret_manager_secret_iam_member.job) == 0 && length(google_project_iam_member.vertex) == 0
+    error_message = "a profile with no secrets and no Vertex AI grants its account no secret and no project role"
   }
   assert {
     condition     = !strcontains(google_storage_bucket_iam_member.job.condition[0].expression, "runs/fugaro-")

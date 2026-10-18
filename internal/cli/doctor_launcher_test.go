@@ -136,3 +136,85 @@ func TestDoctorLauncherReachSkippedWithoutARunEndpoint(t *testing.T) {
 		t.Fatal("read Cloud Run jobs under a test configuration")
 	}
 }
+
+// A public member that can start a job is a finding, not a count: anyone on
+// the internet (allUsers) or with any Google account (allAuthenticatedUsers)
+// holding a start role on a job could launch it — and with runWithOverrides,
+// set its environment. The launcher count never includes them, so without
+// this the info line would read clean over a public job.
+func TestDoctorLauncherReachWarnsOnAPublicStartGrant(t *testing.T) {
+	for _, member := range []string{"allUsers", "allAuthenticatedUsers"} {
+		t.Run(member, func(t *testing.T) {
+			r := newDoctorRig(t)
+			r.withLaunchers(t)
+			r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+			r.run.AddJob("fugaro-acme-app-read", "2", "2Gi")
+			r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
+				Members: []string{"user:a@example.com", member}})
+			r.run.SetJobPolicy("fugaro-acme-app-read", gcpfake.Binding{Role: "roles/run.viewer",
+				Members: []string{member}})
+			c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "launcher-jobs-public")
+			if !found || c.OK || c.Severity != "warning" {
+				t.Fatalf("check = %+v (found %v), want a warning", c, found)
+			}
+			if !strings.Contains(c.Problem, "fugaro-acme-app-web") || strings.Contains(c.Problem, "fugaro-acme-app-read") {
+				t.Errorf("Problem must name the job the public member can start, and only it: %s", c.Problem)
+			}
+		})
+	}
+}
+
+// With no launcher in the local config (a launcher's own shared config may
+// carry none), a zero count is not evidence that no launcher is granted: the
+// line says what it could not compare against rather than that fugaro run
+// cannot start a job.
+func TestDoctorLauncherReachWithoutALauncherList(t *testing.T) {
+	r := newDoctorRig(t)
+	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+	r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
+		Members: []string{"user:a@example.com"}})
+	c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "launcher-jobs")
+	if !found {
+		t.Fatal("doctor reports no launcher reach")
+	}
+	if strings.Contains(c.Problem, "cannot start") {
+		t.Errorf("claims no launcher can start a job from an empty launcher list: %s", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "no launcher") || !strings.Contains(c.Problem, "local config") {
+		t.Errorf("does not say the local config lists no launcher: %s", c.Problem)
+	}
+}
+
+// The predefined role that carries run.jobs.runWithOverrides is a start role
+// too: a launcher granted it on a job can start the job as fugaro run does.
+func TestDoctorLauncherReachKnowsTheOverridesExecutorRole(t *testing.T) {
+	r := newDoctorRig(t)
+	r.withLaunchers(t)
+	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+	r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: "roles/run.jobsExecutorWithOverrides",
+		Members: []string{"user:a@example.com"}})
+	c, _ := doctorCheckByID(r.runDoctorJSON(t).Checks, "launcher-jobs")
+	if !strings.Contains(c.Problem, "can start 1 of them: fugaro-acme-app-web") {
+		t.Errorf("does not count the overrides executor role as a start role: %s", c.Problem)
+	}
+}
+
+// One job whose policy cannot be read is named in a warning, not counted as a
+// job no launcher can start: an unread policy must not look like an empty one.
+func TestDoctorLauncherReachUnreadPolicyWarns(t *testing.T) {
+	r := newDoctorRig(t)
+	r.withLaunchers(t)
+	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+	r.run.AddJob("fugaro-acme-app-hid", "2", "2Gi")
+	r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
+		Members: []string{"user:a@example.com"}})
+	r.run.FailPolicyOf = map[string]int{"fugaro-acme-app-hid": 403}
+	checks := r.runDoctorJSON(t).Checks
+	c, found := doctorCheckByID(checks, "launcher-jobs-unread")
+	if !found || c.OK || c.Severity != "warning" || !strings.Contains(c.Problem, "fugaro-acme-app-hid") {
+		t.Fatalf("check = %+v (found %v), want a warning naming the unread job", c, found)
+	}
+	if info, _ := doctorCheckByID(checks, "launcher-jobs"); !strings.Contains(info.Problem, "can start 1 of them: fugaro-acme-app-web") {
+		t.Errorf("the readable job is not reported beside the unread one: %s", info.Problem)
+	}
+}

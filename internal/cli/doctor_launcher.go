@@ -58,6 +58,7 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 		grants    int      // (job, launcher) bindings
 		startable []string
 		unread    []string
+		public    []string // jobs a public member can start
 	)
 	page := ""
 	for {
@@ -83,6 +84,9 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 			if can {
 				startable = append(startable, shortJobName(j.Name))
 			}
+			if publicCanStart(p, lc.GCPProject) {
+				public = append(public, shortJobName(j.Name))
+			}
 		}
 		page = resp.NextPageToken
 		if page == "" {
@@ -92,13 +96,25 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 	slices.Sort(startable)
 	problem := fmt.Sprintf("launcher grants on Cloud Run jobs: %d grant(s) over %d job(s), and a launcher can start %d of them",
 		grants, len(jobs), len(startable))
-	if len(startable) > 0 {
+	switch {
+	case len(launchers) == 0:
+		// Nothing to compare the policies' members against: a zero here is
+		// the local config's, not the jobs'.
+		problem += " (the local config lists no launcher, so no grant could be attributed to one; run doctor with the operator's config to see the launchers' reach)"
+	case len(startable) > 0:
 		problem += ": " + strings.Join(startable, ", ")
-	} else {
+	default:
 		problem += " (no launcher is granted on any job, so fugaro run cannot start one)"
 	}
 	out := []doctorCheck{{ID: "launcher-jobs", OK: true, Severity: "info", Problem: problem,
 		Fix: "the launcher role's permissions are unchanged by the project-centric model (run.jobs.run, run.jobs.runWithOverrides and the secret metadata list): what changes is how many jobs they attach to, so a grant count that falls while runs still work is a migration doing what it says, and a job a launcher is not granted on is a job fugaro run cannot start. Project-level run roles bypass the jobs' own policies and are not counted here"}}
+	if len(public) > 0 {
+		slices.Sort(public)
+		out = append(out, doctorCheck{ID: "launcher-jobs-public", Severity: "warning",
+			Problem: fmt.Sprintf("%d Cloud Run job(s) can be started by allUsers or allAuthenticatedUsers: ", len(public)) + strings.Join(public, ", ") +
+				": anyone the member names can launch the job, and with run.jobs.runWithOverrides set its environment",
+			Fix: "remove the public member from each job's IAM policy (gcloud run jobs remove-iam-policy-binding JOB --region " + quoteWord(lc.Region) + " --member allUsers --role ROLE); Fugaro grants only the launchers listed in its config"})
+	}
 	if len(unread) > 0 {
 		out = append(out, doctorCheck{ID: "launcher-jobs-unread", Severity: "warning",
 			Problem: "could not read the IAM policy of " + fmt.Sprintf("%d Cloud Run job(s): ", len(unread)) + strings.Join(unread, ", ") +
@@ -145,10 +161,30 @@ func launcherGrantsOn(p *runapi.GoogleIamV1Policy, launchers []string, project s
 // launcher can start, since nothing here may expand a role's permissions.
 func launcherRoleStartsJobs(role, project string) bool {
 	switch role {
-	case "roles/owner", "roles/editor", "roles/run.admin", "roles/run.developer":
+	case "roles/owner", "roles/editor", "roles/run.admin", "roles/run.developer", "roles/run.jobsExecutorWithOverrides":
 		return true
 	}
 	return role == "projects/"+project+"/roles/"+infra.RoleJobRunner
+}
+
+// publicCanStart reports whether p lets allUsers or allAuthenticatedUsers
+// start the job: a binding of a start role (launcherRoleStartsJobs) whose
+// members include either. A conditional binding is still reported, since
+// nothing here evaluates a condition and a public member under any condition
+// is not one Fugaro ever grants.
+func publicCanStart(p *runapi.GoogleIamV1Policy, project string) bool {
+	if p == nil {
+		return false
+	}
+	for _, b := range p.Bindings {
+		if b == nil || !launcherRoleStartsJobs(b.Role, project) {
+			continue
+		}
+		if slices.Contains(b.Members, "allUsers") || slices.Contains(b.Members, "allAuthenticatedUsers") {
+			return true
+		}
+	}
+	return false
 }
 
 // shortJobName is a job's resource name as the last segment: what a person

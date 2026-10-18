@@ -83,8 +83,11 @@ type JSONRun struct {
 	// what says which job a row came from, and the job's name does not spell
 	// it out. The three are absent for a run on a per-repository job (its
 	// name is not a project job the published policy defines) and for a run
-	// whose launch.json the reader does not have; the grouping stays by
-	// repository, from the row's own slug.
+	// whose launch.json the reader does not have; Account is also absent for
+	// an API-key job, which in phase 3 is every project job. Job is
+	// launch.json's, which launchers and shared-job runs can write: display
+	// text, never an authority. The grouping stays by repository, from the
+	// row's own slug.
 	Job      string `json:"job,omitempty"`
 	Profile  string `json:"profile,omitempty"`
 	Provider string `json:"provider,omitempty"`

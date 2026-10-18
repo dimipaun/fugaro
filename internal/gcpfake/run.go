@@ -48,6 +48,11 @@ type Run struct {
 	// pins the degradation of a refused label read (infra.Orphans) and the
 	// delete's own 403.
 	FailListWith, FailDeleteWith int
+	// FailPolicyOf, when set, makes jobs:getIamPolicy of the jobs it names
+	// answer that HTTP status: one job's policy unreadable while the others
+	// read, which is what doctor's launcher-jobs check degrades on. Set it
+	// before the fake serves.
+	FailPolicyOf map[string]int
 	// ProjectNumber, when set, replaces the project ID in every name the
 	// fake returns, as the real API may.
 	ProjectNumber string
@@ -683,6 +688,10 @@ func (f *Run) getJobIamPolicy(w http.ResponseWriter, r *http.Request, p string) 
 	_, _, name, ok := jobPath(p)
 	if !ok || f.jobs[name] == nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "job not found")
+		return
+	}
+	if code := f.FailPolicyOf[name]; code != 0 {
+		writeError(w, code, http.StatusText(code), "injected failure")
 		return
 	}
 	servePolicy(w, r.URL.Query(), f.policies[name])
