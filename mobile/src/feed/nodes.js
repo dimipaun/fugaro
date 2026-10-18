@@ -41,7 +41,6 @@
 export const NODE_CODES = Object.freeze({
   NOT_AN_OBJECT: 'not-an-object',
   BAD_MICROS: 'bad-micros',
-  BAD_KILL: 'bad-kill',
 });
 
 /** The wire's unit: every amount in the database is integer micro-dollars
@@ -122,18 +121,16 @@ export function readCaps({ global, defaults, repo } = {}) {
  * A spend counter, in dollars: `/spend/<day>/global` or
  * `/spend/<day>/repos/<slug>`.
  *
- * `present` is whether the node is there at all. The document does not carry
- * it -- the CLI's document has no such field -- but `view.js` needs it for
- * §10.7: the day's counters arrive as a `put`, and a day that has not delivered
- * one yet is a gap rather than a zero. An absent node is `0` **and** `present:
- * false`; both facts are true of it and they are used by different rules.
+ * The node is **not** judged for whether it is there: an absent node and an
+ * empty one are both zero (see the header), and which of the two it was is a
+ * fact about the *stream*, not about the tree -- §10.7's "the new pair delivers
+ * its put of `/`" is a delivery, and `reader.js` tracks deliveries. A value
+ * that is not an object at all is still refused: a counter node holding a
+ * string is not a counter.
  */
 export function readCounters(value) {
   if (value === undefined || value === null) {
-    return Object.freeze({
-      ok: true,
-      counters: Object.freeze({ counted: 0, spent: 0, notional: 0, present: false }),
-    });
+    return Object.freeze({ ok: true, counters: Object.freeze({ counted: 0, spent: 0, notional: 0 }) });
   }
   if (!isNode(value)) return refuse(NODE_CODES.NOT_AN_OBJECT, 'counters');
   return Object.freeze({
@@ -142,7 +139,6 @@ export function readCounters(value) {
       counted: usd(counterMicros(value.counted)),
       spent: usd(counterMicros(value.spent)),
       notional: usd(counterMicros(value.notional)),
-      present: true,
     }),
   });
 }
@@ -159,14 +155,22 @@ function counterMicros(value) {
  * A kill switch: `/config/kill/global` or `/config/kill/repos/<slug>`.
  *
  * `null` is "not killed", which is a fact and not a missing value. A node that
- * is present but unreadable is **on**: `internal/watch/build.go`'s
- * `State.kill` treats it that way on purpose ("runs treat it as ON"), because a
- * switch that cannot be read is a switch that might be on, and the safe
- * direction for a stop switch is to believe it.
+ * is there but unreadable is **ON**: `internal/watch/build.go`'s `State.kill`
+ * treats it that way on purpose ("runs treat it as ON"), because a switch that
+ * cannot be read is a switch that might be on, and the safe direction for a
+ * stop switch is to believe it. The reason says so, which is what the
+ * contract's `kill.reason` is for.
  */
+export const UNREADABLE_KILL = 'the switch could not be read';
+
 export function readKill(value) {
   if (value === undefined || value === null) return Object.freeze({ ok: true, kill: null });
-  if (!isNode(value)) return refuse(NODE_CODES.BAD_KILL, 'kill');
+  if (!isNode(value) || !killReadable(value)) {
+    return Object.freeze({
+      ok: true,
+      kill: Object.freeze({ on: true, by: null, at: null, reason: UNREADABLE_KILL }),
+    });
+  }
   if (value.on !== true) return Object.freeze({ ok: true, kill: null });
   return Object.freeze({
     ok: true,
@@ -185,6 +189,17 @@ export function readKill(value) {
 function epochMs(value) {
   if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) return null;
   return value;
+}
+
+/** Is this kill node one a reader can believe? A field of the wrong type is a
+ * node `budget.Decode` would have errored on, which is `State.kill`'s
+ * unreadable case -- not an `on: false` this app invented. */
+function killReadable(node) {
+  if (node.on !== undefined && typeof node.on !== 'boolean') return false;
+  if (node.by !== undefined && typeof node.by !== 'string') return false;
+  if (node.reason !== undefined && typeof node.reason !== 'string') return false;
+  if (node.at !== undefined && (typeof node.at !== 'number' || !Number.isInteger(node.at))) return false;
+  return true;
 }
 
 /**

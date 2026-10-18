@@ -295,7 +295,13 @@ export function validateDocument(value) {
 
   const project = text(value.project);
   if (project === null) return refuse(DOCUMENT_CODES.MISSING_FIELD, 'project');
-  if (!MODES.includes(value.mode)) return refuse(DOCUMENT_CODES.BAD_MODE, 'mode');
+  // `mode` is **optional**, and absent is `null`: `/config/mode` is not one of
+  // the four granted families, so the phone cannot read the mode and must not
+  // claim one. The CLI's own document carries it because the CLI reads the
+  // config; a phone that filled in `observe` would be stating a fact it does
+  // not have, on the one setting that decides whether a cap is enforced.
+  if (value.mode !== undefined && !MODES.includes(value.mode)) return refuse(DOCUMENT_CODES.BAD_MODE, 'mode');
+  const mode = value.mode === undefined ? null : value.mode;
   // `""` is the contract's "before the first day is set"; the phone's document
   // carries the day its own clock is in, so a missing or empty day is a
   // document whose series this reader cannot place, and it is refused rather
@@ -348,7 +354,7 @@ export function validateDocument(value) {
     document: Object.freeze({
       degraded: false,
       project,
-      mode: value.mode,
+      mode,
       day,
       now,
       connection: connection.connection,

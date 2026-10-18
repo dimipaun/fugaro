@@ -23,6 +23,7 @@ import {
   readCounters,
   readHeartbeat,
   readKill,
+  UNREADABLE_KILL,
   usd,
 } from './nodes.js';
 
@@ -70,20 +71,20 @@ test('a repository cap falls back to the defaults, and then to nothing at all', 
 
 test('a counter is zero when it is not there, and unavailable when it cannot be read', () => {
   // Absent: the node is not there, so the day counted nothing. This is the
-  // CLI's own reading (`internal/watch/build.go`'s `counters()`), and it comes
-  // with `present: false`, which is the fact §10.7's day break needs.
+  // CLI's own reading (`internal/watch/build.go`'s `counters()`). Whether the
+  // stream has *answered* is a different fact, and `reader.js` tracks it.
   for (const absent of [undefined, null]) {
     const read = readCounters(absent);
     assert.equal(read.ok, true);
-    assert.deepEqual(read.counters, { counted: 0, spent: 0, notional: 0, present: false });
+    assert.deepEqual(read.counters, { counted: 0, spent: 0, notional: 0 });
   }
   // A node with a missing field is the same zero (`Counters.Counted` has
-  // `omitempty`), and the node is present.
+  // `omitempty`).
   const partial = readCounters({ calls: 3, byModel: { 'a-model': { micros: 1 } } });
-  assert.deepEqual(partial.counters, { counted: 0, spent: 0, notional: 0, present: true });
+  assert.deepEqual(partial.counters, { counted: 0, spent: 0, notional: 0 });
   // Present and readable.
   const read = readCounters({ counted: 12_500_000, spent: 12_000_000, notional: 40 * MICROS_PER_USD, calls: 2 });
-  assert.deepEqual(read.counters, { counted: 12.5, spent: 12, notional: 40, present: true });
+  assert.deepEqual(read.counters, { counted: 12.5, spent: 12, notional: 40 });
   // A negative count is clamped, as `nonneg` does: a counter cannot be owed.
   assert.equal(readCounters({ counted: -5 }).counters.counted, 0);
   // Present and *unreadable* is unavailable, never zero -- the phone knows
@@ -93,7 +94,6 @@ test('a counter is zero when it is not there, and unavailable when it cannot be 
     assert.equal(judged.ok, true, String(bad));
     assert.equal(judged.counters.counted, null, String(bad));
     assert.notEqual(judged.counters.counted, 0, String(bad));
-    assert.equal(judged.counters.present, true, String(bad));
   }
   // A node that is not an object at all is refused, not read as empty.
   for (const bad of ['a string', 7, [], true]) {
@@ -102,6 +102,12 @@ test('a counter is zero when it is not there, and unavailable when it cannot be 
 });
 
 test('a kill switch that is not there is off, and one that cannot be read is on', () => {
+  // `State.kill`'s rule, enforced rather than only documented: a switch that
+  // cannot be read is a switch that might be on, and the safe direction for a
+  // stop switch is to believe it.
+  for (const unreadable of ['a string', 7, [], true, { on: 'yes' }, { on: 1 }]) {
+    assert.deepEqual(readKill(unreadable).kill, { on: true, by: null, at: null, reason: UNREADABLE_KILL }, JSON.stringify(unreadable));
+  }
   assert.equal(readKill(undefined).kill, null);
   assert.equal(readKill(null).kill, null);
   assert.equal(readKill({}).kill, null, 'a node with no `on` is not a switch that is on');
@@ -113,9 +119,6 @@ test('a kill switch that is not there is off, and one that cannot be read is on'
   const bare = readKill({ on: true, at: 0 }).kill;
   assert.deepEqual(bare, { on: true, by: null, at: null, reason: null });
   assert.equal(readKill({ on: true, at: '1700000000000' }).kill.at, null);
-  for (const bad of ['a string', 7, [], true]) {
-    assert.equal(readKill(bad).code, NODE_CODES.BAD_KILL, String(bad));
-  }
 });
 
 test('the heartbeat is read, and no presence verdict is drawn from it', () => {

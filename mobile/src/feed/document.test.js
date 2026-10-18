@@ -210,6 +210,7 @@ test('a document that is not one this reader can render is refused, field by fie
     [{ ...wire(), surprise: 1 }, DOCUMENT_CODES.UNKNOWN_FIELD],
     [wire({ project: '' }), DOCUMENT_CODES.MISSING_FIELD],
     [wire({ mode: '' }), DOCUMENT_CODES.BAD_MODE],
+    [wire({ mode: null }), DOCUMENT_CODES.BAD_MODE],
     [wire({ mode: 'enforcing' }), DOCUMENT_CODES.BAD_MODE],
     [wire({ day: '' }), DOCUMENT_CODES.BAD_DAY],
     [wire({ day: '2025-11-9' }), DOCUMENT_CODES.BAD_DAY],
@@ -237,6 +238,20 @@ test('a document that is not one this reader can render is refused, field by fie
   // The two vocabularies are the contract's own lists, not this module's.
   assert.deepEqual([...CONNECTION_STATES], ['live', 'stale', 'offline', 'refused', 'polling']);
   assert.deepEqual([...MODES], ['observe', 'enforce']);
+});
+
+test('the mode is optional, because the phone cannot read it', () => {
+  // `/config/mode` is not in the grant (`paths.test.js` refuses it), so the
+  // phone has no mode to report and says so rather than guessing `observe` --
+  // which is the one setting that decides whether a cap is enforced.
+  const judged = validateDocument(wire({ mode: undefined }));
+  assert.equal(judged.ok, true);
+  assert.equal(judged.document.mode, null);
+  assert.notEqual(judged.document.mode, 'observe');
+  // A mode that *is* there and is not a mode is still refused, and the
+  // contract's two modes are still the two.
+  assert.equal(validateDocument(wire({ mode: 'enforcing' })).code, DOCUMENT_CODES.BAD_MODE);
+  assert.equal(validateDocument(wire({ mode: 'enforce' })).document.mode, 'enforce');
 });
 
 test('repos absent is unavailable, and repos empty is empty', () => {
