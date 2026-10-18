@@ -107,15 +107,22 @@ with fixtures that keep its refusals running, and none of them needs the network
     the page's `h1` and its first `h2` — the paragraph a page opens with before its first
     section — and it is a lead and not an introduction: 40 words at most, on every page,
     the three reference pages included, because a lead is the page's own whichever page it
-    is. A page whose first `h2` is not in the `h1`'s own container (the homepage: the hero's
-    section holds the `h1`, and the first `h2` is a step of the flow under it) or that has
-    no `h2` at all has no such region, and its lead is the paragraphs that follow its `h1`. A page
-    whose `h1` is followed straight by its first `h2` has no lead region either, and 0 words
-    is inside the ceiling: `/security/` is shaped that way (its `h1` is the rendered
-    document's own title, and the page's lead line comes before it) and so is `/changelog/`
-    (whose summary is its first section, under the heading that names it). The ceiling is a
-    ceiling, not a floor — a page with no lead region is a page D188's definition does not
-    describe, and this gate says nothing about how much a page's first section should say.
+    is. **The region between the two headings is the whole of the definition, wherever each
+    heading sits** (P5; P4's reviewer read the homepage's lead two ways, 24 words from the
+    `h1`'s own container and 134 from the plan's region, and the stricter one is the one
+    enforced). A page that carries blocks between its `h1` and its first `h2` is a page
+    whose lead those blocks are part of — which is why the homepage opens its install
+    section with the `h2` above the commands rather than putting the commands under the
+    promise — so the fix for a long lead is a shorter lead or an earlier first `h2`, never
+    a reader that looks somewhere else. A page
+    with no `h2` at all has no such region, and its lead is the paragraphs that follow its
+    `h1`. A page whose `h1` is followed straight by its first `h2` has no lead region
+    either, and 0 words is inside the ceiling: `/security/` is shaped that way (its `h1` is
+    the rendered document's own title, and the page's lead line comes before it) and so is
+    `/changelog/` (whose summary is its first section, under the heading that names it).
+    The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
+    definition does not describe, and this gate says nothing about how much a page's first
+    section should say.
   - **Words per page:** 250 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
