@@ -109,6 +109,12 @@ type Row struct {
 	// follow-up's, known before it starts).
 	Branch  string `json:"branch,omitempty"`
 	Outcome string `json:"outcome,omitempty"`
+	// ChangedFiles is the run's own record of the paths it changed (console
+	// v2 design D27, F17): paths only, bounded, and with the truncation
+	// recorded rather than hidden. nil when the run recorded none — a run
+	// that died before finalize, or a record from before the field existed —
+	// so a reader never sees an empty set where the answer is unknown.
+	ChangedFiles *runstore.ChangedFiles `json:"changed_files,omitempty"`
 	// ArtifactCount and ArtifactBytes are what the run's record says it
 	// delivered: how many artifacts, and their recorded total size (design
 	// artifact-runs.md §9). Both are the record's own account, never a
@@ -236,6 +242,9 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 	}
 	if r != nil {
 		row.ProjectLayer, row.ConfigSHA256 = r.ProjectLayer, r.ConfigSHA256
+		// Bounded again on read: the record is job-writable, so the row
+		// never carries more than the bound or a cut set dressed as whole.
+		row.ChangedFiles = r.ChangedFiles.Bounded()
 		row.Stage = r.Stage
 		if r.Reason != "" {
 			row.Reason = r.Reason

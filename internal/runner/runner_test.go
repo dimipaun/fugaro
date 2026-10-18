@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -369,6 +370,22 @@ func TestUncommittedWorkIsCommittedButNotVerified(t *testing.T) {
 	}
 	if got := testutil.Git(t, h.remote, "log", "-1", "--format=%s", "refs/heads/fugaro/"+runID); got != "fugaro: uncommitted work at finalize" {
 		t.Fatalf("last pushed commit = %q", got)
+	}
+	// The record's set of changed paths is read once the run's own commits
+	// are final, so the file the agent forgot is in it too: it is this run's
+	// work, and a set that stopped at the agent's last commit would miss it
+	// (design D27).
+	cf := rec.ChangedFiles
+	if cf == nil {
+		t.Fatal("the record carries no changed-file set")
+	}
+	for _, want := range []string{"feature.txt", "forgotten.txt"} {
+		if !slices.Contains(cf.Paths, want) {
+			t.Fatalf("changed files = %v, want %s among them", cf.Paths, want)
+		}
+	}
+	if cf.Truncated || cf.Total != len(cf.Paths) {
+		t.Fatalf("a two-file run: %+v", cf)
 	}
 }
 

@@ -1,0 +1,35 @@
+{
+  // The bundler's build (desktop-console plan Task 3.4a).
+  //
+  // `npm run build` runs `tsc -p tsconfig.build.json` and then this: the second
+  // `tsc` compiles the one tool that has to run as a *file*, exactly as
+  // `tsconfig.record-fixture.json` does for the recorder. `node` cannot run
+  // TypeScript, and the alternative -- a loader flag on the pinned Node -- would
+  // put an experimental switch in the app's build path.
+  //
+  // It is a third config rather than an edit to `tsconfig.build.json` because
+  // the two have different `rootDir`s and different outputs: the app's build
+  // takes `src/` to `dist/` (package.json's `main`), and this takes
+  // `tools/bundle-renderer/` to `.bundle-renderer/`, which is a build artifact
+  // and is gitignored.
+  //
+  // The module settings are `tsconfig.build.json`'s and for the same reason:
+  // package.json has no `"type"`, so the emitted `.js` is CommonJS, which is
+  // what `node` expects to `require`. `verbatimModuleSyntax` is off for that
+  // build only; every `import type` in the source is already written as one.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "verbatimModuleSyntax": false,
+    "esModuleInterop": true,
+    "noEmit": false,
+    "outDir": ".bundle-renderer",
+    "rootDir": "tools/bundle-renderer",
+    "sourceMap": true
+  },
+  // Only the tool: it imports nothing but Node's own built-ins, and a
+  // dependency on `src/` would be a dependency the bundle's own walk would then
+  // have to allow.
+  "include": ["tools/bundle-renderer/**/*.ts"]
+}
