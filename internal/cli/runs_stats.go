@@ -221,7 +221,13 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 		return err
 	}
 	if view == userStatsViewOwn {
-		read.runs = slices.DeleteFunc(read.runs, func(r userstats.Run) bool { return r.User != me })
+		// Matched in the table's own domain: a row's key is IdentityOf's
+		// sanitised form, so the caller's identity is put through the same
+		// function before it is compared. For an ordinary address the two are
+		// the same value; for one a paste left an invisible character in, only
+		// this comparison finds the caller's own row rather than none.
+		mine := userstats.IdentityOf(me)
+		read.runs = slices.DeleteFunc(read.runs, func(r userstats.Run) bool { return r.User != mine })
 	}
 	res := userstats.Aggregate(read.runs)
 	return writeUserStats(cmd.OutOrStdout(), userStatsDoc{

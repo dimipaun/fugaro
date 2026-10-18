@@ -345,6 +345,21 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 		}
 	})
 
+	t.Run("the caller's own row is matched in the table's own domain", func(t *testing.T) {
+		f := newCloudFixture(t)
+		// The config's identity carries an invisible character (a paste), and
+		// the run recorded the address without it: the row key is the
+		// sanitised form, so the caller is found by the same function that
+		// made the key, not by a raw string comparison that would show them an
+		// empty table.
+		userStatsPlace(t, f, "dana@example.com​", []string{"user:dana@example.com​"}, nil)
+		seed(t, f)
+		doc := runsStats(t)
+		if len(doc.Rows) != 1 || doc.Rows[0].User != "dana@example.com" {
+			t.Fatalf("the caller's own view = %+v, want their own row", doc.Rows)
+		}
+	})
+
 	t.Run("lists that do not place the caller stay private", func(t *testing.T) {
 		f := newCloudFixture(t)
 		// The installation names neither list: every installation from before
