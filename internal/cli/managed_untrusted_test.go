@@ -93,7 +93,9 @@ func TestTheApplysRootRefusalIsBoundedEndToEnd(t *testing.T) {
 	for name, v := range hostileCLIValues() {
 		t.Run(name, func(t *testing.T) {
 			noAgentSession(t)
-			_, _ = managedBudgetRig(t)
+			// The rig's config and cloud, so the refusal reached is the
+			// root's and not the loader's.
+			managedBudgetRig(t)
 			out, errOut, err := execute(t, "managed", "apply", filepath.Join(t.TempDir(), v))
 			if err == nil {
 				t.Fatalf("a root that is not there was applied:\n%s%s", out, errOut)
