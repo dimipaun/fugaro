@@ -1,3 +1,7 @@
+**Status: DECLINED by the owner on 2026-10-18 (D79: no hard stop). Kept as the record of what was considered and why. D80-D86 are moot. Budget alerts remain alert-only.**
+
+The text below is the design as it was written, before the decision, and is not edited.
+
 # The billing hard stop: a design of its own
 
 **Status: design only. Nothing in this document is built, no code follows it until the owner answers the

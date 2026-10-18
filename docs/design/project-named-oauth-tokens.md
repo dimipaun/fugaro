@@ -62,7 +62,7 @@ the account axis is a hard-coded empty value rather than a rule. Read together:
 | 13 | the **account of a project job**, computed on both sides | `config.ClaudeAccountOfSecrets(pr.Secrets)`, used by the launcher and by the runner's candidate list — which returns `""` for every profile that can be published today, because row 7 refuses every Claude token in `secrets:` | `internal/config/claude_accounts.go:87-122`, `internal/cli/project_job.go:98`, `internal/runner/projectjob.go:180` |
 | 14 | the **agent's environment** under `auth: oauth` | an **allow-list**: `agent.BuildEnv` passes `CLAUDE_CODE_OAUTH_TOKEN` and the declared secrets on an OAuth run, and an `ANTHROPIC_API_KEY` or Vertex variable in the runner's own environment never reaches its agent | `internal/agent/env.go:103-137` (the `switch spec.Auth`) |
 | 15 | a project job's **secret mounts and their grants** | each entry of the job's `secret_env` is a `value_source.secret_key_ref`, and the job's own service account gets `roles/secretmanager.secretAccessor` on **exactly** the secrets its `secret_env` names, at the secret level, one member per secret, none by prefix | `deploy/terraform/gcp/modules/project/job.tf:61-74`, `deploy/terraform/gcp/modules/project/sa.tf:48-63` (`google_secret_manager_secret_iam_member.job`, `for_each = toset(values(var.job.secret_env))`) |
-| 16 | a launcher reading a mounted secret | **cannot**: `JobFullEnv` returns only plain-value entries, and reading a value needs `secretAccessor`, "which only the job and build accounts hold"; nothing under `internal/` reads a Secret Manager value (no `AccessSecretVersion` call) | `internal/backend/gcp/run.go:361-373`, `SECURITY.md:65` |
+| 16 | a launcher reading a mounted secret | **cannot**: `JobFullEnv` returns only plain-value entries, and reading a value needs `secretAccessor`, "which only the job and build accounts hold"; nothing under `internal/` reads a Secret Manager value (no `AccessSecretVersion` call) | `internal/backend/gcp/run.go:361-373`, `SECURITY.md:56` |
 
 Three conclusions from the table, and they are the reason this feature is small:
 
@@ -331,7 +331,7 @@ one function and that the job name is independent of `secret_env`.
   token; they do not scope what the token *can* do.
 - **No launcher reads it.** Reading the value still needs `secretAccessor`, which only the job and
   build accounts hold — an account job's service account on its own account's secret, and nothing
-  else (SECURITY.md:65's sentence stays true).
+  else (SECURITY.md:56's sentence stays true).
 - **This carrier is a stopgap.** It is replaced by the security service
   ([docs/credentials-service/](../credentials-service/README.md)), after which no job holds the
   token at all.

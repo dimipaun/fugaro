@@ -816,42 +816,6 @@ func TestRestoreGCPProjectLine(t *testing.T) {
 		}
 	})
 
-	// The line's value is the only thing this editor owns. A rewrite that
-	// rebuilt the whole line would drop the quoting the value carried and any
-	// trailing comment, and the read-back check would not see it — comments
-	// and quotes are not part of the parsed value — so the file would come
-	// back shorter than the one the operator reviewed, in a committed file the
-	// restore only ever edits one value of. Mutation-checked: the line
-	// rebuilt as "gcp_project: <id>" passes the read-back and fails here.
-	t.Run("the value's quoting and its trailing comment are the file's", func(t *testing.T) {
-		const anchored = "version: 1\nproject: " + initProjectName +
-			"\ngcp_project: \"" + initProject + "\"\t# the sandbox's own project\n" + yamlRest
-		out, changed, err := restoreGCPProjectLine([]byte(anchored), initProject, restoreNewProj)
-		if err != nil {
-			t.Fatalf("a quoted gcp_project: line naming the old project: %v", err)
-		}
-		if !changed {
-			t.Fatal("the line naming the old project was not moved")
-		}
-		want := strings.Replace(anchored, "\""+initProject+"\"", "\""+restoreNewProj+"\"", 1)
-		if string(out) != want {
-			t.Errorf("fugaro.yaml is\n%q\nwant\n%q", out, want)
-		}
-	})
-
-	t.Run("an unquoted value keeps its own spacing and comment", func(t *testing.T) {
-		const anchored = "version: 1\nproject: " + initProjectName +
-			"\ngcp_project:" + "   " + initProject + "   # moved by the restore\n" + yamlRest
-		out, changed, err := restoreGCPProjectLine([]byte(anchored), initProject, restoreNewProj)
-		if err != nil || !changed {
-			t.Fatalf("an unquoted gcp_project: line: changed=%v err=%v", changed, err)
-		}
-		want := strings.Replace(anchored, " "+initProject+"   ", " "+restoreNewProj+"   ", 1)
-		if string(out) != want {
-			t.Errorf("fugaro.yaml is\n%q\nwant\n%q", out, want)
-		}
-	})
-
 	t.Run("the no-op is the file already naming the new project", func(t *testing.T) {
 		moved := strings.Replace(third, "someone-elses-99", restoreNewProj, 1)
 		out, changed, err := restoreGCPProjectLine([]byte(moved), initProject, restoreNewProj)

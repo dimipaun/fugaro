@@ -320,12 +320,29 @@ func TestDocsPlanPointsAtTheHardStopDesign(t *testing.T) {
 	if !strings.Contains(row, design) {
 		t.Errorf("Task 6.0's row does not point at %s", design)
 	}
-	for _, want := range []string{"2026-10-18", "D79"} {
+	for _, want := range []string{"2026-10-18", "D79", "DECLINED"} {
 		if !strings.Contains(row, want) {
 			t.Errorf("Task 6.0's row does not record %q", want)
 		}
 	}
 	if _, err := os.Stat("../../" + design); err != nil {
 		t.Fatalf("Task 6.0 points at %s, which is not there: %v", design, err)
+	}
+}
+
+// TestDocsManagedHardStopDesignIsMarkedDeclined: the owner declined the hard
+// stop on 2026-10-18 (D79), so the design is a record and its first line says
+// so; a reader who opens it must not take it for pending work.
+func TestDocsManagedHardStopDesignIsMarkedDeclined(t *testing.T) {
+	const path = "docs/design/managed-projects-hard-stop.md"
+	doc := readDoc(t, path)
+	head := doc
+	if len(head) > 600 {
+		head = head[:600]
+	}
+	for _, want := range []string{"DECLINED", "2026-10-18", "D79", "no hard stop", "D80-D86 are moot", "alert-only"} {
+		if !strings.Contains(head, want) {
+			t.Errorf("%s's opening status line lacks %q", path, want)
+		}
 	}
 }

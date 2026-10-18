@@ -733,8 +733,7 @@ func attachInputs(ctx context.Context, b *blobx.Bucket, prefix string, paths []s
 //     (internal/config/providers.go:613-631) and is the case a default Claude
 //     workflow always takes: agent.auth decides which destination that is —
 //     vertex (the default applyDefaults writes) is Google Vertex AI, api-key is
-//     Anthropic (direct), oauth is Anthropic (claude-oauth-token) — the
-//     secret's own name, not a bare "oauth token" (config.ClaudeOAuthToken).
+//     Anthropic (direct), oauth is Anthropic (oauth token).
 //
 // The empty set therefore means "no auth route and no claiming provider",
 // which the current Agent.PinnedModels cannot actually produce (three models,
@@ -786,7 +785,7 @@ func TestAttachGatesOnTheImageThatKnowsInputs(t *testing.T)   // P9
 func TestAttachNamesTheProvidersThatMayReceiveTheFile(t *testing.T) // D9: the sentence, with both providers listed
 func TestAttachProviderWarningIsSilentWithoutAttachments(t *testing.T) // D9: a plain launch prints nothing
 func TestAttachProviderWarningNamesTheDefaultAuthRoute(t *testing.T)  // D9, rounds 3 and 4: a default Claude workflow — lc.Providers empty, agent.auth vertex — prints the Vertex route, never "routes nowhere" and never "Anthropic (direct)"
-func TestAttachNamesTheRouteTheAuthModeActuallyTakes(t *testing.T)    // D9, round 4: vertex (and unset) name Google Vertex AI, api-key names Anthropic (direct), oauth names Anthropic (claude-oauth-token)
+func TestAttachNamesTheRouteTheAuthModeActuallyTakes(t *testing.T)    // D9, round 4: vertex (and unset) name Google Vertex AI, api-key names Anthropic (direct), oauth names Anthropic (oauth token)
 func TestAttachProviderWarningSaysLocalOnlyWhenNothingRoutes(t *testing.T) // D9: the empty set (no claiming provider AND no Anthropic path) prints the local wording, not a blank name
 func TestAttachProviderWarningIsNotAGate(t *testing.T) // D9: the launch proceeds — the line is printed, never returned as an error
 ```
