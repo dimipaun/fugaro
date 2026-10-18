@@ -202,7 +202,10 @@ function textBetween(main, from, to) {
  * page opens with before its first section, which is the text D188's 40-word ceiling is
  * about. A page whose `main` carries no `h2` at all (the homepage, whose hero is the whole
  * page) has no such region; its lead is the paragraphs that follow the `h1`, which is the
- * same text read from the other end, rather than the hero's install block and terminal.
+ * same text read from the other end, rather than the hero's install block and terminal. The
+ * whitespace a template leaves between the `h1` and the paragraph under it is a text node and
+ * not a paragraph: it is skipped, because reading it as the end of the opening would measure
+ * the lead of every indented page — every built page — as zero words.
  *
  * A page with no `main` is not measured here: `a11y.mjs` is the gate that refuses a page
  * without the landmark, and this one says nothing about a region it cannot find.
@@ -219,10 +222,20 @@ export function pageWords(html) {
   const siblings = h1.parent.children
   const opening = []
   for (const sibling of siblings.slice(siblings.indexOf(h1) + 1)) {
-    // A style or script body is not text, and a hidden subtree is not rendered: neither ends
-    // the opening paragraph run, which is what keeps the lead the same paragraph whatever the
-    // page puts around it.
+    // A style or script body is not text, a hidden subtree is not rendered, and a comment is
+    // not text either: none of them ends the opening paragraph run, which is what keeps the
+    // lead the same paragraph whatever the page puts around it.
     if (sibling.name === 'style' || sibling.name === 'script' || sibling.attrs?.has('hidden')) continue
+    if (sibling.raw !== undefined) continue
+    // A template's newline is a text node between the `h1` and the paragraph under it, and a
+    // newline is not a paragraph: a run of whitespace is skipped rather than taken for the
+    // end of the opening, which is what keeps a page whose markup is indented — every built
+    // page — from measuring a lead of zero words. Text that is not whitespace is text a
+    // reader reads, so it is part of the lead and does not end the run.
+    if (sibling.text !== undefined) {
+      if (sibling.text.trim() !== '') opening.push(sibling.text)
+      continue
+    }
     if (sibling.name !== 'p') break
     opening.push(visibleText(sibling))
   }
@@ -380,6 +393,28 @@ test('a lead one word over the lead ceiling is refused, and one word under it is
   const f = wordFailures(dist, budgets)
   assert.equal(f.length, 1, f.join('\n'))
   assert.match(f[0], new RegExp(`^over/index\\.html opens with a ${budgets.lead + 1}-word lead; the ceiling is ${budgets.lead} words`))
+})
+
+test('a page with no h2 measures the paragraph under its h1, through the newline between them', (t) => {
+  // The homepage's shape, and the one page whose lead is its whole gist: a hero with an `h1`
+  // and a paragraph under it, and no `h2` anywhere. Astro indents the template it compiles,
+  // so the `h1` and the paragraph are separated by a text node holding a newline and spaces —
+  // which is not a paragraph, and not the end of the opening run. A reader that stopped at it
+  // would measure the lead as zero words and the lead ceiling would pass on this page without
+  // reading it, so the newline is written into the fixture and the lead is measured through
+  // it: one word over the ceiling still fails, one word under it still does not.
+  const budgets = { ...readmeBudgets(), words: 100000 }
+  const page = (n) =>
+    shell('', `<main>\n  <h1>t</h1>\n  <p>${Array.from({ length: n }, () => 'w').join(' ')}</p>\n</main>`)
+  assert.deepEqual(pageWords(page(3)), { words: 4, lead: 3 })
+
+  const dist = distOf(t, {
+    'over/index.html': page(budgets.lead + 1),
+    'under/index.html': page(budgets.lead),
+  })
+  const f = wordFailures(dist, budgets)
+  assert.equal(f.length, 1, f.join('\n'))
+  assert.match(f[0], new RegExp(`^over/index\\.html opens with a ${budgets.lead + 1}-word lead`))
 })
 
 test('the three reference pages are exempt from the page ceiling, and their leads are not', (t) => {
