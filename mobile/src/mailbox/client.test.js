@@ -615,6 +615,27 @@ test('it does not speak or ack the same message twice', async () => {
   assert.equal(second.presence.reason, PRESENCE_REASON.NO_HEARTBEAT);
 });
 
+test('two polls in flight together speak the message once, not twice', async () => {
+  // The ack is written only AFTER the speak (the plan's order), so a poll that
+  // passes while another poll is still running reads the same message unacked
+  // and would speak it again -- the owner hears the sentence twice, which is
+  // the thing the order exists to prevent. A screen that polls on a timer and
+  // again on a reconnect does exactly that without meaning to, so the client
+  // serialises its own passes rather than documenting the duty away.
+  const h = await harness();
+  await plantOutbox(h, 'r-1');
+  const [first, second] = await Promise.all([h.client.poll(), h.client.poll()]);
+  assert.deepEqual(h.speaker.spoken(), ['run 42 finished'], 'spoken once, for the owner to hear once');
+  assert.deepEqual(first.spoken, ['r-1']);
+  assert.deepEqual(second.spoken, [], 'the second pass begins after the first has acked');
+  assert.equal(
+    h.store.writes().filter(({ path }) => path === `${OUTBOX}/r-1/acked`).length,
+    1,
+    'and the ack is written once, not twice',
+  );
+  assertD113WriteSet(h.store, h.paths);
+});
+
 test('an ack that did not land is retried, and the message is not spoken a second time', async () => {
   // The reason the phone remembers what it has spoken: the speak succeeded and
   // the ACK write did not (the phone went offline between the two). A message

@@ -585,5 +585,32 @@ export function createMailboxClient(options = {}) {
     })));
   }
 
-  return Object.freeze({ ok: true, paths, send, flush, poll, pending });
+  // serial runs one mutation at a time, in call order, and is the whole of the
+  // client's concurrency control. It is here rather than inside a method
+  // because the thing it protects is a PROPERTY OF THE PAIR: two `poll`s in
+  // flight together both read an outbox message whose ack has not landed, both
+  // speak it, and the owner hears the sentence twice -- which is exactly what
+  // the "write the ack only after speaking" order exists to prevent. A screen
+  // that polls on a timer and again on reconnect does that without meaning to.
+  // `send` is in the chain for the same class of reason: its `minted` set, its
+  // `outbound` entry and the TTL flush all assume one pass at a time.
+  //
+  // The chain never carries a rejection of its own: the caller gets the call's
+  // own outcome, and the next caller gets a settled queue whether or not the
+  // last one refused.
+  let queue = Promise.resolve();
+  function serial(fn) {
+    const run = queue.then(() => fn(), () => fn());
+    queue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  return Object.freeze({
+    ok: true,
+    paths,
+    send: (text) => serial(() => send(text)),
+    flush: () => serial(() => flush()),
+    poll: () => serial(() => poll()),
+    pending,
+  });
 }

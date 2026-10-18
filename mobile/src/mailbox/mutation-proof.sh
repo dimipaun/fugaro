@@ -224,6 +224,9 @@ run "a message already spoken is not spoken again" \
   "      if (!spoken.has(id)) {" "      if (true) {"
 run "a message the phone already acked is not spoken again" \
   "      if (entry.record.acked === true) return;" ""
+run "the queue: two passes in flight at once do not speak a message twice" \
+  "    const run = queue.then(() => fn(), () => fn());" \
+  "    const run = fn();"
 
 echo
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"
