@@ -690,7 +690,7 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * console happens to read, and a key the CLI adds in a later version is *still*
  * refused -- which is the point of closing the shape: a document the console
  * does not fully understand becomes Task 3.2's skew state, not a half-drawn
- * list. Keys accepted and not read (`project_layer`, `config_sha256`,
+ * list. Keys accepted and not read (`title`, `project_layer`, `config_sha256`,
  * `image_age_s`, `changed_files`, `artifact_count`, `artifact_bytes`, `task_pr`, `record_pr`,
  * `pr`, `pushed_head`, `started_at`, `draft_fallback`, `pr_status_at`,
  * `stale_draft`, `execution`, `batch`, `halt`, `previous_run`, `base_branch`)
@@ -706,6 +706,12 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * two agreed with each other and both were wrong. That test now reads the struct
  * (`internal/runview/runview.go`) and derives both lists from its tags, so the
  * next omission fails there.
+ *
+ * **`title` arrived with `fugaro run --title` (0.8.5, #573)**, between `recipe`
+ * and `project_layer` in the struct, and is written on nearly every row, so a
+ * list without it would turn every 0.8.5 `runs ls --json` document into the
+ * skew state. It is accepted and not read: the Runs screen's rows are this
+ * document's records, and nothing here renders a record's title yet.
  */
 export const RECORD_KEYS = [
   'run',
@@ -713,6 +719,7 @@ export const RECORD_KEYS = [
   'workflow',
   'oauth_account',
   'recipe',
+  'title',
   'project_layer',
   'config_sha256',
   'run_id',

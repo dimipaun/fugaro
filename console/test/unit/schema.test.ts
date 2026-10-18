@@ -245,6 +245,8 @@ const FULL_ROW: JSONDoc = Object.freeze({
   workflow: 'web',
   oauth_account: 'redacted@example.invalid',
   recipe: 'console-text-path',
+  // `fugaro run --title` (0.8.5): the run's title, from the stored task.
+  title: 'wire the console to the live feed',
   project_layer: { name: 'base', sha256: 'a'.repeat(64) },
   config_sha256: 'b'.repeat(64),
   run_id: '20261015-120000-aa01',
