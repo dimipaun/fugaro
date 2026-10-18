@@ -34,11 +34,13 @@
 //
 // **What is deliberately not here.** This file has the writers, and -- since
 // Task 3.3 -- the *gate* every screen is mounted through: no screen of its own,
-// no dashboard, and no decision about where the compiled script is served from
-// (`tsc` emits `dist/` while `src/main/index.ts` serves `src/renderer`, and one
-// of the two has to move). The screens are Task 2.1's, and they are named here
-// so that a reader of this task does not go looking for a screen that was never
-// in its file list.
+// no dashboard, and no decision about where the compiled script is served from.
+// That decision was Task 3.4a's, and it moved the root rather than the compiler:
+// `npm run build` now writes `dist/bundle/` (`tools/bundle-renderer/index.ts`)
+// and `src/main/index.ts` serves that (`rendererRoot`), so `tsc`'s `dist/` is
+// never what a window is handed. The screens are Task 2.1's, and they are named
+// here so that a reader of this task does not go looking for a screen that was
+// never in its file list.
 //
 // ## The gate (Task 3.3)
 //

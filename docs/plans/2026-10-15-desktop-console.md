@@ -28,7 +28,7 @@
 | **0. The ground** | the JSON contract written down and pinned (`console/docs/json-contract.md`); the child-process contract settled; the Go/`console` boundary with three tests holding it (imports, `go:embed`, and the one-entry read exception) | nothing | nothing |
 | **1. The shell** | the hardened Electron main process, the frozen IPC allow-list, `FugaroSource` with its `cli` and `fixture` implementations, the recorder/redactor, and **the console's CI — which begins with Task 1.5's copy-in, so Tasks 1.0 to 1.4 have none** | **the eight fixture recordings** (Task 1.4) and **the copy-in of the staged tests workflow** (Task 1.5) | phase 0 |
 | **2. The screens** | Live, Spend, Projects, Run detail — with the availability states and the replay buffer | nothing | phase 1 |
-| **3. When things are missing** | the no-Firebase and CLI-absent modes, the stale/gap rendering, the version-skew handshake (Task 3.2) **and its wiring at startup (Task 3.3)**; **the renderer entry — the preload, the handlers and the installation picker (Task 3.4, proposed 2026-10-17, not approved)** | nothing required (3.4's header and picker goldens are optional and owner-run) | phase 2 |
+| **3. When things are missing** | the no-Firebase and CLI-absent modes, the stale/gap rendering, the version-skew handshake (Task 3.2) **and its wiring at startup (Task 3.3)**; **the renderer entry — the preload, the handlers and the installation picker (Task 3.4, approved by the owner 2026-10-18; 3.4a implemented)** | nothing required (3.4's header and picker goldens are optional and owner-run) | phase 2 |
 | **4. macOS packaging** | the builder config and entitlements; the staged signing/notarisation workflow (a file of its own, tag-only); the update feed; **Checks 59a and 59b** | **all of it**: the certificate, the API key, the first signed build, the update round trip (Check 59); the protected GitHub environment the signing secrets live in; and Task 4.5's copy-in of the staged **signing** workflow | phase 3 |
 | **5. Later, unscheduled** | Windows and Linux packaging; the v1.1 write actions | each, when the owner decides | phase 4 |
 
@@ -108,12 +108,12 @@ console/
   src/main/spawnlog.ts            # Task 1.3: the opt-in JSONL spawn log of §5.1 rule 10 (D20)
   src/main/updates.ts             # Task 4.4: the update check and the signed feed
   src/preload/index.ts            # the frozen, versioned object the renderer sees
-  src/preload/installations.ts    # Task 3.4b (proposed): the picker window's own frozen object
-  src/main/installations.ts       # Task 3.4b (proposed): the installation store in userData, and its validation
+  src/preload/installations.ts    # Task 3.4b (approved by the owner 2026-10-18): the picker window's own frozen object
+  src/main/installations.ts       # Task 3.4b (approved by the owner 2026-10-18): the installation store in userData, and its validation
   src/renderer/index.html         # the bundled document, the CSP meta as belt-and-braces
   src/renderer/app.ts
-  src/renderer/entry.ts           # Task 3.4a (proposed): the script the dashboard document loads; startConsole first
-  src/renderer/installations.{html,ts}  # Task 3.4b (proposed): the picker document
+  src/renderer/entry.ts           # Task 3.4a (approved by the owner 2026-10-18, implemented): the script the dashboard document loads; startConsole first
+  src/renderer/installations.{html,ts}  # Task 3.4b (approved by the owner 2026-10-18): the picker document
   src/renderer/screens/{live,spend,projects,run}.ts
   src/renderer/theme/tokens.css
   src/source/source.ts            # the FugaroSource interface - the whole data plane
@@ -125,7 +125,7 @@ console/
   test/e2e/__screenshots__/       # the golden frames
   test/fixtures/*.ndjson          # recorded and redacted; never from belong
   tools/record-fixture/{index,redact}.ts
-  tools/bundle-renderer/index.ts  # Task 3.4a (proposed): the dependency-free renderer bundle step
+  tools/bundle-renderer/index.ts  # Task 3.4a (approved by the owner 2026-10-18, implemented): the dependency-free renderer bundle step
 ```
 
 Edited by this plan:
@@ -1083,7 +1083,7 @@ Every task's "Depends on" is a *build* dependency, and none of them is a merge d
 - **Task 1.5 (the owner's copy-in of the tests workflow) must merge before Task 4.6 (the gate edit).** Merged the other way round, `scripts/release-gate.sh` requires a check that no workflow produces and **every tag on this repository is refused** — including the releases that ship none of the console. This is the one ordering in the plan whose inversion breaks other people's releases, and it is why 4.6 is its own PR group (I) rather than sharing G's. **The ordering alone is not enough, and the plan says so where it matters**: the gate names a check, so the check must exist on *every* `main` commit and on every pull request head for the `identical_tree_checks` fallback — which is why the console job carries no `paths:` filter and why Task 1.4 asserts its name and triggers (`TestConsoleWorkflowJobIsGateable`). A path-filtered, correctly-ordered console job would still refuse every tag. **Round 2 is why this bullet names Task 1.5 and not Task 4.5**: the copy-in of the tests workflow moved to phase 1, the signing workflow's copy-in stayed in phase 4, and the gate follows the job it names.
 - **Task 4.2 (the staged signing workflow) must merge before Task 4.5**, trivially — the owner has nothing to copy otherwise. Task 4.2 does **not** gate Task 4.6, and the signing job is not the check the gate names.
 - **Task 3.3 (the handshake wired at startup) must merge before the console MVP is released, and after Task 3.2 (#514).** It gates the release rather than any other task's merge: Task 4.6's release gate section and "What ships with the MVP" both name it.
-- **Task 3.4 (the renderer entry, proposed 2026-10-17) must merge before the console MVP is released, and after Task 3.3.** Its three parts form a small DAG:
+- **Task 3.4 (the renderer entry, approved by the owner 2026-10-18) must merge before the console MVP is released, and after Task 3.3.** Its three parts form a small DAG:
   - **3.4a** (the preload, the handlers and the document's script) depends on 3.3;
   - **3.4b** (the installation store and the picker) depends on 3.3 and on C8 and C9 (answered 2026-10-18). Its store, validation and handshake commits may be written in parallel with 3.4a, and its picker window waits for 3.4a's bundle step and sender narrowing;
   - **3.4c** (the screens wired to the real source) depends on both.

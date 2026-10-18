@@ -1943,4 +1943,38 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	if deps := section("## Cross-task dependencies", "\n## "); !strings.Contains(deps, "Task 3.4 (the renderer entry") {
 		t.Error("the cross-task dependencies do not name Task 3.4")
 	}
+
+	// **The status is one fact in five places, and the scan above only holds one
+	// of them.** A review of the approval commit found the plan still calling
+	// Task 3.4 "proposed 2026-10-17, not approved" in the phase summary, in the
+	// cross-task dependencies and in the file tree's annotations for the three
+	// files 3.4a creates -- places the section-scoped scan above never reads, so
+	// the drift went undetected while the task itself was correct. These are the
+	// four strings that said so; each is asserted absent, and the three that
+	// carry a status (rather than a question's origin date) are asserted to carry
+	// the approval instead. Rewording any of them without updating the others
+	// fails here.
+	for _, stale := range []string{
+		"Task 3.4, proposed 2026-10-17, not approved",
+		"Task 3.4 (the renderer entry, proposed",
+		"Task 3.4a (proposed)",
+		"Task 3.4b (proposed)",
+	} {
+		if strings.Contains(plan, stale) {
+			t.Errorf("the plan still calls Task 3.4 %q: the owner approved it on 2026-10-18, and the status has to be one fact everywhere it is told", stale)
+		}
+	}
+	if row := section("| **3. When things are missing** |", "\n"); !strings.Contains(row, "Task 3.4, approved by the owner 2026-10-18") {
+		t.Error("the phase summary's phase-3 row does not carry Task 3.4's approval")
+	}
+	if bullet := section("- **Task 3.4 (the renderer entry", "\n"); !strings.Contains(bullet, "approved by the owner 2026-10-18") {
+		t.Error("the cross-task dependencies bullet does not carry Task 3.4's approval")
+	}
+	entry := regexp.MustCompile(`(?m)^  src/renderer/entry\.ts .*$`).FindString(plan)
+	if !strings.Contains(entry, "Task 3.4a (approved by the owner 2026-10-18") {
+		t.Errorf("the file tree's annotation for src/renderer/entry.ts does not carry 3.4a's approval: %q", entry)
+	}
+	if strings.Contains(entry, "proposed") {
+		t.Errorf("the file tree still calls src/renderer/entry.ts proposed: %q", entry)
+	}
 }
