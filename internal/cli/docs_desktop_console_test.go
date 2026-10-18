@@ -3364,6 +3364,63 @@ func TestReleaseGateRequiresTheConsoleCheck(t *testing.T) {
 		}
 	})
 
+	// `check_state`'s documented coexistence rule -- "cancelled runs (superseded
+	// by a newer one) are ignored while another run of the name exists" -- run
+	// rather than assumed. Every other fixture in this file writes exactly one
+	// run per name, so the `select(.conclusion != "cancelled")` branch was never
+	// reached: a mutation that made any cancelled run poison its name survived
+	// the whole suite. That is the re-run/superseded flow the rule exists for,
+	// and it is the normal state of a name while CI re-runs a failed leg.
+	t.Run("a cancelled run beside a green run of the same name is ignored", func(t *testing.T) {
+		h := newGateHarness(t)
+		var checks []string
+		for _, name := range required {
+			checks = append(checks, gateCheckRun(name, "github-actions", "success"))
+			checks = append(checks, gateCheckRun(name, "github-actions", "cancelled"))
+		}
+		h.setTargetChecks(t, checks)
+		ok, out := h.run(t)
+		if !ok {
+			t.Fatalf("the gate refused a commit whose every required name has a green run beside a superseded cancelled one:\n%s", out)
+		}
+		if !strings.Contains(out, "gate passed for v1.2.3") {
+			t.Errorf("the gate passed without saying so:\n%s", out)
+		}
+	})
+
+	t.Run("cancelled runs alone are a cancelled check, not a green one", func(t *testing.T) {
+		h := newGateHarness(t)
+		var checks []string
+		for _, name := range required {
+			checks = append(checks, gateCheckRun(name, "github-actions", "cancelled"))
+		}
+		h.setTargetChecks(t, checks)
+		ok, out := h.run(t)
+		if ok {
+			t.Fatalf("the gate passed on a commit whose only runs of every required name were cancelled:\n%s", out)
+		}
+		if want := fmt.Sprintf("required check '%s' is cancelled on %s", required[0], h.sha); !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	})
+
+	t.Run("a cancelled run beside a failed run of the same name still fails", func(t *testing.T) {
+		h := newGateHarness(t)
+		var checks []string
+		for _, name := range required {
+			checks = append(checks, gateCheckRun(name, "github-actions", "success"))
+		}
+		checks = append(checks, gateCheckRun(required[0], "github-actions", "failed"))
+		h.setTargetChecks(t, checks)
+		ok, out := h.run(t)
+		if ok {
+			t.Fatalf("the gate passed with %s failed beside a cancelled run:\n%s", required[0], out)
+		}
+		if want := fmt.Sprintf("required check '%s' is failed on %s", required[0], h.sha); !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	})
+
 	t.Run("the identical-tree fallback requires the console legs too", func(t *testing.T) {
 		h := newGateHarness(t)
 		head := h.identicalTreeHead(t)
