@@ -1,0 +1,327 @@
+// The account store's tests (mobile plan, Task P3.1; D114, D111).
+//
+// This is the file that pins the plan's own sentences for P3.1:
+//
+//   * "**An account is an installation**: one Firebase project, one operator
+//     identity, one Fugaro project name (D114)" -- and two entries for ONE
+//     installation are refused, because that is D114's "non-overlapping" in
+//     the quiet direction;
+//   * "the store holds several, non-overlapping: a per-account secure-storage
+//     item, a per-account cache namespace, **no shared token store**, and a
+//     switcher that **tears down the previous account's listeners and caches
+//     before it opens the next**" -- asserted as a property, on two configured
+//     accounts: no read from one returns a value belonging to the other, and a
+//     switch leaves no listener from the previous account alive;
+//   * "**`belong` is added by hand**" -- so a fresh store is EMPTY, `add` is
+//     the only way in, and there is no discovery and no seed account (Global
+//     Constraint 11: no agent touches `belong`, and no fixture is ever
+//     recorded from it);
+//   * the public view of an account carries D114's tuple and **no secret**,
+//     and the two items are reachable only one at a time, by account and by
+//     item.
+//
+// The values are synthetic and shaped nothing like a credential: no fixture in
+// this directory is recorded from a real installation.
+
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { ACCOUNT_FIELDS } from './account.js';
+import { ResourceRegistry } from './resources.js';
+import { MemorySecureStore, SECRET_KEY_PREFIX, SecretStore } from './secure-store.js';
+import { secret } from './secret.js';
+import { MemorySettingsStore, SETTINGS_KEY_PREFIX, SettingsStore } from './settings.js';
+import { ACCOUNT_KEY_PREFIX, STORE_CODES, AccountStore } from './store.js';
+
+const LAPTOP = Object.freeze({
+  id: 'laptop',
+  firebaseProjectId: 'fugaro-dev',
+  authUid: 'uid-0001',
+  fugaroProject: 'fugaro',
+});
+const PHONE = Object.freeze({
+  id: 'phone',
+  firebaseProjectId: 'fugaro-sandbox',
+  authUid: 'uid-0002',
+  fugaroProject: 'sandbox',
+});
+
+const LAPTOP_TOKEN = 'synthetic-id-token-laptop';
+const PHONE_TOKEN = 'synthetic-id-token-phone';
+const LAPTOP_MAC = 'synthetic-mac-key-laptop';
+
+/** A store over fresh in-memory ports, with the raw stores for inspection and
+ * the registry's trace for the ordering assertions. */
+function makeStore({ trace } = {}) {
+  const secretPort = new MemorySecureStore();
+  const settingsPort = new MemorySettingsStore();
+  const secrets = new SecretStore(secretPort);
+  const settings = new SettingsStore(settingsPort);
+  const registry = new ResourceRegistry(trace === undefined ? {} : { trace });
+  return {
+    secretPort,
+    settingsPort,
+    secrets,
+    settings,
+    registry,
+    store: new AccountStore({ secrets, settings, registry }),
+  };
+}
+
+test('a fresh store holds nothing: the account list is typed by the owner', async () => {
+  const { store } = makeStore();
+  const listed = await store.list();
+  assert.deepEqual([...listed.accounts], []);
+  assert.equal(store.current(), null, 'no account is open until the owner adds one');
+  // A settings key that is not an account is not an account either: there is
+  // no discovery and no seed entry.
+  const other = makeStore();
+  await other.settings.set('ui.theme', 'dark');
+  assert.deepEqual([...(await other.store.list()).accounts], []);
+});
+
+test('adding an installation lists it, as D114\'s tuple and nothing else', async () => {
+  const { store } = makeStore();
+  assert.equal((await store.add(LAPTOP)).ok, true);
+  const listed = await store.list();
+  assert.deepEqual([...listed.accounts], [LAPTOP]);
+  assert.deepEqual(Object.keys(listed.accounts[0]), [...ACCOUNT_FIELDS]);
+  assert.equal(Object.isFrozen(listed.accounts[0]), true);
+  const one = await store.account('laptop');
+  assert.deepEqual(one.account, LAPTOP);
+});
+
+test('a tuple that is not an installation is refused, with its own code', async () => {
+  const { store } = makeStore();
+  assert.equal((await store.add({ id: 'laptop' })).code, 'missing-field');
+  assert.equal((await store.add({ ...LAPTOP, id: 'a.b' })).code, 'bad-id');
+  assert.deepEqual([...(await store.list()).accounts], []);
+});
+
+test('a second entry for one installation is refused, however it is named', async () => {
+  const { store } = makeStore();
+  await store.add(LAPTOP);
+  assert.equal((await store.add(LAPTOP)).code, STORE_CODES.DUPLICATE_ID);
+  // The same installation under another id: two cache namespaces and two
+  // Keychain items for one project -- D114's "non-overlapping", broken.
+  assert.equal(
+    (await store.add({ ...LAPTOP, id: 'laptop-2' })).code,
+    STORE_CODES.DUPLICATE_INSTALLATION,
+  );
+  // A different installation is a different account, and is accepted.
+  assert.equal((await store.add(PHONE)).ok, true);
+  assert.deepEqual((await store.list()).accounts.map((a) => a.id), ['laptop', 'phone']);
+});
+
+test('the items are written and read one account and one item at a time', async () => {
+  const { store, secretPort } = makeStore();
+  await store.add(LAPTOP);
+  assert.deepEqual((await store.items('laptop')).items, []);
+  assert.equal(
+    (await store.setSecret('laptop', 'idToken', secret('idToken', LAPTOP_TOKEN).secret)).ok,
+    true,
+  );
+  await store.setSecret('laptop', 'macKey', secret('macKey', LAPTOP_MAC).secret);
+  assert.deepEqual((await store.items('laptop')).items, ['idToken', 'macKey']);
+  assert.equal((await store.secret('laptop', 'idToken')).secret.reveal(), LAPTOP_TOKEN);
+  assert.deepEqual(secretPort.keys(), [
+    `${SECRET_KEY_PREFIX}laptop.idToken`,
+    `${SECRET_KEY_PREFIX}laptop.macKey`,
+  ]);
+});
+
+test('a secret for an account or an item the app does not have is refused', async () => {
+  const { store } = makeStore();
+  await store.add(LAPTOP);
+  const value = secret('idToken', LAPTOP_TOKEN).secret;
+  assert.equal((await store.setSecret('phone', 'idToken', value)).code, STORE_CODES.UNKNOWN_ACCOUNT);
+  assert.equal((await store.secret('phone', 'idToken')).code, STORE_CODES.UNKNOWN_ACCOUNT);
+  assert.equal((await store.setSecret('laptop', 'password', value)).code, 'unknown-item');
+  assert.equal((await store.secret('laptop', 'password')).code, 'unknown-item');
+  assert.equal((await store.items('phone')).code, STORE_CODES.UNKNOWN_ACCOUNT);
+});
+
+test('the public view of an account carries no secret, in any serialisation', async () => {
+  const { store } = makeStore();
+  await store.add(LAPTOP);
+  await store.add(PHONE);
+  await store.setSecret('laptop', 'idToken', secret('idToken', LAPTOP_TOKEN).secret);
+  await store.setSecret('phone', 'idToken', secret('idToken', PHONE_TOKEN).secret);
+  const listed = await store.list();
+  const text = JSON.stringify(listed);
+  assert.equal(text.includes(LAPTOP_TOKEN), false);
+  assert.equal(text.includes(PHONE_TOKEN), false);
+  assert.equal(text.includes('secret'), false, 'no field of the view names a secret at all');
+  assert.equal((await store.account('laptop')).account.macKey, undefined);
+});
+
+test('there is no shared token store: the settings file holds no secret key', async () => {
+  const { store, secretPort, settingsPort } = makeStore();
+  await store.add(LAPTOP);
+  await store.setSecret('laptop', 'idToken', secret('idToken', LAPTOP_TOKEN).secret);
+  for (const key of settingsPort.keys()) {
+    assert.equal(key.startsWith(SECURE_STORE_PREFIX_FOR_TEST), false, key);
+  }
+  for (const key of secretPort.keys()) {
+    assert.equal(key.startsWith(SETTINGS_KEY_PREFIX), false, key);
+    assert.equal(key.startsWith(SECRET_KEY_PREFIX), true, key);
+  }
+  assert.deepEqual(settingsPort.keys(), [`${SETTINGS_KEY_PREFIX}${ACCOUNT_KEY_PREFIX}laptop`]);
+});
+
+// The secure store's prefix, written once here so the assertion above reads as
+// a sentence; `boundary.test.js` is what keeps the literal in one module.
+const SECURE_STORE_PREFIX_FOR_TEST = 'fugaro.account.';
+
+test('switching closes the previous account before it opens the next', async () => {
+  const trace = [];
+  const { store, registry } = makeStore({ trace });
+  await store.add(LAPTOP);
+  await store.add(PHONE);
+  await store.switchTo('laptop');
+  const stopped = [];
+  registry.add('laptop', () => stopped.push('laptop-listener'));
+  assert.equal(registry.liveCount('laptop'), 1);
+
+  const switched = await store.switchTo('phone');
+  assert.equal(switched.ok, true);
+  assert.equal(switched.changed, true);
+  assert.equal(store.current(), 'phone');
+  // The previous account's listener is stopped and its cache is gone ...
+  assert.deepEqual(stopped, ['laptop-listener']);
+  assert.equal(registry.liveCount('laptop'), 0);
+  assert.equal(registry.cacheFor('laptop').code, 'not-open');
+  // ... and it happened BEFORE the next account was opened.
+  assert.deepEqual(trace, [
+    ['open', 'laptop'],
+    ['listener', 'laptop'],
+    ['close', 'laptop'],
+    ['open', 'phone'],
+  ]);
+  assert.deepEqual(registry.openAccounts(), ['phone']);
+});
+
+test('switching to the account that is already open changes nothing', async () => {
+  const trace = [];
+  const { store, registry } = makeStore({ trace });
+  await store.add(LAPTOP);
+  await store.switchTo('laptop');
+  registry.add('laptop', () => {});
+  const again = await store.switchTo('laptop');
+  assert.equal(again.changed, false);
+  assert.equal(registry.liveCount('laptop'), 1, 'no teardown of the account that stays open');
+  assert.deepEqual(trace, [['open', 'laptop'], ['listener', 'laptop']]);
+});
+
+test('a teardown that failed does not open the next account', async () => {
+  const { store, registry } = makeStore();
+  await store.add(LAPTOP);
+  await store.add(PHONE);
+  await store.switchTo('laptop');
+  registry.add('laptop', () => { throw new Error('socket already gone'); });
+
+  const switched = await store.switchTo('phone');
+  assert.equal(switched.ok, false);
+  assert.equal(switched.code, STORE_CODES.TEARDOWN_FAILED);
+  // No account is open: the previous one is closed and the next was never
+  // opened, so there is no moment with two installations live.
+  assert.equal(store.current(), null);
+  assert.deepEqual(registry.openAccounts(), []);
+  assert.equal(registry.liveCount('laptop'), 0);
+});
+
+test('switching to an account the app does not hold is refused', async () => {
+  const { store, registry } = makeStore();
+  await store.add(LAPTOP);
+  assert.equal((await store.switchTo('phone')).code, STORE_CODES.UNKNOWN_ACCOUNT);
+  assert.deepEqual(registry.openAccounts(), []);
+  assert.equal((await store.switchTo('a.b')).code, STORE_CODES.BAD_ACCOUNT);
+});
+
+test('two configured accounts never answer with each other\'s values', async () => {
+  const { store, registry } = makeStore();
+  await store.add(LAPTOP);
+  await store.add(PHONE);
+  await store.setSecret('laptop', 'idToken', secret('idToken', LAPTOP_TOKEN).secret);
+  await store.setSecret('phone', 'idToken', secret('idToken', PHONE_TOKEN).secret);
+
+  assert.equal((await store.secret('laptop', 'idToken')).secret.reveal(), LAPTOP_TOKEN);
+  assert.equal((await store.secret('phone', 'idToken')).secret.reveal(), PHONE_TOKEN);
+  assert.notEqual(
+    (await store.secret('laptop', 'idToken')).secret.reveal(),
+    (await store.secret('phone', 'idToken')).secret.reveal(),
+  );
+
+  await store.switchTo('laptop');
+  const laptopCache = registry.cacheFor('laptop').cache;
+  laptopCache.set('feed', 'laptop value');
+  await store.switchTo('phone');
+  const phoneCache = registry.cacheFor('phone').cache;
+  assert.equal(phoneCache.get('feed'), undefined, 'the next account starts with an empty cache');
+  phoneCache.set('feed', 'phone value');
+  assert.equal(phoneCache.get('feed'), 'phone value');
+  assert.notEqual(laptopCache.get('feed'), phoneCache.get('feed'));
+});
+
+test('removing an account forgets its secrets, stops its listeners and drops it', async () => {
+  const { store, registry, secretPort, settingsPort } = makeStore();
+  await store.add(LAPTOP);
+  await store.add(PHONE);
+  await store.setSecret('laptop', 'idToken', secret('idToken', LAPTOP_TOKEN).secret);
+  await store.setSecret('phone', 'idToken', secret('idToken', PHONE_TOKEN).secret);
+  await store.switchTo('laptop');
+  const stopped = [];
+  registry.add('laptop', () => stopped.push('laptop-listener'));
+
+  const removed = await store.remove('laptop');
+  assert.equal(removed.ok, true);
+  assert.deepEqual([...removed.removed], ['idToken']);
+  assert.deepEqual(stopped, ['laptop-listener']);
+  assert.equal(store.current(), null);
+  assert.deepEqual((await store.list()).accounts.map((a) => a.id), ['phone']);
+  assert.deepEqual(secretPort.keys(), [`${SECRET_KEY_PREFIX}phone.idToken`]);
+  assert.deepEqual(settingsPort.keys(), [`${SETTINGS_KEY_PREFIX}${ACCOUNT_KEY_PREFIX}phone`]);
+  assert.equal((await store.secret('laptop', 'idToken')).code, STORE_CODES.UNKNOWN_ACCOUNT);
+});
+
+test('a removal whose secret round fails removes nothing at all', async () => {
+  const failing = (port) => ({
+    async getItem(key) { return port.getItem(key); },
+    async setItem(key, value) { return port.setItem(key, value); },
+    async deleteItem() { throw new Error('keychain said no'); },
+    async keys() { return port.keys(); },
+  });
+  const settingsPort = new MemorySettingsStore();
+  const registry = new ResourceRegistry();
+  const store = new AccountStore({
+    secrets: new SecretStore(failing(new MemorySecureStore())),
+    settings: new SettingsStore(settingsPort),
+    registry,
+  });
+  await store.add(LAPTOP);
+  assert.equal((await store.setSecret('laptop', 'idToken', secret('idToken', LAPTOP_TOKEN).secret)).ok, true);
+  const removed = await store.remove('laptop');
+  assert.equal(removed.ok, false);
+  assert.equal(removed.code, 'store-failed');
+  // The account is intact, so it can be removed again: a credential left with
+  // no account pointing at it would never be deleted.
+  assert.deepEqual((await store.list()).accounts.map((a) => a.id), ['laptop']);
+  assert.equal(registry.isOpen('laptop'), false);
+});
+
+test('removing an account the app does not hold is refused', async () => {
+  const { store } = makeStore();
+  assert.equal((await store.remove('phone')).code, STORE_CODES.UNKNOWN_ACCOUNT);
+});
+
+test('a stored tuple this module could not have written fails the whole list', async () => {
+  const { store, settingsPort } = makeStore();
+  await store.add(LAPTOP);
+  await settingsPort.setItem(
+    `${SETTINGS_KEY_PREFIX}${ACCOUNT_KEY_PREFIX}phone`,
+    JSON.stringify({ ...PHONE, id: 'somebody-else' }),
+  );
+  const listed = await store.list();
+  assert.equal(listed.ok, false);
+  assert.equal(listed.code, STORE_CODES.UNREADABLE_ACCOUNT);
+});
