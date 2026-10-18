@@ -822,8 +822,9 @@ test('every built page meets the accessibility contract: landmarks, headings, na
 // the whole content — a screen reader reads the steps, in order — and its arrows are
 // decoration, which is a claim only this file can hold it to: the generic contract above
 // refuses a *focusable* element hidden with aria-hidden, and says nothing about art that
-// should have been hidden and was not. The motion path is the generic one (every animation
-// in a built page's CSS has to be gated or neutralised, D105), so it is not repeated here.
+// should have been hidden and was not, nor about a flow whose own words are hidden and so
+// never reach a reader at all. The motion path is the generic one (every animation in a
+// built page's CSS has to be gated or neutralised, D105), so it is not repeated here.
 
 /** The classes on an element, as a list. */
 function classList(el) {
@@ -840,19 +841,36 @@ export function flowStepsOf(html) {
 /**
  * What a screen reader would get wrong in a page's flow, as the lines a reader sees: a step
  * that is not a list item of the flow's own list, a step whose caption is outside it (so the
- * list reads the step names and then, somewhere else, their captions), or art inside the
- * flow that is not hidden from one.
+ * list reads the step names and then, somewhere else, their captions), a step's text hidden
+ * from assistive technology, or art inside the flow that is not hidden from one.
+ *
+ * The hidden-text half is why this check exists rather than a generic one: the contract above
+ * refuses a *focusable* element inside `aria-hidden`, and says nothing about a `<figure>` or
+ * an `<ol>` that hides the flow's own words — the one thing the flow is for.
  */
 export function flowA11yFailures(html) {
   const out = []
   const doc = parse(html)
   const flows = findAll(doc, (el) => el.name === 'ol' && classList(el).includes('flow-steps'))
+  /** Whether an element or anything above it is hidden from assistive technology. */
+  const hidden = (el) => {
+    for (let node = el; node; node = node.parent) if (node.attrs?.get('aria-hidden') === 'true') return true
+    return false
+  }
   for (const flow of flows) {
+    if (hidden(flow)) {
+      out.push(
+        'the flow is hidden from assistive technology (aria-hidden="true" on the list or on something above it): the steps are the whole content of the picture, and a reader left with an empty figure is exactly what this case is for',
+      )
+    }
     const direct = flow.children.filter((child) => child.name === 'li' && classList(child).includes('flow-step'))
     for (const step of [...walk(flow)].filter((el) => el.name === 'li' && classList(el).includes('flow-step'))) {
       const name = step.attrs.get('data-step') ?? '(a step with no data-step)'
       if (!direct.includes(step)) {
         out.push(`the ${name} step is not an item of the flow's list: the flow is an ordered list, and a step nested anywhere else is read in whatever order the markup happens to give`)
+      }
+      if (hidden(step)) {
+        out.push(`the ${name} step is hidden from assistive technology (aria-hidden="true" on the step or on something above it): the step is what the flow says happens, and hiding it hides a step of the run`)
       }
       const heading = [...walk(step)].find((el) => /^h[1-6]$/.test(el.name))
       const caption = [...walk(step)].find((el) => classList(el).includes('step-caption'))
@@ -888,16 +906,16 @@ test('the flow is an ordered list a screen reader reads in order, and its arrows
 test('the flow refusals fire on the defect each one names', () => {
   // A page carrying the flow in the shape the component writes it, which passes; each
   // fixture below breaks one thing in it, so the check above cannot pass by reading nothing.
-  const flow = ({ captionOutside = false, arrowHidden = true } = {}) => {
+  const flow = ({ captionOutside = false, arrowHidden = true, hiddenAt = '' } = {}) => {
     const arrow = arrowHidden
       ? '<svg class="step-arrow" aria-hidden="true" focusable="false"><path d="M1 1"></path></svg>'
       : '<svg class="step-arrow"><path d="M1 1"></path></svg>'
     // The arrow is the component's own placement: inside the step, after its card.
-    const step = (n, body, svg = '') => `<li class="flow-step" data-step="step ${n}"><div class="step-card">${body}</div>${svg}</li>`
+    const step = (n, body, svg = '', extra = '') => `<li class="flow-step"${extra} data-step="step ${n}"><div class="step-card">${body}</div>${svg}</li>`
     return [
       '<!DOCTYPE html><html lang="en"><head><title>T</title></head><body><main id="main"><h1>T</h1>',
-      '<figure class="flow"><ol class="flow-steps">',
-      step(1, '<h2>One</h2><p class="step-caption">first</p>', arrow),
+      `<figure class="flow"${hiddenAt === 'figure' ? ' aria-hidden="true"' : ''}><ol class="flow-steps"${hiddenAt === 'list' ? ' aria-hidden="true"' : ''}>`,
+      step(1, '<h2>One</h2><p class="step-caption">first</p>', arrow, hiddenAt === 'step' ? ' aria-hidden="true"' : ''),
       step(2, captionOutside ? '<h2>Two</h2>' : '<h2>Two</h2><p class="step-caption">second</p>'),
       captionOutside ? '<p class="step-caption">second</p>' : '',
       '</ol></figure></main></body></html>',
@@ -913,6 +931,14 @@ test('the flow refusals fire on the defect each one names', () => {
     flowA11yFailures(flow({ arrowHidden: false })).some((line) => /is not marked as decoration/.test(line)),
     'an arrow that is not aria-hidden passes: a screen reader would read the picture the steps already say',
   )
+  // The flow's words are the flow: hidden at the list or at the figure above it, the page is
+  // a picture with nothing behind it, and every other gate in this file still passes.
+  for (const at of ['list', 'figure', 'step']) {
+    assert.ok(
+      flowA11yFailures(flow({ hiddenAt: at })).some((line) => /is hidden from assistive technology/.test(line)),
+      `a flow hidden with aria-hidden="true" at the ${at} passes: the steps are the whole content, and a reader given an empty figure has been given nothing`,
+    )
+  }
 })
 
 test('the recorded heading-order defect on the docs page is still real, so its exception is still needed', () => {
