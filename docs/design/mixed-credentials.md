@@ -1,6 +1,6 @@
 # Mixed credentials and a stronger senior reviewer in a cheap-coder loop
 
-Status: draft for the owner's review, 2026-10-14, corrected after an independent review against the code. Nothing here is built. Related: [m10-multi-model.md](m10-multi-model.md) (provider routes, §7 auth modes, §11a two-tier review), [named-oauth-tokens.md](named-oauth-tokens.md), [recipes.md](recipes.md), [m9-budget-and-dashboard.md](m9-budget-and-dashboard.md) (D2).
+Status: draft for the owner's review, 2026-10-14, corrected after an independent review against the code. Nothing here is built. **2026-10-17 (D130): Path B is superseded** — its mechanism and the plan that carries it, [../plans/2026-10-14-oauth-reviewer-stage.md](../plans/2026-10-14-oauth-reviewer-stage.md), which is not to be built — and **Path A and Path C are the credentials service's tiers B and C** ([credentials-service](../credentials-service/README.md), D130 in its [reconciliation](../credentials-service/reconciliation.md) §3); §5 and §10 keep the superseded mechanism as the record of what was proposed. Related: [m10-multi-model.md](m10-multi-model.md) (provider routes, §7 auth modes, §11a two-tier review), [named-oauth-tokens.md](named-oauth-tokens.md), [recipes.md](recipes.md), [m9-budget-and-dashboard.md](m9-budget-and-dashboard.md) (D2).
 
 ## 1. Summary and recommendation
 
@@ -67,6 +67,8 @@ Facts from OpenRouter's public API, 2026-10-14 (to re-verify at build time; the 
 
 ## 5. Path B: the OAuth token for the reviewer stage only
 
+> **SUPERSEDED (D130, 2026-10-17).** The subscription token is not mounted in the job at all: the [credentials service](../credentials-service/README.md) holds it and attaches it per call, which is the mitigation §6 below calls the only one that closes the gap — the token leaves the job rather than being scoped inside it. `agent.stage_auth`, the second `EnvSpec`, the per-account variant-job mounts, the role-swap refusals and the whole-run relaunch are therefore **not to be built**, and the plan that details them (`../plans/2026-10-14-oauth-reviewer-stage.md`) is superseded with them; what carries over from it (the trusted-repository opt-in and the `followup.allow_public` refusal, the version-skew constant, the per-stage notional record) is recorded in D130. Paths A and C above stay, as the cascade's tiers B and C. Everything below is kept as the record of what was proposed, not as work to do.
+
 **Proposed shape (names tentative):**
 
 ```yaml
@@ -97,6 +99,8 @@ Mitigations, honestly:
 
 The SECURITY.md known-gaps list gets one line for B if it ships. Path A needs none. Path C changes the data-flow scope: `allow_data_to` on the provider decides which repositories may send code to it.
 
+**2026-10-17 (D130).** This analysis is why the credentials service exists: it is mitigation 4 — a separate execution with its own identity — generalised from one reviewer stage to every call, so with it on no job mounts a subscription token and `/proc` of the runner holds at most a short-lived per-run identity. Two of the mitigations still hold unchanged there: **1**, the trusted-repository opt-in (`followup.allow_public` and review mode's trusted-author gate), which the cascade keeps for tier A, and **3**, whose window the service shortens by reading the token as its own account instead of the job's. The D2 residual this section describes is what the service removes; the sentence above about a SECURITY.md line for B is moot, and what the service's own SECURITY.md text has to say is the credentials service plan's C1.22 (D148).
+
 ## 7. Comparison
 
 | | A: Anthropic key | C: OpenRouter | B: OAuth reviewer stage |
@@ -116,7 +120,7 @@ Decided (owner, 2026-10-14): B is worth the residual risk; opt-in is enough; the
 Open, still for the owner, and the plan's remaining tasks and live checks do not wait on any of them:
 
 1. Is a non-Claude senior (GPT or Gemini through OpenRouter) acceptable as the first step, before any Claude senior? The owner rules it; **Check 45** is the by-hand comparison the ruling is made from, and it has not been run.
-2. Should `stage_auth` generalize later to the coder role? Recommendation: no.
+2. Should `stage_auth` generalize later to the coder role? Recommendation: no. **Moot since D130 (2026-10-17):** the key is not built, and the force is per call rather than per stage.
 3. §4's own question, kept open on purpose: do Claude Code's prompt-cache markers survive the Anthropic-compatible endpoint? **Check 46** measures it — `cache_read`/`cache_write_5m` and the charge, the same task run routed against direct — and it has not been run. The owner-written switch that supersedes this interim claim path is phase 1b's `routing.claude`: its owner-facing paragraph (the object, the explicit list, absent-means-direct, the `allow_data_to` requirement, and this same cache-marker question with the cost attached) is [multi-model.md](../multi-model.md)'s §2, the resolution it licenses is what `fugaro validate` prints or calls unresolved offline, and **Check 50** ([gcp-live-checklist.md](../gcp-live-checklist.md)) is the same measurement on the switch's route — also not yet run.
 
 ## 9. Testing and live checks
@@ -129,5 +133,5 @@ Open, still for the owner, and the plan's remaining tasks and live checks do not
 
 1. Docs and the live check for a **non-Claude senior through OpenRouter** (no Go change expected beyond what the check finds), and for A if the owner gets an Anthropic key.
 2. The §4 change (the explicit opt-in) and C for Claude.
-3. B: infra, runner per-stage spec, validation, with mitigations 1 and 2.
-4. Optional hardening: the separate-job reviewer, only for repositories with outside contributors.
+3. B: infra, runner per-stage spec, validation, with mitigations 1 and 2. **Superseded (D130, 2026-10-17)**; the credentials service is the answer, and its own Slice 1 waits for 0.9.0's seal.
+4. Optional hardening: the separate-job reviewer, only for repositories with outside contributors. **Folded into the credentials service (D130)**: the service is that separate execution, per call rather than per stage.
