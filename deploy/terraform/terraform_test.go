@@ -1208,6 +1208,120 @@ func firstAttr(body, name string) string {
 	return m[1]
 }
 
+// TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant pins the
+// claim D75 makes in prose — serviceAccountTokenCreator is "one grant on that
+// account, for var.operators" — as a property of the whole tree, because the
+// role scanner does not hold it. checkLiteralRole exempts
+// roles/iam.serviceAccountTokenCreator beside roles/iam.serviceAccountUser so
+// the deployer's impersonation grant is allowed at all, and an exemption
+// cannot tell an operator impersonating the deployer from the same role on a
+// job account, which is a credential that runs as that account. A literal
+// token-creator grant is therefore allowed in exactly one place, and it is the
+// deployer's own block: the deployer account, written as a literal path, for
+// var.operators.
+//
+// Its members are people on the review screen (internal/infra/tf's grantRules)
+// and the plan itself is screened again by Cover.deployerTokenCreator, so what
+// this test is the file-level half of is: no second block anywhere grants the
+// role, and the one that does is the one D75 describes.
+func TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant(t *testing.T) {
+	const (
+		role = "roles/iam.serviceAccountTokenCreator"
+		// The install module's deployer account, as deployer.tf writes it.
+		account = `"projects/${var.project}/serviceAccounts/fugaro-deployer@${var.project}.iam.gserviceaccount.com"`
+		file    = "gcp/modules/installation/deployer.tf"
+		block   = "google_service_account_iam_member.fugaro_deployer_token_creator"
+	)
+	var sites []string
+	walk(t, func(path string, b []byte) {
+		code := stripComments(string(b))
+		for _, m := range quotedRoleRE.FindAllStringSubmatch(code, -1) {
+			if m[1] == role {
+				sites = append(sites, path)
+			}
+		}
+	})
+	if len(sites) != 1 || sites[0] != file {
+		t.Errorf("the literal %s appears in %v; want once, in %s (D75's impersonation grant, and nothing else in the tree)", role, sites, file)
+	}
+
+	var found bool
+	walk(t, func(path string, b []byte) {
+		if path != file {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if blk.name != block {
+				continue
+			}
+			found = true
+			if !hasAttr(blk.body, "service_account_id", account) {
+				t.Errorf("%s: %s does not name the deployer account as the literal %s: a grant whose account is computed is a grant nobody can check, and this is the account an operator is impersonating", path, blk.name, account)
+			}
+			if !hasAttr(blk.body, "for_each", "toset(var.operators)") {
+				t.Errorf("%s: %s is not for var.operators, the people the owner names at init", path, blk.name)
+			}
+			if !hasAttr(blk.body, "member", "each.value") {
+				t.Errorf("%s: %s does not grant the role to each.value", path, blk.name)
+			}
+		}
+	})
+	if !found {
+		t.Fatalf("%s has no %s", file, block)
+	}
+}
+
+// TestInstallationServiceAccountGrantsNameTheirAccount pins the one shape the
+// installation module's service-account grants have to have: the account is a
+// literal path built from var.project, never read from the account resource's
+// own name attribute.
+//
+// Why it is a rule and not a preference. The installation module is the one
+// that creates the deployer account (D75), and the review that screens the
+// apply — internal/infra/tf's Cover.onDeployer — refuses every
+// service-account grant in a deployer-creating module whose account is
+// computed, because a computed account there could be the deployer, and actAs
+// on the deployer is a job that runs as the deployer. A grant written as
+// google_service_account.<x>.name is therefore not merely unreadable: it makes
+// the installation apply stop riding the run's one confirmation and ask for
+// its own, printing a reason that is false about the module's own grant. The
+// operators' actAs on the scheduler account did exactly that (scheduler.tf),
+// which is what this test was added for.
+//
+// deployer.tf's token-creator grant gives the same reason for the same choice
+// in its own comment; this holds the whole module to it. The other modules are
+// not held to it: none of them creates the deployer, so a grant there may read
+// its account from the resource, and most of them do.
+func TestInstallationServiceAccountGrantsNameTheirAccount(t *testing.T) {
+	const dir = "gcp/modules/installation/"
+	// The literal form: var.project twice — the account path and its own
+	// domain — and the account's ID, either written out or read from a
+	// variable the module validates as a service account ID. What the pattern
+	// is here to refuse is an account read from the account RESOURCE's own
+	// name attribute (google_service_account.<x>.name), which is the shape
+	// that is unknown at plan time.
+	literalSA := regexp.MustCompile(`^"projects/\$\{var\.project\}/serviceAccounts/([a-z][a-z0-9-]*|\$\{var\.[A-Za-z0-9_.\[\]]+\})@\$\{var\.project\}\.iam\.gserviceaccount\.com"$`)
+	n := 0
+	walk(t, func(path string, b []byte) {
+		if !strings.HasPrefix(path, dir) {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if blk.typ != "google_service_account_iam_member" {
+				continue
+			}
+			n++
+			id := firstAttr(blk.body, "service_account_id")
+			if !literalSA.MatchString(id) {
+				t.Errorf("%s: %s names its account as %q: a service-account grant in the installation module must name its account as a literal path, because this module creates the deployer account and cover.onDeployer refuses a computed account beside it — the apply then asks its own confirmation and refuses the module's own grant", path, blk.name, id)
+			}
+		}
+	})
+	if n < 2 {
+		t.Errorf("found only %d service-account grants in %s: the scan is not seeing the module's own grants", n, dir)
+	}
+}
+
 // REGRESSION (same-project layout): the project-level roles any job, build or
 // scheduler account holds are exactly these, in every module and IAM resource
 // type. None gives access to the RTDB, Firestore, Identity Platform or the
