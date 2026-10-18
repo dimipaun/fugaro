@@ -550,11 +550,14 @@ test('the README claims about docs/pending-workflows/, firebase.json and the dep
   const text = readme()
   assert.ok(!/Nothing under `docs\/pending-workflows\/`/.test(text), 'the README says nothing is staged under docs/pending-workflows/, but other pending workflows are committed there')
   const staged = path.join(REPO_ROOT, 'docs', 'pending-workflows')
-  // The README says the directory holds the website's two manual workflows (#566) and no other
-  // pending workflow: it must hold exactly those.
-  assert.ok(/holds only the website's two manual workflows, `website-preview\.yml` and `website-promote\.yml`/.test(text.replace(/\s+/g, ' ')), 'the README no longer says what docs/pending-workflows/ holds today')
+  // The owner copied the website's two manual workflows (#566) into .github/workflows/ and removed
+  // the staged copies, so the directory holds no pending workflow and the real files exist.
+  assert.ok(/now holds no pending workflow/.test(text.replace(/\s+/g, ' ')), 'the README no longer says what docs/pending-workflows/ holds today')
   const pending = existsSync(staged) ? readdirSync(staged).filter((n) => /\.ya?ml$/i.test(n)).sort() : []
-  assert.deepEqual(pending, ['website-preview.yml', 'website-promote.yml'], 'the workflows pending under docs/pending-workflows/ are not the two the README names, so update the README')
+  assert.deepEqual(pending, [], 'a workflow is staged under docs/pending-workflows/ but the README says none is pending, so update the README')
+  for (const name of ['website-preview.yml', 'website-promote.yml']) {
+    assert.ok(existsSync(path.join(REPO_ROOT, '.github', 'workflows', name)), `.github/workflows/${name} is missing: the README says the owner copied it in`)
+  }
   // firebase.json landed ahead of W2.1 with scripts/deploy-website.sh, and the README says so.
   assert.ok(existsSync(path.join(REPO_ROOT, 'firebase.json')), 'firebase.json is missing: the README says the hosting configuration is at the repository root')
   assert.ok(/`firebase\.json`/.test(text) && /scripts\/deploy-website\.sh/.test(text), 'the README does not describe firebase.json and scripts/deploy-website.sh')
