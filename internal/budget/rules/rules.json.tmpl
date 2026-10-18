@@ -231,7 +231,7 @@
             },
             "reply_to": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}} && (PARENTKIND == 'answer' || PARENTKIND == 'action')" },
             "action": {
-              ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation'])",
+              ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
               "id": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}}" },
               "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')" },
               "target": {
@@ -271,7 +271,7 @@
             },
             "reply_to": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}} && (PARENTKIND == 'answer' || PARENTKIND == 'action')" },
             "action": {
-              ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation'])",
+              ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
               "id": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}}" },
               "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')" },
               "target": {

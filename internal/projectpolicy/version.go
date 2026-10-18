@@ -66,9 +66,20 @@ const PolicyRulesVersion = 1
 // and the owner's deploy records generation 2 — not a reason for anything to
 // read below the policy generation and answer "no policy here".
 //
+// Generation 3 is P6.4 (mobile plan task P6.4, decisions D161, D165, D166,
+// D169, D171): the mailbox's message fields as P6.3's schema defines them (a
+// `mac` required on every message of every kind and on the heartbeat, with
+// `agent`, `kind`, `options`, `reply_to` and the action record beside it), the
+// device allowlist `config/admin/devices/<uid>` that USER now requires (D166),
+// and the two pairing nodes of D165. The generation moves for the device node
+// even where nothing else did: a phone on generation 2 cannot read its own
+// mailbox under a generation-3 document until its account is paired, so an
+// installation that deploys these rules and forgets `fugaro pair` finds every
+// app read refused — the skew doctor reports is what says why.
+//
 // It is not Version: the policy schema and the rules that guard it move
 // independently.
-const RulesVersion = 2
+const RulesVersion = 3
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own

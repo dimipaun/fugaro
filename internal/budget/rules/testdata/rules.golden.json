@@ -338,7 +338,7 @@
               ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100 && ((newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'answer' || (newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action')"
             },
             "action": {
-              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation'])",
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
               "id": {
                 ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
               },
@@ -420,7 +420,7 @@
               ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100 && ((newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'answer' || (newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action')"
             },
             "action": {
-              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation'])",
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
               "id": {
                 ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
               },

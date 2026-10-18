@@ -619,6 +619,12 @@ func TestRunTokenWritesSurviveThePolicyEdit(t *testing.T) {
 			if _, listed := mailboxWrites()[p]; !listed {
 				t.Errorf("/%s is writable under the mailbox: a write there is one of the four mailboxWrites() lists, and this one is not", p)
 			}
+		case "pairing":
+			// D165's family (P6.4): the one write a pairing session has, and
+			// TestPairingWritesAreExactlyTheOne is what pins it.
+			if _, listed := pairingWrites()[p]; !listed {
+				t.Errorf("/%s is writable under pairing: a write there is the one pairingWrites() lists, and this one is not", p)
+			}
 		}
 	}
 }
@@ -645,6 +651,155 @@ func mailboxWrites() map[string][]string {
 		"mailbox/$mb/outbox/$msg/acked": once(phone),
 		"mailbox/$mb/outbox/$msg":       once(consumer),
 		"mailbox/$mb/heartbeat":         consumer,
+	}
+}
+
+// pairingWrites is D165's grant list (P6.4): the one write a pairing session
+// has, with the fragments its predicate must carry — the pu claim, $uid naming
+// the token's own uid, newData.exists() (a delete is not a write, and a delete
+// of the request would let a session bind a second key) and !data.exists()
+// (the request is written ONCE: a fingerprint the operator confirms must not be
+// swappable afterwards). The delivery node is the operator's write over IAM and
+// has none.
+func pairingWrites() map[string][]string {
+	return map[string][]string{
+		"pairing/$uid/request": {"auth.token.pu != null", "auth.token.pu == auth.uid", "$uid == auth.uid", "newData.exists()", "!data.exists()"},
+	}
+}
+
+// TestPairingWritesAreExactlyTheOne pins D165's family without the emulator:
+// one write, for the pairing uid, on its own request node, once. The emulator
+// proves what each identity can reach through it (emulator_pairing_test.go);
+// this proves the list did not grow, which is the half a later edit would
+// change quietly — a second grant here is a second way into a mailbox.
+func TestPairingWritesAreExactlyTheOne(t *testing.T) {
+	paths := generatedPaths(t)
+	want := pairingWrites()
+	for p, frags := range want {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		w, _ := attrs[".write"].(string)
+		if w == "" {
+			t.Errorf("/%s carries no .write: the pairing session's one write is gone", p)
+			continue
+		}
+		for _, f := range frags {
+			if !strings.Contains(w, f) {
+				t.Errorf("/%s .write = %q, want it to carry %q", p, w, f)
+			}
+		}
+	}
+
+	// No second grant anywhere in the family, and the delivery node is
+	// explicitly denied to every writer: it is written over IAM, which bypasses
+	// the rules, so a client grant there would be a client that can rewrite
+	// what the phone was told to trust.
+	for p, attrs := range paths {
+		if p != "pairing" && !strings.HasPrefix(p, "pairing/") {
+			continue
+		}
+		if w, ok := attrs[".write"].(string); ok {
+			if _, listed := want[p]; !listed {
+				t.Errorf("/%s is writable (%s) and is not the pairing session's one write", p, w)
+			}
+		}
+	}
+	if attrs, ok := paths["pairing/$uid/delivery"]; !ok {
+		t.Error("the template does not generate /pairing/$uid/delivery")
+	} else {
+		if w, ok := attrs[".write"]; !ok || w != false {
+			t.Errorf("/pairing/$uid/delivery .write = %v, want false", w)
+		}
+		r, _ := attrs[".read"].(string)
+		for _, f := range []string{"auth.token.pu != null", "auth.token.pu == auth.uid", "$uid == auth.uid"} {
+			if !strings.Contains(r, f) {
+				t.Errorf("/pairing/$uid/delivery .read = %q, want it to carry %q", r, f)
+			}
+		}
+	}
+
+	// The request node is nobody's to read, the pairing uid included: the
+	// operator reads the key over IAM when they check the fingerprint (P6.6).
+	for _, p := range []string{"pairing", "pairing/$uid", "pairing/$uid/request"} {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		if r, ok := attrs[".read"]; ok && r != false {
+			t.Errorf("/%s .read = %v: an RTDB grant on a parent cascades to its children", p, r)
+		}
+	}
+}
+
+// TestDeviceNodesAreClientDenied pins D166's node from the rules' side: the
+// allowlist is written over IAM by `fugaro pair` (P6.6) and by nothing else, so
+// no client token — a phone's, a consumer's, a run's or a pairing session's —
+// holds a grant on it or on any child of it. The rules are not what keeps it
+// from a launcher, which reads it through roles/firebasedatabase.viewer
+// whatever they say (G13); what they keep is a *client* out, which is the
+// difference between an account that can un-revoke itself and one that cannot.
+func TestDeviceNodesAreClientDenied(t *testing.T) {
+	paths := generatedPaths(t)
+	// The path internal/budget/rules names and the CLI will read (PathDevices).
+	if PathDevices != "config/admin/devices" {
+		t.Fatalf("PathDevices = %q, want config/admin/devices", PathDevices)
+	}
+	node := PathDevices + "/$uid"
+	attrs, ok := paths[node]
+	if !ok {
+		t.Fatalf("the template does not generate /%s, which USER's device conjunct reads", node)
+	}
+	for _, a := range []string{".read", ".write"} {
+		if v, ok := attrs[a]; !ok || v != false {
+			t.Errorf("/%s %s = %v, want false: no client token may touch the allowlist", node, a, v)
+		}
+	}
+	if r, ok := attrs[".read"].(string); ok {
+		t.Errorf("/%s .read = %q: the node is written and read over IAM only", node, r)
+	}
+}
+
+// TestUserClaimRequiresTheDeviceNode: D166's conjunct, in every read and write
+// USER or MAILBOX reaches. The property is the one an operator relies on when
+// they revoke a phone — deleting one child takes every family away at once —
+// so it is asserted on the claim itself and on the rendered expressions, not
+// only on the mailbox (an account that lost its device node must not go on
+// reading the caps).
+func TestUserClaimRequiresTheDeviceNode(t *testing.T) {
+	conjunct := "root.child('config/admin/devices').child(auth.uid).exists()"
+	if !strings.Contains(userClaim, conjunct) {
+		t.Fatalf("userClaim = %q, want D166's conjunct %q", userClaim, conjunct)
+	}
+
+	paths := generatedPaths(t)
+	// Every location whose grant is the user claim's, in either form: the
+	// eight dashboard families carry USER, and the mailbox's two carry MAILBOX,
+	// which is the same claim plus `$mb == auth.uid`.
+	var n int
+	for p, attrs := range paths {
+		for _, a := range []string{".read", ".write"} {
+			expr, ok := attrs[a].(string)
+			if !ok {
+				continue
+			}
+			if !strings.Contains(expr, "auth.token.mu") {
+				continue
+			}
+			n++
+			if !strings.Contains(expr, conjunct) {
+				t.Errorf("/%s %s = %q carries the user claim without the device conjunct: revoking a phone would not revoke this", p, a, expr)
+			}
+		}
+	}
+	// The sweep would pass vacuously if the claim had stopped being used at
+	// all; the eight read families and the mailbox's grants are the ones that
+	// must be there.
+	if n < 10 {
+		t.Errorf("only %d grants carry the user claim: the sweep above proved nothing", n)
 	}
 }
 
