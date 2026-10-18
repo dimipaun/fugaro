@@ -500,6 +500,25 @@ narrow what a peer can reach. The distinction is the whole point of writing it d
 natural next question — "so can a peer read another run's token?" — has the honest answer "it can
 read bytes that are not usable without a key it does not have", and not "no".
 
+**The launch's own agent holds the key, and that is the residual the seal does not remove.** The
+adversary §4 defines is the *peer*, and the seal answers it by delivering the key to one execution —
+but that execution is the one the run's own agent shares. The agent's own environment is built from
+an allow-list and never carries the marker (`internal/agent`'s `BuildEnv` takes `baseEnv`, the auth
+variables and the workflow's declared secrets, and `FUGARO_BUDGET_TOKEN` is in none of them), and
+`internal/gitops`' `processEnv` strips it from every git call and from anything git runs; neither
+closes the last route, because the agent runs as the same user in the same container as the runner,
+which holds the marker in its own process environment: the agent can read `/proc/<runner-pid>/environ`
+and recover the key by exactly the route it already recovers the model credentials, the provider keys
+and the job's service account token by (SECURITY.md, "What one run's agent can reach"). It is stated
+rather than assumed because §7.1's whole method is naming the audience of the key instead of
+widening it in silence, and because the two mitigations above are orderings and hygiene, not
+boundaries: what the agent gets from the key is its own run's token — the identity the run already
+spends under, whose theft by the run itself is the "an agent that reads the real key from `/proc` can
+spend outside it" case SECURITY.md already prices — and not a peer's. The seal neither adds nor
+removes anything here; a run that reads it is the principal the token was minted for. Closing it
+would need the runner to hand the execution's key to something the agent's own user cannot read,
+which is a sandbox this document does not design and no candidate in §5 provides.
+
 ### 7.2 The move out of `runs/` (the part that stops the denial of service)
 
 Today a peer can *delete* a queued run's token object, and the victim then refuses to start

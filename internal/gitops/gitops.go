@@ -216,14 +216,19 @@ func (r *Repo) Environ() []string { return r.processEnv() }
 func (r *Repo) processEnv() []string {
 	env := append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), r.Env...)
 	// A provider key (FUGARO_PROVIDER_KEY_*) is the gateway's alone, and the
-	// budget marker is the run's alone: no git call, and nothing git runs,
-	// ever sees either, whatever StripEnv says. The marker is a secret as soon
-	// as the launcher seals — its value is the launch's seal key, and a run
-	// that read it could unseal the token of the launch it was copied from
-	// (docs/design/budget-token-channel.md §7.1) — and an agent-written
-	// .git/config (core.fsmonitor, a filter driver) is exactly a way to make
-	// git run a command of the agent's choosing, which is why the model
-	// credential is stripped the same way.
+	// budget marker is the run's: no git call, and nothing git runs, ever sees
+	// either, whatever StripEnv says. The marker is a secret as soon as the
+	// launcher seals — its value is the launch's seal key, and whoever holds
+	// it opens this run's token object (docs/design/budget-token-channel.md
+	// §7.1) — and an agent-written .git/config (core.fsmonitor, a filter
+	// driver) is exactly a way to make git run a command of the agent's
+	// choosing, which is why the model credential is stripped the same way.
+	// This strip is hygiene, not a boundary: the run's own agent shares the
+	// container and its user with the runner and can read the marker from the
+	// runner's /proc regardless, so what it removes is one more place the
+	// value would surface — a hook's environment, a command's dump of its own
+	// env — not the agent's own reach (SECURITY.md, "What one run's agent can
+	// reach"; docs/design/budget-token-channel.md §7.1).
 	return slices.DeleteFunc(env, func(kv string) bool {
 		k, _, _ := strings.Cut(kv, "=")
 		return config.IsProviderKeyEnv(k) || k == BudgetTokenEnv || slices.Contains(r.StripEnv, k)
