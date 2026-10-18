@@ -40,8 +40,10 @@ export default defineConfig({
   updateSnapshots: 'none',
   // One PNG per theme PER PLATFORM (`live-light-darwin.png`,
   // `live-light-linux.png`): macOS and Linux draw different pixels, and the CI
-  // matrix runs both legs under the one check name `console`, so a single
-  // unsuffixed file could only ever be green on the platform that recorded it
+  // CI runs the job on both legs (GitHub reports them as the check runs
+  // `console (ubuntu-latest)` and `console (macos-latest)`, the two names
+  // scripts/release-gate.sh requires), so a single unsuffixed file could only
+  // ever be green on the platform that recorded it
   // (review round 2 of PR 494). `{platform}` is `process.platform`; no project
   // name is added, since there is one project.
   snapshotPathTemplate: '{testDir}/__screenshots__/{arg}-{platform}{ext}',
