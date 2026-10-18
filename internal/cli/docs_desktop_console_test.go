@@ -3298,27 +3298,29 @@ func TestReleaseGateRequiresTheConsoleCheck(t *testing.T) {
 		}
 	})
 
+	// One leg at a time, so the message names the check that is not green: a run
+	// that is not there and a run that belongs to another app are both "missing"
+	// to the gate, which selects on the name and the app slug together. The
+	// labels are derived from the legs above, like everything else here.
 	for _, c := range []struct {
 		name  string
+		leg   string
 		app   string
 		state string
 		drop  bool
 	}{
-		{"the first console leg is missing", "", "", true},
-		{"the first console leg is still running", "github-actions", "pending", false},
-		{"the first console leg failed", "github-actions", "failed", false},
-		{"the first console leg was cancelled", "github-actions", "cancelled", false},
-		{"the second console leg is missing", "", "", true},
-		{"the second console leg is still running", "github-actions", "pending", false},
-		{"the second console leg failed", "github-actions", "failed", false},
-		{"the second console leg was cancelled", "github-actions", "cancelled", false},
-		{"a console leg is green, but from another app", "some-other-app", "success", false},
+		{fmt.Sprintf("%s is missing", legA), legA, "", "", true},
+		{fmt.Sprintf("%s is still running", legA), legA, "github-actions", "pending", false},
+		{fmt.Sprintf("%s failed", legA), legA, "github-actions", "failed", false},
+		{fmt.Sprintf("%s was cancelled", legA), legA, "github-actions", "cancelled", false},
+		{fmt.Sprintf("%s is missing", legB), legB, "", "", true},
+		{fmt.Sprintf("%s is still running", legB), legB, "github-actions", "pending", false},
+		{fmt.Sprintf("%s failed", legB), legB, "github-actions", "failed", false},
+		{fmt.Sprintf("%s was cancelled", legB), legB, "github-actions", "cancelled", false},
+		{fmt.Sprintf("%s is green, but from another app", legB), legB, "some-other-app", "success", false},
 	} {
 		t.Run(c.name+" is refused", func(t *testing.T) {
-			leg := legA
-			if strings.Contains(c.name, "second") || strings.Contains(c.name, "another app") {
-				leg = legB
-			}
+			leg := c.leg
 			// What the gate's own rules make of the case: a run that is not there
 			// and a run that belongs to another app are both "missing", because
 			// check_state selects on the name **and** on the app slug.
