@@ -384,6 +384,15 @@ export function servedFile(dist, pathname) {
  * of exactly those three keys: the Go boundary test pins their shape (bare lowercase hosts,
  * a quoted-or-bare URL, a boolean), and anything else in their place is refused.
  */
+/** The Content-Security-Policy `firebase.json` serves, as one string (W3.2). */
+export function deployedCSP(repo = REPO) {
+  const config = JSON.parse(readFileSync(path.join(repo, 'firebase.json'), 'utf8'))
+  const headers = config.hosting.headers.flatMap((entry) => entry.headers)
+  const csp = headers.find((header) => header.key.toLowerCase() === 'content-security-policy')
+  if (!csp) throw new Error('firebase.json carries no Content-Security-Policy header')
+  return csp.value
+}
+
 export function siteFacts(siteYAML = readFileSync(path.join(SITE, 'data', 'site.yaml'), 'utf8')) {
   const lines = siteYAML.split('\n')
   const canonical = lines.map((l) => /^canonical_url:\s*"?([^"\s#]+)"?\s*(#.*)?$/.exec(l)).find(Boolean)
@@ -401,14 +410,20 @@ export function siteFacts(siteYAML = readFileSync(path.join(SITE, 'data', 'site.
     hosts.push(m[1])
   }
   const a = lines.findIndex((l) => /^analytics:\s*$/.test(l))
-  const enabledLine = a === -1 ? null : lines.slice(a + 1).find((l) => /^  enabled:/.test(l))
-  const enabled = /^  enabled:\s*(true|false)\s*(#.*)?$/.exec(enabledLine ?? '')
+  const block = a === -1 ? [] : lines.slice(a + 1, a + 4)
+  const enabled = /^  enabled:\s*(true|false)\s*(#.*)?$/.exec(block.find((l) => /^  enabled:/.test(l)) ?? '')
   if (!enabled) throw new Error('site.yaml analytics.enabled is not a plain true/false')
+  const id = /^  measurement_id:\s*"([^"]*)"\s*(#.*)?$/.exec(block.find((l) => /^  measurement_id:/.test(l)) ?? '')
+  if (!id) throw new Error('site.yaml analytics.measurement_id is not a quoted value')
   const canonicalURL = new URL(canonical[1])
   return {
     canonicalURL,
     canonicalHost: canonicalURL.host,
     allowedHosts: new Set(hosts),
     analyticsEnabled: enabled[1] === 'true',
+    // The property the site reports to, empty while the flag is off: the two move together
+    // (the boundary test holds them to it), and a test that reads the built page's own
+    // configuration compares it with this rather than with a literal of its own (W3.2).
+    analyticsMeasurementID: id[1],
   }
 }

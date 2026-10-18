@@ -617,7 +617,11 @@ test('the gate asks Google for one page view and nothing else, with the advertis
 
 test('the measurement id is written in one place, and the artifact carries it only where site.yaml put it', () => {
   // The property is a public identifier — it is in every page's markup — but it is not a
-  // value to scatter: one place to change it, and one place to read it from.
+  // value to scatter: one place to change it, and one place to read it from. The scan is
+  // over everything the build *reads* (code, configuration, data), plus the deploy config;
+  // `README.md` is the one file allowed to name it, because the note beside the budget has
+  // to be able to say which property the site reports to — and what it names there is held
+  // to the same value below, so a stale second id is a failure rather than a footnote.
   const roots = ['src', 'data', 'public', 'test', 'content']
   const carriers = []
   for (const root of roots) {
@@ -628,7 +632,7 @@ test('the measurement id is written in one place, and the artifact carries it on
       if (readFileSync(full, 'utf8').includes(MEASUREMENT_ID)) carriers.push(`${root}/${rel}`)
     }
   }
-  for (const rel of ['README.md', 'astro.config.mjs', 'package.json', 'tsconfig.json']) {
+  for (const rel of ['astro.config.mjs', 'package.json', 'tsconfig.json']) {
     if (readFileSync(path.join(SITE, rel), 'utf8').includes(MEASUREMENT_ID)) carriers.push(rel)
   }
   if (readFileSync(path.join(REPO, 'firebase.json'), 'utf8').includes(MEASUREMENT_ID)) carriers.push('../firebase.json')
@@ -637,6 +641,12 @@ test('the measurement id is written in one place, and the artifact carries it on
     ['data/site.yaml'],
     `the measurement id is written in ${carriers.length} places (${carriers.join(', ')}); it belongs in site.yaml alone, which is what the layout and this file both read it from (W3.2)`,
   )
+
+  const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  const named = [...new Set([...readme.matchAll(/\bG-[A-Z0-9]{8,}\b/g)].map((m) => m[0]))]
+  for (const id of named) {
+    assert.equal(id, MEASUREMENT_ID, `website/README.md names the measurement id ${id}, and site.yaml carries ${MEASUREMENT_ID}: the note and the property disagree`)
+  }
 
   // And in the artifact it reaches a page only through the banner's own attribute: no script
   // and no stylesheet carries it, so the gate cannot report to a property the markup does not

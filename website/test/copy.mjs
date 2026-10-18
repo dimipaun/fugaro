@@ -331,6 +331,15 @@ class FakeElement {
   get attrs() {
     return this.node.attrs
   }
+  getAttribute(name) {
+    return this.attrs.has(name) ? this.attrs.get(name) : null
+  }
+  hasAttribute(name) {
+    return this.attrs.has(name)
+  }
+  setAttribute(name, value) {
+    this.attrs.set(name, String(value))
+  }
   get hidden() {
     return this.attrs.has('hidden')
   }
@@ -393,12 +402,29 @@ class FakeElement {
   }
 }
 
+/** The event object `site.js` constructs (`new CustomEvent(type, { detail })`). */
+class FakeCustomEvent {
+  constructor(type, init = {}) {
+    this.type = type
+    this.detail = init.detail
+  }
+}
+
 /** A built page as a document `site.js` can run in, with a clipboard the case controls. */
-function fakeDOM(html, { clipboard = 'ok', undrawn = () => false } = {}) {
+function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage = {} } = {}) {
   const root = parse(html)
   const wrapped = new Map()
   const written = []
   const timers = []
+  // What a script appends to <head>, which is how the gate's one analytics tag would show
+  // up; and the storage the consent decision goes to. Both are here because `site.js` is one
+  // file with three duties (D183, W3.2) and this harness runs all of it, not only the copy
+  // control's third.
+  const appended = []
+  const store = new Map(Object.entries(storage))
+  const windowListeners = new Map()
+  const byId = new Map()
+  for (const el of walk(root)) if (el.attrs.has('id')) byId.set(el.attrs.get('id'), el)
   const dom = {
     wrap(node) {
       if (!wrapped.has(node)) wrapped.set(node, new FakeElement(node, dom))
@@ -447,7 +473,13 @@ function fakeDOM(html, { clipboard = 'ok', undrawn = () => false } = {}) {
     return true
   }
   const docEl = dom.wrap(root)
-  const document = Object.assign(docEl, { readyState: 'complete', activeElement: null })
+  const document = Object.assign(docEl, {
+    readyState: 'complete',
+    activeElement: null,
+    getElementById: (id) => (byId.has(id) ? dom.wrap(byId.get(id)) : null),
+    createElement: (name) => ({ name, src: '', async: false }),
+    head: { appendChild: (element) => appended.push(element) },
+  })
   dom.document = document
   const navigator = {}
   if (clipboard !== 'absent') {
@@ -458,9 +490,39 @@ function fakeDOM(html, { clipboard = 'ok', undrawn = () => false } = {}) {
       },
     }
   }
-  const window = { setTimeout: (fn, ms) => timers.push({ fn, ms }) }
-  vm.runInNewContext(SCRIPT_SOURCE, { window, document, navigator })
-  return { document, written, timers, find: (selector) => document.querySelectorAll(selector) }
+  const window = {
+    setTimeout: (fn, ms) => timers.push({ fn, ms }),
+    localStorage: {
+      getItem: (key) => (store.has(key) ? store.get(key) : null),
+      setItem: (key, value) => store.set(key, String(value)),
+      removeItem: (key) => store.delete(key),
+    },
+    addEventListener(type, fn) {
+      if (!windowListeners.has(type)) windowListeners.set(type, [])
+      windowListeners.get(type).push(fn)
+    },
+    dispatchEvent(event) {
+      for (const fn of windowListeners.get(event.type) ?? []) fn(event)
+      return true
+    },
+  }
+  vm.runInNewContext(SCRIPT_SOURCE, { window, document, navigator, CustomEvent: FakeCustomEvent })
+  return {
+    document,
+    written,
+    timers,
+    appended,
+    store,
+    find: (selector) => document.querySelectorAll(selector),
+    /** Click a consent choice, which is the only way the gate's tag is ever appended. */
+    choose(decision) {
+      const banner = document.getElementById('consent-banner')
+      assert.ok(banner, 'the page carries no consent banner to choose in')
+      const control = banner.querySelectorAll('[data-consent]').find((el) => el.attrs.get('data-consent') === decision)
+      assert.ok(control, `the banner carries no ${decision} control`)
+      control.dispatch('click', { type: 'click' })
+    },
+  }
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
@@ -474,9 +536,57 @@ test('site.js names nothing that evaluates, writes markup or fetches', () => {
     [/document\.write/, 'document.write'],
     [/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|EventSource|\bimport\s*\(/, 'a request'],
     [/setTimeout\s*\(\s*['"`]/, 'a string timer'],
-    [/:\/\/|localStorage|sessionStorage|document\.cookie/, 'a URL or storage'],
+    [/:\/\/|sessionStorage|document\.cookie|indexedDB|\bcaches\b/, 'a URL or storage other than the consent decision'],
   ]
-  for (const [pattern, what] of banned) assert.ok(!pattern.test(code), `public/scripts/site.js uses ${what}: the site's one script copies text and closes menus, and nothing else (D183)`)
+  for (const [pattern, what] of banned) assert.ok(!pattern.test(code), `public/scripts/site.js uses ${what}: the site's one script copies text, closes menus and runs the consent gate, and nothing else (D183, W3.2)`)
+
+  // The one storage this file touches is the consent decision, and it names no key of its
+  // own: the key is an attribute of the banner's markup, so the script cannot store under a
+  // key the page does not carry, and a flag-off artifact has nothing to store under.
+  const keys = [...code.matchAll(/localStorage\.(?:get|set|remove)Item\s*\(\s*([^,)]*)/g)].map((m) => m[1].trim())
+  assert.ok(keys.length > 0, 'site.js no longer reads or writes the consent decision at all')
+  for (const key of keys) {
+    assert.ok(
+      /^banner\.getAttribute\(|^key$/.test(key),
+      `site.js stores under the literal ${key}: the consent key is the banner's own attribute, so the script names no key of its own`,
+    )
+  }
+})
+
+test('the same file that reveals the controls loads nothing from Google until the visitor chooses', () => {
+  // The gate is the third duty of this one file, so the harness that runs it for the copy
+  // control runs it for the gate too — a second stub, built a different way, reaching the
+  // same conclusion as `consent.mjs`. Both matter: this one is what a reader would get if the
+  // banner's own controller had stayed in the markup, and it is the reading that says the
+  // three duties do not interfere.
+  const html = builtPages(DIST).find((page) => page.rel === 'index.html').html
+
+  const undecided = fakeDOM(html)
+  assert.deepEqual(undecided.appended, [], 'site.js appended the analytics tag before the visitor chose')
+
+  // The id and the origin are read from the artifact's own configuration rather than written
+  // here: the property lives in site.yaml and the origin in the banner's markup, and a
+  // literal in this file would be a second copy of each (W3.2).
+  const banner = parse(html)
+  const config = [...walk(banner)].find((el) => el.attrs.has('data-analytics-id'))
+  assert.ok(config, 'the shipped page carries no analytics configuration for the gate to read')
+  const id = config.attrs.get('data-analytics-id')
+  const origin = config.attrs.get('data-analytics-origin')
+
+  const accepted = fakeDOM(html)
+  accepted.choose('granted')
+  assert.deepEqual(
+    accepted.appended.map((el) => el.src),
+    [`${origin}/gtag/js?id=${id}`],
+    'accepting did not append exactly the one analytics tag, from the one admitted origin',
+  )
+
+  const refused = fakeDOM(html)
+  refused.choose('denied')
+  assert.deepEqual(refused.appended, [], 'site.js appended the analytics tag after the visitor declined')
+
+  const remembered = fakeDOM(html, { storage: { 'fugaro:analytics-consent': 'denied' } })
+  assert.deepEqual(remembered.appended, [], 'a stored refusal still loaded the analytics tag')
 })
 
 test('site.js reveals every control and copies exactly the command each one sits on', async () => {
