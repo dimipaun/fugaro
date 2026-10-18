@@ -1,0 +1,358 @@
+{
+  "format": "fugaro mailbox message tag vectors",
+  "algorithm": "HMAC-SHA-256 over canonicalBytes(message), lowercase hex (mobile plan §3.5, D171)",
+  "canonical": "JSON, keys sorted by code point at every depth, no insignificant whitespace, absent fields omitted, JSON's own escaping only, integers only",
+  "covered": "every field except mac and acked",
+  "key": "not-a-secret-test-key-0001",
+  "key_note": "a readable placeholder, not a credential: the real key is the per-pairing key of D171 and never appears in this repository",
+  "generated_by": "node shared/mailbox-schema/vectors.generate.mjs",
+  "cases": [
+    {
+      "name": "plain message",
+      "why": "the ordinary message of §3.1: four fields and a tag, and the acked flag the phone writes later is not covered",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "3e3d1f7345b668482e6e852d7e1be235f237985712332580cc130e44147d5ef8",
+        "acked": true
+      },
+      "canonical": "{\"at\":1700000000000,\"id\":\"m-0001\",\"sender\":\"phone\",\"text\":\"run 42 finished\"}",
+      "mac": "3e3d1f7345b668482e6e852d7e1be235f237985712332580cc130e44147d5ef8",
+      "verdict": "verified"
+    },
+    {
+      "name": "prompt with options",
+      "why": "a prompt reads its options aloud and the answer names one by position, so the array is covered in order (D167, §3.2)",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "the pull request is green",
+        "at": 1700000000000,
+        "mac": "0c20689cd1d7ff8ee8783a57c0041aff052a07672d057d1fab689307b976db41",
+        "kind": "prompt",
+        "options": [
+          "merge it",
+          "leave it"
+        ]
+      },
+      "canonical": "{\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"prompt\",\"options\":[\"merge it\",\"leave it\"],\"sender\":\"phone\",\"text\":\"the pull request is green\"}",
+      "mac": "0c20689cd1d7ff8ee8783a57c0041aff052a07672d057d1fab689307b976db41",
+      "verdict": "verified"
+    },
+    {
+      "name": "answer",
+      "why": "an answer says which prompt it settles (D168 amended: the TTL is the consumer's)",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "option two",
+        "at": 1700000000000,
+        "mac": "a301eef28125a6a36db39b0247752ae3f87c7854988772700fa77227ea1ac8b0",
+        "kind": "answer",
+        "reply_to": "m-0000"
+      },
+      "canonical": "{\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"answer\",\"reply_to\":\"m-0000\",\"sender\":\"phone\",\"text\":\"option two\"}",
+      "mac": "a301eef28125a6a36db39b0247752ae3f87c7854988772700fa77227ea1ac8b0",
+      "verdict": "verified"
+    },
+    {
+      "name": "action: cancel a run",
+      "why": "D169's typed destructive command: the confirmation id and time are inside the tagged bytes, never beside them",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "cancel the run",
+        "at": 1700000000000,
+        "mac": "7fab5c3bac872ca341b035d649ad3afafeea5941928674e87a5705c1790886cb",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0001",
+          "verb": "cancel",
+          "target": {
+            "run": "20261018-125859-d3c8"
+          },
+          "confirmation": {
+            "id": "c-0001",
+            "at": 1700000000000
+          }
+        }
+      },
+      "canonical": "{\"action\":{\"confirmation\":{\"at\":1700000000000,\"id\":\"c-0001\"},\"id\":\"a-0001\",\"target\":{\"run\":\"20261018-125859-d3c8\"},\"verb\":\"cancel\"},\"agent\":\"orchestrator\",\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"action\",\"sender\":\"phone\",\"text\":\"cancel the run\"}",
+      "mac": "7fab5c3bac872ca341b035d649ad3afafeea5941928674e87a5705c1790886cb",
+      "verdict": "verified"
+    },
+    {
+      "name": "action: merge a pull request",
+      "why": "a merge carries the head SHA read back at confirmation, which the consumer re-checks before it merges",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "merge the pull request",
+        "at": 1700000000000,
+        "mac": "2d94c23d7a0f5225343c6cdab174c95125d1497b9f7f0b395eeaf318497e66b1",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0002",
+          "verb": "merge",
+          "target": {
+            "repo": "dimipaun/fugaro",
+            "pr": 532
+          },
+          "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "confirmation": {
+            "id": "c-0002",
+            "at": 1700000000000
+          }
+        }
+      },
+      "canonical": "{\"action\":{\"confirmation\":{\"at\":1700000000000,\"id\":\"c-0002\"},\"head_sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"id\":\"a-0002\",\"target\":{\"pr\":532,\"repo\":\"dimipaun/fugaro\"},\"verb\":\"merge\"},\"agent\":\"orchestrator\",\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"action\",\"sender\":\"phone\",\"text\":\"merge the pull request\"}",
+      "mac": "2d94c23d7a0f5225343c6cdab174c95125d1497b9f7f0b395eeaf318497e66b1",
+      "verdict": "verified"
+    },
+    {
+      "name": "heartbeat",
+      "why": "O7: the consumer's liveness record, whose agent list feeds D163 — an unsigned heartbeat is offline",
+      "message": {
+        "at": 1700000000000,
+        "boot": "boot-01",
+        "agents": [
+          {
+            "id": "orchestrator",
+            "name": "Orchestrator"
+          }
+        ],
+        "mac": "8605f256dbc99c6295f7e92575d70415dd2db57e99ef5518f7b1fb7a24fb1c6f"
+      },
+      "canonical": "{\"agents\":[{\"id\":\"orchestrator\",\"name\":\"Orchestrator\"}],\"at\":1700000000000,\"boot\":\"boot-01\"}",
+      "mac": "8605f256dbc99c6295f7e92575d70415dd2db57e99ef5518f7b1fb7a24fb1c6f",
+      "verdict": "verified"
+    },
+    {
+      "name": "html characters stay raw",
+      "why": "Go escapes <, > and & unless SetEscapeHTML(false) is set; the tagged bytes are the raw characters",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "behind <b> & \"quoted\"",
+        "at": 1700000000000,
+        "mac": "7855270cf37b21497a64f7a2607cd63a5b22b048b1d69fc2a4dc223cdeba1619"
+      },
+      "canonical": "{\"at\":1700000000000,\"id\":\"m-0001\",\"sender\":\"phone\",\"text\":\"behind <b> & \\\"quoted\\\"\"}",
+      "mac": "7855270cf37b21497a64f7a2607cd63a5b22b048b1d69fc2a4dc223cdeba1619",
+      "verdict": "verified"
+    },
+    {
+      "name": "non-ASCII is UTF-8",
+      "why": "an emoji is its own characters, not a \\u escape, in both languages",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "x😀y",
+        "at": 1700000000000,
+        "mac": "65be850f34493993ceab8fb0fd909aa92bcd8e1c01b8b2826f47477fc06e6024"
+      },
+      "canonical": "{\"at\":1700000000000,\"id\":\"m-0001\",\"sender\":\"phone\",\"text\":\"x😀y\"}",
+      "mac": "65be850f34493993ceab8fb0fd909aa92bcd8e1c01b8b2826f47477fc06e6024",
+      "verdict": "verified"
+    },
+    {
+      "name": "an unknown field is inside the bytes",
+      "why": "§3.5 covers a field added later by default, and omits an absent one rather than writing null",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "9031515c04d1bc5cc592625cdf60926b794f75e21ab9f82120a88139f17b12c1",
+        "kind": "prompt",
+        "landed_at": 1700000000000
+      },
+      "canonical": "{\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"prompt\",\"landed_at\":1700000000000,\"sender\":\"phone\",\"text\":\"run 42 finished\"}",
+      "mac": "9031515c04d1bc5cc592625cdf60926b794f75e21ab9f82120a88139f17b12c1",
+      "verdict": "verified"
+    },
+    {
+      "name": "text swapped",
+      "why": "the body under a tag made for another body: \"merge it\" spoken by an impostor",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "merge the pull request",
+        "at": 1700000000000,
+        "mac": "3e3d1f7345b668482e6e852d7e1be235f237985712332580cc130e44147d5ef8",
+        "acked": true
+      },
+      "canonical": "{\"at\":1700000000000,\"id\":\"m-0001\",\"sender\":\"phone\",\"text\":\"merge the pull request\"}",
+      "mac": "0cb56d13e74a48091a3216cc6927d66b7906dbbf77b65284e3c3f26e98e49f4a",
+      "verdict": "refused"
+    },
+    {
+      "name": "options swapped",
+      "why": "an option added under a tag made for the shorter list: \"option two\" must not change meaning",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "the pull request is green",
+        "at": 1700000000000,
+        "mac": "8e1faded142fbe5ae1d3b0ff6d26aa79810d08a44a6b2817397e46b47fb5bfa6",
+        "kind": "prompt",
+        "options": [
+          "merge it",
+          "leave it"
+        ]
+      },
+      "canonical": "{\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"prompt\",\"options\":[\"merge it\",\"leave it\"],\"sender\":\"phone\",\"text\":\"the pull request is green\"}",
+      "mac": "0c20689cd1d7ff8ee8783a57c0041aff052a07672d057d1fab689307b976db41",
+      "verdict": "refused"
+    },
+    {
+      "name": "options swapped: order",
+      "why": "a reordered list is a different set of positions, so it is different bytes",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "the pull request is green",
+        "at": 1700000000000,
+        "mac": "8e1faded142fbe5ae1d3b0ff6d26aa79810d08a44a6b2817397e46b47fb5bfa6",
+        "kind": "prompt",
+        "options": [
+          "leave it",
+          "merge it"
+        ]
+      },
+      "canonical": "{\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"prompt\",\"options\":[\"leave it\",\"merge it\"],\"sender\":\"phone\",\"text\":\"the pull request is green\"}",
+      "mac": "1cb0f8d94e6d09b6e22faebd9fd050ef6cb9808028ea861b946dbac86fc6a5b4",
+      "verdict": "refused"
+    },
+    {
+      "name": "reply_to swapped",
+      "why": "an answer moved to another prompt under its own tag",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "option one",
+        "at": 1700000000000,
+        "mac": "e3f41fd372b1a264c7167efc801c069e6b533bc9fae4014c275ca07a1a7dee61",
+        "kind": "answer",
+        "reply_to": "m-0002"
+      },
+      "canonical": "{\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"answer\",\"reply_to\":\"m-0002\",\"sender\":\"phone\",\"text\":\"option one\"}",
+      "mac": "8841008a6ff84f712d901418e5fc8de28d2dd1517a3f1a216b19ad5a0d823b5c",
+      "verdict": "refused"
+    },
+    {
+      "name": "answer swapped",
+      "why": "the answer itself changed under a tag made for \"option one\"",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "option two",
+        "at": 1700000000000,
+        "mac": "e3f41fd372b1a264c7167efc801c069e6b533bc9fae4014c275ca07a1a7dee61",
+        "kind": "answer",
+        "reply_to": "m-0000"
+      },
+      "canonical": "{\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"answer\",\"reply_to\":\"m-0000\",\"sender\":\"phone\",\"text\":\"option two\"}",
+      "mac": "a301eef28125a6a36db39b0247752ae3f87c7854988772700fa77227ea1ac8b0",
+      "verdict": "refused"
+    },
+    {
+      "name": "agents changed",
+      "why": "an impostor added to the advertised list under a tag made for the real one",
+      "message": {
+        "at": 1700000000000,
+        "boot": "boot-01",
+        "agents": [
+          {
+            "id": "orchestrator",
+            "name": "Orchestrator"
+          },
+          {
+            "id": "impostor",
+            "name": "Orchestrator"
+          }
+        ],
+        "mac": "8605f256dbc99c6295f7e92575d70415dd2db57e99ef5518f7b1fb7a24fb1c6f"
+      },
+      "canonical": "{\"agents\":[{\"id\":\"orchestrator\",\"name\":\"Orchestrator\"},{\"id\":\"impostor\",\"name\":\"Orchestrator\"}],\"at\":1700000000000,\"boot\":\"boot-01\"}",
+      "mac": "eb1299585e252bf34b73cd8ad9508287f4e777e2e65ffa68c395d701f155260d",
+      "verdict": "refused"
+    },
+    {
+      "name": "agent renamed",
+      "why": "the spoken name of an advertised agent changed under its tag",
+      "message": {
+        "at": 1700000000000,
+        "boot": "boot-01",
+        "agents": [
+          {
+            "id": "orchestrator",
+            "name": "Impostor"
+          }
+        ],
+        "mac": "8605f256dbc99c6295f7e92575d70415dd2db57e99ef5518f7b1fb7a24fb1c6f"
+      },
+      "canonical": "{\"agents\":[{\"id\":\"orchestrator\",\"name\":\"Impostor\"}],\"at\":1700000000000,\"boot\":\"boot-01\"}",
+      "mac": "87a067bcb3e7f9266057208eb5b5dc1c3474719c5b0b3cd77819cfdce76f323c",
+      "verdict": "refused"
+    },
+    {
+      "name": "confirmation swapped",
+      "why": "another confirmation id under a tag made for this one: the consumer's ledger must not be fooled",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "cancel the run",
+        "at": 1700000000000,
+        "mac": "7fab5c3bac872ca341b035d649ad3afafeea5941928674e87a5705c1790886cb",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0001",
+          "verb": "cancel",
+          "target": {
+            "run": "20261018-125859-d3c8"
+          },
+          "confirmation": {
+            "id": "c-0009",
+            "at": 1700000000000
+          }
+        }
+      },
+      "canonical": "{\"action\":{\"confirmation\":{\"at\":1700000000000,\"id\":\"c-0009\"},\"id\":\"a-0001\",\"target\":{\"run\":\"20261018-125859-d3c8\"},\"verb\":\"cancel\"},\"agent\":\"orchestrator\",\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"action\",\"sender\":\"phone\",\"text\":\"cancel the run\"}",
+      "mac": "6b2e4b3bba8b37c82aec75f7246a8006dfc1ece3c4a2798df74ebb206e3fffa9",
+      "verdict": "refused"
+    },
+    {
+      "name": "verb swapped",
+      "why": "a cancel relabelled as a merge under its own tag",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "cancel the run",
+        "at": 1700000000000,
+        "mac": "7fab5c3bac872ca341b035d649ad3afafeea5941928674e87a5705c1790886cb",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0001",
+          "verb": "merge",
+          "target": {
+            "run": "20261018-125859-d3c8"
+          },
+          "confirmation": {
+            "id": "c-0001",
+            "at": 1700000000000
+          }
+        }
+      },
+      "canonical": "{\"action\":{\"confirmation\":{\"at\":1700000000000,\"id\":\"c-0001\"},\"id\":\"a-0001\",\"target\":{\"run\":\"20261018-125859-d3c8\"},\"verb\":\"merge\"},\"agent\":\"orchestrator\",\"at\":1700000000000,\"id\":\"m-0001\",\"kind\":\"action\",\"sender\":\"phone\",\"text\":\"cancel the run\"}",
+      "mac": "c9cb888b65b9b1be2b2ca2f1ca75c10516d6159feaedc44cc3b680f91cd5549c",
+      "verdict": "refused"
+    }
+  ]
+}

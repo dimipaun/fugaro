@@ -1,4 +1,4 @@
-// The message schema's test (mobile plan, Task P0.2).
+// The message schema's test (mobile plan, Task P0.2, extended by P6.3).
 //
 // Written BEFORE the module it imports, on purpose — the same red step P0.1
 // took with `shared/skeleton/`: `npm test` from `shared/` discovers this file
@@ -6,14 +6,24 @@
 // `shared/mailbox-schema/index.js` exists. A green run over a directory the
 // glob never reached would prove nothing (shared/README.md says why).
 //
-// The schema is the protocol (plan P0.2): what P1.1's state machine validates
-// against, what P3.6's client writes and what P4.1's consumer reads. Its rule
-// is the plan's rule — **fail closed**: an unknown field, a wrong type, an
-// oversize body and every other ambiguity is a REFUSAL with its own code,
-// never a coercion. So the cases below are mostly refusals, and each one is
-// grouped by the code it must carry, because a validator that refuses
-// everything with one code cannot be told apart from one that refuses nothing
-// it means to.
+// The schema is the protocol (plan P0.2, extended by P6.3): what P1.1's state
+// machine validates against, what P3.6's client writes and what P4.1's
+// consumer reads. Its rule is the plan's rule — **fail closed**: an unknown
+// field, a wrong type, an oversize body and every other ambiguity is a REFUSAL
+// with its own code, never a coercion. So the cases below are mostly refusals,
+// and each one is grouped by the code it must carry, because a validator that
+// refuses everything with one code cannot be told apart from one that refuses
+// nothing it means to.
+//
+// P6.3 adds the fields D161, D167, D168, D169 and D171 need — `agent`, `kind`,
+// `options`, `reply_to`, the action record, and a `mac` required on every
+// message and on the heartbeat — and `canonicalBytes`, the one serialisation
+// the MAC covers. The cases for those are at the end, and the two that carry
+// the most weight are the ones a MAC exists for: a valid tag over a message
+// whose `text`, `options`, `reply_to` or answer has been swapped must FAIL to
+// verify, and the vectors file (`vectors.json`) must reproduce byte for byte,
+// because the Go consumer reimplements this serialisation and tests against
+// the same file.
 //
 // What this file deliberately does NOT test, because it is not this task's:
 // the redactor (P1.3 — text is redacted before it is validated, and the case
@@ -22,20 +32,45 @@
 // (P2.1). The schema decides one thing: whether a value is a message.
 //
 // No network, no clock, no filesystem, no randomness, no dependency: node's
-// own test runner and assert, over plain values.
+// own test runner, assert, and the JSON reader for the vectors file, over
+// plain values. No secret-shaped literal is committed here or in the vectors:
+// the test key is an obviously fake string, and one case asserts exactly that.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  ACTIONS,
+  AGENTS_MAX,
+  AGENT_MAX,
+  AGENT_NAME_MAX,
   AT_MAX,
+  FIELDS,
   ID_MAX,
+  KINDS,
+  MAC_MAX,
+  OPTIONS_MAX,
+  OPTION_MAX,
   REFUSALS,
+  REQUIRED_FIELDS,
   SENDER_MAX,
+  TARGET_MAX,
   TEXT_MAX,
+  canonicalBytes,
   isMessage,
+  macOf,
+  validateHeartbeat,
   validateMessage,
+  verifyMac,
 } from './index.js';
+
+// FAKE_MAC is mac-SHAPED and nothing more: 64 lowercase hex characters that no
+// key produces. The schema checks a mac's SHAPE and never its value — it has
+// no key to check it with — so a well-formed message only needs a well-formed
+// tag; the vectors file is where a REAL HMAC is pinned, over an obviously fake
+// key, and where a swapped field under a valid tag is refused.
+const FAKE_MAC = 'f'.repeat(MAC_MAX);
 
 // good returns a fresh well-formed message; overrides are merged in so a case
 // can break exactly one thing.
@@ -45,6 +80,43 @@ function good(over = {}) {
     sender: 'phone',
     text: 'run 42 finished',
     at: 1_700_000_000_000,
+    mac: FAKE_MAC,
+    ...over,
+  };
+}
+
+// anAction returns a COMPLETE action record for its verb, so a case can break
+// exactly one part of one. The default is a cancel of a run, which is the
+// verb whose target is a run id; a merge's target is a repository and a pull
+// request, and it alone carries the head SHA read back at confirmation.
+function anAction(over = {}) {
+  const verb = over.verb ?? 'cancel';
+  const record = {
+    id: 'a-0001',
+    verb,
+    target: { run: '20261018-125859-d3c8' },
+    confirmation: { id: 'c-0001', at: 1_700_000_000_000 },
+    ...over,
+  };
+  if (verb === 'merge') {
+    record.target = over.target ?? { repo: 'dimipaun/fugaro', pr: 532 };
+    if (!Object.hasOwn(record, 'head_sha')) record.head_sha = 'a'.repeat(40);
+  }
+  return record;
+}
+
+// withAction wraps an action record in a well-formed action message.
+function withAction(over = {}) {
+  return good({ kind: 'action', agent: 'orchestrator', action: anAction(over), text: 'cancel the run' });
+}
+
+// aHeartbeat returns a fresh well-formed heartbeat.
+function aHeartbeat(over = {}) {
+  return {
+    at: 1_700_000_000_000,
+    boot: 'boot-01',
+    agents: [{ id: 'orchestrator', name: 'Orchestrator' }],
+    mac: FAKE_MAC,
     ...over,
   };
 }
@@ -63,6 +135,19 @@ function refusal(value, code, field) {
   assert.equal(verdict.ok, false, `expected a refusal for ${JSON.stringify(value)}`);
   assert.equal(verdict.code, code, `code for ${JSON.stringify(value)}`);
   assert.equal(verdict.message, undefined, 'a refusal carries no message');
+  if (field !== undefined) {
+    assert.equal(verdict.field, field, `field for ${JSON.stringify(value)}`);
+  }
+  return verdict;
+}
+
+// heartbeatRefusal is refusal() for the heartbeat's own validator, which is a
+// different function over a different field set (P6.3, O7).
+function heartbeatRefusal(value, code, field) {
+  const verdict = validateHeartbeat(value);
+  assert.equal(verdict.ok, false, `expected a refusal for ${JSON.stringify(value)}`);
+  assert.equal(verdict.code, code, `code for ${JSON.stringify(value)}`);
+  assert.equal(verdict.heartbeat, undefined, 'a refusal carries no heartbeat');
   if (field !== undefined) {
     assert.equal(verdict.field, field, `field for ${JSON.stringify(value)}`);
   }
@@ -106,10 +191,20 @@ test('a value that is not an object is refused', () => {
 });
 
 test('a missing required field is refused with the field named', () => {
-  for (const field of ['id', 'sender', 'text', 'at']) {
+  // REQUIRED_FIELDS, not a list written out here: the schema's own list is the
+  // contract, and `mac` joined it in P6.3 (it is required on every outbox
+  // message and every inbox message of every kind, D169 and §3.5).
+  for (const field of REQUIRED_FIELDS) {
     const value = good();
     delete value[field];
     refusal(value, REFUSALS.MISSING_FIELD, field);
+  }
+  // A heartbeat's own required set is a different one, and it is checked the
+  // same way: `at`, `boot` and `mac`, with `agents` optional.
+  for (const field of ['at', 'boot', 'mac']) {
+    const value = aHeartbeat();
+    delete value[field];
+    assert.equal(validateHeartbeat(value).code, REFUSALS.MISSING_FIELD, `heartbeat without ${field}`);
   }
 });
 
@@ -217,6 +312,19 @@ test('every refusal family has its own code', () => {
     refusal(good({ id: 'a'.repeat(ID_MAX + 1) }), REFUSALS.TOO_LONG).code,
     refusal(good({ text: '\u0000' }), REFUSALS.BAD_CHARACTER).code,
     refusal(good({ at: 1.5 }), REFUSALS.BAD_TIMESTAMP).code,
+    // P6.3's families. A count bound is not a length bound, a value outside a
+    // vocabulary is not a wrong type, a field on the wrong kind of message is
+    // not an unknown one, and a shape that could smuggle an argv element is
+    // not merely malformed:
+    refusal(good({ kind: 'prompt', options: Array(OPTIONS_MAX + 1).fill('x') }), REFUSALS.TOO_MANY).code,
+    refusal(good({ kind: 'prompt', options: [] }), REFUSALS.TOO_FEW).code,
+    refusal(good({ kind: 'gossip' }), REFUSALS.UNKNOWN_KIND).code,
+    refusal(withAction({ verb: 'launch' }), REFUSALS.UNKNOWN_VERB).code,
+    refusal(good({ kind: 'message', options: ['one'] }), REFUSALS.FIELD_NOT_ALLOWED).code,
+    refusal(withAction({ target: { run: '-x' } }), REFUSALS.BAD_TARGET).code,
+    refusal(good({ mac: 'F'.repeat(MAC_MAX) }), REFUSALS.BAD_MAC).code,
+    refusal(good({ kind: 'prompt', options: ['one', 'one'] }), REFUSALS.DUPLICATE_ENTRY).code,
+    refusal(withAction({ verb: 'merge', head_sha: 'short' }), REFUSALS.BAD_SHA).code,
   ];
   assert.equal(new Set(codes).size, codes.length, `codes are distinct: ${codes.join(', ')}`);
   assert.deepEqual(new Set(codes), new Set(Object.values(REFUSALS)), 'and no code is unused');
@@ -245,4 +353,536 @@ test('the schema is not the redactor: redaction happens before it (P1.3)', () =>
   const verdict = validateMessage(good({ text: `the token is ${tokenShaped}` }));
   assert.equal(verdict.ok, true);
   assert.equal(verdict.message.text, `the token is ${tokenShaped}`, 'returned verbatim, unredacted');
+});
+
+// ---------------------------------------------------------------------------
+// P6.3 — the fields D161, D167, D168, D169 and D171 need, and the MAC.
+//
+// The MAC is the part that carries the weight, and it is worth saying once
+// what it is for. A launcher can mint a custom token for any uid (G13) and can
+// read `config/admin/devices` through `firebasedatabase.viewer`, so a minted
+// token passes the rules' device-node conjunct and can write into a paired
+// account's mailbox. What it does NOT have is the per-pairing key (D171), which
+// travels encrypted to a key the phone holds and never through the database —
+// so the tag, and only the tag, is what tells a message the phone really spoke
+// from one a launcher invented. That is why every inbox message of every kind
+// carries one, why an action record's confirmation is inside the tagged bytes
+// rather than beside them, and why the cases below are mostly "a valid tag over
+// a swapped field must fail".
+// ---------------------------------------------------------------------------
+
+test('the kind vocabulary is closed, and an absent kind is the ordinary message', () => {
+  assert.deepEqual([...KINDS], ['message', 'prompt', 'answer', 'action']);
+  const { message } = validateMessage(good());
+  assert.equal(Object.hasOwn(message, 'kind'), false, 'an absent kind adds no field');
+  for (const kind of KINDS) {
+    const value = good({ kind });
+    if (kind === 'answer') value.reply_to = 'm-0000';
+    if (kind === 'action') value.action = anAction();
+    assert.equal(validateMessage(value).ok, true, `kind ${kind} is accepted`);
+  }
+  refusal(good({ kind: 'gossip' }), REFUSALS.UNKNOWN_KIND, 'kind');
+  refusal(good({ kind: 'Message' }), REFUSALS.UNKNOWN_KIND, 'kind'); // the names are exact
+  refusal(good({ kind: 1 }), REFUSALS.WRONG_TYPE, 'kind');
+  refusal(good({ kind: undefined }), REFUSALS.WRONG_TYPE, 'kind');
+  // `command` is P1.1's own vocabulary for an acceptance WINDOW, not a message
+  // kind: P6.5 and P6.7 map a kind to a window, and that mapping is theirs.
+  refusal(good({ kind: 'command' }), REFUSALS.UNKNOWN_KIND, 'kind');
+});
+
+test('a kind carries its own fields and no others', () => {
+  // The field set is the version (P0.2), and with kinds it is the (kind, field)
+  // table: a field on the wrong kind of message is refused rather than ignored,
+  // because two agents disagreeing about whether a message is an action is the
+  // ambiguity the whole module exists to refuse.
+  refusal(good({ kind: 'message', options: ['one'] }), REFUSALS.FIELD_NOT_ALLOWED, 'options');
+  refusal(good({ kind: 'prompt', reply_to: 'm-0000' }), REFUSALS.FIELD_NOT_ALLOWED, 'reply_to');
+  refusal(good({ kind: 'answer', action: anAction() }), REFUSALS.FIELD_NOT_ALLOWED, 'action');
+  refusal(good({ kind: 'message', action: anAction() }), REFUSALS.FIELD_NOT_ALLOWED, 'action');
+  // An action record IS an action, and D162's launch is not one: "kick off …"
+  // goes through without a read-back, so it travels as an ordinary message.
+  refusal(good({ kind: 'action' }), REFUSALS.MISSING_FIELD, 'action');
+  assert.equal(validateMessage(good({ text: 'kick off the fix' })).ok, true, 'a launch is a plain message');
+});
+
+test('an agent is optional, id-shaped, and the same value the heartbeat advertises', () => {
+  const verdict = validateMessage(good({ agent: 'orchestrator' }));
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.message.agent, 'orchestrator');
+  assert.equal(Object.hasOwn(validateMessage(good()).message, 'agent'), false, 'an absent agent adds no field');
+  assert.equal(validateMessage(good({ agent: 'a'.repeat(AGENT_MAX) })).ok, true, 'the bound itself');
+  refusal(good({ agent: '' }), REFUSALS.EMPTY_STRING, 'agent');
+  refusal(good({ agent: 'a'.repeat(AGENT_MAX + 1) }), REFUSALS.TOO_LONG, 'agent');
+  refusal(good({ agent: 'two\nlines' }), REFUSALS.BAD_CHARACTER, 'agent');
+  refusal(good({ agent: 1 }), REFUSALS.WRONG_TYPE, 'agent');
+  // The rule is the heartbeat's agent-id rule, deliberately: "talk to
+  // <agent>" matches this value against the advertised list, so a value the
+  // list could never carry is not an agent. D161 rejected one mailbox per
+  // agent, so nothing is stored under it and it is not a database key either.
+  refusal(good({ agent: 'agent@host' }), REFUSALS.BAD_CHARACTER, 'agent');
+  refusal(good({ agent: 'agent/one' }), REFUSALS.BAD_CHARACTER, 'agent');
+});
+
+test('a prompt carries the options it will read aloud, bounded and unambiguous', () => {
+  const prompt = good({ kind: 'prompt', options: ['merge it', 'leave it'] });
+  const verdict = validateMessage(prompt);
+  assert.equal(verdict.ok, true);
+  assert.deepEqual(verdict.message.options, ['merge it', 'leave it']);
+  assert.equal(validateMessage(good({ kind: 'prompt' })).ok, true, 'options are optional');
+  // Options are answered by position ("option two"), so the list has to be one
+  // a person can hold and every entry has to be distinguishable.
+  refusal(good({ kind: 'prompt', options: [] }), REFUSALS.TOO_FEW, 'options');
+  refusal(
+    good({ kind: 'prompt', options: Array.from({ length: OPTIONS_MAX + 1 }, (_, i) => `option ${i}`) }),
+    REFUSALS.TOO_MANY,
+    'options',
+  );
+  assert.equal(
+    validateMessage(good({ kind: 'prompt', options: Array.from({ length: OPTIONS_MAX }, (_, i) => `o${i}`) })).ok,
+    true,
+    'the bound itself',
+  );
+  refusal(
+    good({ kind: 'prompt', options: ['merge it', 'merge it'] }),
+    REFUSALS.DUPLICATE_ENTRY,
+    'options[1]',
+  );
+  refusal(good({ kind: 'prompt', options: [''] }), REFUSALS.EMPTY_STRING, 'options[0]');
+  refusal(good({ kind: 'prompt', options: ['x'.repeat(OPTION_MAX + 1)] }), REFUSALS.TOO_LONG, 'options[0]');
+  refusal(good({ kind: 'prompt', options: ['two\nlines'] }), REFUSALS.BAD_CHARACTER, 'options[0]');
+  refusal(good({ kind: 'prompt', options: [1] }), REFUSALS.WRONG_TYPE, 'options[0]');
+  refusal(good({ kind: 'prompt', options: 'merge it' }), REFUSALS.WRONG_TYPE, 'options');
+});
+
+test('an answer names the prompt it answers, and only an answer may', () => {
+  const answer = good({ kind: 'answer', reply_to: 'm-0000', text: 'option two' });
+  const verdict = validateMessage(answer);
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.message.reply_to, 'm-0000');
+  refusal(good({ kind: 'answer' }), REFUSALS.MISSING_FIELD, 'reply_to');
+  // `reply_to` names a message, and a message is stored under its id, so it is
+  // held to the id's own key rule.
+  refusal(good({ kind: 'answer', reply_to: 'm/0000' }), REFUSALS.BAD_KEY, 'reply_to');
+  refusal(good({ kind: 'answer', reply_to: '' }), REFUSALS.EMPTY_STRING, 'reply_to');
+  refusal(good({ kind: 'answer', reply_to: 1 }), REFUSALS.WRONG_TYPE, 'reply_to');
+  refusal(good({ kind: 'prompt', reply_to: 'm-0000', options: ['one'] }), REFUSALS.FIELD_NOT_ALLOWED, 'reply_to');
+  // An action record answering a destructive prompt says which prompt it
+  // answers: the consumer has to know which pending prompt it settles (§3.5).
+  const answering = withAction({ verb: 'confirm' });
+  answering.reply_to = 'm-0000';
+  assert.equal(validateMessage(answering).ok, true, 'an action may answer a prompt');
+});
+
+test('there is no expiry field on a prompt', () => {
+  // D168 as amended: a prompt expires at D118's mailbox TTL, which the CONSUMER
+  // computes from `at` and its own clock. An `expires_at` written by the phone
+  // would be the phone's clock deciding — the clock D117 refuses to trust — so
+  // the field does not exist and every name for it is an unknown field.
+  refusal(good({ kind: 'prompt', expires_at: 1_700_000_000_000 }), REFUSALS.UNKNOWN_FIELD, 'expires_at');
+  refusal(good({ kind: 'prompt', expiresAt: 1 }), REFUSALS.UNKNOWN_FIELD, 'expiresAt');
+  refusal(good({ kind: 'prompt', ttl: 1 }), REFUSALS.UNKNOWN_FIELD, 'ttl');
+  refusal(good({ kind: 'prompt', deadline: 1 }), REFUSALS.UNKNOWN_FIELD, 'deadline');
+});
+
+test('an action record is complete or it is refused', () => {
+  const verdict = validateMessage(withAction());
+  assert.equal(verdict.ok, true);
+  assert.deepEqual(verdict.message.action, anAction());
+  assert.equal(validateMessage(withAction({ verb: 'merge' })).ok, true);
+  assert.equal(validateMessage(withAction({ verb: 'confirm' })).ok, true);
+  for (const field of ['id', 'verb', 'target', 'confirmation']) {
+    const value = withAction();
+    delete value.action[field];
+    refusal(value, REFUSALS.MISSING_FIELD, `action.${field}`);
+  }
+  for (const field of ['id', 'at']) {
+    const value = withAction();
+    delete value.action.confirmation[field];
+    refusal(value, REFUSALS.MISSING_FIELD, `action.confirmation.${field}`);
+  }
+  // A confirmation is a record, not a flag: an id that can be deduped and the
+  // time it was given, which is what the consumer's 6-hour command window is
+  // measured from (§3.5).
+  refusal(withAction({ confirmation: 'yes' }), REFUSALS.NOT_AN_OBJECT, 'action.confirmation');
+  refusal(withAction({ confirmation: { id: 'c-0001', at: 'now' } }), REFUSALS.WRONG_TYPE, 'action.confirmation.at');
+  refusal(withAction({ confirmation: { id: 'c-0001', at: 1.5 } }), REFUSALS.BAD_TIMESTAMP, 'action.confirmation.at');
+  refusal(withAction({ id: 'a/0001' }), REFUSALS.BAD_KEY, 'action.id');
+  refusal(withAction({ confirmation: { id: 'c/0001', at: 0 } }), REFUSALS.BAD_KEY, 'action.confirmation.id');
+  refusal(withAction({ extra: 'anything' }), REFUSALS.UNKNOWN_FIELD, 'action.extra');
+  refusal(withAction({ action: 1 }), REFUSALS.UNKNOWN_FIELD, 'action.action');
+  refusal(good({ kind: 'action', action: null }), REFUSALS.NOT_AN_OBJECT, 'action');
+  refusal(good({ kind: 'action', action: [anAction()] }), REFUSALS.NOT_AN_OBJECT, 'action');
+});
+
+test('the verbs are the three the ruling names, and nothing else', () => {
+  assert.deepEqual([...ACTIONS], ['cancel', 'merge', 'confirm']);
+  for (const verb of ACTIONS) {
+    assert.equal(validateMessage(withAction({ verb })).ok, true, `${verb} is accepted`);
+  }
+  // D162: a launch needs no confirmation and is not one of these. Every other
+  // destructive verb — the kill switch, budget writes, deletes — stays refused
+  // by voice, so it has no verb here either (§3.1).
+  for (const verb of ['launch', 'Cancel', 'merge!', 'kill', 'budget', 'delete', 'approve']) {
+    refusal(withAction({ verb }), REFUSALS.UNKNOWN_VERB, 'action.verb');
+  }
+  refusal(withAction({ verb: 1 }), REFUSALS.WRONG_TYPE, 'action.verb');
+});
+
+test('a verb and its target have to agree, and the target is one shape or the other', () => {
+  // D169: the consumer runs `fugaro cancel RUN` itself and `gh pr merge <n>
+  // --repo <owner/name>` itself. The record has to name exactly what will be
+  // executed, so cancel takes a run id, merge takes a repository and a pull
+  // request, and `confirm` — the third verb — takes either.
+  const run = { run: '20261018-125859-d3c8' };
+  const repo = { repo: 'dimipaun/fugaro', pr: 532 };
+  assert.equal(validateMessage(withAction({ verb: 'cancel', target: run })).ok, true);
+  assert.equal(validateMessage(withAction({ verb: 'confirm', target: run })).ok, true);
+  assert.equal(validateMessage(withAction({ verb: 'confirm', target: repo })).ok, true);
+  refusal(withAction({ verb: 'cancel', target: repo }), REFUSALS.BAD_TARGET, 'action.target');
+  refusal(withAction({ verb: 'merge', target: run }), REFUSALS.BAD_TARGET, 'action.target');
+  // Exactly one of the two shapes: a target that is both is a target the
+  // consumer would have to choose between, which is the guess D169's read-back
+  // exists to remove.
+  refusal(withAction({ target: { ...run, ...repo } }), REFUSALS.BAD_TARGET, 'action.target');
+  refusal(withAction({ target: {} }), REFUSALS.BAD_TARGET, 'action.target');
+  refusal(withAction({ target: null }), REFUSALS.NOT_AN_OBJECT, 'action.target');
+  refusal(withAction({ target: 'run-1' }), REFUSALS.NOT_AN_OBJECT, 'action.target');
+  refusal(withAction({ target: { run: '' } }), REFUSALS.EMPTY_STRING, 'action.target.run');
+  refusal(withAction({ target: { run: 1 } }), REFUSALS.WRONG_TYPE, 'action.target.run');
+  refusal(withAction({ target: { repo: 'dimipaun/fugaro' } }), REFUSALS.MISSING_FIELD, 'action.target.pr');
+  refusal(withAction({ target: { repo: 'dimipaun/fugaro', pr: 0 } }), REFUSALS.BAD_TARGET, 'action.target.pr');
+  refusal(withAction({ target: { repo: 'dimipaun/fugaro', pr: 1.5 } }), REFUSALS.BAD_TARGET, 'action.target.pr');
+  refusal(withAction({ target: { repo: 'dimipaun/fugaro', pr: '532' } }), REFUSALS.WRONG_TYPE, 'action.target.pr');
+  refusal(withAction({ target: { repo: 'fugaro', pr: 1 } }), REFUSALS.BAD_TARGET, 'action.target.repo');
+  refusal(withAction({ target: { repo: 'a/b/c', pr: 1 } }), REFUSALS.BAD_TARGET, 'action.target.repo');
+  refusal(withAction({ target: { repo: '/fugaro', pr: 1 } }), REFUSALS.BAD_TARGET, 'action.target.repo');
+  refusal(withAction({ target: { repo: 'dimipaun/fugaro', pr: 1, extra: 1 } }), REFUSALS.UNKNOWN_FIELD, 'action.target.extra');
+});
+
+test('no target can be read as a command-line flag', () => {
+  // The consumer passes the run id to `fugaro cancel` and the repository to
+  // `gh pr merge --repo` as ARGV elements. A value that begins with `-` is a
+  // flag to every parser that sees it, and a value carrying a space, a slash or
+  // a control character is not a run id at all; both are refused here rather
+  // than left for the consumer's argv to decide.
+  // A leading `-` is a flag and a leading `.` is a path, so both are the
+  // SHAPE's fault; a character outside the alphabet is the CHARACTER's fault,
+  // the same family a control character in a body belongs to. Two families,
+  // two codes, because a caller that cannot tell them apart cannot say which
+  // of its own inputs to fix.
+  for (const run of ['-x', '--repo', '-', '.', '..', '-r']) {
+    refusal(withAction({ target: { run } }), REFUSALS.BAD_TARGET, 'action.target.run');
+  }
+  for (const run of ['run one', 'run/one', './run', 'run\none', 'run\u0000', 'run"one']) {
+    refusal(withAction({ target: { run } }), REFUSALS.BAD_CHARACTER, 'action.target.run');
+  }
+  for (const repo of ['-x/y', 'a/-y', '../fugaro', 'fugaro', 'a/b/c', '/fugaro', 'a//b']) {
+    refusal(withAction({ target: { repo, pr: 1 } }), REFUSALS.BAD_TARGET, 'action.target.repo');
+  }
+  for (const repo of ['a b/c', 'a/b ', 'a/b\nc']) {
+    refusal(withAction({ target: { repo, pr: 1 } }), REFUSALS.BAD_CHARACTER, 'action.target.repo');
+  }
+  refusal(withAction({ target: { repo: '', pr: 1 } }), REFUSALS.EMPTY_STRING, 'action.target.repo');
+  // The near misses that are ordinary repositories and runs: the rule is a
+  // shape rule, not a "reject anything unusual" rule.
+  for (const target of [
+    { run: '20261018-125859-d3c8' },
+    { run: 'r.1_2:3' },
+    { repo: 'dimipaun/fugaro', pr: 1 },
+    { repo: 'owner.name/repo-name_x', pr: 99999 },
+  ]) {
+    assert.equal(validateMessage(withAction({ verb: 'confirm', target })).ok, true, JSON.stringify(target));
+  }
+  // A run id and a repository are bounded like every other registry string.
+  refusal(withAction({ target: { run: 'r'.repeat(TARGET_MAX + 1) } }), REFUSALS.TOO_LONG, 'action.target.run');
+  refusal(
+    withAction({ target: { repo: `${'o'.repeat(TARGET_MAX)}/n`, pr: 1 } }),
+    REFUSALS.TOO_LONG,
+    'action.target.repo',
+  );
+});
+
+test('a merge carries the head SHA it was confirmed against, and only a merge', () => {
+  // §3.5 and D169: the read-back names the PR's head at confirmation time, and
+  // the consumer refuses the merge if the head has moved. A record without one
+  // is a record that cannot be checked, and a SHA on a cancel is a field the
+  // record has no business carrying.
+  assert.equal(validateMessage(withAction({ verb: 'merge', head_sha: 'b'.repeat(64) })).ok, true, 'SHA-256');
+  assert.equal(validateMessage(withAction({ verb: 'merge', head_sha: 'b'.repeat(40) })).ok, true, 'SHA-1');
+  const noSha = withAction({ verb: 'merge' });
+  delete noSha.action.head_sha;
+  refusal(noSha, REFUSALS.MISSING_FIELD, 'action.head_sha');
+  refusal(withAction({ verb: 'cancel', head_sha: 'b'.repeat(40) }), REFUSALS.FIELD_NOT_ALLOWED, 'action.head_sha');
+  refusal(withAction({ verb: 'confirm', head_sha: 'b'.repeat(40) }), REFUSALS.FIELD_NOT_ALLOWED, 'action.head_sha');
+  for (const head_sha of ['', 'b'.repeat(39), 'b'.repeat(41), 'B'.repeat(40), 'z'.repeat(40), 1, null]) {
+    refusal(withAction({ verb: 'merge', head_sha }), REFUSALS.BAD_SHA, 'action.head_sha');
+  }
+});
+
+test('a mac is required on every message, and it is a SHA-256 tag in lowercase hex', () => {
+  const verdict = validateMessage(good());
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.message.mac, FAKE_MAC);
+  refusal(without('mac'), REFUSALS.MISSING_FIELD, 'mac');
+  refusal(good({ mac: '' }), REFUSALS.EMPTY_STRING, 'mac');
+  refusal(good({ mac: 1 }), REFUSALS.WRONG_TYPE, 'mac');
+  refusal(good({ mac: undefined }), REFUSALS.WRONG_TYPE, 'mac');
+  // Length and character set are one question here — is this a 32-byte tag? —
+  // which is why they share one code rather than splitting into too-long and
+  // bad-character: a tag of the wrong length is not a tag at all.
+  for (const mac of ['a'.repeat(MAC_MAX - 1), 'a'.repeat(MAC_MAX + 1), 'A'.repeat(MAC_MAX), 'g'.repeat(MAC_MAX), ` ${'a'.repeat(MAC_MAX - 1)}`]) {
+    refusal(good({ mac }), REFUSALS.BAD_MAC, 'mac');
+  }
+  // The canonical case matters: hex has two spellings for one tag, so accepting
+  // both would let one message verify in two encodings and would make the
+  // consumer's comparison depend on which end wrote it.
+  refusal(good({ mac: FAKE_MAC.toUpperCase() }), REFUSALS.BAD_MAC, 'mac');
+  // The heartbeat's tag is required in the same way (O7).
+  heartbeatRefusal(aHeartbeat({ mac: '' }), REFUSALS.EMPTY_STRING, 'mac');
+  heartbeatRefusal(aHeartbeat({ mac: 'nope' }), REFUSALS.BAD_MAC, 'mac');
+});
+
+test('a character two encoders disagree about is refused, so one message has one canonical form', () => {
+  // Go's encoding/json escapes U+2028 and U+2029 even with SetEscapeHTML(false)
+  // set; JavaScript's JSON.stringify leaves them as themselves. A message
+  // carrying one therefore has TWO canonical byte strings, one per language, and
+  // a tag computed over the phone's does not verify against the consumer's —
+  // a refusal nobody could diagnose, for a character nobody can speak. The
+  // schema refuses it here, where the refusal can name itself.
+  for (const char of [' ', ' ']) {
+    refusal(good({ text: `x${char}y` }), REFUSALS.BAD_CHARACTER, 'text');
+    refusal(good({ sender: `x${char}` }), REFUSALS.BAD_CHARACTER, 'sender');
+    refusal(good({ agent: `x${char}` }), REFUSALS.BAD_CHARACTER, 'agent');
+    refusal(good({ id: `x${char}` }), REFUSALS.BAD_KEY, 'id');
+    refusal(good({ kind: 'prompt', options: [`x${char}`] }), REFUSALS.BAD_CHARACTER, 'options[0]');
+  }
+  // And the characters JSON escapes differently from Go's DEFAULT encoder are
+  // still characters: `<`, `>` and `&` are ordinary, and the Go consumer is the
+  // one that has to set SetEscapeHTML(false) — the vectors file pins the bytes
+  // it must produce.
+  assert.equal(validateMessage(good({ text: 'behind <b> & "quoted"' })).ok, true);
+});
+
+test('canonicalBytes is the one serialisation the tag covers', () => {
+  // Sorted by code point, no insignificant whitespace, absent fields omitted,
+  // and `mac` and `acked` out (§3.5). The exact bytes are pinned for the three
+  // shapes the two ends share, because this string IS the protocol: the Go
+  // consumer reimplements it, and one stray space is a MAC that does not verify.
+  assert.equal(
+    canonicalBytes(good()),
+    '{"at":1700000000000,"id":"m-0001","sender":"phone","text":"run 42 finished"}',
+  );
+  assert.equal(
+    canonicalBytes(good({ mac: 'a'.repeat(MAC_MAX), acked: true })),
+    canonicalBytes(good()),
+    'neither the tag nor the ack changes the bytes',
+  );
+  // Absent fields are omitted, never null; present ones are included whether or
+  // not this module happens to know them, because §3.5 covers "a field added
+  // later" by default.
+  assert.equal(canonicalBytes(good({ kind: 'prompt' })), '{"at":1700000000000,"id":"m-0001","kind":"prompt","sender":"phone","text":"run 42 finished"}');
+  // Nested objects are sorted too, at every depth: the action record, its
+  // target and its confirmation are inside the tagged bytes (§3.5).
+  assert.equal(
+    canonicalBytes(withAction({ verb: 'merge' })),
+    '{"action":{"confirmation":{"at":1700000000000,"id":"c-0001"},"head_sha":"' +
+      'a'.repeat(40) +
+      '","id":"a-0001","target":{"pr":532,"repo":"dimipaun/fugaro"},"verb":"merge"},' +
+      '"agent":"orchestrator","at":1700000000000,"id":"m-0001","kind":"action",' +
+      '"sender":"phone","text":"cancel the run"}',
+  );
+  assert.equal(
+    canonicalBytes(good({ kind: 'prompt', options: ['merge it', 'leave it'] })),
+    '{"at":1700000000000,"id":"m-0001","kind":"prompt","options":["merge it","leave it"],' +
+      '"sender":"phone","text":"run 42 finished"}',
+  );
+  // An array keeps its order: an option's position is what "option two" means.
+  assert.equal(
+    canonicalBytes(good({ kind: 'prompt', options: ['b', 'a'] })),
+    '{"at":1700000000000,"id":"m-0001","kind":"prompt","options":["b","a"],' +
+      '"sender":"phone","text":"run 42 finished"}',
+  );
+  // The key order of the value handed in is not part of the message.
+  const reordered = { text: 'run 42 finished', sender: 'phone', id: 'm-0001', at: 1_700_000_000_000, mac: FAKE_MAC };
+  assert.equal(canonicalBytes(reordered), canonicalBytes(good()));
+  // Strings are UTF-8 with JSON's escaping only: an emoji stays itself.
+  assert.equal(canonicalBytes(good({ text: 'x😀y' })), '{"at":1700000000000,"id":"m-0001","sender":"phone","text":"x😀y"}');
+});
+
+test('canonicalBytes refuses a value JSON cannot carry, rather than dropping it', () => {
+  // A dropped field is two different messages with one canonical form, and one
+  // canonical form with one tag is exactly the ambiguity the tag exists to
+  // remove. The schema never produces these values (an explicit undefined is
+  // `wrong-type`, and a null is never written), so failing loudly here cannot
+  // surprise a caller that validated first.
+  assert.throws(() => canonicalBytes({ ...good(), extra: undefined }), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), extra: null }), TypeError);
+  assert.throws(() => canonicalBytes(good({ at: undefined })), TypeError);
+  assert.throws(() => canonicalBytes(null), TypeError);
+  assert.throws(() => canonicalBytes('a message'), TypeError);
+  assert.throws(() => canonicalBytes([]), TypeError);
+});
+
+// TEST_KEY is an obviously fake key, built here rather than committed: every
+// value this module signs in a test is signed with a placeholder, and no
+// secret-shaped literal is written into this file or the vectors file.
+const TEST_KEY = ['not', 'a', 'secret', 'test', 'key', '0001'].join('-');
+
+test('a tag verifies over exactly the covered fields, and a swap fails', () => {
+  const message = good();
+  const mac = macOf(message, TEST_KEY);
+  assert.equal(mac, macOf(good(), TEST_KEY), 'the tag is a function of the value alone');
+  assert.equal(verifyMac({ ...message, mac }, TEST_KEY), true);
+  assert.equal(verifyMac({ ...message, mac }, `${TEST_KEY}-other`), false, 'a different key does not verify');
+  assert.equal(verifyMac({ ...message, mac }, 'not-a-secret-test-key-0002'), false);
+  assert.equal(verifyMac(message, TEST_KEY), false, 'an absent tag does not verify');
+  assert.equal(verifyMac(null, TEST_KEY), false);
+  assert.equal(verifyMac({ ...message, mac: 'nope' }, TEST_KEY), false, 'a malformed tag does not verify');
+  // The ack is written by the phone AFTER the tag, so it is outside the covered
+  // fields — and a message with one still verifies (§3.5).
+  assert.equal(verifyMac({ ...message, acked: true, mac }, TEST_KEY), true, 'the ack is outside the bytes');
+
+  // Every covered field, one at a time. These are the swaps a launcher who
+  // holds a minted token but not the key would try.
+  const swaps = [
+    { ...message, id: 'm-0002', mac },
+    { ...message, sender: 'someone-else', mac },
+    { ...message, text: 'merge the pull request', mac },
+    { ...message, at: message.at + 1, mac },
+    { ...message, agent: 'other-agent', mac },
+    { ...message, kind: 'prompt', mac },
+    { ...good({ kind: 'prompt', options: ['merge it'] }), mac },
+    { ...good({ kind: 'prompt', options: ['merge it', 'leave it'] }), mac: macOf(good({ kind: 'prompt', options: ['merge it'] }), TEST_KEY) },
+    { ...good({ kind: 'answer', reply_to: 'm-0000' }), mac: macOf(good({ kind: 'answer', reply_to: 'm-0001' }), TEST_KEY) },
+    { ...good({ kind: 'answer', reply_to: 'm-0000', text: 'option one' }), mac: macOf(good({ kind: 'answer', reply_to: 'm-0000', text: 'option two' }), TEST_KEY) },
+    { ...withAction({ verb: 'merge' }), mac: macOf(withAction({ verb: 'merge', target: { repo: 'dimipaun/fugaro', pr: 533 } }), TEST_KEY) },
+    { ...withAction({ verb: 'merge' }), mac: macOf(withAction({ verb: 'merge', head_sha: 'b'.repeat(40) }), TEST_KEY) },
+    { ...withAction(), mac: macOf(withAction({ verb: 'merge' }), TEST_KEY) },
+  ];
+  for (const swapped of swaps) {
+    assert.equal(verifyMac(swapped, TEST_KEY), false, `swapped: ${canonicalBytes(swapped)}`);
+  }
+});
+
+test('a heartbeat is a different record: its own fields, and a tag over all of them', () => {
+  const verdict = validateHeartbeat(aHeartbeat());
+  assert.equal(verdict.ok, true);
+  assert.deepEqual(verdict.heartbeat, aHeartbeat());
+  assert.equal(Object.isFrozen(verdict.heartbeat), true, 'a validated heartbeat is frozen');
+  assert.equal(verdict.heartbeat.agents[0].name, 'Orchestrator');
+  // The list is optional — a consumer may advertise nothing — and an empty list
+  // is refused as a claim that says nothing, exactly as an empty options list is.
+  const bare = aHeartbeat();
+  delete bare.agents;
+  assert.equal(validateHeartbeat(bare).ok, true, 'no list at all is not an empty list');
+  assert.equal(Object.hasOwn(validateHeartbeat(bare).heartbeat, 'agents'), false);
+  heartbeatRefusal(aHeartbeat({ agents: [] }), REFUSALS.TOO_FEW, 'agents');
+  heartbeatRefusal(
+    aHeartbeat({ agents: Array.from({ length: AGENTS_MAX + 1 }, (_, i) => ({ id: `a${i}`, name: `Agent ${i}` })) }),
+    REFUSALS.TOO_MANY,
+    'agents',
+  );
+  // Two agents under one id make "talk to <agent>" ambiguous (D163 picks the
+  // first advertised agent by that name).
+  heartbeatRefusal(
+    aHeartbeat({ agents: [{ id: 'a', name: 'One' }, { id: 'a', name: 'Two' }] }),
+    REFUSALS.DUPLICATE_ENTRY,
+    'agents[1].id',
+  );
+  heartbeatRefusal(aHeartbeat({ agents: [{ id: 'orchestrator' }] }), REFUSALS.MISSING_FIELD, 'agents[0].name');
+  heartbeatRefusal(aHeartbeat({ agents: [{ name: 'Orchestrator' }] }), REFUSALS.MISSING_FIELD, 'agents[0].id');
+  heartbeatRefusal(aHeartbeat({ agents: ['orchestrator'] }), REFUSALS.NOT_AN_OBJECT, 'agents[0]');
+  heartbeatRefusal(aHeartbeat({ agents: [{ id: 'a/b', name: 'One' }] }), REFUSALS.BAD_CHARACTER, 'agents[0].id');
+  heartbeatRefusal(aHeartbeat({ agents: [{ id: 'a', name: '' }] }), REFUSALS.EMPTY_STRING, 'agents[0].name');
+  heartbeatRefusal(
+    aHeartbeat({ agents: [{ id: 'a', name: 'n'.repeat(AGENT_NAME_MAX + 1) }] }),
+    REFUSALS.TOO_LONG,
+    'agents[0].name',
+  );
+  // The boot id is D117's: a short identity string, and the same shape as an
+  // agent id (shared/presence carries the same rule for its own input).
+  heartbeatRefusal(aHeartbeat({ boot: '' }), REFUSALS.EMPTY_STRING, 'boot');
+  heartbeatRefusal(aHeartbeat({ boot: 'b'.repeat(65) }), REFUSALS.TOO_LONG, 'boot');
+  heartbeatRefusal(aHeartbeat({ boot: 'boot one' }), REFUSALS.BAD_CHARACTER, 'boot');
+  heartbeatRefusal(aHeartbeat({ boot: 1 }), REFUSALS.WRONG_TYPE, 'boot');
+  heartbeatRefusal(aHeartbeat({ at: 1.5 }), REFUSALS.BAD_TIMESTAMP, 'at');
+  heartbeatRefusal(aHeartbeat({ extra: 1 }), REFUSALS.UNKNOWN_FIELD, 'extra');
+  // A heartbeat is not a message and a message is not a heartbeat: the two
+  // records have different field sets on purpose.
+  heartbeatRefusal(good(), REFUSALS.UNKNOWN_FIELD, 'id');
+  assert.equal(validateHeartbeat(null).ok, false);
+  assert.equal(validateHeartbeat([]).ok, false);
+});
+
+test('the heartbeat\'s tag covers at, boot and agents — the agent list feeds D163', () => {
+  const heartbeat = aHeartbeat();
+  const mac = macOf(heartbeat, TEST_KEY);
+  assert.equal(verifyMac({ ...heartbeat, mac }, TEST_KEY), true);
+  assert.equal(
+    canonicalBytes(heartbeat),
+    '{"agents":[{"id":"orchestrator","name":"Orchestrator"}],"at":1700000000000,"boot":"boot-01"}',
+  );
+  // An unsigned heartbeat is one the phone must treat as offline, and its agent
+  // list is one it must ignore: without the tag, any minted `mc` token could
+  // fake liveness and advertise itself as the agent D163 defaults to (§3.5, O7).
+  const changed = [
+    { ...heartbeat, at: heartbeat.at + 1, mac },
+    { ...heartbeat, boot: 'boot-02', mac },
+    { ...heartbeat, agents: [{ id: 'orchestrator', name: 'Almost' }], mac },
+    { ...heartbeat, agents: [{ id: 'impostor', name: 'Orchestrator' }], mac },
+    { ...heartbeat, agents: [], mac },
+    { ...heartbeat, agents: [{ id: 'orchestrator', name: 'Orchestrator' }, { id: 'other', name: 'Other' }], mac },
+  ];
+  for (const swapped of changed) {
+    assert.equal(verifyMac(swapped, TEST_KEY), false, `swapped: ${canonicalBytes(swapped)}`);
+  }
+  assert.equal(verifyMac(heartbeat, TEST_KEY), false, 'unsigned');
+});
+
+test('the vectors file is the contract both ends test against', () => {
+  const vectors = JSON.parse(readFileSync(new URL('./vectors.json', import.meta.url), 'utf8'));
+  assert.equal(typeof vectors.key, 'string', 'the vectors carry the fake test key');
+  assert.ok(vectors.cases.length >= 8, `the vectors carry the cases, not a token one`);
+  for (const c of vectors.cases) {
+    assert.equal(typeof c.name, 'string');
+    assert.equal(typeof c.why, 'string', `${c.name}: every case says what it pins`);
+    assert.equal(canonicalBytes(c.message), c.canonical, `${c.name}: the canonical bytes`);
+    assert.equal(macOf(c.message, vectors.key), c.mac, `${c.name}: the tag`);
+    assert.equal(verifyMac(c.message, vectors.key), c.verdict === 'verified', `${c.name}: the verdict`);
+    // A refused case is refused because the message no longer matches the tag
+    // it carries, which is the only thing a MAC can refuse.
+    if (c.verdict === 'refused') {
+      assert.notEqual(c.message.mac, c.mac, `${c.name}: the carried tag is the untampered one`);
+    }
+  }
+  // The cases §3.5 and P6.3 name by hand, so that a later edit cannot quietly
+  // drop one of them.
+  const names = vectors.cases.map((c) => c.name).join(' | ');
+  for (const required of ['text swapped', 'options swapped', 'reply_to swapped', 'answer swapped', 'agents changed']) {
+    assert.ok(names.includes(required), `the vectors include "${required}": ${names}`);
+  }
+});
+
+test('the vectors carry no secret-shaped literal', () => {
+  // The brief for this task is explicit, and it is worth a test rather than a
+  // promise: nothing that looks like a credential is committed — not in the
+  // vectors, not here. The key in the file is a readable placeholder, and it is
+  // asserted to be one, so a real key pasted in "just to debug" fails the suite.
+  const text = readFileSync(new URL('./vectors.json', import.meta.url), 'utf8');
+  const shapes = [
+    /ghp_[A-Za-z0-9]{16}/,
+    /github_pat_[A-Za-z0-9_]{16}/,
+    /AIza[A-Za-z0-9_-]{16}/,
+    /sk-[A-Za-z0-9]{16}/,
+    /-----BEGIN/,
+    /AKIA[A-Z0-9]{12}/,
+    /xox[bp]-[A-Za-z0-9-]{10}/,
+    /eyJ[A-Za-z0-9_-]{20}/,
+  ];
+  for (const shape of shapes) {
+    assert.equal(shape.test(text), false, `the vectors carry no ${shape}`);
+  }
+  const vectors = JSON.parse(text);
+  assert.match(vectors.key, /not-a-secret|fake|test-key|placeholder/i, 'the key is an obvious placeholder');
+  assert.ok(vectors.key.length <= 64, 'and it is plainly not a generated key');
 });
