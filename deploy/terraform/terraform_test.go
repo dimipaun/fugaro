@@ -2721,30 +2721,44 @@ func TestLauncherConditionPreconditionMatchesGo(t *testing.T) {
 	}
 }
 
-// TestJobTokenGrantIsReadOnlyOnTokens pins the workflow module's job_tokens
-// grant to what gcp.TokenBucketCondition writes: objectViewer (no create,
-// no delete: a peer run cannot remove or replace a queued run's token, D16),
-// a precondition on tokens/ of this runs bucket in one clause, and the job's
-// objectUser grant never naming tokens/.
+// TestJobTokenGrantIsReadOnlyOnTokens pins both job modules' job_tokens
+// grants — the per-repository job's (modules/workflow, gcp.TokenBucketCondition)
+// and the shared project job's (modules/project,
+// gcp.ProjectTokenBucketCondition) — to objectViewer (no create, no delete: a
+// peer run cannot remove or replace a queued run's token, D16), with a
+// precondition on tokens/ of this runs bucket in one clause, and the jobs'
+// objectUser grants never naming tokens/. The project module's grant is
+// otherwise pinned only by the recorded installation golden plan, which a
+// change to the module does not regenerate, so without this a role widened to
+// objectUser there passed every test.
 func TestJobTokenGrantIsReadOnlyOnTokens(t *testing.T) {
-	b, err := os.ReadFile("gcp/modules/workflow/sa.tf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(b)
-	i := strings.Index(src, `resource "google_storage_bucket_iam_member" "job_tokens" {`)
-	if i < 0 {
-		t.Fatal("no job_tokens grant in modules/workflow/sa.tf")
-	}
-	block := src[i:]
-	block = block[:strings.Index(block, "\n}\n")]
-	if !strings.Contains(block, `role   = "roles/storage.objectViewer"`) {
-		t.Errorf("the job's tokens/ grant is not objectViewer:\n%s", block)
-	}
-	if !strings.Contains(block, `objects/`+gcp.TokenBucketPrefix+`/")`) || !strings.Contains(block, `!strcontains(var.workflow.token_condition.expression, "||")`) {
-		t.Errorf("the job's tokens/ grant has no precondition on one tokens/ clause:\n%s", block)
+	for _, tc := range []struct{ file, variable string }{
+		{"gcp/modules/workflow/sa.tf", "var.workflow"},
+		{"gcp/modules/project/sa.tf", "var.job"},
+	} {
+		b, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(b)
+		i := strings.Index(src, `resource "google_storage_bucket_iam_member" "job_tokens" {`)
+		if i < 0 {
+			t.Errorf("no job_tokens grant in %s", tc.file)
+			continue
+		}
+		block := src[i:]
+		block = block[:strings.Index(block, "\n}\n")]
+		if !strings.Contains(block, `role   = "roles/storage.objectViewer"`) {
+			t.Errorf("%s: the job's tokens/ grant is not objectViewer:\n%s", tc.file, block)
+		}
+		if !strings.Contains(block, `objects/`+gcp.TokenBucketPrefix+`/")`) || !strings.Contains(block, `!strcontains(`+tc.variable+`.token_condition.expression, "||")`) {
+			t.Errorf("%s: the job's tokens/ grant has no precondition on one tokens/ clause:\n%s", tc.file, block)
+		}
 	}
 	if strings.Contains(gcp.BucketCondition("b", gcp.JobBucketPrefixes, "s"), "/"+gcp.TokenBucketPrefix+"/") {
 		t.Error("the job's objectUser condition reaches tokens/")
+	}
+	if strings.Contains(gcp.ProjectBucketCondition("b", gcp.JobBucketPrefixes), "/"+gcp.TokenBucketPrefix+"/") {
+		t.Error("the project job's objectUser condition reaches tokens/")
 	}
 }
