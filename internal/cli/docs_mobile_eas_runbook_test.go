@@ -57,6 +57,13 @@ package cli
 //	| app-config.test.js's name dropped from the tension | TestDocsMobileEasRunbookRecordsTheBundleIdentityTension |
 //	| the README's row renamed | TestDocsMobileReadmeListsTheRunbook |
 //	| a pull-request trigger planted as a permitted one | TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape |
+//	| the long-hex shape dropped from the secret scan | TestMobileEasRunbookSecretScanFindsEveryShape |
+//	| a 64-character lower-case hex secret planted in the page | TestDocsMobileEasRunbookHoldsNoSecretShapedLiteral |
+//	| the precedent claim restored ("the signing workflow it does have takes its secrets through a protected environment") | TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape |
+//	| the deployment-branch/trigger tie removed ("the policy must name `main` as well") | TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape |
+//	| the keyless claim dropped from the release.yml sentence | TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape |
+//	| "not staged and not created" softened to "it is planned" | TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape |
+//	| "Exactly one protected environment exists in this repository today" broadened to a plural | TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape |
 
 import (
 	"net/url"
@@ -181,10 +188,14 @@ func TestDocsMobileEasRunbookNamesEveryCredentialAndWhereItLives(t *testing.T) {
 
 // TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape
 // asserts the repository-side half is described: a protected environment whose
-// only required reviewer is the owner (the `website-live` and `console-release`
-// shape), the trigger the build would run on, least privilege, pinned actions --
-// and that the runbook writes no workflow file, only the shape a later staged
-// file under docs/pending-workflows/ would have (Global Constraint 8).
+// only required reviewer is the owner, the trigger the build would run on,
+// least privilege, pinned actions -- and that the runbook writes no workflow
+// file, only the shape a later staged file under docs/pending-workflows/ would
+// have (Global Constraint 8). It also pins the precedent claim to the tree:
+// exactly one environment exists today (website-live), release.yml signs
+// keyless with no environment, the console's console-release.yml is planned and
+// not staged, and a v*-only deployment-branch policy cannot be reached by a
+// dispatch from main.
 func TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape(t *testing.T) {
 	doc := runbook(t)
 	for _, want := range []string{
@@ -210,6 +221,35 @@ func TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape(t *t
 		if strings.Contains(doc, banned) {
 			t.Errorf("%s says %q: the build must not run on a pull request", mobileEasRunbook, banned)
 		}
+	}
+	// The precedent claim, and the two corrections it now carries. An earlier
+	// revision said this repository already runs a signing workflow that reads
+	// its secrets from a protected environment and called the console's signing
+	// file a second instance of it: neither is true of the tree. Exactly one
+	// environment exists (website-live, in website-promote.yml, holding
+	// variables and no secret), release.yml signs keyless with no environment at
+	// all, and console-release.yml is planned and not staged.
+	for _, want := range []string{
+		"Exactly one protected environment exists in this repository today",
+		"not staged and not created",
+		"keyless",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s does not say %q: the repository-side precedent has to be what the tree has, not what a plan proposes", mobileEasRunbook, want)
+		}
+	}
+	for _, banned := range []string{
+		"the signing workflow it does have takes its secrets through a protected environment",
+		"the same mechanism the other two owner-only paths",
+	} {
+		if strings.Contains(doc, banned) {
+			t.Errorf("%s says %q: this repository has one deployed environment and no signing workflow that reads one", mobileEasRunbook, banned)
+		}
+	}
+	// §9's deployment-branch policy and §10's trigger are one decision: an
+	// environment restricted to tags is unreachable from a dispatch on main.
+	if !strings.Contains(doc, "the policy must name `main` as well") {
+		t.Errorf("%s does not tie the deployment-branch policy to the trigger: a `v*`-only environment cannot be reached by a workflow dispatched from main", mobileEasRunbook)
 	}
 }
 
@@ -309,9 +349,21 @@ func TestDocsMobileEasRunbookCitesOnlyTheAccountsOwnDocumentation(t *testing.T) 
 
 // runbookSecretShapes are the shapes a credential takes when it is written down
 // by accident, and the runbook must hold none of them. The list is the one
-// mobile/src/accounts/settings.js refuses values with, in the shapes the
-// repository writes them: a PEM block, a provider key prefix, a JWT, a long
-// alphanumeric blob, and a value assigned to a name that says what it is.
+// mobile/src/accounts/settings.js refuses values with (SECRET_SHAPES: jwt,
+// pem-private-key, pem-certificate, google-api-key, model-api-key, long-hex),
+// in the shapes this repository actually writes them -- plus the two shapes a
+// *page* holds that a settings value cannot: a provider token pasted into prose
+// (a GitHub or AWS prefix, which settings.js has no reason to know) and a value
+// assigned to a name that says what it is.
+//
+// **long-hex is here deliberately, and it is the entry a blob-length check would
+// miss.** settings.js refuses any run of 32 or more hex digits; runbookBlobish
+// below needs 40 characters *and* an upper-case letter and a digit, so a pasted
+// 32- or 64-character lower-case hex secret -- a MAC key, a hash, an id-shaped
+// token, all of them written down as lower-case hex in practice -- passes the
+// blob check and is caught only by this one. The page is a page of prose, not a
+// settings value, so this pattern is unanchored where settings.js's is anchored:
+// a credential pasted mid-sentence is still a credential.
 var runbookSecretShapes = []struct {
 	what string
 	re   *regexp.Regexp
@@ -322,6 +374,7 @@ var runbookSecretShapes = []struct {
 	{"an AWS access key id", regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)},
 	{"a Google API key", regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)},
 	{"a JSON Web Token", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.`)},
+	{"a long hex string", regexp.MustCompile(`\b[0-9a-fA-F]{32,}\b`)},
 	{"a value assigned to a credential's name", regexp.MustCompile(`(?i)\b(secret|token|password|apikey|api_key|private_key|service_account)\s*[:=]\s*["']?[A-Za-z0-9/+_.-]{16,}`)},
 }
 
@@ -367,6 +420,10 @@ func TestMobileEasRunbookSecretScanFindsEveryShape(t *testing.T) {
 		{"an AWS access key id", "AKIA" + "IOSFODNN7EXAMPLE"},
 		{"a Google API key", "AI" + "za" + strings.Repeat("y", 35)},
 		{"a JSON Web Token", "eyJ" + "hbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxIn0" + "." + "signature"},
+		// Lower-case hex only, at a length settings.js refuses and runbookBlobish
+		// cannot see: no upper-case letter and no digit, so the blob check stays
+		// silent and only the long-hex shape catches it.
+		{"a long hex string", "dead" + strings.Repeat("beef", 8)},
 		{"a long alphanumeric blob", "Aa1" + strings.Repeat("b2C", 14)},
 		{"a value assigned to a credential's name", "password: " + "hunter2hunter2hunter"},
 	}
@@ -375,6 +432,16 @@ func TestMobileEasRunbookSecretScanFindsEveryShape(t *testing.T) {
 			t.Errorf("the scan does not find %s in a planted %q: a green run over the runbook would mean nothing", tc.what, tc.value)
 		}
 	}
+	// The point of the long-hex entry, stated so that an edit which "simplifies"
+	// the list back fails here rather than quietly reopening the hole: this value
+	// is invisible to the blob check and visible only to the long-hex shape.
+	hexOnly := "dead" + strings.Repeat("beef", 8)
+	if runbookBlobish.MatchString(hexOnly) {
+		t.Errorf("runbookBlobish matches %q: the long-hex shape is no longer the only thing that catches it, so this control no longer proves what it claims", hexOnly)
+	}
+	if got := runbookSecretShaped(hexOnly); len(got) != 1 || !strings.Contains(got[0], "a long hex string") {
+		t.Errorf("the long-hex shape does not catch %q on its own: got %q", hexOnly, got)
+	}
 	// And the control's other half: the words the runbook is made of are not
 	// false positives, so a failure names a real defect.
 	clean := []string{
@@ -382,6 +449,9 @@ func TestMobileEasRunbookSecretScanFindsEveryShape(t *testing.T) {
 		"`google-play-service-account.json` is named by `serviceAccountKeyPath`, and its contents are never read.",
 		"See https://docs.expo.dev/app-signing/managed-credentials/ for where EAS keeps the certificate.",
 		"Pin every action to a full 40-character commit SHA.",
+		// A short run of hex letters is a word, not a key: the long-hex shape
+		// starts at 32 characters, the length settings.js starts refusing at.
+		"A hex-looking word such as deadbeefcafe is not a credential here.",
 	}
 	for _, page := range clean {
 		if got := runbookSecretShaped(page); len(got) != 0 {

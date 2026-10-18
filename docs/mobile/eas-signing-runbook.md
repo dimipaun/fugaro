@@ -78,7 +78,13 @@ register):**
 - the decision that the internal track and no public release is what is being
   proved: **C8**;
 - what the app may hold, which is **not** a store credential: **D111** (exactly
-  two items per account, in platform secure storage).
+  two items per account, in platform secure storage);
+- the repository-side precedent, read off the tree rather than off a plan:
+  `.github/workflows/website-promote.yml` is the **only** workflow in this
+  repository carrying an `environment:` (line 70, `website-live`), it reads
+  repository variables and no secret, and `.github/workflows/release.yml` signs
+  the CLI keyless with no environment — so a `mobile-release` environment would
+  be this repository's second, and §9 says so.
 
 **Not verified here, and to be checked at run time against the vendor's current
 documentation** (each step below names the page): every exact console **label
@@ -281,10 +287,19 @@ a stylistic preference:
   every paste.** The repository has a rule against credential-shaped literals in
   source (see §15's files), and Check 89's step 5 reads the tracked file list
   under `mobile/` for exactly the names a key file would have.
-- **A key in CI is a key any later workflow change can read.** This repository's
-  own release gate deliberately holds no store credential (D125), and the
-  signing workflow it does have takes its secrets through a protected
-  environment precisely so they are unreachable without the owner's approval.
+- **A key in CI is a key any later workflow change can read.** **No workflow in
+  this repository holds a signing credential today, and none ever has.**
+  `release.yml` signs the CLI's own artifacts **keyless**: the publish job takes
+  `id-token: write` and cosign asks GitHub's OIDC issuer for a short-lived
+  certificate, so there is no signing secret anywhere in that job
+  (`.github/workflows/release.yml`; the app is outside that gate anyway, D125).
+  The one protected environment any workflow reads is **`website-live`**, in
+  `website-promote.yml`, and it holds repository **variables** — a project id, a
+  provider name, a service-account address — not secrets
+  (`.github/workflows/website-promote.yml:70`). So a store credential in a
+  mobile workflow would be **the first one this repository has ever held**, in
+  any workflow, which is why §10 puts none there and D120's ceiling is a build
+  with no store credential at all.
 - **A key in an agent's environment is the thing D120 was answered against.**
   A Fugaro run's container is not a safe place for a store credential: the
   agent's egress is not restricted and it can read the token from the runner's
@@ -368,15 +383,29 @@ files the profiles reference (`serviceAccountKeyPath`). **Never their contents.*
 
 ## 9. The repository settings: the protected environment
 
-The environment is the repository-side lock, and it is the owner's to create. It
-is the same mechanism the other two owner-only paths in this repository use —
-`website-live` for the site's promote job
-([../website/preview-promote.md](../website/preview-promote.md)) and the
-protected environment the console's signing job reads
-([../design/desktop-console.md](../design/desktop-console.md) §7). It has no
-purpose yet if no workflow exists, and it is recorded here so that the workflow
-§10 describes has somewhere to read from **before** it is written rather than
-after.
+The environment is the repository-side lock, and it is the owner's to create.
+**Exactly one protected environment exists in this repository today:**
+`website-live`, read by the promote job of
+`.github/workflows/website-promote.yml` (`environment: website-live`, line 70),
+whose only required reviewer is the owner and whose one-time setup is worked
+through in [../website/preview-promote.md](../website/preview-promote.md). It is
+the shape to copy, and it is **also worth reading for what it does not do**: it
+holds repository **variables**, not secrets, because the site's deploy
+authenticates by Workload Identity Federation and needs no key at all.
+
+**The console's signing job is not a second one, and this page must not be read
+as though it were.** `console-release.yml` — a signing job reading a protected
+environment — is **designed and planned**
+([../design/desktop-console.md](../design/desktop-console.md) §7 and §9.4, and
+plan Task 4.2 of [../plans/2026-10-15-desktop-console.md](../plans/2026-10-15-desktop-console.md))
+but **it is not staged and not created**: `docs/pending-workflows/` holds no file
+today, and [its own README](../pending-workflows/README.md) says so in its first
+line. So `mobile-release` would be the **second** environment in this
+repository's history, not the third, and the only working precedent to copy is
+`website-live`'s. The console's plan is still the better description of *why* a
+signing job wants an environment, and §10 borrows its trigger reasoning from
+there by name — but "the console does it this way" is a statement about a plan,
+not about a running workflow.
 
 **The name this runbook uses is `mobile-release`.** It is a proposal, and the
 owner may name it otherwise — but the name a staged workflow carries in its
@@ -392,16 +421,29 @@ documentation at `https://docs.github.com/`):
   environment a lock rather than a label: a job carrying `environment:
   mobile-release` waits for your approval before a runner exists, and a
   credential stored in the environment is unreadable without it.
-- **Deployment branches:** restricted to the refs that may deploy into it — the
-  release **tags** (`v*`), matching the app's version rule (C6) and the
-  console's own signing workflow. A workflow dispatched from an arbitrary branch
-  then cannot reach the environment at all.
+- **Deployment branches:** restricted to the refs that may deploy into it — and
+  **this list has to name every ref §10's trigger offers, or the environment is
+  unreachable.** GitHub refuses a deployment to an environment from a ref its
+  policy excludes, so an environment restricted to `v*` tags **cannot** be
+  reached by a `workflow_dispatch` run from `main`, whatever the workflow's own
+  `on:` says. If you take §10's tag trigger (the recommendation, and C6's
+  shape), the policy is the release **tags** (`v*`) and nothing else, and a
+  workflow dispatched from an arbitrary branch cannot reach the environment at
+  all. **If you take §10's `workflow_dispatch` alternative, the policy must name
+  `main` as well** (`v*` plus `main`), or every dispatch stops at the
+  environment instead of at the build; the two settings are one decision and
+  have to be made together. A policy that excludes the trigger's ref fails
+  closed, but it fails at the wrong moment, on the day you need the build.
 - **Environment secrets:** **none today**. If a workflow is ever added, the only
   secret that belongs here is **`EXPO_TOKEN`**. `ASC_API_KEY_ID`,
   `PLAY_SERVICE_ACCOUNT_JSON`, `APPLE_DISTRIBUTION_CERTIFICATE` and
   `ANDROID_UPLOAD_KEYSTORE` do **not** belong here: the store path is owner-run
   (§7), and Check 89's step 5 reads the secret **names** precisely so that one
   appearing is noticed.
+
+**This environment has no purpose yet if no workflow exists**, and it is
+recorded here so that the workflow §10 describes has somewhere to read from
+**before** it is written rather than after.
 
 **FACT for §9 (owner):** the environment's **name**; that its only required
 reviewer is you; the branch restriction you set; and the **names** of any
@@ -424,8 +466,8 @@ have, and the reasons each line is what it is:
 
 | | |
 |---|---|
-| **Trigger** | the **`push` of a `v*` tag, and nothing else** — the app is versioned with the CLI's tag (C6), and a tag is the one ref that means "this commit is a release". If you prefer to build on demand, the alternative is **`workflow_dispatch` from `main`** with the same locks; what it costs is that a build is then not tied to a tag, so its `gitCommitHash` has to be compared to the tag by hand. **Refused either way: `pull_request`, `pull_request_target`, `workflow_run` and every scheduled trigger** — a signing job that runs on a pull request from any branch of this repository is the defect the console's two-file split was made to prevent, and a fork's pull request is not the only way in. |
-| **Locks** | **two**, as the website's promote job has: `environment: mobile-release` (its only required reviewer is you, §9) **and** a guard on the actor, `if: github.actor == 'dimipaun'`, so a dispatch by anybody else is skipped before a runner or an approval request exists. |
+| **Trigger** | the **`push` of a `v*` tag, and nothing else** — the app is versioned with the CLI's tag (C6), and a tag is the one ref that means "this commit is a release". If you prefer to build on demand, the alternative is **`workflow_dispatch` from `main`** with the same locks — **except for one setting: §9's deployment-branch policy must then name `main` as well as `v*`**, or GitHub refuses the deployment from a ref the environment excludes and the run never reaches the build. What the alternative costs is that a build is then not tied to a tag, so its `gitCommitHash` has to be compared to the tag by hand. **Refused either way: `pull_request`, `pull_request_target`, `workflow_run` and every scheduled trigger** — a signing job that runs on a pull request from any branch of this repository is the defect the console's plan splits its two files to prevent ([../plans/2026-10-15-desktop-console.md](../plans/2026-10-15-desktop-console.md), Task 4.2: tests and signing never share a file, because one holds a secret and one runs on every pull request), and a fork's pull request is not the only way in. |
+| **Locks** | **two**, as the website's promote job has: `environment: mobile-release` (its only required reviewer is you, §9 — and its deployment-branch policy has to admit the trigger's own ref, which the row above pins down) **and** a guard on the actor, `if: github.actor == 'dimipaun'`, so a dispatch by anybody else is skipped before a runner or an approval request exists. |
 | **What it may do** | build a **test artifact** — the store-credential-free profile of §8 — and nothing else. **Never `eas submit`.** D120's answer is explicit that *"CI at most builds a **test** artifact with no store credential"*, and that sentence is the ceiling: not a store build, not a submission, not a store credential. |
 | **Permissions** | declared explicitly and minimally, at the workflow level **and** on the job: **`permissions:`** with **`contents: read`** and nothing else — no `id-token: write`, no `packages: write`, and never `permissions: write-all`. A build job needs the checkout and a token, not a write scope over the repository. |
 | **Actions** | pinned, every one, to a **full 40-character commit SHA** with a `# vX.Y.Z` comment beside it, as every other workflow in this repository is (a tag is mutable; a commit is not). Before copying the file in, compare the pins against `main`'s, so the copy cannot downgrade one. |
@@ -528,9 +570,16 @@ copy of it, which is why §7's rule is "never", not "not yet".
 ## 13. What is NOT verified here
 
 - **The app's behaviour.** Installing is as far as Check 89 goes. The
-  microphone ask, the wake word, the hands-free audio, barge-in and multi-account
-  switching are checks **85**, **86** and **87**, and they need hardware this
-  check does not use.
+  microphone ask, the hands-free audio, Bluetooth and barge-in are check **86**;
+  multi-account switching is check **87**; and the on-device STT/TTS bake-off is
+  check **85** (the plan's checks table, which is where these numbers are
+  allocated). **The wake word is not in that block at all** — it is check
+  **102**, in Phase 6, which is **proposed and NOT APPROVED**. Every one of them
+  needs hardware this check does not use. The register's Check 89 step 4 folds
+  the wake word into "checks 85, 86 and 87", which is the same mismatch; the fix
+  belongs to P4.2a in the register's own text, and until it is made this page
+  gives the plan's numbers rather than repeating the register's (see §14,
+  Tension 4).
 - **The public release.** Not made, not attempted, not implied (C8). Nothing
   here proves a production release would work, and Google's own production-access
   rules are not exercised.
@@ -577,13 +626,21 @@ It is one file, and today two things are asked of it:
   same file** — `expo.ios.bundleIdentifier` and `expo.android.package` — and
   prints them as its ready line.
 
-Both are defensible and they cannot both hold. Today the file on `main` carries
-neither field, so Check 89's guard **line** — the one that reads the two keys out
-of `app.json` to build its ready line — fails before the check prints anything
-(it is a `KeyError`, not one of the guard's own stop messages, which is what the
-next reader of that block should expect to see). The conclusion is the same one
-the missing-file stop reaches: there is nothing to build an app identity from
-yet. The two ways out:
+Both are defensible and they cannot both hold. **The stop you will actually see
+first today is not this tension's, and it is worth knowing which is which.** The
+guard's `[ -f mobile/app.json ]` test does **not** fire — P3.1 has merged and the
+file is on the tree — but the `[ -f mobile/eas.json ]` test immediately below it
+**does**, because `mobile/eas.json` does not exist yet (Tension 2), and the guard
+exits with its own message: *"there is no mobile/eas.json, so there is no build
+profile to read"*. **The `KeyError` is the state a reader meets only once §8's
+profile exists and is committed.** With `mobile/eas.json` present and
+`mobile/app.json` still carrying neither field, the guard gets past its file
+tests, and then its python line — the one that reads
+`d["ios"]["bundleIdentifier"]` and `d["android"]["package"]` to build the ready
+line — raises and the check dies with a traceback rather than one of its own stop
+messages. So there are two distinct states, and they are the same finding
+arriving at two different moments: there is no app identity to build from yet.
+The two ways out:
 
 1. **the identities go into `mobile/app.json`**, which is the only site Check
    89's guard reads, and P3.1's test loses its two absence assertions (D125's
@@ -614,6 +671,28 @@ app reports the version the guard's `$TAG` names. How a tag becomes
 `expo.version` is not decided in this runbook, and it has to be decided before
 step 4 can pass. **FACT for §14 (owner):** the rule you choose, and where it is
 written down.
+
+**Tension 4 — three check numbers, and the register's step 4 has them wrong.**
+This is a numbering mismatch rather than a rule conflict, and it is recorded
+here because **§13 must not repeat it and the register should not keep it either**:
+
+- The plan's checks table allocates **85** to the on-device STT/TTS bake-off,
+  **86** to hands-free audio (the background mode, the microphone ask, Bluetooth
+  and barge-in), and **87** to multi-account switching.
+- **The wake word is check 102** — the plan's 100–109 block, Phase 6, written as
+  *"the wake word's recognition rate on the oldest supported device"*, and that
+  whole block is **proposed and NOT APPROVED** (P6.11 is what would write it into
+  the register).
+- **Check 89's step 4** (P4.2a, **PR #580**) says instead that *"the microphone
+  ask, the wake word, the hands-free audio, multi-account switching"* belong to
+  *"checks 85, 86 and 87"* — folding the wake word into the 80–89 block, where
+  no row is its, and leaving 85 (the bake-off) with behaviours that are 86's.
+
+The plan's table is the allocation, so this runbook uses its numbers (§13), and
+**the amendment is P4.2a's, in the register's text**: the fix is to drop the wake
+word from step 4's sentence and point it at check 102 with its Phase 6 status,
+and to let the microphone ask and barge-in rest on 86. **FACT for §14 (owner):**
+that the register's step 4 was amended, and the commit that did it.
 
 ---
 
