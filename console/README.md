@@ -2073,6 +2073,27 @@ an unstapled bundle (the review of Task 4.2 caught it). The disk image is then
 it, and a hardened runtime is for executables, not a `.dmg`), submitted with
 `xcrun notarytool submit --wait` and stapled.
 
+**Every Apple-network call is retried, bounded — added 2026-10-18, after three
+consecutive release runs failed there.** `xcrun stapler staple` and `xcrun
+stapler validate` reach Apple's ticket-delivery service over the network, and
+the three runs printed `CloudKit … error is Error Domain=NSURLErrorDomain
+Code=-1005 "The network connection was lost"` against
+`.../com.apple.gk.ticket-delivery/production/public/records/lookup`, after
+which the signing step refused with "carries no stapled ticket: refusing to
+publish artifacts that would carry it unstapled". The notarisation itself had
+been accepted: what was lost was the connection, not the ticket. So one shell
+function, `retry_apple_network`, defined once in the signing step and once —
+character for character the same — in the verification step, makes up to five
+attempts at those calls with a growing pause between them (15, 30, 60, 90
+seconds), printing each attempt's number and exit code, and returns the failure
+only after the fifth: a ticket that is genuinely absent still refuses to
+publish, and so does a rejected notarisation. **It wraps the staple and
+validate calls and nothing else** — `codesign`, `xcrun notarytool submit
+--wait`, the TeamIdentifier checks, `scripts/release-gate.sh` and the
+fail-closed secret check all still fail at once, with no retry — and in the
+verification step the calls sit inside `record`, so every attempt is in
+`console-verification.txt` too.
+
 **The environment is `console-release`, and the owner creates it before the
 copy-in.** Required reviewers on the owner, deployment branches restricted to
 tags. A staging file cannot create an environment, which is why Task 4.5 is the
@@ -2246,3 +2267,10 @@ a scratch copy of the staged file and turned the named test red:
 | `curl … | sh`, `eval`, `env`, `printenv | sort`, `set | grep` added | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the download-and-run and environment-dump scans |
 | the publish job's `sha256sum --strict --check` removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the publish job's steps |
 | the upload-artifact pin changed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the repository's existing pin |
+| `retry_apple_network` removed from the signing step or from the verification step | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the helper's definition in each step and on every call site it must have |
+| the retry wrapped around `codesign --sign`, or around `xcrun notarytool submit` | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the only-lines-that-may-name-the-helper clause ("retries … the helper wraps `xcrun stapler staple` and `xcrun stapler validate` and nothing else") |
+| the retry removed from the `.dmg`'s staple | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the staple line and on the pack/sign/submit/staple order |
+| the attempt bound lowered to 3, in one step only | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the two definitions differing, and on the five-attempt clause; and `TestDocsConsoleReleaseRetryHelperIsBounded`, on the fifth attempt never being made |
+| the first pause changed (15 → 5) in both steps | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the pause clause; and `TestDocsConsoleReleaseRetryHelperIsBounded`, on the pause the helper asked for |
+| the helper made to return after its first failure | `TestDocsConsoleReleaseRetryHelperIsBounded`, on the retried case and on the five-attempt case (both stop after one attempt) |
+| the `exit 1` after the `.app`'s staple-and-validate removed | `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`, on the refusal's lines |

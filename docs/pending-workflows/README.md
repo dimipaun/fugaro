@@ -173,6 +173,40 @@ step's. The `release` job, in order:
    `console-release-assets` (upload-artifact at the pin `release.yml` and
    `images.yml` use).
 
+**Re-copy required: the staged file changed on 2026-10-18 and the copy under
+`.github/workflows/` did not.** Three consecutive release runs failed at
+Apple's ticket-delivery lookup — `xcrun stapler staple` and `xcrun stapler
+validate` printing `NSURLErrorDomain Code=-1005 "The network connection was
+lost"` against
+`.../com.apple.gk.ticket-delivery/production/public/records/lookup`, followed
+by the signing step's "carries no stapled ticket: refusing to publish artifacts
+that would carry it unstapled" — a network failure to Apple, not a rejection
+(the notarisation had been accepted). The staged file now retries those calls;
+**the applied copy is the older text, so until the owner re-copies the staged
+file in, `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`'s byte-identity
+clause fails** (its last assertion compares the two files and says they
+differ). That red test is the intended state of this change: the fix cannot be
+delivered by an agent, because GitHub rejects a Fugaro push that touches
+`.github/workflows/**`.
+
+**Every Apple-network call is retried, bounded; nothing else is.** One shell
+function, `retry_apple_network`, is defined once in the signing step and once —
+character for character the same — in the verification step, and it wraps the
+`xcrun stapler staple` (the `.app`'s and the `.dmg`'s) and `xcrun stapler
+validate` calls (the `.app`'s in the signing step; the bundle inside the
+mounted `.dmg`, the one inside the extracted `.zip` and the disk image itself
+in the verification step). It makes up to **five** attempts with a growing
+pause between them (**15, 30, 60, 90** seconds), prints each attempt's number
+and exit code (`apple-network attempt 2 of 5: … exited 68`), and returns the
+failure only after the fifth — so a ticket that is genuinely absent, or a
+notarisation that was really rejected, still refuses to publish. In the
+verification step each call is inside `record`, so the attempts land in
+`console-verification.txt` with the rest of the evidence. **It wraps nothing
+else**: `codesign`, `xcrun notarytool submit --wait`, the TeamIdentifier check,
+`scripts/release-gate.sh`, the fail-closed secret check and the `spctl`/`hdiutil`
+assessments all fail at once, exactly as before, and the function is called
+nowhere else in either job.
+
 The `publish` job (`needs: release`) downloads that artifact (download-artifact
 at the pin `images.yml` uses), re-checks every asset with `sha256sum --strict
 --check` and that the `.dmg` and `.zip` are named for the tag's version, and
@@ -279,8 +313,11 @@ available or permitted in the run that wrote it, and no agent run in this
 repository builds, signs, notarises or verifies a bundle. What *is* verified is
 its text,
 through `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` and
-`TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger`, `TestDocsConsoleReleasePublishRefusesToClobber` and
-`TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions` (both run the staged scripts under bash with a faked `gh`) in
+`TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger`, `TestDocsConsoleReleasePublishRefusesToClobber`,
+`TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions` (both run the staged scripts under bash with a faked `gh`) and
+`TestDocsConsoleReleaseRetryHelperIsBounded` (which runs the Apple-network retry
+helper under bash with a fake `sleep` and a command that fails a set number of
+times) in
 `internal/cli/docs_desktop_console_test.go` (both picked up by the
 `-run 'Docs|Lint'` filter): the trigger surface, the ancestry check and the
 gate first, every install and download before the one step that holds the
@@ -288,7 +325,9 @@ secrets, the secret names and their bindings, the fail-closed check, no `if:`,
 `continue-on-error`, stray `|| true`, inlined `${{ }}` or shell tracing, no
 line that prints the key material, the keychain and its trust list, the team
 checks, the packed bundle's staple, the disk image's signature, notarisation
-and staple, the verification and its checksums, the separate `console-vX.Y.Z`
+and staple, the bounded retry around the staple and validate calls (five
+attempts, growing pauses, attempt number and exit code, and nothing else
+wrapped), the verification and its checksums, the separate `console-vX.Y.Z`
 release and its re-run refusals, the two-job split and each job's token,
 the version stamp on both packs, the four action pins, the permissions, and
 byte-identity with the copy under `.github/workflows/` once it exists.
@@ -310,6 +349,16 @@ unsigned warm-up pack leaves everything the signed pack needs in the cache; and
 that `-c.extraMetadata.version` reaches the bundle's version and the
 artifact names as described; and that the signed, stapled DMG passes
 `spctl --assess --type open --context context:primary-signature`.
+
+The 2026-10-18 retry adds two more things for Check 59a to confirm on a real
+runner, because neither can be observed here: that `xcrun stapler staple` on
+the `.app` the packer has *already* stapled succeeds (it is idempotent as far
+as this repository can tell, and it is what attaches the ticket when the
+packer's own attempt lost the connection), and that a stapler call that does
+meet a transient CloudKit failure recovers inside the five attempts. What is
+verified offline is the helper's own behaviour — its bound, its pauses, its
+per-attempt reporting and its returning the failure only after the fifth — run
+under bash with a fake `sleep`; the real service's timing is not.
 
 Two things a reader must not take from those tests: the pinned SHAs are read
 against upstream by the person copying the file in (see "Before you copy" below —
