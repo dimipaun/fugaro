@@ -181,6 +181,18 @@ const gitSecretIDSince = "0.7.5"
 // recipesSince and layeredSince.
 const namedTokensSince = "0.6.5"
 
+// titlesSince is the first fugaro release whose runner reads a task's title
+// (task.Spec.Title, fugaro run --title): an older runner refuses the field
+// outright, since task.Parse decodes with DisallowUnknownFields, and the
+// run would fail at bootstrap on a task nobody can read. It must equal the
+// release that ships task.Spec.Title: docs/release.md ("Before you tag")
+// has the release checklist verify it. internal/cli/run.go gates a launch
+// that would set a title against an older build record, exactly as it does
+// for a named Claude account (namedTokensSince) and for mode: artifact
+// (artifactsSince); a launch with no --title writes no such field and is
+// never gated.
+const titlesSince = "0.8.5"
+
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets
 // agent.recipe (an unknown key to an older runner).

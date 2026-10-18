@@ -70,6 +70,14 @@ type Row struct {
 	// Recipe is the run's recipe: the record's, else the task's; "" when
 	// neither names one (a default run launched before 0.5.0, or not started).
 	Recipe string `json:"recipe,omitempty"`
+	// Title is the run's job title, from the ONE place the text comes from
+	// (task.Spec.TitleLine): the title its launcher stored (fugaro run
+	// --title), else the task prompt's first line. "" only when there is no
+	// readable task, or the task has neither. runs ls renders no title
+	// column (fugaro watch is where a run is listed by title), but its
+	// --json rows carry it for the console and every other reader, so no
+	// reader derives the title from the task itself any more.
+	Title string `json:"title,omitempty"`
 	// ProjectLayer is the project layer the run's task carried, and
 	// ConfigSHA256 its resolved config's sum (docs/design/layered-config.md
 	// §8); both absent before 0.6.0 and for a run that has not started.
@@ -196,6 +204,7 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 	row.Created, _ = runstore.RunTime(in.RunID)
 	if t := in.Task; t != nil {
 		row.Repo, row.Workflow, row.Batch, row.RequestedBy = t.Repo, t.Workflow, t.Batch, t.RequestedBy
+		row.Title = t.TitleLine()
 	} else {
 		row.Reason = "task.json unreadable"
 	}
