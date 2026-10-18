@@ -1532,11 +1532,13 @@ about this directory rather than about the workflow:
   every pull request from any branch never sits next to the Apple material
   (design §9.4).
 - **The job runs unconditionally, and that is what makes it gate-able.** It has
-  no `paths:` filter and no job-level `if:`, and its name is exactly `console`
-  — the string Task 4.6 adds to `scripts/release-gate.sh`'s `names` list (that
-  line reads `names="test terraform rules"` today, so the check is not required
-  yet). From that edit on, the gate requires a check named `console` on a tag's
-  commit and, in its `identical_tree_checks` fallback, the same names on the
+  no `paths:` filter and no job-level `if:`, and its key is `console`. The two
+  check runs it reports are `console (ubuntu-latest)` and
+  `console (macos-latest)` — GitHub appends a matrix job's values to its
+  check-run name, so there is no check run named exactly `console` — and **Task
+  4.6 adds those two names to `scripts/release-gate.sh`'s `names` array**. From
+  that edit on, the gate requires both on a tag's commit and, in its
+  `identical_tree_checks` fallback, the same names on the
   pull request head whose tree matches; **a check that does not exist is not a
   success and neither is a skipped one**, so a `console` job filtered to
   `console/**` would then make the gate refuse **every** release tag in this
@@ -1554,7 +1556,7 @@ toolchain, the hardened window, the IPC allow-list, `FugaroSource` and the
 fixtures were written, reviewed and merged on the strength of a reviewer's
 machine, and no workflow ran a console test on any of their pull requests.
 
-Tests workflow applied at commit 8a17d941 (`Add console workflow`, on the `console` branch): the owner copied `docs/pending-workflows/console-tests.yml` to `.github/workflows/console-tests.yml` unchanged. Tasks 1.0 to 1.4 merged before that commit and had no console CI; commits after it are covered by the `console` check.
+Tests workflow applied at commit 8a17d941 (`Add console workflow`, on the `console` branch): the owner copied `docs/pending-workflows/console-tests.yml` to `.github/workflows/console-tests.yml` unchanged. Tasks 1.0 to 1.4 merged before that commit and had no console CI; commits after it are covered by the console's checks (`console (ubuntu-latest)` and `console (macos-latest)`).
 
 ## The macOS bundle, its entitlements and its fuses (Task 4.1)
 

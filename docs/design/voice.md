@@ -187,7 +187,7 @@ The budget machinery is per-run: the caps and counters are realtime-database nod
 
 **F29 — one tag releases everything, and the console is already the one artifact that stretches it. (Rule)**
 
-`docs/release.md`'s rule, the two workflows it fires and `scripts/release-gate.sh`'s `names="test terraform rules"` are described in `desktop-console.md` §7.1; D11 and D18 move the console to "its own artifact, published from the CLI's own `vX.Y.Z` tag" behind the same gate, with the console check added to the gate's `names` only once it exists on every pull-request head. A voice module adds a *third* artifact unless it ships inside the console's, and the release gate's list is what decides whether a broken voice build can be released.
+`docs/release.md`'s rule, the two workflows it fires and `scripts/release-gate.sh`'s required-check list (`names`, a bash array: `test`, `terraform`, `rules` and the console's two matrix legs) are described in `desktop-console.md` §7.1; D11 and D18 move the console to "its own artifact, published from the CLI's own `vX.Y.Z` tag" behind the same gate, with the console's check runs added to the gate's `names` only once they exist on every pull-request head. A voice module adds a *third* artifact unless it ships inside the console's, and the release gate's list is what decides whether a broken voice build can be released.
 
 **F30 — the Go module is untouched and `console/` holds no Go, so `fugaro voice` cannot be smuggled in through the console. (Rule)**
 

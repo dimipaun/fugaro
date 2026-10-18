@@ -1309,17 +1309,17 @@ func TestWatchCancelReturnsNilSoTheChildExitsZero(t *testing.T) {
 //     byte-identical, so an edit to one without the other fails here rather
 //     than drifting silently.
 //   - TestConsoleWorkflowJobIsGateable is the one that keeps Task 4.6 from
-//     silently breaking every tag on this repository. **Task 4.6 is what adds
-//     `console` to scripts/release-gate.sh's `names` list** -- today that line
-//     reads `names="test terraform rules"` -- and once it does, the gate
-//     requires a check named `console` on the tag's commit and, in its
-//     identical_tree_checks fallback, on the pull request head whose tree
-//     matches. A check that does not exist is not a success, so a `console` job
+//     silently breaking every tag on this repository. **Task 4.6 added this
+//     job's check runs to scripts/release-gate.sh's `names` array**
+//     (`TestReleaseGateRequiresTheConsoleCheck`, below), and because the job is
+//     a matrix the gate requires the two names GitHub actually reports for it,
+//     `console (ubuntu-latest)` and `console (macos-latest)`, not the bare job
+//     key. A check that does not exist is not a success, so a `console` job
 //     behind a `paths:` filter, behind an `if:` guard, or renamed by an
-//     interpolated matrix value would refuse every release once that edit
-//     lands -- including the ones that never touch the console (design section
-//     9.4). The name and the triggers are asserted here so that the edit in
-//     Task 4.6 has something to land on.
+//     interpolated matrix value would refuse every release -- including the
+//     ones that never touch the console (design section 9.4). The name and the
+//     triggers are asserted here so the job the gate names cannot change
+//     silently.
 // ---------------------------------------------------------------------------
 
 const (
@@ -1568,21 +1568,21 @@ func TestConsoleTestsWorkflowIsStagedAndPinned(t *testing.T) {
 }
 
 // TestConsoleWorkflowJobIsGateable pins the job name and the triggers, which is
-// what keeps scripts/release-gate.sh from refusing every tag in this repository
-// **once Task 4.6 adds `console` to its `names` list** (today that line reads
-// `names="test terraform rules"`; the gate does not require this check yet, and
-// this test is what makes the edit safe when it lands).
-// Each check below is a separate way the `console` check stops existing on a
+// half of what keeps scripts/release-gate.sh from refusing every tag in this
+// repository. Task 4.6 is the other half, and it is in place: the gate's `names`
+// array carries this job's check runs, which because the job is a matrix are
+// `console (ubuntu-latest)` and `console (macos-latest)` -- derived from this
+// file by TestReleaseGateRequiresTheConsoleCheck -- and never the bare key.
+// Each check below is a separate way the `console` check runs stop existing on a
 // commit the gate asks about, and the two mutations to try first are the ones
 // that are invisible until a tag is refused: rename the job to `console-tests`,
 // and add `paths: ['console/**']` to its trigger.
 func TestConsoleWorkflowJobIsGateable(t *testing.T) {
 	_, wf, on, rawJobs := readConsoleTestsWorkflow(t)
 
-	// A job whose key is exactly `console` -- the string Task 4.6 adds to
-	// release-gate.sh's `names` list, which today reads
-	// `names="test terraform rules"`. A rename has to be a deliberate edit here
-	// AND there.
+	// A job whose key is exactly `console`: the key is what GitHub prefixes onto
+	// each matrix leg's check-run name, so it is the stem of the two names the
+	// gate requires. A rename has to be a deliberate edit here AND there.
 	job, ok := wf.Jobs["console"]
 	if !ok {
 		var keys []string
@@ -1605,7 +1605,7 @@ func TestConsoleWorkflowJobIsGateable(t *testing.T) {
 	// A matrix value interpolated into it (`console (${{ matrix.os }})`) would
 	// rename the check to something the gate cannot find.
 	if job.Name != "console" {
-		t.Errorf("%s's console job is named %q, want exactly %q: it is the string release-gate.sh's `names` list must carry (Task 4.6)", consoleTestsWorkflowPath, job.Name, "console")
+		t.Errorf("%s's console job is named %q, want exactly %q: that name is the stem every check run of the job is built from, and the gate requires the legs it produces (Task 4.6)", consoleTestsWorkflowPath, job.Name, "console")
 	}
 	if strings.Contains(job.Name, "${{") {
 		t.Errorf("%s's console job name %q interpolates: a matrix value in the name is a check name the gate cannot look up", consoleTestsWorkflowPath, job.Name)
@@ -1626,18 +1626,18 @@ func TestConsoleWorkflowJobIsGateable(t *testing.T) {
 	}
 
 	// No `if:` on the job, in particular none on a `changes`/`docs_only` output:
-	// a skipped check is not a success, so the fallback in
-	// scripts/release-gate.sh would treat it as missing once Task 4.6 requires
-	// the check.
+	// a skipped check is not a success, so scripts/release-gate.sh -- which
+	// requires the two check runs this job reports -- treats the leg as missing
+	// and refuses the tag.
 	if job.If != "" {
 		t.Errorf("%s's console job carries `if: %s`: a guarded job is a check that can be skipped, and a skipped check is not a success", consoleTestsWorkflowPath, job.If)
 	}
 
 	// No `paths:`/`paths-ignore:` at the trigger level or on the job -- **every
 	// trigger**, not just `push`. This is the failure that refuses every release,
-	// including the ones that ship none of the console: once Task 4.6's
-	// `names="test terraform rules console"` is in place, the gate would require
-	// a check this filter skipped. The check is a function over the parsed `on:`
+	// including the ones that ship none of the console: the gate's `names` array
+	// carries the two check runs this job reports, and it would require a check
+	// this filter skipped. The check is a function over the parsed `on:`
 	// map rather than a loop here, because the file has no such filter anywhere:
 	// a loop passes whether or not it looks at the trigger it is about, and an
 	// earlier revision skipped every key but `push`, so a filter under
