@@ -125,8 +125,8 @@ with fixtures that keep its refusals running, and none of them needs the network
   number fails, and the test keeps a case that proves it. The derivation (that build plus
   25 %, D192) is in the test's header, and a task that moves the bytes re-derives the numbers
   here, in the commit that moves them:
-  - **JavaScript per page:** 51,636 bytes. Three times 17,212: the one script the site ships,
-    `public/scripts/site.js` (13,769 bytes — the copy control of P6 and D183, the menu's
+  - **JavaScript per page:** 56,256 bytes. Three times 18,752: the one script the site ships,
+    `public/scripts/site.js` (15,001 bytes — the copy control of P6 and D183, the menu's
     Escape/outside-click close of P3, and W3.2's consent banner and analytics gate, which
     moved out of the markup and into this one file), plus 25 %. Every page loads it once, so
     it is the whole of a page's JavaScript, and the test keeps a case that says so over the

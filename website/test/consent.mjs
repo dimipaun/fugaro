@@ -128,6 +128,18 @@ const DOCUMENT_SELECTORS = new Map([
   ['.site-nav details[open]', (el) => el.name === 'details' && el.attrs.has('open')],
 ])
 
+// The address a stubbed page is "at", and the page it was reached from: both carry a query
+// string and a fragment with something in them that must never reach Google, so a gate that
+// reports the whole address is caught by every case that reads what it queued.
+const PAGE_LOCATION = Object.freeze({
+  href: 'https://site.example/docs/?token=leaked-query#leaked-fragment',
+  origin: 'https://site.example',
+  pathname: '/docs/',
+  search: '?token=leaked-query',
+  hash: '#leaked-fragment',
+})
+const PAGE_REFERRER = 'https://site.example/?q=leaked-referrer#leaked-referrer-fragment'
+
 /** The element tree of a page, as the objects the scripts above see. */
 function stubDOM(html) {
   const state = { activeElement: null }
@@ -242,14 +254,16 @@ function stubDOM(html) {
  * than of a copy of it written here. `script` overrides that source, for the mutation cases
  * that need the site's own file with one line changed.
  */
-export function runPage(html, { dist = DIST, script = null, storage = {}, readable = true, writable = true } = {}) {
+export function runPage(html, { dist = DIST, script = null, storage = {}, readable = true, writable = true, location = PAGE_LOCATION, referrer = PAGE_REFERRER } = {}) {
   const { document, elements, byId, state } = stubDOM(html)
+  document.referrer = referrer
   const requests = state.requests
   const store = { ...storage }
   const windowListeners = new Map()
   const timers = []
 
   const window = {
+    location,
     localStorage: {
       getItem(key) {
         if (!readable) throw new Error('the browser refuses storage')
@@ -572,20 +586,41 @@ test('the gate asks Google for one page view and nothing else, with the advertis
   page.click('granted')
   const calls = (page.window.dataLayer ?? []).map((entry) => Array.from(entry))
   assert.deepEqual(
-    calls.map((call) => call[0]),
-    ['js', 'config'],
-    `the gate queues ${calls.length} dataLayer calls (${calls.map((c) => String(c[0])).join(', ')}); one "js" and one "config" is what "a page view per page and nothing else" means`,
+    calls.map((call) => call.slice(0, 2).map(String)),
+    [
+      ['consent', 'default'],
+      ['consent', 'update'],
+      ['js', String(calls[2]?.[1])],
+      ['config', MEASUREMENT_ID],
+    ],
+    `the gate queues ${calls.length} dataLayer calls (${calls.map((c) => String(c[0])).join(', ')}); consent mode's default first, the grant, one "js" and one "config" is what "a page view per page and nothing else" means`,
   )
+  // Consent mode's default is the first thing queued, and it denies everything: the grant
+  // then lifts analytics storage alone, so no advertising storage or signal is ever allowed.
   assert.deepEqual(
-    calls[1],
-    ['config', MEASUREMENT_ID, { allow_google_signals: false, allow_ad_personalization_signals: false }],
-    'the config call does not name the property site.yaml names with Google Signals and ads personalisation turned off',
+    calls[0][2],
+    { ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied', analytics_storage: 'denied' },
+    "the gate's consent default does not deny every storage and advertising signal before anything else is queued",
   )
+  assert.deepEqual(calls[1][2], { analytics_storage: 'granted' }, 'the grant lifts more than analytics storage')
+  assert.deepEqual(
+    calls[3][2],
+    {
+      allow_google_signals: false,
+      allow_ad_personalization_signals: false,
+      page_location: 'https://site.example/docs/',
+      page_referrer: 'https://site.example/',
+    },
+    'the config call does not name the property site.yaml names with Google Signals and ads personalisation off and the page reported by its bare address',
+  )
+  // The page is reported by its path: no query string and no fragment, of this page or of the
+  // one the visitor came from, reaches Google.
+  assert.ok(!/leaked/.test(JSON.stringify(calls)), `the gate reports a query string or a fragment to Google: ${JSON.stringify(calls[3])}`)
   // The one thing the gate must never queue: an event of its own. A `page_view` is what the
   // `config` call sends; an `event` call is a second thing reported, and the site sends one.
   for (const call of calls) {
     assert.ok(
-      !['event', 'set', 'get', 'consent', 'set_user_properties', 'set_user_id'].includes(String(call[0])),
+      !['event', 'set', 'get', 'set_user_properties', 'set_user_id'].includes(String(call[0])),
       `the gate queues a ${call[0]} call: the site asks for one page view per page and nothing else`,
     )
   }
@@ -602,17 +637,13 @@ test('the gate asks Google for one page view and nothing else, with the advertis
   )
 
   // The mutation this case is written against: the advertising features switched back on.
-  const adFeaturesOn = readFileSync(path.join(DIST, SITE_SCRIPT.replace(/^\//, '')), 'utf8').replace(
-    'allow_google_signals: false, allow_ad_personalization_signals: false',
-    'allow_google_signals: true, allow_ad_personalization_signals: true',
-  )
+  const source = readFileSync(path.join(DIST, SITE_SCRIPT.replace(/^\//, '')), 'utf8')
+  const adFeaturesOn = source.replace('allow_google_signals: false', 'allow_google_signals: true')
+  assert.notEqual(adFeaturesOn, source, 'the mutation found no `allow_google_signals: false` to switch on')
   const mutated = runPage(html, { script: adFeaturesOn })
   mutated.click('granted')
-  assert.notDeepEqual(
-    (mutated.window.dataLayer ?? []).map((entry) => Array.from(entry)),
-    calls,
-    'the advertising features can be switched on in the gate without this case noticing',
-  )
+  const mutatedConfig = (mutated.window.dataLayer ?? []).map((entry) => Array.from(entry)).find((call) => call[0] === 'config')
+  assert.notDeepEqual(mutatedConfig, calls[3], 'the advertising features can be switched on in the gate without this case noticing')
 })
 
 test('the measurement id is written in one place, and the artifact carries it only where site.yaml put it', () => {
@@ -720,8 +751,27 @@ test('consent is withdrawable: the privacy page always offers the choice, and de
     'the privacy page hides the choice from a visitor who already accepted, so consent cannot be withdrawn from the one page that says how (W1.12 step 3)',
   )
 
+  assert.equal(page.analyticsRequests().length, 1, 'a stored grant did not load the analytics script on the privacy page')
+  const queued = page.window.dataLayer.length
   page.click('denied')
   assert.equal(page.store[CONSENT_KEY], 'denied', 'declining on the privacy page did not overwrite the stored grant')
+
+  // Withdrawal stops the page that is already measuring: Google's documented opt-out flag is
+  // set and consent is updated to denied, and nothing new is requested.
+  assert.equal(page.window[`ga-disable-${MEASUREMENT_ID}`], true, 'withdrawing did not set Google\'s opt-out flag, so the page already measuring keeps sending')
+  assert.deepEqual(
+    page.window.dataLayer.slice(queued).map((entry) => Array.from(entry)),
+    [['consent', 'update', { analytics_storage: 'denied' }]],
+    'withdrawing did not update consent to denied on the page that had loaded Google\'s script',
+  )
+  assert.equal(page.analyticsRequests().length, 1, 'withdrawing requested something more from Google')
+
+  // And a grant given again on the same page lifts both, without loading the script twice.
+  page.click('granted')
+  assert.equal(page.window[`ga-disable-${MEASUREMENT_ID}`], false, 'a renewed grant left the opt-out flag set')
+  assert.deepEqual(Array.from(page.window.dataLayer.at(-1)), ['consent', 'update', { analytics_storage: 'granted' }])
+  assert.equal(page.analyticsRequests().length, 1, 'a renewed grant loaded Google\'s script a second time')
+  page.click('denied')
 
   const next = runPage(pageOf(SHIPPED, 'index.html'), { storage: page.store })
   assert.deepEqual(next.analyticsRequests(), [], 'the withdrawn consent still loaded the analytics script on the next page view')
@@ -887,6 +937,13 @@ test("the privacy defaults the page states are the ones the site's script makes"
     !/user_id|user_pseudo_id/.test(script),
     'the script names a user id and the privacy page says it sends none: the page is the claim and this file is the fact',
   )
+
+  // The two claims W3.2's review added, each held to the line of the script that makes it
+  // true: the page is reported by its path alone, and declining stops this page as well.
+  assert.match(text, /path, without any query/i, 'the privacy page no longer says only the path is reported')
+  assert.ok(/page_location:\s*bare\(/.test(script), 'the privacy page says only the path is reported and the script no longer strips the address')
+  assert.match(text, /stops\s+reporting at once, on this page too/i, 'the privacy page no longer says declining stops the page already measuring')
+  assert.ok(/'ga-disable-'/.test(script), "the privacy page says declining stops this page and the script no longer sets Google's opt-out flag")
 
   // And the vendor the page names: the gate loads from the origin the banner's own markup
   // carries, so the origin has to be Google's while the page says Google Analytics. A gate

@@ -65,6 +65,7 @@ import path from 'node:path'
 import {
   DIST,
   HTMLScanError,
+  REPO,
   builtPages,
   cssRules,
   cssURLs,
@@ -779,4 +780,19 @@ test('the stylesheet reader follows nested conditions and @import', () => {
   assert.equal(rules[2].selector, '@keyframes x')
   assert.deepEqual(rules[3].conditions, [])
   assert.throws(() => cssRules('.a{color:red'), /unbalanced/)
+})
+
+test('firebase.json serves exactly one Content-Security-Policy, on every path', () => {
+  // `deployedCSP()` reads the first policy it finds, so a second one — a looser policy on a
+  // narrower `source`, or a Content-Security-Policy-Report-Only beside it — would be served
+  // and never read by the contract above. The deploy config carries one, for `**`, and no
+  // other security-policy header at all.
+  const config = JSON.parse(readFileSync(path.join(REPO, 'firebase.json'), 'utf8'))
+  const policies = []
+  for (const entry of config.hosting.headers) {
+    for (const header of entry.headers) {
+      if (/content-security-policy/i.test(header.key)) policies.push(`${entry.source} ${header.key}`)
+    }
+  }
+  assert.deepEqual(policies, ['** Content-Security-Policy'], `firebase.json serves ${policies.length} security policies (${policies.join('; ')}); the contract reads one, for every path`)
 })

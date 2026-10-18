@@ -58,9 +58,9 @@ const analyticsEnabled = site.facts.analytics.enabled
         <h2>What this site collects</h2>
         <p>
           This site counts visits with <strong>Google Analytics 4</strong>. If you accept,
-          Google's script reports the page you are on to Google, which processes it for the
-          site, and sets <strong>identifiers</strong> in your browser — a client id, in cookies
-          or similar storage.
+          Google's script reports the page's path, without any query, to Google, which
+          processes it for the site, and sets <strong>identifiers</strong> in your browser — a
+          client id, in cookies or similar storage.
         </p>
         <p>
           The site's own code asks for one page view per page: no event, no user id, Google
@@ -70,9 +70,9 @@ const analyticsEnabled = site.facts.analytics.enabled
 
         <h2>Consent</h2>
         <p>
-          Google's script loads only after you accept, and never before: until then this page
-          has asked Google nothing. <strong>Accept</strong>, in the banner, loads Google's
-          script once, here; <strong>Decline</strong> loads nothing, now or on any later page.
+          Google's script loads only after you accept: until then this page has asked Google
+          nothing. <strong>Accept</strong>, in the banner, loads Google's
+          script once; <strong>Decline</strong> loads nothing, now or on any later page.
         </p>
         <p>
           Dismissing the banner — Escape, or reading on — is a refusal. The answer is kept in
@@ -80,7 +80,7 @@ const analyticsEnabled = site.facts.analytics.enabled
         </p>
         <p>
           To withdraw, use the banner here: it always offers the choice again. Declining stops
-          the next page loading anything; this one keeps what it loaded.
+          reporting at once, on this page too; Google's cookies stay until you clear them.
         </p>
 
         <h2>What this site does not do</h2>

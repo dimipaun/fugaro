@@ -199,31 +199,65 @@
   // no user id — with Google Signals and ads personalisation turned off in the same call, so
   // the property is not asked for the advertising features the site does not use. GA4
   // anonymises the visitor's IP by default; there is no setting to add for it.
+  //
+  // Three review findings on W3.2: consent mode's default (everything denied) is queued first
+  // and the grant lifts `analytics_storage` alone, so no advertising storage is written; the
+  // page is reported without its query string or fragment; and a refusal after a grant sets
+  // Google's documented opt-out flag (`ga-disable-<id>`), so the page already measuring stops.
+  function bare(address) {
+    return String(address || '').split(/[?#]/)[0]
+  }
+
   function analytics(banner) {
     var id = banner.getAttribute(ANALYTICS_ID_ATTR)
     var origin = banner.getAttribute(ANALYTICS_ORIGIN_ATTR)
     if (!id || !origin) return
 
     var loaded = false
+    var OPT_OUT = 'ga-disable-' + id
+
+    function gtag() {
+      window.dataLayer.push(arguments)
+    }
 
     function load() {
-      if (loaded) return
+      window[OPT_OUT] = false
+      if (loaded) {
+        gtag('consent', 'update', { analytics_storage: GRANTED })
+        return
+      }
       loaded = true
       window.dataLayer = window.dataLayer || []
-      function gtag() {
-        window.dataLayer.push(arguments)
-      }
+      gtag('consent', 'default', {
+        ad_storage: DENIED,
+        ad_user_data: DENIED,
+        ad_personalization: DENIED,
+        analytics_storage: DENIED,
+      })
+      gtag('consent', 'update', { analytics_storage: GRANTED })
       gtag('js', new Date())
-      gtag('config', id, { allow_google_signals: false, allow_ad_personalization_signals: false })
+      gtag('config', id, {
+        allow_google_signals: false,
+        allow_ad_personalization_signals: false,
+        page_location: bare(window.location && window.location.origin) + bare(window.location && window.location.pathname),
+        page_referrer: bare(document.referrer),
+      })
       var script = document.createElement('script')
       script.async = true
       script.src = origin + '/gtag/js?id=' + encodeURIComponent(id)
       document.head.appendChild(script)
     }
 
+    function withdraw() {
+      window[OPT_OUT] = true
+      if (loaded) gtag('consent', 'update', { analytics_storage: DENIED })
+    }
+
     if (stored(banner) === GRANTED) load()
     window.addEventListener(CONSENT_EVENT, function (event) {
-      if (event && event.detail && event.detail.analytics === GRANTED) load()
+      var decision = event && event.detail && event.detail.analytics
+      if (decision === GRANTED) load()
+      else withdraw()
     })
   }
 
