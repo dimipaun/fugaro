@@ -207,6 +207,20 @@ from their absence:
   (`!data.exists()` on a message, `data.parent().exists()` on the ack) and
   nothing else -- no auth, no durability, no listeners, no quota. The deployed
   rules are checks **81/82**, owner-run, and none of them is run here.
+* **The template does not accept `mac` yet, and that is P6.4's task.** This
+  client signs every message because the plan's P3.6 entry requires it (P6.3 and
+  P6.4 "require `mac` on every inbox message, so P3.6 must sign"), and
+  `shared/mailbox-schema` is the merged authority for the record's shape. The
+  template in `internal/budget/rules/rules.json.tmpl` today validates exactly
+  `id`, `sender`, `text`, `at` (plus `acked` on the outbox) with `$other:
+  false`, so **a message this client writes would be denied by the rules as
+  they now stand** until **P6.4** -- proposed, NOT APPROVED, and the task that
+  adds "the same fields in the mailbox subtree" -- lands and is deployed. That
+  is a sequencing fact, not a defect in this module, and it is named here
+  because a reader who tries this against a real project deserves to know it
+  before the rules refuse the write. `store.js`'s double deliberately does not
+  model a field allow-list: the shape is the schema's rule, and P6.3's tests
+  hold it.
 * **The Realtime Database adapter does not exist yet.** `store.js` is the port
   and its double; the SDK adapter is `mobile/index.js`'s wiring (P3.2's and
   P6.10's territory), and there is no test for it because there is no file.
