@@ -979,14 +979,20 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     expect(indexSource).not.toContain('src/renderer')
   })
 
-  it('drives nothing: every read of the CLI refuses, and no spawn is reachable', () => {
-    // Step 3's subject -- the installation picker -- is Task 3.4b's, so this
-    // console has no installation and every operation that would read one
-    // answers `NO_ACTIVE_INSTALLATION`. The assertions are the source's own: the
-    // constant is used, the sentence is composed from it, and nothing in the
-    // file could start a child.
-    expect(indexSource).toContain('NO_ACTIVE_INSTALLATION')
-    expect(indexSource).toContain('noInstallation(')
+  it('binds the surface to the active installation, and starts no child of its own', () => {
+    // Task 3.4c's subject. Until it landed this file held a source that refused
+    // every read; now the surface is `createBoundSource`, whose reads resolve
+    // the installation the picker made active and build the one `CliSource` for
+    // it. What is still true, and is what this test is for: **the entry point
+    // starts no child itself**. It names no spawn, and the one binary it
+    // resolves is the handshake's -- everything else goes through the source,
+    // where `src/source/cli.ts` is the only place a process is created.
+    expect(indexSource).toContain('createBoundSource(')
+    // The installation is read at message time, from the picker, and the
+    // binding is what turns it into the source's target: a file that read the
+    // picker once and cached the answer would keep driving an installation the
+    // operator has since replaced.
+    expect(indexSource).toContain('installation: activeBinding')
     expect(indexSource).not.toContain('child_process')
     expect(indexSource).not.toContain('spawn(')
     // The one resolution in the file is the handshake's, and it is the only

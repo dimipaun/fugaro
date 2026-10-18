@@ -278,16 +278,82 @@ class FakeNode {
     this.children.push(child)
     return child
   }
+
+  /**
+   * replaceChildren is how the entry swaps one screen for another inside its
+   * own panel (Task 3.4c). It is here rather than a text write because a screen
+   * is replaced as a *tree*: assigning `textContent` would be the one write this
+   * realm's fake exists to keep out of the entry.
+   */
+  replaceChildren(...nodes: FakeNode[]): void {
+    this.children.length = 0
+    this.children.push(...nodes)
+  }
+
+  /** listeners is what the entry attached, by event type. The wiring is a click
+   * on a drawn control, and a test drives it by calling `click()`. */
+  readonly listeners = new Map<string, (() => void)[]>()
+
+  addEventListener(type: string, listener: () => void): void {
+    const found = this.listeners.get(type) ?? []
+    found.push(listener)
+    this.listeners.set(type, found)
+  }
+
+  /** click fires this node's click listeners, in the order they were added. */
+  click(): void {
+    for (const listener of this.listeners.get('click') ?? []) listener()
+  }
 }
 
-/** FakeDocument is the whole document the entry is given: a body to mount into
- * and a factory. Nothing else of the DOM is offered, so a bundle that reached
- * for something else fails here. */
+/** FakeDocument is the whole document the entry is given: a body to mount into,
+ * a factory, and the visibility the Live poll reads. Nothing else of the DOM is
+ * offered, so a bundle that reached for something else fails here. */
 class FakeDocument {
   readonly body = new FakeNode('body')
+  readonly visibilityState = 'visible'
 
   createElement(tag: string): FakeNode {
     return new FakeNode(tag)
+  }
+
+  addEventListener(_type: string, _listener: () => void): void {
+    // The entry listens for `visibilitychange` and nothing else; the poll's own
+    // pause and resume is `entry-wiring.test.ts`'s subject, with a fake document
+    // whose visibility it can move.
+  }
+}
+
+/**
+ * recordingTimers is the sandbox's clock. `setInterval` is a **host** object,
+ * not a language one, so a `vm` realm has none -- and the Live screen's poll is
+ * one. The test lends it a timer that records the callback and never fires on
+ * its own, so nothing keeps the test process alive and no poll happens unless a
+ * case asks for one.
+ */
+function recordingTimers(): {
+  readonly globals: Record<string, unknown>
+  tick(): void
+  readonly live: () => number
+} {
+  const callbacks = new Map<number, () => void>()
+  let next = 1
+  return {
+    globals: {
+      setInterval: (callback: () => void): number => {
+        const handle = next
+        next += 1
+        callbacks.set(handle, callback)
+        return handle
+      },
+      clearInterval: (handle: number): void => {
+        callbacks.delete(handle)
+      },
+    },
+    tick(): void {
+      for (const callback of [...callbacks.values()]) callback()
+    },
+    live: () => callbacks.size,
   }
 }
 
@@ -356,9 +422,10 @@ function aReducedCompatibility(): Record<string, unknown> {
 async function runBundle(
   reply: Readonly<Record<string, unknown>> | undefined,
   installation: Readonly<Record<string, unknown>> = { ok: true, data: { chosen: false, sentence: 'no installation has been chosen' } },
-): Promise<{ document: FakeDocument; asked: () => number }> {
+): Promise<{ document: FakeDocument; asked: () => number; timers: ReturnType<typeof recordingTimers> }> {
   const document = new FakeDocument()
-  const sandbox: Record<string, unknown> = { document, TextEncoder, TextDecoder, atob, btoa }
+  const timers = recordingTimers()
+  const sandbox: Record<string, unknown> = { document, TextEncoder, TextDecoder, atob, btoa, ...timers.globals }
   const context = createContext(sandbox)
   if (reply !== undefined) {
     sandbox['REPLY'] = JSON.stringify(reply)
@@ -374,23 +441,44 @@ async function runBundle(
   // The entry's first call is asynchronous (`startConsole` awaits the bridge),
   // so the drawing lands a microtask later. A macrotask is well past it.
   await new Promise((resolve) => setTimeout(resolve, 20))
-  return { document, asked: () => (sandbox['asked'] as number | undefined) ?? 0 }
+  return { document, asked: () => (sandbox['asked'] as number | undefined) ?? 0, timers }
 }
 
 describe('the bundle in a document', () => {
-  it('draws no figure for an in-range fugaro -- only the installation state -- and asks before it decides', async () => {
-    const { document, asked } = await runBundle({ ok: true, data: anOkCompatibility() })
+  it('draws no figure for an in-range fugaro -- the installation state, the navigation and a refused read -- and asks before it decides', async () => {
+    const { document, asked, timers } = await runBundle({ ok: true, data: anOkCompatibility() })
     // The non-vacuity guard: "drew no figure" is only an answer if the entry ran.
     // A bundle that threw on load, or one whose guard skipped it, draws nothing
     // too -- and this says which happened.
     expect(asked(), 'the entry never asked the bridge: nothing here was drawn or refused').toBe(1)
-    // One drawing: D13's no-installation state (Task 3.4b, step 4), naming no
-    // figure.
-    expect(document.body.children).toHaveLength(1)
+    // The three drawings of a console whose handshake is in range: D13's
+    // no-installation state (Task 3.4b, step 4), the navigation, and the panel
+    // the screens are drawn into (Task 3.4c).
+    expect(document.body.children).toHaveLength(3)
     const root = document.body.children[0] as FakeNode
     expect(root.attributes.get('class')).toBe('console-installation')
     expect(root.attributes.get('data-installation')).toBe('none')
     expect(textOf(root)).toContain('no installation has been chosen')
+    const nav = document.body.children[1] as FakeNode
+    expect(nav.attributes.get('class')).toBe('console-views')
+    expect(nav.children.map((button) => button.attributes.get('data-view'))).toEqual([
+      'live',
+      'spend',
+      'projects',
+    ])
+    // And the panel holds the Live screen's own refusal rather than a dashboard
+    // of zeros: this bridge carries the two handshake methods and **no read at
+    // all**, so the read the screen opens with is one the console could not
+    // make. `renderUnavailable` draws no figure, which is the whole point of
+    // answering a read like this with a refusal.
+    const panel = document.body.children[2] as FakeNode
+    expect(panel.attributes.get('class')).toBe('console-panel')
+    const drawn = panel.children[0] as FakeNode
+    expect(drawn.attributes.get('data-kind')).toBe('refused')
+    expect(drawn.attributes.get('class')).toBe('console-unavailable')
+    // The poll is running: a live screen that never asked again would be a
+    // screenshot, and the interval is what makes it a screen.
+    expect(timers.live()).toBe(1)
   })
 
   it('names the file and why, when the store refused it (review S5)', async () => {
