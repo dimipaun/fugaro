@@ -63,6 +63,38 @@ consent, no cookie before consent, withdrawal and keyboard reachability. `readme
 refuses a third-party font or script host in the shell's own sources today, and W1.11
 asserts the same over the built HTML's script, link, iframe and image origins.
 
+**W3.2 is the task that switched it on** (owner's ruling of 2026-10-18): Google Analytics 4,
+measurement id `G-DZ4F35D3EH`, which is a public identifier rather than a secret and lives in
+`data/site.yaml` and nowhere else — the layout and the test both read it from there, and a
+planted second copy fails. The id, the audit trail and the choices behind them:
+
+- **The property is a fact of `site.yaml`**, beside the flag that emits it: `analytics.enabled`
+  decides whether the banner and its configuration are rendered at all, and clearing the flag
+  leaves an artifact byte-for-byte free of the origin. When the flag is on, the banner carries
+  the id and the one admitted origin as `data-analytics-id` and `data-analytics-origin`.
+- **The gate is code in this site's one script file**, `public/scripts/site.js` — not an inline
+  block — because D183 admits one script and because a first-party file is admitted by
+  `script-src 'self'` while an inline block would need a hash in the deployed policy. The file
+  reads the configuration out of the banner's markup, so it names no URL at all: with the flag
+  off it finds no banner and does nothing.
+- **Nothing is requested from Google before a decision.** A stored `granted` (under
+  `fugaro:analytics-consent`, the key the banner's markup carries) loads the script once; a
+  refusal, a dismissal, an unreadable answer and silence all load nothing. `test/consent.mjs`
+  runs the shipped file in a stub browser and watches the request that does or does not arrive.
+- **The privacy defaults are pinned in the one `config` call**: one page view per page and
+  nothing else — no event, no user id — with `allow_google_signals` and
+  `allow_ad_personalization_signals` both false. GA4 anonymises the IP address by default;
+  there is no setting to add for it. `test/consent.mjs` reads `dataLayer` and holds each of
+  those to what was built.
+- **The deployed policy is widened by exactly what Google documents** for Google Analytics 4
+  without any Ads features
+  ([tag-platform/security/guides/csp](https://developers.google.com/tag-platform/security/guides/csp),
+  read 2026-10-18): `script-src` gains `https://www.googletagmanager.com`, `img-src` and
+  `connect-src` gain that origin and `https://*.google-analytics.com`, and `connect-src` gains
+  `https://*.google.com`. No `'unsafe-inline'`, no `'unsafe-eval'`, no nonce and no hash —
+  the site ships no inline script. `test/origins.mjs` holds the policy to that exact token
+  list, and refuses any token it does not carry.
+
 ## The gates
 
 Five checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
@@ -73,8 +105,13 @@ with fixtures that keep its refusals running, and none of them needs the network
   `allowed_hosts`, and every GitHub link into this repository names a path and heading that
   exist.
 - `test/origins.mjs` — nothing loads from a host that is not this site (images and embeds
-  may also come from `allowed_hosts`), inline scripts are on a hash allow-list, and the one
-  third-party origin D93 admits appears only in the layout's consent-gated loader.
+  may also come from `allowed_hosts`), inline scripts are on a hash allow-list — empty since
+  W3.2, because the site ships no inline script at all — and the one third-party origin D93
+  admits appears only as the consent banner's configuration. It also reads the shipped
+  `public/scripts/site.js` for the gate's contract (no URL, no second analytics vendor, the
+  consent decision compared with `granted`) and `firebase.json`'s Content-Security-Policy
+  against the token list Google's documentation states, refusing an extra origin, an
+  `'unsafe-inline'`, an `'unsafe-eval'`, a nonce, a hash or a wildcard.
 - `test/a11y.mjs` — after W1.2's contrast cases: lang, one `h1`, no heading jumps,
   landmarks, a skip link, names and labels, keyboard reachability, focus outlines, a
   `prefers-reduced-motion` path for every animation, and the shipped tokens equal to the
@@ -88,14 +125,16 @@ with fixtures that keep its refusals running, and none of them needs the network
   number fails, and the test keeps a case that proves it. The derivation (that build plus
   25 %, D192) is in the test's header, and a task that moves the bytes re-derives the numbers
   here, in the commit that moves them:
-  - **JavaScript per page:** 24,654 bytes. Three times 8,218: the one script the site ships,
-    `public/scripts/site.js` (6,574 bytes — the copy control of P6 and D183, and the menu's
-    Escape/outside-click close of P3), plus 25 %. Every page loads it once, so it is the whole
-    of a page's JavaScript, and the test keeps a case that says so over the built artifact.
-  - **Page weight per page:** 798,627 bytes. Three times 266,209: the heaviest page, the
-    docs hub, at 212,967 bytes (its HTML — the whole generated CLI reference — plus the
+  - **JavaScript per page:** 51,636 bytes. Three times 17,212: the one script the site ships,
+    `public/scripts/site.js` (13,769 bytes — the copy control of P6 and D183, the menu's
+    Escape/outside-click close of P3, and W3.2's consent banner and analytics gate, which
+    moved out of the markup and into this one file), plus 25 %. Every page loads it once, so
+    it is the whole of a page's JavaScript, and the test keeps a case that says so over the
+    built artifact.
+  - **Page weight per page:** 828,714 bytes. Three times 276,238: the heaviest page, the
+    docs hub, at 220,990 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 2,810,115 bytes. Three times 936,705 (every file in `dist/`, 749,364
+  - **Whole site:** 2,914,695 bytes. Three times 971,565 (every file in `dist/`, 777,252
     bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
@@ -267,13 +306,24 @@ home-screen icons, the manifest's colours (the palette's `--ground`), the header
 ## Deploying
 
 `firebase.json` at the repository root is the hosting configuration: it serves
-`website/dist` with clean URLs, a Content-Security-Policy that admits this origin only
-(`script-src 'self'`, inline styles allowed because Astro inlines small stylesheets),
-`nosniff`, a referrer policy, a one-year immutable cache for the hashed `/_astro/` files,
-a day for icons and fonts, and five minutes for HTML. It names no project and there is no
-`.firebaserc`. It landed ahead of W2.1 with the owner's deploy script; W2.1 extends it (the
-staged workflow), and W1.12 or W3.2 must widen the CSP when the consented analytics script
-is switched on, because the policy blocks it today.
+`website/dist` with clean URLs, a Content-Security-Policy, `nosniff`, a referrer policy, a
+one-year immutable cache for the hashed `/_astro/` files, a day for icons and fonts, and five
+minutes for HTML. It names no project and there is no `.firebaserc`.
+
+The policy admits this origin and the three Google Analytics origins W3.2 widened it by, and
+nothing else: `script-src 'self' https://www.googletagmanager.com` (inline styles are still
+allowed, because Astro inlines small stylesheets), `img-src` and `connect-src` with
+`https://*.google-analytics.com`, `connect-src` with `https://*.google.com`. Those are the
+origins Google documents for GA4 without Ads features, read 2026-10-18 from
+[tag-platform/security/guides/csp](https://developers.google.com/tag-platform/security/guides/csp),
+and `test/origins.mjs` holds the served policy to that list token by token — an extra origin
+is a failure there, in the same commit that would add it. `test/brand.mjs` is the coarser
+check beside it: the served policy names those three origins and no others. (An earlier
+revision of that page listed `https://*.analytics.google.com`; the current one does not, and
+the contract follows the page rather than the memory of it. `https://*.google.com` is in
+`connect-src` because the documentation requires it, and without it the collect requests a
+consenting visitor's browser makes would be blocked.) It landed ahead of W2.1 with the
+owner's deploy script, and W2.1 extends it (the staged workflow).
 
 ### The canonical domain
 
