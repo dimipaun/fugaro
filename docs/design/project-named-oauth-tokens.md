@@ -195,12 +195,13 @@ The carrier, recommended:
   `internal/backend/launchenv.go`'s `LaunchEnv` parses `Env` and then `SecretEnv`, marks a
   `SecretEnv` entry `Secret`, and requires a backend whose only place for such an entry is readable
   by a wider audience than the execution's override — Batch's job variables — to **refuse the
-  launch** rather than carry it. So the carrier is not reused unchanged: it is extended by one
+  launch** rather than carry it. So the carrier is not reused unchanged: Slice B extends it by one
   field, and the extension is exactly what makes a backend that cannot keep the key private say so
-  instead of leaking it. What this design adds to the carrier is nothing beyond that field — no new
-  variable, no new permission and no new resource, which is
-  [budget-token-channel.md](budget-token-channel.md) §7.1's own point — but an implementation that
-  wrote the key into `LaunchSpec.Env` would undo Slice B's whole reason for the field.
+  instead of leaking it. **This design adds nothing to the carrier itself** — no new variable, no
+  new permission and no new resource, which is
+  [budget-token-channel.md](budget-token-channel.md) §7.1's own point — but it depends on that
+  field, and an implementation that wrote the key into `LaunchSpec.Env` would undo the reason the
+  field exists.
 - A second object, **not** a second field in the existing envelope. The budget token's envelope is
   versioned, reviewed and mutation-tested (`seal.go`, `seal_aad_test.go`, `seal_test.go` on
   `next-0.9`), and its take is the consume. Widening its payload would couple the credential's
