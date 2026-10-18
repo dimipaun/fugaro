@@ -317,5 +317,6 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` holds only the website's two manual workflows,
-`website-preview.yml` and `website-promote.yml` (#566), and no deploy workflow.
+change `.github/workflows/`. `docs/pending-workflows/` now holds no pending workflow: the website's two manual
+workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
+owner, and no deploy workflow is staged.
