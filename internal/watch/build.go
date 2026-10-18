@@ -130,6 +130,16 @@ type RunRow struct {
 	Workflow    string
 	RequestedBy string
 
+	// Job is the Cloud Run job this run executes on, and Profile, Provider
+	// and Account are the (profile, provider, account) that job's name was
+	// computed from — the shared project job's identity, which its name does
+	// not spell out (MergeJobs, plan task 3.5 step 2). All four are "" for a
+	// run whose launch.json the reader does not have, for a run on a
+	// per-repository job (whose name is not a project job of the published
+	// policy), and in the interactive view, which groups by repository and
+	// reads none of them.
+	Job, Profile, Provider, Account string
+
 	// Finished marks a row built from the runs bucket's result.json, not
 	// RTDB: the run's registry entry is already gone (design generic-tool
 	// §10.1). Outcome is the record's outcome (ready, draft or none);

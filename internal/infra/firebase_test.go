@@ -68,7 +68,7 @@ func TestFirebaseTfvarsGolden(t *testing.T) {
 	// job and one job service account per (profile, provider, account), and
 	// no repository ever reaches this root.
 	for name, deploy := range map[string]bool{"installation-budget.tfvars.json": false, "installation-budget-job.tfvars.json": true} {
-		spec := installationSpecWith(t, projectProfilesLCBlock)
+		spec := projectJobSpec(t)
 		h, err := History(parseLC(t, m4LocalConfig+m5Additions))
 		if err != nil {
 			t.Fatal(err)
