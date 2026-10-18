@@ -9,19 +9,25 @@
 // from them.
 //
 // The README's numbers are DELIBERATELY LOOSE (owner's ruling, 2026-10-17: "ignore them for
-// now and optimize later"): each is three times the tight derivation below, and the
-// JavaScript allowance is a generous 100,000 bytes, until a later optimisation pass tightens
-// them back towards these figures. The tight derivation, for that pass:
+// now and optimize later"): each is three times the tight derivation below, until a later
+// optimisation pass tightens them back towards these figures. The tight derivation is the
+// build of 2026-10-18 — the one that ships the site's script (P6), its menu behaviour (P3) and
+// the homepage's run animation (P7), with the How It Works flow (P8) merged in — plus 25 %, which is D192's rule and the rule the
+// README's loose figures are three times:
 //
-//   - JavaScript per page: 0 bytes. The built site ships no script at all today (no
-//     island, no inline script; the terminal and the diagram are CSS/SVG).
-//   - Page weight per page: 220,922 bytes. The heaviest page on 2026-10-17, after the base
-//     styles (#528) landed, was `docs/index.html` (176,737 bytes: the whole generated CLI
-//     reference, inline CSS included); × 1.25, rounded up. One ceiling for every page rather
-//     than one per page, so a page that grows with the product (the changelog, the
+//   - JavaScript per page: 8,218 bytes. The one script the site ships,
+//     `public/scripts/site.js` (P6, P3, D183), is 6,574 bytes; × 1.25, rounded up. Every page
+//     loads it exactly once, so the file's own size IS the whole of a page's JavaScript —
+//     which is why the case below reads the artifact rather than trusting this line.
+//   - Page weight per page: 266,209 bytes. The heaviest page on 2026-10-18, `docs/index.html`,
+//     weighed 212,967 bytes: its HTML 183,914 bytes (the whole generated CLI reference, inline
+//     CSS included) plus the 29,053 bytes of first-party files it fetches — the script above
+//     and the logo and icons the layout links; × 1.25, rounded up. One ceiling for every page
+//     rather than one per page, so a page that grows with the product (the changelog, the
 //     reference) is held to the same line as the rest instead of to its own history.
-//   - Whole site: 484,942 bytes. Every file in `dist/` on that build summed to 387,953
-//     bytes (ten pages; no separate stylesheet, script, font or image); × 1.25, rounded up.
+//   - Whole site: 936,705 bytes. Every file in `dist/` on that build summed to 749,364
+//     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
+//     × 1.25, rounded up.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:
@@ -40,7 +46,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DIST, SITE, builtPages, filesUnder, find, parse, servedFile, walk } from './lib/html.mjs'
@@ -271,6 +277,60 @@ test('every page, and the whole site, is within the byte budget the README state
   assert.deepEqual(failures, [], `the built site is over its byte budget:\n  ${failures.join('\n  ')}`)
 })
 
+// ---- the one script, counted once per page (P6, D183) -----------------------------------
+
+// The site's JavaScript is one file, and this is the case that says so about the ARTIFACT
+// rather than about the budget line above it: every page loads `public/scripts/site.js`
+// exactly once, however many times it references it, and the artifact holds no other script
+// at all. A page that grew a second script — or an inline one — fails here first, with the
+// page named, before it fails the budget with a number.
+const SCRIPT = 'scripts/site.js'
+
+test('the site ships one script file, and every page counts its bytes once', (t) => {
+  const file = path.join(DIST, SCRIPT)
+  assert.ok(
+    existsSync(file),
+    `${SCRIPT} is not in the built artifact: the copy control is driven by one first-party script file (D183, P6), and the budget above counts it as every page's JavaScript`,
+  )
+  const bytes = statSync(file).size
+
+  const scripts = filesUnder(DIST).filter((rel) => /\.m?js$/.test(rel))
+  assert.deepEqual(
+    scripts,
+    [SCRIPT],
+    `the artifact holds ${scripts.length} script files (${scripts.join(', ')}): the site ships one, and the JavaScript budget is a statement about that one file's bytes`,
+  )
+
+  const pages = builtPages(DIST)
+  assert.ok(pages.length > 0, 'the build produced no page, so this case would check nothing')
+  for (const page of pages) {
+    const m = measurePage(page.html, page.rel, DIST)
+    assert.equal(
+      m.js,
+      bytes,
+      `${page.rel} counts ${m.js} bytes of JavaScript; the site's script is ${bytes} bytes and a page loads it once, however many times it names it`,
+    )
+    assert.equal(
+      m.inlineJS,
+      0,
+      `${page.rel} ships ${m.inlineJS} bytes of inline JavaScript: the site's one script is a file, which the deployed policy admits as script-src 'self' rather than by a hash`,
+    )
+  }
+
+  // The other half of "once", as a fixture rather than as an observation about today's
+  // layout: a page that names the same file twice — a preload beside the script tag, which
+  // is what a bundler emits — is one download and one charge.
+  const dist = distOf(t, {
+    'index.html': shell(`<script src="/${SCRIPT}"></script><link rel="modulepreload" href="/${SCRIPT}">`),
+    [SCRIPT]: 'x'.repeat(bytes),
+  })
+  assert.equal(
+    measurePage(readFileSync(path.join(dist, 'index.html'), 'utf8'), 'index.html', dist).js,
+    bytes,
+    'a page that references the script twice is charged for it twice, and the two references are one download',
+  )
+})
+
 test('every page is within the word ceilings the README states', () => {
   const failures = wordFailures(DIST, readmeBudgets())
   assert.deepEqual(failures, [], `the built site is over its word ceilings:\n  ${failures.join('\n  ')}`)
@@ -354,6 +414,62 @@ test('the README budget lines are read strictly', () => {
       ),
     /does not state the words budget/,
   )
+})
+
+// ---- the numbers are the derivation, not a figure picked loose (D192) -------------------
+
+// D192: each README number is three times the build it was derived from plus 25 %, and the
+// README says which build. These read the derivation the README writes beside each number and
+// hold the number to it, so raising a ceiling means re-deriving it from a build the artifact
+// can be measured against — not editing the headline figure. The script is one file edited on
+// purpose, so its stated size is its size; the page and the site may grow under the × 3, and
+// may shrink up to a tenth before the stated build is too far above this one to stand.
+const DERIVATIONS = {
+  js: /\*\*JavaScript per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the one script[\s\S]*?\(([\d,]+) bytes/,
+  page: /\*\*Page weight per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the heaviest page[\s\S]*? at ([\d,]+) bytes/,
+  site: /\*\*Whole site:\*\* ([\d,]+) bytes\. Three times ([\d,]+) \(every file in `dist\/`, ([\d,]+)\s+bytes/,
+}
+
+/** Every way the README's numbers depart from their own derivation, given what is built. */
+export function derivationFailures(readme, measured) {
+  const out = []
+  const n = (s) => Number(s.replace(/,/g, ''))
+  for (const [key, re] of Object.entries(DERIVATIONS)) {
+    const m = re.exec(readme)
+    if (!m) {
+      out.push(`website/README.md does not write the ${key} budget as "N bytes. Three times T … (B bytes": D192 derives each number from a named build`)
+      continue
+    }
+    const [budget, tight, build] = [n(m[1]), n(m[2]), n(m[3])]
+    if (budget !== 3 * tight) out.push(`the ${key} budget is ${budget} bytes and three times ${tight} is ${3 * tight} (D192)`)
+    if (tight !== Math.ceil(build * 1.25)) out.push(`the ${key} tight figure is ${tight} bytes and ${build} plus 25 % is ${Math.ceil(build * 1.25)} (D192)`)
+    if (key === 'js' && build !== measured.js) out.push(`the README derives the JavaScript budget from a ${build}-byte site.js and the built one is ${measured.js} bytes: re-derive it in the commit that changes the script (D192)`)
+    if (key !== 'js' && build > measured[key] * 1.1) out.push(`the README derives the ${key} budget from a ${build}-byte build and this one is ${measured[key]} bytes: a stated build that far above the real one is a loosened budget (D192)`)
+  }
+  return out
+}
+
+function measuredNow() {
+  const pages = builtPages(DIST).map((p) => measurePage(p.html, p.rel, DIST))
+  return {
+    js: statSync(path.join(DIST, SCRIPT)).size,
+    page: Math.max(...pages.map((m) => m.weight)),
+    site: filesUnder(DIST).reduce((sum, rel) => sum + statSync(path.join(DIST, rel)).size, 0),
+  }
+}
+
+test("the README's budgets are D192's derivation from a build this one can be measured against", () => {
+  const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  assert.deepEqual(derivationFailures(readme, measuredNow()), [])
+})
+
+test('a budget raised without re-deriving it is refused', () => {
+  const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  const now = measuredNow()
+  const js = /\*\*JavaScript per page:\*\* ([\d,]+) bytes/.exec(readme)[1]
+  assert.match(derivationFailures(readme.replace(`**JavaScript per page:** ${js} bytes`, '**JavaScript per page:** 100,000 bytes'), now).join('\n'), /three times/)
+  assert.match(derivationFailures(readme, { ...now, js: now.js + 1 }).join('\n'), /re-derive it/)
+  assert.match(derivationFailures(readme, { ...now, site: Math.floor(now.site / 2) }).join('\n'), /loosened budget/)
 })
 
 // ---- the word ceilings' own refusals, kept ----------------------------------------------

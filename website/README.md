@@ -40,8 +40,8 @@ npm run check # the site's gate: the build, then every test/*.mjs
 here fetches anything: there is no integration, no remote font, no remote image, and the
 build script sets `ASTRO_TELEMETRY_DISABLED=1` so that Astro's own anonymous usage report
 is off too. `npm run check` is the same command a developer runs and the one W2.1 stages
-the deploy workflow to run (that workflow is W2.1's: it is not written yet, it will be staged under
-`docs/pending-workflows/` for the owner to copy, and no Fugaro run may write it into
+the deploy workflows to run (`website-preview.yml` and `website-promote.yml`, staged under
+`docs/pending-workflows/` for the owner to copy in: no Fugaro run may write them into
 `.github/workflows/`), and it is hermetic: it reads this
 repository, builds, and asserts over the artifact — no cloud, no credential, no deployed
 site. The live checks — the real domain, DNS, TLS and the deployed HTML — are the owner's,
@@ -81,17 +81,22 @@ with fixtures that keep its refusals running, and none of them needs the network
   palette in force.
 - `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes). **They are
   deliberately loose, by the owner's ruling of 2026-10-17: size is not a concern yet, so
-  each is about three times what the build of 2026-10-17 needs, and a later optimisation
-  pass tightens them.** The gate itself is not loose: a page or a site over the number
-  fails, and the test keeps a case that proves it. The original derivation (that build plus
-  25%) is in the test's header; a task that needs more raises the number here, in the commit
-  that needs it:
-  - **JavaScript per page:** 100,000 bytes. The site ships no script today; the allowance
-    leaves room for W1.12's consent banner and the logo work without a budget edit.
-  - **Page weight per page:** 662,766 bytes. Three times 220,922 (the heaviest page, the
-    docs hub at 176,737 bytes, plus 25%).
-  - **Whole site:** 1,454,826 bytes. Three times 484,942 (every file in `dist/`, 387,953
-    bytes, plus 25%).
+  each is three times what the build of 2026-10-18 needs — the build that ships the site's one
+  script and its menu (P6, P3) and the homepage's run animation (P7), with the How It Works
+  flow (P8) merged in — and a later
+  optimisation pass tightens them.** The gate itself is not loose: a page or a site over the
+  number fails, and the test keeps a case that proves it. The derivation (that build plus
+  25 %, D192) is in the test's header, and a task that moves the bytes re-derives the numbers
+  here, in the commit that moves them:
+  - **JavaScript per page:** 24,654 bytes. Three times 8,218: the one script the site ships,
+    `public/scripts/site.js` (6,574 bytes — the copy control of P6 and D183, and the menu's
+    Escape/outside-click close of P3), plus 25 %. Every page loads it once, so it is the whole
+    of a page's JavaScript, and the test keeps a case that says so over the built artifact.
+  - **Page weight per page:** 798,627 bytes. Three times 266,209: the heaviest page, the
+    docs hub, at 212,967 bytes (its HTML — the whole generated CLI reference — plus the
+    files it fetches: the script above, the logo and the icons), plus 25 %.
+  - **Whole site:** 2,810,115 bytes. Three times 936,705 (every file in `dist/`, 749,364
+    bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte

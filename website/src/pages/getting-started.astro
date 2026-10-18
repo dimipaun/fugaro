@@ -39,6 +39,7 @@
  */
 import Base from '../layouts/Base.astro'
 import { loadSite } from '../content.ts'
+import { copyControlHTML } from '../lib/copy-control.mjs'
 
 // The whole generated layer, read and validated through the base layout's own call: a
 // missing install.yaml stops the build rather than rendering an empty install block
@@ -99,7 +100,10 @@ const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
         )}
 
         {installPath.commands.map((command) => (
-          <pre><code>{command}</code></pre>
+          <div class="command-block" data-copy>
+            <Fragment set:html={copyControlHTML('Copy the install command')} />
+            <pre><code>{command}</code></pre>
+          </div>
         ))}
       </article>
     ))}

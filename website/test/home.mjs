@@ -13,10 +13,13 @@
 //      be a sentence of README.md, and its install commands have to be the commands
 //      `website/data/install.yaml` carries for the paths it renders — never typed into the
 //      component (Global Constraint 6, W1.4 step 1).
-//   3. **The terminal types a real invocation.** The command is README.md's own example and
-//      `fugaro run` is a command the generated CLI reference documents (W0.4's file), and
-//      the animation holds its last frame so a reader whose system asks for less motion gets
-//      the finished command rather than a half-typed one (D105, W1.4 step 2).
+//   3. **The terminal types a real invocation, and its transcript is the documented
+//      sequence.** The command is README.md's own example and `fugaro run` is a command the
+//      generated CLI reference documents (W0.4's file); the four lines after it are the
+//      numbered steps of README.md's `## How it works`, each held to the section it cites
+//      and to the order that section writes them in (P7, D184, RF11); and the animation
+//      holds its last frame, so a reader whose system asks for less motion gets the whole
+//      transcript rather than a half-typed line (D105, W1.4 step 2).
 //   4. **The flow carries D185's four steps, in order, with the two annotations on the job
 //      step**, and every caption on it — a step's and an annotation's — is a line of
 //      README.md or of `docs/design/v1.md`; the names the README does not use are asserted
@@ -90,16 +93,30 @@ function builtCSS(page) {
 }
 
 /** An element's text: its tags removed, and the entities Astro writes decoded. */
-function text(html) {
+function decode(html) {
   return html
-    .replace(/<[^>]*>/g, '')
     .replace(/&quot;/g, '"')
     .replace(/&#39;|&apos;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&')
-    .replace(/\s+/g, ' ')
-    .trim()
+}
+
+function text(html) {
+  return decode(html.replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * A node's text as a reader receives it: the decoration the page marks `aria-hidden` left
+ * out (the terminal's `$` prompt and its caret are drawing, not words), entities decoded,
+ * runs of whitespace one space. This is what the page says, which is what the checks below
+ * hold to the repository.
+ */
+function readableText(node) {
+  if (node.attrs && node.attrs.get('aria-hidden') === 'true') return ''
+  if (node.text !== undefined) return node.text
+  if (node.raw !== undefined) return ''
+  return (node.children ?? []).map(readableText).join('')
 }
 
 /** The text of the first element carrying `class="…"`, or null when there is none. */
@@ -472,15 +489,20 @@ test("the hero's lead sentence is a sentence of README.md", () => {
 
 test('the hero renders the install commands install.yaml carries, and types none of them', () => {
   const page = builtPage('')
-  const rendered = [...page.matchAll(/<div[^>]*class="hero-install-path"[^>]*>([\s\S]*?)<\/div>/g)].map((m) => m[0])
+  // Read as a document rather than sliced with a regex: each path's block now holds a copy
+  // control as well as its commands (P6), and a non-greedy `<div>…</div>` would stop at the
+  // control's own closing tag and check half a block.
+  const blocks = [...walk(parse(page))].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-install-path'))
 
-  assert.equal(rendered.length, 2, `the hero renders ${rendered.length} install paths, and it shows the two commands the plan names (W1.4 step 1)`)
+  assert.equal(blocks.length, 2, `the hero renders ${blocks.length} install paths, and it shows the two commands the plan names (W1.4 step 1)`)
 
-  for (const block of rendered) {
-    const id = /data-path="([^"]*)"/.exec(block)?.[1]
+  for (const block of blocks) {
+    const id = block.attrs.get('data-path')
     assert.ok(id, 'an install path in the hero names no id, so nothing says which path of install.yaml it is')
 
-    const commands = [...block.matchAll(/<pre[^>]*class="hero-install-command"[^>]*>([\s\S]*?)<\/pre>/g)].map((m) => text(m[1]))
+    const commands = [...walk(block)]
+      .filter((el) => el.name === 'pre')
+      .map((el) => textOf(el).trim())
     assert.deepEqual(
       commands,
       installPathCommands(id),
@@ -527,29 +549,202 @@ test('the terminal types an invocation the CLI reference documents, and README.m
   )
 })
 
-test('the terminal holds the finished command when motion is reduced', () => {
-  const page = builtPage('')
-  const css = builtCSS(page)
-  const command = classText(page, 'terminal-command')
+// ---- the transcript (P7, D184) -----------------------------------------------------------
 
-  // The end state is in the markup: the finished command is what a reader sees with the
-  // animation neutralised, so nothing about it depends on the animation having run.
-  assert.ok(
-    command && text(page).includes(command),
-    'the terminal\'s command is not in the markup in full, so a reader whose animation never runs sees a half-typed one',
+/**
+ * The documents a transcript line may cite, by the name the line carries. The command is
+ * README.md's example anywhere in the file; the four steps after it are the numbered steps
+ * of its `## How it works`, so they cite that section and are held to it rather than to the
+ * whole file.
+ */
+function transcriptSources() {
+  return {
+    'README.md': repoFile('README.md'),
+    'README.md#How it works': readmeSection('How it works'),
+  }
+}
+
+/** The transcript a built page renders: each line, the document it cites, and its timing. */
+function transcript(page) {
+  return [...walk(parse(page))]
+    .filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('terminal-line'))
+    .map((el) => {
+      const style = el.attrs.get('style') ?? ''
+      return {
+        text: decode(readableText(el)).replace(/\s+/g, ' ').trim(),
+        source: el.attrs.get('data-source') ?? '',
+        characters: Number(/--terminal-characters:\s*(\d+)/.exec(style)?.[1] ?? NaN),
+        delay: Number(/--terminal-delay:\s*([\d.]+)s/.exec(style)?.[1] ?? NaN),
+        caret: [...walk(el)].some((child) => (child.attrs?.get('class') ?? '').split(/\s+/).includes('terminal-caret')),
+      }
+    })
+}
+
+/**
+ * Every failure of the transcript's rule, as the lines a reader of this file sees: every
+ * line is a line of the document it cites, and the lines of a document come in the order
+ * that document writes them. The page's own caption calls the transcript the documented
+ * sequence of a run, so a line the document does not write — or writes after a line that
+ * follows it here — is the animation saying something the documentation does not (D184,
+ * RF11). Written as a function over a transcript so a fixture can prove it refuses.
+ */
+export function transcriptFailures(lines, sources) {
+  const out = []
+  const reached = new Map() // document -> how far into it the line before this one reached
+  for (const [index, line] of lines.entries()) {
+    const where = `line ${index + 1} of the transcript, ${JSON.stringify(line.text)}`
+    if (line.text === '') {
+      out.push(`${where}, has no text: the whole transcript is in the markup, and a line that is somewhere else is one a reader without the animation never sees`)
+      continue
+    }
+    const source = sources[line.source]
+    if (!source) {
+      out.push(`${where}, cites ${JSON.stringify(line.source)}, which is not a document this check reads: every line says which document it is quoted from`)
+      continue
+    }
+    const at = normalize(source).indexOf(normalize(line.text), reached.get(line.source) ?? 0)
+    if (at === -1) {
+      out.push(
+        `${where}, does not appear in ${line.source} at or after the line before it: the transcript is the documented sequence of a run rather than a run that happened, and every line of it is the repository's own words in the repository's own order (D184, RF11)`,
+      )
+      continue
+    }
+    reached.set(line.source, at + normalize(line.text).length)
+  }
+  return out
+}
+
+test("every line of the homepage transcript is the document it cites, in that document's order", () => {
+  const lines = transcript(builtPage(''))
+
+  // The transcript is the command and the README's four steps — Start, Sync, Loop, Push and
+  // open the pull request (D184). A page that grew a sixth line, or lost one, is a page this
+  // check would otherwise go on accepting.
+  assert.equal(lines.length, 5, `the homepage terminal renders ${lines.length} lines, and the documented sequence is the command and the README's four steps (P7, D184)`)
+
+  const failures = transcriptFailures(lines, transcriptSources())
+  assert.deepEqual(failures, [], `the homepage transcript is not the documented sequence (P7, D184, RF11):\n  ${failures.join('\n  ')}`)
+})
+
+test('the transcript rule refuses a line the document it cites does not write', () => {
+  const sources = transcriptSources()
+  const lines = transcript(builtPage(''))
+  assert.deepEqual(transcriptFailures(lines, sources), [], 'the rule refuses the page it is written for, so every refusal below is the one thing it breaks')
+
+  // A step with a word added to it: not a line of the section, and the defect this rule
+  // exists for — a transcript that is a paraphrase of the documentation rather than the
+  // documentation's own words.
+  const paraphrased = lines.map((line, index) =>
+    index === 2 ? { ...line, text: `${line.text}, quickly` } : line,
+  )
+  assert.match(transcriptFailures(paraphrased, sources).join('\n'), /does not appear in README\.md#How it works/)
+
+  // The README's words, but from outside the section the line cites. The claim a step line
+  // makes is that it is a step of `## How it works`, so this fails even though the words are
+  // in the file — which is why the section is what the line cites.
+  const elsewhere = "Or ask your agent: the plugin's working skill launches, watches and diagnoses runs"
+  assert.ok(normalize(sources['README.md']).includes(normalize(elsewhere)), 'the fixture quotes a sentence README.md carries, and it no longer does')
+  assert.ok(!normalize(sources['README.md#How it works']).includes(normalize(elsewhere)), 'the fixture quotes a sentence outside "## How it works", and the README moved it inside')
+  assert.match(
+    transcriptFailures(lines.map((line, index) => (index === 1 ? { ...line, text: elsewhere } : line)), sources).join('\n'),
+    /does not appear in README\.md#How it works/,
   )
 
-  const typing = /\.terminal-command[^{]*\{([^}]*)\}/.exec(css)
-  assert.ok(typing, 'the terminal has no typing rule, and the command is meant to be typed (W1.4 step 2)')
+  // The same lines, the fourth step put second: the words are all there, the order is not.
+  const reordered = [lines[0], lines[3], lines[1], lines[2], lines[4]]
+  assert.match(transcriptFailures(reordered, sources).join('\n'), /at or after the line before it/)
+
+  // A line citing a document nothing reads, and a line with no text at all.
+  assert.match(transcriptFailures([{ ...lines[0], source: 'website/content/cli-reference.md' }], sources).join('\n'), /not a document this check reads/)
+  assert.match(transcriptFailures([{ ...lines[0], text: '' }], sources).join('\n'), /has no text/)
+})
+
+test('every line of the transcript is in the markup, revealed by its own count, one after another', () => {
+  const page = builtPage('')
+  const lines = transcript(page)
+  assert.ok(lines.length > 1, 'the homepage terminal renders one line, and the transcript is a sequence (P7)')
+
+  // The end state is in the markup: every line is whole in the page a reader receives, so
+  // nothing about the transcript depends on the animation having run — with the animation
+  // neutralised, the page is the whole transcript, still (D105, W1.4 step 2).
+  for (const [index, line] of lines.entries()) {
+    assert.ok(
+      text(page).includes(line.text),
+      `line ${index + 1} of the transcript, ${JSON.stringify(line.text)}, is not in the markup in full, so a reader whose animation never runs sees a half-typed line`,
+    )
+  }
+
+  // The reveal: one step per character of the line, ending on the line's own width. The
+  // count is written on the line and the rule reads it, so a count that does not cover the
+  // line is a line that stops mid-word — and one that is far larger is a reveal that sits
+  // still while the reader waits for it.
+  const typing = /\.terminal-line[^{]*\{([^}]*)\}/.exec(builtCSS(page))
+  assert.ok(typing, 'the transcript has no typing rule, and every line is meant to be typed (W1.4 step 2, P7)')
   assert.match(
     typing[1],
     /animation:[^;}]*\b(forwards|both)\b/,
-    'the typing animation does not hold its last frame: with animation-duration neutralised the page has to land on the finished command, not on an empty line (D105, W1.4 step 2)',
+    'the typing animation does not hold its last frame: with animation-duration neutralised the page has to land on the whole transcript, not on empty lines (D105, W1.4 step 2)',
+  )
+  assert.match(
+    typing[1].replace(/\s+/g, ''),
+    /steps\(var\(--terminal-characters\),end\)/,
+    'the reveal is not stepped by the line\'s own character count, and a smooth reveal is a different animation from the one this page is written for (P7)',
   )
 
-  // The rule that neutralises it is the layout's, written once for every component (W1.3
-  // step 3, D105): this page carries it, so the terminal's end state is the one above.
-  assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)/, 'the built page carries no reduced-motion rule, and the terminal\'s end state depends on it (D105)')
+  for (const [index, line] of lines.entries()) {
+    assert.ok(
+      Number.isFinite(line.characters) && line.characters >= line.text.length,
+      `line ${index + 1} of the transcript carries ${line.characters} characters for ${line.text.length} characters of text: the reveal is as wide as the line, and a count short of it cuts the line off`,
+    )
+    assert.ok(Number.isFinite(line.delay), `line ${index + 1} of the transcript carries no --terminal-delay, so every line arrives at once (P7)`)
+  }
+  assert.equal(lines[0].delay, 0, 'the first line of the transcript waits before it starts, and the command is what the reader came for (P7)')
+  for (let i = 1; i < lines.length; i++) {
+    assert.ok(lines[i].delay > lines[i - 1].delay, `line ${i + 1} of the transcript arrives with the line before it, and the lines are staggered so a reader can follow them (P7)`)
+  }
+
+  // The caret is in the last line and the last line's reveal is one column wider than its
+  // text: that column is what the caret is drawn in, so a caret outside it — or a count
+  // without it — is a caret that stays clipped until the page is reloaded.
+  const last = lines[lines.length - 1]
+  assert.ok(last.caret, 'the transcript\'s caret is not in its last line, so it sits at the end of a line that has not been typed yet (P7)')
+  assert.ok(
+    last.characters > last.text.length,
+    'the last line\'s reveal is exactly its text wide, so the caret beside the text stays clipped (P7)',
+  )
+
+  // The rule that neutralises the animation is the layout's, written once for every
+  // component (W1.3 step 3, D105): this page carries it, so the transcript's end state is
+  // the one above.
+  assert.match(builtCSS(page), /@media\s*\(prefers-reduced-motion:\s*reduce\)/, 'the built page carries no reduced-motion rule, and the transcript\'s end state depends on it (D105)')
+})
+
+test('the caret stops blinking within five seconds of starting', () => {
+  // WCAG 2.2.2: a blink that starts by itself and goes on past five seconds needs a way to
+  // stop it, and a decorative caret has none. So the blink is counted, it waits for the line
+  // it sits in to arrive, and it ends on the caret's visible base rule.
+  const caret = /\.terminal-caret[^{]*\{([^}]*)\}/.exec(builtCSS(builtPage('')))
+  assert.ok(caret, 'the terminal has no caret rule')
+  const animation = /animation:([^;}]*)/.exec(caret[1])
+  assert.ok(animation, 'the caret has no animation rule')
+  const value = animation[1].trim()
+  assert.ok(!/\binfinite\b/.test(value), `the caret blinks for ever (${value}): a blink past five seconds has to be stoppable, and this one is not (WCAG 2.2.2)`)
+  const seconds = (t) => (t.endsWith('ms') ? Number(t.slice(0, -2)) / 1000 : Number(t.slice(0, -1)))
+  const duration = seconds(/(\d*\.?\d+m?s)\b/.exec(value)[1])
+  const count = Number(/\s(\d+)\s*$/.exec(value)?.[1] ?? 1)
+  assert.ok(duration * count <= 5, `the caret blinks for ${duration * count}s (${value}): five seconds at most (WCAG 2.2.2)`)
+  assert.match(value.replace(/\s+/g, ''), /var\(--terminal-delay\)/, 'the caret starts blinking before its line has arrived, so its blinks are spent on a line nobody can see yet')
+})
+
+test('the transcript says on the page that it is the documented sequence, not a recording', () => {
+  // D184 admits the animation only in this form: the lines are the repository's own, and the
+  // page says what they are. The caption is the whole of that claim, so it is checked as the
+  // claim — a page that dropped it would be showing a transcript as if it were a run.
+  const caption = classText(builtPage(''), 'terminal-caption')
+
+  assert.ok(caption, 'the homepage terminal carries no caption, and D184 admits the run animation only as a labelled sequence rather than a recording (P7, RF11)')
+  assert.match(caption, /documented sequence/i, `the terminal's caption ${JSON.stringify(caption)} does not say the lines are the documented sequence (D184)`)
+  assert.match(caption, /not a recording/i, `the terminal's caption ${JSON.stringify(caption)} does not say the lines are not a recording of a run (D184)`)
 })
 
 test("the flow carries D185's four steps, in order, with the two annotations on the job step", () => {
