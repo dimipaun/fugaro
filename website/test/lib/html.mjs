@@ -1,8 +1,8 @@
 // website/test/lib/html.mjs — the reader the site's gates stand on (website plan, W1.11).
 //
-// The four gates (`linkcheck.mjs`, `a11y.mjs`, `origins.mjs`, `budget.mjs`) all read the
-// built artifact, and they read it with this one module so that what counts as "a link", "a
-// script" or "a heading" cannot differ between them. It lives under `test/lib/` rather than
+// The gates (`linkcheck.mjs`, `a11y.mjs`, `origins.mjs`, `budget.mjs` and the redesign's
+// `meta.mjs`) all read the built artifact, and they read it with this one module so that what
+// counts as "a link", "a script" or "a heading" cannot differ between them. It lives under `test/lib/` rather than
 // beside them because `npm run check` runs `node --test test/*.mjs`: a helper at the top level
 // would be run as a test file of its own, and a test file imported by another registers its
 // cases twice. Its own cases are in `origins.mjs` (the scanner section), which is the gate

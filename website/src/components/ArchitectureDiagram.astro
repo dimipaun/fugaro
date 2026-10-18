@@ -132,11 +132,7 @@ function title(name: string): string {
 }
 ---
 
-<figure class="flow" data-source="docs/website/redesign/reconciliation.md">
-  <figcaption class="flow-note">
-    Every caption below is a line of README.md or of docs/design/v1.md.
-  </figcaption>
-
+<figure class="flow" aria-label="How a task becomes a pull request" data-source="docs/website/redesign/reconciliation.md">
   <ol class="flow-steps">
     {
       STEPS.map((step, index) => (
@@ -183,14 +179,6 @@ function title(name: string): string {
   .flow {
     margin: 0;
     max-width: var(--page-max);
-  }
-
-  .flow-note {
-    max-width: var(--measure);
-    margin-bottom: var(--space-lg);
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-    line-height: var(--leading-normal);
   }
 
   .flow-steps {

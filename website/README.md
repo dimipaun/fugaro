@@ -40,8 +40,8 @@ npm run check # the site's gate: the build, then every test/*.mjs
 here fetches anything: there is no integration, no remote font, no remote image, and the
 build script sets `ASTRO_TELEMETRY_DISABLED=1` so that Astro's own anonymous usage report
 is off too. `npm run check` is the same command a developer runs and the one W2.1 stages
-the deploy workflow to run (that workflow is W2.1's: it is not written yet, it will be staged under
-`docs/pending-workflows/` for the owner to copy, and no Fugaro run may write it into
+the deploy workflows to run (`website-preview.yml` and `website-promote.yml`, staged under
+`docs/pending-workflows/` for the owner to copy in: no Fugaro run may write them into
 `.github/workflows/`), and it is hermetic: it reads this
 repository, builds, and asserts over the artifact — no cloud, no credential, no deployed
 site. The live checks — the real domain, DNS, TLS and the deployed HTML — are the owner's,
@@ -65,7 +65,7 @@ asserts the same over the built HTML's script, link, iframe and image origins.
 
 ## The gates
 
-Four checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Five checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network:
 
 - `test/linkcheck.mjs` — every internal link and asset resolves to a built file, every
@@ -81,17 +81,73 @@ with fixtures that keep its refusals running, and none of them needs the network
   palette in force.
 - `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes). **They are
   deliberately loose, by the owner's ruling of 2026-10-17: size is not a concern yet, so
-  each is about three times what the build of 2026-10-17 needs, and a later optimisation
-  pass tightens them.** The gate itself is not loose: a page or a site over the number
-  fails, and the test keeps a case that proves it. The original derivation (that build plus
-  25%) is in the test's header; a task that needs more raises the number here, in the commit
-  that needs it:
-  - **JavaScript per page:** 100,000 bytes. The site ships no script today; the allowance
-    leaves room for W1.12's consent banner and the logo work without a budget edit.
-  - **Page weight per page:** 662,766 bytes. Three times 220,922 (the heaviest page, the
-    docs hub at 176,737 bytes, plus 25%).
-  - **Whole site:** 1,454,826 bytes. Three times 484,942 (every file in `dist/`, 387,953
-    bytes, plus 25%).
+  each is three times what the build of 2026-10-18 needs — the build that ships the site's one
+  script and its menu (P6, P3) and the homepage's run animation (P7), with the How It Works
+  flow (P8) merged in — and a later
+  optimisation pass tightens them.** The gate itself is not loose: a page or a site over the
+  number fails, and the test keeps a case that proves it. The derivation (that build plus
+  25 %, D192) is in the test's header, and a task that moves the bytes re-derives the numbers
+  here, in the commit that moves them:
+  - **JavaScript per page:** 24,654 bytes. Three times 8,218: the one script the site ships,
+    `public/scripts/site.js` (6,574 bytes — the copy control of P6 and D183, and the menu's
+    Escape/outside-click close of P3), plus 25 %. Every page loads it once, so it is the whole
+    of a page's JavaScript, and the test keeps a case that says so over the built artifact.
+  - **Page weight per page:** 798,627 bytes. Three times 266,209: the heaviest page, the
+    docs hub, at 212,967 bytes (its HTML — the whole generated CLI reference — plus the
+    files it fetches: the script above, the logo and the icons), plus 25 %.
+  - **Whole site:** 2,810,115 bytes. Three times 936,705 (every file in `dist/`, 749,364
+    bytes across 21 files, plus 25 %).
+
+  Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
+  principle is "the gist above the fold on every page with very few words", which no byte
+  budget can hold (D187, D188). The same file reads them out of this list, and the same
+  rule applies — a task that needs more raises the number here, in the commit that needs
+  it:
+  - **Words in a page's lead:** 40 words. The lead is the visible text of `main` between
+    the page's `h1` and its first `h2` — the paragraph a page opens with before its first
+    section — and it is a lead and not an introduction: 40 words at most, on every page,
+    the three reference pages included, because a lead is the page's own whichever page it
+    is. A page whose first `h2` is not in the `h1`'s own container (the homepage: the hero's
+    section holds the `h1`, and the first `h2` is a step of the flow under it) or that has
+    no `h2` at all has no such region, and its lead is the paragraphs that follow its `h1`. A page
+    whose `h1` is followed straight by its first `h2` has no lead region either, and 0 words
+    is inside the ceiling: `/security/` is shaped that way (its `h1` is the rendered
+    document's own title, and the page's lead line comes before it) and so is `/changelog/`
+    (whose summary is its first section, under the heading that names it). The ceiling is a
+    ceiling, not a floor — a page with no lead region is a page D188's definition does not
+    describe, and this gate says nothing about how much a page's first section should say.
+  - **Words per page:** 250 words. Every word a reader sees inside `main` — command blocks
+    and code spans included, since the ceiling is a claim about the page rather than about
+    its prose — counted by `budget.mjs`'s own reader, which reads a page the way
+    `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
+    `alt` is) and adds the one rule `textOf` does not carry: a subtree carrying `hidden` is
+    not text either. No built page hides anything inside `main` today — the layout's own
+    `hidden` elements, the skip link and the consent banner, sit outside it — so that rule
+    is what stops a page that starts hiding a control from being counted for words nobody
+    sees. `/docs/`, `/security/`
+    and `/changelog/` are exempt, which is D188's own list: each renders a document of this
+    repository rather than a page of the site, and the brief allows those to stay long.
+    The ceiling is set against the site as it was measured before the redesign
+    (`docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
+    getting-started 431, privacy 277, community 268 — every one of them over it).
+- `test/meta.mjs` — the provenance-phrase gate (D186): a page must not explain why its own
+  text exists, so D186's phrase list (`rendered from`, `generated rather than written`, …) is
+  refused in the text a reader reads, on every built page. It is the one defect the other
+  four cannot see — a sentence about the build is short, well-formed and honest — and it is
+  the sentence the redesign removes. Naming a document is not provenance text: the docs hub
+  names each guide's file, a page may link to `SECURITY.md`, and the changelog renders the
+  release files' own lines, which is why D186 chose an explicit list over a rule about
+  naming a repository file. It holds a second rule of the same kind, because a phrase list
+  cannot hold it: **no page may show a generated file's banner as text.** The generated files
+  under `content/` — `cli-reference.md` and `security.md`, both `go run ./internal/clidoc`'s
+  output; `downloads.json` beside them is hand-kept and carries no banner — open with
+  `<!-- generated by …; do not edit -->`, W1.3's pipeline reads the banner as a fact and
+  drops it from the body it renders, and RF8 takes "the banner is never on a page"
+  as a premise — which was false on the docs hub, where the rendered CLI reference carried it
+  through the markdown compiler and the page's own `escapeRawHtml` showed it to a reader as
+  `<!-- generated by go run ./internal/clidoc; do not edit -->` above the reference's title.
+  The gate refuses the escaped banner and ignores a comment node, which is the difference
+  between a line a reader reads and a note in the markup.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
@@ -266,4 +322,6 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` holds no pending workflow today.
+change `.github/workflows/`. `docs/pending-workflows/` now holds no pending workflow: the website's two manual
+workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
+owner, and no deploy workflow is staged.
