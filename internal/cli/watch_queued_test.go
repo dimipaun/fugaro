@@ -11,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
 
@@ -537,5 +539,137 @@ func TestWatchQueuedTaskFieldsSanitised(t *testing.T) {
 	}
 	if !strings.Contains(plain, run) || strings.Contains(plain, "PWNED") || strings.ContainsAny(plain, "\x1b\x07\u009b") {
 		t.Fatalf("plain: %q", plain)
+	}
+}
+
+// writeLaunchJob writes launch.json naming the Cloud Run job the run was
+// launched on, which is what every project-job assertion here reads.
+func (f *budgetFixture) writeLaunchJob(t *testing.T, slug, run, job string, at time.Time) {
+	t.Helper()
+	data, err := json.Marshal(struct {
+		Version    int       `json:"version"`
+		RunID      string    `json:"run_id"`
+		Backend    string    `json:"backend"`
+		Execution  string    `json:"execution"`
+		Job        string    `json:"job"`
+		LaunchedAt time.Time `json:"launched_at"`
+	}{Version: 1, RunID: run, Backend: "cloud-run", Execution: "projects/p/locations/r/jobs/" + job + "/executions/e-" + run, Job: job, LaunchedAt: at.UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.writeRunObject(t, slug, run, "launch.json", string(data))
+}
+
+// writeResultAt writes a terminal result.json finished at finishedAt: the
+// fixture's writeResult carries a fixed, long-past timestamp, and a finished
+// row older than the scanner's 24 h lookback is dropped on purpose.
+func (f *budgetFixture) writeResultAt(t *testing.T, slug, run, status string, finishedAt time.Time) {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{
+		"version": 1, "run_id": run, "repo": "acme/app", "status": status, "outcome": "none",
+		"started_at": finishedAt.Add(-time.Minute).UTC(), "finished_at": finishedAt.UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.writeRunObject(t, slug, run, "result.json", string(data))
+}
+
+// The JSON a shared project job's run carries (plan task 3.5 step 2): the job,
+// and the (profile, provider, account) its name was computed from, beside it —
+// for a live row, a queued one and a finished one alike, because all three are
+// read from the same launch.json and the job's name spells none of the three
+// out (R2-5: the triple is computed from the published policy's profiles and
+// matched, never parsed back).
+//
+// A run on a per-repository job keeps the job alone: no profile of the policy
+// computes its name, and inventing a triple for it would send a reader after an
+// identity the run does not have. The grouping itself stays by repository —
+// every row here keeps the repository its own slug names, whatever job it ran
+// on.
+func TestWatchJSONCarriesProfileAndAccount(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	// The published policy is where the triple comes from: the same document
+	// the launcher resolves the job from and the runner matches CLOUD_RUN_JOB
+	// against.
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version": projectpolicy.Version,
+		"profiles": map[string]any{
+			"standard": map[string]any{"provider": "github", "cpu": 2, "memory": "8Gi", "timeout_class": "6h"},
+		},
+	})
+	job := gcp.ProjectJobName("standard", "github", "")
+	if job == "" {
+		t.Fatal("no project job name")
+	}
+
+	now := time.Now()
+	live, queued, finished := runID(3*time.Minute, "e001"), runID(2*time.Minute, "e002"), runID(time.Minute, "e003")
+	// The live run: the registry entry watch draws, plus the launch.json the
+	// job is read from.
+	ms := now.UnixMilli()
+	f.db.Set(budget.PathAgent(appSlug, live), map[string]any{
+		"repo": "acme/app", "title": "on the shared job", "stage": "code", "auth": "api_key", "spent": usd1,
+		"startedAt": ms - 120_000, "updatedAt": ms})
+	f.writeTask(t, appSlug, live, "")
+	f.writeLaunchJob(t, appSlug, live, job, now.Add(-3*time.Minute))
+	// The queued run: launch.json and nothing else.
+	f.writeTask(t, appSlug, queued, "")
+	f.writeLaunchJob(t, appSlug, queued, job, now.Add(-2*time.Minute))
+	// The finished run: a per-repository job, the shape a baked workflow keeps
+	// until phase 4 ends.
+	legacy := "fugaro-acme-app-web"
+	f.writeTask(t, appSlug, finished, "")
+	f.writeLaunchJob(t, appSlug, finished, legacy, now.Add(-time.Minute))
+	f.writeResultAt(t, appSlug, finished, "succeeded", now.Add(-30*time.Second))
+
+	out, _, err := execute(t, "watch", "--once", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type row struct {
+		Run      string `json:"run"`
+		Slug     string `json:"slug"`
+		Queued   bool   `json:"queued"`
+		Job      string `json:"job"`
+		Profile  string `json:"profile"`
+		Provider string `json:"provider"`
+		Account  string `json:"account"`
+	}
+	var doc struct {
+		Runs     []row `json:"runs"`
+		Finished []row `json:"finished"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("watch --once --json is not JSON: %v\n%s", err, out)
+	}
+	find := func(rows []row, run string) *row {
+		for i := range rows {
+			if rows[i].Run == run {
+				return &rows[i]
+			}
+		}
+		return nil
+	}
+	for _, c := range []struct {
+		name   string
+		row    *row
+		queued bool
+		want   row
+	}{
+		{"a live run", find(doc.Runs, live), false, row{Run: live, Slug: appSlug, Job: job, Profile: "standard", Provider: "github"}},
+		{"a queued run", find(doc.Runs, queued), true, row{Run: queued, Slug: appSlug, Queued: true, Job: job, Profile: "standard", Provider: "github"}},
+		{"a finished run on a per-repository job", find(doc.Finished, finished), false, row{Run: finished, Slug: appSlug, Job: legacy}},
+	} {
+		if c.row == nil {
+			t.Fatalf("%s (%s) is missing from %s", c.name, c.want.Run, out)
+		}
+		if c.row.Queued != c.queued {
+			t.Errorf("%s: queued = %v, want %v", c.name, c.row.Queued, c.queued)
+		}
+		if *c.row != c.want {
+			t.Errorf("%s: row = %+v, want %+v", c.name, *c.row, c.want)
+		}
 	}
 }

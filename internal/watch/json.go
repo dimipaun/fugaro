@@ -76,6 +76,19 @@ type JSONRun struct {
 	Stuck       bool   `json:"stuck,omitempty"`
 	Workflow    string `json:"workflow,omitempty"`
 	RequestedBy string `json:"requested_by,omitempty"`
+	// Job is the Cloud Run job this run is in, and Profile, Provider and
+	// Account are the (profile, provider, account) its name was computed from
+	// (plan task 3.5 step 2): under the project-centric model a run's job is
+	// shared by every repository admitted to the profile, so the triple is
+	// what says which job a row came from, and the job's name does not spell
+	// it out. The three are absent for a run on a per-repository job (its
+	// name is not a project job the published policy defines) and for a run
+	// whose launch.json the reader does not have; the grouping stays by
+	// repository, from the row's own slug.
+	Job      string `json:"job,omitempty"`
+	Profile  string `json:"profile,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	Account  string `json:"account,omitempty"`
 }
 
 // JSONFinished is a finished run (design generic-tool §10.1 and §10.3): a
@@ -91,6 +104,13 @@ type JSONFinished struct {
 	PRURL    string  `json:"pr_url,omitempty"`
 	PRNumber int     `json:"pr_number,omitempty"`
 	AgeSecs  float64 `json:"age_seconds"`
+	// Job and the (profile, provider, account) behind its name, as in JSONRun:
+	// a finished run's row is a run's row too, and a reader that follows a
+	// run from runs[] into finished[] must not lose the job it ran on.
+	Job      string `json:"job,omitempty"`
+	Profile  string `json:"profile,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	Account  string `json:"account,omitempty"`
 }
 
 // JSONDoc is one watch --json document.
@@ -116,7 +136,8 @@ type JSONDoc struct {
 
 func jsonFinished(slug, repo string, r RunRow) JSONFinished {
 	return JSONFinished{Run: r.Run, Slug: slug, Repo: repo, Title: r.Title, Status: r.Stage, Outcome: r.Outcome,
-		Failed: r.Failed, PRURL: r.PRURL, PRNumber: r.PRNumber, AgeSecs: r.Age.Seconds()}
+		Failed: r.Failed, PRURL: r.PRURL, PRNumber: r.PRNumber, AgeSecs: r.Age.Seconds(),
+		Job: r.Job, Profile: r.Profile, Provider: r.Provider, Account: r.Account}
 }
 
 func usdPtr(b Bar) (cap, pct *float64) {
@@ -166,7 +187,11 @@ func BuildJSON(project string, v View) JSONDoc {
 				Queued:      run.Queued,
 				Stuck:       run.Stuck,
 				Workflow:    run.Workflow,
-				RequestedBy: run.RequestedBy}
+				RequestedBy: run.RequestedBy,
+				Job:         run.Job,
+				Profile:     run.Profile,
+				Provider:    run.Provider,
+				Account:     run.Account}
 			if run.HasSpent {
 				s := run.Spent.USD()
 				j.SpentUSD = &s
