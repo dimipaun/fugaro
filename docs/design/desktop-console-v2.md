@@ -256,6 +256,66 @@ The table below has five columns: the number, the question, the recommendation, 
 | **D37** | Release placement. | **Post-0.8.0, and unscheduled until the owner approves v2.** The console is its own artifact published from the CLI's own tag (D11); v2's first shippable version is whatever release follows the one that carries the v1 console's phase 4. | Attaching v2 to a named release now costs a commitment the tree cannot back: the release train recorded in this repo is R4 of the project-centric plan (§5.2), and v2's own tasks are not written yet. | **Owner answered 2026-10-15/16: post-0.8.0, and unscheduled until the owner approves v2.** *Implementation: **no task** — §1's release paragraph and the approval gate above carry it.* |
 | **D38** | Sequencing against the v1 console plan. | **v1 phases 0–5 are unchanged and v2 adds later phases** (§4), each independently mergeable, with the graph and the changed-files record before anything that draws them. | Re-cutting the v1 plan around v2 costs a merged plan its stability for work that is not approved; putting v2's reads before v1's shell costs a console that cannot display them. | **Owner answered 2026-10-15/16: v1 phases 0–5 are unchanged and v2 adds later phases** (§4), each independently mergeable. *Implementation: **no task** — this plan's phase order in §3 is the implementation.* |
 
+### The graph artifact's schema, written down (V2.2.1, V2.2.2)
+
+**V2.2.1's task says the schema is written down in the design before it is written in Go, and this is that writing-down: version 1 of the graph artifact, the document a plan carries beside it.** D25 puts the graph on the plan's side rather than in a database and D28 gives a task's footprint its shape, but neither can hold a field list — and the field list is the one thing all three parties have to agree on, because the planning skill writes this document (V2.8.1), the CLI validates it and prints it (V2.2.1), and the console reads the printed form and never opens the file (D1, §3.4 rule 7). A schema that lived only in `internal/plan/document.go` would be one the skill's reference file copies out of Go source, which is how two spellings of one format start.
+
+**The file, and how a read finds it.** The artifact is `docs/plans/<plan>.graph.json` — the plan `docs/plans/2026-10-15-desktop-console-v2.md` is described by `docs/plans/2026-10-15-desktop-console-v2.graph.json` — so a plan moved to another directory takes its graph with it, and a checkout may hold a plan whose graph has not been written yet. `fugaro plan graph --plan <path>` reads the artifact named after that plan; with no `--plan` it looks for `docs/plans/*.graph.json` **in the directory the command is run in**, and the three answers are three different things: exactly one artifact is read, none is a refusal that says to pass `--plan`, and more than one is a refusal that lists them. It never picks, because a guess here is the first thing a console would draw (F6: the graph is new work with no precedent to extend).
+
+**The document, in full.**
+
+```json
+{
+  "schema_version": 1,
+  "plan": "docs/plans/2026-10-15-desktop-console-v2.md",
+  "nodes": [
+    {"id": "V2.2.1",
+     "title": "the graph document, its schema, and the read that prints it",
+     "run": "console-graph-1",
+     "version": "0.9.0",
+     "footprint": {"prediction": true, "paths": ["internal/plan/**", "internal/cli/plan.go"]}},
+    {"id": "V2.2.2",
+     "title": "the footprint",
+     "run": null,
+     "version": null,
+     "footprint": {"prediction": true, "paths": []}}
+  ],
+  "edges": [
+    {"task": "V2.2.2", "needs": "V2.2.1",
+     "reason": "the footprint is a field of the document V2.2.1 defines"}
+  ]
+}
+```
+
+**Every field, and what its empty form says.**
+
+| Field | Type | What it carries, and what an empty one means |
+|---|---|---|
+| `schema_version` | integer | The schema the document is written in. **1** is the only version this design defines, and a document carrying no version, or another one, is refused with **both numbers named** ("this graph is schema version 9 and this build reads version 1") — so "your CLI is older than your plan" is a different message from "this document is broken". |
+| `plan` | string | The plan the graph describes, as a path, so a document found in the wrong checkout can be seen to be about another plan. Required and non-empty: a graph that does not say which plan it is about cannot be checked against one. |
+| `nodes` | array of node | The tasks. **Always an array, `[]` when the plan has no tasks** — an empty array is a fact and a null is not (the availability rule the console's contract states, §1 of [json-contract.md](../../console/docs/json-contract.md)). |
+| `edges` | array of edge | The dependencies. Same rule: `[]`, never null. |
+| `nodes[].id` | string | The planner's own name for the task (`V2.2.1`): non-empty, unique in the document, and what the edges refer to. |
+| `nodes[].title` | string | What a person reads on the node. Required — a node with no title is a node nobody can identify. |
+| `nodes[].run` | string or null | **The state source D25's prose means**: the run this task belongs to, whose documents carry its state (`JSONRun`, `AgentEntry`), or `null` when it belongs to no run — the honest state of a task that has not been launched, which is not the empty string. |
+| `nodes[].version` | string or null | The target version this task ships in (D29's "the plan artifact now"): the roadmap's source of truth until the project record carries one, and `null` when the plan does not say. |
+| `nodes[].footprint` | object | The planner's expected set of paths (D28, below). Present on every node, so a renderer never has to ask whether the field is there. |
+| `nodes[].footprint.prediction` | boolean | **`true`, always.** The label is a field of the document rather than a convention of the reader, so no screen can print a footprint as if it were a measurement. A document that says `false` is refused rather than corrected: a prediction is what this field is. |
+| `nodes[].footprint.paths` | array of string | Glob-shaped paths in **doublestar** semantics — the ones this repository already uses (`doublestar.Match` in `internal/imagecheck`, `doublestar.Glob` in `internal/cache/key.go`, `doublestar.ValidatePattern` in `internal/config/validate.go` and `internal/verify/reports.go`), not a second implementation of globbing. Each pattern is validated when the document is read, so a malformed one is a refusal at the read rather than a pattern that silently matches nothing. `[]` means "this task predicts no path", which is not the same as a footprint that is absent. |
+| `edges[].task` | string | The dependent: the node that waits. |
+| `edges[].needs` | string | The dependency: the node it waits for. Both must name nodes the document carries — an edge to a node that is not there is refused, not dropped. |
+| `edges[].reason` | string | **Why the edge exists, and it is required.** An edge with no reason is an edge nobody can check, and the field costs the planner one sentence. |
+
+**What the read refuses, and why a refusal is the right answer.** A document from another schema version; one that is not JSON at all; one carrying a field this version does not define (refused by name rather than ignored, because an ignored field is a planner's work disappearing silently); a node with an empty or duplicated `id` or no `title`; an empty string where `run` or `version` may be null (the two are different claims and the empty string is the third, wrong one); a footprint that does not claim to be a prediction; a malformed glob; an edge naming a node the document does not carry, or carrying no reason. **And a cycle is refused, not drawn** — every "ready" and "blocked" answer is a function of the graph (F7), so a cyclic graph has no answers to give and a view that rendered one would be inventing them; the refusal names the cycle (`a -> b -> c -> a`) so the planner can fix it without hunting.
+
+**What version 1 does not carry, said here so it is not added by accident.** No state field: `done` and `running` come from the run `nodes[].run` names, and `ready`/`blocked` are computed where the graph is read (V2.2.3, F7) rather than written by the planner — the planner cannot know them, and a document that guessed them would be a second answer to a question the CLI already answers. No bottleneck ranking (V2.2.3) and no overlap warnings (V2.4.1, which compares these footprints against the changed-file record of V2.1.2). **V2.2.3 and V2.4.1 both add fields to the document a read prints**, and the artifact's `schema_version` is what a console refuses on, so each of them states whether it bumps the version or adds fields a console may ignore; that decision is theirs to take and this section records that it is not taken here.
+
+**Built, 2026-10-18 (V2.2.1, V2.2.2).** `internal/plan/` carries the document type, the parser and the validation, and `fugaro plan graph [--plan P] [--json]` is the read; it takes no cloud flag of any kind, which is what makes it safe to spawn with no installation selected. The same field list is stated for the console in §6.9 of [json-contract.md](../../console/docs/json-contract.md), and the key sets of the document, a node, an edge and a footprint are pinned by golden files under `internal/cli/testdata/`, so a field added to any of them fails a named test rather than reaching a screen.
+
+### The installations document, and the fields it may not carry (V2.1.1)
+
+**D31's read shipped on 2026-10-18 as `fugaro config list --json`, and its shape is deliberately narrower than any struct the tree already has.** The document names one entry per installation — the project name, the GCP project, the region, whether a shared config was merged, and when the shared copy was last checked — and nothing else. **It is not a marshalled `localcfg.Config`**, and that is the security property rather than a stylistic one: the config struct carries more than the console needs, so marshalling it would make every field added to it later join a document the app is allowed to read, silently, in a pull request about something else. The fields are named one by one in the document type, a test asserts that the type is not the config type, and a second test asserts that no field outside the named set reaches the output. The console's contract states the same list in §6.8, and the app still reads nothing itself (§3.4 rule 7): the operator picks from what the CLI printed, and D13's stored tuple and pairing check are unchanged.
+
 ## 3. Release placement and sequencing
 
 **The console is its own artifact published from the CLI's own `vX.Y.Z` tag** — D11, restated in the v1 plan's "Releases" paragraph, which is what [release.md](../release.md)'s "one tag releases everything" means once a second deliverable exists. Its first shippable version is whatever release carries the v1 plan's phase 4 (macOS packaging, Check 59). **v2 changes none of that** and adds no release: it is post-0.8.0 work whose first shippable version is whatever tag follows the v1 console's first one (D37, **answered 2026-10-15/16: post-0.8.0, and unscheduled until the owner approves v2**).
