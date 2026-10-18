@@ -34,6 +34,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1976,6 +1977,21 @@ func TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger(t *testing.T) {
 // no secret in any step's environment (review of Task 4.2, round 2).
 const consoleReleaseSigningStep = "Sign, notarise and staple the console"
 
+// consoleReleaseVerifyStep is the release job's verification step, the second
+// and last step that calls the Apple-network retry helper: it validates the
+// ticket on the bundle inside the mounted .dmg, the one inside the extracted
+// .zip, and the disk image itself.
+const consoleReleaseVerifyStep = "Verify the shipped artifacts, and record it"
+
+// consoleRetryHelperName is the one shell function that retries the
+// Apple-network calls (`xcrun stapler staple` and `xcrun stapler validate`),
+// defined once in each of the two steps that make them. Three consecutive
+// release runs in October 2026 failed at Apple's ticket-delivery lookup with
+// NSURLErrorDomain -1005, "The network connection was lost" -- a network
+// failure, not a rejection -- so those calls get five attempts with a growing
+// pause, and everything else in the file still fails at once.
+const consoleRetryHelperName = "retry_apple_network"
+
 // consoleReleasePublishStep and consoleReleaseTagStep are the publish job's
 // release step and the release job's tag-shape step, which the behavioural
 // tests below run under bash with a faked `gh`.
@@ -2005,6 +2021,40 @@ func consoleRunLines(run string) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// consoleRetryHelper is one step's Apple-network retry helper as text, from its
+// `retry_apple_network() {` line to the closing brace at the same indentation.
+// It fails the test when the step defines it twice (one definition per step,
+// called from the sites that need it) or not at all, and it returns the text
+// rather than a bool so the two definitions can be compared instead of
+// trusted.
+func consoleRetryHelper(t *testing.T, where, run string) string {
+	t.Helper()
+	head := consoleRetryHelperName + "() {"
+	lines := strings.Split(run, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) != head {
+			continue
+		}
+		if start >= 0 {
+			t.Fatalf("%s defines %s more than once: one definition per step, and the call sites name it", where, consoleRetryHelperName)
+		}
+		start = i
+	}
+	if start < 0 {
+		t.Fatalf("%s does not define %s: every Apple-network call there would fail on the first lost connection", where, consoleRetryHelperName)
+	}
+	indent := lines[start][:len(lines[start])-len(strings.TrimLeft(lines[start], " "))]
+	close := indent + "}"
+	for i := start + 1; i < len(lines); i++ {
+		if lines[i] == close {
+			return strings.Join(lines[start:i+1], "\n")
+		}
+	}
+	t.Fatalf("%s's %s has no closing %q: the rest of the step would be its body", where, consoleRetryHelperName, close)
+	return ""
 }
 
 // consoleLineIndex is the index of the first line of lines equal to want, or
@@ -2487,9 +2537,14 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		t.Errorf("%s's signing step packs before it has written the key file, handed on its path and unset the certificate", consoleReleaseWorkflowPath)
 	}
 	at(`APP="release/mac-universal/Fugaro Console.app"`, false)
-	staple := at(`if ! xcrun stapler validate "$APP"; then`, false)
-	if staple < 0 || staple+2 >= len(lines) || lines[staple+2] != "exit 1" {
-		t.Errorf("%s's signing step does not refuse an unstapled bundle", consoleReleaseWorkflowPath)
+	staple := at(`if ! retry_apple_network xcrun stapler staple "$APP" ||`, false)
+	if staple >= 0 && (staple+3 >= len(lines) ||
+		lines[staple+1] != `! retry_apple_network xcrun stapler validate "$APP"; then` ||
+		!strings.HasPrefix(lines[staple+2], `echo "::error::`) || lines[staple+3] != "exit 1") {
+		t.Errorf("%s's signing step does not refuse an unstapled bundle, after retrying its staple and its validation", consoleReleaseWorkflowPath)
+	}
+	if staple < 0 {
+		t.Errorf("%s's signing step does not retry the .app's staple and validation: a lost connection to Apple's ticket service would fail the release on the first attempt", consoleReleaseWorkflowPath)
 	}
 	if strings.Contains(text, "mac-*") || strings.Contains(text, "mac-arm64") {
 		t.Errorf("%s globs or names a thin-arch output directory: the build is universal, release/mac-universal", consoleReleaseWorkflowPath)
@@ -2500,7 +2555,7 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	}
 	signDMG := at(`codesign --sign "$identity" --keychain "$KEYCHAIN" --timestamp "$DMG"`, false)
 	submit := at(`xcrun notarytool submit "$DMG" --key "$KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait`, false)
-	stapleDMG := at(`xcrun stapler staple "$DMG"`, false)
+	stapleDMG := at(`retry_apple_network xcrun stapler staple "$DMG"`, false)
 	if !(pack < signDMG && signDMG < submit && submit < stapleDMG) {
 		t.Errorf("%s's signing step does not pack, sign the .dmg, notarise it and staple it, in that order (%d, %d, %d, %d)", consoleReleaseWorkflowPath, pack, signDMG, submit, stapleDMG)
 	}
@@ -2508,7 +2563,7 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	// **The record is about the shipped bytes**, and record() exits 1 on a
 	// failure; the record, the sums and both artifacts leave the job as one
 	// workflow artifact.
-	verifyIdx, verify := stepNamed("Verify the shipped artifacts, and record it")
+	verifyIdx, verify := stepNamed(consoleReleaseVerifyStep)
 	vlines := consoleRunLines(verify.Run)
 	if verify.Env["DMG"] != "${{ steps.signed.outputs.dmg }}" || verify.Env["ZIP"] != "${{ steps.signed.outputs.zip }}" {
 		t.Errorf("%s's verification step does not read the signed .dmg and .zip: %v", consoleReleaseWorkflowPath, verify.Env)
@@ -2524,13 +2579,13 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		`record codesign --verify --deep --strict --verbose=2 "$IN_DMG"`,
 		`record codesign -d --entitlements - "$IN_DMG"`,
 		`record spctl --assess --type execute --verbose=4 "$IN_DMG"`,
-		`record xcrun stapler validate "$IN_DMG"`,
+		`record retry_apple_network xcrun stapler validate "$IN_DMG"`,
 		`record ditto -x -k "$ZIP" "$UNZIP"`,
 		`record codesign --verify --deep --strict --verbose=2 "$IN_ZIP"`,
 		`record spctl --assess --type execute --verbose=4 "$IN_ZIP"`,
-		`record xcrun stapler validate "$IN_ZIP"`,
+		`record retry_apple_network xcrun stapler validate "$IN_ZIP"`,
 		`record codesign --verify --strict --verbose=2 "$DMG"`,
-		`record xcrun stapler validate "$DMG"`,
+		`record retry_apple_network xcrun stapler validate "$DMG"`,
 		`record spctl --assess --type open --context context:primary-signature -v "$DMG"`,
 		`cp "$DMG" "$ZIP" "$RECORD" "$SUMS" "$ASSETS/"`,
 	} {
@@ -2541,6 +2596,81 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if verifyIdx+1 >= len(job.Steps) || !strings.Contains(job.Steps[verifyIdx+1].Uses, "actions/upload-artifact@") ||
 		job.Steps[verifyIdx+1].With["name"] != "console-release-assets" || job.Steps[verifyIdx+1].With["if-no-files-found"] != "error" {
 		t.Errorf("%s does not upload the verified assets as the console-release-assets artifact right after verifying them", consoleReleaseWorkflowPath)
+	}
+
+	// **The Apple-network calls are retried, bounded, and nothing else is.**
+	// `xcrun stapler staple` and `xcrun stapler validate` reach Apple's
+	// ticket-delivery service over the network, and three consecutive release
+	// runs in October 2026 failed there with `NSURLErrorDomain Code=-1005 "The
+	// network connection was lost"` -- a lost connection, not a rejected
+	// notarisation. One helper, defined once in each of the two steps that call
+	// it and character for character the same in both, retries those calls; the
+	// mutations this clause is proved against are removing the helper from
+	// either step (the definition and call-site clauses below), wrapping
+	// `codesign`, `notarytool submit` or a check in it (the "nothing else"
+	// clause), and lowering the attempt bound or the pauses (the bound clause,
+	// and TestDocsConsoleReleaseRetryHelperIsBounded, which runs the helper).
+	signHelper := consoleRetryHelper(t, "the signing step", sign.Run)
+	verifyHelper := consoleRetryHelper(t, "the verification step", verify.Run)
+	if signHelper != verifyHelper {
+		t.Errorf("%s defines %s differently in its signing and verification steps: the two copies are one helper, character for character, or the bounded retry drifts apart", consoleReleaseWorkflowPath, consoleRetryHelperName)
+	}
+	retryCalls := map[string][]string{
+		consoleReleaseSigningStep: {
+			`if ! retry_apple_network xcrun stapler staple "$APP" ||`,
+			`! retry_apple_network xcrun stapler validate "$APP"; then`,
+			`retry_apple_network xcrun stapler staple "$DMG"`,
+		},
+		consoleReleaseVerifyStep: {
+			`record retry_apple_network xcrun stapler validate "$IN_DMG"`,
+			`record retry_apple_network xcrun stapler validate "$IN_ZIP"`,
+			`record retry_apple_network xcrun stapler validate "$DMG"`,
+		},
+	}
+	for _, j := range jobs {
+		for _, step := range j.job.Steps {
+			stepLines := consoleRunLines(step.Run)
+			for _, line := range stepLines {
+				if !strings.Contains(line, consoleRetryHelperName) {
+					continue
+				}
+				if line == consoleRetryHelperName+"() {" {
+					if _, ok := retryCalls[step.Name]; !ok {
+						t.Errorf("%s's step %q defines %s: only the signing step and the verification step may, and a helper in a step with no Apple-network call is a retry nobody bounded", consoleReleaseWorkflowPath, step.Name, consoleRetryHelperName)
+					}
+					continue
+				}
+				if !slices.Contains(retryCalls[step.Name], line) {
+					t.Errorf("%s's step %q retries %q: the helper wraps `xcrun stapler staple` and `xcrun stapler validate` and nothing else -- behind codesign, a notarytool submission, the gate, the team check or the secret check it would retry something that has already decided", consoleReleaseWorkflowPath, step.Name, line)
+				}
+			}
+			for _, want := range retryCalls[step.Name] {
+				if !slices.Contains(stepLines, want) {
+					t.Errorf("%s's step %q does not run %q: every Apple-network call it makes is retried", consoleReleaseWorkflowPath, step.Name, want)
+				}
+			}
+		}
+	}
+	// The helper is bounded: five attempts, a growing pause between them, and
+	// each attempt's number and exit code printed.
+	for _, c := range []struct{ where, helper string }{
+		{"signing", signHelper},
+		{"verification", verifyHelper},
+	} {
+		for _, want := range []string{
+			`while [ "$attempt" -le 5 ]; do`,
+			`echo "apple-network attempt $attempt of 5: $* exited $status"`,
+			`if [ "$attempt" -eq 5 ]; then`,
+			`return "$status"`,
+			`1) sleep 15 ;;`,
+			`2) sleep 30 ;;`,
+			`3) sleep 60 ;;`,
+			`4) sleep 90 ;;`,
+		} {
+			if !strings.Contains(c.helper, want) {
+				t.Errorf("%s's %s step's %s lacks %q: five attempts, a growing pause, and each attempt's number and exit code printed", consoleReleaseWorkflowPath, c.where, consoleRetryHelperName, want)
+			}
+		}
 	}
 
 	// **The publish job**: downloads that artifact, re-checks every asset
@@ -2774,6 +2904,147 @@ func TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions(t *testing.T) {
 		if !ok || out != "version="+c.version+"\n" {
 			t.Errorf("tag %q: ok=%v output %q, want version=%s", c.tag, ok, out, c.version)
 		}
+	}
+}
+
+// TestDocsConsoleReleaseRetryHelperIsBounded runs the staged workflow's
+// Apple-network retry helper -- the same text the signing step and the
+// verification step each carry -- under bash, with a fake `sleep` that records
+// the pause instead of taking it and a fake command that fails a set number of
+// times. The pins in TestDocsConsoleReleaseWorkflowIsStagedAndPinned read the
+// helper's text; this runs it.
+//
+// What it fixes: a command that succeeds first time is run once, with no
+// pause; a command that loses the connection twice is retried after 15 and 30
+// seconds and the caller goes on; a command that never gets there is run five
+// times with 15, 30, 60 and 90 seconds between them and **only then** returns
+// its exit code, so a ticket that is genuinely absent still refuses to
+// publish. The mutations that prove it: returning after the first failure
+// (`return "$status"` moved above the attempt bound) makes the second and third
+// cases red, dropping a `sleep` makes the pauses red, and printing no attempt
+// number makes every case red.
+func TestDocsConsoleReleaseRetryHelperIsBounded(t *testing.T) {
+	_, wf, _, _ := readConsoleReleaseWorkflow(t)
+	_, sign := consoleStepNamed(t, wf.Jobs["release"], "release", consoleReleaseSigningStep)
+	helper := consoleRetryHelper(t, "the signing step", sign.Run)
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+
+	for _, c := range []struct {
+		name    string
+		fails   int
+		code    string
+		want    []string // in order, each on its own line
+		notWant []string
+	}{
+		{
+			name:  "succeeds first time: one attempt, no pause",
+			fails: 0,
+			code:  "68",
+			want: []string{
+				"apple-network attempt 1 of 5: flaky exited 0",
+				"helper ok",
+			},
+			notWant: []string{"attempt 2", "pause"},
+		},
+		{
+			name:  "the connection is lost twice: retried, then the caller goes on",
+			fails: 2,
+			code:  "68",
+			want: []string{
+				"apple-network attempt 1 of 5: flaky exited 68",
+				"pause 15",
+				"apple-network attempt 2 of 5: flaky exited 68",
+				"pause 30",
+				"apple-network attempt 3 of 5: flaky exited 0",
+				"helper ok",
+			},
+			notWant: []string{"attempt 4", "pause 60"},
+		},
+		{
+			name:  "never gets there: five attempts, then the caller refuses",
+			fails: 99,
+			code:  "68",
+			want: []string{
+				"apple-network attempt 1 of 5: flaky exited 68",
+				"pause 15",
+				"apple-network attempt 2 of 5: flaky exited 68",
+				"pause 30",
+				"apple-network attempt 3 of 5: flaky exited 68",
+				"pause 60",
+				"apple-network attempt 4 of 5: flaky exited 68",
+				"pause 90",
+				"apple-network attempt 5 of 5: flaky exited 68",
+				"helper failed 68",
+			},
+			notWant: []string{"attempt 6"},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "bin")
+			if err := os.MkdirAll(bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// `sleep` is not a bash builtin, so the helper's pauses go through
+			// this: it records what it was asked to wait for and returns at
+			// once, which is what keeps this test from taking three minutes.
+			sleep := "#!/usr/bin/env bash\necho \"pause $1\"\n"
+			// A command that fails the first $FLAKY_FAILS times with
+			// $FLAKY_CODE and then succeeds, so one test body covers "the
+			// network came back" and "it never did".
+			flaky := `#!/usr/bin/env bash
+n=$(cat "$FLAKY_COUNTER" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" > "$FLAKY_COUNTER"
+if [ "$n" -le "$FLAKY_FAILS" ]; then
+  exit "$FLAKY_CODE"
+fi
+exit 0
+`
+			for name, body := range map[string]string{"sleep": sleep, "flaky": flaky} {
+				if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			script := "set -euo pipefail\n" + helper + `
+if retry_apple_network flaky; then
+  echo "helper ok"
+else
+  echo "helper failed $?"
+fi
+`
+			cmd := exec.Command(bash, "-e", "-c", script)
+			cmd.Dir = dir
+			cmd.Env = append([]string{
+				"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"FLAKY_COUNTER=" + filepath.Join(dir, "counter"),
+				"FLAKY_FAILS=" + strconv.Itoa(c.fails),
+				"FLAKY_CODE=" + c.code,
+			}, "HOME="+dir)
+			out, runErr := cmd.CombinedOutput()
+			if runErr != nil {
+				t.Fatalf("the helper's script failed to run (%v); output:\n%s", runErr, out)
+			}
+			lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+			at := 0
+			for _, want := range c.want {
+				next := consoleLineIndex(lines[at:], want, true)
+				if next < 0 {
+					t.Errorf("the helper's output does not carry %q after %d line(s); output:\n%s", want, at, out)
+					break
+				}
+				at += next + 1
+			}
+			for _, bad := range c.notWant {
+				if strings.Contains(string(out), bad) {
+					t.Errorf("the helper's output carries %q, which it must not; output:\n%s", bad, out)
+				}
+			}
+		})
 	}
 }
 
