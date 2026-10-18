@@ -544,14 +544,24 @@ export function argvFor(
       case 'pullRequest': {
         // The validator hands this over as the *number* it checked (ipc.ts's
         // `pullRequest` kind returns it unchanged), and the CLI's `--pr` is an
-        // `IntVar`: the digit spelling is what it reads. The spelling is then
-        // put through the same whitelist as every other value, so a number that
-        // is not a number -- `NaN`, `Infinity`, `1e21`, `-1`, `1.5` -- is
-        // refused here rather than turned into argv.
-        if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+        // `IntVar`: the digit spelling is what it reads. `Number.isInteger` alone
+        // was not enough (finding 2, review): `1e21` is an integer and
+        // `String(1e21)` is `"1e+21"`, which ARGUMENT_RE admits -- so the argv
+        // became `--pr 1e+21`, an exponent the `IntVar` cannot read. The
+        // safe-integer bound refuses `1e21` and everything past
+        // `Number.MAX_SAFE_INTEGER`, where the digits the validator saw are no
+        // longer the digits the number names, and the digit-only test below is
+        // the direct statement of what `IntVar` reads. A spelling that is not
+        // digits is refused beside the general whitelist, so a number that is
+        // not a number -- `NaN`, `Infinity`, `1e21`, `-1`, `1.5` -- never
+        // reaches argv.
+        if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
           refused(`${operation}'s ${spec.key} is not a pull request number`)
         }
         const spelled = String(value)
+        if (!/^[0-9]+$/.test(spelled)) {
+          refused(`${operation}'s ${spec.key} is not a pull request number`)
+        }
         if (!isSafeArgumentValue(spelled)) {
           refused(`${operation}'s ${spec.key} is not a value this console will pass to the CLI`)
         }
@@ -587,7 +597,15 @@ export function argvFor(
  * than in the callers because this function is the only producer of an argv. */
 export function assertArgvFlags(operation: string, argv: readonly string[]): void {
   for (const element of argv) {
-    if (!element.startsWith('--')) continue
+    // Any token that begins with `-` is a flag, not just a `--` one. Inspecting
+    // only `--` elements let a single-dash token skip both checks (finding 3,
+    // review): the CLI's real shorthands `-f` (`--follow`) and `-j` (`--json`)
+    // would pass every guard in this file, and `logs -f` is exactly the
+    // never-exiting child a one-shot reader's deadline would then have to kill.
+    // `SPAWN_FLAGS` holds only the long spellings, so a shorthand is refused
+    // here by the allow-list; the never-table check stays for the long spelling
+    // of a never-reachable flag.
+    if (!element.startsWith('-')) continue
     if (!SPAWN_FLAGS.includes(element)) {
       refused(`${operation} would emit ${element}, which is not a flag this console may spawn`)
     }
@@ -1742,9 +1760,6 @@ export function startSidecar(
     readText(started.stderr, (text) => {
       stderr = boundAppend(stderr, text, MAX_STDERR_BYTES)
     })
-    started.on('error', (error) => {
-      finish({ reason: 'unstartable', code: null, signal: null, sentence: error.message, spawns })
-    })
     // `close`, not `exit`, for the same reason as the one-shot reader above:
     // the last frame of a `watch` can arrive after the child is reaped, and a
     // supervisor that decided `lost` on `exit` would both drop that frame and
@@ -1793,6 +1808,30 @@ export function startSidecar(
       }, grace)
     })
     started.on('close', decide)
+    // A spawn that never produced a process -- Node's `error` for a missing
+    // binary (ENOENT), one that is not executable (EACCES) or a descriptor that
+    // cannot be made (EMFILE) -- is a *decided* outcome, not a `finish` that
+    // leaves the decision open for the `close` Node emits right after `error`.
+    // Finding 1 (review): with `finish` alone, `ended` was set but `decided` was
+    // not, so that `close` still reached `decide(null, null)` -- and
+    // `restartDecision` reads a null code as a clean end, returning
+    // `restart: true`. That armed a re-spawn of the very path that is gone every
+    // backoff for the rest of the session, fired `onRestart` *after* `onEnded`,
+    // and outran `stop()`, which early-returned on `ended` before it could set
+    // `stopped` or clear the timer (the feed was already dropped from the
+    // source's map by `onEnded`, so `CliSource.close()` never reached it
+    // either). Marking the outcome decided here makes that `close` a no-op.
+    const unstartable = (error: Error): void => {
+      if (decided) return
+      decided = true
+      if (drainTimer !== null) {
+        timers.clearTimeout(drainTimer)
+        drainTimer = null
+      }
+      child = null
+      finish({ reason: 'unstartable', code: null, signal: null, sentence: error.message, spawns })
+    }
+    started.on('error', unstartable)
   }
 
   // `stop()` is idempotent, and *the promise is what is cached*, not just the
@@ -1806,16 +1845,23 @@ export function startSidecar(
   const stop = (): Promise<SidecarEnd> => {
     if (stopping !== null) return stopping
     stopping = new Promise<SidecarEnd>((resolve) => {
+      // Clearing a restart timer and recording `stopped` comes *before* the
+      // `ended` early-return. Finding 1 (review): a restart timer can be armed
+      // after `finish` has set `ended` (the `error`-then-`close` race this file
+      // now forecloses at the source), and the early return used to come first,
+      // leaving that timer to fire with nothing left to stop it -- a re-spawn of
+      // a feed the console believes is over. `stopped` also lets any decision
+      // already in flight settle as a stop rather than a restart.
+      if (timer !== null) {
+        timers.clearTimeout(timer)
+        timer = null
+      }
+      stopped = true
       if (ended) {
         resolve({ reason: 'stopped', code: null, signal: null, sentence: null, spawns })
         return
       }
       settle = resolve
-      stopped = true
-      if (timer !== null) {
-        timers.clearTimeout(timer)
-        timer = null
-      }
       const running = child
       if (running === null) {
         finish({ reason: 'stopped', code: null, signal: null, sentence: null, spawns })

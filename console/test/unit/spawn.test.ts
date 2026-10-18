@@ -54,6 +54,7 @@ import {
   SPAWN_COMMANDS,
   WELL_KNOWN_BINARY_PREFIXES,
   argvFor,
+  assertArgvFlags,
   assertSpawnSurface,
   binDirectories,
   childEnvironment,
@@ -450,6 +451,23 @@ describe('the spawn table and the argv it builds', () => {
     }
   })
 
+  it('refuses a pull request number whose spelling is not digits', () => {
+    // Finding 2 (review): `Number.isInteger(1e21)` is true and `String(1e21)`
+    // is `"1e+21"`, which ARGUMENT_RE admits, so the old guard built
+    // `--pr 1e+21` -- an exponent the CLI's `IntVar` cannot read. The mutation
+    // this catches is the bound falling back to `Number.isInteger` and the
+    // digit-only test being dropped: either alone lets `1e21` reach argv.
+    for (const value of [1e21, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => argvFor('runs.list', { pr: value }, safeContext()), String(value)).toThrow(
+        /not a pull request number/,
+      )
+    }
+    // The bound is not vacuous: the largest safe integer still spells as digits
+    // and becomes argv.
+    const argv = argvFor('runs.list', { pr: Number.MAX_SAFE_INTEGER }, safeContext())
+    expect(argv[argv.indexOf('--pr') + 1]).toBe(String(Number.MAX_SAFE_INTEGER))
+  })
+
   it('accepts the report window `report` reads, and only that one', () => {
     // `spend.report`'s `--since` is not `runs ls`'s: `reportRange` reads a date
     // or `Nd`/`Nw`, so `12w` and `2026-10-01` must survive argvFor while `3h`
@@ -553,6 +571,28 @@ describe('the spawn table and the argv it builds', () => {
     const strict = planFor('environment.report', {}, safeContext())
     expect(strict.argv).not.toContain('--strict')
     expect(strict.argv).not.toContain('--follow')
+  })
+
+  it('refuses a single-dash shorthand, not only a --flag', () => {
+    // Finding 3 (review): the guard inspected only `--` elements, so a token
+    // like `-f` (`--follow`'s real shorthand) or `-j` (`--json`'s) skipped both
+    // the allow-list and the never-table -- and `logs -f` is exactly the
+    // never-exiting child a one-shot reader's deadline would then have to kill.
+    // The mutation this catches is `startsWith('--')` coming back: restore it
+    // and these calls stop throwing.
+    for (const argv of [
+      ['/opt/homebrew/bin/fugaro', 'logs', '--dir', '/tmp/work', '-f'],
+      ['/opt/homebrew/bin/fugaro', 'watch', '-j', '--project', 'fugaro'],
+    ]) {
+      expect(() => assertArgvFlags('run.logs', argv), argv.join(' ')).toThrow(
+        /not a flag this console may spawn/,
+      )
+    }
+    // The allow-list still admits the long spellings a row actually builds, so
+    // the refusal above is about the shorthand and not about the argv shape.
+    expect(() =>
+      assertArgvFlags('live.watch', ['/opt/homebrew/bin/fugaro', 'watch', '--json', '--project', 'fugaro']),
+    ).not.toThrow()
   })
 
   it('refuses a subcommand outside the table before any process exists', () => {
@@ -1289,6 +1329,58 @@ describe('the supervisor', () => {
     expect(ends).toEqual([
       { reason: 'refused', sentence: 'this checkout belongs to project acme; --project says fugaro', spawns: 1 },
     ])
+  })
+
+  it('does not re-spawn a binary that never started, and a later stop() still settles', async () => {
+    // Finding 1 (review). `childThatNeverSpawns` now emits `close` after
+    // `error`, as Node does. The supervisor used to `finish` on `error` -- which
+    // sets `ended`, not `decided` -- and the following `close` then reached
+    // `decide(null, null)`, which `restartDecision` reads as a clean end and
+    // answers `restart: true`. The mutation this catches is dropping `decided`
+    // from the `unstartable` handler: `restarts` would hold one entry and
+    // `timers.fire()` would spawn a second child.
+    const plan = planFor('live.watch', {}, safeContext())
+    const timers = manualTimers()
+    let spawned = 0
+    const restarts: unknown[] = []
+    const ends: { reason: string; spawns: number }[] = []
+    const sidecar = startSidecar(
+      plan,
+      {
+        onFrame: () => undefined,
+        onNotice: () => undefined,
+        onRestart: (restart) => restarts.push(restart),
+        onEnded: (end) => ends.push({ reason: end.reason, spawns: end.spawns }),
+      },
+      {
+        spawner: () => {
+          spawned += 1
+          return childThatNeverSpawns()
+        },
+        timers,
+      },
+    )
+
+    await waitFor(() => ends.length > 0)
+    expect(ends).toEqual([{ reason: 'unstartable', spawns: 1 }])
+    // `onEnded` came and `onRestart` did not: the outcome was decided, not left
+    // for the `close` that follows `error` to re-decide as a clean end.
+    expect(restarts).toHaveLength(0)
+    // No restart timer is armed, so nothing fires and no second child exists.
+    expect(timers.pending()).toBe(0)
+    timers.fire()
+    expect(spawned).toBe(1)
+
+    // `stop()` after the feed has ended settles rather than hanging, and leaves
+    // no timer behind for a re-spawn the ended feed could no longer stop.
+    await expect(sidecar.stop()).resolves.toEqual({
+      reason: 'stopped',
+      code: null,
+      signal: null,
+      sentence: null,
+      spawns: 1,
+    })
+    expect(timers.pending()).toBe(0)
   })
 
   it('treats a signal as the ordinary end of a feed: it restarts', () => {
@@ -2224,8 +2316,15 @@ const throwingSpawner: ChildSpawner = () => {
  * whatever happens, then emits `error` (ENOENT for a binary that is not there,
  * EACCES for one that is not executable) and never emits `spawn`. The streams
  * are never readable, and nothing is ever written to them.
+ *
+ * Node emits `close` *after* `error` for a spawn that produced no process, and
+ * the supervisor decides the outcome on `close` (`startSidecar`'s `decide`), so
+ * this fixture emits both, in that order, on the microtask queue. A fixture that
+ * stopped at `error` hid the re-spawn that pair used to arm (finding 1, review):
+ * the `close` reached `decide(null, null)` and read a null code as a clean end.
  */
 function childThatNeverSpawns(): SpawnedChildLike {
+  const closeListeners: ((code: number | null, signal: string | null) => void)[] = []
   return {
     stdout: { on: () => undefined },
     stderr: { on: () => undefined },
@@ -2233,11 +2332,20 @@ function childThatNeverSpawns(): SpawnedChildLike {
       event: 'spawn' | 'error' | 'exit' | 'close',
       listener: (...args: unknown[]) => void,
     ) => {
+      if (event === 'close') {
+        closeListeners.push(listener as (code: number | null, signal: string | null) => void)
+        return undefined
+      }
       if (event !== 'error') return undefined
+      // The microtask runs after `spawnOnce` has registered every listener, so
+      // `closeListeners` is populated by the time it fires; `runToCompletion`
+      // registers both too. Node's order is `error` then `close`, and this fires
+      // the error listener first in the same microtask.
       queueMicrotask(() => {
         const error = new Error('spawn /opt/homebrew/bin/fugaro ENOENT') as Error & { code?: string }
         error.code = 'ENOENT'
         listener(error)
+        for (const close of closeListeners) close(null, null)
       })
       return undefined
     }) as SpawnedChildLike['on'],
