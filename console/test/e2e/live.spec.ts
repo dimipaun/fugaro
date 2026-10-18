@@ -437,14 +437,21 @@ test.describe('the Live screen', () => {
     // `sparkline(history, repo.slug, document.now)`, with the history observed at
     // the same stamp). So two frames observed through one history and drawn at
     // their own clock are the fixture's picture of that window; the same two
-    // frames with the document's clock moved an hour past the window's end are a
-    // window with nothing left in it.
+    // frames with the last document's clock moved an hour on are drawn at a
+    // window that has lost the earlier of the two samples and still holds that
+    // last document's own.
     //
     // Mutation: a window cut at the renderer's wall clock instead (a `Date.now()`
-    // in `BurnHistory.window` or at its call site) draws the SAME bars for both
-    // mounts below -- the fixture's stamps are three days old, so every sample
-    // falls out of a window ending at "now" in both mounts -- and the last
-    // assertion below fails.
+    // in `BurnHistory.window` or at its call site) fails the FIRST assertion
+    // below. The fixture's stamps are three days old, so both mounts window to
+    // nothing, and a window with no samples is not an empty chart: `burnLine`
+    // draws the one mark it draws when no document has been seen at all
+    // (`screens/live.ts`, the `line.bars.length === 0` branch), which carries no
+    // `data-height`. So `asRecorded.sparkBars` is 1, not 2, and the
+    // `sparkHeights.length` comparison further down is `1 < 1` rather than
+    // `1 < 2`. The re-mount assertions at the end still pass under that mutation
+    // -- the two mounts there are both the same empty mark -- which is exactly
+    // why the count and the height the window keeps are asserted first.
     const observed = theFrames().slice(-2)
     expect(observed).toHaveLength(2)
 
@@ -456,13 +463,20 @@ test.describe('the Live screen', () => {
     expect(asRecorded.sparkBars).toBe(2)
 
     // The same documents with the last one's own clock an hour later: the window
-    // it is drawn at is `13:04:21Z` minus `BurnWindow`, the sample the earlier
-    // document stamped at `12:04:20Z` is outside it, and the console says it has
-    // seen nothing for the window it is drawing rather than drawing a bar it has
-    // no reading for.
+    // it is drawn at ends at `13:04:21Z`, so its cut is `12:59:21Z`, the sample
+    // the earlier document stamped at `12:04:20Z` is outside it, and the sample
+    // the LAST document stamped at `13:04:21Z` -- the drawing frame's own -- is
+    // still inside it. One bar, and it is that sample's measured height: what a
+    // window cut anywhere else loses is a MEASURED bar, never one of the marks
+    // for a sample that never arrived.
     await mount([observed[0] as JSONDoc, atAClock(observed[1] as JSONDoc, 60 * 60)], 'light')
     const anHourLater = await screen(page)
+    // The surviving bar is pinned, not just counted: a bar drawn for a sample
+    // that is not there is a gap mark (`—`, `formatReading`'s `GAP_MARK`), and a
+    // window with no samples at all is one bar too, so a count alone would read
+    // the same for the reading this test is about and for both of those.
     expect(anHourLater.sparkBars).toBe(1)
+    expect(anHourLater.sparkHeights).toEqual([asRecorded.sparkHeights[1]])
     expect(anHourLater.sparkHeights.length).toBeLessThan(asRecorded.sparkHeights.length)
 
     // And the same two frames, at the same clock reading, draw the same screen
