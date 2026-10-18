@@ -596,6 +596,18 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 		if p, ok := config.ProviderBySecret(lc.Providers, s.Name); ok {
 			return nil, userErr("workflow %s: secret %s is the key of model provider %s, which only the owner's local config may use", name, s.Name, p)
 		}
+		if p, ok := config.ReservedProviderSecret(lc.Providers, s.Name); ok {
+			// The conventional name of a configured provider's key, and not
+			// that provider's own .secret (a name that IS its key took the
+			// branch above). No workflow may mount it: the name belongs to
+			// that provider's key (config.ReservedProviderSecret), so a value
+			// stored under it would be read as the provider's credential the
+			// day the key is renamed to the convention, and `fugaro secrets
+			// set` refuses to store one — the job would mount a name that can
+			// have no version. Refused here rather than left to the readiness
+			// check, which would blame a missing secret.
+			return nil, userErr("workflow %s: secret %s is the name reserved for model provider %s's key (the convention names a provider's key after its entry), so no workflow may declare it", name, s.Name, p)
+		}
 		out = append(out, SecretMount{s.Name, s.Env})
 	}
 	return out, nil

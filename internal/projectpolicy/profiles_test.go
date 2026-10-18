@@ -322,6 +322,42 @@ func TestDecodeRefusesAProfileMountingAClaudeOAuthToken(t *testing.T) {
 	}
 }
 
+// TestDecodeRefusesAProfileMountingACodexOAuthToken: the Codex harness's OAuth
+// credential names are reserved ahead of the harness (config.CodexOAuthToken,
+// owner ruling of 2026-10-18). Fugaro does not drive Codex, so nothing mints a
+// value for one and `fugaro secrets set` refuses to store one: a profile
+// naming it would mount a container that can never have a version, and would
+// name the credential the harness reads the day it lands. The whole
+// codex-oauth-token-<name> namespace, not only the bare name.
+//
+// The mutation is dropping the refusal: every secrets list below is accepted.
+func TestDecodeRefusesAProfileMountingACodexOAuthToken(t *testing.T) {
+	secrets := func(list string) string {
+		return `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":` + list + `}}`
+	}
+	for _, list := range []string{
+		`["codex-oauth-token"]`,
+		`["codex-oauth-token-acme"]`,
+		`["github-app-key","codex-oauth-token"]`,
+	} {
+		_, err := decodeProfiles(t, secrets(list))
+		if err == nil {
+			t.Errorf("the secrets list %s was accepted", list)
+			continue
+		}
+		for _, want := range []string{"reserved for the Codex harness's OAuth credential", "codex-oauth-token"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal for %s does not say %q: %v", list, want, err)
+			}
+		}
+	}
+	// A name merely shaped like one is not the namespace: the rule is
+	// exactly the two prefixes (config.CodexOAuthSecret).
+	if _, err := decodeProfiles(t, secrets(`["my-codex-oauth-token","codex-token"]`)); err != nil {
+		t.Fatalf("a name merely shaped like a Codex token was refused: %v", err)
+	}
+}
+
 // TestDecodeRefusesAnExplicitlyEmptyProfileAllowRepos: a written empty list is
 // not the same statement as an absent one, and the node cannot carry the
 // difference (the carrier's omitempty): read as "the project's list applies",
