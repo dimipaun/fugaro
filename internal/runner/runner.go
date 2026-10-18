@@ -1086,8 +1086,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 		r.rec.Branch = branch
 		// The start commit, read at once and locally: a checkpoint never
-		// pushes a tip at or behind it (nothing of the agent's yet).
+		// pushes a tip at or behind it (nothing of the agent's yet), and it
+		// is the base the workflow guard measures the run's changes
+		// against (workBase) — the task's ref, which is not the base branch
+		// when the run was started from another one. Recorded as it is read,
+		// so what the guard compared against is in the record.
 		r.startSHA, startErr = repo.CommitOf(ctx, "refs/heads/"+branch)
+		r.rec.StartSHA = r.startSHA
 		data, err := os.ReadFile(filepath.Join(r.d.WorkDir, "fugaro.yaml"))
 		if err != nil {
 			return fmt.Errorf("reading fugaro.yaml at %s: %w", spec.Ref, err)
@@ -2175,6 +2180,10 @@ func (r *run) logTail(ready bool, records []verify.Record) *LogTail {
 
 func (r *run) finalize(ctx context.Context) error {
 	r.rec.Stage = "finalize"
+	// The paths this run changed, recorded before anything else saves the
+	// record, so every run that reaches finalize carries them — the ones
+	// that end without a pull request included (design D27, V2.1.2).
+	r.recordChangedFiles(ctx)
 	r.save(ctx)
 	if r.skipPR {
 		// The check gate already ended the run (gate.go: endWithoutPR or
@@ -2203,10 +2212,14 @@ func (r *run) finalize(ctx context.Context) error {
 	if r.follow == nil {
 		// A follow-up's branch is already ahead of its base: when its
 		// agent adds nothing, the report says so rather than an empty
-		// commit.
-		ahead, err := r.repo.AheadOf(ctx, base)
+		// commit. What is counted is the run's own commits — those after
+		// the commit it was cut from that the base branch does not have —
+		// not origin/<base>..HEAD: for a run cut from another ref (--ref
+		// console) every one of that ref's commits is ahead of the base
+		// branch, and "the agent made no commits" could never fire.
+		ahead, err := r.runCommits(ctx)
 		if err != nil {
-			return fmt.Errorf("counting commits ahead of %s: %w", base, err)
+			return fmt.Errorf("counting the run's own commits: %w", err)
 		}
 		if ahead == 0 {
 			r.fail("the agent made no commits")
@@ -2219,6 +2232,11 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading head sha: %w", err)
 	}
+	// Read once more now that the run's own commits are final: work the
+	// agent left uncommitted was just committed above, and those paths are
+	// this run's too. A failed read keeps the set read at the top of
+	// finalize, which is still this run's work.
+	r.recordChangedFiles(ctx)
 	records, err := verify.Records(r.d.StateDir)
 	if err != nil {
 		return fmt.Errorf("reading verify records: %w", err)
@@ -2515,6 +2533,14 @@ func (r *run) uploadVerifyRecords(ctx context.Context, records []verify.Record) 
 // rawPRText returns the PR title and body the agent wrote to pr.md, or
 // defaults built from the task. The agent's text is redacted before it is
 // published.
+//
+// Without a pr.md the title is the run's own, from the ONE place the text
+// comes from (task.Spec.TitleLine): the title its launcher stored (fugaro
+// run --title), else the task prompt's first line. A run launched with a
+// title also carries it as the body's first heading, so a brief whose first
+// line is a shared preamble is told apart in the pull request itself and not
+// only in its title; a run without one keeps the body it always had, byte
+// for byte.
 func (r *run) rawPRText() (string, string) {
 	if data, err := os.ReadFile(filepath.Join(r.d.StateDir, prFile)); err == nil {
 		title, body, _ := strings.Cut(strings.TrimSpace(agent.Redact(string(data), r.secretList())), "\n")
@@ -2523,11 +2549,15 @@ func (r *run) rawPRText() (string, string) {
 			return title, strings.TrimSpace(body)
 		}
 	}
-	first, _, _ := strings.Cut(strings.TrimSpace(r.spec.Task), "\n")
+	first := r.spec.TitleLine()
 	if runes := []rune(first); len(runes) > 72 {
 		first = string(runes[:71]) + "…"
 	}
-	return first, fmt.Sprintf("Opened by Fugaro run `%s`.\n\n## Task\n\n%s", r.rec.RunID, r.spec.Task)
+	body := fmt.Sprintf("Opened by Fugaro run `%s`.\n\n## Task\n\n%s", r.rec.RunID, r.spec.Task)
+	if r.spec.Title != "" {
+		body = fmt.Sprintf("Opened by Fugaro run `%s`.\n\n# %s\n\n## Task\n\n%s", r.rec.RunID, first, r.spec.Task)
+	}
+	return first, body
 }
 
 // Pull request text bounds. They keep well under GitHub's limits (titles

@@ -217,7 +217,7 @@ Depends on the answer to D45 and on which of the readings above the bridge took:
 
 **F36 — bilingual support and custom vocabulary. (Open)**
 
-The spec's §13 asks whether English/Romanian is needed in v1, and wants custom vocabulary for "project, repo and recipe names". Both are provider properties rather than Fugaro properties: vocabulary boosting is a per-provider feature (the tree's own precedent for a per-provider capability is the price catalog and its `Unverified` rows, `docs/design/provider-price-catalog.md`), and the repo/project names a vocabulary would need are exactly the identifiers `watch` sanitizes and clips (`internal/watch/json.go`'s `JSONRun.Title` is "the task's first line, clipped to 80 characters and redacted"). Neither can be settled before the provider is chosen (§D46).
+The spec's §13 asks whether English/Romanian is needed in v1, and wants custom vocabulary for "project, repo and recipe names". Both are provider properties rather than Fugaro properties: vocabulary boosting is a per-provider feature (the tree's own precedent for a per-provider capability is the price catalog and its `Unverified` rows, `docs/design/provider-price-catalog.md`), and the repo/project names a vocabulary would need are exactly the identifiers `watch` sanitizes and clips (`internal/watch/json.go`'s `JSONRun.Title` is "the run's own title, clipped to 80 characters and redacted"). Neither can be settled before the provider is chosen (§D46).
 
 **F37 — the provider's own data policy is not readable from Fugaro. (Open)**
 

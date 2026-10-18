@@ -101,13 +101,23 @@ function newMailbox(overrides = {}) {
   return created.state;
 }
 
-/** A message with the schema's five fields, and an `at` inside the window. */
+/**
+ * A message with the schema's required fields, and an `at` inside the window.
+ *
+ * `mac` is required on every message (P6.3, §3.5) and this module never reads
+ * it — the tag is the consumer's to check, with a key this package does not
+ * hold, before a message is ever delivered — so the fixture carries a
+ * mac-SHAPED placeholder: 64 lowercase hex characters that no key produces.
+ * A test that wants a real tag over a real byte string uses the vectors in
+ * mailbox-schema.
+ */
 function message(overrides = {}) {
   return {
     id: 'm-0001',
     sender: 'phone-a',
     text: 'run 42 finished',
     at: NOW - 1_000,
+    mac: 'f'.repeat(64),
     ...overrides,
   };
 }
