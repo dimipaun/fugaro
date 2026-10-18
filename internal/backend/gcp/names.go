@@ -533,9 +533,15 @@ func bucketPrefixClause(bucket, prefix, slug string) string {
 	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/%s/%s/")`, bucket, prefix, slug)
 }
 
+// BucketConditionTitlePrefix is the fixed part of BucketConditionTitle: a
+// caller that must recognise the title rather than build it (internal/infra/tf
+// reads a plan's condition titles) takes it from here, so the two spellings
+// cannot drift apart.
+const BucketConditionTitlePrefix = "fugaro-"
+
 // BucketConditionTitle is the title of the bucket condition of the account
 // saID, as the bootstrap set it.
-func BucketConditionTitle(saID string) string { return "fugaro-" + saID }
+func BucketConditionTitle(saID string) string { return BucketConditionTitlePrefix + saID }
 
 // TokenBucketPrefix is the runs bucket prefix the budget token objects live
 // under (internal/budget/token's ObjectPrefix, pinned equal by a test): out of
@@ -559,6 +565,42 @@ func TokenBucketCondition(bucket, slug string) string {
 // account saID: distinct from BucketConditionTitle, so the two bindings are
 // told apart by title as well as by role.
 func TokenBucketConditionTitle(saID string) string { return "fugaro-tokens-" + saID }
+
+// ProjectTokenBucketCondition is the condition of a *project job's* read-only
+// (objectViewer) grant on the runs bucket: the whole of tokens/, with no slug,
+// the same widening ProjectBucketCondition makes on runs/, cache/ and locks/,
+// and for the same reason — a project job serves every repository admitted to
+// its profile, so the token object it must read is no longer inside one
+// repository's prefix (plan task 3.2 step 2; budget-token-channel.md §7.2,
+// where the sentence about Task 3.2's shared job names this grant).
+//
+//	resource.name.startsWith("projects/_/buckets/<b>/objects/tokens/")
+//
+// Read-only is what keeps it from being a widening of the same kind as the
+// objectUser one: objectViewer carries no create, no delete and no update, so
+// a project job can read a queued run's sealed token and can neither replace
+// nor remove it. What it reads is ciphertext, because the object is sealed
+// under a key only the execution the launch minted it for receives (§7.1), so
+// the reach is a capability over bytes and not over tokens. It is a separate
+// builder from TokenBucketCondition, which names one slug: the two must not be
+// confused, and neither may be built from the other by passing an empty slug.
+func ProjectTokenBucketCondition(bucket string) string {
+	return projectBucketPrefixClause(bucket, TokenBucketPrefix)
+}
+
+// ProjectTokenBucketConditionTitlePrefix is the fixed part of
+// ProjectTokenBucketConditionTitle, for a caller that must recognise the title
+// rather than build it (internal/infra/tf).
+const ProjectTokenBucketConditionTitlePrefix = "fugaro-project-tokens-"
+
+// ProjectTokenBucketConditionTitle is the title of that grant's condition for
+// the project job account saID, as ProjectBucketCondition's is for its own
+// grant: distinct from TokenBucketConditionTitle, so a project job's tokens/
+// binding is told apart from a per-repository job's by title as well as by
+// expression.
+func ProjectTokenBucketConditionTitle(saID string) string {
+	return ProjectTokenBucketConditionTitlePrefix + saID
+}
 
 // LauncherBucketConditionTitle is the title of the launchers' objectUser
 // grant on the runs bucket (docs/design/bucket-iam.md H5). It names both

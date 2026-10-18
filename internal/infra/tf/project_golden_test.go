@@ -34,6 +34,10 @@ type projectJobFixture struct {
 		Title      string `json:"title"`
 		Expression string `json:"expression"`
 	} `json:"bucket_condition"`
+	TokenCondition struct {
+		Title      string `json:"title"`
+		Expression string `json:"expression"`
+	} `json:"token_condition"`
 }
 
 func installationGoldenFixture(t *testing.T) installationFixture {
@@ -267,6 +271,99 @@ func TestProjectJobBucketGrantsAreTheWidenedCondition(t *testing.T) {
 	}, map[string]any{}, "create")
 	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{named}}, nil); !refusedTheGrant(got, repoMod+".google_storage_bucket_iam_member.x") {
 		t.Errorf("a per-repository job account's widened grant is covered when the grant names its member\nrefused: %q", got)
+	}
+}
+
+// The other half of the project job's pair (plan task 3.2 step 2;
+// docs/design/budget-token-channel.md §7.2): the sealed budget token lives
+// under tokens/, which the widened objectUser grant never covers, so the
+// shared job account carries a second, read-only grant on the whole of
+// tokens/. Without it a project job's runs that carry a budget token stop at
+// bootstrap, reading their own sealed token as a missing object.
+func TestProjectJobTokenGrantsAreTheWidenedTokensRead(t *testing.T) {
+	f := installationGoldenFixture(t)
+	if len(f.ProjectJobs) == 0 {
+		t.Fatalf("the installation golden declares no project job: regenerate it as TestGoldenInstallationHasOneProjectJobPerTriple says")
+	}
+	p := goldenPlan(t, "installation")
+	want := gcp.ProjectTokenBucketCondition(f.RunsBucket)
+	for name, j := range f.ProjectJobs {
+		// The fixture is what fugaro init writes (internal/infra.ProjectJobs):
+		// the same widening the module's grant carries, from the Go side.
+		if j.TokenCondition.Expression != want {
+			t.Errorf("the fixture's job %s carries %q, want the widened %q", name, j.TokenCondition.Expression, want)
+		}
+		if w := gcp.ProjectTokenBucketConditionTitle(j.ServiceAccount.AccountID); j.TokenCondition.Title != w {
+			t.Errorf("the fixture's job %s titles its tokens condition %q, want %q", name, j.TokenCondition.Title, w)
+		}
+		mod := `module.project["` + name + `"]`
+		rc := resource(t, p, mod+".google_storage_bucket_iam_member.job_tokens")
+		if got := str(rc.Change.After["bucket"]); got != f.RunsBucket {
+			t.Errorf("%s grants on %q, want %s", mod, got, f.RunsBucket)
+		}
+		// Read-only, and that is what keeps the widening bounded: objectViewer
+		// carries no create, no delete and no update, so the account can read a
+		// queued run's sealed token and can neither replace nor remove it.
+		// objectUser here would be a write on the one prefix the seal moved out
+		// of runs/ so that a job could not write it.
+		if got := str(rc.Change.After["role"]); got != "roles/storage.objectViewer" {
+			t.Errorf("%s grants %q on tokens/, want roles/storage.objectViewer", mod, got)
+		}
+		conds := objects(rc.Change.After["condition"])
+		if len(conds) != 1 {
+			t.Fatalf("%s has %d conditions on its tokens grant, want one", mod, len(conds))
+		}
+		if got := str(conds[0]["expression"]); got != want {
+			t.Errorf("%s grants %q,\nwant the widened tokens condition %q", mod, got, want)
+		}
+		if tt := str(conds[0]["title"]); tt != gcp.ProjectTokenBucketConditionTitle(j.ServiceAccount.AccountID) {
+			t.Errorf("%s titles its tokens condition %q, want %q", mod, tt, gcp.ProjectTokenBucketConditionTitle(j.ServiceAccount.AccountID))
+		}
+		if d := str(conds[0]["description"]); d != "" {
+			t.Errorf("%s describes its tokens condition %q, which the module never sets", mod, d)
+		}
+		// The two grants on one account do not overlap: what the account may
+		// write (runs/, cache/, locks/) and what it may read (tokens/) are
+		// disjoint, which is the whole point of moving the token out of runs/.
+		obj := objects(resource(t, p, mod+".google_storage_bucket_iam_member.job").Change.After["condition"])
+		if len(obj) != 1 {
+			t.Fatalf("%s has %d conditions on its objectUser grant, want one", mod, len(obj))
+		}
+		if expr := str(obj[0]["expression"]); strings.Contains(expr, "/"+gcp.TokenBucketPrefix+"/") {
+			t.Errorf("%s's objectUser grant reaches tokens/: %q", mod, expr)
+		}
+	}
+	// The review screen accepts the pair, and only the pair: the tokens grant
+	// is covered for the module's own account, refused as a write, refused
+	// when another account's title names it, and refused when a
+	// per-repository workflow module writes the same expression — that
+	// module's account serves one repository and must name its own prefix.
+	saID := gcp.ProjectServiceAccountID("standard", "github", "")
+	mod := `module.project["` + gcp.ProjectJobName("standard", "github", "") + `"]`
+	created := inModule(mod, "google_service_account", map[string]any{"account_id": saID}, map[string]any{}, "create")
+	tokenGrant := func(mod, id, role string) ResourceChange {
+		return inModule(mod, "google_storage_bucket_iam_member", map[string]any{
+			"bucket": f.RunsBucket, "role": role,
+			"condition": []any{map[string]any{"title": gcp.ProjectTokenBucketConditionTitle(id), "expression": want, "description": nil}},
+		}, map[string]any{"member": true}, "create")
+	}
+	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{created, tokenGrant(mod, saID, "roles/storage.objectViewer")}}, nil); len(got) != 0 {
+		t.Errorf("a project job's tokens grant is not covered: %q", got)
+	}
+	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{created, tokenGrant(mod, saID, "roles/storage.objectUser")}}, nil); len(got) == 0 {
+		t.Error("a project job's tokens grant is covered as objectUser: a write on the sealed token objects")
+	}
+	// A title naming no account this plan creates: the grant would be for an
+	// account nothing here says exists.
+	stranger := inModule(mod, "google_service_account", map[string]any{"account_id": "fugaro-p-other-github-0123456789ab"}, map[string]any{}, "create")
+	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{stranger, tokenGrant(mod, saID, "roles/storage.objectViewer")}}, nil); len(got) == 0 {
+		t.Error("a project job's tokens grant whose title names no account the plan creates is covered")
+	}
+	repoMod := `module.repo.module.workflow["api"]`
+	repoSA := gcp.ServiceAccountID("bitbucket-acme-app", "api")
+	repoCreated := inModule(repoMod, "google_service_account", map[string]any{"account_id": repoSA}, map[string]any{}, "create")
+	if got := goldenCover().NotCovered(&Plan{ResourceChanges: []ResourceChange{repoCreated, tokenGrant(repoMod, repoSA, "roles/storage.objectViewer")}}, nil); len(got) == 0 {
+		t.Errorf("a per-repository workflow module's whole-tokens/ read is covered: %s serves one repository, and its token grant must name that repository's prefix", repoMod)
 	}
 }
 

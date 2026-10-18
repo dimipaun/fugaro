@@ -1085,11 +1085,20 @@ var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_
 // tokens/<slug>/ of a bucket, nothing before it and nothing after it.
 var tokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/` + gcp.TokenBucketPrefix + `/([a-z0-9][a-z0-9_-]*)/"\)$`)
 
+// projectTokenClause is the one clause of a project job account's read-only
+// grant on the bucket's budget token objects, as
+// gcp.ProjectTokenBucketCondition writes it: the whole of tokens/ of a
+// bucket, no slug segment (plan task 3.2 step 2).
+var projectTokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/` + gcp.TokenBucketPrefix + `/"\)$`)
+
 // bucketCondition says why a bucket grant's condition is not the modules'
 // (docs/design/bucket-iam.md H6), "" when it is: objectAdmin carries none; an
 // objectViewer carries none, except an account's, which may carry exactly
 // one tokens/<slug>/ clause on one of this run's buckets (the job's read of
-// its own budget token objects, budget-token-channel.md §7.2); a person's
+// its own budget token objects, budget-token-channel.md §7.2) or, in the
+// project module and for an account that module creates, exactly one
+// whole-tokens/ clause (gcp.ProjectTokenBucketCondition, the shared job's
+// read of every repository's sealed token, plan task 3.2 step 2); a person's
 // objectUser carries exactly the launchers' condition on one of this run's
 // buckets; an account's objectUser carries either a project job's widened
 // condition (gcp.ProjectBucketCondition, byte for byte, in the project
@@ -1122,7 +1131,13 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 	case role == "roles/storage.objectViewer" && len(conds) != 0 && !person:
 		m := tokenClause.FindStringSubmatch(expr)
 		if m == nil || !slices.Contains(c.Buckets, m[1]) || (bucket != "" && bucket != m[1]) {
-			return "grants objectViewer on the bucket to an account under a condition that is not one repository's tokens/ condition of this run's bucket"
+			// Not a per-repository job's tokens/<slug>/: it may still be a
+			// project job's, which is the project module's own widening and
+			// is accepted only for an account that module creates.
+			if c.projectJobTokenCondition(rc, createdSAIDs, heldSAIDs, title, expr) {
+				return ""
+			}
+			return "grants objectViewer on the bucket to an account under a condition that is not one repository's tokens/ condition of this run's bucket, nor a project job's whole-tokens/ one"
 		}
 	case role == "roles/storage.objectAdmin" || role == "roles/storage.objectViewer":
 		if len(conds) != 0 {
@@ -1185,33 +1200,7 @@ var projectModule = regexp.MustCompile(`^module\.project\["[^"]+"\]$`)
 // created just the same — or granting it to an account of another module, is
 // still a plan the review screen stops.
 func (c Cover) projectJobCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool, title, expr string) bool {
-	if !projectModule.MatchString(modulePrefix(rc)) {
-		return false
-	}
-	var id string
-	switch m := saMember.FindStringSubmatch(str(rc.Change.After["member"])); {
-	case m != nil:
-		// The grant names its account (an update plan, where the account
-		// already exists): it must be a Fugaro job account of this run that
-		// the same module holds — not merely any job account of the project,
-		// which would let one module's grant widen another profile's or a
-		// repository's account — and the title must be that account's
-		// condition title.
-		if !slices.Contains(c.Projects, m[2]) || !jobAccountID(m[1]) || !heldSAIDs[modulePrefix(rc)+"|"+m[1]] {
-			return false
-		}
-		id = m[1]
-	case unknown(rc.Change, "member"):
-		// The computed member the module writes: the title is built from the
-		// account the same module creates, so the plan must create it.
-		id = strings.TrimPrefix(title, "fugaro-")
-		if id == "" || id == title || !createdSAIDs[modulePrefix(rc)+"|"+id] {
-			return false
-		}
-	default:
-		return false
-	}
-	if title != gcp.BucketConditionTitle(id) {
+	if _, ok := c.projectJobGrantAccount(rc, createdSAIDs, heldSAIDs, title, gcp.BucketConditionTitlePrefix); !ok {
 		return false
 	}
 	bucket := str(rc.Change.After["bucket"])
@@ -1224,6 +1213,69 @@ func (c Cover) projectJobCondition(rc ResourceChange, createdSAIDs, heldSAIDs ma
 		}
 	}
 	return false
+}
+
+// projectJobTokenCondition reports whether a bucket grant is a project job's
+// read-only grant on the bucket's budget token objects
+// (gcp.ProjectTokenBucketCondition, plan task 3.2 step 2), for the account
+// the grant is written for. It is projectJobCondition's own account rule —
+// the project module, an account that module creates or holds, the title
+// built from that account — with the tokens/ builder's title and expression,
+// so the same plan a per-repository job's token grant comes from cannot be
+// read as this one.
+func (c Cover) projectJobTokenCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool, title, expr string) bool {
+	if _, ok := c.projectJobGrantAccount(rc, createdSAIDs, heldSAIDs, title, gcp.ProjectTokenBucketConditionTitlePrefix); !ok {
+		return false
+	}
+	bucket := str(rc.Change.After["bucket"])
+	for _, b := range c.Buckets {
+		if !gcp.ValidBucketName(b) || (bucket != "" && bucket != b) {
+			continue
+		}
+		if expr == gcp.ProjectTokenBucketCondition(b) {
+			return true
+		}
+	}
+	return false
+}
+
+// projectJobGrantAccount is the account rule both project-module conditions
+// share: the grant lives in the project module, its condition's title is
+// titlePrefix + the account's ID, and the account is one that module creates
+// or holds in this plan. It returns the ID and whether the grant passed.
+//
+// The module path is what says a grant belongs to the project module — the
+// account IDs cannot (see projectModule). An account named outright (an
+// update plan, where the account already exists) must be a Fugaro job account
+// of this run that the same module holds, not merely any job account of the
+// project, which would let one module's grant widen another profile's or a
+// repository's account; a computed member must be one the same module creates
+// in this plan, since the title is built from it.
+func (c Cover) projectJobGrantAccount(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool, title, titlePrefix string) (string, bool) {
+	if !projectModule.MatchString(modulePrefix(rc)) {
+		return "", false
+	}
+	var id string
+	switch m := saMember.FindStringSubmatch(str(rc.Change.After["member"])); {
+	case m != nil:
+		if !slices.Contains(c.Projects, m[2]) || !jobAccountID(m[1]) || !heldSAIDs[modulePrefix(rc)+"|"+m[1]] {
+			return "", false
+		}
+		id = m[1]
+	case unknown(rc.Change, "member"):
+		// The computed member the module writes: the title is built from the
+		// account the same module creates, so the plan must create it.
+		id = strings.TrimPrefix(title, titlePrefix)
+		if id == "" || id == title || !createdSAIDs[modulePrefix(rc)+"|"+id] {
+			return "", false
+		}
+	default:
+		return "", false
+	}
+	if title != titlePrefix+id {
+		return "", false
+	}
+	return id, true
 }
 
 func (c Cover) fugaroAccount(m string) bool {

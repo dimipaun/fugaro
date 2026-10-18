@@ -136,9 +136,19 @@ var jobRunsSlugRE = regexp.MustCompile(`/objects/runs/([a-z0-9][a-z0-9_-]*)/"\)`
 // Its runs cannot read their token, and GCS answers the refused read like a
 // missing object, so the run alone cannot say which. Read from the bucket's
 // own policy: the same read runs-bucket-iam makes, nothing more.
+//
+// A shared project job account is judged the same way and against its own
+// pair: its objectUser grant is the widened gcp.ProjectBucketCondition, and
+// the read it must hold is the whole-tokens/ gcp.ProjectTokenBucketCondition
+// titled gcp.ProjectTokenBucketConditionTitle (plan task 3.2 step 2,
+// budget-token-channel.md §7.2: the shared job reads every repository's
+// sealed token, and the seal is what keeps that from being a token).
 func JobTokenGrantFindings(p *storage.Policy, bucket, project string) []BucketFinding {
 	account := fugaroAccountRE(project)
-	type job struct{ member, saID, slug string }
+	type job struct {
+		member, saID, slug string
+		project            bool // a shared project job account
+	}
 	var jobs []job
 	var odd []BucketFinding
 	has := map[string]bool{}
@@ -155,7 +165,22 @@ func JobTokenGrantFindings(p *storage.Policy, bucket, project string) []BucketFi
 				if !strings.Contains(bd.Condition.Expression, "/objects/runs/") {
 					continue // a build account (builds/): it reads no token
 				}
-				saID, ok := strings.CutPrefix(bd.Condition.Title, "fugaro-")
+				if bd.Condition.Expression == gcp.ProjectBucketCondition(bucket, gcp.JobBucketPrefixes) {
+					// The shared job's widened grant (phase 3): the account
+					// serves every repository of its profile, so the grant it
+					// must hold is the whole-tokens/ one.
+					saID, ok := strings.CutPrefix(bd.Condition.Title, gcp.BucketConditionTitlePrefix)
+					if !ok || saID == "" {
+						pm := pluginwire.Printable(m)
+						odd = append(odd, BucketFinding{Severity: "info", Member: pm, Role: bd.Role,
+							Problem: "project job account " + pm + ": tokens/ read grant not checked (its runs/ grant on gs://" + bucket + " is the widened condition, but its title is not " + gcp.BucketConditionTitlePrefix + "<account>)",
+							Fix:     "an operator runs fugaro init (" + sealRelease + " or later), which writes both grants"})
+						continue
+					}
+					jobs = append(jobs, job{member: m, saID: saID, project: true})
+					continue
+				}
+				saID, ok := strings.CutPrefix(bd.Condition.Title, gcp.BucketConditionTitlePrefix)
 				sm := jobRunsSlugRE.FindStringSubmatch(bd.Condition.Expression)
 				if !ok || sm == nil || bd.Condition.Expression != gcp.BucketCondition(bucket, gcp.JobBucketPrefixes, sm[1]) {
 					// Not the shape this fugaro writes, so the slug and the
@@ -167,7 +192,7 @@ func JobTokenGrantFindings(p *storage.Policy, bucket, project string) []BucketFi
 						Fix:     "an operator runs fugaro init --repo (" + sealRelease + " or later) in that repository's checkout, which writes both grants"})
 					continue
 				}
-				jobs = append(jobs, job{m, saID, sm[1]})
+				jobs = append(jobs, job{member: m, saID: saID, slug: sm[1]})
 			case "roles/storage.objectViewer":
 				has[m+"\x00"+bd.Condition.Title+"\x00"+bd.Condition.Expression] = true
 			}
@@ -175,10 +200,19 @@ func JobTokenGrantFindings(p *storage.Policy, bucket, project string) []BucketFi
 	}
 	out := odd
 	for _, j := range jobs {
+		pm := pluginwire.Printable(j.member)
+		if j.project {
+			if has[j.member+"\x00"+gcp.ProjectTokenBucketConditionTitle(j.saID)+"\x00"+gcp.ProjectTokenBucketCondition(bucket)] {
+				continue
+			}
+			out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: "roles/storage.objectViewer",
+				Problem: "project job account " + pm + " cannot read the bucket's budget token objects (gs://" + bucket + "/tokens/): the installation has not been re-applied since the sealed budget token moved to tokens/, so every run of its job that carries a budget token stops at bootstrap, reading the token as missing",
+				Fix:     "an operator runs fugaro init (" + sealRelease + " or later)"})
+			continue
+		}
 		if has[j.member+"\x00"+gcp.TokenBucketConditionTitle(j.saID)+"\x00"+gcp.TokenBucketCondition(bucket, j.slug)] {
 			continue
 		}
-		pm := pluginwire.Printable(j.member)
 		out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: "roles/storage.objectViewer",
 			Problem: "job account " + pm + " cannot read its repository's budget token objects (gs://" + bucket + "/tokens/" + j.slug + "/): the repository has not been re-applied since the sealed budget token moved to tokens/, so its runs with a budget token stop at bootstrap, reading the token as missing",
 			Fix:     "an operator runs fugaro init --repo (" + sealRelease + " or later) in that repository's checkout"})

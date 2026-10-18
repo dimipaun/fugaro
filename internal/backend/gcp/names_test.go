@@ -316,6 +316,22 @@ func TestDisplayNamesAndConditions(t *testing.T) {
 			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/") || resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/")`},
 		{TokenBucketConditionTitle("fugaro-x-12345678"), "fugaro-tokens-fugaro-x-12345678"},
 		{TokenBucketCondition("b", "s"), `resource.name.startsWith("projects/_/buckets/b/objects/tokens/s/")`},
+		// The project job's pair (plan task 3.2 step 2): the widened objectUser
+		// grant on runs/, cache/ and locks/, and the read-only one on the whole
+		// of tokens/. Both are slugless, and neither is the per-repository
+		// builder called with an empty slug, which refuses
+		// (TestProjectBucketConditionHasNoSlug).
+		{ProjectBucketCondition("b", []string{"runs", "cache"}),
+			`resource.name.startsWith("projects/_/buckets/b/objects/runs/") || resource.name.startsWith("projects/_/buckets/b/objects/cache/")`},
+		{ProjectTokenBucketCondition("fugaro-runs-proj-1234"),
+			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/")`},
+		{ProjectTokenBucketConditionTitle("fugaro-x-12345678"), "fugaro-project-tokens-fugaro-x-12345678"},
+		// The two title prefixes the plan reader matches on
+		// (internal/infra/tf) are these, and a project job's title must not
+		// read as a per-repository job's: the prefix of one is not a prefix of
+		// the other's titles.
+		{BucketConditionTitlePrefix, "fugaro-"},
+		{ProjectTokenBucketConditionTitlePrefix, "fugaro-project-tokens-"},
 	} {
 		if c.got != c.want {
 			t.Errorf("got %q, want %q", c.got, c.want)
