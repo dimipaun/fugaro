@@ -21,9 +21,11 @@ build:
 # The reader-facing platform list, and the whole of what the site says about
 # the operating systems a reader might be on (reconciliation D94). macOS and
 # Linux are supported. Windows is untested: this repository builds no Windows
-# binary, and the Linux archive may work through WSL, but nobody has verified
-# it. The list is rendered as written -- the Windows entry is a note and never
-# a platform a reader is offered.
+# binary, which is the whole of the Windows entry's note -- the redesign (P4)
+# cut the WSL sentence that used to follow it, because a guess about an
+# unverified route is not a fact this file can carry. The list is rendered as
+# written -- the Windows entry is a note and never a platform a reader is
+# offered.
 platforms:
   - id: macos
     name: macOS

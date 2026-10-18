@@ -25,7 +25,8 @@
 // And two about getting started, whose wording W0.1's Go test pins to the
 // repository: every command the page prints is one `website/data/install.yaml`
 // carries, byte for byte, and the platform list is the file's own statuses —
-// macOS and Linux supported, Windows untested with the WSL note, never a
+// macOS and Linux supported, Windows untested and carrying its own note
+// (the redesign's P4 cut the WSL sentence that used to be in it), never a
 // platform a reader is offered (F20, D94).
 //
 // **Two things about this file are worth stating.**
@@ -535,8 +536,8 @@ test('getting started offers the platforms install.yaml marks, and states Window
   )
   assert.match(text, /macOS, Linux/, 'the archive path does not render its platforms as the names install.yaml writes for them')
 
-  // The untested platform's own note is rendered, verbatim: the WSL sentence and
-  // the reason it is a note rather than a support promise.
+  // The untested platform's own note is rendered, verbatim: the reason Windows is a note
+  // rather than a support promise, which is the whole of what the note says.
   const note = install.slice(install.indexOf('- id: windows')).match(/note: >-\n((?: {6}[^\n]*\n?)+)/)[1]
   assert.ok(text.includes(collapse(note)), `the page does not render Windows' own note, which install.yaml writes as:\n${collapse(note)}`)
 })
