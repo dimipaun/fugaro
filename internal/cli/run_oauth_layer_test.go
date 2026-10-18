@@ -9,8 +9,10 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // The refusal of task 3.4a must ask the question about the document the run
@@ -60,6 +62,32 @@ workflows:
       test: sh test.sh
     timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }
 `
+
+// projectJobProfiledRepoYAML is projectJobAnchoredRepoYAML whose workflow takes
+// one of the layer's workflow templates (`profile:`, the layer's own selection;
+// job_profile is the published policy's job). A file that names a template
+// resolves only over a layer that defines it, which is what makes the carried
+// layer the one that decides whether this checkout resolves at all.
+const projectJobProfiledRepoYAML = `version: 1
+project: aurora
+gcp_project: proj-1234
+git:
+  provider: github
+  base_branch: main
+workflows:
+  web:
+    profile: p
+    commands:
+      build: sh build.sh
+      test: sh test.sh
+    timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }
+`
+
+// projectJobProfiledOAuthLayer is projectJobOAuthLayer plus the template
+// projectJobProfiledRepoYAML's workflow selects: the copy that applies to the
+// checkout is a complete one, so the launcher's own resolution of it succeeds
+// and the launch reaches the resolution this test is about.
+const projectJobProfiledOAuthLayer = projectJobOAuthLayer + "profiles:\n  p: { checkout: clone }\n"
 
 // TestSharedJobRefusalUsesTheLayerTheRunCarries is the stale-layer case the
 // owner's ruling of 2026-10-17 is about: a task stored while the project layer
@@ -284,5 +312,115 @@ func TestSharedJobRefusalWhenTheCarriedLayerIsInvalid(t *testing.T) {
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Errorf("%d executions, want none", n)
+	}
+}
+
+// TestSharedJobRefusalWhenTheCheckoutCannotBeFound is the arm of
+// projectJobAgentAuth that has no other guard behind it: when the checkout the
+// resolution is made against cannot be found, the credential is unknown, and an
+// unknown credential must refuse the launch rather than be read as "no oauth
+// here" (the empty string checkProjectJobOAuth is then handed).
+//
+// It is the state a launch reaches when its checkout goes away between the two
+// reads of it — launchProjectJobFor only gets past checkoutConfig with a
+// checkout in hand, and this is that checkout having moved or gone before
+// projectJobAgentAuth asks for its root again — so the launcher cannot be driven
+// into it from the fixture: the two reads run inside one command. The test calls
+// the resolution directly, in a directory that is no checkout at all (git
+// answers "not a git repository" for --show-toplevel there).
+//
+// Mutation (run, restore): return "", nil for the empty root instead of
+// refusing — the launcher reads the empty string as the run's agent.auth, and
+// checkProjectJobOAuth finds no "oauth" in it, so an OAuth run would be launched
+// on a shared job that holds no token for it.
+func TestSharedJobRefusalWhenTheCheckoutCannotBeFound(t *testing.T) {
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir()) // not a repository: there is no checkout to find
+
+	e := &cloudEnv{lc: &localcfg.Config{Name: "aurora"}}
+	_, err := e.projectJobAgentAuth(context.Background(), &task.Spec{Repo: "acme/app"})
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cannot tell which Claude credential") ||
+		!strings.Contains(err.Error(), "checkout could not be found") || !strings.Contains(err.Error(), "acme/app") {
+		t.Fatalf("a launch whose checkout cannot be found: %v, want a refusal naming the repository and the missing checkout", err)
+	}
+}
+
+// TestSharedJobRefusalWhenTheCarriedLayerDoesNotResolve is the other refusal
+// with no test behind it: a carried layer the runner's resolution parses (no
+// LayerErr, so it is not the invalid-layer case above) but whose merge with the
+// checkout's fugaro.yaml does not validate. runner.ResolveConfig reports that as
+// Problems and returns no config, so there is no agent.auth to judge — and the
+// arm that reads out.Cfg.Agent.Auth off it would be reading a nil config.
+//
+// This is the ordinary shape of a project layer that is legal as a layer and
+// wrong as a file: a layer's own keys are held to the layer's rules
+// (config.ParseProjectLayer) one at a time, so what it can break is a relation
+// only the resolution knows — here the profile the checkout's workflow selects,
+// which the layer republished under the run no longer defines (L13/L16: the
+// launcher's own read of the layer and the stored task's can legitimately
+// differ, and it is the stored one the run resolves over). The layer parses,
+// it applies, and config.Resolve still has nothing to build a config from:
+// resolveWorkflows reports the missing profile and returns no config at all.
+//
+// The checkout's workflow names that profile, so its own fugaro.yaml needs the
+// launcher's layer to resolve — which the bucket's copy defines, with the OAuth
+// auth the first attempt below is refused for.
+//
+// Mutation (run, restore): make the arm `if false` — the resolution returns a
+// nil *config.Config with its problems, and out.Cfg.Agent.Auth panics on the
+// nil dereference: the launch neither refuses nor starts on a resolved
+// credential.
+func TestSharedJobRefusalWhenTheCarriedLayerDoesNotResolve(t *testing.T) {
+	f := newProjectJobFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f.cloudFixture, projectJobProfiledOAuthLayer)
+	projectJobCheckoutYAML(t, projectJobProfiledRepoYAML)
+
+	const run = "20261018-160000-eeee"
+	// The first attempt stores task.json and stops at the OAuth refusal: what
+	// the repeat below carries is that stored layer, replaced.
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "phase 5") {
+		t.Fatalf("the first attempt: %v", err)
+	}
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	s := runstore.Open(b, appSlug, run)
+	spec, err := s.ReadTask(ctx)
+	if err != nil {
+		t.Fatalf("task.json of the first attempt: %v", err)
+	}
+	if spec.ProjectLayer == nil {
+		t.Fatal("the first attempt stored no project layer; this test needs one to replace")
+	}
+	// A layer of this project and this GCP project — so it applies to the
+	// checkout's file (runner.ResolveConfig's Applied) — that parses on its own
+	// and no longer defines the profile the checkout's workflow names.
+	bad := "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  agent: { auth: api-key }\nprofiles:\n  other: { checkout: clone }\n"
+	spec.ProjectLayer = &task.ProjectLayer{SHA256: config.LayerSum([]byte(bad)), YAML: bad}
+	if err := s.WriteTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+
+	claimed := false
+	launchHooks.beforeClaim = func() { claimed = true }
+	t.Cleanup(func() { launchHooks.beforeClaim = nil })
+
+	_, _, err = execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cannot tell which Claude credential") ||
+		!strings.Contains(err.Error(), "do not resolve") || !strings.Contains(err.Error(), `names profile "p"`) {
+		t.Fatalf("a repeat whose carried layer and checkout do not resolve together: %v, want a refusal naming the problem", err)
+	}
+	if claimed {
+		t.Error("the refusal came after the launch claim: the claim, the budget token and the Cloud Run call all happen past it")
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
 	}
 }
