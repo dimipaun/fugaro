@@ -321,9 +321,9 @@ a.skip-link:focus {
 
 /* ---- 2b. the copy control (redesign part P6, D183) --------------------------------------- */
 
-/* Every command the site prints — the hero's install blocks, the getting-started page's, the
- * terminal's own line, the usage lines on the caps guide and every code block of the rendered
- * CLI reference — carries one of these, and the markup is written once in
+/* Every command the site prints — the hero's install blocks and its chat's `fugaro watch`
+ * snippet, the getting-started page's, the usage lines on the caps guide and every code block
+ * of the rendered CLI reference — carries one of these, and the markup is written once in
  * `src/lib/copy-control.mjs`. The control is emitted `hidden` and `public/scripts/site.js`
  * reveals it, so a reader whose browser runs no script sees the command and no button rather
  * than a button that copies nothing.

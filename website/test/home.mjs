@@ -1257,8 +1257,11 @@ test('the tokens the pages name are the ones the design layer declares', () => {
     return
   }
 
-  // The declarations the artifact carries, from its stylesheets and from the properties a
-  // component sets on an element (`--terminal-characters` is the terminal's, set inline).
+  // The declarations the artifact carries, from its stylesheets and from a custom property a
+  // page sets on an element inline. Nothing sets one today (the hero's terminal did, and item
+  // 3 of the changes spec replaced it with the chat), so the pages contribute nothing to this
+  // set — and the reading stays exactly the one that would catch a name a component asks for
+  // and nothing declares.
   const declarations = new Set(
     [...`${css}\n${pages.join('\n')}`.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]),
   )
