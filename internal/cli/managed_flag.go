@@ -171,6 +171,12 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	if m := agentMarker(os.Getenv); m != "" {
 		return userErr("nothing was written: fugaro managed flag records the owner's own decision about a GCP project with the operator's credentials, so it is run by a person: %s", initflow.AgentRefusal(m))
 	}
+	// And a run's own process, whatever its agent's markers: the plan refuses
+	// the command from a run credential as well as from an agent's session,
+	// and a run's variables are set by the platform rather than by the agent.
+	if m := managedFlagRunMarker(os.Getenv); m != "" {
+		return userErr("nothing was written: fugaro managed flag is run by a person at their own terminal, and this process is a Fugaro run's (%s is set)", m)
+	}
 	// One project, named exactly, and by a name a shell cannot expand into
 	// several: the argument is a GCP project ID and the wildcard and list
 	// forms are not ones. The equality with the selected installation's own
@@ -233,7 +239,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	fmt.Fprintf(w, "⚠ CONFIRM (project %s): flagging GCP project %s as managed writes gs://%s/%s\n", lc.Name, safetext.Field(lc.GCPProject), bucket, managed.MarkerObject)
 	fmt.Fprintf(w, "  it records: this project is managed, with the budget alert amount %d %s\n", amount, safetext.Field(currency))
 	fmt.Fprintf(w, "  it gives up: the typed confirmation for this project's applies. From the next apply on, a plan a coding agent's session authored is applied with no human prompt when the deterministic gate admits it (D55), and what stands in the confirmation's place is the gate, the whole-project inventory, the owner's delete list (fugaro allow-delete) and the budget above.\n")
-	fmt.Fprintf(w, "  it adds: nothing is created, no billing call is made, and the amount above is recorded rather than spent.\n")
+	fmt.Fprintf(w, "  it creates nothing: no resource is created, no billing call is made, and the amount above is recorded rather than spent.\n")
 	fmt.Fprintf(w, "  it does not protect against: a coding agent's session, which holds these credentials and can write this object directly (SECURITY.md).\n")
 	fmt.Fprintf(w, "  if this project already records whether it is managed: nothing is written unless its marker is the creation fact that records no amount (what `fugaro init --create-project` without --managed leaves), which this replaces with the one above. A marker that already records an amount is refused, and so is any object this build cannot read as this project's.\n")
 	if err := confirmTypedGCPProject(cmd, lc.GCPProject); err != nil {
@@ -243,6 +249,22 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	if err != nil {
 		return managedFlagErr(lc, bucket, err)
 	}
+	// Read back through the managed read itself, with its project-number
+	// check (the plan's step 3): a marker the apply would not believe, or one
+	// recording another amount than the one typed, is not a flagged project,
+	// and the command does not say it is.
+	got, ok, reason, err := managedFlagReadBack(ctx, c.Storage, c.CRM, lc.Name, lc.GCPProject)
+	if err != nil || !ok || got != budget {
+		why := safetext.Field(reason)
+		if err != nil {
+			why = safetext.Field(err.Error())
+		} else if ok {
+			why = fmt.Sprintf("it records %d %s", got.Amount, safetext.Field(got.Currency))
+		}
+		return remote(fmt.Errorf("wrote gs://%s/%s, but it does not read back as %s's marker with the budget %d %s (%s): check it with `gcloud storage cat gs://%s/%s` as the operator before relying on it",
+			bucket, managed.MarkerObject, lc.Name, amount, safetext.Field(currency), why, bucket, managed.MarkerObject))
+	}
+	fmt.Fprintf(w, "read back gs://%s/%s through the managed read, with the project-number check: managed, budget %d %s\n", bucket, managed.MarkerObject, got.Amount, safetext.Field(got.Currency))
 	// What happened is said, and the two are different things: this project
 	// had no marker, or it had the version-1 creation fact and now records an
 	// amount.
@@ -254,6 +276,25 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 		wrote, amount, safetext.Field(currency))
 	fmt.Fprintf(w, "undo: there is no command that removes the marker in this release — delete gs://%s/%s yourself as the operator to make the project unmanaged again\n", bucket, managed.MarkerObject)
 	return nil
+}
+
+// managedFlagReadBack is the read the written marker is checked with; tests
+// replace it.
+var managedFlagReadBack = managed.ReadBudget
+
+// managedFlagRunMarkers are the variables a Fugaro run's process carries: the
+// run's own name (set on both backends), Cloud Run's job and execution, and
+// Batch's task index.
+var managedFlagRunMarkers = []string{"FUGARO_RUN", "CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION", "BATCH_TASK_INDEX"}
+
+// managedFlagRunMarker is the first run marker getenv shows set, or "".
+func managedFlagRunMarker(getenv func(string) string) string {
+	for _, k := range managedFlagRunMarkers {
+		if getenv(k) != "" {
+			return k
+		}
+	}
+	return ""
 }
 
 // confirmTypedGCPProject is the confirmation this command takes and the only

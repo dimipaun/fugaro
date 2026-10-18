@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	crm "google.golang.org/api/cloudresourcemanager/v1"
+	storage "google.golang.org/api/storage/v1"
+
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 )
@@ -17,9 +20,19 @@ import (
 func managedFlagRig(t *testing.T) *initRig {
 	t.Helper()
 	noAgentSession(t)
+	noRunSession(t)
 	r := newInitRig(t)
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
 	return r
+}
+
+// noRunSession clears the variables a Fugaro run's own process carries, so a
+// test of this command passes when the suite itself runs inside one.
+func noRunSession(t *testing.T) {
+	t.Helper()
+	for _, k := range managedFlagRunMarkers {
+		t.Setenv(k, "")
+	}
 }
 
 // managedFlagAt is the marker's bytes in bucket, and whether it is there.
@@ -66,6 +79,97 @@ func TestManagedFlagWritesTheMarker(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("the command does not say %q in what flagging gives up:\n%s", want, out)
 		}
+	}
+	// And the write is read back through the managed read itself, with its
+	// project-number check, before the command says it is done.
+	if !strings.Contains(out, "read back") {
+		t.Errorf("the command does not say the marker was read back:\n%s", out)
+	}
+}
+
+// TestManagedFlagFailsClosedOnAnUnreadableProjectNumber: the number is what
+// proves the runs bucket is the project's own, and it comes from the cloud. A
+// project the caller cannot read is refused before the confirmation is asked
+// for, and nothing is written — an unreadable number is never a match.
+func TestManagedFlagFailsClosedOnAnUnreadableProjectNumber(t *testing.T) {
+	r := managedFlagRig(t)
+	r.crm.DenyGet(initProject)
+	terminal(t, true)
+	out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+	if err == nil {
+		t.Fatalf("the flag was written with no project number read:\n%s", out)
+	}
+	if strings.Contains(out, "Type "+initProject) {
+		t.Errorf("the confirmation was asked for with no project number read:\n%s", out)
+	}
+	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
+		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+	}
+}
+
+// TestManagedFlagRefusesInsideAFugaroRun: the plan refuses the command from a
+// run credential as well as from a coding agent's session. A run's process
+// carries its own variables whether or not the agent's markers survive into
+// the shell a command runs in, so each of them refuses on its own, before
+// anything is read, and nothing is written.
+func TestManagedFlagRefusesInsideAFugaroRun(t *testing.T) {
+	for _, marker := range managedFlagRunMarkers {
+		t.Run(marker, func(t *testing.T) {
+			r := managedFlagRig(t)
+			terminal(t, true)
+			t.Setenv(marker, "x")
+			out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+			if err == nil {
+				t.Fatalf("the command ran inside a Fugaro run:\n%s", out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+			}
+			if !strings.Contains(err.Error(), marker) {
+				t.Errorf("the refusal does not name %s: %v", marker, err)
+			}
+			if len(r.crm.Requests()) != 0 {
+				t.Errorf("a refused run read the project: %v", r.crm.Requests())
+			}
+			if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
+				t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+			}
+		})
+	}
+}
+
+// TestManagedFlagFailsWhenTheMarkerDoesNotReadBack: the plan's step 3 reads
+// the written marker back with the project-number check. A write the managed
+// read does not believe — not managed, or another amount than the one typed —
+// is not reported as a flagged project.
+func TestManagedFlagFailsWhenTheMarkerDoesNotReadBack(t *testing.T) {
+	for name, back := range map[string]struct {
+		b  managed.Budget
+		ok bool
+	}{
+		"not managed":      {managed.Budget{}, false},
+		"another amount":   {managed.Budget{Amount: 51, Currency: "USD"}, true},
+		"another currency": {managed.Budget{Amount: 50, Currency: "EUR"}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			managedFlagRig(t)
+			terminal(t, true)
+			old := managedFlagReadBack
+			managedFlagReadBack = func(context.Context, *storage.Service, *crm.Service, string, string) (managed.Budget, bool, string, error) {
+				return back.b, back.ok, "planted", nil
+			}
+			t.Cleanup(func() { managedFlagReadBack = old })
+			out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+			if err == nil {
+				t.Fatalf("a marker that does not read back was reported as flagged:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), "read back") {
+				t.Errorf("the error does not say the read-back failed: %v", err)
+			}
+			if strings.Contains(out, "is a managed project") {
+				t.Errorf("the command claimed success:\n%s", out)
+			}
+		})
 	}
 }
 
@@ -171,6 +275,12 @@ func TestManagedFlagNamesOneProjectAndNoOther(t *testing.T) {
 		"a wildcard":              {"managed", "flag", "*", "--budget", "50", "--budget-currency", "USD"},
 		"a prefix wildcard":       {"managed", "flag", "proj-*", "--budget", "50", "--budget-currency", "USD"},
 		"a list of two":           {"managed", "flag", initProject, "other-proj", "--budget", "50", "--budget-currency", "USD"},
+		"a prefix of the ID":      {"managed", "flag", "proj-12", "--budget", "50", "--budget-currency", "USD"},
+		"the ID and a suffix":     {"managed", "flag", initProject + "5", "--budget", "50", "--budget-currency", "USD"},
+		"the project number":      {"managed", "flag", "424242424242", "--budget", "50", "--budget-currency", "USD"},
+		"a URL":                   {"managed", "flag", "https://console.cloud.google.com/home?project=" + initProject, "--budget", "50", "--budget-currency", "USD"},
+		"the ID with a space":     {"managed", "flag", initProject + " ", "--budget", "50", "--budget-currency", "USD"},
+		"a Cyrillic lookalike":    {"managed", "flag", "pr\u043ej-1234", "--budget", "50", "--budget-currency", "USD"},
 		"an uppercase ID":         {"managed", "flag", "PROJ-1234", "--budget", "50", "--budget-currency", "USD"},
 		"a too-short ID":          {"managed", "flag", "abc", "--budget", "50", "--budget-currency", "USD"},
 		"another project's ID":    {"managed", "flag", "another-proj", "--budget", "50", "--budget-currency", "USD"},
@@ -260,6 +370,7 @@ func TestManagedFlagNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			noAgentSession(t)
+			noRunSession(t)
 			r := newInitRig(t)
 			terminal(t, true)
 			// Only the row's bucket is seeded. The installation's runs bucket
