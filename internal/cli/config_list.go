@@ -98,7 +98,7 @@ func newConfigListCmd() *cobra.Command {
 func buildConfigList(getenv func(string) string, now time.Time) configListDoc {
 	// Both are seeded: an empty array is a fact ("there are none", "there
 	// were no warnings") and a null is not, which is the console's own
-	// availability rule (console/docs/json-contract.md §1).
+	// availability rule the console's JSON contract states (§1).
 	doc := configListDoc{Installations: []configListInstallation{}, Warnings: []string{}}
 	names, err := localcfg.Projects(getenv)
 	if err != nil {

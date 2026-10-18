@@ -12,8 +12,9 @@ package cli
 // docs_desktop_console_test.go), extended by the one thing v2's plan asks for
 // and v1's table does not carry: the answer names the task that implements it.
 //
-// The v1 file is also the ONE Go file allowed to name a console/ path (Task
-// 0.3's boundary test); everything here reads docs/ only.
+// The v1 file is also the ONE Go file allowed to name a path under the
+// console's directory (Task 0.3's boundary test); everything here reads docs/
+// only.
 //
 //  * TestDocsDesktopConsoleV2AnswersEveryDecision -- all eighteen are present,
 //    each carrying a dated answer, and the four argued in prose are exactly the
