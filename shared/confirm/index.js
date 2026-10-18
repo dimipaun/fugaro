@@ -86,7 +86,9 @@
 // command is P6.7's. `shared/README.md` is the package's contract and
 // `../../docs/mobile/implementation-plan.md`'s P6.2 is this module's task.
 
+import { CONFIRMATION_PHRASES, isConfirmation, routeUtterance } from '../command/index.js';
 import { MAX_TIMESTAMP } from '../lease/index.js';
+import { TARGET_MAX } from '../mailbox-schema/index.js';
 
 /**
  * The three phases. Nothing else is a phase: a state carrying an unlisted one is
@@ -121,9 +123,12 @@ export const OUTCOME = Object.freeze({
 
 /** The kinds of resolved target, and the verbs each one belongs to. */
 export const TARGET_KIND = Object.freeze({
+  /** A run id: what a cancel cancels, and one thing a confirm may confirm. */
   RUN: 'run',
+  /** A repository, a PR and the head read back: what a merge merges. */
   MERGE: 'merge',
-  ACTION: 'action',
+  /** A repository and a PR with no head: the other thing a confirm may confirm (P6.3 refuses a head SHA on a confirm). */
+  PR: 'pr',
 });
 
 /**
@@ -136,7 +141,8 @@ export const TARGET_KIND = Object.freeze({
  */
 export const VERB = Object.freeze({
   CANCEL: 'cancel',
-  CONFIRM_ACTION: 'confirm-action',
+  /** Confirming an action: spelled as P6.3's action record spells it. */
+  CONFIRM_ACTION: 'confirm',
   MERGE: 'merge',
   LAUNCH: 'launch',
 });
@@ -146,7 +152,7 @@ export const VERB = Object.freeze({
  * approve/merge, and confirming an action. A command with one of these enters
  * `pending` and needs a confirmation.
  */
-export const DESTRUCTIVE_VERBS = Object.freeze(['cancel', 'confirm-action', 'merge']);
+export const DESTRUCTIVE_VERBS = Object.freeze(['cancel', 'confirm', 'merge']);
 
 /** The verbs that go straight through: D162's launch, and nothing else. */
 export const PASS_THROUGH_VERBS = Object.freeze(['launch']);
@@ -175,16 +181,20 @@ export const REFUSED_VERBS = Object.freeze([
 
 /**
  * The fixed phrase (D128 as amended; Voice D47's "fixed, short,
- * low-confusability phrase"). It is a set of one, exported so that P6.1's
- * router and this module cannot disagree about what a confirmation is.
- * "yes", "sure", "ok", "yeah", "confirmed" and "confirmed it" are deliberately
- * **not** in it (G10: the spec's own example "yes, merge it" is not an
- * acceptable confirmation).
+ * low-confusability phrase"). It is **P6.1's** set of one, imported rather
+ * than restated, so the router and this module cannot disagree about what a
+ * confirmation is. "yes", "sure", "ok", "yeah", "confirmed" and "confirmed
+ * it" are deliberately **not** in it (G10: the spec's own example "yes, merge
+ * it" is not an acceptable confirmation).
  */
-export const CONFIRM_PHRASES = Object.freeze(['confirm']);
+export const CONFIRM_PHRASES = CONFIRMATION_PHRASES;
 
-/** The cue appended to every read-back, so no consumer invents its own wording. */
-export const CONFIRM_CUE = 'Say "confirm" to confirm.';
+/**
+ * The cue appended to every read-back, so no consumer invents its own wording.
+ * It names the wake word because P6.1 recognises "confirm" only as an app
+ * command: a bare "confirm" is agent text (D164) and confirms nothing.
+ */
+export const CONFIRM_CUE = 'Say "Fugaro, confirm" to confirm.';
 
 /**
  * The confirmation timeout (P6.2: "it has a timeout"). Nothing in the documents
@@ -222,9 +232,24 @@ export const ID_MAX = 100;
 /** The permitted length of an utterance, in UTF-16 code units (P0.2's TEXT_MAX). */
 export const TEXT_MAX = 4096;
 
-/** The permitted length of a repository, and of each of its two segments, in UTF-16 code units. */
-export const REPO_MAX = 201;
+/**
+ * The permitted length of a repository, in UTF-16 code units: P6.3's
+ * TARGET_MAX, imported, because a target this module reads back must be one
+ * P6.3's action record can carry. Each segment is bounded too.
+ */
+export const REPO_MAX = TARGET_MAX;
 export const REPO_SEGMENT_MAX = 100;
+
+/**
+ * P6.3's run-id and repository alphabets and shapes, restated (P6.3 does not
+ * export them) and held to P6.3's validator by a test that wraps every record
+ * this module authorises in a message and validates it. A run id is passed to
+ * `fugaro cancel` and a repository to `gh pr merge --repo` as ARGV elements,
+ * so a leading `-` or `.` would be a flag or a path to the consumer.
+ */
+const RUN_CHARS = /^[A-Za-z0-9._:-]+$/;
+const RUN_PATTERN = /^[A-Za-z0-9_:][A-Za-z0-9._:-]*$/;
+const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 
 /** The largest pull-request number this module will carry: a bound, not a measurement. */
 export const PR_MAX = 10000000;
@@ -567,11 +592,15 @@ export const TRANSITIONS = Object.freeze({
   }),
 });
 
-/** Which target kind each destructive verb requires. */
-const VERB_TARGET_KIND = Object.freeze({
-  [VERB.CANCEL]: TARGET_KIND.RUN,
-  [VERB.CONFIRM_ACTION]: TARGET_KIND.ACTION,
-  [VERB.MERGE]: TARGET_KIND.MERGE,
+/**
+ * Which target kinds each destructive verb takes: P6.3's verb/target rule. A
+ * cancel names a run, a merge a repository, PR and head, and a confirm either
+ * a run or a repository and PR -- never a head, which P6.3 refuses on it.
+ */
+const VERB_TARGET_KINDS = Object.freeze({
+  [VERB.CANCEL]: Object.freeze([TARGET_KIND.RUN]),
+  [VERB.CONFIRM_ACTION]: Object.freeze([TARGET_KIND.RUN, TARGET_KIND.PR]),
+  [VERB.MERGE]: Object.freeze([TARGET_KIND.MERGE]),
 });
 
 const VERB_VALUES = Object.freeze([...DESTRUCTIVE_VERBS, ...PASS_THROUGH_VERBS, ...REFUSED_VERBS]);
@@ -726,8 +755,8 @@ function command(state, values) {
     return refuse(REFUSAL.REFUSED_VERB, 'verb');
   }
 
-  const kind = VERB_TARGET_KIND[verb];
-  if (kind === undefined) {
+  const kinds = VERB_TARGET_KINDS[verb];
+  if (kinds === undefined) {
     // A pass-through verb takes no target and no action id: a launch is not read
     // back, so carrying either is a caller that thinks it is.
     if (target !== undefined) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'target');
@@ -747,8 +776,8 @@ function command(state, values) {
   // confirmation cannot disagree about what "no target" means.
 
   let resolved = null;
-  if (kind !== undefined) {
-    const readTarget = readResolvedTarget(target, kind);
+  if (kinds !== undefined) {
+    const readTarget = readResolvedTarget(target, kinds);
     if (!readTarget.ok) return readTarget;
     resolved = readTarget.target;
   }
@@ -756,14 +785,14 @@ function command(state, values) {
   if (hasLedgerId(state, LEDGER_KIND.UTTERANCE, utteranceId)) {
     return refuse(REFUSAL.REPLAYED_UTTERANCE, 'utteranceId');
   }
-  if (kind !== undefined && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {
+  if (kinds !== undefined && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {
     // Two commands under one action id are an ambiguity about which action a
     // confirmation authorised, so the second is refused rather than allowed to
     // overwrite the first.
     return refuse(REFUSAL.REPLAYED_ACTION, 'actionId');
   }
 
-  if (kind === undefined) {
+  if (kinds === undefined) {
     // D162: a launch goes straight through. Its utterance is still spent, so
     // "one utterance, one event" holds for it too -- a pass-through authorises
     // nothing, but its id is not a second utterance later.
@@ -876,7 +905,7 @@ function confirm(state, values) {
     return refuse(REFUSAL.REPLAYED_CONFIRMATION, 'confirmationId');
   }
 
-  const readTarget = readResolvedTarget(target, VERB_TARGET_KIND[entry.verb]);
+  const readTarget = readResolvedTarget(target, VERB_TARGET_KINDS[entry.verb]);
   if (!readTarget.ok) return readTarget;
   if (!sameTarget(entry.target, readTarget.target)) {
     // The pending action changed, or -- for a merge -- the PR's head moved since
@@ -891,9 +920,11 @@ function confirm(state, values) {
 
   const pendings = state.pending.filter((one) => one.actionId !== entry.actionId);
 
-  // The read-back is recomputed from the target the confirmation *asserted*,
-  // which for a merge is the head read at confirmation time: what is spoken
-  // last states what will happen now (P6.12).
+  // Everything authorised is the target that was READ BACK -- the pending
+  // record's, never the one the confirmation asserted. The assertion (for a
+  // merge, the head re-read at confirmation time) is only ever compared with
+  // it above, so a confirmation cannot substitute a target the speaker did not
+  // hear, and the record binds the head the read-back named.
   return Object.freeze({
     ok: true,
     outcome: OUTCOME.CONFIRMED,
@@ -901,16 +932,10 @@ function confirm(state, values) {
     verb: entry.verb,
     actionId: entry.actionId,
     confirmationId,
-    target: readTarget.target,
+    target: entry.target,
     confirmedAt: values.now,
-    readBack: readBack(entry.verb, readTarget.target),
-    record: Object.freeze({
-      verb: entry.verb,
-      actionId: entry.actionId,
-      confirmationId,
-      confirmedAt: values.now,
-      target: readTarget.target,
-    }),
+    readBack: readBack(entry.verb, entry.target),
+    record: actionRecord(entry, confirmationId, values.now),
     state: buildState(
       phaseOf(pendings),
       values.now,
@@ -965,6 +990,26 @@ function abort(state, values) {
   });
 }
 
+/**
+ * actionRecord builds P6.3's action record (`message.action`) for a confirmed
+ * read-back, field for field: `{ id, verb, target, head_sha?, confirmation }`.
+ * The target is the one read back; a merge carries the head the read-back
+ * named as `head_sha`, which the consumer compares with the PR's head before it
+ * merges (P6.7). Frozen all the way down.
+ */
+function actionRecord(entry, confirmationId, confirmedAt) {
+  const t = entry.target;
+  const target =
+    t.kind === TARGET_KIND.RUN ? Object.freeze({ run: t.runId }) : Object.freeze({ repo: t.repo, pr: t.pr });
+  return Object.freeze({
+    id: entry.actionId,
+    verb: entry.verb,
+    target,
+    ...(t.kind === TARGET_KIND.MERGE ? { head_sha: t.headSha } : {}),
+    confirmation: Object.freeze({ id: confirmationId, at: confirmedAt }),
+  });
+}
+
 /** The one dispatcher, keyed by the closed event set. */
 const HANDLERS = Object.freeze({ [EVENT.COMMAND]: command, [EVENT.CONFIRM]: confirm, [EVENT.ABORT]: abort });
 
@@ -988,18 +1033,20 @@ const HANDLERS = Object.freeze({ [EVENT.COMMAND]: command, [EVENT.CONFIRM]: conf
  */
 export function readBack(verb, target) {
   try {
-    const kind = VERB_TARGET_KIND[verb];
-    if (kind === undefined) return null;
-    const read = readResolvedTarget(target, kind);
+    const kinds = VERB_TARGET_KINDS[verb];
+    if (kinds === undefined) return null;
+    const read = readResolvedTarget(target, kinds);
     if (!read.ok) return null;
     const resolved = read.target;
     let what;
-    if (resolved.kind === TARGET_KIND.RUN) {
-      what = `Cancel run ${resolved.runId}.`;
-    } else if (resolved.kind === TARGET_KIND.MERGE) {
+    if (resolved.kind === TARGET_KIND.MERGE) {
       what = `Merge ${resolved.repo}#${resolved.pr} at head ${resolved.headSha}.`;
+    } else if (verb === VERB.CANCEL) {
+      what = `Cancel run ${resolved.runId}.`;
+    } else if (resolved.kind === TARGET_KIND.RUN) {
+      what = `Confirm run ${resolved.runId}.`;
     } else {
-      what = `Confirm action ${resolved.actionId}.`;
+      what = `Confirm ${resolved.repo}#${resolved.pr}.`;
     }
     return `${what} ${CONFIRM_CUE}`;
   } catch {
@@ -1010,19 +1057,21 @@ export function readBack(verb, target) {
 /**
  * isConfirmPhrase decides whether an utterance is the fixed phrase.
  *
- * Case and runs of whitespace are normalised and **nothing else**: "Confirm" and
- * "  confirm " are the phrase, and "confirm.", "conform", "confirmed it", "yes"
- * and "say confirm" are not. Trimming and folding case is not a repair -- it is
- * what "the same words" means for a transcript -- while stripping punctuation or
- * accepting a substring would be, and would let a misrecognition satisfy the
- * confirmation.
+ * It is **P6.1's answer**, not a second grammar: the utterance is routed by
+ * `shared/command`'s router (with its default wake-word aliases) and is the
+ * phrase only when the route is the `confirm` app command. So "Fugaro,
+ * confirm" and "Figaro, confirm." are the phrase, and a bare "confirm" is not
+ * -- P6.1 forwards that to the agent as text (D164), and a machine that also
+ * read it as a confirmation would act on words the agent received too. Every
+ * near miss ("conform", "confirmed it", "yes", "Fugaro, confirm it") and any
+ * utterance carrying an invisible format character is refused by the router.
  *
  * @param {unknown} text a candidate utterance
  * @returns {boolean} true when it is the fixed phrase, and nothing else
  */
 export function isConfirmPhrase(text) {
   if (typeof text !== 'string') return false;
-  return CONFIRM_PHRASES.includes(normaliseSpoken(text));
+  return isConfirmation(routeUtterance({ utterance: text }));
 }
 
 /**
@@ -1158,7 +1207,7 @@ function readAbortFields(values) {
  * lower-cased and a SHA is not shortened -- because a target this module
  * repaired would be a target the consumer never saw.
  */
-function readResolvedTarget(value, kind) {
+function readResolvedTarget(value, kinds) {
   if (value === undefined || value === null) return refuse(REFUSAL.UNRESOLVED_TARGET, 'target');
   if (!isPlainObject(value)) return refuse(REFUSAL.WRONG_TYPE, 'target');
 
@@ -1168,14 +1217,15 @@ function readResolvedTarget(value, kind) {
   const kindDescriptor = Object.getOwnPropertyDescriptor(value, 'kind');
   if (kindDescriptor === undefined) return refuse(REFUSAL.MISSING_FIELD, 'target.kind');
   if (!Object.hasOwn(kindDescriptor, 'value')) return refuse(REFUSAL.ACCESSOR_PROPERTY, 'target.kind');
-  if (kindDescriptor.value !== kind) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');
+  if (!kinds.includes(kindDescriptor.value)) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');
+  const kind = kindDescriptor.value;
 
   const names =
     kind === TARGET_KIND.RUN
       ? RUN_TARGET_FIELDS
       : kind === TARGET_KIND.MERGE
         ? MERGE_TARGET_FIELDS
-        : ACTION_TARGET_FIELDS;
+        : PR_TARGET_FIELDS;
   const read = readFields(value, names, 'target');
   if (!read.ok) return read;
   const target = read.values;
@@ -1183,17 +1233,20 @@ function readResolvedTarget(value, kind) {
   if (kind === TARGET_KIND.RUN) {
     const runId = keyIdField(target.runId, 'target.runId');
     if (runId.bad) return runId.bad;
+    // P6.3's run alphabet and shape: nothing the consumer's command line could
+    // read as a flag or a path.
+    if (!RUN_CHARS.test(runId.value) || !RUN_PATTERN.test(runId.value)) {
+      return refuse(REFUSAL.BAD_KEY, 'target.runId');
+    }
     return { ok: true, target: Object.freeze({ kind, runId: runId.value }) };
-  }
-  if (kind === TARGET_KIND.ACTION) {
-    const actionId = keyIdField(target.actionId, 'target.actionId');
-    if (actionId.bad) return actionId.bad;
-    return { ok: true, target: Object.freeze({ kind, actionId: actionId.value }) };
   }
 
   const repo = repoField(target.repo);
   if (repo.bad) return repo.bad;
   if (!isIntegerInRange(target.pr, 1, PR_MAX)) return refuse(REFUSAL.BAD_PR, 'target.pr');
+  if (kind === TARGET_KIND.PR) {
+    return { ok: true, target: Object.freeze({ kind, repo: repo.value, pr: target.pr }) };
+  }
   const headSha = headShaField(target.headSha);
   if (headSha.bad) return headSha.bad;
   return {
@@ -1204,7 +1257,7 @@ function readResolvedTarget(value, kind) {
 
 const RUN_TARGET_FIELDS = Object.freeze(['kind', 'runId']);
 const MERGE_TARGET_FIELDS = Object.freeze(['kind', 'repo', 'pr', 'headSha']);
-const ACTION_TARGET_FIELDS = Object.freeze(['kind', 'actionId']);
+const PR_TARGET_FIELDS = Object.freeze(['kind', 'repo', 'pr']);
 
 // repoField validates `owner/name`.
 function repoField(value) {
@@ -1218,10 +1271,11 @@ function repoField(value) {
   return { value };
 }
 
-// isRepoSegment: a name GitHub would have. Bounded, alphanumeric first, and no
-// character that could be read as a path, a flag or a second repository.
+// isRepoSegment: a name GitHub would have, in P6.3's shape. Bounded, no `-`
+// or `.` first, and no character that could be read as a path, a flag or a
+// second repository.
 function isRepoSegment(part) {
-  return part.length > 0 && part.length <= REPO_SEGMENT_MAX && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part);
+  return part.length > 0 && part.length <= REPO_SEGMENT_MAX && REPO_SEGMENT_PATTERN.test(part);
 }
 
 // headShaField validates the PR head read back at confirmation: 40 or 64
@@ -1310,7 +1364,7 @@ function readPending(value, maxPending) {
     ) {
       return refuse(REFUSAL.INVALID_PENDING_ENTRY, 'pending');
     }
-    const target = readResolvedTarget(entry.target, VERB_TARGET_KIND[entry.verb]);
+    const target = readResolvedTarget(entry.target, VERB_TARGET_KINDS[entry.verb]);
     if (!target.ok) return refuse(REFUSAL.INVALID_PENDING_ENTRY, 'pending');
     entries.push(
       Object.freeze({
@@ -1371,23 +1425,27 @@ function readLedger(value, maxLedger) {
 // The small predicates
 // ---------------------------------------------------------------------------
 
-/** Whether a transcript carries the confirming phrase as one of its words. */
+/**
+ * Whether a transcript carries the confirming phrase as one of its words.
+ *
+ * Words are split on whitespace **and punctuation**, because P6.1 strips
+ * punctuation from a word before matching it: a command ending "confirm." or
+ * "x,confirm" carries the phrase exactly as much as one ending "confirm".
+ * Splitting wider than the router is the safe direction here -- this check
+ * only ever refuses.
+ */
 function carriesConfirmToken(text) {
-  return normaliseSpoken(text)
-    .split(' ')
+  return text
+    .toLowerCase()
+    .split(/[\s\p{P}\p{S}]+/u)
     .some((word) => CONFIRM_PHRASES.includes(word));
-}
-
-/** The one normalisation this module does: case and runs of whitespace, nothing else. */
-function normaliseSpoken(text) {
-  return text.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
 /** Whether the two resolved targets are the same target, field by field. */
 function sameTarget(left, right) {
   if (left.kind !== right.kind) return false;
   if (left.kind === TARGET_KIND.RUN) return left.runId === right.runId;
-  if (left.kind === TARGET_KIND.ACTION) return left.actionId === right.actionId;
+  if (left.kind === TARGET_KIND.PR) return left.repo === right.repo && left.pr === right.pr;
   return left.repo === right.repo && left.pr === right.pr && left.headSha === right.headSha;
 }
 
@@ -1578,8 +1636,14 @@ function stringField(value, field, max) {
     if (code < 0x20 || code === 0x7f) return { bad: refuse(REFUSAL.BAD_CHARACTER, field) };
   }
   if (hasLoneSurrogate(value)) return { bad: refuse(REFUSAL.BAD_CHARACTER, field) };
+  // An invisible format character (zero-width space, joiner, bidi control, BOM)
+  // is refused as P6.1 refuses it: what is shown must be what is judged, or
+  // "con\u200bfirm" reads as "confirm" on a screen and as something else here.
+  if (FORMAT_CHARACTER.test(value)) return { bad: refuse(REFUSAL.BAD_CHARACTER, field) };
   return { value };
 }
+
+const FORMAT_CHARACTER = /\p{Cf}/u;
 
 // hasLoneSurrogate reports whether s contains an unpaired surrogate: half of a
 // character that JSON cannot encode, so a value carrying one cannot be written.

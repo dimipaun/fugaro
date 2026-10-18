@@ -181,9 +181,35 @@ run "the confirmation must name the outstanding action id" \
   "  if (entry === undefined || entry.actionId !== actionId) {" "  if (entry === undefined) {"
 run "a confirmation must be the fixed phrase, and nothing else" \
   "  if (typeof text !== 'string') return false;
-  return CONFIRM_PHRASES.includes(normaliseSpoken(text));" "  return true;"
-run "one phrase, and no punctuation or substring repair" \
-  "  return CONFIRM_PHRASES.includes(normaliseSpoken(text));" "  return normaliseSpoken(text).includes(CONFIRM_PHRASES[0]);"
+  return isConfirmation(routeUtterance({ utterance: text }));" "  return true;"
+run "a bare \"confirm\" (P6.1's agent text) is not the phrase" \
+  "  return isConfirmation(routeUtterance({ utterance: text }));" \
+  "  return isConfirmation(routeUtterance({ utterance: text })) || CONFIRM_PHRASES.includes(text.trim().toLowerCase());"
+run "the confirmation must name an outstanding read-back (confirm without pending)" \
+  "  if (entry === undefined || entry.actionId !== actionId) {" "  if (entry !== undefined && entry.actionId !== actionId) {"
+run "a confirmation one millisecond past the deadline is refused (off by one)" \
+  "  if (values.now > entry.deadline) {" "  if (values.now > entry.deadline + 1) {"
+run "the head SHA read back is bound: a moved head is a different target" \
+  "  return left.repo === right.repo && left.pr === right.pr && left.headSha === right.headSha;" \
+  "  return left.repo === right.repo && left.pr === right.pr;"
+run "the merge record carries the head SHA read back (P6.3's head_sha)" \
+  "    ...(t.kind === TARGET_KIND.MERGE ? { head_sha: t.headSha } : {})," ""
+run "the record carries the confirmation's own time" \
+  "    confirmation: Object.freeze({ id: confirmationId, at: confirmedAt })," \
+  "    confirmation: Object.freeze({ id: confirmationId, at: entry.at }),"
+run "the read-back is built from the target, never the transcript" \
+  "    readBack: readBack(verb, resolved)," "    readBack: \`\${text} \${CONFIRM_CUE}\`,"
+run "a launch is not destructive (D162)" \
+  "  [VERB.MERGE]: Object.freeze([TARGET_KIND.MERGE]),
+});" "  [VERB.MERGE]: Object.freeze([TARGET_KIND.MERGE]),
+  [VERB.LAUNCH]: Object.freeze([TARGET_KIND.RUN]),
+});"
+run "a run id P6.3 refuses (a flag, a path) is refused" \
+  "    if (!RUN_CHARS.test(runId.value) || !RUN_PATTERN.test(runId.value)) {" "    if (false) {"
+run "an invisible format character is refused in a text" \
+  "  if (FORMAT_CHARACTER.test(value)) return { bad: refuse(REFUSAL.BAD_CHARACTER, field) };" ""
+run "a confirm word glued to punctuation is still a confirm word in a command" \
+  "    .split(/[\\s\\p{P}\\p{S}]+/u)" "    .split(/\\s+/u)"
 run "a second pending action makes a confirm ambiguous" \
   "  if (state.pending.length > 1) {" "  if (false) {"
 run "the utterance that issued a command can never confirm it" \
@@ -242,7 +268,7 @@ run "a launch takes no target" \
 run "a launch takes no action id" \
   "    if (actionId !== undefined) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'actionId');" ""
 run "the target's kind must be the verb's kind" \
-  "  if (kindDescriptor.value !== kind) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');" ""
+  "  if (!kinds.includes(kindDescriptor.value)) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');" ""
 run "a target with no kind at all is missing a field, not of the wrong kind" \
   "  if (kindDescriptor === undefined) return refuse(REFUSAL.MISSING_FIELD, 'target.kind');" ""
 
@@ -284,8 +310,10 @@ run "the read-back names the resolved run id" \
 run "the read-back names the repository and the PR" \
   '      what = `Merge ${resolved.repo}#${resolved.pr} at head ${resolved.headSha}.`;' \
   '      what = `Merge ${resolved.repo}#${resolved.pr} at head whatever it is now.`;'
-run "the read-back names the action id" \
-  '      what = `Confirm action ${resolved.actionId}.`;' "      what = 'Confirm that action.';"
+run "the read-back for a confirm names the repository and PR" \
+  '      what = `Confirm ${resolved.repo}#${resolved.pr}.`;' "      what = 'Confirm that.';"
+run "the read-back for a confirm names the run id" \
+  '      what = `Confirm run ${resolved.runId}.`;' "      what = 'Confirm that run.';"
 run "the read-back carries the confirming cue" \
   "    return \`\${what} \${CONFIRM_CUE}\`;" "    return what;"
 

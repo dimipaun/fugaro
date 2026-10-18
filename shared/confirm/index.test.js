@@ -428,6 +428,12 @@ test('the read-back is built from the resolved target alone, for every destructi
     machineWith(confirmActionEvent()).readBack,
     `Confirm ${REPO}#${PR}. ${CONFIRM_CUE}`,
   );
+  assert.equal(
+    machineWith(confirmActionEvent({ target: RUN })).readBack,
+    `Confirm run ${RUN.runId}. ${CONFIRM_CUE}`,
+  );
+  // The cue names the phrase P6.1 recognises, wake word and all.
+  assert.equal(CONFIRM_CUE, 'Say "Fugaro, confirm" to confirm.');
   // A 64-character SHA is carried as it is, not shortened.
   assert.equal(
     machineWith(mergeEvent({ target: { ...MERGE, headSha: SHA_64 } })).readBack,
