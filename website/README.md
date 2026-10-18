@@ -191,7 +191,7 @@ with fixtures that keep its refusals running, and none of them needs the network
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
   word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
   is a statement about the built pages, though, and it is this file's rules: the homepage's lead
-  region holds one element and it is the promise, so the install block and the terminal are the
+  region holds one element and it is the promise, so the install block and the chat are the
   section the heading opens; Getting Started's install section opens with its commands, with the
   sentence about them still there after the paths; and on every route that prints a command —
   three of the eleven today, and the other eight are skipped rather than asserted about — the

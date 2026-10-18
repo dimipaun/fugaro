@@ -21,12 +21,13 @@
  *      no player, no poster, no play button, nothing to click that plays nothing. W2.4 flips
  *      the flag and fills the slot in the same commit.
  *
- * The terminal below is `Terminal.astro`, which is the other half of the hero (step 2). The
- * hero holds no fact of its own: what it renders, it reads.
+ * The chat below is `AgentChat.astro` (changes spec item 3): the example of the workflow,
+ * which is the other half of the hero. The hero holds no fact of its own: what it renders, it
+ * reads.
  */
 import { loadSite } from '../content.ts'
 import { copyControlHTML } from '../lib/copy-control.mjs'
-import Terminal from './Terminal.astro'
+import AgentChat from './AgentChat.astro'
 
 const site = loadSite()
 const facts = site.facts
@@ -102,7 +103,7 @@ const videoExists = facts.features.video
     </p>
   </div>
 
-  <Terminal />
+  <AgentChat />
 
   {
     videoExists && (

@@ -1,5 +1,5 @@
-// website/test/home.mjs — the hero, the terminal and the flow (website
-// plan, Task W1.4).
+// website/test/home.mjs — the hero, the chat, the flow and the run detail (website plan,
+// Task W1.4; website changes spec of 2026-10-18, items 2, 3 and 4).
 //
 // The two pages this task writes are the first pages the site has, and they are the pages
 // where a marketing site is most likely to say something the product cannot back. So every
@@ -13,24 +13,23 @@
 //      be a sentence of README.md, and its install commands have to be the commands
 //      `website/data/install.yaml` carries for the paths it renders — never typed into the
 //      component (Global Constraint 6, W1.4 step 1).
-//   3. **The terminal types a real invocation, and its transcript is the documented
-//      sequence.** The command is README.md's own example and `fugaro run` is a command the
-//      generated CLI reference documents (W0.4's file); the four lines after it are the
-//      numbered steps of README.md's `## How it works`, each held to the section it cites
-//      and to the order that section writes them in (P7, D184, RF11); and the animation
-//      holds its last frame, so a reader whose system asks for less motion gets the whole
-//      transcript rather than a half-typed line (D105, W1.4 step 2).
-//   4. **The flow carries D185's four steps, in order, with the two annotations on the job
-//      step**, and every caption on it — a step's and an annotation's — is a line of
-//      README.md or of `docs/design/v1.md`; the names the README does not use are asserted
-//      to be labels rather than quotations. The four steps, the caption the ruling gives each
-//      of them and the two annotations are all read out of the ruling's own row in
-//      `docs/website/redesign/reconciliation.md`, so the page is held to the decision rather
-//      than to a copy of it — including which caption belongs to which step, since all four
-//      are lines of the README and could otherwise be shuffled. The names a reader reads —
-//      each step's heading, each annotation's label — are held to the names the check reads,
-//      so a page whose visible flow says something else fails on what it shows rather than
-//      passing on its attributes (W1.4 step 3, P8, RF12/D185).
+//   3. **The chat is the workflow, and every line of it is a document's own** (changes spec
+//      item 3). The request is the spec's example, the agent's two lines are the
+//      `parallelism` and `working` skills' own sentences, and the launch is the invocation
+//      the `parallelism` skill documents — read from those files rather than imagined, since
+//      a chat is where a page invents what a product says. The hero offers one command to
+//      copy besides the install paths, `fugaro watch`, and the old `fugaro run` example is
+//      asserted gone; the slot for the screenshot a separate task adds is asserted to be
+//      marked and empty, and the page to carry no picture but its wordmark.
+//   4. **The flow carries the changes spec's four steps, in order**, one short line each,
+//      from one component on both pages: the names, and the caption of each step, are read
+//      out of the spec's own item 4 and of the section of README.md the step cites, in that
+//      section's order — all four captions are lines of the README, so a source alone would
+//      let them be shuffled among the steps. `ArchitectureDiagram.astro` supersedes D185's
+//      step names; the detail D185's two annotations held (the caches, the trust boundary) is
+//      under `RunDetail.astro` on How It Works, whose five steps and note are held to
+//      README.md's `## How it works` and to `docs/design/v1.md` the same way, and whose
+//      absence from the homepage is a case of its own (changes spec item 4).
 //   5. **Neither page names a claim the product cannot back**: no console download, no
 //      Windows/WSL support, no "~2 h", no ballpark ranges (F50, D102, W1.4 step 4). The
 //      video slot is checked against `site.yaml`'s own flag rather than against today's
@@ -108,7 +107,7 @@ function text(html) {
 
 /**
  * A node's text as a reader receives it: the decoration the page marks `aria-hidden` left
- * out (the terminal's `$` prompt and its caret are drawing, not words), entities decoded,
+ * out (the flow's step numbers are drawing, not words), entities decoded,
  * runs of whitespace one space. This is what the page says, which is what the checks below
  * hold to the repository.
  */
@@ -667,218 +666,259 @@ test('the hero renders a player only when site.yaml says the video exists', () =
   }
 })
 
-test('the terminal types an invocation the CLI reference documents, and README.md shows', () => {
-  const page = builtPage('')
-  const command = classText(page, 'terminal-command')
-  const reference = repoFile('website/content/cli-reference.md')
-
-  assert.ok(command, 'the hero renders no terminal, and the spec\'s hero is a terminal typing a fugaro command (W1.4 step 2)')
-  assert.ok(
-    normalize(repoFile('README.md')).includes(normalize(command)),
-    `the terminal types ${JSON.stringify(command)}, which README.md does not print: the command is the README's own example rather than one written for the page (W1.4 step 2)`,
-  )
-  assert.ok(
-    reference.includes('`fugaro run`'),
-    'the generated CLI reference documents no `fugaro run`, and the terminal types an invocation the reference carries (W0.4, W1.4 step 2)',
-  )
-})
-
-// ---- the transcript (P7, D184) -----------------------------------------------------------
+// ---- the chat (changes spec of 2026-10-18, item 3) ---------------------------------------
 
 /**
- * The documents a transcript line may cite, by the name the line carries. The command is
- * README.md's example anywhere in the file; the four steps after it are the numbered steps
- * of its `## How it works`, so they cite that section and are held to it rather than to the
- * whole file.
+ * The documents a line of the chat may be quoted from, by the name the turn cites: the spec,
+ * whose item 3 gives the request, and the two skills, which are what the agent does with one.
  */
-function transcriptSources() {
+function chatSources() {
   return {
-    'README.md': repoFile('README.md'),
-    'README.md#How it works': readmeSection('How it works'),
+    'docs/website/redesign/changes-spec-2026-10-18.md': repoFile('docs/website/redesign/changes-spec-2026-10-18.md'),
+    'plugin/skills/parallelism/SKILL.md': repoFile('plugin/skills/parallelism/SKILL.md'),
+    'plugin/skills/working/SKILL.md': repoFile('plugin/skills/working/SKILL.md'),
   }
 }
 
-/** The transcript a built page renders: each line, the document it cites, and its timing. */
-function transcript(page) {
+const CHAT_CLASSES = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
+
+/**
+ * The chat a built page renders: its turns in order, each with the lines it carries — the
+ * reader's request, the agent's answer and the launch it runs, and the results it reports
+ * back with. One array, so the rules below read the chat the way a reader does.
+ */
+function chat(page) {
   return [...walk(parse(page))]
-    .filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('terminal-line'))
+    .filter((el) => el.name === 'li' && CHAT_CLASSES(el).includes('chat-turn'))
     .map((el) => {
-      const style = el.attrs.get('style') ?? ''
+      const inside = (selector) => {
+        const node = [...walk(el)].find((child) => CHAT_CLASSES(child).includes(selector))
+        return node ? decode(readableText(node)).replace(/\s+/g, ' ').trim() : ''
+      }
       return {
-        text: decode(readableText(el)).replace(/\s+/g, ' ').trim(),
+        turn: el.attrs.get('data-turn') ?? '',
         source: el.attrs.get('data-source') ?? '',
-        characters: Number(/--terminal-characters:\s*(\d+)/.exec(style)?.[1] ?? NaN),
-        delay: Number(/--terminal-delay:\s*([\d.]+)s/.exec(style)?.[1] ?? NaN),
-        caret: [...walk(el)].some((child) => (child.attrs?.get('class') ?? '').split(/\s+/).includes('terminal-caret')),
+        who: inside('turn-who'),
+        line: inside('turn-line'),
+        call: inside('turn-call'),
+        results: [...walk(el)]
+          .filter((child) => CHAT_CLASSES(child).includes('turn-result'))
+          .map((child) => decode(readableText(child)).replace(/\s+/g, ' ').trim()),
       }
     })
 }
 
 /**
- * Every failure of the transcript's rule, as the lines a reader of this file sees: every
- * line is a line of the document it cites, and the lines of a document come in the order
- * that document writes them. The page's own caption calls the transcript the documented
- * sequence of a run, so a line the document does not write — or writes after a line that
- * follows it here — is the animation saying something the documentation does not (D184,
- * RF11). Written as a function over a transcript so a fixture can prove it refuses.
+ * Every failure of the chat's rule, as the lines a reader of this file sees: every line of it
+ * is a line of the document its turn cites, and the lines of a document come in the order
+ * that document writes them. The chat is an illustration drawn from the repository rather
+ * than a recording of a session, so a line a skill does not write — or one that moved ahead
+ * of the line before it — is the page putting words in the agent's mouth that the agent's own
+ * skill does not have (changes spec item 3, Global Constraint 6).
+ *
+ * Written as a function over a chat so a fixture can prove it refuses.
  */
-export function transcriptFailures(lines, sources) {
+export function chatFailures(turns, sources) {
   const out = []
   const reached = new Map() // document -> how far into it the line before this one reached
-  for (const [index, line] of lines.entries()) {
-    const where = `line ${index + 1} of the transcript, ${JSON.stringify(line.text)}`
-    if (line.text === '') {
-      out.push(`${where}, has no text: the whole transcript is in the markup, and a line that is somewhere else is one a reader without the animation never sees`)
+  for (const [index, turn] of turns.entries()) {
+    const where = `turn ${index + 1} of the chat, ${JSON.stringify(turn.line)}`
+    if (!turn.line) {
+      out.push(`${where}, has no text: the chat is the illustration, and a turn with nothing in it is a bubble a reader cannot read`)
       continue
     }
-    const source = sources[line.source]
-    if (!source) {
-      out.push(`${where}, cites ${JSON.stringify(line.source)}, which is not a document this check reads: every line says which document it is quoted from`)
+    const document = sources[turn.source]
+    if (!document) {
+      out.push(`${where}, cites ${JSON.stringify(turn.source)}, which is not a document this check reads: every line says which document it is quoted from`)
       continue
     }
-    const at = normalize(source).indexOf(normalize(line.text), reached.get(line.source) ?? 0)
-    if (at === -1) {
-      out.push(
-        `${where}, does not appear in ${line.source} at or after the line before it: the transcript is the documented sequence of a run rather than a run that happened, and every line of it is the repository's own words in the repository's own order (D184, RF11)`,
-      )
-      continue
+    for (const [what, line] of [
+      ['line', turn.line],
+      ['tool call', turn.call],
+    ]) {
+      if (!line) continue
+      const quoted = normalize(line)
+      const at = normalize(document).indexOf(quoted, reached.get(turn.source) ?? 0)
+      if (at === -1) {
+        out.push(
+          `the chat's ${what} ${JSON.stringify(line)} does not appear in ${turn.source} at or after the line before it: every line of the chat is the document's own words, in the order it writes them (changes spec 2026-10-18, item 3; Global Constraint 6)`,
+        )
+        continue
+      }
+      reached.set(turn.source, at + quoted.length)
     }
-    reached.set(line.source, at + normalize(line.text).length)
   }
   return out
 }
 
-test("every line of the homepage transcript is the document it cites, in that document's order", () => {
-  const lines = transcript(builtPage(''))
+test('the homepage chat is the workflow, and every line of it is the document it cites', () => {
+  const turns = chat(builtPage(''))
 
-  // The transcript is the command and the README's four steps — Start, Sync, Loop, Push and
-  // open the pull request (D184). A page that grew a sixth line, or lost one, is a page this
-  // check would otherwise go on accepting.
-  assert.equal(lines.length, 5, `the homepage terminal renders ${lines.length} lines, and the documented sequence is the command and the README's four steps (P7, D184)`)
+  // Item 3's illustration, turn for turn: the request, the agent's answer with the launch it
+  // runs, and the report a few minutes later. A page that grew a fourth turn, or lost one, is
+  // a page this check would otherwise go on accepting.
+  assert.equal(turns.length, 3, `the homepage chat renders ${turns.length} turns, and item 3's illustration is three (changes spec 2026-10-18, item 3)`)
+  assert.deepEqual(
+    turns.map((turn) => turn.turn),
+    ['you', 'agent', 'agent'],
+    `the chat's turns are ${JSON.stringify(turns.map((turn) => turn.turn))}, and the reader's request comes first, with the agent answering it (changes spec 2026-10-18, item 3)`,
+  )
+  assert.ok(turns[0].who, 'the chat does not say who is speaking, and a reader who cannot tell the two voices apart has not been shown the workflow (changes spec 2026-10-18, item 3)')
+  assert.ok(turns[1].call, "the agent's answer carries no tool call, and item 3 asks for the launch to show as a tool-call line rather than as a command the reader typed (changes spec 2026-10-18, item 3)")
+  assert.equal(
+    turns[2].results.length,
+    3,
+    `the agent reports back with ${turns[2].results.length} results, and item 3's illustration fans three pieces of work out (changes spec 2026-10-18, item 3)`,
+  )
 
-  const failures = transcriptFailures(lines, transcriptSources())
-  assert.deepEqual(failures, [], `the homepage transcript is not the documented sequence (P7, D184, RF11):\n  ${failures.join('\n  ')}`)
+  const failures = chatFailures(turns, chatSources())
+  assert.deepEqual(failures, [], `the homepage chat is not the documents' own words (changes spec 2026-10-18, item 3):\n  ${failures.join('\n  ')}`)
 })
 
-test('the transcript rule refuses a line the document it cites does not write', () => {
-  const sources = transcriptSources()
-  const lines = transcript(builtPage(''))
-  assert.deepEqual(transcriptFailures(lines, sources), [], 'the rule refuses the page it is written for, so every refusal below is the one thing it breaks')
+test('the chat rule refuses a line the document it cites does not write', () => {
+  const sources = chatSources()
+  const turns = chat(builtPage(''))
+  assert.deepEqual(chatFailures(turns, sources), [], 'the rule refuses the page it is written for, so every refusal below is the one thing it breaks')
 
-  // A step with a word added to it: not a line of the section, and the defect this rule
-  // exists for — a transcript that is a paraphrase of the documentation rather than the
-  // documentation's own words.
-  const paraphrased = lines.map((line, index) =>
-    index === 2 ? { ...line, text: `${line.text}, quickly` } : line,
+  // A line with a word added to it: not a line of the skill, and the defect this rule exists
+  // for — a chat that paraphrases what the agent says rather than quoting its skill.
+  const paraphrased = turns.map((turn, index) => (index === 1 ? { ...turn, line: 'I will run each fix in its own job.' } : turn))
+  assert.match(chatFailures(paraphrased, sources).join('\n'), /does not appear in plugin\/skills\/parallelism\/SKILL\.md/)
+
+  // A line from the wrong document: the words are the repository's, and they are not this
+  // turn's skill. The chat says which document each turn answers from, so this fails.
+  const elsewhere = turns.map((turn, index) =>
+    index === 1 ? { ...turn, source: 'plugin/skills/working/SKILL.md' } : turn,
   )
-  assert.match(transcriptFailures(paraphrased, sources).join('\n'), /does not appear in README\.md#How it works/)
+  assert.match(chatFailures(elsewhere, sources).join('\n'), /does not appear in plugin\/skills\/working\/SKILL\.md/)
 
-  // The README's words, but from outside the section the line cites. The claim a step line
-  // makes is that it is a step of `## How it works`, so this fails even though the words are
-  // in the file — which is why the section is what the line cites.
-  const elsewhere = "Or ask your agent: the plugin's working skill launches, watches and diagnoses runs"
-  assert.ok(normalize(sources['README.md']).includes(normalize(elsewhere)), 'the fixture quotes a sentence README.md carries, and it no longer does')
-  assert.ok(!normalize(sources['README.md#How it works']).includes(normalize(elsewhere)), 'the fixture quotes a sentence outside "## How it works", and the README moved it inside')
-  assert.match(
-    transcriptFailures(lines.map((line, index) => (index === 1 ? { ...line, text: elsewhere } : line)), sources).join('\n'),
-    /does not appear in README\.md#How it works/,
+  // The tool call is a line of a document too, and it is the one that would otherwise be
+  // invented: an invocation written for the page, with a batch name of its own.
+  const invented = turns.map((turn, index) =>
+    index === 1 ? { ...turn, call: 'fugaro run --batch three-fixes --run-id fix-1 --task-file -' } : turn,
   )
+  assert.match(chatFailures(invented, sources).join('\n'), /tool call .* does not appear in plugin\/skills\/parallelism\/SKILL\.md/)
 
-  // The same lines, the fourth step put second: the words are all there, the order is not.
-  const reordered = [lines[0], lines[3], lines[1], lines[2], lines[4]]
-  assert.match(transcriptFailures(reordered, sources).join('\n'), /at or after the line before it/)
+  // The same turn's line and tool call, the other way round: both are in the skill, and the
+  // order is the skill's — the sentence that says one run per piece comes before the
+  // invocation that launches them.
+  const swapped = turns.map((turn, index) => (index === 1 ? { ...turn, line: turn.call, call: turn.line } : turn))
+  assert.match(chatFailures(swapped, sources).join('\n'), /at or after the line before it/)
 
-  // A line citing a document nothing reads, and a line with no text at all.
-  assert.match(transcriptFailures([{ ...lines[0], source: 'website/content/cli-reference.md' }], sources).join('\n'), /not a document this check reads/)
-  assert.match(transcriptFailures([{ ...lines[0], text: '' }], sources).join('\n'), /has no text/)
+  // A turn citing a document nothing reads, and a turn with no text at all.
+  assert.match(chatFailures([{ ...turns[0], source: 'website/content/cli-reference.md' }], sources).join('\n'), /not a document this check reads/)
+  assert.match(chatFailures([{ ...turns[0], line: '' }], sources).join('\n'), /has no text/)
 })
 
-test('every line of the transcript is in the markup, revealed by its own count, one after another', () => {
-  const page = builtPage('')
-  const lines = transcript(page)
-  assert.ok(lines.length > 1, 'the homepage terminal renders one line, and the transcript is a sequence (P7)')
+test('the hero launches through the agent, and the one command it offers the reader is fugaro watch', () => {
+  // Item 3's acceptance, read off the built page: a first-time reader has to come away with
+  // "my agent runs this", and the only command the hero offers to copy besides the install
+  // paths is `fugaro watch`. The old hero example — a `fugaro run` line the reader was meant
+  // to type — is the thing this case is written to notice coming back.
+  const page = parse(builtPage(''))
+  const hero = findAll(page, (el) => el.name === 'section' && CHAT_CLASSES(el).includes('hero'))[0]
+  assert.ok(hero, 'the homepage has no hero section, and the chat and the install block are both in it')
 
-  // The end state is in the markup: every line is whole in the page a reader receives, so
-  // nothing about the transcript depends on the animation having run — with the animation
-  // neutralised, the page is the whole transcript, still (D105, W1.4 step 2).
-  for (const [index, line] of lines.entries()) {
-    assert.ok(
-      text(page).includes(line.text),
-      `line ${index + 1} of the transcript, ${JSON.stringify(line.text)}, is not in the markup in full, so a reader whose animation never runs sees a half-typed line`,
-    )
-  }
-
-  // The reveal: one step per character of the line, ending on the line's own width. The
-  // count is written on the line and the rule reads it, so a count that does not cover the
-  // line is a line that stops mid-word — and one that is far larger is a reveal that sits
-  // still while the reader waits for it.
-  const typing = /\.terminal-line[^{]*\{([^}]*)\}/.exec(builtCSS(page))
-  assert.ok(typing, 'the transcript has no typing rule, and every line is meant to be typed (W1.4 step 2, P7)')
-  assert.match(
-    typing[1],
-    /animation:[^;}]*\b(forwards|both)\b/,
-    'the typing animation does not hold its last frame: with animation-duration neutralised the page has to land on the whole transcript, not on empty lines (D105, W1.4 step 2)',
-  )
-  assert.match(
-    typing[1].replace(/\s+/g, ''),
-    /steps\(var\(--terminal-characters\),end\)/,
-    'the reveal is not stepped by the line\'s own character count, and a smooth reveal is a different animation from the one this page is written for (P7)',
-  )
-
-  for (const [index, line] of lines.entries()) {
-    assert.ok(
-      Number.isFinite(line.characters) && line.characters >= line.text.length,
-      `line ${index + 1} of the transcript carries ${line.characters} characters for ${line.text.length} characters of text: the reveal is as wide as the line, and a count short of it cuts the line off`,
-    )
-    assert.ok(Number.isFinite(line.delay), `line ${index + 1} of the transcript carries no --terminal-delay, so every line arrives at once (P7)`)
-  }
-  assert.equal(lines[0].delay, 0, 'the first line of the transcript waits before it starts, and the command is what the reader came for (P7)')
-  for (let i = 1; i < lines.length; i++) {
-    assert.ok(lines[i].delay > lines[i - 1].delay, `line ${i + 1} of the transcript arrives with the line before it, and the lines are staggered so a reader can follow them (P7)`)
-  }
-
-  // The caret is in the last line and the last line's reveal is one column wider than its
-  // text: that column is what the caret is drawn in, so a caret outside it — or a count
-  // without it — is a caret that stays clipped until the page is reloaded.
-  const last = lines[lines.length - 1]
-  assert.ok(last.caret, 'the transcript\'s caret is not in its last line, so it sits at the end of a line that has not been typed yet (P7)')
+  const commands = [...walk(hero)].filter((el) => el.name === 'pre').map((el) => decode(readableText(el)).trim())
   assert.ok(
-    last.characters > last.text.length,
-    'the last line\'s reveal is exactly its text wide, so the caret beside the text stays clipped (P7)',
+    commands.includes('fugaro watch'),
+    `the hero's command blocks are ${JSON.stringify(commands)}, and \`fugaro watch\` is the one command the reader is asked for (changes spec 2026-10-18, item 3)`,
+  )
+  assert.ok(
+    !commands.some((command) => /^fugaro run\b/.test(command)),
+    `the hero offers ${JSON.stringify(commands)} as commands the reader can copy, and a \`fugaro run\` line is the manual path the documentation keeps rather than what the reader types (changes spec 2026-10-18, item 3)`,
+  )
+  assert.ok(
+    !text(builtPage('')).includes('add a --verbose flag to the export command'),
+    'the homepage still carries the old hero example, the `fugaro run "add a --verbose flag to the export command"` transcript (changes spec 2026-10-18, item 3: "Remove `fugaro run` from the hero example")',
   )
 
-  // The rule that neutralises the animation is the layout's, written once for every
-  // component (W1.3 step 3, D105): this page carries it, so the transcript's end state is
-  // the one above.
-  assert.match(builtCSS(page), /@media\s*\(prefers-reduced-motion:\s*reduce\)/, 'the built page carries no reduced-motion rule, and the transcript\'s end state depends on it (D105)')
+  // The launch is the agent's, drawn as a subdued line: a paragraph inside the turn, with no
+  // copy control of its own — what the reader copies here is `fugaro watch`, not the launch.
+  const call = findAll(hero, (el) => CHAT_CLASSES(el).includes('turn-call'))[0]
+  assert.ok(call, "the hero's chat carries no tool-call line, and item 3 asks for the launch to show as one (changes spec 2026-10-18, item 3)")
+  assert.equal(call.name, 'p', `the tool call is a <${call.name}>, and a command block is what a reader is offered to copy: the agent's launch is a line of the illustration (changes spec 2026-10-18, item 3)`)
+  assert.equal(
+    [...walk(call)].filter((el) => el.attrs.has('data-copy-button') || el.attrs.has('data-copy')).length,
+    0,
+    'the tool call carries a copy control, and the reader did not type this line: the hero offers exactly one command to copy (changes spec 2026-10-18, item 3)',
+  )
 })
 
-test('the caret stops blinking within five seconds of starting', () => {
-  // WCAG 2.2.2: a blink that starts by itself and goes on past five seconds needs a way to
-  // stop it, and a decorative caret has none. So the blink is counted, it waits for the line
-  // it sits in to arrive, and it ends on the caret's visible base rule.
-  const caret = /\.terminal-caret[^{]*\{([^}]*)\}/.exec(builtCSS(builtPage('')))
-  assert.ok(caret, 'the terminal has no caret rule')
-  const animation = /animation:([^;}]*)/.exec(caret[1])
-  assert.ok(animation, 'the caret has no animation rule')
-  const value = animation[1].trim()
-  assert.ok(!/\binfinite\b/.test(value), `the caret blinks for ever (${value}): a blink past five seconds has to be stoppable, and this one is not (WCAG 2.2.2)`)
-  const seconds = (t) => (t.endsWith('ms') ? Number(t.slice(0, -2)) / 1000 : Number(t.slice(0, -1)))
-  const duration = seconds(/(\d*\.?\d+m?s)\b/.exec(value)[1])
-  const count = Number(/\s(\d+)\s*$/.exec(value)?.[1] ?? 1)
-  assert.ok(duration * count <= 5, `the caret blinks for ${duration * count}s (${value}): five seconds at most (WCAG 2.2.2)`)
-  assert.match(value.replace(/\s+/g, ''), /var\(--terminal-delay\)/, 'the caret starts blinking before its line has arrived, so its blinks are spent on a line nobody can see yet')
+test('the chat says on the page that it is an illustration, not a recording', () => {
+  // D184's rule for the transcript this replaces, kept for the chat: the lines are the
+  // repository's own, and the page says what they are rather than leaving a reader to take an
+  // illustration for a session that happened.
+  const caption = classText(builtPage(''), 'chat-caption')
+
+  assert.ok(caption, 'the homepage chat carries no caption, and item 3 admits the illustration only as a labelled one rather than as a recording (changes spec 2026-10-18, item 3; D184)')
+  assert.match(caption, /illustration/i, `the chat's caption ${JSON.stringify(caption)} does not say the chat is an illustration (changes spec 2026-10-18, item 3)`)
+  assert.match(caption, /not a recording/i, `the chat's caption ${JSON.stringify(caption)} does not say the lines are not a recording of a session (D184)`)
 })
 
-test('the transcript says on the page that it is the documented sequence, not a recording', () => {
-  // D184 admits the animation only in this form: the lines are the repository's own, and the
-  // page says what they are. The caption is the whole of that claim, so it is checked as the
-  // claim — a page that dropped it would be showing a transcript as if it were a run.
-  const caption = classText(builtPage(''), 'terminal-caption')
+test('the watch snippet is the command the reader keeps, and it copies itself', () => {
+  const page = builtPage('')
+  const command = classText(page, 'chat-watch-command')
 
-  assert.ok(caption, 'the homepage terminal carries no caption, and D184 admits the run animation only as a labelled sequence rather than a recording (P7, RF11)')
-  assert.match(caption, /documented sequence/i, `the terminal's caption ${JSON.stringify(caption)} does not say the lines are the documented sequence (D184)`)
-  assert.match(caption, /not a recording/i, `the terminal's caption ${JSON.stringify(caption)} does not say the lines are not a recording of a run (D184)`)
+  assert.equal(command, 'fugaro watch', `the hero's watch snippet reads ${JSON.stringify(command)}, and the one command the reader is asked for is \`fugaro watch\` (changes spec 2026-10-18, item 3)`)
+  assert.ok(
+    repoFile('README.md').includes(command),
+    `the snippet offers ${JSON.stringify(command)}, which README.md does not print: the command is the documentation's rather than one written for the page (Global Constraint 9)`,
+  )
+
+  // And it is a command block like every other one on the site: one control, on the command
+  // (P6, D183). The skill's own line about what the screen shows goes under it, quoted.
+  const block = [...walk(parse(page))].find((el) => CHAT_CLASSES(el).includes('chat-watch'))
+  assert.ok(block?.attrs.has('data-copy'), "the watch snippet is in no [data-copy] block, and it is a command a reader copies like any other (P6)")
+  assert.equal(
+    [...walk(block)].filter((el) => el.attrs.has('data-copy-button')).length,
+    1,
+    "the watch snippet does not carry exactly one copy control (P6, D183)",
+  )
+  const note = classText(page, 'chat-watch-note')
+  assert.ok(
+    normalize(repoFile('plugin/skills/working/SKILL.md')).includes(normalize(note)),
+    `the note under the snippet, ${JSON.stringify(note)}, is not a line of plugin/skills/working/SKILL.md: the page quotes the skill rather than describing what the screen does (Global Constraint 6)`,
+  )
+})
+
+test('the slot for the watch screenshot is marked, empty, and adds no image', () => {
+  // Item 3 asks for a clearly marked slot right after the chat, and for the image itself to
+  // be a separate task's: so the slot is here, it is empty, and this page adds no picture of
+  // a screen the run does not have (Global Constraint 9, D107's rule for the hero's video).
+  const page = parse(builtPage(''))
+  const slot = findAll(page, (el) => el.attrs.get('data-slot') === 'watch-screenshot')[0]
+  assert.ok(slot, 'the homepage carries no [data-slot="watch-screenshot"], and item 3 asks for a clearly marked slot for the `fugaro watch` screenshot (changes spec 2026-10-18, item 3)')
+  assert.deepEqual(
+    [...walk(slot)].map((el) => el.name),
+    [],
+    'the slot for the watch screenshot carries elements of its own: it is the place a later task puts the image, and until then it holds nothing (changes spec 2026-10-18, item 3)',
+  )
+  assert.equal(textOf(slot).trim(), '', `the slot carries the text ${JSON.stringify(textOf(slot).trim())}, and a slot is not a caption (changes spec 2026-10-18, item 3)`)
+  for (const attribute of ['src', 'srcset', 'href', 'style', 'aria-label', 'role']) {
+    assert.ok(!slot.attrs.has(attribute), `the slot carries ${attribute}, and the hook a task and this check read is \`data-slot\` alone (changes spec 2026-10-18, item 3)`)
+  }
+
+  // "right after the chat": the slot is the element after the turns, inside the chat's own
+  // figure, so the screenshot a later task adds lands where item 3 puts it.
+  const turns = findAll(page, (el) => CHAT_CLASSES(el).includes('chat-turns'))[0]
+  const siblings = (turns.parent.children ?? []).filter((child) => child.name !== undefined)
+  assert.equal(
+    siblings[siblings.indexOf(turns) + 1],
+    slot,
+    'the slot for the watch screenshot is not the element after the chat turns, and item 3 puts it right after the chat (changes spec 2026-10-18, item 3)',
+  )
+
+  // And no image came with it: the wordmark is the homepage's only picture, so a screenshot
+  // committed by mistake — the one thing this run must not add — is this failure.
+  const pictures = [...walk(page)]
+    .filter((el) => ['img', 'picture', 'video', 'source'].includes(el.name))
+    .map((el) => el.attrs.get('src') ?? el.attrs.get('srcset') ?? '')
+  assert.deepEqual(
+    pictures,
+    ['/logo.png'],
+    `the homepage renders the pictures ${JSON.stringify(pictures)}, and this run adds none: the wordmark is the page's only image, and the screenshot is a separate task's (changes spec 2026-10-18, item 3)`,
+  )
 })
 
 test("the flow carries the changes spec's four steps, as one component on both pages", () => {

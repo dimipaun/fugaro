@@ -220,8 +220,8 @@ const analyticsEnabled = facts.analytics.enabled
          transition on the page immediately, rather than having to be given a second
          reduced-motion stylesheet by each component's author. The durations are 1ms rather
          than 0 because a zero-duration animation with `fill-mode: both` still fires its end
-         state, and 1ms keeps `animationend` and `transitionend` listeners working — the
-         site's own terminal (W1.4) reaches its finished frame through exactly that. */
+         state, and 1ms keeps `animationend` and `transitionend` listeners working, so a
+         component that reveals something over time still lands on its finished frame. */
       @media (prefers-reduced-motion: reduce) {
         *,
         *::before,

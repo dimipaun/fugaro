@@ -1,0 +1,313 @@
+---
+/**
+ * website/src/components/AgentChat.astro — the hero's example (website changes spec of
+ * 2026-10-18, item 3; it replaces `Terminal.astro`, the `fugaro run` transcript of P7/D184).
+ *
+ * **What it shows.** Fugaro is not a CLI the reader drives from a terminal: it is what the
+ * reader's own coding agent reaches for, through the plugin's skills. So the hero shows that
+ * — three turns of a chat: the reader asks for three bug fixes fanned out, the agent answers
+ * and launches the runs, and a few minutes later it reports the pull requests. The launch is
+ * the agent's own tool call, drawn as a subdued line rather than as a command with a prompt
+ * in front of it, because the reader did not type it.
+ *
+ * **Every line is a line of a document.** Global Constraint 6 and D102: a page renders a fact
+ * and never restates one. The request is the spec's own example; the agent's two lines are
+ * the `parallelism` and `working` skills' own sentences — what the agent really says, read
+ * from the skills rather than imagined (item 3's acceptance: "the agent's lines show the real
+ * shape of the skills' behaviour"). The launch line is the invocation the `parallelism`
+ * skill's code block documents, with the placeholders it writes (`<name>`, `<id>`): an
+ * invented batch name or run id would be a fact about a run that did not happen (D184).
+ * Every line is held here at build time to the document it cites, and again from outside by
+ * `website/test/home.mjs`.
+ *
+ * **The pull requests are text, not links.** Item 3 asks the agent to report back with pull
+ * request links, and there is no honest link to draw: a run that has not happened has no
+ * pull request number, and a link to one would be either invented (D184's rejected
+ * alternative) or a pointer at a page that does not exist (Global Constraint 9). So the three
+ * results are named as the batch's own pieces — `Pull request 1 of 3` — and the sentence
+ * above them is the skill's own line about what a run ends with. `fugaro watch` is the one
+ * command the reader is asked for, and it is the one they can copy.
+ *
+ * **The slot.** Under the chat, a marked, empty element sits where the `fugaro watch`
+ * screenshot goes: a separate task adds the image, and until it exists there is nothing to
+ * show (the rule the hero's video slot follows, D107). No binary file is added here.
+ */
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { REPO_ROOT } from '../content.ts'
+import { copyControlHTML } from '../lib/copy-control.mjs'
+
+// The documents a line of the chat may be quoted from. The spec, because the request is its
+// example of a request; the two skills, because they are what the agent does with one.
+const SPEC = 'docs/website/redesign/changes-spec-2026-10-18.md'
+const PARALLELISM = 'plugin/skills/parallelism/SKILL.md'
+const WORKING = 'plugin/skills/working/SKILL.md'
+
+/**
+ * A string with its markdown markers and its whitespace removed: how a line and the document
+ * it claims to come from are compared, the same reading the other components use. Code spans
+ * and emphasis are markers rather than text.
+ */
+function comparable(document: string): string {
+  return document.replace(/[`*]/g, '').replace(/\s+/g, '')
+}
+
+/** A document of this repository, by the path a line cites, read once. */
+function source(document: string): string {
+  return readFileSync(path.join(REPO_ROOT, document), 'utf8')
+}
+
+const SOURCES: { [name: string]: string } = {
+  [SPEC]: source(SPEC),
+  [PARALLELISM]: source(PARALLELISM),
+  [WORKING]: source(WORKING),
+}
+
+/**
+ * The chat, turn by turn: who says it, what they say, and the document each line is quoted
+ * from. `call` is the agent's tool call rather than a line of dialogue — the launch the
+ * `parallelism` skill documents — and `results` is the list the last turn reports back with.
+ */
+const TURNS = [
+  {
+    who: 'You',
+    turn: 'you',
+    line: 'Fan out these three bug fixes.',
+    source: SPEC,
+  },
+  {
+    who: 'Your agent',
+    turn: 'agent',
+    line: 'One run per piece, each with a self-contained task',
+    source: PARALLELISM,
+    call: 'fugaro run --batch <name> --run-id <id> --task-file -',
+  },
+  {
+    who: 'Your agent, a few minutes later',
+    turn: 'agent',
+    line: 'It always ends with a pull request, a draft one when it is not sure.',
+    source: WORKING,
+    results: ['Pull request 1 of 3', 'Pull request 2 of 3', 'Pull request 3 of 3'],
+  },
+]
+
+/**
+ * The one command the reader is asked for (item 3's acceptance: "the only command they are
+ * likely to type is `fugaro watch`"), and the skill's own line about what it shows. The
+ * snippet is the hero's only command block besides the install paths, and it carries its own
+ * copy control like every other block on the site (P6).
+ */
+const WATCH = 'fugaro watch'
+const WATCH_NOTE = '`fugaro watch` is the live screen of spend, repositories and running agents.'
+
+// Hold every line to the document it cites, in that document's order, here, so a paraphrase —
+// or a line the skills stopped saying — stops the build naming the file rather than reaching
+// a reader as the agent's own words. `cursor` walks forward through a document, so two lines
+// quoted from one of them can only be quoted in the order it writes them.
+{
+  const cursors: { [name: string]: number } = {}
+  for (const turn of TURNS) {
+    for (const [what, line] of [
+      ['line', turn.line],
+      ['call', turn.call],
+    ] as const) {
+      if (!line) continue
+      const document = comparable(SOURCES[turn.source])
+      const quoted = comparable(line)
+      const from = cursors[turn.source] ?? 0
+      const at = document.indexOf(quoted, from)
+      if (at === -1) {
+        throw new Error(
+          `website/src/components/AgentChat.astro: the chat's ${what} ${JSON.stringify(line)} is not a line of ${turn.source} at or after the line before it, and every line of the chat is a document's own words rather than words written for the page (changes spec 2026-10-18, item 3; Global Constraint 6).`,
+        )
+      }
+      cursors[turn.source] = at + quoted.length
+    }
+  }
+}
+
+// And the note under the watch snippet, held the same way, to the skill that writes it.
+if (!comparable(SOURCES[WORKING]).includes(comparable(WATCH_NOTE))) {
+  throw new Error(
+    `website/src/components/AgentChat.astro: the note ${JSON.stringify(WATCH_NOTE)} is not a line of ${WORKING}, and the page quotes the skill rather than describing it (Global Constraint 6).`,
+  )
+}
+
+// And the command itself, to the README: `fugaro watch` is a command the documentation
+// prints, so the one thing the reader is asked to type is a command that exists.
+if (!source('README.md').includes(WATCH)) {
+  throw new Error(
+    `website/src/components/AgentChat.astro: README.md does not print ${JSON.stringify(WATCH)}, and the snippet offers a command the documentation carries. Either the README stopped documenting it or the snippet is showing one that does not exist (Global Constraint 9).`,
+  )
+}
+---
+
+<figure class="chat" data-source={SPEC}>
+  <h2 class="chat-title">Through your agent</h2>
+
+  <ol class="chat-turns">
+    {
+      TURNS.map((turn) => (
+        <li class="chat-turn" data-turn={turn.turn} data-source={turn.source}>
+          <p class="turn-who">{turn.who}</p>
+          <p class="turn-line">{turn.line}</p>
+          {/* The agent's own tool call: the invocation the skill documents, drawn as a
+              subdued line rather than as a prompt a reader is meant to type. It is a
+              paragraph and not a `<pre>`, so it carries no copy control — what a reader
+              copies here is `fugaro watch` below, not the agent's launch. */}
+          {turn.call && <p class="turn-call"><code>{turn.call}</code></p>}
+          {turn.results && (
+            <ul class="turn-results">
+              {turn.results.map((result) => (
+                <li class="turn-result">{result}</li>
+              ))}
+            </ul>
+          )}
+        </li>
+      ))
+    }
+  </ol>
+
+  {/* Where the `fugaro watch` screenshot goes (changes spec item 3): a separate task adds the
+      image, and until it exists this element carries nothing at all — no placeholder, no
+      empty frame, no request for a file the build does not produce. `data-slot` is the hook
+      that task and `website/test/home.mjs` read; it is deliberately not a class, so it is not
+      something the stylesheet can start drawing. */}
+  <div class="chat-shot" data-slot="watch-screenshot"></div>
+
+  <h3 class="chat-watch-title">Watch it run</h3>
+
+  <div class="chat-watch" data-copy>
+    <Fragment set:html={copyControlHTML('Copy the command')} />
+    <pre class="chat-watch-command"><code>{WATCH}</code></pre>
+  </div>
+
+  <p class="chat-watch-note">{WATCH_NOTE}</p>
+
+  {/* The caption is the figure's last child and its name: the chat is an illustration of the
+      workflow drawn from the documents, not a recording of a session (D184's rule for the
+      transcript this component replaced). */}
+  <figcaption class="chat-caption">
+    An illustration of the workflow, not a recording of a session: every line is the
+    repository's own words, from the skills the agent reads.
+  </figcaption>
+</figure>
+
+<style>
+  /* Tokens only (W1.2). The chat is quieter than the install block above it — it is an
+     illustration of what happens next rather than a command to run — and the accent marks
+     the agent's turns, which is where the work leaves the reader's hands. */
+  .chat {
+    max-width: var(--measure);
+    margin: 0;
+  }
+
+  .chat-title {
+    margin: 0 0 var(--space-xs);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  .chat-turns {
+    display: grid;
+    gap: var(--space-xs);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .chat-turn {
+    display: grid;
+    gap: var(--space-3xs);
+    padding: var(--space-sm);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+
+  /* The agent's turns carry the accent as a rail: the reader's own turn is the flat card,
+     and the two turns where Fugaro does the work are the ones marked. */
+  .chat-turn[data-turn='agent'] {
+    border-left: calc(var(--border-width) * 2) solid var(--accent);
+  }
+
+  .turn-who {
+    margin: 0;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+  }
+
+  .turn-line {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--font-size-base);
+    line-height: var(--leading-normal);
+  }
+
+  /* The tool call: no card of its own, no prompt, no control — the smallest thing that says
+     the agent ran something. */
+  .turn-call {
+    margin: 0;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
+  }
+
+  .turn-results {
+    display: grid;
+    gap: var(--space-3xs);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .turn-result {
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+  }
+
+  .chat-watch-title {
+    margin: var(--space-md) 0 var(--space-3xs);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-base);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  .chat-watch {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    padding: var(--space-2xs) var(--space-sm);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--ground);
+  }
+
+  .chat-watch-command {
+    margin: 0;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+  }
+
+  .chat-watch-note {
+    margin: var(--space-3xs) 0 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--leading-normal);
+  }
+
+  .chat-caption {
+    margin-top: var(--space-sm);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--leading-normal);
+  }
+</style>

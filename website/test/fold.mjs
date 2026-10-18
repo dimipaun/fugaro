@@ -19,7 +19,7 @@
 //      lead ceiling in `budget.mjs` is a ceiling on the promise rather than on the commands
 //      (D188's lead is the region between the two headings, wherever each of them sits).
 //      A hero whose install block sat between the promise and the heading would put the
-//      commands, the terminal and the "every install path" link inside the lead, and the page
+//      commands, the chat and the "every install path" link inside the lead, and the page
 //      would say nothing about the promise above them.
 //   2. **Getting Started's first section opens with its commands.** Inside `#install`, no
 //      paragraph of the section's own precedes the first command block, and the section's
@@ -88,7 +88,7 @@ export function foldFailures(dist) {
         const shape = lead.map((el) => el.name + (el.attrs.get('class') ? `.${el.attrs.get('class')}` : '')).join(', ')
         if (shape !== 'p.hero-lead') {
           out.push(
-            `${page.rel} holds ${lead.length} element(s) between its \`h1\` and its first \`h2\` (${shape}): the promise is the whole of the page's gist above the fold, so the install block, the terminal and the link after them belong to the section the heading opens (P5, D188)`,
+            `${page.rel} holds ${lead.length} element(s) between its \`h1\` and its first \`h2\` (${shape}): the promise is the whole of the page's gist above the fold, so the install block, the chat and the link after them belong to the section the heading opens (P5, D188)`,
           )
         }
         if (lead.length === 1 && textOf(lead[0]).trim() === '') {

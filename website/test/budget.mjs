@@ -226,7 +226,7 @@ function textBetween(main, from, to) {
  * from the `h1`'s container instead when the first `h2` was outside it — the shape the
  * homepage had, where the hero's section held the `h1` and the flow's step names were the
  * first `h2`s under it — and that reading measured the homepage's lead as 24 words where the
- * plan's measures 134: the promise, the install commands, the terminal and everything up to
+ * plan's measures 134: the promise, the install commands, the chat and everything up to
  * the flow. A gate whose number depends on which end it is read from is two gates (P4's
  * reviewer asked which one this is, and P5 answered it). The homepage now carries its
  * install section's own `h2` above those blocks, so both readings agree on every built page
@@ -572,7 +572,7 @@ test('the lead is the h1 -> first h2 region wherever the first h2 sits, and what
   // The homepage's shape before P5 put an `h2` above its install block: the hero's section
   // holds the `h1`, and the first `h2` of `main` is a step of a figure that sits outside that
   // section. The whole region between the two headings is the lead — the hero's own paragraph
-  // and the blocks that follow it, which is where a page's install commands and terminal were —
+  // and the blocks that follow it, which is where a page's install commands and chat were —
   // because that is the region the plan defines the lead as, and a page that puts its commands
   // between its `h1` and its first `h2` is a page whose lead they are part of. The run of
   // paragraphs under the `h1` is not the answer here: it is shorter than the region — 38 words
