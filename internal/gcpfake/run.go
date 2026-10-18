@@ -18,8 +18,9 @@ import (
 )
 
 // Run is a stateful fake of the Cloud Run Admin v2 calls Fugaro makes:
-// jobs.run, jobs get, list, patch and delete, operations get (of a patch or
-// a delete), and executions get, list (including across jobs/-) and cancel.
+// jobs.run, jobs get, list, patch, delete and getIamPolicy, operations get
+// (of a patch or a delete), and executions get, list (including across
+// jobs/-) and cancel.
 //
 // It stores executions by (job, short name), so it accepts a name in any
 // form: full with the project ID, full with ProjectNumber, or short when the
@@ -71,6 +72,10 @@ type Run struct {
 	// (AddProjectJob): one job per (profile, provider, account), shared by
 	// every repository admitted to the profile (design §4.1).
 	projectJobs map[string]projectJobTriple
+	// policies are the jobs' own IAM policies, by job name (SetJobPolicy):
+	// who may start each job, which is the grant surface doctor reads
+	// (plan task 3.5 step 1). A job with no entry serves an empty policy.
+	policies map[string][]Binding
 }
 
 // projectJobTriple is the (profile, provider, account) a shared project
@@ -175,9 +180,18 @@ type runExec struct {
 // NewRun starts a Cloud Run fake that lives until the test ends.
 func NewRun(t *testing.T) *Run {
 	t.Helper()
-	f := &Run{jobs: map[string]*runJob{}, execs: map[execKey]*runExec{}, pending: map[string]*runOp{}}
+	f := &Run{jobs: map[string]*runJob{}, execs: map[execKey]*runExec{}, pending: map[string]*runOp{}, policies: map[string][]Binding{}}
 	f.Server = newServer(t, f.handle)
 	return f
+}
+
+// SetJobPolicy sets job name's IAM policy: who may start it, as
+// jobs:getIamPolicy serves it. The role strings are the caller's, because a
+// custom role's full name is projects/<p>/roles/<id>.
+func (f *Run) SetJobPolicy(name string, bindings ...Binding) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.policies[name] = cloneBindings(bindings)
 }
 
 // AddJob creates a job with the given CPU and memory limits.
@@ -634,6 +648,8 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		f.patchJob(w, r, p, body)
 	case r.Method == http.MethodDelete && isJobPath(p):
 		f.deleteJob(w, p)
+	case r.Method == http.MethodGet && strings.HasSuffix(p, ":getIamPolicy"):
+		f.getJobIamPolicy(w, r, strings.TrimSuffix(p, ":getIamPolicy"))
 	case r.Method == http.MethodGet && isJobPath(p):
 		f.getJob(w, p)
 	case r.Method == http.MethodGet && strings.Contains(p, "/operations/"):
@@ -658,6 +674,18 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 func isJobPath(p string) bool {
 	_, _, job, ok := jobPath(p)
 	return ok && job != "-"
+}
+
+// getJobIamPolicy answers jobs:getIamPolicy for the job the path names: the
+// policy SetJobPolicy stored, empty when none is stored. A job the fake does
+// not have is 404, as the path's own job get is.
+func (f *Run) getJobIamPolicy(w http.ResponseWriter, r *http.Request, p string) {
+	_, _, name, ok := jobPath(p)
+	if !ok || f.jobs[name] == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "job not found")
+		return
+	}
+	servePolicy(w, r.URL.Query(), f.policies[name])
 }
 
 // getJob answers jobs get: the stored body when there is one, else the
