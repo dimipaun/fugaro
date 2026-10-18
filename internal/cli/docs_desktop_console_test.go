@@ -31,6 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/userstats"
 	"github.com/dimipaun/fugaro/internal/watch"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -210,6 +211,11 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(showKill{}),
 		reflect.TypeOf(doctorOutput{}),
 		reflect.TypeOf(doctorCheck{}),
+		// §6.8: the by-person aggregate behind runs stats --json, and the
+		// counts it embeds (CLI 0.9.0).
+		reflect.TypeOf(userStatsDoc{}),
+		reflect.TypeOf(userstats.Row{}),
+		reflect.TypeOf(userstats.Counts{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
@@ -247,6 +253,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(doctorOutput{}), reflect.TypeOf(doctorCheck{}),
 		reflect.TypeOf(report.JSONDoc{}), reflect.TypeOf(report.JSONLine{}),
 		reflect.TypeOf(report.JSONTokens{}), reflect.TypeOf(Diagnosis{}),
+		// §6.8, the same three shapes as the test above (CLI 0.9.0).
+		reflect.TypeOf(userStatsDoc{}),
+		reflect.TypeOf(userstats.Row{}),
+		reflect.TypeOf(userstats.Counts{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		real[name] = true
@@ -426,6 +436,12 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"budget show": newBudgetShowCmd,
 	"report":      newReportCmd,
 	"runs ls":     newLsCmd,
+	// §6.8 documents the by-person aggregate (CLI 0.9.0). It is not on the
+	// design's spawn allow-list yet -- the Spend screen's by-person view is
+	// the task that follows -- but the document describes its flags, so the
+	// flags written there are checked against this constructor like any
+	// other's.
+	"runs stats":  newRunsStatsCmd,
 	"diagnose":    newDiagnoseCmd,
 	"logs":        newLogsCmd,
 	"cancel":      newCancelCmd,

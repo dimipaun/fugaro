@@ -402,6 +402,16 @@ func TestRunsStatsReadIsBoundedAndAdmitsIt(t *testing.T) {
 	if len(doc.Rows) != 2 || doc.Totals[0].Runs != 2 {
 		t.Fatalf("rows = %+v over %d runs, want the newest two", doc.Rows, doc.Totals[0].Runs)
 	}
+	// The newest two, not the first two the listing happened to give: the
+	// oldest run's launcher is in no row at all.
+	for _, r := range doc.Rows {
+		if r.User == "dana@example.com" {
+			t.Errorf("the oldest run's launcher is in the read: %+v", doc.Rows)
+		}
+	}
+	if userStatsRow(t, doc, "pat@example.com").Runs != 1 || userStatsRow(t, doc, "sam@example.com").Runs != 1 {
+		t.Errorf("rows = %+v, want the two newest runs", doc.Rows)
+	}
 	human, _, err := execute(t, "runs", "stats", "--max-runs", "2")
 	if err != nil {
 		t.Fatal(err)
@@ -536,7 +546,11 @@ func TestRunsStatsIdentitiesPastTheCapAreOneRow(t *testing.T) {
 	f := newCloudFixture(t)
 	userStatsPlace(t, f, "someone@example.com", nil, []string{"user:someone@example.com"})
 	day := time.Now().UTC()
-	base := strings.Repeat("a", userstats.MaxIdentityRunes)
+	// Long enough to be cut by the cap and short enough not to be cut by
+	// safetext.Field's own: the two differ past the cap alone. The length is
+	// written out rather than derived from the cap, so lowering the cap keeps
+	// the two apart and raising it does not quietly make them the same value.
+	base := strings.Repeat("a", 200)
 	seedUserRun(t, f, userStatsID(day, 0), base+"-one", userRec(runstore.StatusSucceeded, 1.00, runstore.BasisAPIList))
 	seedUserRun(t, f, userStatsID(day, 1), base+"-two", userRec(runstore.StatusSucceeded, 2.00, runstore.BasisAPIList))
 
