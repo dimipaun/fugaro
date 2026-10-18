@@ -27,7 +27,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { MemorySettingsStore, SETTINGS_CODES, SettingsStore, isSettingsKey, secretShaped } from './settings.js';
-import { secret } from './secret.js';
+import { SECRET_ITEMS, secret } from './secret.js';
 
 const ID_TOKEN = 'synthetic-id-token';
 
@@ -149,6 +149,33 @@ test('a key that names an item, or the secure store\'s namespace, is refused', a
   }
   assert.equal(isSettingsKey('account.laptop'), true);
   assert.equal(isSettingsKey('account.idToken'), true, 'the key rule is about NAMES, and isSettingsKey is only the alphabet');
+});
+
+test('the key fence covers D111\'s item names, derived and not repeated', async () => {
+  const { store } = makeStore();
+  // The property rather than the example: EVERY name in `SECRET_ITEMS`, under
+  // any account, is refused as a settings key. The list in `settings.js` is
+  // built from these names, so a third item added to D111 is fenced the moment
+  // it is declared -- and this loop fails if that derivation is ever dropped,
+  // which is exactly the "one list of names, in one place" rule.
+  for (const item of SECRET_ITEMS) {
+    for (const key of [`account.laptop.${item}`, `account.${item}`]) {
+      const result = await store.set(key, 'synthetic');
+      assert.equal(result.code, SETTINGS_CODES.SECRET_KEY, key);
+    }
+  }
+  assert.equal(SECRET_ITEMS.length, 2, 'D111: exactly two items');
+});
+
+test('a fence that refused the owner\'s own installation would be the wrong fence', async () => {
+  const { port, store } = makeStore();
+  // `mac` -- short for the machine the owner is most likely typing on -- is a
+  // name a person picks for an account, and `account.mac` must therefore
+  // round-trip. The word list refuses `macKey` and not `mac`, which is the
+  // difference between a fence and a nuisance.
+  assert.equal((await store.set('account.mac', TUPLE)).ok, true);
+  assert.equal((await store.get('account.mac')).ok, true);
+  assert.deepEqual(port.keys(), ['fugaro.settings.account.mac']);
 });
 
 test('an absent key is its own answer, and deleting one is not an error', async () => {

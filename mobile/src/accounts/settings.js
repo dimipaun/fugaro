@@ -59,18 +59,28 @@ export const SETTINGS_CODES = Object.freeze({
  * an exact match, so `firebaseProjectId` is not caught by `id` and no
  * legitimate field of a tuple is refused. This is the "a name, never a value"
  * rule turned into a list of names.
+ *
+ * D111's item names are DERIVED at the bottom of the list rather than repeated
+ * here, so a third item added to `SECRET_ITEMS` is fenced the moment it is
+ * declared -- and `settings.test.js` asserts that property for each of them,
+ * so removing the derivation is red rather than silent.
+ *
+ * The list deliberately does NOT contain `mac`. An account is named by the
+ * owner, and `mac` is what the owner's own installation is most likely to be
+ * called (`account.mac`); refusing it would mean a fence that breaks the
+ * person it is protecting -- and a fence someone has to work around is a
+ * fence that gets deleted. `macKey` is the name that matters, and it is here,
+ * derived.
  */
 const FORBIDDEN_KEY_SEGMENTS = Object.freeze([
   'token',
-  'idtoken',
   'secret',
   'password',
   'credentials',
   'credential',
   'privatekey',
   'apikey',
-  'mac',
-  'mackey',
+  ...SECRET_ITEMS.map((item) => item.toLowerCase()),
 ]);
 
 /** The prefix the secure store owns. A settings key may not start with it. */
@@ -213,8 +223,9 @@ export class SettingsStore {
 
   /**
    * Judge a key. `reserved-key` is the secure store's namespace, `secret-key`
-   * is a key that names one of D111's items or one of the forbidden segment
-   * names, and `bad-key` is everything else that is not a key.
+   * is a key whose segment names one of the forbidden words (D111's item names
+   * among them -- that list is where the coupling lives), and `bad-key` is
+   * everything else that is not a key.
    */
   #judgeKey(key) {
     if (!isSettingsKey(key)) return refuse(SETTINGS_CODES.BAD_KEY, 'key');
@@ -224,9 +235,6 @@ export class SettingsStore {
       if (FORBIDDEN_KEY_SEGMENTS.includes(segment)) {
         return refuse(SETTINGS_CODES.SECRET_KEY, 'key');
       }
-    }
-    if (SECRET_ITEMS.some((item) => segments.includes(item.toLowerCase()))) {
-      return refuse(SETTINGS_CODES.SECRET_KEY, 'key');
     }
     return null;
   }

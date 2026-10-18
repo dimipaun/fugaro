@@ -100,6 +100,24 @@ test('printing a secret prints the placeholder, in every conversion', () => {
   }
   assert.equal(String(s), '[secret idToken]');
   assert.equal(String(secret('macKey', MAC_KEY).secret), '[secret macKey]');
+
+  // ... and each print method BY NAME. This is not belt-and-braces: a
+  // conversion (`String(s)`, `s + ''`, a template) never reaches `toString`,
+  // because `Symbol.toPrimitive` is consulted first and short-circuits it. So
+  // the list above pins `Symbol.toPrimitive`, and this loop is the only thing
+  // that pins `toString` and `toJSON` at all -- without it a `toString` that
+  // returned the material would pass every assertion here.
+  const direct = [
+    s.toString(),
+    s.toJSON(),
+    s[Symbol.toPrimitive]('string'),
+    s[Symbol.toPrimitive]('number'),
+    s[Symbol.for('nodejs.util.inspect.custom')](),
+  ];
+  for (const text of direct) {
+    assert.equal(text.includes(ID_TOKEN), false, text);
+    assert.equal(text, '[secret idToken]');
+  }
 });
 
 test('the positive control: a plain string DOES print, so the test can fail', () => {
