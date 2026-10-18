@@ -456,3 +456,33 @@ describe('the fixture source', () => {
     expect(importsOf(index).filter((specifier) => /fixture/.test(specifier))).toEqual([])
   })
 })
+
+// The entry spec draws nothing into its window by hand.
+// ---------------------------------------------------------------------------
+
+describe('the entry e2e spec', () => {
+  it('loads no code into the window: the Live screen is the bundle’s own drawing', () => {
+    // `test/e2e/live.spec.ts`, `degraded.spec.ts`, `skew.spec.ts`, `spend.spec.ts`
+    // and the rest all draw their screens by calling the console's own functions
+    // through `webContents.executeJavaScript` -- which is the right tool for a
+    // spec whose subject is one screen drawn by hand, and the wrong one for this
+    // file. `entry.spec.ts` is the spec that asserts the *app* draws: the entry
+    // mounts Live on load, polls `live.watch` and paints what came back. A case
+    // here that reached for `executeJavaScript` would be drawing the screen
+    // itself, and would then pass whether or not the entry ever did.
+    //
+    // The window's own shape is asserted beside this (one `<script>`, resolved
+    // to the bundle), but that cannot see this: code injected through
+    // `executeJavaScript` adds no element to the document. So the claim is read
+    // off the spec's text, the way the fixture-source scan above is.
+    const spec = readFileSync(join(CONSOLE_ROOT, 'test', 'e2e', 'entry.spec.ts'), 'utf8')
+    expect(spec.length, 'the spec read empty: it would pass by finding nothing').toBeGreaterThan(1000)
+    // The *call*, not the word: this file names `executeJavaScript` in prose to
+    // say it does not use it, and a scan over the bare word would fail on its
+    // own explanation.
+    expect(spec.match(/executeJavaScript\s*\(/g) ?? []).toEqual([])
+    // `page.evaluate` is the *reading* half and is what the file uses; the
+    // assertion above is only meaningful next to the thing it is not.
+    expect(spec).toContain('page.evaluate')
+  })
+})
