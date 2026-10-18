@@ -296,6 +296,14 @@ func TestDecodeRefusesAProfileSecretThatIsAValueOrNotAName(t *testing.T) {
 // names a claude_accounts block happens to define (config.ClaudeOAuthTokenPrefix
 // says why: a name merely shaped like one must be refused wherever a secret
 // name is accepted).
+// The rule is enforced on the read path as well as at publish and at deploy:
+// validProfiles runs inside the decode (policy.go's Decode), so a node
+// written by an older CLI, or by hand, is refused by every reader of it — the
+// launcher, the runner and `fugaro project policy show` — and not only by the
+// command that published it.
+//
+// The mutation is dropping the isClaudeOAuthSecret call from validProfiles:
+// every secrets list below is accepted, on the read path included.
 func TestDecodeRefusesAProfileMountingAClaudeOAuthToken(t *testing.T) {
 	secrets := func(list string) string {
 		return `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":` + list + `}}`
