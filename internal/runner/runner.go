@@ -1023,8 +1023,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 		r.rec.Branch = branch
 		// The start commit, read at once and locally: a checkpoint never
-		// pushes a tip at or behind it (nothing of the agent's yet).
+		// pushes a tip at or behind it (nothing of the agent's yet), and it
+		// is the base the workflow guard measures the run's changes
+		// against (workBase) — the task's ref, which is not the base branch
+		// when the run was started from another one. Recorded as it is read,
+		// so what the guard compared against is in the record.
 		r.startSHA, startErr = repo.CommitOf(ctx, "refs/heads/"+branch)
+		r.rec.StartSHA = r.startSHA
 		data, err := os.ReadFile(filepath.Join(r.d.WorkDir, "fugaro.yaml"))
 		if err != nil {
 			return fmt.Errorf("reading fugaro.yaml at %s: %w", spec.Ref, err)
@@ -2134,10 +2139,14 @@ func (r *run) finalize(ctx context.Context) error {
 	if r.follow == nil {
 		// A follow-up's branch is already ahead of its base: when its
 		// agent adds nothing, the report says so rather than an empty
-		// commit.
-		ahead, err := r.repo.AheadOf(ctx, base)
+		// commit. What is counted is the run's own commits — those after
+		// the commit it was cut from that the base branch does not have —
+		// not origin/<base>..HEAD: for a run cut from another ref (--ref
+		// console) every one of that ref's commits is ahead of the base
+		// branch, and "the agent made no commits" could never fire.
+		ahead, err := r.runCommits(ctx)
 		if err != nil {
-			return fmt.Errorf("counting commits ahead of %s: %w", base, err)
+			return fmt.Errorf("counting the run's own commits: %w", err)
 		}
 		if ahead == 0 {
 			r.fail("the agent made no commits")

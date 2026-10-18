@@ -167,16 +167,19 @@ func (r *run) checkpointTick(ctx context.Context, stage string) {
 }
 
 // checkpointSince is where a checkpoint's secret scan and workflow guard
-// start: the last pushed commit, or, before the first push, the base
-// commit bootstrap read right after it fetched the base (as finalize's
-// guards start at the base) — never a ref name
-// such as origin/<base> that the agent's own git could repoint once it
-// controls the checkout (C6a).
+// start: the last pushed commit, or, before the first push, the commit the
+// run was cut from — the base of every commit the push adds, exactly as
+// finalize's guards measure them (workBase). Not the base branch, which is
+// another branch when the run was started from one: measured against it, a
+// run cut from console looks like it changed every workflow file console
+// already carried, which stops the run's checkpoints for good. And never a
+// ref name such as origin/<base> that the agent's own git could repoint
+// once it controls the checkout (C6a).
 func (r *run) checkpointSince() string {
 	if r.rec.PushedHead != "" {
 		return r.rec.PushedHead
 	}
-	return r.baseSHA
+	return r.workBase()
 }
 
 // checkpointPush pushes sha, the tip just read: every check is on sha,
@@ -319,11 +322,9 @@ func (r *run) checkpointClean(ctx context.Context, sha string) bool {
 // does, so a run killed later still says what reached the remote.
 func (r *run) pushCheckpoint(ctx context.Context, sha string) error {
 	r.refreshForPush(ctx)
-	// The range starts at the frozen base commit (or the last pushed one),
-	// wider than finalize's, which starts at origin/<base>. After a rebase
-	// onto a newer base that brought someone else's .github/workflows
-	// change, this guard refuses and checkpoints stop for the run although
-	// the host would accept the push: it fails closed, over-conservatively.
+	// finalize's guard over the range this push adds: the same two bounds
+	// (checkpointSince and the base branch), so a checkpoint is refused
+	// exactly when the push it makes would be.
 	if rej := r.workflowGuardAt(ctx, r.checkpointSince(), sha); rej != nil {
 		return rej // no network call for a push GitHub is sure to refuse
 	}

@@ -42,12 +42,12 @@
 
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildCopy, linkNodeModules } from './lib/build.mjs'
+import { linkNodeModules } from './lib/build.mjs'
 
 // website/test/changelog-page.mjs -> website/test -> website.
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -61,6 +61,21 @@ const RELEASES_DIR = path.join(REPO, 'docs', 'releases')
 // file the generator does not recognise fails the coverage case instead of being filtered
 // out of the expectation by the same rule that filtered it out of the answer (W0.6).
 const NON_RELEASE = 'README.md'
+
+// The sections a release file may carry after its Highlights, by title: the two headings
+// `docs/releases/README.md` names — the operator steps, and the release's known limits —
+// both optional, in the order the file writes them. Each heading is a content line the page
+// does not render verbatim: it becomes an `<h3>` whose text is the heading's own words, and
+// a `### Known limits` line printed as text instead is the defect the page gate below
+// catches. The `###` is the file's level; GoReleaser puts the file under its own
+// `## Highlights` in the release body, so a `##` in the file would be a second top-level
+// heading beside it.
+const SECTION_TITLES = ['For operators', 'Known limits']
+
+/** The file line that opens a section, from its title: `For operators` -> `### For operators`. */
+function sectionHeading(title) {
+  return `### ${title}`
+}
 
 // The heading of the summary block P4 put above the list (D189). It is the page's own word
 // — the block is the page's summary of the newest releases, not a line of any one of them —
@@ -236,18 +251,6 @@ function pageText(html) {
   return pageChunks(html).map(plain).join('\n')
 }
 
-/**
- * The page's headings, as words: the `<h3>` an entry renders for a heading line of its
- * file (a release's section — the operator steps, and any other heading a file writes).
- * An entry's own `<h2>` is its tag and is read by `tagsOnPage`; the summary block's `<h2>`
- * is the page's, and neither has a heading line of a file behind it.
- */
-function headingsOnPage(html) {
-  return [...html.matchAll(/<h3\b[^>]*>([\s\S]*?)<\/h3>/g)].map((match) =>
-    plain(decodeEntities(match[1].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim()),
-  )
-}
-
 /** The chunks split into sentences, each chunk on its own: see `pageChunks`. */
 function pageSentences(html) {
   return pageChunks(html).flatMap((chunk) =>
@@ -296,6 +299,52 @@ function summaryItems(html) {
     })
   }
   return items
+}
+
+/**
+ * One entry's body, element by element, in the order the page renders it: the text of each
+ * `<h3>`, `<p>` and `<li>` inside that entry's own `<article>`, with the tags, the entities
+ * and the inline markers of both sides stripped by `plain()`.
+ *
+ * Reading the entry out of its own `<article>` — which opens at the heading its tag carries
+ * — is what lets the case below compare one release's rendering against one release file:
+ * the sequence of elements is the file's lines, in the file's order, with each section
+ * heading as the heading element it is. The "not yet released" marker is the page's own
+ * line rather than a release file's and is left out here as it is left out of the gate above.
+ */
+function entryElements(html, tag) {
+  const at = html.indexOf(`<h2 id="${tag}"`)
+  assert.notEqual(at, -1, `the page carries no entry for ${tag}`)
+  const article = html.slice(html.lastIndexOf('<article', at), html.indexOf('</article>', at))
+
+  const out = []
+  for (const match of article.matchAll(/<(h3|p|li)\b([^>]*)>([\s\S]*?)<\/\1>/g)) {
+    if (match[2].includes('release-status')) continue
+    const text = decodeEntities(match[3].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim()
+    if (text.length > 0) out.push({ kind: match[1], text: plain(text) })
+  }
+  return out
+}
+
+/**
+ * What that entry must be, read from the release file alone: every content line of the file
+ * in order, each one the element the page renders it as — a `### ` heading as an `<h3>`, a
+ * bullet as a list item, any other line as a paragraph of its own (W1.9 step 3). This is
+ * the file's shape rather than the generator's, so a page that drops a line, reorders the
+ * sections or prints a heading's `###` as text differs from it.
+ */
+function fileElements(fileName) {
+  const out = []
+  for (const line of contentLines(fileName)) {
+    const title = SECTION_TITLES.find((candidate) => line === sectionHeading(candidate))
+    if (title !== undefined) {
+      out.push({ kind: 'h3', text: plain(title) })
+      continue
+    }
+    const bullet = /^[-*]\s+(.*)$/.exec(line)
+    out.push(bullet === null ? { kind: 'p', text: plain(line) } : { kind: 'li', text: plain(bullet[1]) })
+  }
+  return out
 }
 
 // ---------------------------------------------------------------------------------------
@@ -394,92 +443,39 @@ test('the summary block renders the newest releases’ first Highlights line', (
   }
 })
 
-test("a release file's heading line is rendered as a heading, and not as its own markers", (t) => {
-  // The defect this case is about is the one `docs/releases/v0.8.5.md` found: the file
-  // writes `## Known limits`, the page renders its lines one by one, and a page that has no
-  // rule for a heading line prints it as the paragraph "## Known limits" — the markers are
-  // markup, and a reader is being shown the page's rendering rather than the file's words.
-  // The copy carries the shape, so the case proves the rule rather than the file: a
-  // heading line is an `<h3>` whose words are the line's, and the markers are nowhere in
-  // the text a reader reads.
-  const built = buildCopy(t, ({ root }) => {
-    writeFileSync(
-      path.join(root, 'docs', 'releases', 'v9.9.9.md'),
-      '- A fixture release, so a heading line has a file to be written in.\n\n## Known limits\n\n- The fixture names a limit.\n',
-    )
-  })
-  assert.equal(built.status, 0, `the site's build failed:\n${built.output}`)
-  const html = readFileSync(path.join(built.dist, 'changelog', 'index.html'), 'utf8')
-
-  assert.ok(
-    headingsOnPage(html).includes('Known limits'),
-    'a release file writes "## Known limits" as a heading and the page renders no heading with those words: a heading line becomes a heading',
-  )
-  assert.ok(
-    !pageText(html).includes('## Known limits'),
-    'the page prints the heading line\'s own markers: `##` is markup rather than text, and a reader is shown the page\'s rendering instead of the file\'s words',
-  )
-})
-
-test("a heading line's inline markup is rendered, not printed", (t) => {
-  // A heading line is a line of the file like any other, so the inline rule reaches it too:
-  // `` ## The `fugaro` limit `` is a heading whose words carry a `<code>` element. A page
-  // that renders a heading line's words as plain text — which is what the heading rule did
-  // before this case — puts the backticks in front of a reader, which is the same defect as
-  // leaving `##` on: one marker later, and the reason the rule is stated for the file's text
-  // rather than for its bullets and paragraphs alone.
-  const built = buildCopy(t, ({ root }) => {
-    writeFileSync(
-      path.join(root, 'docs', 'releases', 'v9.9.9.md'),
-      '- A fixture release, so a heading line has a file to be written in.\n\n## The `fugaro` limit\n\n- The fixture names a limit.\n',
-    )
-  })
-  assert.equal(built.status, 0, `the site's build failed:\n${built.output}`)
-  const html = readFileSync(path.join(built.dist, 'changelog', 'index.html'), 'utf8')
-
-  const heading = /<h3\b[^>]*>([\s\S]*?)<\/h3>/g
-  const carrier = [...html.matchAll(heading)]
-    .map((match) => match[1])
-    .find((inner) => inner.includes('limit'))
-  assert.ok(carrier !== undefined, 'the page renders no heading for the fixture release\'s heading line')
-  assert.ok(
-    /<code>fugaro<\/code>/.test(carrier),
-    `the heading line's \`code\` span reaches a reader as markup rather than as a code element: ${JSON.stringify(carrier)}`,
-  )
-  assert.ok(
-    !carrier.includes('`'),
-    `the heading line's own backticks are printed in the heading: ${JSON.stringify(carrier)}`,
-  )
-  assert.ok(
-    headingsOnPage(html).includes('The fugaro limit'),
-    'the heading\'s words are the line\'s own, with its inline markers rendered rather than printed',
-  )
-})
-
-test('the changelog page renders every line of every release file', () => {
+test('the changelog page renders each release file, line for line and in the file’s order', () => {
   const html = builtPage()
-  const text = pageText(html)
 
+  // One comparison per release, of the whole entry against the whole file: every content
+  // line is rendered, none is added, and the order is the file's — the Highlights, then
+  // each section heading as its own `<h3>` with its lines under it, in the order the file
+  // writes the two sections. A `### Known limits` line that leaks into the page as text, a
+  // section rendered before the one the file puts first, or a line left out all differ from
+  // the file here, in the element that differs.
   for (const fileName of releaseFiles()) {
-    for (const line of contentLines(fileName)) {
-      // A heading line is rendered as a heading, and its words are the line's own with the
-      // marker taken off: `## Known limits` is a section of an entry, and the `##` is
-      // markup rather than text. The line and the page are compared as words in both
-      // directions, so a heading that reaches a reader with its markers still on it fails
-      // here — and so does one the page drops.
-      const heading = /^#{1,6}\s+(.*)$/.exec(line)
-      if (heading !== null) {
-        assert.ok(
-          headingsOnPage(html).includes(plain(heading[1])),
-          `docs/releases/${fileName} writes ${JSON.stringify(line)} as a heading, and the page does not render it as one: a heading line becomes a heading whose words are the line's, without its markers`,
-        )
-        continue
-      }
-      assert.ok(
-        text.includes(plain(line)),
-        `docs/releases/${fileName} carries a line the page does not render: ${JSON.stringify(line)}`,
-      )
-    }
+    const tag = tagOf(fileName)
+    assert.deepEqual(
+      entryElements(html, tag),
+      fileElements(fileName),
+      `the entry for ${tag} is not docs/releases/${fileName} rendered, line for line and in the file’s order`,
+    )
+  }
+
+  // And the new section is on the page as a heading rather than only as text somewhere: the
+  // 0.8.5 release file carries the release's known limits, and a reader reads them under
+  // that heading — which is what the release rule asks the page for.
+  const withLimits = releaseFiles()
+    .map(tagOf)
+    .filter((tag) => contentLines(`${tag}.md`).includes(sectionHeading('Known limits')))
+  assert.ok(withLimits.length > 0, 'no release file carries a Known limits section, so this case proves nothing')
+  for (const tag of withLimits) {
+    assert.deepEqual(
+      entryElements(builtPage(), tag).filter((element) => element.kind === 'h3').map((element) => element.text),
+      contentLines(`${tag}.md`)
+        .filter((line) => SECTION_TITLES.some((title) => line === sectionHeading(title)))
+        .map((line) => plain(line.replace(/^#{1,6}\s+/, ''))),
+      `the entry for ${tag} does not render its own section headings, in the file’s order`,
+    )
   }
 })
 

@@ -5,10 +5,11 @@
  * One entry per release, newest first, each one rendered from the lines W0.6's
  * `src/lib/changelog.mjs` read out of `docs/releases/vX.Y.Z.md` at build time, preceded by
  * the summary block the redesign's P4 added (D189; RF24). The component writes nothing of
- * its own: the tag comes from the filename, the bullets and the operator steps are the
- * file's own lines, and the only words it adds are the summary block's heading, the
- * "not yet released" marker below and the "For operators" heading the file itself
- * carries (`### For operators`).
+ * its own: the tag comes from the filename, the bullets and the sections are the file's own
+ * lines, and the only words it adds are the summary block's heading and the "not yet
+ * released" marker below. Every heading inside an entry is a `###` heading the file itself
+ * carries — `### For operators`, `### Known limits` — printed as the heading element it is,
+ * so a section the format allows is a section the page renders.
  *
  * Five decisions are worth stating rather than leaving in the code:
  *
@@ -27,17 +28,11 @@
  *      whose file carries no Highlights line stops the build rather than leaving a hole in
  *      the summary (the format requires 3 to 6 bullets, `docs/releases/README.md`).
  *   3. **The file's own line structure is kept.** A line the file writes as a bullet
- *      becomes a list item, a line it writes as a heading becomes a heading, and any other
- *      line becomes a paragraph of its own, so a note that is prose does not gain a bullet,
- *      a list does not lose one, and a heading does not reach a reader with its `#` markers
- *      still in front of it.
+ *      becomes a list item and any other line becomes a paragraph of its own, so a note
+ *      that is prose does not gain a bullet and a list does not lose one.
  *   4. **The file's inline markup is rendered, not printed.** `` `code` `` becomes a
  *      `<code>` element and `**bold**` a `<strong>` one: the markers are markup and not
- *      text, and printing them would put backticks in front of a reader. This is a rule
- *      about the file's text wherever it appears — a bullet, a paragraph and a heading line
- *      alike — because a heading line is a line like the others and `## A `code` limit`
- *      would otherwise reach a reader with its backticks on, which is exactly the defect the
- *      `#` markers were just taken off for. The files carry
+ *      text, and printing them would put backticks in front of a reader. The files carry
  *      no link, no image and no other construct — the generator hands the lines over as
  *      written — so this is the whole of the inline rendering, and it is applied to text
  *      that is escaped first.
@@ -47,6 +42,20 @@
  *      to `main` before its tag exists. The entry says so rather than reading as shipped.
  */
 
+/**
+ * One section of a release file's body, as W0.6's generator returns it: a `###` heading the
+ * format names (`### For operators`, `### Known limits`), its words a title, and the lines
+ * under it verbatim. The two headings are the same kind of thing, so a release carries a
+ * list of these rather than a field per heading, and a third one later is a room in the list
+ * rather than a fourth branch here.
+ */
+interface Section {
+  /** The heading's own words, with the `###` left behind: `For operators`, `Known limits`. */
+  title: string
+  /** The lines under the heading, verbatim. */
+  lines: string[]
+}
+
 /** One release, as W0.6's generator returns it: the file's own text and nothing else. */
 interface Entry {
   /** The tag, from the filename: `vX.Y.Z`. */
@@ -55,10 +64,10 @@ interface Entry {
   version: string
   /** True only where the checkout the build ran in has this tag. */
   released: boolean
-  /** The file's lines before its `### For operators` heading, verbatim. */
+  /** The file's lines before its first section heading, verbatim. */
   highlights: string[]
-  /** The file's lines after it, verbatim, or empty when the file has no such block. */
-  for_operators: string[]
+  /** Every section the file writes after them, in the file's own order. */
+  sections: Section[]
 }
 
 interface Props {
@@ -96,27 +105,13 @@ function inline(text: string): string {
 }
 
 /**
- * The lines as the elements a reader sees: consecutive bullets become one list, a heading
- * line becomes a heading, and every other line is a paragraph of its own, with the bullet
- * marker left to the list that renders it and everything else kept as written (an operator
- * step's own `1.`, for one).
- *
- * A heading line — `## Known limits`, which the 0.8.5 release notes carry and the format
- * in `docs/releases/README.md` does not forbid — is the one line whose markers are the
- * page's to render: `#` is markup and not text, so a line the file writes as a heading is
- * a heading whose words are the line's own, with the markers taken off. Printing the line
- * as a paragraph instead would put `##` in front of a reader; dropping it would drop the
- * section it names. The page's `<h3>` is the depth a section of an entry has, which is the
- * depth the operator heading already takes.
+ * The lines as the elements a reader sees: consecutive bullets become one list, and every
+ * other line is a paragraph of its own, with the bullet marker left to the list that
+ * renders it and everything else kept as written (an operator step's own `1.`, for one).
  */
 function elements(lines: string[]): Element[] {
   const out: Element[] = []
   for (const line of lines) {
-    const heading = /^#{1,6}\s+(.*)$/.exec(line)
-    if (heading !== null) {
-      out.push({ kind: 'heading', text: heading[1].trim() })
-      continue
-    }
     const bullet = /^[-*]\s+(.*)$/.exec(line)
     if (bullet !== null) {
       const last = out[out.length - 1]
@@ -129,12 +124,18 @@ function elements(lines: string[]): Element[] {
   return out
 }
 
-/** An entry's whole body: its highlights, then the operator steps when the file has them. */
+/**
+ * An entry's whole body: its highlights, then each section the file writes — the operator
+ * steps, the release's known limits — as its own heading with its lines under it, in the
+ * order the file writes them. The heading's words are the file's own, printed as the
+ * heading element they are; the file's order is kept rather than the format's, so a page
+ * never reorders what its source said.
+ */
 function body(entry: Entry): Element[] {
   const out = elements(entry.highlights)
-  if (entry.for_operators.length > 0) {
-    out.push({ kind: 'heading', text: 'For operators' })
-    out.push(...elements(entry.for_operators))
+  for (const section of entry.sections) {
+    out.push({ kind: 'heading', text: section.title })
+    out.push(...elements(section.lines))
   }
   return out
 }
@@ -206,7 +207,7 @@ const summary = entries.slice(0, SUMMARY_RELEASES).map((entry) => {
             ))}
           </ul>
         ) : element.kind === 'heading' ? (
-          <h3 set:html={inline(element.text)}></h3>
+          <h3>{element.text}</h3>
         ) : (
           <p set:html={inline(element.text)}></p>
         ),
