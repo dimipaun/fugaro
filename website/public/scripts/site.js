@@ -14,10 +14,14 @@
  *     it. A browser that runs no script therefore shows the command and no button, rather
  *     than a button that copies nothing.
  *   - **Escape and a click outside close an open menu (part P3).** The menu's two levels are
- *     `<details>` and open and close by themselves; what a `<details>` does not do is close
- *     when the reader presses Escape or clicks somewhere else, which is what a menu owes a
- *     keyboard. Closing is all this adds: with no script the menu still opens, still closes
- *     and still reaches every link.
+ *     `<details>` and open and close by themselves (and the groups share a `name`, so only
+ *     one is open at a time); what a `<details>` does not do is close when the reader
+ *     presses Escape or clicks somewhere else, which is what a menu owes a keyboard. Closing
+ *     is all this adds: with no script the menu still opens, still closes and still reaches
+ *     every link.
+ *
+ * It writes text with `textContent` only and builds no markup, and `website/test/copy.mjs`
+ * runs it against the built pages and reads it for anything that would evaluate or fetch.
  *
  * Nothing here is load-bearing: the commands are in the markup in full, and every one of
  * them is readable, selectable and copyable by hand without this file ever arriving; the
@@ -79,17 +83,31 @@
     )
   }
 
+  // Whether a menu holds the element: the drawer's panel is its toggle's next sibling rather
+  // than its child (see the layout's note), so "inside the drawer" is the toggle or that panel.
+  function holds(details, element) {
+    if (!element) return false
+    if (details.contains(element)) return true
+    var panel = details.nextElementSibling
+    return !!(panel && details.classList.contains('site-nav-drawer') && panel.contains(element))
+  }
+
   // Close every open menu. A menu closed under the reader's focus would leave that focus on
   // an element that is no longer rendered, so the control that opened it takes the focus
-  // back — which is where a keyboard reader expects to be after dismissing a menu.
+  // back — which is where a keyboard reader expects to be after dismissing a menu. Menus come
+  // in document order, outermost first, so the toggle that takes the focus is the outermost
+  // one that holds it and is on the page: the drawer's on a narrow viewport (closing it hides
+  // the groups' own toggles), the group's on a wide one (where the drawer is not drawn).
   function closeMenus() {
+    var active = document.activeElement
     var open = document.querySelectorAll(OPEN_MENUS)
+    var back = null
     for (var i = 0; i < open.length; i++) {
-      var details = open[i]
-      var held = details.contains(document.activeElement)
-      details.open = false
-      if (held) details.querySelector('summary').focus()
+      var summary = open[i].querySelector('summary')
+      if (!back && summary && holds(open[i], active) && summary.getClientRects().length > 0) back = summary
     }
+    for (var j = 0; j < open.length; j++) open[j].open = false
+    if (back) back.focus()
   }
 
   function menu() {

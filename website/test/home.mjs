@@ -719,6 +719,23 @@ test('every line of the transcript is in the markup, revealed by its own count, 
   assert.match(builtCSS(page), /@media\s*\(prefers-reduced-motion:\s*reduce\)/, 'the built page carries no reduced-motion rule, and the transcript\'s end state depends on it (D105)')
 })
 
+test('the caret stops blinking within five seconds of starting', () => {
+  // WCAG 2.2.2: a blink that starts by itself and goes on past five seconds needs a way to
+  // stop it, and a decorative caret has none. So the blink is counted, it waits for the line
+  // it sits in to arrive, and it ends on the caret's visible base rule.
+  const caret = /\.terminal-caret[^{]*\{([^}]*)\}/.exec(builtCSS(builtPage('')))
+  assert.ok(caret, 'the terminal has no caret rule')
+  const animation = /animation:([^;}]*)/.exec(caret[1])
+  assert.ok(animation, 'the caret has no animation rule')
+  const value = animation[1].trim()
+  assert.ok(!/\binfinite\b/.test(value), `the caret blinks for ever (${value}): a blink past five seconds has to be stoppable, and this one is not (WCAG 2.2.2)`)
+  const seconds = (t) => (t.endsWith('ms') ? Number(t.slice(0, -2)) / 1000 : Number(t.slice(0, -1)))
+  const duration = seconds(/(\d*\.?\d+m?s)\b/.exec(value)[1])
+  const count = Number(/\s(\d+)\s*$/.exec(value)?.[1] ?? 1)
+  assert.ok(duration * count <= 5, `the caret blinks for ${duration * count}s (${value}): five seconds at most (WCAG 2.2.2)`)
+  assert.match(value.replace(/\s+/g, ''), /var\(--terminal-delay\)/, 'the caret starts blinking before its line has arrived, so its blinks are spent on a line nobody can see yet')
+})
+
 test('the transcript says on the page that it is the documented sequence, not a recording', () => {
   // D184 admits the animation only in this form: the lines are the repository's own, and the
   // page says what they are. The caption is the whole of that claim, so it is checked as the

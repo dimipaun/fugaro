@@ -40,8 +40,8 @@ npm run check # the site's gate: the build, then every test/*.mjs
 here fetches anything: there is no integration, no remote font, no remote image, and the
 build script sets `ASTRO_TELEMETRY_DISABLED=1` so that Astro's own anonymous usage report
 is off too. `npm run check` is the same command a developer runs and the one W2.1 stages
-the deploy workflow to run (that workflow is W2.1's: it is not written yet, it will be staged under
-`docs/pending-workflows/` for the owner to copy, and no Fugaro run may write it into
+the deploy workflows to run (`website-preview.yml` and `website-promote.yml`, staged under
+`docs/pending-workflows/` for the owner to copy in: no Fugaro run may write them into
 `.github/workflows/`), and it is hermetic: it reads this
 repository, builds, and asserts over the artifact — no cloud, no credential, no deployed
 site. The live checks — the real domain, DNS, TLS and the deployed HTML — are the owner's,
@@ -82,19 +82,20 @@ with fixtures that keep its refusals running, and none of them needs the network
 - `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes). **They are
   deliberately loose, by the owner's ruling of 2026-10-17: size is not a concern yet, so
   each is three times what the build of 2026-10-18 needs — the build that ships the site's one
-  script and its menu (P6, P3) and the homepage's run animation (P7) — and a later
+  script and its menu (P6, P3) and the homepage's run animation (P7), with the How It Works
+  flow (P8) merged in — and a later
   optimisation pass tightens them.** The gate itself is not loose: a page or a site over the
   number fails, and the test keeps a case that proves it. The derivation (that build plus
   25 %, D192) is in the test's header, and a task that moves the bytes re-derives the numbers
   here, in the commit that moves them:
-  - **JavaScript per page:** 20,391 bytes. Three times 6,797: the one script the site ships,
-    `public/scripts/site.js` (5,437 bytes — the copy control of P6 and D183, and the menu's
+  - **JavaScript per page:** 24,654 bytes. Three times 8,218: the one script the site ships,
+    `public/scripts/site.js` (6,574 bytes — the copy control of P6 and D183, and the menu's
     Escape/outside-click close of P3), plus 25 %. Every page loads it once, so it is the whole
     of a page's JavaScript, and the test keeps a case that says so over the built artifact.
-  - **Page weight per page:** 793,926 bytes. Three times 264,642: the heaviest page, the
-    docs hub, at 211,713 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 798,627 bytes. Three times 266,209: the heaviest page, the
+    docs hub, at 212,967 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 2,775,630 bytes. Three times 925,210 (every file in `dist/`, 740,168
+  - **Whole site:** 2,810,115 bytes. Three times 936,705 (every file in `dist/`, 749,364
     bytes across 21 files, plus 25 %).
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
@@ -267,7 +268,9 @@ The script checks that `node`, `npm` and `firebase` are installed, runs `npm ci`
 `firebase hosting:channel:deploy <name> --project <id>`). `scripts/deploy-website_test.sh`
 tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test.
 
-The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
-workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
-deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` holds no pending workflow today.
+The deploy workflows are **not a Fugaro run's to write** into `.github/workflows/`: they are
+staged under `docs/pending-workflows/` for the owner to copy in — `website-preview.yml` (a
+manual build of a chosen ref to a public preview channel) and `website-promote.yml` (the
+owner's alone: an existing preview promoted to live) — after the one-time setup
+`docs/website/preview-promote.md` describes, and they deploy to the Firebase project created
+for the website only (D91, D109).

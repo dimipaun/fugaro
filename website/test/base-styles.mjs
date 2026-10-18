@@ -285,12 +285,24 @@ export function navFailures(html, rel) {
   if (drawer) {
     const summary = drawer.children.find((el) => el.name === 'summary')
     if (!summary || !textOf(summary).trim()) fail('the drawer toggle is not a <summary> with words on it')
+    // The panel is the toggle's sibling rather than its child, so nothing but this attribute
+    // tells assistive technology which region the toggle's expanded state is about.
+    const controls = summary?.attrs.get('aria-controls') ?? ''
+    if (!panel || !controls || panel.attrs.get('id') !== controls) {
+      fail(`the drawer toggle's aria-controls is ${JSON.stringify(controls)} and the panel's id is ${JSON.stringify(panel?.attrs.get('id') ?? '')}: the panel is outside the <details>, so the toggle has to name the region it opens`)
+    }
   }
 
   // The menu itself: groups of a summary and a list of links. Every top-level item is a link
   // or a summary — a plain span that looks like a control is one a keyboard cannot open.
   const groups = panel ? [...walk(panel)].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav-group')) : []
   if (panel && groups.length === 0) fail('the menu has no groups: the nav is three groups of three (D182)')
+  // One `name` across the groups makes them an exclusive set, without script: opening one
+  // dropdown closes the one already open, so two never hang over each other on a wide row.
+  const names = new Set(groups.flatMap((group) => group.children.filter((el) => el.name === 'details').map((el) => el.attrs.get('name') ?? '')))
+  if (groups.length > 0 && (names.size !== 1 || names.has(''))) {
+    fail(`the menu's groups carry the names ${JSON.stringify([...names])}: they share one non-empty name, so opening one dropdown closes the other two`)
+  }
   for (const group of groups) {
     for (const item of group.children.filter((child) => child.name !== undefined)) {
       if (item.name !== 'details') {
@@ -340,16 +352,16 @@ const FIXTURE_GROUPS = [
   ['Project', [['/security/', 'Security'], ['/faq/', 'FAQ'], ['/community/', 'Community']]],
 ]
 
-const FIXTURE_DRAWER = '<details class="site-nav-drawer"><summary class="site-nav-toggle">Menu</summary></details>'
+const FIXTURE_DRAWER = '<details class="site-nav-drawer"><summary class="site-nav-toggle" aria-controls="site-nav-panel">Menu</summary></details>'
 
 function fixtureNav({ label = 'Sections', current = '/docs/', drawer = FIXTURE_DRAWER } = {}) {
   const groups = FIXTURE_GROUPS.map(([group, items]) => {
     const links = items
       .map(([href, text]) => `<li><a href="${href}"${href === current ? ' aria-current="page"' : ''}>${text}</a></li>`)
       .join('')
-    return `<li class="site-nav-group"><details><summary>${group}</summary><ul>${links}</ul></details></li>`
+    return `<li class="site-nav-group"><details name="site-nav-group"><summary>${group}</summary><ul>${links}</ul></details></li>`
   }).join('')
-  return `<nav class="site-nav" aria-label="${label}">${drawer}<div class="site-nav-panel"><ul class="site-nav-groups">${groups}</ul></div></nav>`
+  return `<nav class="site-nav" aria-label="${label}">${drawer}<div class="site-nav-panel" id="site-nav-panel"><ul class="site-nav-groups">${groups}</ul></div></nav>`
 }
 
 function fixturePage({ nav = fixtureNav(), wordmark = '<a class="site-wordmark" href="/" rel="home">Fugaro</a>' } = {}) {
@@ -379,7 +391,10 @@ test('every menu refusal fires on the defect it names', () => {
   const cases = [
     ['an unlabelled nav', fixturePage({ nav: fixtureNav({ label: '' }) }), /empty label/],
     ['no drawer toggle', fixturePage({ nav: fixtureNav({ drawer: '' }) }), /no drawer toggle/],
-    ['the panel inside the toggle', fixturePage({ nav: fixtureNav().replace('</details><div class="site-nav-panel">', '<div class="site-nav-panel">').replace('</ul></div></nav>', '</ul></div></details></nav>') }), /next sibling/],
+    ['the panel inside the toggle', fixturePage({ nav: fixtureNav().replace('</details><div class="site-nav-panel" id="site-nav-panel">', '<div class="site-nav-panel" id="site-nav-panel">').replace('</ul></div></nav>', '</ul></div></details></nav>') }), /next sibling/],
+    ['a drawer toggle that does not name its panel', fixturePage({ nav: fixtureNav().replace(' aria-controls="site-nav-panel"', '') }), /aria-controls is ""/],
+    ['a drawer toggle naming another region', fixturePage({ nav: fixtureNav().replace(' id="site-nav-panel"', ' id="elsewhere"') }), /panel's id is "elsewhere"/],
+    ['groups that are not one exclusive set', fixturePage({ nav: fixtureNav().replace('<details name="site-nav-group"><summary>Product', '<details><summary>Product') }), /share one non-empty name/],
     ['a group with no summary', fixturePage({ nav: fixtureNav().replace('<summary>Product</summary>', '') }), /no <summary> with words on it/],
     ['a top-level item that is not a control', fixturePage({ nav: fixtureNav().replace('<li class="site-nav-group">', '<li class="site-nav-group"><span>Product</span>') }), /top-level menu item is a <span>/],
     ['a link with no href', fixturePage({ nav: fixtureNav().replace('<a href="/docs/" aria-current="page">', '<a aria-current="page">') }), /no href/],

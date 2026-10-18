@@ -354,17 +354,23 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
           and none is wanted: the wide layout shows the same panel without opening anything,
           because the wide rule says `display: block`. Dropping that one declaration hides
           the whole menu at every width at or above 48rem, which is the failure
-          `base-styles.mjs` keeps a case for. */}
+          `base-styles.mjs` keeps a case for.
+
+          Because the panel is not inside the toggle, the toggle names it: `aria-controls`
+          is the one programmatic link between the drawer's expanded state (which the
+          `<summary>` exposes by itself) and the panel that state shows. And the three groups
+          share one `name`, which makes them an exclusive set without a line of script:
+          opening *Reference* closes *Product*, so two dropdowns never hang over each other. */}
       <nav class="site-nav" aria-label="Sections">
         <details class="site-nav-drawer">
-          <summary class="site-nav-toggle">Menu</summary>
+          <summary class="site-nav-toggle" aria-controls="site-nav-panel">Menu</summary>
         </details>
 
-        <div class="site-nav-panel">
+        <div class="site-nav-panel" id="site-nav-panel">
           <ul class="site-nav-groups">
             {NAV_GROUPS.map((group) => (
               <li class="site-nav-group">
-                <details data-current={group.items.some((item) => isCurrent(item.href)) ? '' : undefined}>
+                <details name="site-nav-group" data-current={group.items.some((item) => isCurrent(item.href)) ? '' : undefined}>
                   <summary>{group.label}</summary>
                   <ul>
                     {group.items.map((item) => (

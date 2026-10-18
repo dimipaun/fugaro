@@ -550,14 +550,14 @@ test('the README claims about docs/pending-workflows/, firebase.json and the dep
   const text = readme()
   assert.ok(!/Nothing under `docs\/pending-workflows\/`/.test(text), 'the README says nothing is staged under docs/pending-workflows/, but other pending workflows are committed there')
   const staged = path.join(REPO_ROOT, 'docs', 'pending-workflows')
-  // The README says the directory holds no pending workflow today: it must hold none.
-  assert.ok(/holds no pending workflow today/.test(text.replace(/\s+/g, ' ')), 'the README no longer says docs/pending-workflows/ holds no pending workflow today')
-  const pending = existsSync(staged) ? readdirSync(staged).filter((n) => /\.ya?ml$/i.test(n)) : []
-  assert.deepEqual(pending, [], 'a workflow is pending under docs/pending-workflows/: the README says there is none, so update the README')
+  // The README names the workflows staged there, every one of them and no other, and the
+  // setup document they need.
+  const pending = existsSync(staged) ? readdirSync(staged).filter((n) => /\.ya?ml$/i.test(n)).sort() : []
+  const named = [...new Set([...text.matchAll(/`([\w.-]+\.ya?ml)`/g)].map((m) => m[1]).filter((n) => n.startsWith('website-')))].sort()
+  assert.deepEqual(named, pending.filter((n) => n.startsWith('website-')), 'the README names the website workflows docs/pending-workflows/ stages, and those are not the ones staged there')
+  assert.ok(text.includes('docs/website/preview-promote.md') && existsSync(path.join(REPO_ROOT, 'docs', 'website', 'preview-promote.md')), 'the README does not point at docs/website/preview-promote.md, the setup the staged workflows need')
   // firebase.json landed ahead of W2.1 with scripts/deploy-website.sh, and the README says so.
   assert.ok(existsSync(path.join(REPO_ROOT, 'firebase.json')), 'firebase.json is missing: the README says the hosting configuration is at the repository root')
   assert.ok(/`firebase\.json`/.test(text) && /scripts\/deploy-website\.sh/.test(text), 'the README does not describe firebase.json and scripts/deploy-website.sh')
   assert.ok(!existsSync(path.join(REPO_ROOT, '.firebaserc')), '.firebaserc is committed: the README says the project is passed on the command line')
-  const deploy = existsSync(staged) ? readdirSync(staged).filter((n) => /deploy/i.test(n)) : []
-  assert.deepEqual(deploy, [], 'a deploy workflow is staged: the README says it is W2.1\'s and not yet there')
 })

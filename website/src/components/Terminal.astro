@@ -44,7 +44,9 @@
  *
  * The caret follows the same shape: it blinks while motion is allowed and, when it is not,
  * sits still and visible — the global rule caps it at a single iteration, and its base rule
- * is the visible caret rather than the blank half of the blink.
+ * is the visible caret rather than the blank half of the blink. Even with motion allowed it
+ * blinks four times (4.4 s) once its line has arrived and then holds still: a blink that ran
+ * for ever would be motion past five seconds with no way to stop it (WCAG 2.2.2).
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -299,7 +301,9 @@ const TRANSCRIPT = LINES.map((line, index) => {
     display: inline;
   }
 
-  /* The caret: visible at rest, blinking while motion is allowed, and inside the last line
+  /* The caret: visible at rest, blinking while motion is allowed — four times, starting when
+     its line has arrived (the line's own delay and duration, inherited), so the blink is over
+     inside five seconds (WCAG 2.2.2) — and inside the last line
      so that it arrives with the line rather than sitting at the end of a line that has not
      been typed yet. The global reduced-motion rule caps it at one iteration, so it lands
      back on this rule rather than on the blank half of the blink (W1.3 step 3). */
@@ -310,7 +314,7 @@ const TRANSCRIPT = LINES.map((line, index) => {
     margin-left: 0.15ch;
     vertical-align: text-bottom;
     background: var(--accent);
-    animation: terminal-caret 1.1s step-end infinite;
+    animation: terminal-caret 1.1s step-end calc(var(--terminal-delay) + var(--terminal-duration)) 4;
   }
 
   @keyframes terminal-caret {
