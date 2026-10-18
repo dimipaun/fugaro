@@ -19,9 +19,8 @@
 //      lead ceiling in `budget.mjs` is a ceiling on the promise rather than on the commands
 //      (D188's lead is the region between the two headings, wherever each of them sits).
 //      A hero whose install block sat between the promise and the heading would put the
-//      commands, the terminal and the "every install path" link inside the lead: the page
-//      would still pass the ceiling at 134 words only by being refused, and it would say
-//      nothing about the promise. Moving the heading is the defect this case plants.
+//      commands, the terminal and the "every install path" link inside the lead, and the page
+//      would say nothing about the promise above them.
 //   2. **Getting Started's first section opens with its commands.** Inside `#install`, no
 //      paragraph of the section's own precedes the first command block, and the section's
 //      own sentence is still there, after the paths. P5 moved that sentence from under the
@@ -29,111 +28,178 @@
 //      command they run met a sentence about the page first, which is the ordering the plan
 //      asks this part to fix.
 //   3. **Every page that prints a command prints it under a heading.** The page's first `h2`
-//      comes before its first `pre`, on all eleven routes, so no page opens with a command
-//      that nothing above it names. This is the general form of the two cases above and the
-//      rule a future page keeps: a command block belongs to a section, and the section's
-//      heading is what a reader reads before it.
+//      comes before its first `pre`, on every route that prints one — three of the eleven
+//      today — so no page opens with a command that nothing above it names. This is the
+//      general form of the two cases above and the rule a future page keeps: a command block
+//      belongs to a section, and the section's heading is what a reader reads before it.
 //
-// The pages are read from `dist/`, which `npm run check` builds before it runs this file:
-// every fact here is a statement about the artifact a reader receives, and none of it is
-// read from a page's own sources.
+// The pages are read from `dist/`, which `npm run check` builds before it runs this file, and
+// `foldFailures()` is the whole of the gate: one function over one directory, so the refusals
+// are kept the way the other gates keep theirs — with a synthetic `dist` written by the case
+// below (`distOf`, the mechanism `budget.mjs` uses; `FUGARO_GATES_DIST` points the other gates
+// at a planted copy by hand). A gate whose refusals have never been seen to fire is a gate
+// nobody knows the shape of, which is why every rule here has a fixture that breaks it.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { builtPages, find, parse, textOf, walk } from './lib/html.mjs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { DIST, builtPages, find, parse, textOf, walk } from './lib/html.mjs'
 
-/** A built page's `main`, as a flat list of its elements in document order. */
-function mainInDocumentOrder(html) {
-  const main = find(parse(html), 'main')
-  assert.ok(main !== null, 'a built page carries no `main` landmark, so the ordering of its text cannot be read')
-  return [...walk(main)]
+/** The elements of a built page's `main`, in document order; `null` when it has no `main`. */
+function elementsOf(page) {
+  const main = find(parse(page.html), 'main')
+  return main === null ? null : [...walk(main)]
 }
 
-/** The built page at a route: `'/'`, `'/getting-started/'`. */
-function builtPage(url) {
-  const page = builtPages().find((candidate) => candidate.url === url)
-  assert.ok(page !== null && page !== undefined, `the build produced no ${url} page, and this check reads the built artifact`)
-  return page.html
-}
+/**
+ * Every way a built `dist` breaks the ordering the fold claim rests on, as the sentences a
+ * reader of the failure gets: the three rules above, over every page the directory holds.
+ *
+ * A page that is not there is not a failure here — a missing route is `linkcheck.mjs`'s and
+ * `a11y.mjs`'s business, and this gate says nothing about a page it cannot read — and neither
+ * is a page whose `main` is missing, for the same reason. What it does say is what the rules
+ * above are about, and the message names the page and the rule each time.
+ */
+export function foldFailures(dist) {
+  const out = []
 
-/** The `id` of a section of a page's `main`, found by its own `id` attribute. */
-function sectionWithId(html, id) {
-  const section = [...walk(find(parse(html), 'main'))].find((el) => el.attrs.get('id') === id)
-  assert.ok(section !== undefined, `the page's \`main\` carries no #${id} section, and this check reads the section a reader lands in`)
-  return section
-}
+  for (const page of builtPages(dist)) {
+    const els = elementsOf(page)
+    if (els === null) continue
 
-test("the homepage's lead is the promise alone, and the first section starts after it", () => {
-  const els = mainInDocumentOrder(builtPage('/'))
-  const h1 = els.findIndex((el) => el.name === 'h1')
-  const firstH2 = els.findIndex((el) => el.name === 'h2')
-
-  assert.ok(h1 !== -1, 'the homepage renders no `h1`, so it has no lead to read')
-  assert.ok(firstH2 > h1, 'the homepage renders no `h2` after its `h1`, so it has no first section and no lead region')
-
-  const lead = els.slice(h1 + 1, firstH2)
-  assert.deepEqual(
-    lead.map((el) => `${el.name}.${el.attrs.get('class') ?? ''}`),
-    ['p.hero-lead'],
-    `the homepage's lead holds ${lead.length} element(s) between its \`h1\` and its first \`h2\`: ${lead.map((el) => el.name).join(', ')}. The promise is the whole of the page's gist above the fold, so the install block, the terminal and the link that follows them belong to the section the heading opens (P5, D188)`,
-  )
-  assert.ok(
-    textOf(lead[0]).trim().length > 0,
-    'the homepage\'s lead paragraph is empty, so the page\'s gist above the fold is its tagline and nothing else',
-  )
-
-  // And the heading that ends the lead opens the section the commands are in: the first
-  // command of the page comes after it, never between the promise and it.
-  const firstPre = els.findIndex((el) => el.name === 'pre')
-  assert.ok(firstPre !== -1, 'the homepage prints no command at all, and its whole first screen is the install command (P5, RF5)')
-  assert.ok(
-    firstPre > firstH2,
-    'the homepage prints a command above its first `h2`: the command is then part of the lead and above the heading that names it, which is the ordering P5 fixed',
-  )
-})
-
-test('getting started opens its install section with the commands, and keeps its own sentence after them', () => {
-  const html = builtPage('/getting-started/')
-  const section = sectionWithId(html, 'install')
-  const els = [...walk(section)]
-  const firstPre = els.findIndex((el) => el.name === 'pre')
-
-  assert.ok(firstPre !== -1, 'the install section prints no command, and a reader who came for the command they run has nowhere to find it')
-
-  // A paragraph of the section's own — a `p` whose parent is the section rather than an
-  // install path's article — is prose about the section. One above the first command is the
-  // sentence P5 moved: the reader meets an explanation before the thing it explains.
-  const proseBefore = els.slice(0, firstPre).filter((el) => el.name === 'p' && el.parent === section)
-  assert.deepEqual(
-    proseBefore.map((el) => textOf(el).trim()),
-    [],
-    'the install section opens with a sentence of its own before its first command: the section opens with the paths themselves, and what it says about them comes after them (P5)',
-  )
-
-  const proseAfter = els.slice(firstPre + 1).filter((el) => el.name === 'p' && el.parent === section)
-  assert.ok(
-    proseAfter.length > 0,
-    "the install section carries no sentence of its own after the commands, so P5's move dropped it rather than moved it: the section's own note belongs at its end",
-  )
-})
-
-test('every page that prints a command prints it under a heading', () => {
-  const pages = builtPages()
-  assert.ok(pages.length > 0, 'the build produced no page, so this case would check nothing')
-
-  let withCommands = 0
-  for (const page of pages) {
-    const els = mainInDocumentOrder(page.html)
-    const firstPre = els.findIndex((el) => el.name === 'pre')
-    if (firstPre === -1) continue
-    withCommands++
     const firstH2 = els.findIndex((el) => el.name === 'h2')
-    assert.ok(
-      firstH2 !== -1 && firstH2 < firstPre,
-      `${page.rel} prints a command before its first \`h2\`: a command block belongs to a section, and the heading is what a reader reads above it (P5)`,
-    )
+    const firstPre = els.findIndex((el) => el.name === 'pre')
+
+    // Rule 3, and the half of rule 1 that is about the homepage's own command: a command
+    // above the page's first heading is a command nothing above it names.
+    if (firstPre !== -1 && (firstH2 === -1 || firstH2 > firstPre)) {
+      out.push(
+        `${page.rel} prints a command before its first \`h2\`: a command block belongs to a section, and the heading is what a reader reads above it (P5)`,
+      )
+    }
+
+    // Rule 1: the lead region of the homepage is the promise, and nothing else.
+    if (page.url === '/') {
+      const h1 = els.findIndex((el) => el.name === 'h1')
+      if (h1 !== -1 && firstH2 !== -1) {
+        const lead = els.slice(h1 + 1, firstH2)
+        const shape = lead.map((el) => el.name + (el.attrs.get('class') ? `.${el.attrs.get('class')}` : '')).join(', ')
+        if (shape !== 'p.hero-lead') {
+          out.push(
+            `${page.rel} holds ${lead.length} element(s) between its \`h1\` and its first \`h2\` (${shape}): the promise is the whole of the page's gist above the fold, so the install block, the terminal and the link after them belong to the section the heading opens (P5, D188)`,
+          )
+        }
+        if (lead.length === 1 && textOf(lead[0]).trim() === '') {
+          out.push(`${page.rel} opens with an empty lead paragraph: the page's gist above the fold is its tagline and nothing else (P5, RF5)`)
+        }
+      } else if (h1 !== -1) {
+        out.push(`${page.rel} renders no \`h2\` after its \`h1\`, so it has no first section and no lead region to read (P5, D188)`)
+      }
+    }
+
+    // Rule 2: the install section opens with the commands, and keeps its own sentence.
+    if (page.url === '/getting-started/') {
+      const section = els.find((el) => el.attrs.get('id') === 'install')
+      if (section !== undefined) {
+        const inside = [...walk(section)]
+        const pre = inside.findIndex((el) => el.name === 'pre')
+        if (pre === -1) {
+          out.push(`${page.rel}'s #install section prints no command, and a reader who came for the command they run has nowhere to find it (P5)`)
+        } else {
+          const before = inside.slice(0, pre).filter((el) => el.name === 'p' && el.parent === section)
+          if (before.length > 0) {
+            out.push(
+              `${page.rel}'s #install section opens with a sentence of its own before its first command (${JSON.stringify(textOf(before[0]).trim())}): the section opens with the paths themselves, and what it says about them comes after them (P5)`,
+            )
+          }
+          if (inside.slice(pre + 1).filter((el) => el.name === 'p' && el.parent === section).length === 0) {
+            out.push(
+              `${page.rel}'s #install section carries no sentence of its own after the commands: the section's own note belongs at its end, and a gate that only refused prose before them would pass a page that dropped it (P5)`,
+            )
+          }
+        }
+      }
+    }
   }
 
-  // The rule has to be looking at pages that print commands, or it is a rule about nothing.
-  assert.ok(withCommands > 0, 'no built page prints a command, so this case checks nothing')
+  return out
+}
+
+// ---- the built site ---------------------------------------------------------------------
+
+test("the gist above the fold is ordered on every built page", () => {
+  const failures = foldFailures(DIST)
+  assert.deepEqual(
+    failures,
+    [],
+    `the built site breaks the ordering P5's fold claim rests on:\n  ${failures.join('\n  ')}`,
+  )
+})
+
+// ---- the refusals, kept -----------------------------------------------------------------
+
+function distOf(t, files) {
+  const dist = mkdtempSync(path.join(tmpdir(), 'fugaro-fold-'))
+  t.after(() => rmSync(dist, { recursive: true, force: true }))
+  for (const [rel, body] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(dist, rel)), { recursive: true })
+    writeFileSync(path.join(dist, rel), body)
+  }
+  return dist
+}
+
+const page = (body) => `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main>${body}</main></body></html>`
+
+test('each rule refuses the ordering it is about, and passes the page that keeps it', (t) => {
+  // The three defects are the three orderings P5 fixed, planted one per rule, beside a page
+  // that keeps every one of them: the gate has to report each defect and leave the good page
+  // alone, or it is a gate whose refusals have never been seen to fire.
+  const dist = distOf(t, {
+    // The homepage with its install block above the section heading: the command is in the
+    // lead, and above the heading that names it (rules 1 and 3).
+    'index.html': page('<h1>t</h1><p class="hero-lead">the promise</p><pre>brew install fugaro</pre><h2>Install</h2>'),
+    // The install section with a sentence about itself under its heading, before the paths
+    // (rule 2, the ordering P5 changed). Its own closing sentence is there as well, so the
+    // one failure this page earns is the ordering and not the other half of the rule.
+    'getting-started/index.html': page(
+      '<h1>t</h1><section id="install"><h2>Install</h2><p>a sentence about the section</p><pre>brew install fugaro</pre><p>and the section\'s own sentence</p></section>',
+    ),
+    // And a page that keeps all three rules: a promise, then the heading, then the command,
+    // then the section's own sentence.
+    'ok/index.html': page(
+      '<h1>t</h1><p>the promise</p><h2>Install</h2><pre>brew install fugaro</pre><p>and the section\'s own sentence</p>',
+    ),
+  })
+
+  const failures = foldFailures(dist)
+  const of = (rel) => failures.filter((line) => line.startsWith(rel))
+
+  assert.equal(of('index.html').length, 2, `the homepage's two broken rules are not both reported:\n${failures.join('\n')}`)
+  assert.match(of('index.html')[0], /prints a command before its first `h2`/)
+  assert.match(of('index.html')[1], /holds 2 element\(s\) between its `h1` and its first `h2` \(p\.hero-lead, pre\)/)
+
+  assert.equal(of('getting-started/index.html').length, 1, `the install section's broken ordering is not reported:\n${failures.join('\n')}`)
+  assert.match(of('getting-started/index.html')[0], /opens with a sentence of its own before its first command/)
+
+  assert.deepEqual(
+    of('ok/index.html'),
+    [],
+    'a page that keeps every rule was refused, so the gate reports the shape it is meant to pass',
+  )
+})
+
+test('a page that drops the install section\'s own sentence is refused too', (t) => {
+  // The other half of rule 2: the sentence is not only moved, it is still there. A gate that
+  // refused prose before the commands and said nothing about the sentence after them would
+  // pass a page that deleted it, which is the failure a "the section opens with the commands"
+  // check is most likely to have.
+  const dist = distOf(t, {
+    'getting-started/index.html': page('<h1>t</h1><section id="install"><h2>Install</h2><pre>brew install fugaro</pre></section>'),
+  })
+  const failures = foldFailures(dist)
+
+  assert.equal(failures.length, 1, failures.join('\n'))
+  assert.match(failures[0], /carries no sentence of its own after the commands/)
 })

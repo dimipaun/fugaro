@@ -140,13 +140,15 @@ with fixtures that keep its refusals running, and none of them needs the network
 - `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
   word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
-  is a statement about the built pages, though, and it is this file's three cases: the
-  homepage's lead region holds one element and it is the promise, so the install block and the
-  terminal are the section the heading opens; Getting Started's install section opens with its
-  commands, with the sentence about them after the paths; and on every route the first `h2`
-  precedes the first `pre`. Each was mutation-proved by planting the ordering P5 fixed — the
-  hero's `h2` moved under its install block, the install section's sentence moved back above
-  the paths.
+  is a statement about the built pages, though, and it is this file's rules: the homepage's lead
+  region holds one element and it is the promise, so the install block and the terminal are the
+  section the heading opens; Getting Started's install section opens with its commands, with the
+  sentence about them still there after the paths; and on every route that prints a command —
+  three of the eleven today, and the other eight are skipped rather than asserted about — the
+  first `h2` precedes the first `pre`. The whole gate is one function over one `dist`, so its
+  refusals are kept the way the other gates keep theirs: a case writes a synthetic `dist` with
+  each defect planted beside a page that keeps every rule, and each rule was mutation-proved by
+  removing it from the function and watching that case fail.
 - `test/meta.mjs` — the provenance-phrase gate (D186): a page must not explain why its own
   text exists, so D186's phrase list (`rendered from`, `generated rather than written`, …) is
   refused in the text a reader reads, on every built page. It is the one defect the other
