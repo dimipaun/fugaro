@@ -26,6 +26,8 @@ package rules
 import (
 	"net/http"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 // credsState is the cascade's shared state as the service writes it: two
@@ -157,4 +159,33 @@ func TestCredsTokenOfAnotherRepositoryDenied(t *testing.T) {
 	// not a slug mismatch, it is a closed subtree.
 	h.mustDeny(h.run("aurora", "r1"), "the owning repository's own token", map[string]any{"creds/accounts/alice/state": "exhausted"})
 	h.mustReadDenied(h.run("aurora", "r1"), "creds/accounts/alice/state")
+}
+
+// TestCredsMailboxIdentitiesDenied: the project's other token kinds are denied
+// too — the phone's signed-in owner and the mailbox consumer (D112, D113b).
+// Neither has any business under creds/, and neither can reach it today. The
+// case is here because creds/ is closed to *every* non-admin token and not
+// only to a run's, so this makes the sentence in this file's header a checked
+// claim: C1.3 adds children under creds/, and a child granted to a signed-in
+// identity would pass the run-token cases above while failing this one.
+func TestCredsMailboxIdentitiesDenied(t *testing.T) {
+	h := newHarness(t)
+	h.patch(credsState())
+	for _, tc := range []struct {
+		who string
+		c   *rtdb.Client
+	}{
+		{"the phone", h.phone("mb")},
+		{"the consumer", h.consumer("mb")},
+	} {
+		for _, p := range credsPaths() {
+			h.mustReadDenied(tc.c, p)
+		}
+		h.mustDeny(tc.c, tc.who+" writing a mark", map[string]any{"creds/accounts/alice/state": "exhausted"})
+		h.mustDeny(tc.c, tc.who+" writing the counter", map[string]any{"creds/counters/roundRobin": int64(4)})
+		h.mustDeny(tc.c, tc.who+" deleting a mark", map[string]any{"creds/accounts/bob/state": nil})
+		// The state is untouched by every refusal above.
+		h.wantValue("creds/accounts/bob/state", `"exhausted"`)
+		h.wantValue("creds/counters/roundRobin", "3")
+	}
 }
