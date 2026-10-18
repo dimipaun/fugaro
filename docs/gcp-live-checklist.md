@@ -4233,7 +4233,7 @@ grep -oE 'h1Bottom|leadBottom|firstCommandBottom' docs/website/redesign/capture-
 grep -oE 'width: [0-9]+, height: [0-9]+' docs/website/redesign/capture-screenshots.mjs
 # The word ceilings, out of the site's own gate rather than typed here: the numbers live in the
 # README `website/test/budget.mjs` reads them from, and `budget.mjs` is what enforces them.
-grep -oE '\*\*Words (in a page.s lead|per page):\*\* [0-9]+ words' website/README.md
+grep -oE '\*\*Words[^*]*\*\* [0-9]+ words' website/README.md
 grep -n 'PAGE_EXEMPT = ' website/test/budget.mjs
 # The provenance phrases the build refuses (D186), out of the gate's own list: the phrases step 6
 # searches every page for.
