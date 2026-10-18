@@ -14,6 +14,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The whole-project inventory (Task 4.1, design D59).
@@ -76,9 +77,10 @@ const ServiceCloudAsset = "cloudasset.googleapis.com"
 // a read made under the deployer's credential answers CauseRoleMissing and
 // falls the run back to its confirmations, which is the fail-closed direction
 // (the fallback a call that fails for any reason takes) rather than a clean
-// read. Which credential the caller makes the read with is the caller's to
-// decide: Task 4.4 wires this check into the apply, and this paragraph is the
-// constraint it has to meet.
+// read. The credential the caller makes the read with is the operator's own,
+// which is the identity the installation grants this role to: internal/cli's
+// managed apply makes the read before it assumes the deployer, and hands the
+// answer in (Task 4.5).
 const RoleCloudAssetReader = tf.CloudAssetRole
 
 // inventoryPageSize is how many assets the read asks for per page. The read
@@ -225,6 +227,14 @@ const (
 	// CauseNoReader is no read at all: none was given, or there is no project
 	// to read.
 	CauseNoReader Cause = "there is no whole-project read to make"
+	// CauseStateUnread is the installation's own state not being readable
+	// (Unread, Task 4.5): the accounted side of the comparison could not be
+	// built, so nothing is accounted for and the run keeps its confirmations.
+	// It is the same direction as a read that failed, and it is a cause of its
+	// own because what an operator does about it is different — the state
+	// bucket's objects are what could not be listed or parsed, not the
+	// project's assets.
+	CauseStateUnread Cause = "the installation's own state could not be read"
 )
 
 // Decision is what the inventory decided — a decision rather than an error on
@@ -276,10 +286,14 @@ func (in Inventory) Check(ctx context.Context) Decision {
 
 // fallback is a decision that keeps the run's confirmations, with the project,
 // the cause and what happens next in one sentence.
+//
+// The detail is one bounded field before it goes in, for the reason the
+// warning's names are (foreignWhy): it is an API's error text or a caller's
+// own words about a read that failed, and the sentence is printed.
 func (in Inventory) fallback(cause Cause, detail string) Decision {
 	return Decision{Fallback: true, Cause: cause,
 		Why: fmt.Sprintf("the whole-project inventory of %s could not be checked: %s (%s); this run falls back to confirmations, and nothing is deleted (D59)",
-			in.what(), cause, detail)}
+			in.what(), cause, safetext.Field(detail))}
 }
 
 // foreign is the listed assets the state does not account for — and that GCP
@@ -527,10 +541,18 @@ func assetPath(name string) string {
 // foreignWhy is the warning: the project, how many resources the state does
 // not account for, the first few of them with their types, and what happens
 // next.
+//
+// Each name and type is one bounded field (safetext.Field) before it is joined
+// into the sentence, and that is not decoration: this sentence is printed —
+// by the managed apply, whose reader is the session that applied — and a
+// resource name is a string the project's own API answered with, so a name
+// carrying an escape sequence, a line break or ten thousand characters would
+// be this program printing text of someone else's choosing, in text its reader
+// acts on. The count is the sentence's own and is not bounded.
 func (in Inventory) foreignWhy(foreign []Asset) string {
 	named := make([]string, 0, inventoryNamed)
 	for _, a := range foreign[:min(len(foreign), inventoryNamed)] {
-		named = append(named, a.Name+" ("+a.Type+")")
+		named = append(named, safetext.Field(a.Name)+" ("+safetext.Field(a.Type)+")")
 	}
 	more := ""
 	if n := len(foreign) - len(named); n > 0 {
