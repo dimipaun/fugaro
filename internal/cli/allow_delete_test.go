@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -612,4 +613,63 @@ func TestAllowDeleteCommandRefusesAnOverSizeList(t *testing.T) {
 	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); ok {
 		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.AllowDeleteObject, got)
 	}
+}
+
+// hostileAddresses are entries an object in the bucket can carry and
+// parseDeleteList accepts (it refuses only blank ones): a C1 CSI (U+009B), a
+// bidi override (U+202E), a newline, and a 10,000-character string.
+var hostileAddresses = []string{"csi\u009b31m.x", "bidi‮evil.x", "line\nforged.x", strings.Repeat("z", 10000)}
+
+// assertNoRawHostile fails when out carries any hostile entry as itself: the
+// C1 and bidi characters, the newline inside an entry, or a line longer than
+// one safetext.Field value can be.
+func assertNoRawHostile(t *testing.T, out string) {
+	t.Helper()
+	if strings.ContainsAny(out, "\u009b‮") {
+		t.Errorf("the output carries a raw control or bidi character: %q", out)
+	}
+	if strings.Contains(out, "line\nforged.x") {
+		t.Error("the output carries an entry's newline as a line break")
+	}
+	for _, l := range strings.Split(out, "\n") {
+		if len([]rune(l)) > 1000 {
+			t.Errorf("an output line is %d runes long: an entry was printed uncut", len([]rune(l)))
+		}
+	}
+}
+
+// M4: the addresses printed from the bucket go to stdout, not through
+// ErrorText, so each is safetext.Field'd at the print: the listing and the
+// "this list leaves out" lines.
+func TestAllowDeletePrintsBucketAddressesSanitised(t *testing.T) {
+	list := `{"version":1,"gcp_project":"` + initProject + `","addresses":[`
+	for i, a := range hostileAddresses {
+		if i > 0 {
+			list += ","
+		}
+		b, _ := json.Marshal(a)
+		list += string(b)
+	}
+	list += `]}`
+	t.Run("the listing", func(t *testing.T) {
+		r := allowDeleteRig(t)
+		r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, []byte(list))
+		out, _, err := execute(t, "allow-delete")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out, "allows 4 address(es)") {
+			t.Fatalf("the hostile list was not read as one, so the print is not exercised:\n%q", out)
+		}
+		assertNoRawHostile(t, out)
+	})
+	t.Run("the entries a write would drop", func(t *testing.T) {
+		r := allowDeleteRig(t)
+		r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, []byte(list))
+		out, _, _ := execute(t, "allow-delete", "google_storage_bucket.data")
+		if !strings.Contains(out, "leaves out 4") {
+			t.Fatalf("the drop listing was not printed:\n%q", out)
+		}
+		assertNoRawHostile(t, out)
+	})
 }

@@ -30,22 +30,33 @@ import (
 // the refusal it removes is a mitigation against an agent going through the
 // program. A gate such a session could open on its own command line would
 // remove nothing. There is no longer any constant in this file that opens it:
-// Budget's zero value is closed, Enable's zero value is closed, and the only
-// thing that sets Read is ApplyGate's acceptance of a read that answered with
-// an amount.
+// Budget's zero value is closed, Enable's zero value is closed, and the
+// fields are unexported, so outside this package the only way to hold an open
+// Enable is to be handed one by ApplyGate's acceptance of a read that answered
+// with a valid amount — another package can copy a gate or hold the zero
+// value, and cannot build an open one. (Inside the package, Refuse still
+// re-checks the pair with the marker's own rule.)
 type Enable struct {
-	// Budget is the amount and the currency the apply-time read answered with
+	// budget is the amount and the currency the apply-time read answered with
 	// (Task 4.4). It is what the read of the creation fact recorded, and it is
 	// carried here rather than left to the caller because the two fields are
 	// the pair the gate is open on and nothing else may be substituted for
 	// them.
-	Budget Budget
-	// Read is whether an apply-time budget read answered with that pair. The
-	// gate is open exactly when it is true, and the zero value is false, so a
-	// caller that forgets to thread a read through is refused rather than
-	// admitted.
-	Read bool
+	budget Budget
+	// read is whether an apply-time budget read answered with that pair. The
+	// gate is open exactly when it is true and the pair is valid, and the zero
+	// value is false, so a caller that forgets to thread a read through is
+	// refused rather than admitted.
+	read bool
 }
+
+// Budget is the pair the gate was opened on: the zero Budget for a closed
+// gate.
+func (e Enable) Budget() Budget { return e.budget }
+
+// Open reports whether an apply-time budget read opened the gate — the same
+// answer Refuse gives, as a boolean.
+func (e Enable) Open() bool { return e.Refuse() == nil }
 
 // ErrNotEnabled is the refusal of an apply under a closed gate. It is a value
 // as well as a message, so a test can match on it without reading English.
@@ -66,7 +77,7 @@ const NotEnabled = "the managed apply was refused: no apply-time budget read ope
 // reads, so an Enable that was never built by ApplyGate refuses however it is
 // called.
 func (e Enable) Refuse() error {
-	if e.Read && e.Budget.Valid() {
+	if e.read && e.budget.Valid() {
 		return nil
 	}
 	return fmt.Errorf("%w: %s", ErrNotEnabled, NotEnabled)

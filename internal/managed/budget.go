@@ -1,6 +1,11 @@
 package managed
 
-import "fmt"
+import (
+	"fmt"
+
+	inframanaged "github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/safetext"
+)
 
 // The apply-time budget read (Task 4.4, and D62's second blocking input).
 //
@@ -51,13 +56,22 @@ type Budget struct {
 	Currency string
 }
 
-// Valid reports whether the pair is one an apply may be opened on: an amount
-// above 0 and a currency, which is the same pair the marker's own writer and
-// reader refuse (internal/infra/managed's Marker.Bytes and readFact). It is a
-// method rather than a check inside ApplyGate so that Enable's own Refuse —
-// the second check of the same value, the one that runs however Apply is
-// called — cannot drift from the first.
-func (b Budget) Valid() bool { return b.Amount > 0 && b.Currency != "" }
+// Check refuses a pair an apply may not be opened on, and it is the marker's
+// own rule and not a copy of it: internal/infra/managed's Budget.Check, which
+// the marker's writer (Marker.Bytes, and init before anything is created) and
+// its reader (readFact) both apply — an amount from 1 to 10,000,000 whole
+// units of its currency, and a currency of exactly three ASCII uppercase
+// letters. One rule, called rather than restated, so the gate can never accept
+// a figure the marker would refuse ("usd", "US\n", "EURO", 9e18).
+func (b Budget) Check() error {
+	return inframanaged.Budget{Amount: b.Amount, Currency: b.Currency}.Check()
+}
+
+// Valid reports whether the pair is one an apply may be opened on: exactly
+// when Check refuses nothing. It is a method rather than a check inside
+// ApplyGate so that Enable's own Refuse — the second check of the same value,
+// the one that runs however Apply is called — cannot drift from the first.
+func (b Budget) Valid() bool { return b.Check() == nil }
 
 // BudgetRead is the apply-time read's answer, carried whole, in the shape the
 // caller that holds the cloud clients can make it. It is deliberately the
@@ -68,9 +82,13 @@ type BudgetRead struct {
 	Project string
 	// Amount, Currency, OK, Reason and Err are internal/infra/managed's
 	// ReadBudget, field for field. OK is true only when the creation fact was
-	// read AND it records an amount; Reason is its one-line reason, empty when
-	// OK; Err is set only when the read could not be made at all, and it is
-	// never a reason to proceed.
+	// read AND it records a valid amount; Reason is its one-line reason, empty
+	// when OK; Err is set only when the read could not be made at all, and it
+	// is never a reason to proceed. With OK false, Amount and Currency are set
+	// only when the marker is a version 2 whose recorded figure fails
+	// Budget.Check — the one case ReadBudget hands the refused figure back, so
+	// the refusal can say the recorded budget is invalid rather than that the
+	// project is not managed.
 	Amount   int64
 	Currency string
 	OK       bool
@@ -99,24 +117,32 @@ type BudgetRead struct {
 // this function that opens the gate on anything but a read that answered with
 // a usable pair.
 func ApplyGate(r BudgetRead) (Enable, error) {
+	b := Budget{Amount: r.Amount, Currency: r.Currency}
 	switch {
 	case r.Err != nil:
-		return Enable{}, fmt.Errorf("%w: the apply-time budget read of %s could not be made, and a read that did not answer is an apply with no budget control at all: %v",
-			ErrNotEnabled, r.Project, r.Err)
-	case r.OK && Budget{Amount: r.Amount, Currency: r.Currency}.Valid():
-		return Enable{Budget: Budget{Amount: r.Amount, Currency: r.Currency}, Read: true}, nil
-	case r.OK:
-		// ReadBudget refuses this itself (internal/infra/managed's readFact
-		// refuses a recorded amount of 0 or of no currency), so this branch is
-		// unreachable through it — and it is written anyway, because the gate
-		// is the thing that must not open and a second caller passing a pair
-		// built by hand must not be able to open it either.
-		return Enable{}, fmt.Errorf("%w: %s's creation fact records a budget of %d %q, and an amount above 0 with a currency is what an apply is opened on",
-			ErrNotEnabled, r.Project, r.Amount, oneLine(r.Currency))
+		return Enable{}, fmt.Errorf("%w: the apply-time budget read of %s could not be made, and a read that did not answer is an apply with no budget control at all: %s",
+			ErrNotEnabled, r.Project, safetext.Field(r.Err.Error()))
+	case r.OK && b.Valid():
+		return Enable{budget: b, read: true}, nil
+	case r.OK || r.Amount != 0 || r.Currency != "":
+		// A recorded figure that fails the marker's own Check. Through
+		// ReadBudget this is a version-2 marker whose amount or currency is
+		// outside the shape the write enforces (ReadBudget answers OK only for
+		// a valid one, and hands the refused figure back for exactly this
+		// sentence); a second caller passing a pair built by hand lands here
+		// too. Either way it is refused, and it is reported as what it is —
+		// an invalid recorded budget — and not as a project that is not
+		// managed, which would send the owner to the wrong cure.
+		why := "the recorded figure was refused"
+		if err := b.Check(); err != nil {
+			why = err.Error()
+		}
+		return Enable{}, fmt.Errorf("%w: the budget recorded in the marker of %s is invalid: %s",
+			ErrNotEnabled, r.Project, safetext.Field(why))
 	case !r.Managed:
 		// Not managed at all: the project keeps the coding agent's refusal, and
 		// the sentence is the one the command already prints for that.
-		reason := oneLine(r.ManagedReason)
+		reason := safetext.Field(r.ManagedReason)
 		if reason == "" {
 			reason = "its creation fact was not believed"
 		}
@@ -125,14 +151,16 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 	default:
 		// Managed, and the creation fact records no amount: the marker's
 		// version 1, which is a creation before Task 4.2 or a creation that
-		// was not managed. This is the state the task exists for, and the
-		// sentence is the one the owner asked for: it says what is missing and
-		// what the owner does about it.
-		reason := oneLine(r.Reason)
+		// was not managed. The sentence says what is true in this release:
+		// fugaro init refuses --managed without --create-project, so no
+		// command in this build adds a budget to an existing project (that is
+		// the plan's Task 6.1, unscheduled), and the only managed project is
+		// one created with its budget.
+		reason := safetext.Field(r.Reason)
 		if reason == "" {
 			reason = "the creation fact records no amount"
 		}
-		return Enable{}, fmt.Errorf("%w: this project has no budget recorded; the owner adds one with `fugaro init --managed --budget N --budget-currency CCC` (%s)",
-			ErrNotEnabled, reason)
+		return Enable{}, fmt.Errorf("%w: %s has no budget recorded (%s), and this release cannot add a budget to an existing project; a managed project must be created with `fugaro init --create-project --managed --budget N --budget-currency CCC`",
+			ErrNotEnabled, r.Project, reason)
 	}
 }

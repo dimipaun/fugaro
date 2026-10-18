@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -146,6 +147,13 @@ type Inventory struct {
 	// Project is the Fugaro project's name and GCPProject its GCP project ID.
 	// They name the project in the warning; GCPProject is what is read.
 	Project, GCPProject string
+	// ProjectNumber is GCPProject's number, from the caller's own Resource
+	// Manager read (the read every managed command already makes to prove a
+	// bucket is the project's own). The service accounts GCP names by the
+	// number are ignored only when the number in the name IS this one; with
+	// a zero ProjectNumber none of them is, so they are foreign and the run
+	// falls back to confirmations — the safe direction.
+	ProjectNumber int64
 	// Assets is the read. A nil read falls back rather than reading as clean:
 	// a check that could not run means ask for confirmation (Global
 	// Constraint 3).
@@ -279,7 +287,7 @@ func (in Inventory) fallback(cause Cause, detail string) Decision {
 func (in Inventory) foreign(listed []Asset) []Asset {
 	var out []Asset
 	for _, a := range listed {
-		if !gcpCreated(a) && !in.accounted(a) {
+		if !in.gcpCreated(a) && !in.accounted(a) {
 			out = append(out, a)
 		}
 	}
@@ -306,7 +314,7 @@ func (in Inventory) foreign(listed []Asset) []Asset {
 // service account or a sink an operator created in the project is exactly the
 // "single purpose" case D59 is about. Anything that is not one of these is
 // still foreign.
-func gcpCreated(a Asset) bool {
+func (in Inventory) gcpCreated(a Asset) bool {
 	switch a.Type {
 	case
 		// The project itself: "//cloudresourcemanager.googleapis.com/projects/<p>".
@@ -336,54 +344,83 @@ func gcpCreated(a Asset) bool {
 		"logging.googleapis.com/LogSink":
 		return lastSegment(a.Name) == "_Default" || lastSegment(a.Name) == "_Required"
 	case "iam.googleapis.com/ServiceAccount":
-		return gcpServiceAccount(a)
+		return in.gcpServiceAccount(a)
 	}
 	return false
 }
 
 // gcpServiceAccount reports whether a service account is one GCP itself
-// created for the project — the default one and the Google-managed agents,
+// created for THIS project — the default ones and the Google-managed agents,
 // whose names GCP assigns and which a project of the installation's kind has
-// whether or not any plan mentions it. Each form is matched exactly and
-// nothing else is: an account an operator created, even one whose local part
-// borrows a prefix, is a resource the state does not account for and stays
-// foreign.
+// whether or not any plan mentions it. Each form is matched exactly, against
+// this project's own id and number, and nothing else is: an account an
+// operator or an agent created — even one whose local part borrows an agent's
+// shape, such as service-1@<p>.iam.gserviceaccount.com — and a default
+// account of another project are resources the state does not account for and
+// stay foreign, which is what keeps D59's fallback to confirmations reachable.
 //
-// The forms, with <N> the project number and <p> the project id:
+// The forms, with <N> this project's number (Inventory.ProjectNumber) and <p>
+// its id (Inventory.GCPProject):
 //
 //   - <N>-compute@developer.gserviceaccount.com — the Compute Engine default.
 //   - <N>@cloudservices.gserviceaccount.com — the Google APIs service agent:
 //     the identity the API calls made on the project's behalf run as.
-//   - service-<N>@<agent>.iam.gserviceaccount.com — the agents GCP creates as
-//     services are used (Firebase's, Cloud Run's, App Engine's).
+//   - service-<N>@gcp-sa-<agent>.iam.gserviceaccount.com — the Google-managed
+//     agents GCP creates as services are used (Firebase's, Artifact
+//     Registry's), and service-<N>@<d>.iam.gserviceaccount.com for the closed
+//     list of older agent domains in legacyAgentDomains (Cloud Run's
+//     serverless-robot-prod among them). The domain is never <p>'s own: an
+//     account under <p>.iam.gserviceaccount.com is one somebody created in
+//     the project, whatever it is called.
 //   - <p>@appspot.gserviceaccount.com — the App Engine default, which the
-//     project has once Firebase is added to it.
+//     project has once Firebase is added to it; <p> must be this project's id
+//     and the asset must be filed under it.
 //
 // The number in the first three is why no Accounted entry could carry them:
 // the installation's state knows the project by its id, and these are named by
-// its number.
-func gcpServiceAccount(a Asset) bool {
+// its number — and why the number is checked: any run of digits would also
+// match another project's default account.
+func (in Inventory) gcpServiceAccount(a Asset) bool {
 	local, domain, ok := strings.Cut(lastSegment(a.Name), "@")
 	if !ok || local == "" {
 		return false
 	}
+	number := ""
+	if in.ProjectNumber > 0 {
+		number = strconv.FormatInt(in.ProjectNumber, 10)
+	}
+	ours := func(n string) bool { return number != "" && n == number }
 	switch domain {
 	case "developer.gserviceaccount.com":
 		n, ok := strings.CutSuffix(local, "-compute")
-		return ok && digits(n)
+		return ok && ours(n)
 	case "cloudservices.gserviceaccount.com":
-		return digits(local)
+		return ours(local)
 	case "appspot.gserviceaccount.com":
-		// The id is the asset's own path segment ("projects/<p>/..."), read
-		// from the name rather than passed in: the match is a property of the
-		// asset, not of the caller's config.
-		return local == pathSegment(a.Name, "projects")
+		// The id is checked twice: it is this project's, and the asset is
+		// filed under it ("projects/<p>/...").
+		return in.GCPProject != "" && local == in.GCPProject && pathSegment(a.Name, "projects") == in.GCPProject
 	}
-	if !strings.HasSuffix(domain, ".iam.gserviceaccount.com") {
+	sub, ok := strings.CutSuffix(domain, ".iam.gserviceaccount.com")
+	if !ok || sub == "" || sub == in.GCPProject {
+		return false
+	}
+	if !strings.HasPrefix(sub, "gcp-sa-") && !legacyAgentDomains[sub] {
 		return false
 	}
 	n, ok := strings.CutPrefix(local, "service-")
-	return ok && digits(n)
+	return ok && ours(n)
+}
+
+// legacyAgentDomains are the Google-managed service agents' domains that
+// predate the gcp-sa-* naming, closed as gcpCreated's list is: an agent whose
+// domain is not here and not gcp-sa-* is foreign until it is named.
+var legacyAgentDomains = map[string]bool{
+	"serverless-robot-prod": true, // Cloud Run
+	"gcf-admin-robot":       true, // Cloud Functions
+	"firebase-rules":        true, // Firebase Rules
+	"compute-system":        true, // Compute Engine
+	"containerregistry":     true, // Container Registry
 }
 
 // pathSegment is the segment of a full resource name that follows key: with

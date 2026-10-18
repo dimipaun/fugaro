@@ -20,7 +20,9 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	crm "google.golang.org/api/cloudresourcemanager/v1"
 	iam "google.golang.org/api/iam/v1"
+	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	managed "github.com/dimipaun/fugaro/internal/infra/managed"
@@ -28,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // fugaro managed apply (docs/design/managed-projects.md, D76) applies the
@@ -937,13 +940,27 @@ func (a deployerAccess) TokenCreator(ctx context.Context, account, member string
 // only in that case, and only so the refusal names the right one of the two.
 // Nothing is applied either way.
 func managedBudgetGate(ctx context.Context, c *infra.Clients, lc *localcfg.Config) (managedmode.Enable, managedmode.Fact, error) {
-	budget, ok, reason, err := managed.ReadBudget(ctx, c.Storage, c.CRM, lc.Name, lc.GCPProject)
+	var s *storage.Service
+	var r *crm.Service
+	if c != nil {
+		s, r = c.Storage, c.CRM
+	}
+	return managedBudgetGateOf(ctx, s, r, lc.Name, lc.GCPProject)
+}
+
+// managedBudgetGateOf is managedBudgetGate for a named GCP project rather than
+// the selected config's: `fugaro restore` asks it of the NEW project right
+// after the creation, so a creation that wrote no valid version-2 marker stops
+// before the checkout line moves. One function, so the restore's check and
+// the apply's gate are the same read and the same decision.
+func managedBudgetGateOf(ctx context.Context, s *storage.Service, r *crm.Service, name, gcpProject string) (managedmode.Enable, managedmode.Fact, error) {
+	budget, ok, reason, err := managed.ReadBudget(ctx, s, r, name, gcpProject)
 	read := managedmode.BudgetRead{
-		Project: lc.Name, Amount: budget.Amount, Currency: budget.Currency,
+		Project: name, Amount: budget.Amount, Currency: budget.Currency,
 		OK: ok, Reason: reason, Err: err,
 	}
 	if !ok && err == nil {
-		isManaged, managedReason, managedErr := managed.IsManaged(ctx, c.Storage, c.CRM, lc.Name, lc.GCPProject)
+		isManaged, managedReason, managedErr := managed.IsManaged(ctx, s, r, name, gcpProject)
 		read.Managed, read.ManagedReason = isManaged, managedReason
 		if managedErr != nil {
 			// A read that answered once and failed the second time is believed
@@ -968,9 +985,9 @@ func managedBudgetGate(ctx context.Context, c *infra.Clients, lc *localcfg.Confi
 func managedListErr(lc *localcfg.Config, bucket string, err error) error {
 	switch {
 	case errors.Is(err, managed.ErrRefused):
-		return userErr("nothing was applied: the delete list of %s could not be read, and an unreadable list approves nothing: %v", lc.Name, err)
+		return userErr("nothing was applied: the delete list of %s could not be read, and an unreadable list approves nothing: %s", lc.Name, safetext.Field(err.Error()))
 	case isAccessDenied(err):
-		return userErr("nothing was applied: gs://%s/%s could not be read with this run's credentials: %v", bucket, managed.AllowDeleteObject, err)
+		return userErr("nothing was applied: gs://%s/%s could not be read with this run's credentials: %s", bucket, managed.AllowDeleteObject, safetext.Field(err.Error()))
 	default:
 		return remote(fmt.Errorf("reading gs://%s/%s for %s: %w", bucket, managed.AllowDeleteObject, lc.Name, err))
 	}

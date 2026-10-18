@@ -28,7 +28,7 @@ func closedGate(t *testing.T, r BudgetRead) Enable {
 	if err == nil {
 		t.Fatalf("a read that did not answer with an amount opened the gate: %+v", r)
 	}
-	if gate.Read {
+	if gate.read {
 		t.Fatalf("the gate is open after a refusal: %+v", gate)
 	}
 	if !errors.Is(err, ErrNotEnabled) {
@@ -55,7 +55,7 @@ func TestApplyGateRefusesEveryReadThatAnsweredNoAmount(t *testing.T) {
 		{
 			what: "the marker is version 1: managed, and no amount recorded",
 			read: BudgetRead{Project: project, Managed: true, Reason: reason},
-			want: []string{"this project has no budget recorded", "fugaro init --managed --budget N --budget-currency CCC", reason},
+			want: []string{"has no budget recorded", "this release cannot add a budget to an existing project", "fugaro init --create-project --managed --budget N --budget-currency CCC", reason},
 		},
 		{
 			what: "the marker is absent",
@@ -90,17 +90,52 @@ func TestApplyGateRefusesEveryReadThatAnsweredNoAmount(t *testing.T) {
 		{
 			what: "the amount is zero",
 			read: BudgetRead{Project: project, OK: true, Amount: 0, Currency: "USD", Managed: true},
-			want: []string{"records a budget of 0", "an amount above 0 with a currency"},
+			want: []string{"the budget recorded in the marker of aurora is invalid", "amount 0 is outside 1 to 10000000"},
 		},
 		{
 			what: "the amount is negative",
 			read: BudgetRead{Project: project, OK: true, Amount: -5, Currency: "USD", Managed: true},
-			want: []string{"records a budget of -5", "an amount above 0 with a currency"},
+			want: []string{"is invalid", "amount -5 is outside 1 to 10000000"},
 		},
 		{
 			what: "the currency is not there",
 			read: BudgetRead{Project: project, OK: true, Amount: 5000, Managed: true},
-			want: []string{"records a budget of 5000", "an amount above 0 with a currency"},
+			want: []string{"is invalid", "currency \"\" is not three ASCII uppercase letters"},
+		},
+		// H1: the gate's rule is the marker's own Check, exactly — each of
+		// these passed an "amount above 0 and a currency" rule and is refused.
+		{
+			what: "the currency is lowercase",
+			read: BudgetRead{Project: project, OK: true, Amount: 5000, Currency: "usd", Managed: true},
+			want: []string{"is invalid", "not three ASCII uppercase letters"},
+		},
+		{
+			what: "the currency carries a newline",
+			read: BudgetRead{Project: project, OK: true, Amount: 5000, Currency: "US\n", Managed: true},
+			want: []string{"is invalid", "not three ASCII uppercase letters"},
+		},
+		{
+			what: "the currency is four letters",
+			read: BudgetRead{Project: project, OK: true, Amount: 5000, Currency: "EURO", Managed: true},
+			want: []string{"is invalid", "not three ASCII uppercase letters"},
+		},
+		{
+			what: "the amount is above ten million",
+			read: BudgetRead{Project: project, OK: true, Amount: 10_000_001, Currency: "USD", Managed: true},
+			want: []string{"is invalid", "amount 10000001 is outside 1 to 10000000"},
+		},
+		{
+			what: "the amount is 9e18",
+			read: BudgetRead{Project: project, OK: true, Amount: 9_000_000_000_000_000_000, Currency: "USD", Managed: true},
+			want: []string{"is invalid", "is outside 1 to 10000000"},
+		},
+		// L3: a version-2 marker whose figure fails Check comes back from
+		// ReadBudget with OK false and the refused figure: it is reported as
+		// an invalid recorded budget, never as "is not managed".
+		{
+			what: "a version 2 marker whose recorded figure fails Check",
+			read: BudgetRead{Project: project, Amount: 5000, Currency: "usd", Reason: "records no budget amount a managed creation could have chosen"},
+			want: []string{"the budget recorded in the marker of aurora is invalid", "not three ASCII uppercase letters"},
 		},
 		{
 			what: "a read that answered nothing at all",
@@ -153,8 +188,8 @@ func TestApplyGateOpensOnlyOnARecordedAmount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a read that answered with an amount was refused: %v", err)
 	}
-	if !gate.Read || gate.Budget != (Budget{Amount: 12000, Currency: "EUR"}) {
-		t.Fatalf("the gate carries %+v (read %v), want the read's own pair", gate.Budget, gate.Read)
+	if !gate.read || gate.budget != (Budget{Amount: 12000, Currency: "EUR"}) {
+		t.Fatalf("the gate carries %+v (read %v), want the read's own pair", gate.budget, gate.read)
 	}
 	if err := gate.Refuse(); err != nil {
 		t.Errorf("the gate a successful read opened refused: %v", err)
@@ -170,7 +205,13 @@ func TestBudgetValidIsTheMarkersOwnPair(t *testing.T) {
 		want bool
 	}{
 		{Budget{Amount: 1, Currency: "USD"}, true},
-		{Budget{Amount: 1, Currency: "usd"}, true}, // the marker's reader checks for a currency, not a list
+		{Budget{Amount: 10_000_000, Currency: "EUR"}, true},
+		{Budget{Amount: 1, Currency: "usd"}, false},
+		{Budget{Amount: 1, Currency: "US\n"}, false},
+		{Budget{Amount: 1, Currency: "EURO"}, false},
+		{Budget{Amount: 1, Currency: "ÉUR"}, false},
+		{Budget{Amount: 10_000_001, Currency: "USD"}, false},
+		{Budget{Amount: 9_000_000_000_000_000_000, Currency: "USD"}, false},
 		{Budget{Amount: 0, Currency: "USD"}, false},
 		{Budget{Amount: -1, Currency: "USD"}, false},
 		{Budget{Amount: 100, Currency: ""}, false},
@@ -235,5 +276,28 @@ func TestApplyRefusesEveryCallerWhoseBudgetReadDidNotAnswer(t *testing.T) {
 	}
 	if want := len(allConditions()) * 3; n != want {
 		t.Fatalf("the seam ran %d combinations, want %d", n, want)
+	}
+}
+
+// M4: the read's own error (BudgetRead.Err) reaches the refusal through
+// safetext.Field: its text can carry a 5xx body, so a C1 CSI, a bidi
+// override, a newline and a 10,000-character string come out neutralised and
+// cut — and the error is carried, not dropped.
+func TestApplyGateSanitisesTheReadError(t *testing.T) {
+	for _, payload := range []string{"csi\u009b31m", "bidi‮evil", "line\nforged", strings.Repeat("z", 10000)} {
+		_, err := ApplyGate(BudgetRead{Project: project, Err: errors.New("marker read: " + payload)})
+		if err == nil {
+			t.Fatal("a failed read opened the gate")
+		}
+		got := err.Error()
+		if strings.ContainsAny(got, "\u009b‮\n") {
+			t.Errorf("the refusal carries a raw control, bidi or newline: %q", got)
+		}
+		if len([]rune(got)) > 1000 {
+			t.Errorf("the refusal is %d runes: the error was not cut", len([]rune(got)))
+		}
+		if !strings.Contains(got, "marker read:") {
+			t.Errorf("the read's own error was dropped: %q", got)
+		}
 	}
 }

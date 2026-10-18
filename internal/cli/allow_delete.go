@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // fugaro allow-delete (design docs/design/managed-projects.md, decisions D72
@@ -187,8 +188,13 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 			return nil
 		}
 		fmt.Fprintf(w, "gs://%s/%s allows %d address(es) in %s:\n", bucket, managed.AllowDeleteObject, len(current), lc.Name)
+		// Every address printed here is safetext.Field'd: these lines go to
+		// stdout and not through ErrorText, and an address read from the
+		// bucket is whatever its writer put there (parseDeleteList refuses
+		// only blank entries), so an escape sequence, a bidi control or a
+		// newline in one must not reach the terminal as itself.
 		for _, a := range current {
-			fmt.Fprintln(w, a)
+			fmt.Fprintln(w, safetext.Field(a))
 		}
 		return nil
 	}
@@ -204,7 +210,7 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 	if len(dropped) > 0 {
 		fmt.Fprintf(w, "gs://%s/%s approves %d address(es) now, and this list leaves out %d of them:\n", bucket, managed.AllowDeleteObject, len(current), len(dropped))
 		for _, a := range dropped {
-			fmt.Fprintln(w, a)
+			fmt.Fprintln(w, safetext.Field(a))
 		}
 	}
 	// An object that is there but is not a list this command reads is
@@ -237,7 +243,7 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 	}
 	fmt.Fprintf(w, "wrote gs://%s/%s: %s may now delete or replace %d address(es):\n", bucket, managed.AllowDeleteObject, lc.Name, len(approved))
 	for _, a := range approved {
-		fmt.Fprintln(w, a)
+		fmt.Fprintln(w, safetext.Field(a))
 	}
 	return nil
 }

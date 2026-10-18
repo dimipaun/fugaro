@@ -16,7 +16,7 @@ import (
 // read through passes: refused rather than admitted.
 func TestZeroGateIsClosedAndRefuses(t *testing.T) {
 	var zero Enable
-	if zero.Read {
+	if zero.read {
 		t.Fatal("the zero Enable is open")
 	}
 	if err := zero.Refuse(); err == nil {
@@ -27,13 +27,13 @@ func TestZeroGateIsClosedAndRefuses(t *testing.T) {
 	}
 	// A gate carrying an amount nobody read is closed too: Read is the read's
 	// answer, and a pair set beside it is not one.
-	if err := (Enable{Budget: Budget{Amount: 5000, Currency: "USD"}}).Refuse(); err == nil {
+	if err := (Enable{budget: Budget{Amount: 5000, Currency: "USD"}}).Refuse(); err == nil {
 		t.Error("an Enable with a budget and no read refuses nothing")
 	}
 	// And a gate the read opened with a pair the marker's own reader refuses is
 	// not open: the second check of the same value cannot drift from the first.
-	for _, b := range []Budget{{}, {Amount: 0, Currency: "USD"}, {Amount: -5, Currency: "USD"}, {Amount: 5000}} {
-		if err := (Enable{Budget: b, Read: true}).Refuse(); err == nil {
+	for _, b := range []Budget{{}, {Amount: 0, Currency: "USD"}, {Amount: -5, Currency: "USD"}, {Amount: 5000}, {Amount: 5000, Currency: "usd"}, {Amount: 5000, Currency: "US\n"}, {Amount: 5000, Currency: "EURO"}, {Amount: 10_000_001, Currency: "USD"}, {Amount: 9_000_000_000_000_000_000, Currency: "USD"}} {
+		if err := (Enable{budget: b, read: true}).Refuse(); err == nil {
 			t.Errorf("an Enable opened on %+v refuses nothing", b)
 		}
 	}
@@ -73,11 +73,11 @@ func TestGateABudgetReadOpenedRefusesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a read that answered with an amount was refused: %v", err)
 	}
-	if !gate.Read {
+	if !gate.read {
 		t.Fatal("the gate of a read that answered with an amount is closed")
 	}
-	if gate.Budget != (Budget{Amount: 5000, Currency: "USD"}) {
-		t.Errorf("the open gate carries %+v, want the read's own pair", gate.Budget)
+	if gate.budget != (Budget{Amount: 5000, Currency: "USD"}) {
+		t.Errorf("the open gate carries %+v, want the read's own pair", gate.budget)
 	}
 	if err := gate.Refuse(); err != nil {
 		t.Errorf("the open gate refused: %v", err)

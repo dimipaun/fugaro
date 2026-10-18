@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // fugaro restore (docs/design/managed-projects.md, D66) rebuilds a managed
@@ -58,15 +59,18 @@ import (
 //     whether that project was managed at all, and whether the NEW project ID
 //     already exists (a restore never adopts one).
 //
-// It is INERT in this release, and it refuses before it reads anything —
-// before the project is selected and before a single cloud call. The reason
-// is the same one the managed apply's gate gives, and it is sharper here:
-// the restore's last step IS that apply, so a restore that had created a
-// project on the operator's billing account and stopped before applying
-// anything would leave a half-restored installation — a project that exists,
-// bills, and holds nothing — which is worse than the installation it started
-// from. managedmode.Shipped is closed until Task 4.4, so the whole sequence
-// below is unreachable, and both halves open together.
+// There is no release gate of its own any more (Task 4.4 removed the
+// constant one, managedmode.Shipped, that kept this command inert). What
+// keeps it from being a weaker path is the order: the coding agent's refusal
+// FIRST, before a single cloud call; then restorePreflight's refusals on the
+// merits; then the creation, whose postcondition (verifyCreated) reads the
+// NEW project's creation fact through the same budget gate the managed apply
+// opens on (managedBudgetGateOf: ReadBudget, and a valid version-2 marker or
+// a refusal) before the checkout line moves; and then the apply, which opens
+// that gate again, itself, on the new project (managedApply ->
+// managedBudgetGate). A restore whose creation wrote no valid budget stops
+// before the checkout moves, rather than leaving a half-restored
+// installation the apply would then refuse.
 
 // restoreOptions are fugaro restore's own flags, besides the cloud flags.
 //
@@ -187,40 +191,23 @@ func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) err
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
-	// And then the coding agent's refusal, before the gate and before a
-	// single cloud call. It is the rule every applying step gives, and of the
-	// creation of a project on somebody's billing account it is most true.
+	// And then the coding agent's refusal, FIRST of everything that reads the
+	// cloud: before the project is selected and before a single cloud call.
+	// It is the rule every applying step gives, and of the creation of a
+	// project on somebody's billing account it is most true. There is no
+	// release gate after it any more: the budget gate is the new project's
+	// own, read after the creation (verifyCreated) and again by the apply.
 	if m := agentMarker(os.Getenv); m != "" {
 		return userErr("nothing was restored: %s", initflow.AgentRefusal(m))
 	}
-	// And then the gate, before the project is selected: in this release a
-	// restore is refused, and a refused command must not read a bucket,
-	// create a project or run terraform on its way to the refusal. The apply
-	// at the end refuses on its own gate again (managedApply's first step).
-	if err := restoreGate(); err != nil {
-		return userErr("nothing was restored: %v", err)
-	}
 	return restoreSteps(cmd, o, newID, rootArg)
 }
-
-// restoreGateClosed is the restore's release gate, and the ONLY place in this
-// file that names the closed-gate symbol (managedmode.Shipped). Everything
-// the restore must refuse on its merits is restorePreflight's, which does not
-// reference the gate; so when the managed apply's gate is replaced (Task 4.4
-// removes managedmode.Shipped), this one-line function is the only thing in
-// the restore its author changes or deletes.
-func restoreGateClosed() error { return managedmode.Shipped().Refuse() }
-
-// restoreGate is the gate runRestore asks. It is restoreGateClosed in
-// production; a variable only so a test can drive runRestore with a gate of
-// its own and assert that a closed one refuses before anything is read.
-var restoreGate = restoreGateClosed
 
 // restoreManagedApply is the apply a restore ends in: managedApply, the
 // function `fugaro managed apply` runs, and nothing else (a test pins the
 // production value). It is a variable only so that a test can record that
 // the sequence below reaches it, exactly once and with the new project's
-// root — the gate keeps the sequence unreachable through the command tree.
+// root.
 var restoreManagedApply = managedApply
 
 // restoreInitCmd builds the creating path's command: newInitCmdWith, the
@@ -230,9 +217,8 @@ var restoreInitCmd = newInitCmdWith
 
 // restorePreflight is every check a restore makes before it changes anything:
 // no file is written, no project created, nothing applied, and the one cloud
-// write it could cause is none — it only reads. It does not reference the
-// release gate (restoreGateClosed), so it stays correct once the gate opens:
-// it is what refuses a restore on its merits.
+// write it could cause is none — it only reads. It is what refuses a restore
+// on its merits.
 //
 // In order: the coding agent's refusal and the real terminal every typed step
 // needs; the selection and the project config's file; the fresh ID; the root
@@ -421,12 +407,15 @@ func (rr *restoreRun) verifyCreated(ctx context.Context, c *infra.Clients, made 
 	if c != nil {
 		s, r = c.Storage, c.CRM
 	}
-	ok, reason, err := managed.IsManaged(ctx, s, r, rr.lc.Name, rr.newID)
-	if err != nil {
-		return userErr("the creation of %s ended, and whether it is managed could not be read: %v", rr.newID, err)
-	}
-	if !ok {
-		return userErr("the creation of %s ended and it is not managed (%s)", rr.newID, reason)
+	// The read is the managed apply's own budget gate on the NEW project
+	// (ReadBudget, through managedBudgetGateOf), not IsManaged alone: a
+	// creation that wrote no valid version-2 marker — a version 1, a figure
+	// that fails Budget.Check, one naming another project, an unreadable
+	// object — is a project the apply at the end would refuse, so it is
+	// refused here, while the config can still be put back and before the
+	// checkout's gcp_project: line moves.
+	if _, _, err := managedBudgetGateOf(ctx, s, r, rr.lc.Name, rr.newID); err != nil {
+		return userErr("the creation of %s ended and its creation fact does not open the managed apply: %v", rr.newID, err)
 	}
 	return nil
 }
@@ -568,24 +557,34 @@ func (rr *restoreRun) budgetOf(ctx context.Context, c *infra.Clients) (*managed.
 		}
 		return flags, nil
 	}
-	isManaged, reason, err := managed.IsManaged(ctx, c.Storage, c.CRM, rr.lc.Name, old)
+	// The old fact is read through ReadBudget, the read the managed apply's
+	// gate makes, once: a valid version-2 fact is managed and gives the amount
+	// (the flags still win over it). Only when it answers with no amount is
+	// IsManaged asked, to tell a managed version-1 fact (the flags are then
+	// required) from a project that is not managed (refused whatever the
+	// flags say). A version-2 fact whose figure fails Budget.Check is not
+	// believed by either read, so it is refused as not managed.
+	b, ok, reason, err := managed.ReadBudget(ctx, c.Storage, c.CRM, rr.lc.Name, old)
 	if err != nil {
-		return nil, userErr("nothing was restored: the creation fact of %s could not be read, and a restore refuses a project that is not managed: %v", old, err)
+		return nil, userErr("nothing was restored: the creation fact of %s could not be read, and a restore refuses a project that is not managed: %s", old, safetext.Field(err.Error()))
+	}
+	if ok {
+		if flags != nil {
+			return flags, nil
+		}
+		return &b, nil
+	}
+	isManaged, managedReason, err := managed.IsManaged(ctx, c.Storage, c.CRM, rr.lc.Name, old)
+	if err != nil {
+		return nil, userErr("nothing was restored: the creation fact of %s could not be read, and a restore refuses a project that is not managed: %s", old, safetext.Field(err.Error()))
 	}
 	if !isManaged {
-		return nil, userErr("nothing was restored: %s can be read and is not managed (%s). A restore rebuilds a managed project, and no flag turns an installation that is not managed into one", old, reason)
+		return nil, userErr("nothing was restored: %s can be read and is not managed (%s). A restore rebuilds a managed project, and no flag turns an installation that is not managed into one", old, safetext.Field(managedReason))
 	}
 	if flags != nil {
 		return flags, nil
 	}
-	b, ok, reason, err := managed.ReadBudget(ctx, c.Storage, c.CRM, rr.lc.Name, old)
-	if err != nil {
-		return nil, userErr("nothing was restored: the creation fact of %s could not be read, and the amount a managed creation was required to choose is recorded in it: %v", old, err)
-	}
-	if !ok {
-		return nil, userErr("nothing was restored: %s's creation fact records no monthly amount (%s). Pass --budget, --budget-currency and --billing-account together: there is no amount to fall back on, and a restore never chooses one for you (D64)", old, reason)
-	}
-	return &b, nil
+	return nil, userErr("nothing was restored: %s's creation fact records no monthly amount (%s). Pass --budget, --budget-currency and --billing-account together: there is no amount to fall back on, and a restore never chooses one for you (D64)", old, safetext.Field(reason))
 }
 
 // restoreOldReadable is whether the OLD project can still be read at all:

@@ -238,7 +238,7 @@ func (r *applyRig) request(t *testing.T) Request {
 		// The gate a successful apply-time budget read opens (Task 4.4): the
 		// only value Apply admits, so every test below runs the sequence the
 		// command runs once its read answered with an amount.
-		Enable:     Enable{Budget: Budget{Amount: 5000, Currency: "USD"}, Read: true},
+		Enable:     Enable{budget: Budget{Amount: 5000, Currency: "USD"}, read: true},
 		Project:    project,
 		GCPProject: gcpProject,
 		Fact:       Fact{Managed: true},
@@ -795,7 +795,7 @@ func TestApplyAsksD55sRuleForTheSessionsOwnConditions(t *testing.T) {
 // and the closed value still refuses every row.
 func TestApplyIsNotReachableWhileTheGateIsClosed(t *testing.T) {
 	closed, err := ApplyGate(BudgetRead{Project: project})
-	if err == nil || closed.Read {
+	if err == nil || closed.read {
 		t.Fatalf("a read that answered nothing produced %+v (err %v), want a closed gate", closed, err)
 	}
 	n, wouldProceed, opened := 0, 0, 0
