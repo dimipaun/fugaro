@@ -32,7 +32,10 @@
 //      follows `--project` whenever the installation declares one, and the value
 //      is the installation's, never the ambient environment's.
 //   3. **The binary is resolved explicitly** (rule 4): the operator's configured
-//      path first, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`,
+//      path first -- an absolute one, since a relative path is checked against
+//      the app's working directory and run against the child's, which is a
+//      refusal and not a fallback (review of Task 4.1) -- then
+//      `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`,
 //      `/usr/bin`, and only then `PATH`. The path and the version it reported
 //      are the header's ("the resolved absolute path and the version it reports
 //      are shown in the header"), and **a candidate that exists but whose version
@@ -697,7 +700,15 @@ export function binDirectories(options: {
 }): readonly string[] {
   const home = options.home ?? homedir()
   const candidates: string[] = []
-  if (options.configuredPath !== undefined && options.configuredPath !== '') {
+  // Only an absolute one, for the same reason as the `PATH` entries below. This
+  // list is what `isExecutableFile` is asked about, and that question is put to
+  // the *app's* working directory; the child then runs with the installation's
+  // directory as its cwd, and `argv[0]` is this string. A relative configured
+  // path would therefore be checked in one place and run in another -- a
+  // different file, or none -- so it is not a candidate at all. `resolveBinary`
+  // refuses it outright rather than letting the walk fall through to the
+  // well-known prefixes, which would be the silent substitution rule 3 refuses.
+  if (options.configuredPath !== undefined && options.configuredPath !== '' && isAbsolute(options.configuredPath)) {
     candidates.push(options.configuredPath)
   }
   for (const prefix of options.prefixes ?? WELL_KNOWN_BINARY_PREFIXES) {
@@ -819,16 +830,17 @@ export function childPath(binaryPath: string): string {
  * refused rather than spawned from.
  *
  * **On a fine point of section 5.1 rule 10, said out loud rather than left to be
- * noticed:** rule 10 says the app writes the spawn log, when asked, and
- * `installations.json`, and nothing else — and this creates a *directory*. The
- * reconciliation is that rule 10 is about *records* -- no history, no cached
- * document, no crash dump, nothing that outlives the process -- and this holds
- * nothing at all: it exists so that `doctor`'s `--dir` is a directory rather
- * than `/`, and an empty directory is the smallest thing that can satisfy "never
- * the app's own default of `/`". The installations file, which rule 10 gained on
- * 2026-10-18 (C8), is the other write and it is a record; it is reconciled there
- * rather than here, because `src/main/installations.ts` owns it and this module
- * writes neither file.
+ * noticed:** that rule is about *records* -- no history, no cached document, no
+ * crash dump, nothing that outlives the process -- and this creates a directory.
+ * The reconciliation is that a directory is not a record at all: it exists so
+ * that `doctor`'s `--dir` is a directory rather than `/`, and an empty directory
+ * is the smallest thing that can satisfy "never the app's own default of `/`".
+ * **The rule's wording changed on 2026-10-18** (the owner's C8 answer): it read
+ * "the spawn log is the only thing the app ever writes to disk" and now reads
+ * "the app writes the spawn log, when asked, and the installations file, and
+ * nothing else". The installations file is the other write and it is a record;
+ * it is reconciled there rather than here, because `src/main/installations.ts`
+ * owns it and this module writes neither file. This directory is still neither.
  */
 export function privateWorkingDirectory(options: {
   readonly base?: string
@@ -934,6 +946,11 @@ function readText(stream: ReadableLike | null, onText: (text: string) => void): 
 export interface SpawnedChildLike {
   readonly stdout: ReadableLike | null
   readonly stderr: ReadableLike | null
+  /** `spawn` fires once the process exists: Node emits it before any I/O and
+   * never for a spawn that failed, where a missing or non-executable binary
+   * hands back a `ChildProcess` and then emits `error` (ENOENT/EACCES) instead.
+   * It is what the spawn log's one-line-per-child rule is held to. */
+  on(event: 'spawn', listener: () => void): unknown
   on(event: 'error', listener: (error: Error) => void): unknown
   on(event: 'exit', listener: (code: number | null, signal: string | null) => void): unknown
   /** `close` comes after `exit`, once the child's stdio has drained: a reader
@@ -1070,10 +1087,16 @@ export function runToCompletion(
       reject(error instanceof Error ? error : new Error(String(error)))
       return
     }
-    // Recorded once the spawner has handed back a child, never before: the
-    // log is one line per child process (`spawnlog.ts`), and a spawn that threw
-    // (the binary removed between resolution and spawn) produced none.
-    deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
+    // Recorded when the child process exists, which is what `spawn` means (`spawnlog.ts`'s
+    // one line per child). It is *not* the spawner's return: `spawn` hands back
+    // a `ChildProcess` before it knows whether there is a process, and a binary
+    // that is missing or not executable produces none -- it emits `error`,
+    // never `spawn` -- so recording on return wrote a line for a child that
+    // never ran (review). A spawner that throws, above, is the other half of
+    // the same rule and records nothing either.
+    child.on('spawn', () => {
+      deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
+    })
     let stdout = ''
     let stderr = ''
     let settled = false
@@ -1193,6 +1216,11 @@ export type BinaryResolution =
  * file's header -- and an order with no candidate at all is refused with the
  * whole list in the message, because the screen that follows says what to
  * install and where.
+ *
+ * A configured path that is not absolute is refused before the walk begins, and
+ * for the same reason: it would be checked against the app's own working
+ * directory and then run against the child's, so the file that answered the
+ * version check need not be the file that runs.
  */
 export async function resolveBinary(options: {
   readonly configuredPath?: string | undefined
@@ -1205,6 +1233,18 @@ export async function resolveBinary(options: {
   readonly log?: SpawnLogWriter
   readonly timeoutMs?: number
 }): Promise<BinaryResolution> {
+  // Before the walk, and refusing rather than skipping: a configured path that
+  // is not absolute names a file relative to the app's own working directory --
+  // which is nothing the operator chose, and not the directory the child runs in
+  // (rule 5). Walking on would resolve some other installation and report its
+  // numbers under the operator's chosen path (review of Task 4.1).
+  if (options.configuredPath !== undefined && options.configuredPath !== '' && !isAbsolute(options.configuredPath)) {
+    return {
+      ok: false,
+      path: options.configuredPath,
+      reason: `the configured binary path is not absolute: ${options.configuredPath} -- give an absolute path, so the file that is checked is the file that runs`,
+    }
+  }
   const candidates = binDirectories({
     configuredPath: options.configuredPath,
     appEnv: options.appEnv,
@@ -1594,8 +1634,9 @@ export function startSidecar(
       })
       return
     }
-    // After the spawner returned, as in `runToCompletion`: one line per child.
-    deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
+    started.on('spawn', () => {
+      deps.log?.record({ argv: plan.argv, cwd: plan.cwd, project: plan.project })
+    })
     child = started
     stderr = ''
     buffer = ''

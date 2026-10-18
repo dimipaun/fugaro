@@ -37,6 +37,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
+import { NO_ACTIVE_INSTALLATION } from './ipc'
 import { isSafeInstallationValue, isExecutableFile, planFor, probeVersion } from './spawn'
 import type { ChildSpawner, SpawnTarget } from './spawn'
 import type { SpawnLogWriter } from './spawnlog'
@@ -108,8 +109,10 @@ export const INSTALLATION_CHANNEL_PREFIX = 'fugaro:installations/'
 
 /** NO_ACTIVE_INSTALLATION is the one sentence a CLI-backed operation answers
  * with when no installation has been chosen. It is a fixed string and it names
- * no path: an operator who has chosen nothing gets a state, not a guess. */
-export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
+ * no path: an operator who has chosen nothing gets a state, not a guess. It is
+ * `src/main/ipc.ts`'s constant, re-exported, so the store's no-installation
+ * state and the dashboard's refusal of a read cannot drift apart. */
+export { NO_ACTIVE_INSTALLATION }
 
 /** MAX_OUTSTANDING_PICKS bounds the pick tokens at once. A token is single-use
  * and is dropped when the picker closes; eight is more than the four pickers a
@@ -173,7 +176,7 @@ export interface InstallationFs {
 /** nodeInstallationFs is the real filesystem. `readFileSync` is called with no
  * encoding argument's sibling here -- the string is decoded by `utf8` in
  * `readInstallationFile`'s caller -- so the bound is checked against bytes. */
-export const nodeInstallationFs: InstallationFs = Object.freeze({
+export const nodeInstallationFs: InstallationFs = Object.freeze<InstallationFs>({
   mkdir: (path, options) => {
     mkdirSync(path, options)
   },
@@ -699,7 +702,7 @@ export interface InstallationOperation {
  * A renderer that sends a path -- even the path it was just shown -- has sent
  * something no row accepts, and it is refused by name.
  */
-export const INSTALLATION_OPERATIONS: readonly InstallationOperation[] = Object.freeze([
+export const INSTALLATION_OPERATIONS: readonly InstallationOperation[] = Object.freeze(([
   { name: 'list', method: 'list', args: [] },
   { name: 'current', method: 'current', args: [] },
   { name: 'pickBinary', method: 'pickBinary', args: [] },
@@ -717,7 +720,9 @@ export const INSTALLATION_OPERATIONS: readonly InstallationOperation[] = Object.
   },
   { name: 'choose', method: 'choose', args: [{ key: 'id', kind: 'installationId', required: true }] },
   { name: 'remove', method: 'remove', args: [{ key: 'id', kind: 'installationId', required: true }] },
-].map((row) => Object.freeze({ ...row, args: Object.freeze(row.args.map((arg) => Object.freeze(arg))) })))
+] satisfies readonly InstallationOperation[]).map(
+  (row): InstallationOperation => Object.freeze({ ...row, args: Object.freeze(row.args.map((arg) => Object.freeze(arg))) }),
+))
 
 /** INSTALLATION_OPERATION_NAMES is the picker's names, frozen. */
 export const INSTALLATION_OPERATION_NAMES: readonly InstallationOperationName[] = Object.freeze(

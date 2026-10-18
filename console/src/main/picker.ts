@@ -2,14 +2,13 @@
 // (desktop-console plan Task 3.4b; design sections 3.4 rules 5 and 7, 5.1 rule
 // 10, 7.4, D13, D14; owner rulings C8 and C9, 2026-10-18).
 //
-// This file is new rather than an edit to `window.ts` and `index.ts`, and that
-// is deliberate: Task 3.4a is rebuilding the entry point at the same time, and
-// the plan's shared-files table gives `window.ts` to neither half of the task.
-// Everything the picker needs from `window.ts` is already exported --
-// `consoleWebPreferences`, `installWebContentsSecurity`, `denyEveryPermission`,
-// `denyPageTitleUpdate` -- so the picker's window is built here, from the same
-// four pieces, and **`window.ts` is not touched at all**. The entry point's edit
-// is the one call at the bottom of `installInstallationPicker`.
+// This file is new rather than an edit to `window.ts` and `index.ts`: it was
+// written in parallel with Task 3.4a's rebuild of the entry point. Since the two
+// were merged, the picker's window is built by `buildHardenedWindow`
+// (`src/main/window.ts`), the one construction path the dashboard and the
+// refusal screen go through too, with `consoleWebPreferences()` plus the
+// picker's own preload; and a choose goes through the lifecycle's handshake
+// path (`lifecycle.choose`, via `onChosen` in `src/main/index.ts`).
 //
 // The picker is a *separate window* (C9) and not a panel in the dashboard's
 // header, and the reason is the surface rather than the layout: the dashboard's
@@ -53,25 +52,19 @@ import type {
 } from './installations'
 import { SENDER_REFUSAL, isSenderOnDocument } from './ipc'
 import type { ConsoleEventLike, IpcMainLike } from './ipc'
-import { APP_ORIGIN } from './protocol'
+import { PICKER_ENTRY_PATH, PICKER_ENTRY_URL } from './protocol'
 import { verifyCandidate } from '../source/cli'
-import {
-  consoleWebPreferences,
-  denyEveryPermission,
-  denyPageTitleUpdate,
-  installWebContentsSecurity,
-} from './window'
+import { buildHardenedWindow, consoleWebPreferences } from './window'
 import type { BrowserWindow, BrowserWindowConstructorOptions, Session } from 'electron'
+import type { CliCompatibility } from '../shared/version'
 import type { ChildSpawner } from './spawn'
 import type { SpawnLogWriter } from './spawnlog'
 
 /** PICKER_ENTRY_PATH is the picker's document, and PICKER_ENTRY_URL the URL the
- * picker's window loads and the one its channels are gated on. It is composed
- * from `APP_ORIGIN` rather than declared in `protocol.ts` for the reason this
- * file's header gives: `protocol.ts` is 3.4a's, and it already serves any path
- * under the bundle root, so a new document needs no change there. */
-export const PICKER_ENTRY_PATH = '/installations.html'
-export const PICKER_ENTRY_URL = APP_ORIGIN + PICKER_ENTRY_PATH
+ * picker's window loads and the one its channels are gated on. They are
+ * `protocol.ts`'s, beside the dashboard's and the refusal's, and `SERVED_FILES`
+ * names the document and its script; re-exported here for the picker's tests. */
+export { PICKER_ENTRY_PATH, PICKER_ENTRY_URL }
 
 /** INSTALLATIONS_MENU_LABEL is the application menu item's label, and it is the
  * only door to the picker (C9). */
@@ -134,14 +127,21 @@ export interface InstallationPickerDeps {
   readonly spawnLog?: SpawnLogWriter
   readonly fs?: InstallationFs
   /**
-   * onChosen is the seam the renderer-entry task (3.4a) consumes: it is called
-   * after a choose has run the handshake and persisted `active`, and it is where
-   * the console closes the previous `CliSource`, binds a new one, replaces the
-   * stored compatibility and reopens its window through `openWindowFor`. None of
-   * that is this task's -- the source and the lifecycle are 3.4a's -- so the
-   * picker states the fact and hands it over rather than reaching into them.
+   * onChosen is the seam the entry point consumes: it is called after a choose
+   * has run the handshake and persisted `active`, and `src/main/index.ts` hands
+   * the answer to `lifecycle.choose`, which replaces the stored compatibility,
+   * registers the surface if it was not yet and reopens the window through
+   * `openWindowFor`. Binding a `CliSource` to the chosen installation is Task
+   * 3.4c's. The picker states the fact and hands it over rather than reaching
+   * into the lifecycle.
    */
-  readonly onChosen?: (installation: { readonly id: string; readonly project: string; readonly binaryPath: string }) => void
+  readonly onChosen?: (installation: {
+    readonly id: string
+    readonly project: string
+    readonly binaryPath: string
+    /** The answer of the handshake the choose just ran: never `refused`. */
+    readonly compatibility: CliCompatibility
+  }) => void
   /** onRemoved is the same seam for a removal that took the active installation
    * away: the console has none, and its dashboard must say so. */
   readonly onRemoved?: (id: string) => void
@@ -186,16 +186,22 @@ export function installationsMenuTemplate(options: {
   readonly onQuit: () => void
   readonly appName: string
 }): readonly unknown[] {
-  return Object.freeze([
-    Object.freeze({
+  // **Not frozen**, unlike every other table in this module: Electron's
+  // `Menu.buildFromTemplate` sorts the template in place and assigns each
+  // item's `submenu`, and a frozen template makes it throw ("Cannot assign to
+  // read only property 'submenu'") before the app has a window -- which is what
+  // the first real launch of this file did. A fresh value per call is the
+  // guard instead: nothing else holds a reference to it.
+  return [
+    {
       label: options.appName,
-      submenu: Object.freeze([
-        Object.freeze({ label: INSTALLATIONS_MENU_LABEL, click: options.onOpen }),
-        Object.freeze({ type: 'separator' }),
-        Object.freeze({ role: 'quit', click: options.onQuit }),
-      ]),
-    }),
-  ])
+      submenu: [
+        { label: INSTALLATIONS_MENU_LABEL, click: options.onOpen },
+        { type: 'separator' },
+        { role: 'quit', click: options.onQuit },
+      ],
+    },
+  ]
 }
 
 /** pickerOptions is the picker window's construction options: the dashboard's
@@ -221,9 +227,9 @@ export function pickerOptions(preloadPath: string): BrowserWindowConstructorOpti
  * That is not style: the typecheck configuration is `module: ESNext`, where
  * `__dirname` is not a thing this file may name, and a path that is computed
  * from the app root is also the one a test can hold without a build on disk.
- * The preload is compiled by `tsconfig.build.json` into `dist/`, while the
- * documents are served from `src/renderer` -- which is why the two halves of
- * this path are spelled differently and why both are spelled here, once.
+ * The preload is compiled by `tsconfig.build.json` into `dist/preload/`, beside
+ * the dashboard's (`consolePreloadPath` in `src/main/index.ts`), and the
+ * documents are served from the bundler's `dist/bundle/` (Task 3.4a).
  */
 export function pickerPreloadPath(appPath: string): string {
   return join(appPath, 'dist', 'preload', 'installations.js')
@@ -269,25 +275,28 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
       window.focus()
       return
     }
-    const built = new deps.BrowserWindow(pickerOptions(pickerPreloadPath(deps.appPath)))
-    installWebContentsSecurity(built.webContents)
-    denyEveryPermission(deps.session)
-    built.on('page-title-updated', (event) => {
-      denyPageTitleUpdate(event)
-    })
-    built.once('ready-to-show', () => {
-      built.show()
-    })
-    built.on('closed', () => {
-      // The tokens are dropped with the window: a token is a capability to name
-      // one path, and a window that is gone has no use for one. This is also
-      // what makes "at most eight outstanding" a bound on a *session* rather
-      // than on a process.
-      tokens.dropAll()
-      window = null
-    })
-    window = built
-    await built.loadURL(PICKER_ENTRY_URL)
+    // The same construction path as the dashboard and the refusal screen
+    // (`buildHardenedWindow` in `src/main/window.ts`): the three denials, every
+    // permission denied, the title kept, shown when ready, one load. Only the
+    // options differ, and they are `consoleWebPreferences()` plus this preload.
+    await buildHardenedWindow(
+      { BrowserWindow: deps.BrowserWindow, session: deps.session },
+      pickerOptions(pickerPreloadPath(deps.appPath)),
+      PICKER_ENTRY_URL,
+      (built) => {
+        built.on('closed', () => {
+          // The tokens are dropped with the window: a token is a capability to
+          // name one path, and a window that is gone has no use for one. This is
+          // also what makes "at most eight outstanding" a bound on a *session*
+          // rather than on a process.
+          tokens.dropAll()
+          window = null
+        })
+        // Held before the load, so a second `open()` while this one loads
+        // focuses this window rather than building another.
+        window = built
+      },
+    )
   }
 
   const rows = (): readonly InstallationRow[] => registry.rows()
@@ -348,7 +357,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         if (!probed.ok) return { ok: false, reason: probed.reason }
         registry.remember(id, probed.compatibility)
         registry.choose(id)
-        deps.onChosen?.({ id, project: held.project, binaryPath: held.binary })
+        deps.onChosen?.({ id, project: held.project, binaryPath: held.binary, compatibility: probed.compatibility })
         return { ok: true, data: { rows: rows(), active: current() } }
       }
       case 'remove': {

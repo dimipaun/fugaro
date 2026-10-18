@@ -78,6 +78,7 @@ import {
   consoleWindowTitle,
   createConsoleWindow,
   createRefusalWindow,
+  dashboardWebPreferences,
   denyEveryPermission,
   denyNavigation,
   denyPageTitleUpdate,
@@ -92,6 +93,7 @@ import {
   validateExternalUrl,
 } from '../../src/main/window'
 import type { NavigationEvent, VersionRead } from '../../src/main/window'
+import type { CliCompatibility } from '../../src/shared/version'
 import {
   CLI_VERSION_BUILT_AGAINST,
   SKEW_HEADLINES,
@@ -101,10 +103,12 @@ import {
 } from '../../src/shared/version'
 import { githubToken } from '../support/fakeSecrets'
 
-// The two files of the bundle, read from this test's own location rather than
-// from the working directory: the protocol handler's root is the source tree
-// (`rendererRoot` in src/main/index.ts), so what is served here is exactly what
-// is served by the running app.
+// The two documents of the bundle, read from this test's own location rather
+// than from the working directory: since Task 3.4a the served root is the
+// *build's* `dist/bundle/` (`rendererRoot` in src/main/index.ts), which is these
+// two files copied verbatim beside the bundled entry -- `test/unit/bundle.test.ts`
+// is what holds the copy to the sources, and what is read here is the source the
+// copy is made from, which is what `window.test.ts` has always pinned.
 const bundleRoot = fileURLToPath(new URL('../../src/renderer', import.meta.url))
 const indexHTMLPath = fileURLToPath(new URL('../../src/renderer/index.html', import.meta.url))
 const indexHTML = readFileSync(indexHTMLPath, 'utf8')
@@ -230,16 +234,38 @@ describe('the window is hardened, flag by flag (design section 5.1 rule 1)', () 
     )
   })
 
-  it('builds the window with those preferences and no preload yet', () => {
+  it('builds the window with those preferences when nothing asks for a preload', () => {
     const options = consoleWindowOptions()
     expect(options.webPreferences).toEqual(consoleWebPreferences())
     expect(options.title).toBe(CONSOLE_WINDOW_TITLE)
     // Shown only once it has painted, so the console is never on screen half
     // drawn (`createConsoleWindow`'s `ready-to-show` listener).
     expect(options.show).toBe(false)
-    // The preload and its `contextBridge` surface are Task 1.2's; asserting the
-    // absence here is what makes it a decision rather than an oversight.
+    // The default carries no preload, and that is a decision rather than an
+    // oversight (Task 3.4a): the dashboard window is the one window with a
+    // renderer entry to run, so its caller is the one that names a preload
+    // (`dashboardWebPreferences` below), and the refusal window -- which is
+    // built from this default -- gets none by construction.
     expect(options.webPreferences?.preload).toBeUndefined()
+  })
+
+  it('adds the preload and changes nothing else about the hardened set', () => {
+    // Task 3.4a, step 1, the half that matters: the dashboard's preferences are
+    // the hardened set *plus* a preload, so there is exactly one key more than
+    // `consoleWebPreferences()` has and every value under the shared keys is
+    // identical. A `dashboardWebPreferences` that quietly dropped `sandbox` or
+    // turned `contextIsolation` off would fail here, and that is the mutation
+    // this test exists for.
+    const hardened = consoleWebPreferences()
+    const dashboard = dashboardWebPreferences(PRELOAD_PATH)
+    expect(dashboard.preload).toBe(PRELOAD_PATH)
+    expect(Object.keys(dashboard).toSorted()).toEqual([...Object.keys(hardened), 'preload'].toSorted())
+    for (const [flag, value] of Object.entries(hardened)) {
+      expect(dashboard[flag as keyof WebPreferences], `${flag} was changed by the preload`).toBe(value)
+    }
+    // And the path is an absolute one: a relative preload path would resolve
+    // against Electron's working directory, which is not the app's.
+    expect(PRELOAD_PATH.startsWith('/')).toBe(true)
   })
 })
 
@@ -608,13 +634,26 @@ describe('the document in the bundle', () => {
     expect(CONTENT_SECURITY_POLICY).not.toContain('*')
   })
 
-  it('is the document the window loads, and it is script-free', () => {
+  it('is the document the window loads, with the one script of Task 3.4a', () => {
     expect(indexHTML).toContain(`<title>${CONSOLE_WINDOW_TITLE}</title>`)
     expect(APP_ENTRY_URL).toBe(`${APP_ORIGIN}/index.html`)
-    expect(indexHTML).not.toContain('<script')
+    // The document was script-free until Task 3.4a, and it is not any more: the
+    // dashboard's renderer is `./console.js`, the bundle this task's build
+    // writes into the served root. What the *refusal* document is owed is
+    // unchanged -- it loads none (asserted below) -- and the element-by-element
+    // version of both claims is `test/unit/csp-document.test.ts`'s.
+    expect(indexHTML).toContain('<script src="./console.js" defer></script>')
     expect(indexHTML).not.toContain('<style')
   })
 })
+
+/**
+ * PRELOAD_PATH is the compiled preload the dashboard window loads (Task 3.4a).
+ * It is a path under an application directory and not a real file: the tests
+ * below are about *which* window gets the key and what the key holds, and a
+ * preference object does not read the file.
+ */
+const PRELOAD_PATH = '/opt/fugaro-console/dist/preload/index.js'
 
 describe('createConsoleWindow', () => {
   it('loads the bundled document and wires every denial to the window it built', async () => {
@@ -645,7 +684,7 @@ describe('createConsoleWindow', () => {
       return fakeWindow
     } as unknown as new (options: BrowserWindowConstructorOptions) => BrowserWindow
 
-    const built = await createConsoleWindow({ BrowserWindow: WindowClass, session: session.value })
+    const built = await createConsoleWindow({ BrowserWindow: WindowClass, session: session.value, preloadPath: PRELOAD_PATH })
 
     expect(built).toBe(fakeWindow)
     // The one load, over the console's own scheme: no file://, no remote origin.
@@ -656,7 +695,7 @@ describe('createConsoleWindow', () => {
         height: 780,
         show: false,
         title: CONSOLE_WINDOW_TITLE,
-        webPreferences: consoleWebPreferences(),
+        webPreferences: dashboardWebPreferences(PRELOAD_PATH),
       },
     ])
     expect(session.requestHandler()).not.toBeNull()
@@ -881,7 +920,7 @@ describe('the title the window ends up with', () => {
     const factory = fakeWindowFactory()
     const startup = await startupWindow({
       BrowserWindow: factory.BrowserWindow,
-      session: fakeSession().value,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
       readVersion: async () => ({ ok: true, stdout: '0.6.9\n' }),
     })
     const window = factory.built[0]
@@ -896,7 +935,7 @@ describe('the title the window ends up with', () => {
   it('says what it refused on the window the refusal screen is drawn in', async () => {
     const factory = fakeWindowFactory()
     const built = await createRefusalWindow(
-      { BrowserWindow: factory.BrowserWindow, session: fakeSession().value },
+      { BrowserWindow: factory.BrowserWindow, session: fakeSession().value, preloadPath: PRELOAD_PATH },
       classifyCliVersion('0.5.0'),
     )
     expect(factory.built[0]?.title).toContain(SKEW_HEADLINES.refused)
@@ -933,7 +972,7 @@ describe('startupWindow', () => {
     const factory = fakeWindowFactory()
     const startup = await startupWindow({
       BrowserWindow: factory.BrowserWindow,
-      session: fakeSession().value,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
       readVersion: async () => ({ ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` }),
     })
     expect(startup.compatibility.mode).toBe('ok')
@@ -943,7 +982,7 @@ describe('startupWindow', () => {
     // ...and that is what the window *ends up* as: the document offered its own
     // `<title>` and the console refused it (see the block below).
     expect(factory.built[0]?.title).toBe(CONSOLE_WINDOW_TITLE)
-    expect(factory.options[0]?.webPreferences).toEqual(consoleWebPreferences())
+    expect(factory.options[0]?.webPreferences).toEqual(dashboardWebPreferences(PRELOAD_PATH))
     expect(factory.loaded).toEqual([APP_ENTRY_URL])
   })
 
@@ -951,23 +990,25 @@ describe('startupWindow', () => {
     const factory = fakeWindowFactory()
     const startup = await startupWindow({
       BrowserWindow: factory.BrowserWindow,
-      session: fakeSession().value,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
       readVersion: async () => ({ ok: true, stdout: '0.6.9\n' }),
     })
     expect(startup.compatibility.mode).toBe('reduced')
     expect(startup.window).not.toBeNull()
     expect(factory.options[0]?.title).toContain(SKEW_HEADLINES.reduced)
     expect(factory.built[0]?.title).toContain(SKEW_HEADLINES.reduced)
-    // The window is still the hardened one: a reduced mode is not a reason to
-    // relax anything.
-    expect(factory.options[0]?.webPreferences).toEqual(consoleWebPreferences())
+    // The window is still the hardened one, and still the dashboard's: a reduced
+    // mode is not a reason to relax anything, and it is not a reason to take the
+    // bridge away either -- a reduced console draws the views it may draw, which
+    // it can only do over IPC.
+    expect(factory.options[0]?.webPreferences).toEqual(dashboardWebPreferences(PRELOAD_PATH))
   })
 
   it('builds no window at all below the floor -- the plan\'s red step', async () => {
     const factory = fakeWindowFactory()
     const startup = await startupWindow({
       BrowserWindow: factory.BrowserWindow,
-      session: fakeSession().value,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
       readVersion: async () => ({ ok: true, stdout: '0.5.0\n' }),
     })
     expect(startup.compatibility.mode).toBe('refused')
@@ -985,12 +1026,94 @@ describe('startupWindow', () => {
     const factory = fakeWindowFactory()
     const startup = await startupWindow({
       BrowserWindow: factory.BrowserWindow,
-      session: fakeSession().value,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
       readVersion: nothingToRead,
     })
     expect(startup.compatibility.mode).toBe('refused')
     expect(startup.window).toBeNull()
     expect(factory.options).toHaveLength(0)
+  })
+
+  it('tells the caller the answer after the read and before the document loads', async () => {
+    // Task 3.4a, step 2, and the whole reason `onDecided` is a dep: the IPC
+    // surface can only be registered in the window between the handshake having
+    // an answer and a renderer existing that could ask for one. So the callback
+    // is recorded *in order* against the two things it has to sit between -- the
+    // version read and the load -- rather than merely "called at some point".
+    const order: string[] = []
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
+      readVersion: async () => {
+        order.push('read')
+        return { ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` }
+      },
+      onDecided: (compatibility) => {
+        // The compatibility, not a mode: the caller stores the whole answer.
+        order.push(`decided:${compatibility.mode}`)
+        // And there is no window yet -- so nothing can have asked for a handler.
+        expect(factory.options).toHaveLength(0)
+      },
+    })
+    order.push('loaded')
+    expect(order).toEqual(['read', 'decided:ok', 'loaded'])
+    expect(startup.window).not.toBeNull()
+  })
+
+  it('tells the caller a reduced answer too, before that window loads', async () => {
+    // The reduced mode takes the same path as `ok`: the dashboard document is
+    // loaded, its renderer runs, and it will ask for the handshake on its first
+    // line -- so the handlers have to be there for it just as much.
+    const order: string[] = []
+    const startup = await startupWindow({
+      BrowserWindow: fakeWindowFactory().BrowserWindow,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
+      readVersion: async () => {
+        order.push('read')
+        return { ok: true, stdout: '0.6.9\n' }
+      },
+      onDecided: (compatibility) => order.push(`decided:${compatibility.mode}`),
+    })
+    order.push('loaded')
+    expect(order).toEqual(['read', 'decided:reduced', 'loaded'])
+    expect(startup.window).not.toBeNull()
+  })
+
+  it('tells the caller a refused answer, and builds nothing for it', async () => {
+    // The refusal is the one mode where the callback's *job* is to do nothing
+    // (see `onDecided` in `src/main/index.ts`): a refused console registers no
+    // handler at all. It is called all the same, because the caller is what
+    // decides that -- and it is called before any window exists, so a console
+    // that refused has nothing to take back.
+    const answered: CliCompatibility[] = []
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
+      readVersion: nothingToRead,
+      onDecided: (compatibility) => {
+        answered.push(compatibility)
+        expect(factory.options).toHaveLength(0)
+      },
+    })
+    expect(answered.map((compatibility) => compatibility.mode)).toEqual(['refused'])
+    expect(startup.window).toBeNull()
+    expect(factory.options).toHaveLength(0)
+    expect(factory.loaded).toEqual([])
+  })
+
+  it('is optional, so a caller that wants one window needs no callback', async () => {
+    // Every test above this one drives `startupWindow` with no `onDecided`, which
+    // is the assertion: a required callback would make this file unbuildable
+    // rather than failing here, and this case is written out so that the
+    // optionality is a decision a reader can see.
+    const startup = await startupWindow({
+      BrowserWindow: fakeWindowFactory().BrowserWindow,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
+      readVersion: async () => ({ ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` }),
+    })
+    expect(startup.window).not.toBeNull()
   })
 })
 
@@ -1000,14 +1123,18 @@ describe('createRefusalWindow', () => {
     const session = fakeSession()
     const compatibility = classifyCliVersion('0.5.0')
     const built = await createRefusalWindow(
-      { BrowserWindow: factory.BrowserWindow, session: session.value },
+      { BrowserWindow: factory.BrowserWindow, session: session.value, preloadPath: PRELOAD_PATH },
       compatibility,
     )
     expect(factory.built).toEqual([built])
     expect(factory.options).toHaveLength(1)
     expect(factory.options[0]?.title).toContain(SKEW_HEADLINES.refused)
     expect(factory.built[0]?.title).toContain(SKEW_HEADLINES.refused)
+    // The hardened set and **no `preload` key at all** (Task 3.4a, step 1): a
+    // refused console has no renderer entry to run and nothing to ask for, so a
+    // bridge there would be a surface on a window that must draw nothing.
     expect(factory.options[0]?.webPreferences).toEqual(consoleWebPreferences())
+    expect(factory.options[0]?.webPreferences).not.toHaveProperty('preload')
     expect(factory.options[0]?.show).toBe(false)
     // The same single load over the console's own scheme, the same handlers and
     // the same denied permissions as the dashboard window: the refusal screen is
@@ -1045,14 +1172,18 @@ describe('the refusal document in the bundle', () => {
     // different file with no dashboard in it at all.
     expect(REFUSAL_ENTRY_URL).toBe(`${APP_ORIGIN}/refusal.html`)
     expect(refusalHTML).not.toBe(indexHTML)
-    expect(refusalHTML).not.toContain('<script')
-    expect(refusalHTML).not.toContain('<style')
+    // The markup, and not the whole file: this document's comment says in prose
+    // what Task 3.4a did to `index.html`'s script, and a comment is not an
+    // element. What a refused console runs stays the question, and the answer
+    // stays none.
+    const markup = refusalHTML.replace(/<!--[\s\S]*?-->/g, '')
+    expect(markup).not.toContain('<script')
+    expect(markup).not.toContain('<style')
     // The console's own sentences, and no version, no path and nothing the CLI
     // printed: the document is static, so what it says cannot depend on the
     // binary that was found.
     expect(refusalHTML).toContain(`<title>${CONSOLE_WINDOW_TITLE}</title>`)
     expect(refusalHTML).toContain('will not draw a dashboard')
-    const markup = refusalHTML.replace(/<!--[\s\S]*?-->/g, '')
     expect(markup, 'the markup names no version').not.toMatch(/\d+\.\d+/)
     expect(markup).not.toContain('0.8')
   })
@@ -1085,7 +1216,7 @@ describe('openWindowFor', () => {
       const factory = fakeWindowFactory()
       const version = mode === 'ok' ? CLI_VERSION_BUILT_AGAINST : '0.9.0'
       const window = await openWindowFor(
-        { BrowserWindow: factory.BrowserWindow, session: fakeSession().value },
+        { BrowserWindow: factory.BrowserWindow, session: fakeSession().value, preloadPath: PRELOAD_PATH },
         classifyCliVersion(version),
       )
       expect(factory.built, mode).toEqual([window])
@@ -1104,7 +1235,7 @@ describe('openWindowFor', () => {
   it('opens the refusal document for a refusal, and never the dashboard', async () => {
     const factory = fakeWindowFactory()
     await openWindowFor(
-      { BrowserWindow: factory.BrowserWindow, session: fakeSession().value },
+      { BrowserWindow: factory.BrowserWindow, session: fakeSession().value, preloadPath: PRELOAD_PATH },
       classifyCliVersion('0.5.0'),
     )
     expect(factory.loaded).toEqual([REFUSAL_ENTRY_URL])
@@ -1118,7 +1249,7 @@ describe('openStartupWindow', () => {
     const order: string[] = []
     const opened = await openStartupWindow({
       BrowserWindow: factory.BrowserWindow,
-      session: fakeSession().value,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
       readVersion: async () => {
         // The claim this task is about: the version is read *before* anything
         // is constructed, so a refused console decides on the document before a
@@ -1137,7 +1268,7 @@ describe('openStartupWindow', () => {
     const factory = fakeWindowFactory()
     const opened = await openStartupWindow({
       BrowserWindow: factory.BrowserWindow,
-      session: fakeSession().value,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
       readVersion: async () => ({ ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` }),
     })
     expect(opened.compatibility.mode).toBe('ok')
@@ -1150,7 +1281,7 @@ describe('openStartupWindow', () => {
     const factory = fakeWindowFactory()
     const opened = await openStartupWindow({
       BrowserWindow: factory.BrowserWindow,
-      session: fakeSession().value,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
       readVersion: nothingToRead,
     })
     expect(opened.compatibility.mode).toBe('refused')

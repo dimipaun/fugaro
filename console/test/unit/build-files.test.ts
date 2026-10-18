@@ -68,6 +68,10 @@ const preloads = filesNamed('src/preload', '.ts').map((name) => `dist/preload/${
 const compiled = compiledModules()
 const bundlerOutputs = ['dist/bundle/console.js', 'dist/bundle/installations.js']
 
+/** NEVER_SHIPPED are the two compiled files Task 4.1 keeps out of the package by
+ * name: the packing hook (it needs a devDependency) and the fixture loader. */
+const NEVER_SHIPPED: readonly string[] = ['dist/main/fuses.js', 'dist/source/fixture.js']
+
 /** globToRegExp turns one electron-builder `files` pattern into a matcher. `**`
  * spans directories, `*` and `?` do not cross a `/`. */
 function globToRegExp(pattern: string): RegExp {
@@ -75,7 +79,12 @@ function globToRegExp(pattern: string): RegExp {
   for (let index = 0; index < pattern.length; index += 1) {
     const character = pattern[index] ?? ''
     if (character === '*') {
-      if (pattern[index + 1] === '*') {
+      if (pattern[index + 1] === '*' && pattern[index + 2] === '/') {
+        // `**/` spans zero or more directories, as electron-builder's minimatch
+        // reads it: `dist/main/**/*.js` carries `dist/main/index.js`.
+        out += '(?:.*/)?'
+        index += 2
+      } else if (pattern[index + 1] === '*') {
         out += '.*'
         index += 1
       } else out += '[^/]*'
@@ -157,8 +166,28 @@ describe('the packaged console carries what it loads', () => {
       expect(packageJson.build).toBeUndefined()
       return
     }
-    const missing = uncovered(patterns, [...documents, ...preloads, ...compiled, ...bundlerOutputs])
+    // Since Task 3.4a the documents are served from the bundler's output, not
+    // from `src/renderer`: each source document ships as its copy in
+    // `dist/bundle/`, and the renderer's compiled modules ship inside the two
+    // bundles rather than as `dist/renderer/*.js` (test/unit/bundle.test.ts
+    // holds each bundle to its closure). Task 4.1 excludes the two compiled
+    // files the app never loads, by name; they are named here too, and asserted
+    // excluded, so the required list below is everything else `tsc` emits.
+    const served = documents.map((path) => path.replace(/^src\/renderer\//, 'dist/bundle/'))
+    const runtime = compiled.filter(
+      (path) => !path.startsWith('dist/renderer/') && !NEVER_SHIPPED.includes(path),
+    )
+    expect(runtime.length, 'the runtime set is empty: the check below would be vacuous').toBeGreaterThan(10)
+    const missing = uncovered(patterns, [...served, ...preloads, ...runtime, ...bundlerOutputs])
     expect(missing, 'these files are loaded at runtime and are not in build.files').toEqual([])
+    for (const excluded of NEVER_SHIPPED) {
+      expect(compiled, `${excluded} is not emitted, so its exclusion names nothing`).toContain(excluded)
+      expect(patterns, `${excluded} must be excluded by name`).toContain(`!${excluded}`)
+    }
+    // And the sources are not shipped in place of the bundle's copies.
+    for (const document of documents) {
+      expect(patterns, `${document} is the source, not the served copy`).not.toContain(document)
+    }
   })
 
   it('the matcher itself: a directory, a glob and a negation', () => {
@@ -166,6 +195,11 @@ describe('the packaged console carries what it loads', () => {
     // must refuse, so a `covers` that answered `true` to everything could not
     // make the test above pass.
     expect(covers('dist/**', 'dist/preload/installations.js')).toBe(true)
+    // `**/` spans zero directories too: the shape Task 4.1's list uses.
+    expect(covers('dist/main/**/*.js', 'dist/main/index.js')).toBe(true)
+    expect(covers('dist/main/**/*.js', 'dist/main/sub/deep.js')).toBe(true)
+    expect(covers('dist/main/**/*.js', 'dist/mainly.js')).toBe(false)
+    expect(covers('dist/main/**/*.js', 'dist/preload/index.js')).toBe(false)
     expect(covers('dist', 'dist/main/picker.js')).toBe(true)
     expect(covers('dist/', 'dist/main/picker.js')).toBe(true)
     expect(covers('src/renderer/*.html', 'src/renderer/installations.html')).toBe(true)

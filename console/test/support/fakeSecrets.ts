@@ -144,3 +144,41 @@ export function pemBlock(body = repeat('A', 24)): string {
   const end = piece('-----END ', 'PRIVATE KEY-----')
   return piece(begin, '\n', body, '\n', end)
 }
+
+/** MIXED is the alphabet the realistic bodies below draw from. */
+const MIXED = piece('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz', '0123456789')
+const UPPER_DIGITS = piece('ABCDEFGHIJKLMNOPQRSTUVWXYZ', '0123456789')
+
+/** mixedBody is a deterministic, mixed-case, high-entropy run: what a real
+ * token's body looks like, unlike the repeated letters above. A small linear
+ * congruential generator keeps it reproducible; it is assembled at run time, so
+ * no line of this file holds the result. */
+function mixedBody(seed: number, length: number, alphabet = MIXED): string {
+  let state = seed >>> 0
+  let out = ''
+  for (let index = 0; index < length; index += 1) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0
+    out += alphabet[state % alphabet.length] ?? 'x'
+  }
+  return out
+}
+
+/** realisticSecrets is one realistic, high-entropy value per token family the
+ * rules know, named. The bodies mix case and digits the way issued tokens do,
+ * which is what a test of a *fragment* needs: a run of one repeated letter is a
+ * shape no entropy rule ever finds, so a fragment of it could leak unnoticed. */
+export function realisticSecrets(): readonly (readonly [string, string])[] {
+  return [
+    ['github', piece('gh', 'p_', mixedBody(11, 36))],
+    ['github fine-grained', piece('github', '_pat_', mixedBody(12, 40))],
+    ['gitlab', piece('gl', 'pat-', mixedBody(13, 20))],
+    ['npm', piece('np', 'm_', mixedBody(14, 36))],
+    ['provider sk-', piece('s', 'k-', mixedBody(15, 40))],
+    ['slack', piece('xo', 'xb-', mixedBody(16, 12, '0123456789'), '-', mixedBody(17, 24))],
+    ['aws key id', piece('AK', 'IA', mixedBody(18, 16, UPPER_DIGITS))],
+    ['google api key', piece('AI', 'za', mixedBody(19, 35))],
+    ['google access token', piece('ya', '29.', mixedBody(20, 40))],
+    ['jwt', piece('ey', 'J', mixedBody(21, 16), '.', 'ey', 'J', mixedBody(22, 16), '.', mixedBody(23, 20))],
+    ['high-entropy run', mixedBody(24, 32)],
+  ]
+}

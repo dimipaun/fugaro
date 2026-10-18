@@ -186,7 +186,18 @@ function fakeChild(): SpawnedChildLike {
   return {
     stdout: { on: () => undefined },
     stderr: { on: () => undefined },
-    on: () => undefined,
+    // Node emits `spawn` on the tick after the process exists, before any I/O.
+    // This fake fires it at registration instead: the ordering the assertions
+    // here depend on is the same (a spawn-log line exists before the child's
+    // first byte), without a tick for every test to wait out. `scriptedChild`
+    // below does the same, and `childThatNeverSpawns` is the other half.
+    on: ((
+      event: 'spawn' | 'error' | 'exit' | 'close',
+      listener: (...args: unknown[]) => void,
+    ) => {
+      if (event === 'spawn') listener()
+      return undefined
+    }) as SpawnedChildLike['on'],
     kill: () => true,
   }
 }
@@ -260,8 +271,15 @@ function scriptedChild(): SpawnedChildLike & {
       on: (_event: string, listener: (chunk: Buffer | string) => void) => stderrListeners.push(listener),
       destroy: () => destroyed.push('stderr'),
     },
-    on(event: 'error' | 'exit' | 'close', listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void)) {
-      if (event === 'error') errorListeners.push(listener as (error: Error) => void)
+    on(
+      event: 'spawn' | 'error' | 'exit' | 'close',
+      listener:
+        | (() => void)
+        | ((error: Error) => void)
+        | ((code: number | null, signal: string | null) => void),
+    ) {
+      if (event === 'spawn') (listener as () => void)()
+      else if (event === 'error') errorListeners.push(listener as (error: Error) => void)
       else if (event === 'exit') exitListeners.push(listener as (code: number | null, signal: string | null) => void)
       else closeListeners.push(listener as (code: number | null, signal: string | null) => void)
       return undefined
@@ -887,6 +905,56 @@ describe('binary resolution', () => {
       prefixes: [],
     })
     expect([...candidates]).toEqual(['/usr/sbin/fugaro'])
+  })
+
+  it('never lists a relative configured path as a place to find the binary', () => {
+    // The same rule as the `PATH` entries above, one step earlier in the order:
+    // this list is what `isExecutableFile` is asked about, and that question is
+    // put to the app's working directory, while the child runs in the
+    // installation's. A relative configured path is therefore not a place to
+    // look -- and `resolveBinary` refuses it rather than falling through.
+    expect([
+      ...binDirectories({ configuredPath: 'bin/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+    ]).toEqual([])
+    expect([
+      ...binDirectories({ configuredPath: './tools/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+    ]).toEqual([])
+    expect([
+      ...binDirectories({ configuredPath: '~/tools/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+    ]).toEqual([])
+  })
+
+  it('puts an absolute configured path first, with the well-known prefixes after it', () => {
+    expect([
+      ...binDirectories({ configuredPath: '/opt/fugaro/bin/fugaro', appEnv: {}, home: '/Users/owner', prefixes: [] }),
+    ]).toEqual(['/opt/fugaro/bin/fugaro'])
+  })
+
+  it('refuses a configured path that is not absolute, rather than substituting another installation', async () => {
+    // The review of Task 4.1's finding: `bin/fugaro` was validated against the
+    // app's cwd (`isExecutableFile`) and then handed to the child, whose cwd is
+    // the installation's -- so the file that answered the version check need not
+    // be the file that runs. Here the relative path does not exist at all, and a
+    // perfectly good stub sits in a well-known prefix: before this guard the walk
+    // fell through and reported *that* installation's numbers under the
+    // operator's chosen path, which is the silent substitution rule 3 refuses.
+    const base = freshDirectory()
+    const prefix = join(base, 'prefix', 'bin')
+    const stub = installStub(prefix, { commands: { version: { stdout: '9.9.9\n' } } })
+    const resolution = await resolveBinary({
+      configuredPath: 'bin/fugaro',
+      appEnv: {},
+      directory: base,
+      target: { project: PROJECT },
+      prefixes: [prefix],
+    })
+    expect(resolution.ok).toBe(false)
+    expect(resolution.ok === false && resolution.path).toBe('bin/fugaro')
+    expect(resolution.ok === false && resolution.reason).toMatch(/not absolute/)
+    expect(resolution.ok === false && resolution.reason).toContain('bin/fugaro')
+    // Nothing was spawned: the refusal is before the walk, so the stub in the
+    // prefix never ran.
+    expect(stub.calls()).toBe(0)
   })
 
   it('resolves a configured path first, and reports where it came from', async () => {
@@ -2150,6 +2218,33 @@ const throwingSpawner: ChildSpawner = () => {
   throw error
 }
 
+/**
+ * childThatNeverSpawns is the other way a spawn produces no process, and the one
+ * that does not throw: `child_process.spawn` returns a `ChildProcess` object
+ * whatever happens, then emits `error` (ENOENT for a binary that is not there,
+ * EACCES for one that is not executable) and never emits `spawn`. The streams
+ * are never readable, and nothing is ever written to them.
+ */
+function childThatNeverSpawns(): SpawnedChildLike {
+  return {
+    stdout: { on: () => undefined },
+    stderr: { on: () => undefined },
+    on: ((
+      event: 'spawn' | 'error' | 'exit' | 'close',
+      listener: (...args: unknown[]) => void,
+    ) => {
+      if (event !== 'error') return undefined
+      queueMicrotask(() => {
+        const error = new Error('spawn /opt/homebrew/bin/fugaro ENOENT') as Error & { code?: string }
+        error.code = 'ENOENT'
+        listener(error)
+      })
+      return undefined
+    }) as SpawnedChildLike['on'],
+    kill: () => true,
+  }
+}
+
 describe('the spawn log records children, not attempts', () => {
   it('writes no line when a one-shot read never produced a child', async () => {
     const log = countingLog()
@@ -2158,11 +2253,39 @@ describe('the spawn log records children, not attempts', () => {
     expect(log.records).toBe(0)
   })
 
+  it('writes no line when the spawner handed back a child that never spawned', async () => {
+    // The case a throwing spawner hides: `spawn` returns a `ChildProcess` for a
+    // binary that is not there and fails afterwards, so a line recorded on the
+    // spawner's return is a line for a process that never existed (review).
+    const log = countingLog()
+    const plan = planFor('budget.show', {}, safeContext())
+    await expect(runToCompletion(plan, { spawner: () => childThatNeverSpawns(), log })).rejects.toThrow(
+      /ENOENT/,
+    )
+    expect(log.records).toBe(0)
+  })
+
   it('writes one line for a one-shot read that did spawn', () => {
     const log = countingLog()
     const plan = planFor('budget.show', {}, safeContext())
     void runToCompletion(plan, { spawner: recordingSpawner(), log })
     expect(log.records).toBe(1)
+  })
+
+  it('writes no line for a feed whose child never spawned, and ends as unstartable', () => {
+    const log = countingLog()
+    const plan = planFor('live.watch', {}, safeContext())
+    const ended: string[] = []
+    startSidecar(plan, {
+      onFrame: () => undefined,
+      onNotice: () => undefined,
+      onRestart: () => undefined,
+      onEnded: (end) => ended.push(end.reason),
+    }, { spawner: () => childThatNeverSpawns(), timers: manualTimers(), log })
+    return waitFor(() => ended.length > 0).then(() => {
+      expect(ended).toEqual(['unstartable'])
+      expect(log.records).toBe(0)
+    })
   })
 
   it('writes no line when a feed never produced a child, and one per child it did', () => {

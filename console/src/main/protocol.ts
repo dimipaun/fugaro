@@ -74,6 +74,50 @@ export const REFUSAL_ENTRY_PATH = '/refusal.html'
  * the dashboard's -- it is only its document that differs. */
 export const REFUSAL_ENTRY_URL = `${APP_ORIGIN}${REFUSAL_ENTRY_PATH}`
 
+/**
+ * PICKER_ENTRY_PATH is the installation picker's document (Task 3.4b; owner
+ * ruling C9): a separate window opened from the application menu, with its own
+ * preload and its own channel prefix, and PICKER_ENTRY_URL is the URL that
+ * window loads and the one its channels' sender gate compares against
+ * (`isSenderOnDocument` in `src/main/ipc.ts`).
+ */
+export const PICKER_ENTRY_PATH = '/installations.html'
+
+/** PICKER_ENTRY_URL is the full URL of the picker's document. */
+export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
+
+/**
+ * SERVED_FILES is the whole of what the served root holds (desktop-console plan
+ * Task 3.4a, step 4; Task 3.4b's second entry): the dashboard's and the
+ * refusal's documents and the one script the dashboard loads, and the picker's
+ * document and its own script.
+ *
+ * The root itself is `dist/bundle/` (`rendererRoot` in `src/main/index.ts`),
+ * and the five files are there because `npm run build` puts them there: `tsc`
+ * compiles `src/renderer/entry.ts` and `src/renderer/installations.ts` and
+ * everything they require, and `tools/bundle-renderer/index.ts` writes
+ * `console.js` and `installations.js` and copies the three documents
+ * verbatim. `test/unit/bundle.test.ts` holds this list and that directory equal
+ * in both directions, so a file that appears beside the bundle -- or a name
+ * dropped from this list -- is a failing test rather than a document the
+ * console serves and nothing vouches for.
+ *
+ * It is a list of URL paths rather than of file names because that is how the
+ * handler speaks, and it is deliberately **not** a second filter inside
+ * `resolveBundleRequest`: the root's contents are already decided by the build,
+ * the handler's refusals are pinned by `test/unit/window.test.ts` (a path inside
+ * the root that names no file is a 404, and one that names a file the read fails
+ * on is a 500), and a filter here would turn that 500 into a 404 for every name
+ * it does not list.
+ */
+export const SERVED_FILES: readonly string[] = Object.freeze([
+  '/console.js',
+  '/index.html',
+  '/installations.html',
+  '/installations.js',
+  '/refusal.html',
+])
+
 /** CSP_HEADER is the response header the CSP travels in (rule 3). */
 export const CSP_HEADER = 'Content-Security-Policy'
 

@@ -153,7 +153,7 @@ describe('the file’s schema', () => {
     // file is the one thing C8 forbids outright, and the refusal is of the whole
     // file -- a reader that dropped the key and kept the entry would be a reader
     // that silently rewrote the operator's file.
-    const planted = fileText([{ ...installation(), token: 'ghp_aaaaaaaaaaaaaaaaaaaa' }])
+    const planted = fileText([{ ...installation(), token: ['gh', 'p_', 'a'.repeat(20)].join('') }])
     const read = readInstallationFile(planted)
     expect(read.ok).toBe(false)
     if (read.ok) return
@@ -342,7 +342,7 @@ describe('the writer', () => {
       installations: [installation(), installation({ id: 'ffffffffffffffff', project: 'other' })],
     }
     const text = serializeInstallationFile(file)
-    expect(text.split('\n').filter((line) => line.startsWith('    {')).toHaveLength(2))
+    expect(text.split('\n').filter((line) => line.startsWith('    {'))).toHaveLength(2)
     const read = readInstallationFile(text)
     expect(read.ok).toBe(true)
     if (read.ok) expect(read.file).toEqual(file)

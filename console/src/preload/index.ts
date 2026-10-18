@@ -98,26 +98,29 @@ export const BRIDGE_VERSION = 1
  *
  * **The twelve rows are still twelve.** The Spend screen's controls (Task 2.4)
  * wire the range picker and the breakdown switch to `runReport` -- on the
- * screen's side of the seam: the entry point that calls them is a later task's,
- * and `src/renderer/screens/spend.ts` says so. They do it with the arguments
- * `spend.report` already declares: no operation was added here, no method was
- * added to one, and no screen gained a way to name a channel. A task that needs
- * a *new read* adds a row to the table in `src/main/ipc.ts` and a row here, and
- * the test above is what makes forgetting the second half fail rather than
- * pass.
+ * screen's side of the seam: `src/renderer/screens/spend.ts` calls them, and the
+ * entry point that calls *it* is the screens task's (3.4c). Task 3.4a builds the
+ * entry (`src/renderer/entry.ts`, bundled into the one script the dashboard
+ * document loads) and stops at the gate, so what reaches these methods today is
+ * the handshake and nothing else. They do it with the arguments `spend.report`
+ * already declares: no operation was added here, no method was added to one, and
+ * no screen gained a way to name a channel. A task that needs a *new read* adds
+ * a row to the table in `src/main/ipc.ts` and a row here, and the test above is
+ * what makes forgetting the second half fail rather than pass.
  *
  * **There are fourteen rows, and two of them are not spawns.** Task 3.3 added
  * `startup.compatibility` / `getCompatibility`: the handshake's answer, which the
- * renderer asks for once at load and draws nothing until it has. Task 3.4b added
+ * renderer asks for once at load and draws nothing until it has. Task 3.4a makes
+ * that sentence literal -- the dashboard document loads the bundled entry, its
+ * first call is `startConsole`, and the first thing `startConsole` does is ask
+ * this method -- so the main process registers this handler *before* that
+ * document is loaded (`src/main/index.ts`'s `onDecided`, called by
+ * `startupWindow` between the version read and the `loadURL`). Task 3.4b added
  * `installation.current` / `getInstallation`: the installation the operator
  * chose, as the store holds it, so the header can name the project it is showing
  * without the renderer ever naming a path. Both take no argument at all --
  * `ConsoleMethod`'s optional argument object is simply not sent, so there is
  * nothing for a renderer to name.
- *
- * (The line this paragraph replaced read "The thirteen rows are now thirteen",
- * which was true of nothing: Task 3.3's review of #541 recorded it as a stale
- * comment that the next task must make true or reword, and this is the reword.)
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],

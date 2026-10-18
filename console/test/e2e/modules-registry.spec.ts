@@ -52,30 +52,57 @@ function relativeRequires(module: string, code: string): readonly string[] {
 // order-sensitive. An unsorted side would make the guard fail on a filesystem
 // that happened to enumerate the directory differently, for no reason that has
 // anything to do with a registry.
-const specs = readdirSync(e2eDir)
+const specSources = readdirSync(e2eDir)
   .filter((name) => name.endsWith('.spec.ts'))
-  .map((name) => ({ name, registry: registryOf(readFileSync(join(e2eDir, name), 'utf8')) }))
+  .map((name) => ({ name, source: readFileSync(join(e2eDir, name), 'utf8') }))
+
+const specs = specSources
+  .map((spec) => ({ name: spec.name, registry: registryOf(spec.source) }))
   .filter((spec): spec is { name: string; registry: readonly string[] } => spec.registry !== null)
   .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
 
+/**
+ * declaring is every spec that injects the compiled renderer, found by a scan
+ * that does **not** go through `registryOf`: a spec that reads a module straight
+ * out of `dist/` is one with a registry, whether or not this file can parse its
+ * list.
+ *
+ * It exists because the first version of the guard below named four specs by
+ * hand -- `degraded`, `live`, `skew`, `spend` -- while six declared a registry
+ * (`projects` and `run` were the two it did not name). A spec left out of a
+ * hand-written list is a spec whose registry can drift unnoticed, which is
+ * exactly the defect this whole file exists for, so the list is derived from the
+ * directory and the guard asserts that the derived set and the parsed set are
+ * the same set. A spec whose `MODULES` block stops being parseable therefore
+ * fails here instead of being skipped in silence.
+ */
+const declaring = specSources
+  .filter((spec) => /readFileSync\(\s*join\(consoleDir,\s*'dist'/.test(spec.source))
+  .map((spec) => spec.name)
+
 test.describe('the hand-built module registries', () => {
-  test('there are registries to check, and this guard names every one of them', () => {
-    // **Derived, not listed.** Round 2 of Task 3.3 wrote this as
-    // `arrayContaining(['degraded.spec.ts', 'live.spec.ts', 'skew.spec.ts',
-    // 'spend.spec.ts'])`, which named four of the six specs that declare a
-    // registry: the other two were checked by the loop below and *unasserted*
-    // here, so a seventh spec could have joined them silently. The set is
-    // therefore read off the directory -- every spec in it that declares a
-    // `MODULES` list, this guard file excepted -- and compared exactly.
-    const declaring = readdirSync(e2eDir)
+  test('there are registries to check, and this guard covers every one of them', () => {
+    expect(declaring.length, 'no spec reads a compiled module out of dist/').toBeGreaterThan(0)
+    // The derived set and the parsed set, both ways: every spec with a registry
+    // is checked, and every spec that is checked has a registry this file could
+    // read. `toEqual` on sorted copies, so a spec in either list and not the
+    // other is a failure naming nothing else.
+    expect(specs.map((spec) => spec.name).sort()).toEqual([...declaring].sort())
+    for (const spec of specs) {
+      expect(spec.registry.length, `${spec.name} declares an empty registry`).toBeGreaterThan(0)
+    }
+    // **Derived, not listed**, a second way (Task 3.4b): every spec in the
+    // directory that declares a `MODULES` list, this guard file excepted, read
+    // with a pattern independent of `registryOf`'s, and compared exactly.
+    const declaringModules = readdirSync(e2eDir)
       .filter((name) => name.endsWith('.spec.ts'))
       .filter((name) => name !== basename(__filename))
       .filter((name) => /const MODULES[^=]*=\s*Object\.freeze\(\[/.test(readFileSync(join(e2eDir, name), 'utf8')))
       .sort()
-    expect(specs.map((spec) => spec.name)).toEqual(declaring)
+    expect(specs.map((spec) => spec.name)).toEqual(declaringModules)
     // ...and the floor, so a directory that somehow read as empty fails here
-    // rather than making the assertion above vacuously true.
-    expect(declaring.length).toBeGreaterThanOrEqual(6)
+    // rather than making the assertions above vacuously true.
+    expect(declaringModules.length).toBeGreaterThanOrEqual(6)
   })
 
   for (const spec of specs) {

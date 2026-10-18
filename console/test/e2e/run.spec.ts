@@ -289,7 +289,14 @@ function screen(page: Page): Promise<Screen> {
       replayAt: text('.run-replay-at'),
       replayNote: text('.run-replay-note'),
       anchors: all('a').length,
-      navigating: all('[href]').length + all('[src]').length,
+      // Counted inside the screen's own mount, which must exist (-1 otherwise,
+      // so a missing mount cannot read as zero): since Task 3.4a the document
+      // itself carries one `<script src="./console.js">`, the shell's and not
+      // the screen's, and test/unit/csp-document.test.ts pins that list.
+      navigating: ((mount) =>
+        mount === null ? -1 : all('[href]', mount).length + all('[src]', mount).length)(
+        document.getElementById('run-mount'),
+      ),
       text: document.getElementById('run-mount')?.textContent ?? '',
     }
   })
@@ -410,7 +417,12 @@ test.describe('the Run detail screen', () => {
     // an in-range one it opens the refusal document, and the dashboard document
     // this spec mounts into would never be loaded.
     cli = inRangeCliStub()
-    app = await electron.launch({ args: [consoleDir], env: cli.env })
+    // A scratch profile with the stub as the active installation (Task 3.4b):
+    // the dashboard is this spec's subject, so the first run's picker -- which
+    // opens when no installation is chosen -- is not, and no spec touches the
+    // machine's own console profile.
+    cli.seedActiveInstallation()
+    app = await electron.launch({ args: cli.launchArgs(consoleDir), env: cli.env })
     page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
   })

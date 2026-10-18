@@ -27,6 +27,7 @@
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -129,13 +130,19 @@ class StubChild implements SpawnedChildLike {
     return true
   }
 
+  on(event: 'spawn', listener: () => void): unknown
   on(event: 'error', listener: (error: Error) => void): unknown
   on(event: 'exit' | 'close', listener: (code: number | null, signal: string | null) => void): unknown
   on(
-    event: 'error' | 'exit' | 'close',
-    listener: ((error: Error) => void) | ((code: number | null, signal: string | null) => void),
+    event: 'spawn' | 'error' | 'exit' | 'close',
+    listener: (() => void) | ((error: Error) => void) | ((code: number | null, signal: string | null) => void),
   ): unknown {
-    if (event === 'error') this.#errors.push(listener as (error: Error) => void)
+    // `spawn` is fired at registration, as in `spawn.test.ts`'s fakes: Node
+    // emits it on the tick after the process exists, which for these tests is
+    // the same ordering -- a spawn-log line before the child's first byte --
+    // without a tick to wait out.
+    if (event === 'spawn') (listener as () => void)()
+    else if (event === 'error') this.#errors.push(listener as (error: Error) => void)
     else if (event === 'exit') this.#exits.push(listener as (code: number | null, signal: string | null) => void)
     else this.#closes.push(listener as (code: number | null, signal: string | null) => void)
     return this
@@ -934,6 +941,44 @@ describe('the whole tool', () => {
     // A refusal that happens before anything is spawned: the message is the one
     // the owner reads, and no child is reached.
     await expect(main(['--out', OUT])).rejects.toThrow(/--project is required/)
+  })
+
+  it('returns 0 or throws, and never hands back a refusal’s exit code', async () => {
+    // The contract `main`'s docstring got wrong (review of Task 4.1): a run that
+    // wrote a fixture resolves with 0, and a run that wrote nothing *throws* its
+    // `RecorderRefusal` -- the sentence is what the caller prints, and resolving
+    // with the code instead would let a caller take a refusal for a finished
+    // recording. The 2 is the entry point's, at the foot of the tool.
+    const wrote = tool((stub) => {
+      stub.write('{"day":"2026-10-15"}\n')
+      stub.exit(0)
+    })
+    expect(await wrote.run(['--out', OUT, '--project', 'sandbox', '--gcp-project', 'fixture-gcp-1'])).toBe(0)
+
+    // Every refusal shape, and each one a throw rather than a number.
+    const beforeSpawn = tool(() => {})
+    await expect(beforeSpawn.run(['--out', OUT])).rejects.toThrow(RecorderRefusal)
+    const noDocument = tool((stub) => {
+      stub.exit(2)
+    })
+    await expect(
+      noDocument.run(['--out', OUT, '--project', 'sandbox', '--gcp-project', 'fixture-gcp-1']),
+    ).rejects.toThrow(RecorderRefusal)
+    // And neither refusal wrote anything, so neither produced a code at all.
+    expect(beforeSpawn.written).toEqual([])
+    expect(noDocument.written).toEqual([])
+
+    // The claim above is only worth anything if the tool's own docstring states
+    // it: that is the sentence an owner reads before running it, and the review
+    // of Task 4.1 found the old one describing a return contract `main` does not
+    // have (`2 for a refusal`). Read off the source, the way `spawn.test.ts`
+    // reads the spawn table's callers.
+    const toolSource = readFileSync(fileURLToPath(new URL('../../tools/record-fixture/index.ts', import.meta.url)), 'utf8')
+    const docstring = /\/\*\*\n((?: \*.*\n)+) \*\/\nexport async function main\(/.exec(toolSource)?.[1] ?? ''
+    expect(docstring).toContain('returns 0')
+    expect(docstring).toContain('throws a `RecorderRefusal`')
+    expect(docstring).toContain('exits 2')
+    expect(docstring).not.toMatch(/2 for a refusal/)
   })
 })
 

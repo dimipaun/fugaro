@@ -49,6 +49,7 @@ import { CLI_VERSION_BUILT_AGAINST, SKEW_HEADLINES, classifyCliVersion } from '.
 import type { CliCompatibilityMode } from '../../src/shared/version'
 import { installCliStub, resolveConsoleBinary } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { dismissFirstRunPicker } from '../support/firstRun'
 import type { BinaryResolution } from '../../src/main/spawn'
 
 // The console's own directory, from this file's location, as in the other
@@ -101,9 +102,14 @@ interface Launched {
 /** launch starts the app the way a user starts it, with the stub's environment
  * (or the machine's, when a case wants the machine's own binary). */
 async function launch(env: Record<string, string>): Promise<Launched> {
-  const app = await electron.launch({ args: [consoleDir], env })
+  // A scratch profile with no installation (Task 3.4b): this spec's subject is
+  // the first run's handshake, rule 4's resolution with nothing chosen, so the
+  // picker opens beside the window under test and is dismissed before any
+  // assertion about that window (`dismissFirstRunPicker`).
+  const app = await electron.launch({ args: stub.launchArgs(consoleDir), env })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
+  await dismissFirstRunPicker(app, page)
   return { app, page }
 }
 
@@ -291,10 +297,13 @@ test.describe('the startup handshake, in the real app', () => {
       // window's title says which console this is and what it made of the CLI,
       // which is design section 3.4 rule 8 ("the console knows which CLI it is
       // driving, and says so in its header") read as far as this tree can carry
-      // it: no renderer draws a header yet, so the header is the title. What the *document* draws for a reduced
-      // mode -- the banner, and no withheld view -- is `renderVersionSkew`'s and
-      // is asserted in `skew.spec.ts`: nothing under `src/renderer/` is loaded
-      // into the app's document yet, and this spec does not pretend otherwise.
+      // it: the header is the title. What the *document* draws for a reduced
+      // mode -- the banner, and no withheld view -- is the renderer's, and since
+      // Task 3.4a the dashboard document loads the bundled entry, so it is drawn
+      // in the app's own document: `entry.spec.ts` asserts the banner, its
+      // headline and the three hidden views from inside the page, and
+      // `skew.spec.ts` asserts `renderVersionSkew` itself, injected into the same
+      // document. This spec stays what it was -- the wiring, and the title.
       expect(await windowTitles(app)).toEqual([`${CONSOLE_WINDOW_TITLE} — ${SKEW_HEADLINES.reduced}`])
       expect((await pageShape(page)).url).toBe(APP_ENTRY_URL)
     } finally {

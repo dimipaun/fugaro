@@ -99,21 +99,59 @@ export function consoleWebPreferences(): WebPreferences {
 }
 
 /**
+ * dashboardWebPreferences is the dashboard window's preferences: the hardened
+ * set above, and **exactly one key more** -- `preload` (desktop-console plan Task
+ * 3.4a, step 1; design section 5.1 rules 1 and 5).
+ *
+ * Why the dashboard and not the refusal window: the refusal document has no
+ * renderer entry to load and nothing to ask for, so a preload there would be a
+ * bridge on a window that must draw nothing -- and D7's claim is about what a
+ * refused console *has*. `buildConsoleWindow` below is where that difference is
+ * decided, by the one thing that distinguishes the two windows, which is the
+ * document they load.
+ *
+ * Why `preload` is a path and not a module: a sandboxed preload is loaded by
+ * Electron from the file system, and the file is the compiled
+ * `dist/preload/index.js` under the app's own path. The path is an argument
+ * rather than a constant of this module for the same reason every other Electron
+ * value in this file is: this module imports Electron *types* only, so
+ * `test/unit/window.test.ts` can assert -- under plain Node -- that the key is
+ * there, that it is absolute, and that it is inside the app's own directory, and
+ * `src/main/index.ts` is the one place that knows where the app is.
+ *
+ * It is a **separate function** and not a parameter of `consoleWebPreferences`
+ * for the reason the hardened set's comment gives: `consoleWebPreferences` is the
+ * refusal window's set and the baseline this one adds to, and a caller that could
+ * pass a preload into it could also pass one into a window that must not have
+ * one. Spreading the one into the other keeps the hardened flags in one place:
+ * this function cannot weaken a flag without editing the set it spreads.
+ */
+export function dashboardWebPreferences(preloadPath: string): WebPreferences {
+  return { ...consoleWebPreferences(), preload: preloadPath }
+}
+
+/**
  * consoleWindowOptions is the window's construction options, webPreferences
  * included. `show: false` with a `ready-to-show` listener (see
  * `createConsoleWindow`) means the window is never visible half-drawn, which
  * matters more here than usual: the console's first paint is the only paint
  * that comes from the bundle, and everything after it comes over IPC.
+ *
+ * The preferences are a parameter with the hardened set as its default (Task
+ * 3.4a): every caller that does not ask for the dashboard's preload gets exactly
+ * what this function always built, and the dashboard's caller asks for it through
+ * `dashboardWebPreferences`, which is the one place the extra key is added.
  */
 export function consoleWindowOptions(
   compatibility: CliCompatibility | null = null,
+  webPreferences: WebPreferences = consoleWebPreferences(),
 ): BrowserWindowConstructorOptions {
   return {
     width: CONSOLE_WINDOW_SIZE.width,
     height: CONSOLE_WINDOW_SIZE.height,
     show: false,
     title: consoleWindowTitle(compatibility),
-    webPreferences: consoleWebPreferences(),
+    webPreferences,
   }
 }
 
@@ -312,6 +350,16 @@ export async function openExternalValidated(shell: Shell, raw: string): Promise<
 export interface ConsoleWindowDeps {
   BrowserWindow: new (options: BrowserWindowConstructorOptions) => BrowserWindow
   session: Session
+  /**
+   * `preloadPath` is the compiled preload the **dashboard** window loads (Task
+   * 3.4a), and it is required rather than optional: it is the one window member
+   * that carries the console's whole IPC surface, and a default would make
+   * forgetting it a console with no bridge at all -- which is a state the
+   * renderer handles (a missing bridge is a refusal) but which nobody would have
+   * chosen. The refusal window ignores it, by `buildConsoleWindow`'s decision
+   * below and not by a caller's.
+   */
+  readonly preloadPath: string
 }
 
 /**
@@ -334,13 +382,47 @@ export async function createConsoleWindow(deps: ConsoleWindowDeps): Promise<Brow
  * and the refusal's is `REFUSAL_ENTRY_URL`. Which one a window got is the D7
  * claim itself and the thing an e2e assertion can read off a running window
  * (`page.url()`), so it is decided by the caller's door and not by anything the
- * renderer could influence. */
+ * renderer could influence.
+ *
+ * **The document also decides the preload** (Task 3.4a): the dashboard document
+ * gets `dashboardWebPreferences(deps.preloadPath)` and the refusal document gets
+ * the plain hardened set, with no `preload` key at all. It is the same `entryUrl`
+ * that decides both, and it is checked here rather than passed in as a second
+ * flag, so "the refusal window has no bridge" is a property of the refusal
+ * window's *document* and cannot be got wrong by a caller that meant the other
+ * window: the two windows differ in exactly one thing, and this is where that
+ * one thing is read. */
 async function buildConsoleWindow(
   deps: ConsoleWindowDeps,
   compatibility: CliCompatibility | null,
   entryUrl: string,
 ): Promise<BrowserWindow> {
-  const window = new deps.BrowserWindow(consoleWindowOptions(compatibility))
+  const webPreferences =
+    entryUrl === APP_ENTRY_URL ? dashboardWebPreferences(deps.preloadPath) : consoleWebPreferences()
+  return buildHardenedWindow(deps, consoleWindowOptions(compatibility, webPreferences), entryUrl)
+}
+
+/**
+ * buildHardenedWindow is the one construction path every window of this app
+ * goes through -- the dashboard's, the refusal screen's and, since Task 3.4b,
+ * the installation picker's (`src/main/picker.ts`): the options it is given, the
+ * three denials on its `webContents`, every permission denied for the session,
+ * the page refused the title, shown only when ready, and then the single load.
+ *
+ * The options are the caller's, and that is the only thing that differs between
+ * windows: each caller builds them from `consoleWebPreferences()` (plus at most
+ * a `preload`), so the hardened flags stay in one place. `beforeLoad` runs after
+ * construction and before the load, which is where a caller that must hold the
+ * window while its document loads (the picker, whose `closed` listener drops its
+ * pick tokens) attaches its own listeners.
+ */
+export async function buildHardenedWindow(
+  deps: { readonly BrowserWindow: new (options: BrowserWindowConstructorOptions) => BrowserWindow; readonly session: Session },
+  options: BrowserWindowConstructorOptions,
+  entryUrl: string,
+  beforeLoad?: (window: BrowserWindow) => void,
+): Promise<BrowserWindow> {
+  const window = new deps.BrowserWindow(options)
 
   installWebContentsSecurity(window.webContents)
   denyEveryPermission(deps.session)
@@ -360,6 +442,7 @@ async function buildConsoleWindow(
   window.once('ready-to-show', () => {
     window.show()
   })
+  beforeLoad?.(window)
   await window.loadURL(entryUrl)
 
   return window
@@ -477,8 +560,27 @@ export interface ConsoleStartup {
   readonly compatibility: CliCompatibility
 }
 
-/** StartupWindowDeps is the window surface plus the version reader. */
-export interface StartupWindowDeps extends ConsoleWindowDeps, VersionHandshakeDeps {}
+/**
+ * StartupWindowDeps is the window surface plus the version reader, and the one
+ * callback that runs when the handshake has an answer (Task 3.4a).
+ *
+ * `onDecided` is a *dep* and not a return value because of *when* it has to run:
+ * after the version read and **before the dashboard document is loaded**, which
+ * is the only moment at which the IPC handlers can be registered without a window
+ * existing that could ask for something nobody answered. `startupWindow` below is
+ * where that ordering lives, and it is the reason this callback is threaded
+ * through the window-building path rather than called by the entry point after
+ * `lifecycle.start()` resolved -- by then the dashboard is already up and its
+ * renderer has already asked for the handshake.
+ *
+ * It is optional so that the unit tests that drive a single window (and the
+ * callers that only want one) need no callback, and it is called for **every**
+ * mode: a refused console's callback is what records the answer and decides, in
+ * `src/main/index.ts`, to register nothing.
+ */
+export interface StartupWindowDeps extends ConsoleWindowDeps, VersionHandshakeDeps {
+  readonly onDecided?: (compatibility: CliCompatibility) => void
+}
 
 /**
  * startupWindow is the console's startup in one call: read the CLI's version,
@@ -495,6 +597,11 @@ export interface StartupWindowDeps extends ConsoleWindowDeps, VersionHandshakeDe
  */
 export async function startupWindow(deps: StartupWindowDeps): Promise<ConsoleStartup> {
   const compatibility = await runVersionHandshake(deps)
+  // The one moment the answer exists and no window does (Task 3.4a). For the
+  // dashboard it is the last moment the handlers can be registered *before* a
+  // renderer can ask for one, and for a refusal it is the moment the entry point
+  // learns there is nothing to register.
+  deps.onDecided?.(compatibility)
   if (compatibility.mode === 'refused') return { window: null, compatibility }
   return {
     window: await buildConsoleWindow(deps, compatibility, APP_ENTRY_URL),
@@ -590,6 +697,16 @@ export interface ConsoleLifecycleDeps {
   readonly windowDeps: () => ConsoleWindowDeps
   readonly readVersion: () => Promise<VersionRead>
   readonly openWindowCount: () => number
+  /**
+   * `onDecided` is handed to the startup and runs the moment the handshake has an
+   * answer, before any window is built (Task 3.4a). `activate` does **not** call
+   * it again: the answer it stored is the one it already reported, and a second
+   * registration is what this callback's caller would do twice if it were called
+   * per window. `choose` (Task 3.4b) does call it, once per new answer, because a
+   * new installation's answer is a new decision; the caller's registration is
+   * once-only on its own side.
+   */
+  readonly onDecided?: (compatibility: CliCompatibility) => void
 }
 
 /** ConsoleLifecycle is the startup and the `activate` handler, as two calls. */
@@ -600,6 +717,18 @@ export interface ConsoleLifecycle {
   /** activate is macOS's dock-icon click: a window for the stored answer when
    * none is open, and nothing otherwise. */
   activate(): Promise<void>
+  /**
+   * choose is a new answer for a newly chosen installation (Task 3.4b, step 5):
+   * the picker has already run that installation's handshake and refused to
+   * choose a `refused` one. It waits for the startup, replaces the stored answer,
+   * hands it to `onDecided` -- the same callback the startup ran, so the surface
+   * is registered if it was not yet and never twice -- and reopens the console's
+   * window through `openWindowFor`, closing the one it replaces. A
+   * refused-to-ok switch therefore replaces the refusal window with the
+   * dashboard; the reverse is not a door this offers, because the picker does
+   * not choose a refused installation.
+   */
+  choose(compatibility: CliCompatibility): Promise<void>
 }
 
 /**
@@ -623,12 +752,20 @@ export interface ConsoleLifecycle {
 export function createConsoleLifecycle(deps: ConsoleLifecycleDeps): ConsoleLifecycle {
   let startup: Promise<CliCompatibility> | null = null
   let decided: CliCompatibility | null = null
+  // shown is the console window this lifecycle opened last (the dashboard or the
+  // refusal screen, never the picker's), so `choose` closes the one it replaces.
+  let shown: BrowserWindow | null = null
 
   const start = (): Promise<CliCompatibility> => {
     if (startup === null) {
-      startup = openStartupWindow({ ...deps.windowDeps(), readVersion: deps.readVersion }).then(
+      startup = openStartupWindow({
+        ...deps.windowDeps(),
+        readVersion: deps.readVersion,
+        ...(deps.onDecided === undefined ? {} : { onDecided: deps.onDecided }),
+      }).then(
         (opened) => {
           decided = opened.compatibility
+          shown = opened.window
           return opened.compatibility
         },
       )
@@ -652,8 +789,17 @@ export function createConsoleLifecycle(deps: ConsoleLifecycleDeps): ConsoleLifec
     // A window is constructed synchronously inside `openWindowFor` (before its
     // first `await`), so a second click in the same turn already sees it here.
     if (deps.openWindowCount() > 0) return
-    await openWindowFor(deps.windowDeps(), decided)
+    shown = await openWindowFor(deps.windowDeps(), decided)
   }
 
-  return { start, activate }
+  const choose = async (compatibility: CliCompatibility): Promise<void> => {
+    if (startup !== null) await startup
+    decided = compatibility
+    deps.onDecided?.(compatibility)
+    const previous = shown
+    shown = await openWindowFor(deps.windowDeps(), compatibility)
+    if (previous !== null && !previous.isDestroyed()) previous.close()
+  }
+
+  return { start, activate, choose }
 }

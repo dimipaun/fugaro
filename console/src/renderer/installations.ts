@@ -130,7 +130,7 @@ export function rowText(row: InstallationListRow): string {
 // `lib.dom`, for the same reason the preload declares its own `ipcRenderer`
 // slice: the view is then drivable under plain Node, where there is no DOM at
 // all, and the interfaces say exactly what the view is allowed to touch. A
-// `textContent` assignment is not `innerHTML`, `appendChild` takes an element
+// `textContent` assignment is not markup, `appendChild` takes an element
 // and not a string, and there is no `style`, no `href` and no `src`.
 
 /** PickerEvent is the slice of an event this view uses: the form's submit is
@@ -207,7 +207,7 @@ const PICK_LABELS: Readonly<Record<PickKind, { readonly idle: string; readonly c
  *     main process sent, and it is drawn through `drawn` rather than composed:
  *     the console does not paraphrase a refusal, and it does not trust one
  *     either;
- *   - **nothing is drawn with `innerHTML`**: rows are elements whose text is
+ *   - **nothing is drawn as markup**: rows are elements whose text is
  *     `rowText`'s output, and the only attributes set are a button's `type`;
  *   - **a submit is handled in the page**, never as a navigation.
  */
@@ -284,6 +284,10 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
       if (button !== null) button.textContent = PICK_LABELS[kind].idle
     }
   }
+  // The buttons start from the view's own labels, not from whatever the
+  // document's markup happened to say: a label is the one place the view
+  // reports whether a pick is held, so it is the view that writes it.
+  clearTokens()
 
   for (const kind of ['binary', 'config', 'checkout'] as const) {
     const picker = pickers[kind]

@@ -822,9 +822,14 @@ function argvShape(argv: readonly string[]): string {
 }
 
 /**
- * main records one fixture and returns the process exit code: 0 for a fixture
- * written, 2 for a refusal (whose sentence it prints). It is the whole tool, and
- * the one function an owner's run reaches.
+ * main records one fixture and returns 0 -- the exit code of a run that wrote
+ * one. A run that wrote nothing throws a `RecorderRefusal` carrying the sentence
+ * to print, rather than resolving with a code a caller could take for a finished
+ * recording. It is the whole tool, and the one function an owner's run reaches;
+ * the entry point at the foot of this file turns those two outcomes into the
+ * process's own: the 0 is assigned to `process.exitCode`, and a thrown refusal
+ * is printed and exits 2. (The review of Task 4.1 found this docstring claiming
+ * `main` itself returned that 2.)
  */
 export async function main(argv: readonly string[], deps: RecorderDeps = {}): Promise<number> {
   const cwd = deps.cwd ?? process.cwd()

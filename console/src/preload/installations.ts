@@ -10,8 +10,8 @@
 // same origin (`app://console`), so the *only* thing that separates their
 // surfaces is that each window is built with its own preload and each channel
 // prefix is gated on the document that may reach it -- `isSenderOnDocument` in
-// `src/main/ipc.ts` for `fugaro:console/*`, and `src/main/picker.ts` for
-// `fugaro:installations/*`.
+// `src/main/ipc.ts` for the `fugaro:console/` prefix, and `src/main/picker.ts` for
+// the `fugaro:installations/` prefix.
 //
 // What this file deliberately does not do:
 //

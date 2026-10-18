@@ -41,7 +41,8 @@ import {
   invokeOperation,
 } from '../../src/preload/installations'
 import { createInstallationPicker } from '../../src/main/picker'
-import { INSTALLATIONS_MENU_LABEL, PICKER_ENTRY_URL } from '../../src/main/picker'
+import { INSTALLATIONS_MENU_LABEL, PICKER_ENTRY_URL, pickerOptions, pickerPreloadPath } from '../../src/main/picker'
+import { consoleWebPreferences } from '../../src/main/window'
 import {
   CONSOLE_OPERATION_NAMES,
   SENDER_REFUSAL,
@@ -71,15 +72,21 @@ function fakeIpcMain(): IpcMainLike & { readonly listeners: Map<string, (event: 
 }
 
 /** fakeWindow is the slice of Electron's BrowserWindow the picker uses. */
-function fakeWindow() {
+function fakeWindow(options: Record<string, unknown> = {}) {
   const handlers = new Map<string, (...args: unknown[]) => void>()
+  let openHandlerSet = false
   const contents = {
     on: (name: string, handler: (...args: unknown[]) => void) => {
       handlers.set(name, handler)
     },
-    setWindowOpenHandler: () => undefined,
+    setWindowOpenHandler: () => {
+      openHandlerSet = true
+    },
   }
   const window = {
+    options,
+    handlerNames: () => handlers.keys(),
+    openHandlerSet: () => openHandlerSet,
     webContents: contents,
     loaded: [] as string[],
     on: (name: string, handler: (...args: unknown[]) => void) => {
@@ -109,8 +116,8 @@ function fakeWindow() {
 function pickerOver(options: { readonly userData?: string } = {}) {
   const ipcMain = fakeIpcMain()
   const windows: ReturnType<typeof fakeWindow>[] = []
-  const BrowserWindow = function BrowserWindow(this: unknown) {
-    const window = fakeWindow()
+  const BrowserWindow = function BrowserWindow(this: unknown, options: Record<string, unknown>) {
+    const window = fakeWindow(options)
     windows.push(window)
     return window
   } as unknown as new (options: unknown) => never
@@ -379,6 +386,25 @@ describe('the picker’s add', () => {
     expect(windows).toHaveLength(1)
   })
 
+  it('is built through the same hardened path as the dashboard (buildHardenedWindow)', async () => {
+    const { picker, windows } = pickerOver()
+    await picker.open()
+    const built = windows[0]
+    expect(built, 'no picker window was built').toBeDefined()
+    // The three webContents denials, the title refusal and the show-when-ready
+    // are what `buildHardenedWindow` installs on every window this app opens;
+    // a picker built by hand beside it would be the one window without them.
+    expect([...(built?.handlerNames() ?? [])].sort()).toEqual(
+      ['closed', 'page-title-updated', 'ready-to-show', 'will-attach-webview', 'will-navigate'].sort(),
+    )
+    expect(built?.openHandlerSet()).toBe(true)
+    expect(built?.options).toEqual(pickerOptions(pickerPreloadPath('/work/repo/console')))
+    expect(built?.options['webPreferences']).toEqual({
+      ...consoleWebPreferences(),
+      preload: '/work/repo/console/dist/preload/installations.js',
+    })
+  })
+
   it('is opened from the menu item and from nowhere else', async () => {
     const { picker, windows, menu } = pickerOver()
     picker.installMenu()
@@ -388,6 +414,17 @@ describe('the picker’s add', () => {
     const item = items.find((entry) => entry.label === INSTALLATIONS_MENU_LABEL)
     expect(item, INSTALLATIONS_MENU_LABEL).toBeDefined()
     expect(INSTALLATIONS_MENU_LABEL).toBe('Installations…')
+    // Electron's `buildFromTemplate` writes into the template (it sorts it and
+    // assigns `submenu`), so a frozen one throws at startup: nothing in the
+    // value handed to it may be frozen, at any depth.
+    const frozen: string[] = []
+    const walk = (value: unknown, at: string): void => {
+      if (typeof value !== 'object' || value === null) return
+      if (Object.isFrozen(value)) frozen.push(at)
+      for (const [key, child] of Object.entries(value)) walk(child, `${at}.${key}`)
+    }
+    walk(installed, 'template')
+    expect(frozen).toEqual([])
     expect(windows).toHaveLength(0)
     item?.click?.()
     await Promise.resolve()

@@ -84,6 +84,9 @@ import {
   MAX_REPOSITORY_LENGTH,
   MAX_URL_LENGTH,
   NEVER_REACHABLE,
+  NO_ACTIVE_INSTALLATION,
+  REDUCED_REFUSAL,
+  REDUCED_VIEW_OPERATIONS,
   SENDER_REFUSAL,
   assertReachableSurface,
   channelForOperation,
@@ -92,6 +95,7 @@ import {
   isSenderOnDocument,
   isNeverReachable,
   readStoredCompatibility,
+  reducedModeHandlers,
   registerConsoleHandlers,
   startupCompatibility,
   validateArguments,
@@ -121,7 +125,12 @@ import type {
   RendererLike,
 } from '../../src/preload/index'
 import { RENDERER_UNREADABLE, compatibilityFrom } from '../../src/renderer/app'
-import { REDUCED_VIEWS, classifyCliVersion, unreadableCompatibility } from '../../src/shared/version'
+import {
+  REDUCED_VIEWS,
+  classifyCliVersion,
+  hidesView,
+  unreadableCompatibility,
+} from '../../src/shared/version'
 import type { CliCompatibility } from '../../src/shared/version'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
@@ -650,19 +659,22 @@ describe("the allow-list's read-only invariant", () => {
     expect([...driven].sort()).toEqual([...DESIGN_ARGV].sort())
   })
 
-  it('has exactly two operations spawn nothing at all: the link, and the handshake’s answer', () => {
-    // Task 3.3 added the second one, and the number is the claim: this row is
-    // the console's own startup state, and a third operation with no command
-    // would be a surface that answers something no CLI read produced.
+  it('has exactly three operations spawn nothing at all: the link, the handshake’s answer and the active installation', () => {
+    // Task 3.3 added the second one and Task 3.4b the third (`installation.current`,
+    // plan step 6: "added to SHIPPED_SURFACE deliberately"), and the number is the
+    // claim: these rows are the console's own state, and a fourth operation with
+    // no command would be a surface that answers something no CLI read produced.
     const withoutCommand = CONSOLE_OPERATIONS.filter((operation) => operation.command === null)
     expect(withoutCommand.map((operation) => operation.name)).toEqual([
       'startup.compatibility',
+      'installation.current',
       'link.openExternal',
     ])
-    // Both of them, by name, so the test fails naming the row rather than on a
+    // Each of them, by name, so the test fails naming the row rather than on a
     // list that a reader has to diff.
     expect(withoutCommand.map((operation) => operation.method)).toEqual([
       'getCompatibility',
+      'getInstallation',
       'openExternal',
     ])
   })
@@ -923,6 +935,7 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'accounts.inventory': { repo: 'acme/app' },
   'cli.version': {},
   'startup.compatibility': {},
+  'installation.current': {},
   'environment.report': {},
   'link.openExternal': { url: 'https://github.com/acme/app/pull/1' },
 }
@@ -2536,5 +2549,245 @@ describe('the source of the allow-list and the preload', () => {
     expect(main.match(/fugaro:console\//g) ?? []).toHaveLength(1)
     expect(preload.match(/fugaro:console\//g) ?? []).toHaveLength(1)
     expect(IPC_CHANNEL_PREFIX).toBe('fugaro:console/')
+  })
+})
+
+
+// ---------------------------------------------------------------------------
+// Reduced mode, at the handler (desktop-console plan Task 3.4a, step 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * THE_WITHHELD_OPERATIONS is the whole of what a reduced console refuses to
+ * fetch, written out as a literal so that the mapping cannot be checked against
+ * itself. Every entry is one operation of the surface, and the list is the
+ * *answer* to "which channels does step 3 close": `spend.report` is the Spend
+ * screen's one read, `budget.show` is the Caps screen's, and there is no third
+ * because the kill switch has no operation of its own (design C10 -- its fields
+ * travel inside `live.watch`, which a reduced console still draws).
+ */
+const THE_WITHHELD_OPERATIONS: readonly OperationName[] = ['budget.show', 'spend.report']
+
+/** theRest is every operation that is *not* withheld: the non-vacuity guard for
+ * the tests below, which otherwise would pass on a wrapper that refused the
+ * whole surface. */
+const THE_OPEN_OPERATIONS: readonly OperationName[] = CONSOLE_OPERATIONS.map(
+  (operation) => operation.name,
+).filter((name) => name !== 'startup.compatibility' && !THE_WITHHELD_OPERATIONS.includes(name))
+
+/** methodFor is the bridge method an operation is reached by, read from the
+ * preload's own table rather than spelled here: a screen calls `runReport`, and
+ * the operation it drives is `spend.report`. */
+function methodFor(name: OperationName): string {
+  const row = EXPOSED_OPERATIONS.find(([candidate]) => candidate === name)
+  if (row === undefined) throw new Error(`${name} is not on the surface`)
+  return row[1]
+}
+
+/** reasonOf is a reply's refusal sentence, for a test that is asserting the
+ * sentence rather than the shape: `ConsoleReply` is a union, so reading
+ * `reason` is only legal once `ok` is known to be false. */
+function reasonOf(reply: ConsoleReply): string {
+  if (reply.ok) throw new Error(`expected a refusal, got data: ${JSON.stringify(reply.data)}`)
+  return reply.reason
+}
+
+/** argsFor is a well-formed payload as the handler's own argument type: the
+ * registrar validates before it calls a handler, so a test that calls one
+ * directly is handing it what the validator would have. */
+function argsFor(name: OperationName): Parameters<ConsoleHandler>[0] {
+  return WELL_FORMED[name] as Parameters<ConsoleHandler>[0]
+}
+
+/** answeredBy is a source spy: every operation the surface can reach, recording
+ * that it was called and answering an empty document. A wrapper that refuses
+ * *after* calling the source has not refused anything -- the read already
+ * happened -- so "was the source reached" is the assertion, not the reply. */
+function answeredBy() {
+  const reached: string[] = []
+  const handlers = stubHandlers(
+    Object.fromEntries(
+      CONSOLE_OPERATIONS.map((operation) => [
+        operation.name,
+        (() => {
+          reached.push(operation.name)
+          return {}
+        }) as ConsoleHandler,
+      ]),
+    ),
+  )
+  return { reached, handlers }
+}
+
+/** reducedConsole is the surface as `src/main/index.ts` registers it: the whole
+ * allow-list, wrapped by the reduced-mode gate, behind the real registrar and the
+ * real bridge. What a screen would get is what these tests read. */
+function reducedConsole(compatibility: CliCompatibility) {
+  const source = answeredBy()
+  const ipcMain = recordingIpcMain()
+  const handlers = reducedModeHandlers(source.handlers, () => compatibility)
+  registerConsoleHandlers(ipcMain, handlers)
+  const renderer: RendererLike = {
+    async invoke(channel: string, ...args: unknown[]): Promise<unknown> {
+      const listener = ipcMain.listeners.get(channel)
+      if (listener === undefined) throw new Error(`nothing handles ${channel}`)
+      return listener(consoleEvent(), args[0])
+    },
+  }
+  return { bridge: createConsoleBridge(renderer), reached: source.reached }
+}
+
+describe('the views a reduced console withholds, at the handler (rule 4)', () => {
+  it('withholds exactly the spend and caps reads, and names them', () => {
+    // The mapping is closed over the three view ids of the design, and the
+    // operations in it are the two reads a screen makes for a withheld view.
+    expect(Object.keys(REDUCED_VIEW_OPERATIONS).sort()).toEqual(['caps', 'kill', 'spend'])
+    const named = REDUCED_VIEWS.flatMap((view) => REDUCED_VIEW_OPERATIONS[view])
+    expect([...named].sort()).toEqual([...THE_WITHHELD_OPERATIONS].sort())
+    // `kill` is empty on purpose, and that is the assertion rather than a gap:
+    // the kill-switch controls are fields of the live feed (C10), so there is no
+    // operation to withhold and a later task that adds one has to say so here.
+    expect(REDUCED_VIEW_OPERATIONS.kill).toEqual([])
+    // And the live feed is in none of the three lists: a reduced console still
+    // draws its live view, kill-switch fields and all.
+    expect(named).not.toContain('live.watch')
+    for (const view of REDUCED_VIEWS) {
+      expect(REDUCED_VIEW_OPERATIONS[view], `${view} names an operation twice`).toHaveLength(
+        new Set(REDUCED_VIEW_OPERATIONS[view]).size,
+      )
+    }
+  })
+
+  it('refuses a withheld read without reaching the source, and answers its own sentence', async () => {
+    // The compatibility is the one `classifyCliVersion('0.9.0')` builds: mode
+    // `reduced`, every view hidden. It is built rather than hand-written so the
+    // test cannot pass on a shape the handshake never produces.
+    const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
+    for (const name of THE_WITHHELD_OPERATIONS) {
+      const reply = await asCallable(
+        (bridge as unknown as Record<string, unknown>)[methodFor(name)],
+      )(WELL_FORMED[name])
+      expect(reply, name).toEqual({ ok: false, reason: REDUCED_REFUSAL })
+      // The sentence is the console's own and carries nothing of the CLI's: a
+      // refusal that looked like a failed read would send the operator to fix a
+      // project that is not broken.
+      expect(reasonOf(reply)).not.toContain(NO_ACTIVE_INSTALLATION)
+    }
+    // **The point of the wrapper**: neither read reached the source. A gate
+    // applied after `inner` would answer the same sentence and have read the
+    // figures anyway, which is the failure this asserts against.
+    expect(reached).toEqual([])
+  })
+
+  it('lets every other operation through, so a reduced console is still a console', async () => {
+    const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
+    // The non-vacuity half: eleven of the surface's fourteen operations, all of
+    // them reachable in a reduced mode (the handshake is the one the loop skips
+    // and its own test covers; `installation.current`, Task 3.4b, is among the
+    // eleven, because a reduced console's header still names its installation).
+    // A wrapper that refused the whole surface would fail here.
+    expect(THE_OPEN_OPERATIONS.length).toBe(11)
+    expect(THE_OPEN_OPERATIONS).toContain('installation.current')
+    for (const name of THE_OPEN_OPERATIONS) {
+      const reply = await asCallable(
+        (bridge as unknown as Record<string, unknown>)[methodFor(name)],
+      )(WELL_FORMED[name])
+      expect(reply, name).toEqual({ ok: true, data: {} })
+    }
+    // Every open operation reached the source, and no withheld one did.
+    expect([...reached].sort()).toEqual([...THE_OPEN_OPERATIONS].sort())
+    expect(reached).toContain('live.watch')
+    expect(reached).not.toContain('spend.report')
+    expect(reached).not.toContain('budget.show')
+  })
+
+  it('answers the handshake in a reduced mode, because the gate is what the answer is for', async () => {
+    // `startup.compatibility` is the one operation the wrapper does not wrap
+    // (see `reducedModeHandlers`): the renderer asks it first and draws nothing
+    // until it has the answer, so a gate over it would leave a reduced console
+    // unable to learn *which* views it may not draw. It is asserted here rather
+    // than left to the comment, because the exception is load-bearing.
+    const source = answeredBy()
+    const wrapped = reducedModeHandlers(source.handlers, () => REDUCED_HANDSHAKE)
+    expect(wrapped['startup.compatibility']).toBe(source.handlers['startup.compatibility'])
+    expect(wrapped['spend.report']).not.toBe(source.handlers['spend.report'])
+    expect(Object.isFrozen(wrapped)).toBe(true)
+  })
+
+  it('refuses every read in a refused mode, and still answers the handshake', async () => {
+    // Belt-and-braces, and kept deliberately: today a refused console registers
+    // no handler at all (`src/main/index.ts`), so nothing here is reachable. It
+    // is asserted because that is a property of the *wiring*, and a later task
+    // that registered the surface earlier would otherwise open every channel in
+    // a console that may draw nothing.
+    const refused = classifyCliVersion('0.5.9')
+    expect(refused.mode).toBe('refused')
+    const source = answeredBy()
+    const wrapped = reducedModeHandlers(source.handlers, () => refused)
+    for (const operation of CONSOLE_OPERATIONS) {
+      if (operation.name === 'startup.compatibility') continue
+      await expect(wrapped[operation.name]({}), operation.name).rejects.toThrow(REDUCED_REFUSAL)
+    }
+    expect(source.reached).toEqual([])
+  })
+
+  it('reads the mode per call, so a handler cannot answer for a mode the console is not in', async () => {
+    // The reason `current` is a function and not a value: a wrapper built over a
+    // copy of the answer keeps answering whatever the copy said. The store is
+    // mutable here on purpose -- that is the only way to see the difference --
+    // and it is the same staleness `startupCompatibility`'s `read` avoids.
+    let store: CliCompatibility = SUPPORTED_HANDSHAKE
+    const source = answeredBy()
+    const wrapped = reducedModeHandlers(source.handlers, () => store)
+    expect(await wrapped['spend.report'](argsFor('spend.report'))).toEqual({})
+    store = REDUCED_HANDSHAKE
+    await expect(wrapped['spend.report'](argsFor('spend.report'))).rejects.toThrow(REDUCED_REFUSAL)
+    // The source was reached once, by the first call, and not by the second.
+    expect(source.reached).toEqual(['spend.report'])
+  })
+
+  it('refuses only the view that is hidden, not all three', async () => {
+    // A hand-written compatibility with one view hidden: the gate reads
+    // `hidesView`, so a mode that withholds one view withholds one view's read.
+    const oneHidden: CliCompatibility = Object.freeze({
+      ...REDUCED_HANDSHAKE,
+      hidden: Object.freeze(['spend']) as unknown as CliCompatibility['hidden'],
+    })
+    expect(hidesView(oneHidden, 'spend')).toBe(true)
+    expect(hidesView(oneHidden, 'caps')).toBe(false)
+    const source = answeredBy()
+    const wrapped = reducedModeHandlers(source.handlers, () => oneHidden)
+    await expect(wrapped['spend.report'](argsFor('spend.report'))).rejects.toThrow(REDUCED_REFUSAL)
+    expect(await wrapped['budget.show'](argsFor('budget.show'))).toEqual({})
+    expect(source.reached).toEqual(['budget.show'])
+  })
+
+  it('answers every well-formed payload the same withheld sentence', async () => {
+    // The withheld answer is one fixed sentence about the console's *mode* and
+    // nothing about what was sent: no argument of the read appears in it, and
+    // the same payload that reaches the source in an `ok` mode is refused here
+    // with the same words. `spend.report`'s four keys are all optional, so `{}`
+    // is a well-formed payload and gets the same answer as the full one.
+    const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
+    const spend = asCallable((bridge as unknown as Record<string, unknown>)[methodFor('spend.report')])
+    expect(await spend(WELL_FORMED['spend.report'])).toEqual({ ok: false, reason: REDUCED_REFUSAL })
+    expect(await spend({})).toEqual({ ok: false, reason: REDUCED_REFUSAL })
+    expect(await spend(undefined)).toEqual({ ok: false, reason: REDUCED_REFUSAL })
+    expect(reached).toEqual([])
+  })
+
+  it('refuses a malformed payload for being malformed, before the mode is read', async () => {
+    // The order `dispatch` fixes: validate, then hand the handler checked
+    // arguments. So a payload with a key the operation does not take is refused
+    // with the schema's sentence and not the mode's -- which is the honest
+    // answer (nothing was withheld; the payload was wrong), and it is what makes
+    // the gate a gate over *reads* rather than a blanket refusal that would hide
+    // a caller's mistake behind the console's mode.
+    const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
+    const spend = asCallable((bridge as unknown as Record<string, unknown>)[methodFor('spend.report')])
+    const reply = await spend({ ...WELL_FORMED['spend.report'], treasury: 'acme' })
+    expect(reasonOf(reply)).toBe('spend.report takes no treasury')
+    expect(reasonOf(reply)).not.toBe(REDUCED_REFUSAL)
+    expect(reached).toEqual([])
   })
 })

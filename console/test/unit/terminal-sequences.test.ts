@@ -245,8 +245,8 @@ describe('a sequence before a letter is read every way', () => {
   it('strips as a terminal does, and masks only what a reading found', () => {
     expect(stripTerminalSequences(`x${ESC}[Ay`)).toBe('xy')
     expect(stripTerminalSequences(`x${ESC}[1Ay`)).toBe('xy')
-    expect(resolveAmbiguousSequences(`x${ESC}[Ay`)).toEqual({ text: 'xy', masked: false })
-    expect(resolveAmbiguousSequences(`x${ESC}[1Ay`)).toEqual({ text: 'xy', masked: false })
+    expect(resolveAmbiguousSequences(`x${ESC}[Ay`)).toEqual({ text: 'xy', masked: false, sequences: true, credential: false })
+    expect(resolveAmbiguousSequences(`x${ESC}[1Ay`)).toEqual({ text: 'xy', masked: false, sequences: true, credential: false })
   })
 })
 
