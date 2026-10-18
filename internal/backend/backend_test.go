@@ -96,9 +96,11 @@ func TestCloudRunCodecNames(t *testing.T) {
 	}
 }
 
-// ValidateRun is the job-binding check the CLI's checkExecution relies on:
-// a name the run's own service account wrote must be an execution of the
-// run's own job, in the backend's region, and spelled [a-z0-9-].
+// ValidateRun is the job-binding half of the codec's name checks, in the
+// backend's region and spelled [a-z0-9-]. The CLI's checkExecution does not
+// use it -- it binds a name to a run by FUGARO_RUN, because a shared job no
+// longer says which run an execution is (Codec's own doc) -- so this pins
+// the codec's behavior on its own.
 func TestCloudRunCodecValidateRun(t *testing.T) {
 	const job = "fugaro-acme-app-web"
 	in := "projects/my-proj/locations/us-east5/jobs/" + job + "/executions/" + job + "-x7k2p"

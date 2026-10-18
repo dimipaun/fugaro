@@ -94,7 +94,7 @@ func (batchCodec) On(getenv func(string) string) bool {
 // sees come from bucket objects a run's own service account can write, so
 // without this check a run could point the operator's cancel or logs at any
 // job in the project. It binds no job: a caller that knows the run binds it
-// with ValidateRun.
+// by the run's own FUGARO_RUN, not by the job (Codec's ValidateRun).
 func (batchCodec) ParseInRegion(name, region string) (ExecID, error) {
 	id, ok := BatchCodec().Parse(name)
 	if !ok {
@@ -115,6 +115,9 @@ func (batchCodec) ParseInRegion(name, region string) (ExecID, error) {
 // Batch job id is derived per run -- fugaro-<slug>-<workflow>-<12 hex>
 // (design §2.4) -- so the caller passes the id it launched. An empty job is
 // refused, not skipped, for the same reason the Cloud Run codec refuses one.
+//
+// No production caller, on this codec either: the CLI binds a name to a run
+// by FUGARO_RUN (Codec's own doc).
 func (c batchCodec) ValidateRun(name, region, job string) (ExecID, error) {
 	if job == "" {
 		return ExecID{}, fmt.Errorf("job %s is not bound to a run: the run's job id is required", name)

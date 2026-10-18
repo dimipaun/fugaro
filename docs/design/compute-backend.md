@@ -1193,9 +1193,25 @@ into the job env (it is known before `jobs.create` returns, because Fugaro
 chooses the id, §2.4). That value is **launcher-forgeable**, exactly like
 `FUGARO_RUN`, so it is a hint — good enough to record, to show and to compare
 against the backend's own answer, never evidence to act on
-(`backend.Execution.Run`'s comment is the same rule). The backend's
-`Execution(name)` is what a caller with a name to check should trust, and
-`CheckRunExecution`'s job-binding rule carries over.
+(`backend.Execution.Run`'s comment is the same rule, and the same limit: it
+says which launch an execution is, never who asked for it). The backend's
+`Execution(name)` is what a caller with a name to check should trust.
+
+**What carries over is the correlation, not the job binding.**
+`CheckRunExecution` refuses an execution whose `FUGARO_RUN` is not the run's
+own `<slug>/<run id>` (`internal/backend/gcp/run.go`), and it is what the CLI's
+`checkExecution` applies to a name read out of the run's bucket objects. The
+job it used to bind the execution to is gone with shared jobs: one project job
+serves every repository admitted to a profile, so an execution's job says
+nothing about which run it is (§4.1, plan task 3.4 step 2), and on a shared job
+`FUGARO_RUN` is the only thing that tells two runs of one job apart. The half
+that makes it usable is the asymmetry: the run's own service account can write
+its own bucket objects but cannot set another execution's environment — and the
+half that bounds it is that whoever may start an execution of the job may set
+the variable. `Codec.ValidateRun`'s job binding is therefore not the rule to
+reach for here: it has no production caller for that reason, and a Task 8
+call site takes the selected backend's `ParseInRegion` (the name's shape and
+region) plus this correlation, not a job binding.
 
 ## 3. Security
 
