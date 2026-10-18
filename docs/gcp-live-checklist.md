@@ -3973,7 +3973,7 @@ git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
 # The step's variables: fill the two SANDBOX_* values in once (read-only
 # lines below), every one ${VAR:?}-guarded.
 SANDBOX_BUCKET=${SANDBOX_BUCKET:?the runs bucket the local config names}
-SANDBOX_JOB=${SANDBOX_JOB:?the job the steps below execute: step 2's launch.json names it}
+SANDBOX_JOB=${SANDBOX_JOB:?the job the steps below execute: step 3 reads it off launch.json}
 CHK60=/tmp/chk60; mkdir -p "$CHK60"; chmod 700 "$CHK60"
 ```
 
