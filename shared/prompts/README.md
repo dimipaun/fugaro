@@ -170,7 +170,7 @@ prompt is re-validated by that validator and the two must not disagree about wha
 | `invalid-ttl` | the TTL is outside P1.1's `MIN_WINDOW_MS`..`MAX_PROMPT_TTL_MS` |
 | `invalid-window` | the command window is outside P1.1's bounds |
 | `invalid-max-pending` | the cap is outside 1..`MAX_MAX_PENDING` (1024) |
-| `invalid-future-tolerance` | the future tolerance is negative or absurd |
+| `invalid-future-tolerance` | the future tolerance is outside P1.1's `0`..`MAX_FUTURE_TOLERANCE_MS` (24 hours), the bound that decides how far a prompt's `at` may lead the clock |
 | `invalid-queue` | a handed-back queue has a field that is missing, mistyped or out of bounds |
 | `invalid-prompts` | the prompts are not a list, or hold more entries than the cap allows |
 | `invalid-entry` | an entry is malformed, its prompt fails the schema, or its prompt is not a prompt |
@@ -217,7 +217,7 @@ function of the prompt's `at`, the TTL and the consumer's clock", written agains
 that never expires anything and failing on it. It is `mutation-proof.sh`'s first guard, so it stays
 re-runnable rather than living only in a pull-request transcript.
 
-`mutation-proof.sh` plants 46 one-line bugs in `index.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 49 one-line bugs in `index.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. It
@@ -225,11 +225,18 @@ runs the module's own tests rather than the package's `npm test` because of a pr
 unrelated failure in `shared/url` on the node line the package pins; the script's header says why,
 and the task's pull request reports it.
 
-One guard it found was not one: `isDue` returned false explicitly for an entry at reminder stage 0,
-but the fall-through already answers false for every announcement a queue can hold — at stage 0 the
-reminder time is `at - 23h`, and an announcement is made at the queue's `now`, never that early. A
-line no mutation can tell apart from its neighbour is a line no test defends, so it is gone and the
-reasoning is in its place. That is the fix the harness exists to force.
+One guard the first version of the harness could not kill, and what that turned out to mean. `isDue`
+returned false explicitly for an entry at reminder stage 0, and no mutation of that line changed any
+answer: at stage 0 the reminder time is `at - 23h`, and an announcement is made at the queue's
+`now`, so the fall-through looked like it answered false on its own. It does not. A prompt's `at`
+may lead the clock by up to the future tolerance (P1.1's 24 hours, and a hand-built queue may carry
+any `announcedAt` the reader accepts), so for an `at` between 23 and 24 hours ahead the stage-0
+reminder time is still in the future — and without the branch the question was reported due at
+every pause, read out again each time, and kept interrupting under `widen`. The branch is back,
+with the reason that holds written beside it, and the test that tells it apart is in
+(`announce`, `pending` and `evaluateInterrupt` all asserted on it). A guard whose removal a test
+cannot see is a guard no test defends — here it was the *premise* for removing it that was wrong,
+which is the other thing the harness exists to force.
 
 No test value here is a secret, and none is secret-shaped: the fixtures' `mac` is 64 `a`s, which is
 a shape, not a key.
