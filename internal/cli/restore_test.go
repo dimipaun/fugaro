@@ -852,6 +852,32 @@ func TestRestoreGCPProjectLine(t *testing.T) {
 		}
 	})
 
+	// A tag or an anchor before the value is YAML this editor does not
+	// understand: it would replace the "!!str" or "&a" word and keep the old
+	// ID behind it, writing a line that means something else. Only the
+	// read-back check refuses it. Mutation-checked: removing that check
+	// fails these.
+	t.Run("a tagged or anchored value is refused by the read-back, not rewritten", func(t *testing.T) {
+		for name, value := range map[string]string{
+			"tag":    "!!str " + initProject,
+			"anchor": "&a " + initProject,
+		} {
+			t.Run(name, func(t *testing.T) {
+				doc := "version: 1\nproject: " + initProjectName + "\ngcp_project: " + value + "\n" + yamlRest
+				out, changed, err := restoreGCPProjectLine([]byte(doc), initProject, restoreNewProj)
+				if err == nil {
+					t.Fatalf("a %s before the value was rewritten:\n%s", name, out)
+				}
+				if changed || out != nil {
+					t.Errorf("a refused edit returned bytes: %q", out)
+				}
+				if !strings.Contains(err.Error(), "would not read back as intended") {
+					t.Errorf("not refused by the read-back: %v", err)
+				}
+			})
+		}
+	})
+
 	t.Run("the no-op is the file already naming the new project", func(t *testing.T) {
 		moved := strings.Replace(third, "someone-elses-99", restoreNewProj, 1)
 		out, changed, err := restoreGCPProjectLine([]byte(moved), initProject, restoreNewProj)
@@ -1509,6 +1535,16 @@ func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "is back as it was") {
 				t.Errorf("the refusal says the config was put back:\n%v", err)
+			}
+			// #588: a budget CAN be added to an existing project, with
+			// managed flag, and the refusal must say so. Telling the owner it
+			// cannot, and to delete the project, is false and destructive (the
+			// ID stays reserved ~30 days); docs/gcp-setup.md says the same.
+			if want := "fugaro managed flag " + newProj + " --budget N --budget-currency CCC"; !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not give the way to add a budget %q:\n%v", want, err)
+			}
+			if strings.Contains(err.Error(), "cannot add one") {
+				t.Errorf("the refusal says a budget cannot be added:\n%v", err)
 			}
 			if len(r.crm.Creates()) != 1 {
 				t.Errorf("%d creation(s), want 1", len(r.crm.Creates()))

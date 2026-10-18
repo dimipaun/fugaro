@@ -1312,6 +1312,11 @@ func TestInstallationServiceAccountGrantsNameTheirAccount(t *testing.T) {
 			}
 			n++
 			id := firstAttr(blk.body, "service_account_id")
+			// Only deployer.tf grants on the deployer (the token-creator
+			// rule); another file's grant naming it is actAs on the deployer.
+			if m := literalSA.FindStringSubmatch(id); m != nil && m[1] == "fugaro-deployer" && !strings.HasSuffix(path, "/deployer.tf") {
+				t.Errorf("%s: %s grants on the deployer account outside deployer.tf (%q)", path, blk.name, id)
+			}
 			if !literalSA.MatchString(id) {
 				t.Errorf("%s: %s names its account as %q: a service-account grant in the installation module must name its account as a literal path, because this module creates the deployer account and cover.onDeployer refuses a computed account beside it — the apply then asks its own confirmation and refuses the module's own grant", path, blk.name, id)
 			}
