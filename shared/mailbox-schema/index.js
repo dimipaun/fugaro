@@ -78,7 +78,10 @@
 //
 // What the tag covers is **every field except `mac` itself**, with `acked`
 // excluded because the phone writes it after the fact on an outbox message,
-// and the canonical serialisation is `canonicalBytes`' — sorted keys, no
+// plus the DIRECTION (inbox, outbox or heartbeat) the reader supplies, so a tag
+// is valid in one direction only (owner ruling 2026-10-18, one field beyond
+// §3.5's list; see DIRECTIONS), and the canonical serialisation is
+// `canonicalBytes`' — sorted keys, no
 // insignificant whitespace, absent fields omitted, JSON's own escaping only.
 // The Go consumer reimplements that serialisation, so the two ends are held
 // together by a vectors file (`vectors.json`) rather than by good intentions,
@@ -240,6 +243,22 @@ export const KINDS = Object.freeze(['message', 'prompt', 'answer', 'action']);
  * here at all.
  */
 export const ACTIONS = Object.freeze(['cancel', 'merge', 'confirm']);
+
+/**
+ * The directions a tag is made for, one per node a signed record lives in:
+ * `inbox` (the phone signs, the consumer reads), `outbox` (the consumer signs,
+ * the phone reads) and `heartbeat` (the consumer's liveness record). One
+ * per-pairing key signs all three, so the direction is inside the covered bytes
+ * — `canonicalBytes` adds it as the field `direction` — and a tag made for one
+ * node does not verify in another: a message reflected from the inbox into the
+ * outbox, or back, fails (owner ruling of 2026-10-18 on PR #579, one field
+ * beyond §3.5's list). It is NOT a stored field: the reader supplies it from
+ * the node it read the record from, so the writer never chooses it.
+ */
+export const DIRECTIONS = Object.freeze(['inbox', 'outbox', 'heartbeat']);
+
+/** The name the direction is covered under, which no stored record may carry. */
+const DIRECTION_FIELD = 'direction';
 
 /** The exact fields a message has; any other field is refused. */
 export const FIELDS = Object.freeze([
@@ -545,18 +564,37 @@ export function validateHeartbeat(value) {
  * and the Go consumer's bytewise order — not JavaScript's default UTF-16 order
  * (see `compareKeys`).
  *
+ * The **direction** is covered too, as the field `direction` (one of
+ * DIRECTIONS), by the owner's ruling of 2026-10-18 — one field beyond §3.5's
+ * list. It is an argument, not a field of the record: the reader passes the
+ * node it read from, so a tag made for the outbox does not verify as inbox.
+ * A record that carries a `direction` of its own is refused by throwing.
+ *
  * @param {object} record a validated message or heartbeat
+ * @param {string} direction one of DIRECTIONS: the node the record is (to be) stored in
  * @returns {string} the bytes, as a string whose UTF-8 encoding is what is signed
  */
-export function canonicalBytes(record) {
+export function canonicalBytes(record, direction) {
   if (!isPlainObject(record)) {
     throw new TypeError('canonicalBytes: a record must be a plain object');
+  }
+  if (!DIRECTIONS.includes(direction)) {
+    throw new TypeError('canonicalBytes: the direction must be one of inbox, outbox, heartbeat');
+  }
+  if (Object.hasOwn(record, DIRECTION_FIELD)) {
+    throw new TypeError('canonicalBytes: a record may not carry its own direction; the reader supplies it');
   }
   // `mac` is the tag itself, and `acked` is the phone's write after the tag was
   // made (§3.5). Every other field is covered, including one a later protocol
   // version adds: absent fields are omitted, so an unknown field signs as itself
-  // rather than being silently outside the bytes.
-  return serialiseObject(record, (key) => key !== 'mac' && key !== 'acked');
+  // rather than being silently outside the bytes. The copy has no prototype, so
+  // an own `__proto__` key stays a field.
+  const covered = Object.create(null);
+  for (const key of Object.keys(record)) {
+    if (key !== 'mac' && key !== 'acked') covered[key] = record[key];
+  }
+  covered[DIRECTION_FIELD] = direction;
+  return serialiseObject(covered);
 }
 
 
@@ -948,23 +986,23 @@ function serialiseValue(value) {
       return String(value);
     case 'object':
       if (Array.isArray(value)) return `[${value.map(serialiseValue).join(',')}]`;
-      return serialiseObject(value, () => true);
+      return serialiseObject(value);
     default:
       throw new TypeError(`canonicalBytes: a ${typeof value} is not a value a message carries`);
   }
 }
 
 // serialiseObject writes a plain object's canonical bytes: its own enumerable
-// keys that `keep` admits, sorted by code point, each written as a JSON string.
+// keys, sorted by code point, each written as a JSON string.
 // An object that is not plain data — a Date, a Map, a class instance — has a
 // shape decided by its methods rather than its fields, and is refused.
-function serialiseObject(value, keep) {
+function serialiseObject(value) {
   const proto = Object.getPrototypeOf(value);
   if (proto !== Object.prototype && proto !== null) {
     throw new TypeError('canonicalBytes: only plain objects have a canonical form');
   }
   const members = [];
-  for (const key of Object.keys(value).filter(keep).sort(compareKeys)) {
+  for (const key of Object.keys(value).sort(compareKeys)) {
     members.push(`${JSON.stringify(canonicalString(key, 'a key'))}:${serialiseValue(value[key])}`);
   }
   return `{${members.join(',')}}`;

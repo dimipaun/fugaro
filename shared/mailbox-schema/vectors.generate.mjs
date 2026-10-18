@@ -36,8 +36,18 @@ const heartbeat = (over = {}) => ({ at: AT, boot: 'boot-01', agents: [{ id: 'orc
 // tag is computed over the canonical bytes and written into the record, which
 // is exactly what the phone does before writing to the outbox and what the
 // consumer does before comparing.
-function signed(m) {
-  const mac = macOf(m, KEY);
+//
+// The direction is inside the bytes (owner ruling 2026-10-18): a heartbeat is
+// signed for `heartbeat`, a prompt — the consumer's question — for `outbox`,
+// and everything else here is the phone's, for `inbox`. Every case records its
+// direction, and a reader must pass the node it READ from, never this field.
+function dirOf(m) {
+  if (Object.hasOwn(m, 'boot')) return 'heartbeat';
+  return m.kind === 'prompt' ? 'outbox' : 'inbox';
+}
+
+function signed(m, direction = dirOf(m)) {
+  const mac = macOf(m, KEY, direction);
   return { ...m, mac };
 }
 
@@ -48,13 +58,14 @@ function signed(m) {
 // `mac` is always the tag the canonical bytes PRODUCE, never the one the record
 // carries: for a verified case the two are the same string, and for a refused
 // case they differ by construction — which is what the case is for.
-function tampered(name, why, original, changed) {
-  const mac = macOf(changed, KEY);
+function tampered(name, why, original, changed, direction = dirOf(changed)) {
+  const mac = macOf(changed, KEY, direction);
   return {
     name,
     why,
+    direction,
     message: { ...changed, mac: original.mac },
-    canonical: canonicalBytes(changed),
+    canonical: canonicalBytes(changed, direction),
     mac,
     verdict: 'refused',
   };
@@ -62,12 +73,14 @@ function tampered(name, why, original, changed) {
 
 const cases = [];
 function verified(name, why, record) {
-  const signedRecord = signed(record);
+  const direction = dirOf(record);
+  const signedRecord = signed(record, direction);
   cases.push({
     name,
     why,
+    direction,
     message: signedRecord,
-    canonical: canonicalBytes(signedRecord),
+    canonical: canonicalBytes(signedRecord, direction),
     mac: signedRecord.mac,
     verdict: 'verified',
   });
@@ -183,6 +196,27 @@ cases.push(
   tampered('verb swapped', 'a cancel relabelled as a merge under its own tag', cancelOne, { ...cancelOne, action: { ...cancelOne.action, verb: 'merge' } }),
 );
 
+// --- the direction: a tag made for one node does not verify in another ---
+// A reflected message keeps every byte of its record and its tag, and only the
+// node it is read from changes; `mac` is the tag the bytes PRODUCE for the
+// reading direction, which differs from the one the record carries.
+const answerIn = signed(message({ kind: 'answer', reply_to: 'm-0000', text: 'merge it' }), 'inbox');
+const promptOut = signed(message({ kind: 'prompt', options: ['merge it', 'leave it'], text: 'approve the merge?' }), 'outbox');
+cases.push(tampered('inbox tag read as outbox', 'a phone-signed answer copied into the outbox by a minted token: the tag was made for the inbox', answerIn, answerIn, 'outbox'));
+cases.push(tampered('outbox tag read as inbox', 'a consumer-signed message copied into the inbox: "approve the merge?" answered with the consumer\'s own words', promptOut, promptOut, 'inbox'));
+cases.push(tampered('heartbeat tag read as outbox', 'a signed heartbeat is not an outbox message', beat, beat, 'outbox'));
+
+// direction_pairs: one record, two directions, and nothing else different —
+// so the pair proves the direction alone changes the bytes and the tag.
+const direction_pairs = [];
+function pair(name, record, a, b) {
+  const side = (direction) => ({ direction, message: record, canonical: canonicalBytes(record, direction), mac: macOf(record, KEY, direction) });
+  direction_pairs.push({ name, a: side(a), b: side(b) });
+}
+pair('plain message, inbox and outbox', message(), 'inbox', 'outbox');
+pair('answer, inbox and outbox', message({ kind: 'answer', reply_to: 'm-0000', text: 'merge it' }), 'inbox', 'outbox');
+pair('heartbeat, heartbeat and outbox', heartbeat(), 'heartbeat', 'outbox');
+
 // The schema's refusals, as data: what both ends must REFUSE before a tag is
 // even compared. Each case is a value, the record it is judged as, and the
 // code and field the JavaScript validator answers with; the generator asserts
@@ -222,15 +256,19 @@ refused('__proto__ field', 'a parsed __proto__ is an unknown field, never a prot
 refused('action on a plain message', 'a kind carries its own fields and no others', 'message', message({ action: actionCancel }));
 refused('answer without reply_to', 'an answer names the prompt it answers', 'message', message({ kind: 'answer' }));
 refused('float at', 'a time is an integer millisecond', 'message', message({ at: AT + 0.5 }));
+refused('stored direction', 'the direction is the reader\'s to supply, never a field the writer stores', 'message', message({ direction: 'inbox' }));
+refused('stored direction on a heartbeat', 'a heartbeat cannot claim its own direction either', 'heartbeat', heartbeat({ direction: 'heartbeat' }));
 const file = {
   format: 'fugaro mailbox message tag vectors',
-  algorithm: 'HMAC-SHA-256 over canonicalBytes(message), lowercase hex (mobile plan §3.5, D171)',
+  algorithm: 'HMAC-SHA-256 over canonicalBytes(message, direction), lowercase hex (mobile plan §3.5, D171; direction by the owner ruling of 2026-10-18)',
+  direction: 'the node the record is stored in (inbox, outbox or heartbeat), covered as the field "direction"; it is never stored in the record, and a reader passes the node it read from',
   canonical: 'JSON, keys sorted by code point at every depth, no insignificant whitespace, absent fields omitted, JSON\'s own escaping only, integers only',
-  covered: 'every field except mac and acked',
+  covered: 'every field except mac and acked, plus the direction',
   key: KEY,
   key_note: 'a readable placeholder, not a credential: the real key is the per-pairing key of D171 and never appears in this repository',
   generated_by: 'node shared/mailbox-schema/vectors.generate.mjs',
   cases,
+  direction_pairs,
   refusals,
 };
 

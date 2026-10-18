@@ -39,13 +39,15 @@ import { canonicalBytes } from './index.js';
  * @param {string} key the per-pairing key (D171): the phone's from secure
  *   storage, the consumer's from the OS keychain. It is a string of UTF-8
  *   bytes; passing anything else is a programming error and throws.
+ * @param {string} direction one of DIRECTIONS (`inbox`, `outbox`, `heartbeat`):
+ *   the node the record is written to, which is inside the tagged bytes
  * @returns {string} MAC_MAX lowercase hex characters
  */
-export function macOf(record, key) {
+export function macOf(record, key, direction) {
   if (typeof key !== 'string') {
     throw new TypeError('macOf: the key must be a string');
   }
-  const bytes = Buffer.from(canonicalBytes(record), 'utf8');
+  const bytes = Buffer.from(canonicalBytes(record, direction), 'utf8');
   return createHmac('sha256', Buffer.from(key, 'utf8')).update(bytes).digest('hex');
 }
 
@@ -61,9 +63,11 @@ export function macOf(record, key) {
  *
  * @param {unknown} record a message or heartbeat as it arrived
  * @param {string} key the per-pairing key
+ * @param {string} direction the node the record was READ from — never a value
+ *   the record supplies: a tag made for another node does not verify here
  * @returns {boolean} true only when the record's `mac` is its own tag under key
  */
-export function verifyMac(record, key) {
+export function verifyMac(record, key, direction) {
   if (typeof key !== 'string') return false;
   // A value that is not a plain object carries no tag to compare: the object
   // test is canonicalBytes', one call down, and it throws — which is the same
@@ -73,7 +77,7 @@ export function verifyMac(record, key) {
   }
   let expected;
   try {
-    expected = macOf(record, key);
+    expected = macOf(record, key, direction);
   } catch {
     return false;
   }

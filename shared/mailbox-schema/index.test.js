@@ -42,6 +42,7 @@ import test from 'node:test';
 
 import {
   ACTIONS,
+  DIRECTIONS,
   AGENTS_MAX,
   AGENT_MAX,
   AGENT_NAME_MAX,
@@ -710,44 +711,44 @@ test('canonicalBytes is the one serialisation the tag covers', () => {
   // shapes the two ends share, because this string IS the protocol: the Go
   // consumer reimplements it, and one stray space is a MAC that does not verify.
   assert.equal(
-    canonicalBytes(good()),
-    '{"at":1700000000000,"id":"m-0001","sender":"phone","text":"run 42 finished"}',
+    canonicalBytes(good(), 'inbox'),
+    '{"at":1700000000000,"direction":"inbox","id":"m-0001","sender":"phone","text":"run 42 finished"}',
   );
   assert.equal(
-    canonicalBytes(good({ mac: 'a'.repeat(MAC_MAX), acked: true })),
-    canonicalBytes(good()),
+    canonicalBytes(good({ mac: 'a'.repeat(MAC_MAX), acked: true }), 'inbox'),
+    canonicalBytes(good(), 'inbox'),
     'neither the tag nor the ack changes the bytes',
   );
   // Absent fields are omitted, never null; present ones are included whether or
   // not this module happens to know them, because §3.5 covers "a field added
   // later" by default.
-  assert.equal(canonicalBytes(good({ kind: 'prompt' })), '{"at":1700000000000,"id":"m-0001","kind":"prompt","sender":"phone","text":"run 42 finished"}');
+  assert.equal(canonicalBytes(good({ kind: 'prompt' }), 'inbox'), '{"at":1700000000000,"direction":"inbox","id":"m-0001","kind":"prompt","sender":"phone","text":"run 42 finished"}');
   // Nested objects are sorted too, at every depth: the action record, its
   // target and its confirmation are inside the tagged bytes (§3.5).
   assert.equal(
-    canonicalBytes(withAction({ verb: 'merge' })),
+    canonicalBytes(withAction({ verb: 'merge' }), 'inbox'),
     '{"action":{"confirmation":{"at":1700000000000,"id":"c-0001"},"head_sha":"' +
       'a'.repeat(40) +
       '","id":"a-0001","target":{"pr":532,"repo":"dimipaun/fugaro"},"verb":"merge"},' +
-      '"agent":"orchestrator","at":1700000000000,"id":"m-0001","kind":"action",' +
+      '"agent":"orchestrator","at":1700000000000,"direction":"inbox","id":"m-0001","kind":"action",' +
       '"sender":"phone","text":"cancel the run"}',
   );
   assert.equal(
-    canonicalBytes(good({ kind: 'prompt', options: ['merge it', 'leave it'] })),
-    '{"at":1700000000000,"id":"m-0001","kind":"prompt","options":["merge it","leave it"],' +
+    canonicalBytes(good({ kind: 'prompt', options: ['merge it', 'leave it'] }), 'inbox'),
+    '{"at":1700000000000,"direction":"inbox","id":"m-0001","kind":"prompt","options":["merge it","leave it"],' +
       '"sender":"phone","text":"run 42 finished"}',
   );
   // An array keeps its order: an option's position is what "option two" means.
   assert.equal(
-    canonicalBytes(good({ kind: 'prompt', options: ['b', 'a'] })),
-    '{"at":1700000000000,"id":"m-0001","kind":"prompt","options":["b","a"],' +
+    canonicalBytes(good({ kind: 'prompt', options: ['b', 'a'] }), 'inbox'),
+    '{"at":1700000000000,"direction":"inbox","id":"m-0001","kind":"prompt","options":["b","a"],' +
       '"sender":"phone","text":"run 42 finished"}',
   );
   // The key order of the value handed in is not part of the message.
   const reordered = { text: 'run 42 finished', sender: 'phone', id: 'm-0001', at: 1_700_000_000_000, mac: FAKE_MAC };
-  assert.equal(canonicalBytes(reordered), canonicalBytes(good()));
+  assert.equal(canonicalBytes(reordered, 'inbox'), canonicalBytes(good(), 'inbox'));
   // Strings are UTF-8 with JSON's escaping only: an emoji stays itself.
-  assert.equal(canonicalBytes(good({ text: 'x😀y' })), '{"at":1700000000000,"id":"m-0001","sender":"phone","text":"x😀y"}');
+  assert.equal(canonicalBytes(good({ text: 'x😀y' }), 'inbox'), '{"at":1700000000000,"direction":"inbox","id":"m-0001","sender":"phone","text":"x😀y"}');
 });
 
 test('canonicalBytes refuses a value JSON cannot carry, rather than dropping it', () => {
@@ -756,8 +757,8 @@ test('canonicalBytes refuses a value JSON cannot carry, rather than dropping it'
   // remove. The schema never produces these values (an explicit undefined is
   // `wrong-type`, and a null is never written), so failing loudly here cannot
   // surprise a caller that validated first.
-  assert.throws(() => canonicalBytes({ ...good(), extra: undefined }), TypeError);
-  assert.throws(() => canonicalBytes({ ...good(), extra: null }), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), extra: undefined }, 'inbox'), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), extra: null }, 'inbox'), TypeError);
   // And it says WHICH failure it is, not merely that something failed: an
   // absent-or-null field has no canonical form because omitting is not writing
   // null, and that reason is the module's own. (The reason is asserted because
@@ -765,23 +766,23 @@ test('canonicalBytes refuses a value JSON cannot carry, rather than dropping it'
   // a TypeError from somewhere else entirely if this branch were dropped, and
   // the difference between the two — one says why, the other accuses the
   // caller's object of not being an object — is the whole of the refusal.)
-  assert.throws(() => canonicalBytes({ ...good(), extra: null }), /absent fields are omitted/);
-  assert.throws(() => canonicalBytes({ ...good(), extra: undefined }), /absent fields are omitted/);
-  assert.throws(() => canonicalBytes(good({ at: undefined })), TypeError);
-  assert.throws(() => canonicalBytes(null), TypeError);
-  assert.throws(() => canonicalBytes('a message'), TypeError);
-  assert.throws(() => canonicalBytes([]), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), extra: null }, 'inbox'), /absent fields are omitted/);
+  assert.throws(() => canonicalBytes({ ...good(), extra: undefined }, 'inbox'), /absent fields are omitted/);
+  assert.throws(() => canonicalBytes(good({ at: undefined }), 'inbox'), TypeError);
+  assert.throws(() => canonicalBytes(null, 'inbox'), TypeError);
+  assert.throws(() => canonicalBytes('a message', 'inbox'), TypeError);
+  assert.throws(() => canonicalBytes([], 'inbox'), TypeError);
   // And a number that is not an integer, for the reason that has nothing to do
   // with this module's taste: Go prints 1e-07 where JavaScript prints 1e-7
   // for the same double, so a float inside a signed record is a tag that
   // verifies on one end and not the other. Every number this schema accepts is
   // an integer (`at`, a confirmation's `at`, a pull request number), so nothing
   // valid is refused here.
-  assert.throws(() => canonicalBytes(good({ at: 1.5 })), TypeError);
-  assert.throws(() => canonicalBytes(good({ at: Number.NaN })), TypeError);
-  assert.throws(() => canonicalBytes(good({ at: Number.POSITIVE_INFINITY })), TypeError);
+  assert.throws(() => canonicalBytes(good({ at: 1.5 }), 'inbox'), TypeError);
+  assert.throws(() => canonicalBytes(good({ at: Number.NaN }), 'inbox'), TypeError);
+  assert.throws(() => canonicalBytes(good({ at: Number.POSITIVE_INFINITY }), 'inbox'), TypeError);
   // A nested one too: the walk is at every depth.
-  assert.throws(() => canonicalBytes(withAction({ target: { repo: 'a/b', pr: 1.5 } })), TypeError);
+  assert.throws(() => canonicalBytes(withAction({ target: { repo: 'a/b', pr: 1.5 } }), 'inbox'), TypeError);
 });
 
 test('keys are ordered by code point, which is not UTF-16 code-unit order', () => {
@@ -797,15 +798,15 @@ test('keys are ordered by code point, which is not UTF-16 code-unit order', () =
   // the vectors rather than left to the reader.
   const astral = '😀'; // U+1F600: encoded as the surrogate pair D83D DE00
   const bmp = '￿'; // the last BMP code point: U+FFFF < U+1F600, but 0xFFFF > 0xD83D
-  assert.equal(canonicalBytes({ [astral]: 1, [bmp]: 2 }), `{"${bmp}":2,"${astral}":1}`);
+  assert.equal(canonicalBytes({ [astral]: 1, [bmp]: 2 }, 'inbox'), `{"direction":"inbox","${bmp}":2,"${astral}":1}`);
   assert.equal(
-    canonicalBytes({ [bmp]: 2, [astral]: 1 }),
-    `{"${bmp}":2,"${astral}":1}`,
+    canonicalBytes({ [bmp]: 2, [astral]: 1 }, 'inbox'),
+    `{"direction":"inbox","${bmp}":2,"${astral}":1}`,
     'the caller\'s order is not the message\'s',
   );
   // A non-ASCII key that is not astral is unaffected: for the BMP, code-unit
   // order IS code-point order, which is why the hazard is this narrow.
-  assert.equal(canonicalBytes({ é: 1, a: 2 }), '{"a":2,"é":1}');
+  assert.equal(canonicalBytes({ é: 1, a: 2 }, 'inbox'), '{"a":2,"direction":"inbox","é":1}');
 });
 
 test('a string the two encoders spell differently has no canonical form', () => {
@@ -817,19 +818,19 @@ test('a string the two encoders spell differently has no canonical form', () => 
   // record, no canonical form — so the call throws, at every depth, for a key
   // exactly as for a value.
   for (const key of ['x\ud800y', ' ', ' ']) {
-    assert.throws(() => canonicalBytes({ ...good(), [key]: 1 }), TypeError, `key ${JSON.stringify(key)}`);
+    assert.throws(() => canonicalBytes({ ...good(), [key]: 1 }, 'inbox'), TypeError, `key ${JSON.stringify(key)}`);
   }
   for (const value of ['x\ud800y', 'x y', 'x y']) {
-    assert.throws(() => canonicalBytes(good({ text: value })), TypeError, `text ${JSON.stringify(value)}`);
+    assert.throws(() => canonicalBytes(good({ text: value }), 'inbox'), TypeError, `text ${JSON.stringify(value)}`);
   }
   assert.throws(
-    () => canonicalBytes(withAction({ target: { repo: 'a/\ud800', pr: 1 } })),
+    () => canonicalBytes(withAction({ target: { repo: 'a/\ud800', pr: 1 } }), 'inbox'),
     TypeError,
     'the walk is at every depth',
   );
   // And what it does NOT refuse: an astral character, a non-ASCII letter and the
   // characters JSON escapes identically to Go all have one canonical form.
-  assert.equal(canonicalBytes(good({ text: 'x😀é y' })), '{"at":1700000000000,"id":"m-0001","sender":"phone","text":"x😀é y"}');
+  assert.equal(canonicalBytes(good({ text: 'x😀é y' }), 'inbox'), '{"at":1700000000000,"direction":"inbox","id":"m-0001","sender":"phone","text":"x😀é y"}');
 });
 
 test('the entry point imports nothing, so the phone can load it', () => {
@@ -856,17 +857,17 @@ const TEST_KEY = ['not', 'a', 'secret', 'test', 'key', '0001'].join('-');
 
 test('a tag verifies over exactly the covered fields, and a swap fails', () => {
   const message = good();
-  const mac = macOf(message, TEST_KEY);
-  assert.equal(mac, macOf(good(), TEST_KEY), 'the tag is a function of the value alone');
-  assert.equal(verifyMac({ ...message, mac }, TEST_KEY), true);
-  assert.equal(verifyMac({ ...message, mac }, `${TEST_KEY}-other`), false, 'a different key does not verify');
-  assert.equal(verifyMac({ ...message, mac }, 'not-a-secret-test-key-0002'), false);
-  assert.equal(verifyMac(message, TEST_KEY), false, 'an absent tag does not verify');
-  assert.equal(verifyMac(null, TEST_KEY), false);
-  assert.equal(verifyMac({ ...message, mac: 'nope' }, TEST_KEY), false, 'a malformed tag does not verify');
+  const mac = macOf(message, TEST_KEY, 'inbox');
+  assert.equal(mac, macOf(good(), TEST_KEY, 'inbox'), 'the tag is a function of the value alone');
+  assert.equal(verifyMac({ ...message, mac }, TEST_KEY, 'inbox'), true);
+  assert.equal(verifyMac({ ...message, mac }, `${TEST_KEY}-other`, 'inbox'), false, 'a different key does not verify');
+  assert.equal(verifyMac({ ...message, mac }, 'not-a-secret-test-key-0002', 'inbox'), false);
+  assert.equal(verifyMac(message, TEST_KEY, 'inbox'), false, 'an absent tag does not verify');
+  assert.equal(verifyMac(null, TEST_KEY, 'inbox'), false);
+  assert.equal(verifyMac({ ...message, mac: 'nope' }, TEST_KEY, 'inbox'), false, 'a malformed tag does not verify');
   // The ack is written by the phone AFTER the tag, so it is outside the covered
   // fields — and a message with one still verifies (§3.5).
-  assert.equal(verifyMac({ ...message, acked: true, mac }, TEST_KEY), true, 'the ack is outside the bytes');
+  assert.equal(verifyMac({ ...message, acked: true, mac }, TEST_KEY, 'inbox'), true, 'the ack is outside the bytes');
 
   // Every covered field, one at a time. These are the swaps a launcher who
   // holds a minted token but not the key would try.
@@ -878,15 +879,15 @@ test('a tag verifies over exactly the covered fields, and a swap fails', () => {
     { ...message, agent: 'other-agent', mac },
     { ...message, kind: 'prompt', mac },
     { ...good({ kind: 'prompt', options: ['merge it'] }), mac },
-    { ...good({ kind: 'prompt', options: ['merge it', 'leave it'] }), mac: macOf(good({ kind: 'prompt', options: ['merge it'] }), TEST_KEY) },
-    { ...good({ kind: 'answer', reply_to: 'm-0000' }), mac: macOf(good({ kind: 'answer', reply_to: 'm-0001' }), TEST_KEY) },
-    { ...good({ kind: 'answer', reply_to: 'm-0000', text: 'option one' }), mac: macOf(good({ kind: 'answer', reply_to: 'm-0000', text: 'option two' }), TEST_KEY) },
-    { ...withAction({ verb: 'merge' }), mac: macOf(withAction({ verb: 'merge', target: { repo: 'dimipaun/fugaro', pr: 533 } }), TEST_KEY) },
-    { ...withAction({ verb: 'merge' }), mac: macOf(withAction({ verb: 'merge', head_sha: 'b'.repeat(40) }), TEST_KEY) },
-    { ...withAction(), mac: macOf(withAction({ verb: 'merge' }), TEST_KEY) },
+    { ...good({ kind: 'prompt', options: ['merge it', 'leave it'] }), mac: macOf(good({ kind: 'prompt', options: ['merge it'] }), TEST_KEY, 'inbox') },
+    { ...good({ kind: 'answer', reply_to: 'm-0000' }), mac: macOf(good({ kind: 'answer', reply_to: 'm-0001' }), TEST_KEY, 'inbox') },
+    { ...good({ kind: 'answer', reply_to: 'm-0000', text: 'option one' }), mac: macOf(good({ kind: 'answer', reply_to: 'm-0000', text: 'option two' }), TEST_KEY, 'inbox') },
+    { ...withAction({ verb: 'merge' }), mac: macOf(withAction({ verb: 'merge', target: { repo: 'dimipaun/fugaro', pr: 533 } }), TEST_KEY, 'inbox') },
+    { ...withAction({ verb: 'merge' }), mac: macOf(withAction({ verb: 'merge', head_sha: 'b'.repeat(40) }), TEST_KEY, 'inbox') },
+    { ...withAction(), mac: macOf(withAction({ verb: 'merge' }), TEST_KEY, 'inbox') },
   ];
   for (const swapped of swaps) {
-    assert.equal(verifyMac(swapped, TEST_KEY), false, `swapped: ${canonicalBytes(swapped)}`);
+    assert.equal(verifyMac(swapped, TEST_KEY, 'inbox'), false, `swapped: ${canonicalBytes(swapped, 'inbox')}`);
   }
 });
 
@@ -949,11 +950,11 @@ test('a heartbeat is a different record: its own fields, and a tag over all of t
 
 test('the heartbeat\'s tag covers at, boot and agents — the agent list feeds D163', () => {
   const heartbeat = aHeartbeat();
-  const mac = macOf(heartbeat, TEST_KEY);
-  assert.equal(verifyMac({ ...heartbeat, mac }, TEST_KEY), true);
+  const mac = macOf(heartbeat, TEST_KEY, 'heartbeat');
+  assert.equal(verifyMac({ ...heartbeat, mac }, TEST_KEY, 'heartbeat'), true);
   assert.equal(
-    canonicalBytes(heartbeat),
-    '{"agents":[{"id":"orchestrator","name":"Orchestrator"}],"at":1700000000000,"boot":"boot-01"}',
+    canonicalBytes(heartbeat, 'heartbeat'),
+    '{"agents":[{"id":"orchestrator","name":"Orchestrator"}],"at":1700000000000,"boot":"boot-01","direction":"heartbeat"}',
   );
   // An unsigned heartbeat is one the phone must treat as offline, and its agent
   // list is one it must ignore: without the tag, any minted `mc` token could
@@ -967,9 +968,9 @@ test('the heartbeat\'s tag covers at, boot and agents — the agent list feeds D
     { ...heartbeat, agents: [{ id: 'orchestrator', name: 'Orchestrator' }, { id: 'other', name: 'Other' }], mac },
   ];
   for (const swapped of changed) {
-    assert.equal(verifyMac(swapped, TEST_KEY), false, `swapped: ${canonicalBytes(swapped)}`);
+    assert.equal(verifyMac(swapped, TEST_KEY, 'heartbeat'), false, `swapped: ${canonicalBytes(swapped, 'heartbeat')}`);
   }
-  assert.equal(verifyMac(heartbeat, TEST_KEY), false, 'unsigned');
+  assert.equal(verifyMac(heartbeat, TEST_KEY, 'heartbeat'), false, 'unsigned');
 });
 
 test('the vectors file is the contract both ends test against', () => {
@@ -979,9 +980,9 @@ test('the vectors file is the contract both ends test against', () => {
   for (const c of vectors.cases) {
     assert.equal(typeof c.name, 'string');
     assert.equal(typeof c.why, 'string', `${c.name}: every case says what it pins`);
-    assert.equal(canonicalBytes(c.message), c.canonical, `${c.name}: the canonical bytes`);
-    assert.equal(macOf(c.message, vectors.key), c.mac, `${c.name}: the tag`);
-    assert.equal(verifyMac(c.message, vectors.key), c.verdict === 'verified', `${c.name}: the verdict`);
+    assert.equal(canonicalBytes(c.message, c.direction), c.canonical, `${c.name}: the canonical bytes`);
+    assert.equal(macOf(c.message, vectors.key, c.direction), c.mac, `${c.name}: the tag`);
+    assert.equal(verifyMac(c.message, vectors.key, c.direction), c.verdict === 'verified', `${c.name}: the verdict`);
     // A refused case is refused because the message no longer matches the tag
     // it carries, which is the only thing a MAC can refuse.
     if (c.verdict === 'refused') {
@@ -1037,12 +1038,12 @@ test('canonicalBytes covers an own __proto__ key instead of losing it to a proto
     '{"id":"m-0001","sender":"phone","text":"run 42 finished","at":1700000000000,"__proto__":{"x":1}}',
   );
   assert.equal(
-    canonicalBytes(raw),
-    '{"__proto__":{"x":1},"at":1700000000000,"id":"m-0001","sender":"phone","text":"run 42 finished"}',
+    canonicalBytes(raw, 'inbox'),
+    '{"__proto__":{"x":1},"at":1700000000000,"direction":"inbox","id":"m-0001","sender":"phone","text":"run 42 finished"}',
   );
-  assert.notEqual(canonicalBytes(raw), canonicalBytes(good()));
-  const mac = macOf(good(), TEST_KEY);
-  assert.equal(verifyMac({ ...raw, mac }, TEST_KEY), false, 'a smuggled __proto__ is inside the bytes');
+  assert.notEqual(canonicalBytes(raw, 'inbox'), canonicalBytes(good(), 'inbox'));
+  const mac = macOf(good(), TEST_KEY, 'inbox');
+  assert.equal(verifyMac({ ...raw, mac }, TEST_KEY, 'inbox'), false, 'a smuggled __proto__ is inside the bytes');
 });
 
 test('integer-like keys are ordered by code point too, not by JavaScript\'s index order', () => {
@@ -1050,8 +1051,8 @@ test('integer-like keys are ordered by code point too, not by JavaScript\'s inde
   // BEFORE every other key, whatever order they were inserted in, so an object
   // rebuilt in sorted order and handed to JSON.stringify does not keep the sort.
   // Go sorts map keys bytewise: "10" before "9". One record, two byte strings.
-  assert.equal(canonicalBytes({ 10: 1, 9: 2, a: 3 }), '{"10":1,"9":2,"a":3}');
-  assert.equal(canonicalBytes({ b: { 2: 'x', 10: 'y', '': 'z' } }), '{"b":{"":"z","10":"y","2":"x"}}');
+  assert.equal(canonicalBytes({ 10: 1, 9: 2, a: 3 }, 'inbox'), '{"10":1,"9":2,"a":3,"direction":"inbox"}');
+  assert.equal(canonicalBytes({ b: { 2: 'x', 10: 'y', '': 'z' } }, 'inbox'), '{"b":{"":"z","10":"y","2":"x"},"direction":"inbox"}');
 });
 
 test('negative zero, and an integer the two ends spell differently, have no canonical form', () => {
@@ -1063,26 +1064,26 @@ test('negative zero, and an integer the two ends spell differently, have no cano
   // integer outside the exact-double range too, which JavaScript prints in
   // exponent form ("1e+21") and Go's integer types print in full or cannot hold.
   assert.equal(validateMessage(good({ at: -0 })).ok, true, 'the schema\'s contract is unchanged');
-  assert.throws(() => macOf(good({ at: -0 }), TEST_KEY), TypeError);
-  assert.equal(verifyMac({ ...good({ at: -0 }), mac: macOf(good({ at: 0 }), TEST_KEY) }, TEST_KEY), false);
-  assert.throws(() => canonicalBytes({ ...good(), at: -0 }), TypeError);
-  assert.throws(() => canonicalBytes({ ...good(), at: 2 ** 53 }), TypeError);
-  assert.throws(() => canonicalBytes({ ...good(), at: 1e21 }), TypeError);
-  assert.equal(canonicalBytes({ n: Number.MAX_SAFE_INTEGER }), `{"n":${Number.MAX_SAFE_INTEGER}}`);
-  assert.equal(canonicalBytes({ n: -1 }), '{"n":-1}', 'a negative integer is a canonical number');
+  assert.throws(() => macOf(good({ at: -0 }), TEST_KEY, 'inbox'), TypeError);
+  assert.equal(verifyMac({ ...good({ at: -0 }), mac: macOf(good({ at: 0 }), TEST_KEY, 'inbox') }, TEST_KEY, 'inbox'), false);
+  assert.throws(() => canonicalBytes({ ...good(), at: -0 }, 'inbox'), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), at: 2 ** 53 }, 'inbox'), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), at: 1e21 }, 'inbox'), TypeError);
+  assert.equal(canonicalBytes({ n: Number.MAX_SAFE_INTEGER }, 'inbox'), `{"direction":"inbox","n":${Number.MAX_SAFE_INTEGER}}`);
+  assert.equal(canonicalBytes({ n: -1 }, 'inbox'), '{"direction":"inbox","n":-1}', 'a negative integer is a canonical number');
 });
 
 test('canonicalBytes refuses a value that is not plain JSON data, rather than guessing at it', () => {
   // A Date, a Map or a class instance has no fields of its own to sort, and
   // JSON.stringify would ask it (toJSON) what it wants to be: a record whose
   // bytes depend on a method is not a canonical record.
-  assert.throws(() => canonicalBytes({ ...good(), when: new Date(0) }), TypeError);
-  assert.throws(() => canonicalBytes({ ...good(), m: new Map() }), TypeError);
-  assert.throws(() => canonicalBytes({ ...good(), n: 1n }), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), when: new Date(0) }, 'inbox'), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), m: new Map() }, 'inbox'), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), n: 1n }, 'inbox'), TypeError);
   // A null-prototype object is plain data, which is what a hardened parser gives.
   const bare = Object.assign(Object.create(null), { b: 1, a: 2 });
-  assert.equal(canonicalBytes(bare), '{"a":2,"b":1}');
-  assert.equal(canonicalBytes({ t: true, f: false }), '{"f":false,"t":true}');
+  assert.equal(canonicalBytes(bare, 'inbox'), '{"a":2,"b":1,"direction":"inbox"}');
+  assert.equal(canonicalBytes({ t: true, f: false }, 'inbox'), '{"direction":"inbox","f":false,"t":true}');
 });
 
 test('every field the schema names is covered by the tag, or excluded by name', () => {
@@ -1101,12 +1102,12 @@ test('every field the schema names is covered by the tag, or excluded by name', 
   for (const field of FIELDS) {
     assert.ok(carried.has(field), `a maximal fixture carries ${field}`);
   }
-  const covered = new Set(maximal.flatMap((m) => Object.keys(JSON.parse(canonicalBytes(m)))));
+  const covered = new Set(maximal.flatMap((m) => Object.keys(JSON.parse(canonicalBytes(m, 'inbox')))));
   for (const field of FIELDS) {
     assert.equal(covered.has(field), !EXCLUDED.includes(field), `${field} is ${EXCLUDED.includes(field) ? 'excluded' : 'covered'}`);
   }
   // And a field no version of the schema names is covered by default.
-  assert.match(canonicalBytes({ ...good(), later: 'x' }), /"later":"x"/);
+  assert.match(canonicalBytes({ ...good(), later: 'x' }, 'inbox'), /"later":"x"/);
 });
 
 test('the tag is required on every kind, and a wrong-length one is refused on every kind', () => {
@@ -1147,6 +1148,85 @@ test('the vectors carry the schema refusals both ends must agree on', () => {
     'short mac', 'long mac', 'uppercase mac', 'unknown verb', 'short head SHA', 'uppercase head SHA',
     'too many options', 'unknown field', '__proto__ field',
   ]) {
+    assert.ok(names.includes(required), `the vectors refuse "${required}": ${names}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The direction (owner ruling 2026-10-18 on PR #579). One per-pairing key signs
+// the inbox, the outbox and the heartbeat, so without the direction in the
+// bytes a phone-signed inbox message copied into the outbox by a minted token
+// would still verify there, and the reverse. The direction is not a stored
+// field: the reader supplies it from the node it read the record from, and
+// canonicalBytes covers it as `direction`.
+// ---------------------------------------------------------------------------
+
+test('the direction is covered: the same record has different bytes in each direction', () => {
+  assert.deepEqual([...DIRECTIONS], ['inbox', 'outbox', 'heartbeat']);
+  const m = good();
+  assert.equal(
+    canonicalBytes(m, 'inbox'),
+    '{"at":1700000000000,"direction":"inbox","id":"m-0001","sender":"phone","text":"run 42 finished"}',
+  );
+  assert.equal(
+    canonicalBytes(m, 'outbox'),
+    '{"at":1700000000000,"direction":"outbox","id":"m-0001","sender":"phone","text":"run 42 finished"}',
+  );
+  assert.notEqual(canonicalBytes(m, 'inbox'), canonicalBytes(m, 'outbox'));
+  assert.notEqual(canonicalBytes(aHeartbeat(), 'heartbeat'), canonicalBytes(aHeartbeat(), 'outbox'));
+});
+
+test('a tag made for one direction does not verify in another', () => {
+  const m = good({ kind: 'answer', reply_to: 'm-0000', text: 'merge it' });
+  const asOutbox = { ...m, mac: macOf(m, TEST_KEY, 'outbox') };
+  assert.equal(verifyMac(asOutbox, TEST_KEY, 'outbox'), true);
+  assert.equal(verifyMac(asOutbox, TEST_KEY, 'inbox'), false, 'an outbox message reflected into the inbox fails');
+  const asInbox = { ...m, mac: macOf(m, TEST_KEY, 'inbox') };
+  assert.equal(verifyMac(asInbox, TEST_KEY, 'inbox'), true);
+  assert.equal(verifyMac(asInbox, TEST_KEY, 'outbox'), false, 'an inbox message reflected into the outbox fails');
+  const beat = aHeartbeat();
+  const signedBeat = { ...beat, mac: macOf(beat, TEST_KEY, 'heartbeat') };
+  assert.equal(verifyMac(signedBeat, TEST_KEY, 'heartbeat'), true);
+  assert.equal(verifyMac(signedBeat, TEST_KEY, 'outbox'), false, 'a heartbeat tag is not an outbox tag');
+  assert.equal(verifyMac({ ...m, mac: macOf(m, TEST_KEY, 'outbox') }, TEST_KEY, 'heartbeat'), false);
+});
+
+test('the direction is required, closed, and never taken from the record', () => {
+  for (const bad of [undefined, null, '', 'Inbox', 'in', 'both', 1, {}]) {
+    assert.throws(() => canonicalBytes(good(), bad), TypeError, `direction ${JSON.stringify(bad)}`);
+    assert.throws(() => macOf(good(), TEST_KEY, bad), TypeError);
+    assert.equal(verifyMac({ ...good(), mac: macOf(good(), TEST_KEY, 'inbox') }, TEST_KEY, bad), false);
+  }
+  // A record cannot carry its own direction: that would let the writer choose
+  // the very field the reader is meant to supply. The schema refuses it as an
+  // unknown field, and canonicalBytes refuses it rather than let one shadow the
+  // other.
+  refusal(good({ direction: 'inbox' }), REFUSALS.UNKNOWN_FIELD, 'direction');
+  heartbeatRefusal(aHeartbeat({ direction: 'heartbeat' }), REFUSALS.UNKNOWN_FIELD, 'direction');
+  assert.throws(() => canonicalBytes({ ...good(), direction: 'inbox' }, 'inbox'), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), direction: 'outbox' }, 'inbox'), TypeError);
+  assert.equal(FIELDS.includes('direction'), false, 'the direction is not a stored field');
+});
+
+test('the vectors pin the direction: same record, different bytes, and refusals across directions', () => {
+  const vectors = JSON.parse(readFileSync(new URL('./vectors.json', import.meta.url), 'utf8'));
+  for (const c of vectors.cases) {
+    assert.ok(DIRECTIONS.includes(c.direction), `${c.name}: names its direction`);
+  }
+  const pairs = vectors.direction_pairs;
+  assert.ok(Array.isArray(pairs) && pairs.length >= 2, 'the vectors carry direction pairs');
+  for (const p of pairs) {
+    assert.notEqual(p.a.direction, p.b.direction, `${p.name}: two directions`);
+    assert.deepEqual(p.a.message, p.b.message, `${p.name}: the record is otherwise identical`);
+    assert.notEqual(p.a.canonical, p.b.canonical, `${p.name}: different bytes`);
+    assert.notEqual(p.a.mac, p.b.mac, `${p.name}: different tags`);
+    for (const side of [p.a, p.b]) {
+      assert.equal(canonicalBytes(side.message, side.direction), side.canonical, `${p.name}: bytes`);
+      assert.equal(macOf(side.message, vectors.key, side.direction), side.mac, `${p.name}: tag`);
+    }
+  }
+  const names = vectors.cases.filter((c) => c.verdict === 'refused').map((c) => c.name).join(' | ');
+  for (const required of ['outbox tag read as inbox', 'inbox tag read as outbox', 'heartbeat tag read as outbox']) {
     assert.ok(names.includes(required), `the vectors refuse "${required}": ${names}`);
   }
 });

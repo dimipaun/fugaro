@@ -28,7 +28,7 @@ validateMessage(message);
 validateMessage({ …message, id: 'm.0001' });
 // => { ok: false, code: 'bad-key', field: 'id' }
 
-verifyMac({ …message, text: 'merge it' }, key);   // => false: the bytes no longer match the tag
+verifyMac({ …message, text: 'merge it' }, key, 'inbox');   // => false: the bytes no longer match the tag
 ```
 
 ## The message
@@ -134,17 +134,39 @@ advertised agent list it ignores, because that list is what "list agents" reads 
 what D163 defaults to.
 
 The tag covers **every field except `mac` and `acked`** — `acked` because the phone
-writes it after the fact on an outbox message — over the canonical bytes below.
+writes it after the fact on an outbox message — **plus the direction**, over the
+canonical bytes below.
+
+### The direction is inside the bytes (owner ruling, 2026-10-18)
+
+One per-pairing key signs the inbox (the phone), the outbox and the heartbeat (the
+consumer). Without more, a phone-signed inbox message copied into the outbox by a minted
+token would still verify there, and a consumer-signed outbox message copied into the
+inbox would verify as the phone's — "approve the merge?" answered with the consumer's own
+words. So `canonicalBytes(record, direction)` covers the **direction** — one of
+`DIRECTIONS`: `inbox`, `outbox`, `heartbeat` — as the field `direction`, and a tag is
+valid in one direction only. **This is one field beyond the covered list of
+[§3.5](../../docs/mobile/functional-spec-reconciliation.md), by the owner's ruling of
+2026-10-18 on PR #579**; §3.5 carries a dated note saying so.
+
+The direction is **not a stored field**. The reader supplies it from the node it read
+the record from (`verifyMac(record, key, 'inbox')` in the consumer, `'outbox'` or
+`'heartbeat'` on the phone), so the writer never chooses it: a record carrying a
+`direction` of its own is refused by the schema (`unknown-field`) and by
+`canonicalBytes` (it throws), and a direction outside the three throws too. The vectors
+pin it three ways: every case names its direction, `direction_pairs` holds one record
+under two directions with different bytes and tags, and three refused cases are a
+reflection (inbox read as outbox, outbox read as inbox, heartbeat read as outbox).
 
 This module validates a tag's **shape** and never its value: it has no key, and
-`verifyMac(record, key)` is the separate, keyed question the consumer asks. A key is
+`verifyMac(record, key, direction)` is the separate, keyed question the consumer asks. A key is
 never written down here, and the module never reads one from anywhere.
 
 ### `canonicalBytes` — the one serialisation the tag covers
 
 JSON, keys sorted by **code point** at every depth, no insignificant whitespace, absent
 fields **omitted** (never `null`), strings as UTF-8 with JSON's own escaping only,
-numbers as integers. One message, one byte string — which is the only thing a MAC can
+numbers as integers, and the `direction` field added. One message in one direction, one byte string — which is the only thing a MAC can
 mean across two languages.
 
 **Code point, not UTF-16 code unit.** §3.5's word is "code point", and Go's bytewise
@@ -157,16 +179,16 @@ is narrow, which is exactly why a port that used `.sort()` would otherwise ship 
 
 That is the hard part of this task, because the two ends are JavaScript (the phone) and
 Go (the consumer), and the Go end cannot call into JavaScript. It reimplements the
-serialisation and **tests against [`vectors.json`](vectors.json)**: 21 cases — the four
+serialisation and **tests against [`vectors.json`](vectors.json)**: 24 cases — the four
 kinds, the heartbeat, the argv-shaped targets, HTML characters Go escapes by default,
 an emoji, an unknown field inside the bytes, the key order above, and the swaps a
 token-holder without the key would try (text, options, option order, `reply_to`, answer,
-agents, agent name, target, head SHA, confirmation, verb) — each pinning the message,
-the exact bytes, the tag and whether it verifies — and **20 schema refusals**
+agents, agent name, target, head SHA, confirmation, verb) and the three reflections across directions — each pinning the message,
+the exact bytes, the tag and whether it verifies — three `direction_pairs`, and **22 schema refusals**
 (`refusals`: an unsigned message of every kind and an unsigned heartbeat, a short, long,
 uppercase or null tag, an unknown verb, a short or uppercase head SHA, a merge without
 one, too many options, an oversize body, an unknown field, a parsed `__proto__`, a field
-on the wrong kind, an answer without `reply_to`, a float time), each with the value, the
+on the wrong kind, an answer without `reply_to`, a float time, and a stored `direction` on a message and on a heartbeat), each with the value, the
 record it is judged as and the code and field this validator answers. The Go consumer
 need not copy the codes' wording, but it must refuse every one of those values. A
 disagreement about key order, whitespace or escaping fails on the side that is wrong,
@@ -258,15 +280,10 @@ refused on read, which is the fail-closed reading of version skew.
   compute the canonical bytes from the same map, never from a re-marshalled struct.
 - **Write HTML characters raw** (`SetEscapeHTML(false)`) and sort keys by byte; the
   vectors pin both.
-- **A verified tag proves the pairing, not the direction.** One per-pairing key signs
-  the inbox (the phone) and the outbox and heartbeat (the consumer), and nothing in the
-  covered bytes says which way a message travelled, so a phone-signed inbox message
-  copied into the outbox by a minted token still verifies, and so does the reverse. Each
-  reader must therefore also check that `sender` is the other end's identity (the
-  consumer refuses an inbox message whose sender is not a phone; the phone refuses an
-  outbox message whose sender is its own) — the schema cannot, because it has no notion
-  of who is reading. Binding the direction into the bytes would change §3.5's
-  serialisation and is the owner's call (raised on the pull request).
+- **Pass the direction from the node you read, never from the record.** The consumer
+  verifies everything it reads from the inbox with `inbox`; the phone verifies the
+  outbox with `outbox` and the heartbeat with `heartbeat`. The `direction` key is added
+  to the covered map before sorting, and a stored record carrying one is refused.
 
 ## Fail closed, and each refusal is named
 
@@ -352,7 +369,7 @@ installed, nothing is fetched, and the entry point the phone loads imports nothi
 all. The tests are the plan's verification list (a missing
 id, a wrong type, an oversize body and an unknown field refused; a well-formed message
 accepted) plus the fail-closed families above and P6.3's kind, action, tag and
-canonical-byte cases: 47 tests in this module's test file.
+canonical-byte cases: 51 tests in this module's test file.
 
 **Every guard is mutation-proved**, not merely covered — 72 guards over `index.js` and
 `mac.js`, one mutation each:

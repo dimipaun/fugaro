@@ -373,15 +373,23 @@ run "the two encoders' separators are refused (Go escapes them, JavaScript does 
   "  const code = s.charCodeAt(i);
   return code === 0x2028 || code === 0x2029;" "  return false;"
 run "canonicalBytes: the tag itself is not covered" \
-  "  return serialiseObject(record, (key) => key !== 'mac' && key !== 'acked');" "  return serialiseObject(record, (key) => key !== 'acked');"
+  "    if (key !== 'mac' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'acked') covered[key] = record[key];"
 run "canonicalBytes: the ack is outside the bytes" \
-  "  return serialiseObject(record, (key) => key !== 'mac' && key !== 'acked');" "  return serialiseObject(record, (key) => key !== 'mac');"
+  "    if (key !== 'mac' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'mac') covered[key] = record[key];"
 run "canonicalBytes: a covered field is never dropped (reply_to)" \
-  "  return serialiseObject(record, (key) => key !== 'mac' && key !== 'acked');" "  return serialiseObject(record, (key) => key !== 'mac' && key !== 'acked' && key !== 'reply_to');"
+  "    if (key !== 'mac' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'mac' && key !== 'acked' && key !== 'reply_to') covered[key] = record[key];"
+run "canonicalBytes: the direction is inside the covered bytes" \
+  "  covered[DIRECTION_FIELD] = direction;" ""
+run "canonicalBytes: the direction is one of the three" \
+  "  if (!DIRECTIONS.includes(direction)) {" "  if (false) {"
+run "canonicalBytes: a record may not carry its own direction" \
+  "  if (Object.hasOwn(record, DIRECTION_FIELD)) {" "  if (false) {"
+run "canonicalBytes: the covered copy has no prototype (__proto__ stays a field)" \
+  "  const covered = Object.create(null);" "  const covered = {};"
 run "canonicalBytes: keys are sorted at all" \
-  "  for (const key of Object.keys(value).filter(keep).sort(compareKeys)) {" "  for (const key of Object.keys(value).filter(keep)) {"
+  "  for (const key of Object.keys(value).sort(compareKeys)) {" "  for (const key of Object.keys(value)) {"
 run "canonicalBytes: the sort is by code point, not UTF-16 code unit" \
-  "  for (const key of Object.keys(value).filter(keep).sort(compareKeys)) {" "  for (const key of Object.keys(value).filter(keep).sort()) {"
+  "  for (const key of Object.keys(value).sort(compareKeys)) {" "  for (const key of Object.keys(value).sort()) {"
 run "canonicalBytes: the bytes are written, not rebuilt (__proto__, integer-like keys)" \
   "  return \`{\${members.join(',')}}\`;" \
   "  return JSON.stringify(Object.assign({}, ...members.map((m) => JSON.parse(\`{\${m}}\`))));"
@@ -424,8 +432,13 @@ run "the entry point carries no node-only buffer type" \
 
 const IDENTITY_PATTERN = /^[A-Za-z0-9._:-]+\$/;"
 run "macOf: the bytes are the canonical ones, not the object's own order" \
-  "  const bytes = Buffer.from(canonicalBytes(record), 'utf8');" \
+  "  const bytes = Buffer.from(canonicalBytes(record, direction), 'utf8');" \
   "  const bytes = Buffer.from(JSON.stringify(record), 'utf8');" "$M"
+run "macOf: the direction reaches the bytes" \
+  "  const bytes = Buffer.from(canonicalBytes(record, direction), 'utf8');" \
+  "  const bytes = Buffer.from(canonicalBytes(record, 'inbox'), 'utf8');" "$M"
+run "verifyMac: the reader's direction is the one checked" \
+  "    expected = macOf(record, key, direction);" "    expected = macOf(record, key, 'inbox');" "$M"
 run "verifyMac: a wrong length is a false, not a throw" \
   "  if (got.length !== want.length) return false;" "  if (false) return false;" "$M"
 
