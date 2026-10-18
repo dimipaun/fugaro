@@ -390,6 +390,53 @@ func TestDecodeRefusesACaseVariantProfileMember(t *testing.T) {
 	}
 }
 
+// TestDecodeRefusesAProfileNamedOrSpelledTwice: the profiles block is read the
+// way the providers block is — a map keyed by name, built by encoding/json,
+// which keeps the LAST of a repeated key — and it was the one keyed block that
+// never called checkNoDuplicateNames. A name written twice therefore resolved
+// to whichever profile came second, silently: the job deployed, its cpu,
+// memory, timeout, secrets and allow_repos were the second block's, and an
+// allow_repos repeated inside one entry widened the list the same way (the
+// written-document checks read the collapsed map, so they saw neither). That is
+// the fail-open direction the block's own comment refuses elsewhere, and it is
+// refused here for the same reason the providers block is.
+//
+// Mutation (run, restore): drop checkNoDuplicateNames from decodeProfileBlock,
+// or the objectMemberNames/checkNoDuplicateNames pair from
+// checkWrittenProfileFields — each half fails its rows below.
+func TestDecodeRefusesAProfileNamedOrSpelledTwice(t *testing.T) {
+	for _, tc := range []struct{ what, doc string }{
+		{"the profile named twice", `{
+			"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":["github/acme/app"]},
+			"standard":{"provider":"github","cpu":8,"memory":"16Gi","timeout_class":"6h","allow_repos":["github/acme/*"]}}`},
+		{"allow_repos twice, the second widened", `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":["github/acme/app"],"allow_repos":["github/acme/*"]}}`},
+		{"secrets twice, the second longer", `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":["deploy-key"],"secrets":["deploy-key","registry-key"]}}`},
+		{"provider twice", `{"standard":{"provider":"github","provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}`},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			p, err := decodeProfiles(t, tc.doc)
+			if err == nil {
+				t.Fatalf("a repeated key was accepted as %+v: encoding/json keeps the last of the two, so which profile this Fugaro deploys would depend on the order the keys were written in", p.Profiles["standard"])
+			}
+			if !strings.Contains(err.Error(), "twice") {
+				t.Errorf("the refusal for %s does not say a key was written twice: %v", tc.what, err)
+			}
+		})
+	}
+	// One level up, the block's own keys: the name is what a workflow selects
+	// with job_profile, so a second block under one name is a profile nothing
+	// in the document shows.
+	if _, err := decodeProfiles(t, `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},"standard":{"provider":"github","cpu":8,"memory":"16Gi","timeout_class":"6h"}}`); err == nil ||
+		!strings.Contains(err.Error(), "profiles names") || !strings.Contains(err.Error(), `"standard"`) {
+		t.Errorf("a profile entry written twice = %v, want a refusal naming the block and the entry written twice", err)
+	}
+	// The other side: each key written once still decodes, so the guard is not
+	// a blanket refusal of the block.
+	if _, err := decodeProfiles(t, `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":["deploy-key"],"allow_repos":["github/acme/app"]}}`); err != nil {
+		t.Errorf("a profile with every key written once was refused: %v", err)
+	}
+}
+
 // TestProfileAdmitsAlsoRequiresTheProjectList: both gates, and the project's is
 // not optional. §4.3: "there is never a state in which a shared job serves a
 // repository that has not been allowed" — so a profile whose own list is wider

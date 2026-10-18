@@ -118,6 +118,20 @@ func TestParseSharedRefusals(t *testing.T) {
 			return s + "project_secrets:\n    bitbucket-token:\n        allow_data_to: [belong/edgeweb]\n"
 		}, "project_secrets"},
 		{"empty project_secrets section", func(s string) string { return s + "project_secrets: {}\n" }, "project_secrets"},
+		// profiles is the owner's policy for claude_accounts' reason:
+		// localcfg.Config.Shared nils it, because a profile is the job a
+		// repository's clone workflow is launched on and what it admits —
+		// so a writer of the runs bucket must not be able to inject one by
+		// publishing a document, nor to widen the admission of a profile the
+		// policy node already carries. Both spellings are refused, as for
+		// project_secrets: the key in the document, and the decoded value.
+		// Without the key check, SharedDiff would not even report the
+		// tampering: it compares both sides through Shared(), which drops
+		// the map.
+		{"profiles section", func(s string) string {
+			return s + "profiles:\n    standard:\n        provider: github\n        cpu: 4\n        memory: 8Gi\n        allow_repos: [belong/edgeweb]\n"
+		}, "profiles"},
+		{"empty profiles section", func(s string) string { return s + "profiles: {}\n" }, "profiles"},
 		{"firebase triple of another project", func(s string) string {
 			s = strings.Replace(s, "https://fugaro-belong-default-rtdb.firebaseio.com", "https://evil-proj-default-rtdb.firebaseio.com", 1)
 			s = strings.Replace(s, "firebase_project: fugaro-belong", "firebase_project: evil-proj", 1)
