@@ -1,28 +1,33 @@
 # `mailbox-schema` — the message schema and its validation
 
 The mobile plan's **Task P0.2**, in the shared pure-logic package [P0.1](../README.md)
-built. It answers one question — **is this value a mailbox message?** — and nothing
-else.
+built, extended by **Task P6.3** with the fields D161, D167, D168 (as amended), D169
+and D171 need and with the tag §3.5 puts on every message. It answers one question —
+**is this value a mailbox message?** — and nothing else.
 
 **The schema is the protocol.** P1.1's state machine validates against it, P3.6's app
 writes it and P4.1's consumer reads it, so the three cannot disagree about what a
 message is. The plan is explicit that this task sits on the **critical path** and must
 stay small: the redactor is P1.3's, the dedupe table and the replay window are P1.1's,
 the link rules are P0.3's, and *who* may write a message is P2.1's rules. Nothing of
-theirs is built here.
+theirs is built here — with one deliberate exception, the tag, because a tag is a
+property of the message's own bytes and there is nowhere else it could live.
 
 ```sh
 cd shared && npm test          # this module's tests, with no install and no network
 ```
 
 ```js
-import { validateMessage, isMessage } from './mailbox-schema/index.js';
+import { validateMessage, isMessage, macOf, verifyMac, canonicalBytes } from './mailbox-schema/index.js';
 
-validateMessage({ id: 'm-0001', sender: 'phone', text: 'run 42 finished', at: 1700000000000 });
-// => { ok: true, message: { id: 'm-0001', sender: 'phone', text: 'run 42 finished', at: 1700000000000 } }
+const message = { id: 'm-0001', sender: 'phone', text: 'run 42 finished', at: 1700000000000, mac: '…64 hex…' };
+validateMessage(message);
+// => { ok: true, message: { …the same five fields, deep-frozen… } }
 
-validateMessage({ id: 'm.0001', sender: 'phone', text: 'hi', at: 1700000000000 });
+validateMessage({ …message, id: 'm.0001' });
 // => { ok: false, code: 'bad-key', field: 'id' }
+
+verifyMac({ …message, text: 'merge it' }, key);   // => false: the bytes no longer match the tag
 ```
 
 ## The message
@@ -33,61 +38,188 @@ validateMessage({ id: 'm.0001', sender: 'phone', text: 'hi', at: 1700000000000 }
 | `sender` | string | yes | 1–200 code units | the writer's identity; P1.1 does not dedupe across senders, P2.1 binds it to the writer's claim |
 | `text` | string | yes | 1–4096 code units | D118's size bound per message; **already redacted** when it arrives (P1.3) |
 | `at` | number | yes | epoch ms, a safe integer ≥ 0 | the tree's own time unit (`budget.Day`, the token's `fx` claim) |
-| `acked` | boolean | no | — | D113's second phone write; **absent means not acked** |
+| `mac` | string | **yes** (P6.3) | exactly 64 lowercase hex characters | §3.5, D169, D171, O7 — see below |
+| `acked` | boolean | no | — | D113's second phone write; **absent means not acked**, and it is **outside the tagged bytes** |
+| `agent` | string | no | 1–64 code units, an **identity string** | D161: one mailbox per account, the agent travels in the message. The same shape the heartbeat advertises (D163) |
+| `kind` | string | no | `message` · `prompt` · `answer` · `action`; absent means `message` | D167, D169, §3.2. P6.5/P6.7 map it to an acceptance window (D173) |
+| `options` | string[] | on a `prompt`, optional | 1–8 entries, each 1–200 code units, distinct, single-line | §3.2: the app reads them aloud and the answer names one by position |
+| `reply_to` | string | on an `answer`, optional on an `action` | a message id | D168 (as amended) for the answer; §3.5 for the action that settles a prompt |
+| `action` | object | on an `action` | the record below | D169's typed destructive command |
 
-A validated message comes back as a **frozen copy**: a fresh, plain object carrying
-exactly these fields, with the caller's values **verbatim**. Nothing is trimmed,
-floored, stringified or dropped — the schema never repairs a value, because two
-agents disagreeing about what a stored message says is the failure at-least-once
-delivery cannot survive. `acked` is added only when it was present, so "not acked" is
-the absence of the field rather than a false one.
+A validated message comes back as a **deep-frozen copy**: a fresh, plain object — and
+fresh objects all the way down — carrying exactly these fields, with the caller's
+values **verbatim**. Nothing is trimmed, floored, stringified or dropped. The copy is
+deep on purpose: `message.action.verb` is a field the consumer *executes*, so a nested
+record still shared with the caller, or still editable, would be a record whose tag
+proves nothing.
 
-### Why the id is a database key and the sender is not
+### The kinds, and what each may carry
 
-A message is stored under **its own id**, in whichever inbox or outbox node P2.1's
-template chooses (the plan's own choice **C3**), so the id is a Realtime Database node
-key. The rule applied to it is the tree's own, ported rather
-than invented: `internal/budget`'s `Key`/`Unkey` treat a string as a valid key exactly
-when it contains none of `%` (the escape `Unkey` parses), `.`, `$`, `#`, `[`, `]`, `/`
-and no control character including DEL. An id the database cannot hold is not an id,
-and it is refused as `bad-key` rather than escaped into one. `sender` is a **value**,
-not a path segment, so a perfectly ordinary identity such as `owner@example.com` is
-accepted; D113's example of the contrary shape is `agents/$slug/$run`, where the
-identity *is* a key.
+| Kind | May carry | Must carry | What it is |
+|---|---|---|---|
+| `message` (or no `kind`) | — | — | something said to, or by, an agent (§3.1) — including **a launch**, which D162 sends with no read-back |
+| `prompt` | `options` | — | a question the agent wants answered (§3.2), with or without choices |
+| `answer` | — | `reply_to` | the answer to a prompt; the chosen words are `text`, because the answer is *spoken*, not selected |
+| `action` | `reply_to` | `action` | D169's destructive command |
+
+A field on the wrong kind is **`field-not-allowed`**, not an unknown field: two agents
+disagreeing about whether a message *is* an action is exactly the ambiguity this module
+exists to refuse.
+
+### The action record
+
+```js
+{ id: 'a-0001',                       // the action's own id, a database key
+  verb: 'cancel' | 'merge' | 'confirm',
+  target: { run: '20261018-125859-d3c8' }            // cancel, confirm
+        | { repo: 'owner/name', pr: 532 },           // merge, confirm
+  head_sha: '…40 or 64 hex…',         // merge only: the head read back at confirmation
+  confirmation: { id: 'c-0001', at: 1700000000000 } }
+```
+
+Everything in it is required, because everything in it is **executed**: the consumer
+runs `fugaro cancel RUN` or `gh pr merge <n> --repo <owner/name>` from these fields and
+nothing else. Two rules are security rules rather than tidiness:
+
+- **A verb and its target must agree.** A cancel resolves to a run id, a merge to a
+  repository and a pull request; `confirm` — the ruling's third verb, confirming an
+  action — takes either, because what it confirms may be either.
+- **No target can be read as a command-line flag.** The values are passed as ARGV
+  elements, so a leading `-` or `.` is a flag or a path to whatever parser sees it, and
+  a space, a slash where a slash does not belong, a newline or a NUL is not a run id or
+  a repository at all. The two families are named separately — `bad-target` for the
+  shape, `bad-character` for the alphabet — so a caller can say which of its inputs to
+  fix. A merge's head SHA is re-read by the consumer before it merges: the record names
+  a state of the world, not just an intention.
+
+A launch is deliberately **not** a verb: D162 answered that "kick off …" goes through
+without a read-back, so it travels as an ordinary `message`. Every other destructive
+verb — the kill switch, budget writes, deletes — stays refused by voice and so has no
+verb here at all (§3.1).
+
+### Why there is no `expires_at`
+
+D168 as amended: a prompt expires at **D118's mailbox TTL, computed by the consumer**
+from `at` and its own clock. An expiry written by the phone would be the phone's clock
+deciding — the clock D117 refuses to trust — so the field does not exist, and every
+name for it (`expires_at`, `expiresAt`, `ttl`, `deadline`) is an unknown field. The
+confirmation *timeout* is absent for the same reason: it is P6.2's phone-local state,
+not a property of the message.
 
 ### Why there is no version field
 
-**The field set is the version.** P2.1's subtree idiom denies `$other`, and this
-validator refuses any field it does not name, so a message from a future protocol that
-carries an extra field is refused by the rules *and* here rather than being silently
-accepted with the new field dropped. That is fail-closed version skew without a second
-number for two artifacts — the app, which ships on the stores' cadence, and the CLI —
-to disagree about.
+**The field set is the version**, and with kinds it is the (kind, field) table. P2.1's
+subtree idiom denies `$other`, and this validator refuses any field it does not name
+and any field on the wrong kind, so a message from a future protocol that carries an
+extra field is refused by the rules *and* here rather than being silently accepted with
+the new field dropped. That is fail-closed version skew without a second number for two
+artifacts — the app, which ships on the stores' cadence, and the CLI — to disagree
+about.
+
+## The tag, and why it is on *every* message
+
+A launcher can mint a custom token for any uid (G13) and can read
+`config/admin/devices` through `firebasedatabase.viewer`, so a minted token passes both
+of the rules' identity conjuncts and can write into a paired account's mailbox. What it
+cannot have is the **per-pairing key** of D171: that travels encrypted to a key the
+phone holds (D165) and never through the database. So the tag over the message's own
+bytes is the one thing that separates a message the phone really spoke from one a
+launcher invented. It is required on **every** inbox message of every kind, not only on
+action records: a plain `message` or `answer` saying "merge it" is exactly the shape an
+impostor would use to answer the orchestrator's own "approve the merge?" prompt (§3.5).
+It is required on the outbox too, and on the consumer's heartbeat (O7, D161) — an
+unsigned or wrongly signed heartbeat is one the phone treats as **offline**, and whose
+advertised agent list it ignores, because that list is what "list agents" reads out and
+what D163 defaults to.
+
+The tag covers **every field except `mac` and `acked`** — `acked` because the phone
+writes it after the fact on an outbox message — over the canonical bytes below.
+
+This module validates a tag's **shape** and never its value: it has no key, and
+`verifyMac(record, key)` is the separate, keyed question the consumer asks. A key is
+never written down here, and the module never reads one from anywhere.
+
+### `canonicalBytes` — the one serialisation the tag covers
+
+JSON, keys sorted by code point at every depth, no insignificant whitespace, absent
+fields **omitted** (never `null`), strings as UTF-8 with JSON's own escaping only,
+numbers as integers. One message, one byte string — which is the only thing a MAC can
+mean across two languages.
+
+That is the hard part of this task, because the two ends are JavaScript (the phone) and
+Go (the consumer), and the Go end cannot call into JavaScript. It reimplements the
+serialisation and **tests against [`vectors.json`](vectors.json)**: 18 cases — the four
+kinds, the heartbeat, the argv-shaped targets, HTML characters Go escapes by default,
+an emoji, an unknown field inside the bytes, and the swaps a token-holder without the
+key would try (text, options, option order, `reply_to`, answer, agents, confirmation,
+verb) — each pinning the message, the exact bytes, the tag and whether it verifies. A
+disagreement about key order, whitespace or escaping fails on the side that is wrong,
+at the byte level, rather than at three in the morning on a phone. Regenerate with
+`node shared/mailbox-schema/vectors.generate.mjs`; the key in the file is a readable
+placeholder, and a test asserts that neither the vectors nor the suite carries anything
+that looks like a credential.
+
+`canonicalBytes` **refuses, by throwing**:
+
+- **`undefined` and `null`.** A dropped field is two different records with one
+  canonical form: absent is omitted, present is covered, and there is no third state.
+- **a number that is not an integer.** Go prints `1e-07` where JavaScript prints `1e-7`
+  for the same double, so a float inside a signed record is a tag that verifies on one
+  end and not the other. Every number the schema accepts is an integer (`at`, a
+  confirmation's `at`, a pull request number), so nothing valid is refused.
+
+And the schema itself refuses **U+2028 LINE SEPARATOR and U+2029 PARAGRAPH
+SEPARATOR** in every string it validates, for the same class of reason: Go's
+`encoding/json` escapes both *even with `SetEscapeHTML(false)`*, and JavaScript's
+`JSON.stringify` leaves both as themselves, so a message carrying one would have two
+canonical byte strings and one tag that verifies on one end only — an undiagnosable
+refusal, for a character nobody can speak. (The converse hazard is the Go side's to
+handle: it escapes `<`, `>`, `&` unless it disables HTML escaping, and the vectors pin
+the raw bytes it must produce.)
+
+**The one import.** The module now imports `node:crypto` for HMAC-SHA-256 — a builtin,
+not a dependency: nothing is installed, nothing is fetched, and the package stays
+`private` with no `dependencies` (D119). It is used by `macOf` and `verifyMac` only.
+The React Native side must reimplement HMAC over the vectors' key: that is an honest
+gap, recorded in the pull request rather than papered over.
 
 ## Fail closed, and each refusal is named
 
-Every refusal carries a **distinct code**, so a caller can tell a replay-shaped
-problem from a malformed write instead of seeing "no message" for both:
+Every refusal carries a **distinct code**, so a caller can tell a replay-shaped problem
+from a malformed write instead of seeing "no message" for both:
 
 | Code | What it refuses |
 |---|---|
-| `not-an-object` | `null`, an array, a primitive, a function |
-| `unknown-field` | a field the schema does not name (`__proto__` from JSON included: it is an unknown field, not pollution) |
-| `missing-field` | a required field that is absent |
+| `not-an-object` | `null`, an array, a primitive, a function — a message, an action record, a confirmation, a target, an advertised agent |
+| `unknown-field` | a field the schema does not name (`__proto__` from JSON included: it is an unknown field, not pollution), at any depth |
+| `missing-field` | a required field that is absent, at any depth |
 | `wrong-type` | a field of the wrong type — **including an explicit `undefined`**, which is present-but-ambiguous |
-| `empty-string` | an empty `id`, `sender` or `text` |
-| `bad-key` | an `id` containing a character a database key may not contain |
+| `empty-string` | an empty `id`, `sender`, `text`, `reply_to`, `agent`, `boot`, an option or an agent's name |
+| `bad-key` | an `id`, an action id, a confirmation id or a `reply_to` containing a character a database key may not contain |
 | `too-long` | a string longer than its bound |
-| `bad-character` | a control character (line breaks are allowed in `text`, not in `sender`), DEL, or an **unpaired surrogate** — half a character that JSON cannot encode |
+| `too-many` | more options (`OPTIONS_MAX`) or advertised agents (`AGENTS_MAX`) than the bound allows |
+| `too-few` | a list that is **present and empty**: a claim that says nothing |
+| `bad-character` | a control character (line breaks are allowed in `text`, not in a single-line field), DEL, an unpaired surrogate, U+2028/U+2029, or a character outside a run id's, a repository's or an identity string's alphabet |
 | `bad-timestamp` | `at` is **a number but not a time**: a float, `NaN`, `Infinity`, `-1` |
+| `unknown-kind` | a `kind` outside `message` · `prompt` · `answer` · `action` |
+| `unknown-verb` | an action's verb outside `cancel` · `merge` · `confirm` |
+| `field-not-allowed` | a field on a kind of message that does not carry it (a `reply_to` on a prompt, an `action` on an answer, a head SHA on a cancel) |
+| `bad-target` | a target that is not one of the two shapes, or that its verb cannot resolve to |
+| `bad-sha` | a head SHA that is not 40 or 64 **lowercase** hex characters |
+| `bad-mac` | a tag that is not exactly 64 lowercase hex characters |
+| `duplicate-entry` | two options with the same words, or two advertised agents under one id — a choice by position, or by name, with two right answers |
 
-The boundary between the last two rows is the type check, and it is worth stating
-because a caller branching on the code must not be surprised: a **numeric string** such as
-`'1700000000000'` is refused earlier, as `wrong-type` — it is not a number at all — and only
-a value that *is* a number and still not a time reaches `bad-timestamp`.
+The boundary between two of these rows is worth stating, because a caller branching on
+the code must not be surprised: a **numeric string** such as `'1700000000000'` is
+refused as `wrong-type` (it is not a number at all), and only a value that *is* a
+number and still not a time reaches `bad-timestamp`. The same shape of distinction runs
+through the rest: a value outside a vocabulary is not a wrong type, a count bound is not
+a length bound, and a refusal never carries the value it refused.
 
-There is no coercion anywhere: `'1700000000000'` is not a time, `'true'` is not an
-ack, and a padded id is returned padded.
+There is no coercion anywhere: `'1700000000000'` is not a time, `'true'` is not an ack,
+a padded id is returned padded, and uppercase hex is not accepted as a tag or as a head
+SHA — hex has two spellings for one value, and a comparison that accepted both would
+depend on which end wrote it.
 
 ## What this module is *not*
 
@@ -101,36 +233,61 @@ assuming it:
 - **Not the lease, the dedupe table or the replay window.** The schema says an `at` is
   a time; whether it is *too old* is a function of `at` and an injected `now`. (P1.1,
   P1.2)
+- **Not the key, and not the verifier.** Where the per-pairing key comes from (D165,
+  D171) and when to check the tag (P4.1) are other tasks'. This module holds no key.
+- **Not the confirmation machine.** The spoken read-back, the "confirm", its timeout and
+  its ledger are P6.2's and P6.7's. The schema carries the confirmation *record* D169
+  puts on the wire.
+- **Not the expiry rule.** See above: D168 as amended leaves the TTL to the consumer.
 - **Not the URL rules.** A message carries text, not links. (P0.3)
 - **Not the rules.** The schema is what P2.1's template must agree with — the same
-  fields, the byte-for-byte key rule on the id, and `text`'s bound at `TEXT_MAX` — but
-  who may write a message, and the ack's own fence, are the rules' business.
+  fields, the byte-for-byte key rule on the id, `text`'s bound at `TEXT_MAX` — but who
+  may write a message, and the ack's own fence, are the rules' business. **P6.3 has
+  changed the schema and not the template**, which is P6.4's task (level 3, after
+  P2.2): until it lands, the rules would refuse a write carrying `mac`. That gap is
+  asserted, not hidden — see the note in
+  `TestMailboxRulesAgreeWithTheSharedSchema`.
 - **Not the node's retention.** D118's TTL and the owner's sweeper are properties of
   the mailbox node, not of a message.
 
+## The reader that constrains the exports
+
+`internal/budget/rules/rules_test.go` reads this file with a **regex**, not a JS
+parser, to compare the rules' bounds and field sets with the schema's
+(`TestMailboxRulesAgreeWithTheSharedSchema`): `export const NAME = …;` on one line,
+`NAME` in `[A-Z_]+`, and a value that is digits, `Number.MAX_SAFE_INTEGER`,
+`Object.freeze({…})` or `Object.freeze([…])`. Anything else makes that test `t.Fatalf`
+so the reader gets taught rather than silently skipped. The exports below keep that
+shape, and `FIELDS`/`REQUIRED_FIELDS` are the two arrays it compares.
+
 ## Evidence, and how to reproduce it
 
-The module has **no dependency**: it imports nothing, not even a node builtin. The
-tests are the plan's verification list (a missing id, a wrong type, an oversize body
-and an unknown field refused; a well-formed message accepted) plus the fail-closed
-families above.
+The module imports one node builtin (`node:crypto`) and has **no dependency**: nothing
+is installed, nothing is fetched. The tests are the plan's verification list (a missing
+id, a wrong type, an oversize body and an unknown field refused; a well-formed message
+accepted) plus the fail-closed families above and P6.3's kind, action, tag and
+canonical-byte cases.
 
-**Every guard in `index.js` is mutation-proved**, not merely covered:
+**Every guard in `index.js` is mutation-proved**, not merely covered — 62 guards, one
+mutation each:
 
 ```sh
 shared/mailbox-schema/mutation-proof.sh
-# control       the pristine suite passes, 18 tests, 0 failures
+# control       the pristine suite passes, 310 tests, 0 failures
 # killed        control: refuse() always succeeds (must be killed)
 # killed        not-an-object guard (null/array/primitive)
-# ...                                                        (17 more)
-# --- control killed; 19 guards: 19 killed, 0 survived, 0 not applied
+# ...                                                        (60 more)
+# --- control killed; 62 guards: 62 killed, 0 survived, 0 not applied
 ```
 
 The script disables one guard at a time — the object check, the unknown-field check,
-each type check, each bound, each character rule, the surrogate rule, the timestamp
-range, the ack's type check, the freeze and the copy — runs `npm test`, and requires
-the suite to fail each time. It restores the file with `git checkout` after each one
-and refuses to run against an uncommitted module.
+each type check, each bound, each character rule, the surrogate and separator rules, the
+timestamp range, the ack's type check, the deep freeze and the copy, then P6.3's: the
+kind vocabulary and its (kind, field) table, the agent and option shapes, the action
+record's verbs and both target shapes, the argv alphabets and the head SHA, the required
+tag, and the canonical serialisation — runs `npm test`, and requires the suite to fail
+each time. It restores the file with `git checkout` after each one and refuses to run
+against an uncommitted module.
 
 **"Killed" is only worth reading because of three things it does first**, since
 otherwise it is a claim about a command that may never have run:
@@ -150,7 +307,10 @@ otherwise it is a claim about a command that may never have run:
 Both controls were reproduced as failures while writing this: with the runner removed
 (`PATH=/usr/bin:/bin`) the script refuses; with `index.test.js` renamed the positive
 control passes over the skeleton's two tests alone and the **negative** control catches
-it, which is why there are two.
+it, which is why there are two. P6.3's four new guards were each *seen* to fail before
+they were trusted: the first run of the extended script reported four `APPLY-FAILED`
+lines against patterns that no longer matched the module, which is exactly the failure
+mode the harness exists to surface.
 
 ## Two honest gaps
 
@@ -158,10 +318,14 @@ it, which is why there are two.
   plan's Global Constraint 8: no agent edits `.github/workflows/`). Until it exists the
   tests run only where someone runs them — the same gap [the package's
   README](../README.md) records.
-- **Nothing consumes the schema yet.** P1.1, P3.6 and P4.1 are unbuilt, and no task of
-  the plan is approved; this module is not evidence that one is.
+- **The rules do not carry the new fields yet.** P6.3 changes the schema; P6.4 (level 3,
+  after P2.2) changes `rules.json.tmpl`, `rules.go` and the golden plan. Until it lands,
+  a write carrying `mac` is refused by the template. The Go test asserts the gap in both
+  directions and names it, so the difference is a listed state and not an oversight.
 
 Where the reasoning lives: [implementation-plan.md](../../docs/mobile/implementation-plan.md)
-(P0.2, and the critical-path note that keeps this task small),
-[reconciliation.md](../../docs/mobile/reconciliation.md) (D110, D113, D118), and the
-tree's own key rule, `internal/budget/model.go`'s `Key`.
+(P0.2, P6.3, the critical-path note that keeps this task small, and P6.4's own row),
+[functional-spec-reconciliation.md](../../docs/mobile/functional-spec-reconciliation.md)
+(§3.1, §3.2, §3.5, D161, D162, D163, D167, D168 as amended, D169, D171, D173),
+[reconciliation.md](../../docs/mobile/reconciliation.md) (D110, D113, D117, D118, D119),
+and the tree's own key rule, `internal/budget/model.go`'s `Key`.

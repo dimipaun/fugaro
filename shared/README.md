@@ -27,6 +27,17 @@ approved, and this directory is not evidence that one is.
 
 `mailbox-sim/` (P1.5) is the deterministic mailbox simulator: built, with its own tests and its own mutation proof; see `mailbox-sim/README.md`.
 
+`mailbox-schema/` (P0.2, extended by P6.3) is the message schema and its validation, and
+now the required `mac` on every message of every kind, the `agent`, `kind`, `options`,
+`reply_to` and action-record fields, the canonical serialisation the tag covers and its
+vectors: built, with its own tests, its own mutation proof (62 guards) and
+`vectors.json`, the contract the Go consumer reimplements against; see
+`mailbox-schema/README.md`. It is the one module in this package that imports a node
+builtin — `node:crypto`, for HMAC-SHA-256 — and it still has no dependency: nothing is
+installed, nothing is fetched. Note that P6.3 changes the schema and not
+`internal/budget/rules`' template, which is P6.4's task and is asserted as a known gap in
+`TestMailboxRulesAgreeWithTheSharedSchema`.
+
 ## The runner, and the glob
 
 `npm test` runs `node --test "**/*.test.js"` — Node's own test runner, so the package has
