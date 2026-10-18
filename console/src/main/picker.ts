@@ -280,6 +280,10 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
     // permission denied, the title kept, shown when ready, one load. Only the
     // options differ, and they are `consoleWebPreferences()` plus this preload.
     let opening: BrowserWindow | null = null
+    // closing is set by the window's own `close` event, which Electron emits
+    // when the close is asked for -- before the aborted load rejects, and before
+    // `isDestroyed()` turns true on every platform (macOS lags it).
+    let closing = false
     try {
       await buildHardenedWindow(
         { BrowserWindow: deps.BrowserWindow, session: deps.session },
@@ -287,6 +291,9 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         PICKER_ENTRY_URL,
         (built) => {
           opening = built
+          built.on('close', () => {
+            closing = true
+          })
           built.on('closed', () => {
             // The tokens are dropped with the window: a token is a capability to
             // name one path, and a window that is gone has no use for one. This is
@@ -306,7 +313,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
       // rethrowing it would reach `main`'s `reportAndQuit` on the first run and
       // quit the whole console. Any other failure is still thrown.
       const built = opening as BrowserWindow | null
-      if (built !== null && built.isDestroyed()) return
+      if (built !== null && (closing || built.isDestroyed())) return
       throw error
     }
   }

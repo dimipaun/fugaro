@@ -435,8 +435,12 @@ async function main(): Promise<void> {
   picker.installMenu()
   await lifecycle.start()
   // D13's first run: with no installation chosen the console makes no guess,
-  // says so, and opens the picker once.
-  await picker.openOnFirstRun()
+  // says so, and opens the picker once. A picker that fails to open is logged
+  // and is not a reason to quit a console whose own window is already up: the
+  // menu item is still there.
+  await picker.openOnFirstRun().catch((error: unknown) => {
+    console.error('[console] the installation picker could not be opened:', error)
+  })
 }
 
 app.whenReady().then(main).catch(reportAndQuit)

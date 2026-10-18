@@ -72,7 +72,7 @@ function fakeIpcMain(): IpcMainLike & { readonly listeners: Map<string, (event: 
 }
 
 /** fakeWindow is the slice of Electron's BrowserWindow the picker uses. */
-function fakeWindow(options: Record<string, unknown> = {}, loadFails?: 'closed' | 'error') {
+function fakeWindow(options: Record<string, unknown> = {}, loadFails?: 'closed' | 'closing' | 'error') {
   const handlers = new Map<string, (...args: unknown[]) => void>()
   let openHandlerSet = false
   let destroyed = false
@@ -107,6 +107,12 @@ function fakeWindow(options: Record<string, unknown> = {}, loadFails?: 'closed' 
         destroyed = true
         throw new Error('ERR_ABORTED (-3) loading app://console/installations.html')
       }
+      // The same, as macOS orders it: the close is asked for (`close` fires) and
+      // the load rejects while the window does not yet report itself destroyed.
+      if (loadFails === 'closing') {
+        handlers.get('close')?.()
+        throw new Error('ERR_ABORTED (-3) loading app://console/installations.html')
+      }
       if (loadFails === 'error') throw new Error('ERR_FAILED (-2) loading app://console/installations.html')
     },
     isDestroyed: () => destroyed,
@@ -121,7 +127,7 @@ function fakeWindow(options: Record<string, unknown> = {}, loadFails?: 'closed' 
 
 /** pickerOver builds a picker over fakes, with one userData directory of its
  * own. It returns the picker and the listeners it registered. */
-function pickerOver(options: { readonly userData?: string; readonly loadFails?: 'closed' | 'error' } = {}) {
+function pickerOver(options: { readonly userData?: string; readonly loadFails?: 'closed' | 'closing' | 'error' } = {}) {
   const ipcMain = fakeIpcMain()
   const loadFails = options.loadFails
   const windows: ReturnType<typeof fakeWindow>[] = []
@@ -404,7 +410,7 @@ describe('the picker’s add', () => {
     // are what `buildHardenedWindow` installs on every window this app opens;
     // a picker built by hand beside it would be the one window without them.
     expect([...(built?.handlerNames() ?? [])].sort()).toEqual(
-      ['closed', 'page-title-updated', 'ready-to-show', 'will-attach-webview', 'will-navigate'].sort(),
+      ['close', 'closed', 'page-title-updated', 'ready-to-show', 'will-attach-webview', 'will-navigate'].sort(),
     )
     expect(built?.openHandlerSet()).toBe(true)
     expect(built?.options).toEqual(pickerOptions(pickerPreloadPath('/work/repo/console')))
@@ -421,6 +427,8 @@ describe('the picker’s add', () => {
     const dismissed = pickerOver({ loadFails: 'closed' })
     await expect(dismissed.picker.openOnFirstRun()).resolves.toBeUndefined()
     expect(dismissed.windows).toHaveLength(1)
+    const closing = pickerOver({ loadFails: 'closing' })
+    await expect(closing.picker.openOnFirstRun()).resolves.toBeUndefined()
     const broken = pickerOver({ loadFails: 'error' })
     await expect(broken.picker.open()).rejects.toThrow(/ERR_FAILED/)
   })

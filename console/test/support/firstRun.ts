@@ -20,7 +20,10 @@ import { PICKER_ENTRY_URL } from '../../src/main/protocol'
  * `consoleWindow`, checks it is the picker's document, and closes it. */
 export async function dismissFirstRunPicker(app: ElectronApplication, consoleWindow: Page): Promise<void> {
   const picker = app.windows().find((window) => window !== consoleWindow) ?? (await app.waitForEvent('window'))
-  await picker.waitForLoadState('domcontentloaded')
+  // `load`, not `domcontentloaded`: the picker is closed below, and a window
+  // closed while its document is still loading is a different path (the
+  // aborted load) from the one these specs are about.
+  await picker.waitForLoadState('load')
   expect(picker.url(), 'the first run opened a second window that is not the picker').toBe(PICKER_ENTRY_URL)
   expect(consoleWindow.url()).not.toBe(PICKER_ENTRY_URL)
   await app.evaluate(({ BrowserWindow }, url) => {
@@ -28,5 +31,9 @@ export async function dismissFirstRunPicker(app: ElectronApplication, consoleWin
       if (window.webContents.getURL() === url) window.close()
     }
   }, PICKER_ENTRY_URL)
-  await expect.poll(() => app.windows().length).toBe(1)
+  await expect
+    .poll(() => app.windows().length, {
+      message: `closing the picker took the console window with it (app exit code ${String(app.process().exitCode)})`,
+    })
+    .toBe(1)
 }
