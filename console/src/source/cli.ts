@@ -658,6 +658,25 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       }),
     )
 
+  /**
+   * superseded is the refusal for a read whose build landed after the console
+   * stopped showing the installation it was for: the operator moved to another
+   * installation, or removed this one.
+   *
+   * It is **not** always D13's no-installation state. When the console has moved
+   * to another installation, one is chosen, its binary is there and its source
+   * is being built -- and a screen saying "no installation is chosen, so there
+   * is no binary for the console to read" would be describing a console that is
+   * not this one, with a `searched` list and an install command to match. The
+   * store is read here, at the moment of the refusal, so the sentence is about
+   * what actually happened: a removal is D13's state, and a switch is a read for
+   * an installation the console has stopped showing.
+   */
+  const superseded = (): SourceRefusal =>
+    deps.installation() === null
+      ? noInstallation()
+      : new SourceRefusal('the console is no longer showing the installation this read was for')
+
   const resolve = async (): Promise<CliSource> => {
     const installation = deps.installation()
     if (installation === null) throw noInstallation()
@@ -666,28 +685,31 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     // A different installation, or none bound: the previous source's children
     // are stopped before a new one is built. `bound` is cleared first so a read
     // that arrives while the close is in flight cannot be handed the source that
-    // is on its way out.
+    // is on its way out -- and the build is registered as `pending` **before**
+    // that close is awaited, so the read that arrives in the same window joins
+    // this build instead of starting a second one for the same installation
+    // (which would leave the first refused as a superseded build, and cost a
+    // second probe of a binary that was already being probed).
     const previous = bound
     bound = null
-    pending = null
     feeds.clear()
     epoch += 1
     const mine = epoch
-    if (previous !== null) await previous.source.close()
-    const source = create(installation).then((created) => {
+    const source = (async (): Promise<CliSource> => {
+      if (previous !== null) await previous.source.close()
+      const created = await create(installation)
       if (mine !== epoch) {
-        // Dropped, or superseded by a build for another installation, while
-        // this one was in flight. `forget` could not close what did not exist
-        // yet, so this source is closed here -- nothing else holds it -- and
-        // the read that asked for it is refused as a read for an installation
-        // that is gone.
+        // Dropped, or superseded by a build for another installation, while this
+        // one was in flight. `forget` could not close what did not exist yet, so
+        // this source is closed here -- nothing else holds it -- and the read
+        // that asked for it is refused for what actually happened.
         void created.close().catch(() => undefined)
-        throw noInstallation()
+        throw superseded()
       }
       bound = { id: installation.id, source: created }
       pending = null
       return created
-    })
+    })()
     pending = { id: installation.id, source }
     return source
   }

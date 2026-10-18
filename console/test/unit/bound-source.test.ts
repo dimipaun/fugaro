@@ -1,45 +1,68 @@
-// The bound source's `forget` (desktop-console plan Task 3.4c step 1, wiring
-// 3.4b's deferred N1).
+// The bound source: `forget` (desktop-console plan Task 3.4c step 1, wiring
+// 3.4b's deferred N1) and the build that is in flight when the console moves.
 //
 // `createBoundSource` is the join between the console's own state and the data
-// plane, and `forget` is the one operation the IPC surface has no name for: the
-// installation the console was reading from is gone, so nothing may stay bound
-// to it. The interesting half is not the close of a source that exists -- it is
-// the build that does not exist *yet*. Building a source resolves a binary and
-// probes its version, and a removal can land in the middle of that: the console
-// is reading from an installation at the moment the operator removes it.
+// plane. Two things about it are not obvious from the happy path, and both are
+// about a *build* -- resolving a binary and probing its version -- overlapping
+// something else:
 //
-// A build that finishes after the removal must not bind. `bound` is what every
-// later read is handed, and a source bound for an installation the store no
-// longer names is a `fugaro watch` child nobody holds and nobody will ever
-// close -- which is the exact thing `forget` exists to prevent.
+//   - **`forget`.** The installation the console was reading from is gone, so
+//     nothing may stay bound to it. The interesting half is not the close of a
+//     source that exists -- it is the build that does not exist *yet*. A build
+//     that lands after the removal must not bind, because `bound` is what every
+//     later read is handed, and a source bound for an installation the store no
+//     longer names is a `fugaro watch` child nobody holds and nobody will ever
+//     close.
+//   - **A switch.** Moving to another installation closes the previous source
+//     first, and a read that arrives while that close is in flight must join the
+//     build for the installation the console moved to -- not start a second one
+//     for it, which would leave the first refused as a superseded build. And a
+//     read whose build *is* superseded is refused for what happened: the console
+//     stopped showing that installation. It is **not** D13's no-installation
+//     state, which says no binary can be found while one is chosen and running.
 
 import { describe, expect, it } from 'vitest'
 
 import { NoInstallation, createBoundSource } from '../../src/source/cli'
 import type { BoundInstallation, CliSource } from '../../src/source/cli'
+import { SourceRefusal } from '../../src/source/source'
 
-/** INSTALLATION is the installation the cases below read from. */
-const INSTALLATION: BoundInstallation = {
+/** FIRST and SECOND are the two installations the cases below move between. */
+const FIRST: BoundInstallation = {
   id: 'a1',
   project: 'acme',
   binaryPath: '/opt/fugaro/bin/fugaro',
 }
+const SECOND: BoundInstallation = {
+  id: 'b2',
+  project: 'other',
+  binaryPath: '/opt/fugaro/bin/fugaro',
+}
 
 /** aSource is a `CliSource`-shaped stand-in: it answers a version and records
- * its own close, which is the only thing these cases ask of a source. */
-function aSource(closed: string[], name: string): CliSource {
+ * its own close, which is the only thing these cases ask of a source. `hold`
+ * delays the close, which is how a case keeps the window a switch opens open. */
+function aSource(closed: string[], name: string, hold?: () => Promise<void>): CliSource {
   return {
     version: async () => ({ text: name, receivedAt: '2026-10-15T12:00:00Z' }),
     close: async () => {
       closed.push(name)
+      if (hold !== undefined) await hold()
     },
   } as unknown as CliSource
 }
 
+/** refusalOf runs a read that is expected to refuse and answers the reason. */
+async function refusalOf(reading: Promise<unknown>): Promise<unknown> {
+  return reading.then(
+    () => null,
+    (cause: unknown) => cause,
+  )
+}
+
 describe('the source bound to the active installation', () => {
   it('binds one source per installation, and forget closes it once', async () => {
-    let installation: BoundInstallation | null = INSTALLATION
+    let installation: BoundInstallation | null = FIRST
     const closed: string[] = []
     const built: string[] = []
     const source = createBoundSource({
@@ -52,19 +75,23 @@ describe('the source bound to the active installation', () => {
 
     await source.version()
     await source.version()
-    expect(built, 'two reads of one installation built two sources').toEqual(['a1'])
+    expect(built, 'two reads of one installation built two sources').toEqual([FIRST.id])
 
     installation = null
     await source.forget()
     await source.forget()
-    expect(closed, 'forget did not close the source it unbound, exactly once').toEqual(['a1'])
+    expect(closed, 'forget did not close the source it unbound, exactly once').toEqual([FIRST.id])
     // And the read after the removal is D13's refusal rather than a source for
     // an installation nobody chose.
-    await expect(source.version()).rejects.toBeInstanceOf(NoInstallation)
+    const error = await refusalOf(source.version())
+    expect(error).toBeInstanceOf(NoInstallation)
+    expect(String((error as Error).message), 'the refusal is not D13’s own sentence').toContain(
+      'no installation is chosen',
+    )
   })
 
   it('closes a source whose installation was removed while it was being built', async () => {
-    let installation: BoundInstallation | null = INSTALLATION
+    let installation: BoundInstallation | null = FIRST
     const closed: string[] = []
     const held: (() => void)[] = []
     const source = createBoundSource({
@@ -86,9 +113,83 @@ describe('the source bound to the active installation', () => {
     // it closes here or it never closes at all.
     expect(held, 'the build answered before the removal: the case proves nothing').toHaveLength(1)
     held[0]?.()
-    await expect(reading).rejects.toBeInstanceOf(NoInstallation)
+
+    const error = await refusalOf(reading)
+    // A removal is D13's state, and the sentence is the resolution's own: no
+    // installation is chosen, so there is no binary for the console to read.
+    expect(error).toBeInstanceOf(NoInstallation)
+    expect(String((error as Error).message)).toContain('no installation is chosen')
     expect(closed, 'a source for the removed installation was left running').toEqual([
       'the removed installation',
     ])
+  })
+
+  it('joins the build in flight for the installation the console moved to', async () => {
+    let installation: BoundInstallation | null = FIRST
+    const closed: string[] = []
+    const built: string[] = []
+    const closing: (() => void)[] = []
+    const source = createBoundSource({
+      installation: () => installation,
+      create: async (each) => {
+        built.push(each.id)
+        // The first source's close does not answer until the test says so, which
+        // is the window a switch leaves open.
+        return each.id === FIRST.id
+          ? aSource(closed, each.id, () => new Promise<void>((resolve) => closing.push(resolve)))
+          : aSource(closed, each.id)
+      },
+    })
+
+    await source.version()
+    installation = SECOND
+    // The switch starts: the previous source is closing, and the second read
+    // arrives while it is. It is a read for the installation the console moved
+    // to, so it is a read for the build already in flight.
+    const first = source.version()
+    const second = source.version()
+
+    expect(closing, 'the previous source was not closed: the case proves nothing').toHaveLength(1)
+    closing[0]?.()
+
+    expect((await first).text, 'the first read was not answered by the new installation').toBe(SECOND.id)
+    expect((await second).text).toBe(SECOND.id)
+    expect(built, 'the read that arrived during the close started a second build').toEqual([
+      FIRST.id,
+      SECOND.id,
+    ])
+  })
+
+  it('refuses a read for an installation the console stopped showing, and says so', async () => {
+    let installation: BoundInstallation | null = FIRST
+    const closed: string[] = []
+    const held: (() => void)[] = []
+    const source = createBoundSource({
+      installation: () => installation,
+      create: (each) =>
+        each.id === FIRST.id
+          ? new Promise((resolve) => held.push(() => resolve(aSource(closed, each.id))))
+          : Promise.resolve(aSource(closed, each.id)),
+    })
+
+    // A read starts a build for the installation the console is showing, and the
+    // operator moves to another one before it lands.
+    const reading = source.version()
+    installation = SECOND
+    expect((await source.version()).text).toBe(SECOND.id)
+
+    expect(held, 'the first build answered before the switch: the case proves nothing').toHaveLength(1)
+    held[0]?.()
+
+    const error = await refusalOf(reading)
+    // Not "no installation is chosen": one is chosen, and the read that was
+    // refused was for the installation the console is no longer showing.
+    expect(error).toBeInstanceOf(SourceRefusal)
+    expect(
+      error,
+      'a read for an installation the console left was refused as D13’s no-installation state',
+    ).not.toBeInstanceOf(NoInstallation)
+    expect(String((error as Error).message)).toContain('no longer showing')
+    expect(closed, 'the superseded build’s source was left running').toEqual([FIRST.id])
   })
 })
