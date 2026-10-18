@@ -237,3 +237,30 @@ func TestValidateModelProvidersConventionDoesNotShadowTheDuplicateRule(t *testin
 		t.Fatalf("problems = %s", problemsText(ps))
 	}
 }
+
+// TestConventionNeverReservesAPlatformName: a provider entry may be named so
+// that its conventional name is one the platform already owns — the entry
+// `anthropic` gives anthropic-api-key, the direct Anthropic key, and an entry
+// named after a harness family gives a name in that family. Such a name is
+// never the provider's (ValidateModelProviders refuses it as its .secret), so
+// it is not reserved for the provider either: reserving it would refuse the
+// platform's own key to `secrets set` and init. And the warning stays quiet
+// for that entry, since the name it would advise is one the provider may not
+// use.
+func TestConventionNeverReservesAPlatformName(t *testing.T) {
+	providers := map[string]ModelProvider{
+		"anthropic":          {Secret: "anthropic-proxy-key"},
+		"codex-oauth-token":  {Secret: "cx-key"},
+		"claude-oauth-token": {Secret: "cl-key"},
+	}
+	for _, secret := range []string{AnthropicSecret, "codex-oauth-token-api-key", "claude-oauth-token-api-key"} {
+		if name, ok := ReservedProviderSecret(providers, secret); ok {
+			t.Errorf("ReservedProviderSecret(%q) = (%q, true): a platform name is reserved for a provider", secret, name)
+		}
+	}
+	for name, p := range providers {
+		if msg := SecretNameOffConvention(name, p); msg != "" {
+			t.Errorf("provider %s is advised to use a name it may not use: %s", name, msg)
+		}
+	}
+}

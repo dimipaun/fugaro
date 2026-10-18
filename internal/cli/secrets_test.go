@@ -2202,3 +2202,23 @@ func TestSecretsBoolFlagsMatchTheFlags(t *testing.T) {
 		}
 	}
 }
+
+// TestSecretsSetAnthropicKeyWithAnthropicNamedProvider: a provider entry named
+// `anthropic` has anthropic-api-key as its conventional name, which is the
+// platform's own direct Anthropic key (config.AnthropicSecret). The
+// reservation must not take that name from the platform: the key still
+// stores in the repository's scope.
+func TestSecretsSetAnthropicKeyWithAnthropicNamedProvider(t *testing.T) {
+	sm := secretsFixture(t)
+	t.Chdir(t.TempDir())
+	appendConfig(t, `providers:
+  anthropic: { kind: anthropic-compat, base_url: "https://openrouter.ai/api", auth: bearer, secret: anthropic-proxy-key, models: ["deepseek/*"], allow_data_to: ["acme/app"] }
+`)
+	const key = "not-a-real-key-1234"
+	if _, _, err := executeStdin(t, key, "secrets", "set", config.AnthropicSecret, "--repo", "acme/app"); err != nil {
+		t.Fatalf("the platform's Anthropic key was refused: %v", err)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, config.AnthropicSecret))); got != key {
+		t.Fatalf("stored %q", got)
+	}
+}

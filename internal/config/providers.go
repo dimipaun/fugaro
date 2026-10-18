@@ -521,9 +521,16 @@ func ProviderSecretConvention(name string) string { return name + APIKeySuffix }
 // provider itself is not refused its own name (ProviderBySecret finds it
 // first, and ValidateModelProviders holds a provider's .secret to this rule
 // only when the name belongs to a *different* entry).
+//
+// A conventional name the platform already owns is never reserved for a
+// provider (conventionUsable): the entry `anthropic` gives anthropic-api-key,
+// the direct Anthropic key, and an entry named after a harness family gives a
+// name in that family. Neither can ever be the provider's key
+// (ValidateModelProviders refuses both as a .secret), and reserving one would
+// take the platform's own name away from `secrets set` and init.
 func ReservedProviderSecret(providers map[string]ModelProvider, secret string) (name string, ok bool) {
 	for _, n := range sortedKeys(providers) {
-		if ProviderSecretConvention(n) == secret {
+		if conventionUsable(n) && ProviderSecretConvention(n) == secret {
 			return n, true
 		}
 	}
@@ -539,13 +546,26 @@ func ReservedProviderSecret(providers map[string]ModelProvider, secret string) (
 // It never echoes anything but names: p.Secret is a secret's name, and the
 // one thing it must never be is a value (CheckSecretName's rule, which
 // ValidateModelProviders applies before this text is ever built).
+//
+// An entry whose conventional name the provider may not use
+// (conventionUsable) is never warned about: the advice would name a secret
+// ValidateModelProviders refuses.
 func SecretNameOffConvention(name string, p ModelProvider) string {
 	want := ProviderSecretConvention(name)
-	if p.Secret == want {
+	if p.Secret == want || !conventionUsable(name) {
 		return ""
 	}
 	return fmt.Sprintf("its key is stored under the name %s; the convention names a provider's key after its entry in the local config, so this one's is %s. The key keeps working as it is — nothing is renamed and nothing is migrated — and %s stays reserved for it either way, so a key stored from now on should be %s",
 		p.Secret, want, want, want)
+}
+
+// conventionUsable reports whether the conventional name of the provider
+// entry named name is one a provider's key may have: not a secret the
+// platform reserves for itself (ReservedSecrets — the entry `anthropic` gives
+// anthropic-api-key) and not a harness's OAuth credential name.
+func conventionUsable(name string) bool {
+	c := ProviderSecretConvention(name)
+	return !reservedSecretName(c) && !HarnessOAuthSecret(c)
 }
 
 // ProviderSecretWarnings are the providers whose key is stored under a name
