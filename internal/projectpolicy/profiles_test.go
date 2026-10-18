@@ -462,6 +462,45 @@ func TestDecodeRefusesACaseVariantProfileMember(t *testing.T) {
 	}
 }
 
+// TestDecodeRefusesARepeatedProfileMember: encoding/json keeps the last member
+// it reads, so a profile's member written twice is decided by the second write
+// with nothing left in the decoded value to refuse — the same silence
+// checkNoDuplicateNames closes for the document's top level, for
+// providers.<name>, for accounts.<name>, for model_prices and, one entry down,
+// for a provider's and a price's own members (checkMemberNames).
+//
+// The profile entry is the carrier that was left out: checkWrittenProfileFields
+// reads the entry's members off a map, which has already folded a repeat away, so
+// `"cpu": 2, "cpu": 32` was read as 32 and `"allow_repos": ["github/acme/*"]`
+// followed by `"allow_repos": ["github/*/*"]` admitted every repository, both
+// silently.
+//
+// Mutation (run, restored): drop the objectMemberNames/checkNoDuplicateNames pair
+// from checkWrittenProfileFields — every document below is accepted again.
+func TestDecodeRefusesARepeatedProfileMember(t *testing.T) {
+	for _, tc := range []struct{ what, doc string }{
+		{"cpu twice", `{"standard":{"provider":"github","cpu":2,"cpu":4,"memory":"4Gi","timeout_class":"6h"}}`},
+		{"allow_repos twice, the second wider", `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":["github/acme/*"],"allow_repos":["github/*/*"]}}`},
+		{"memory twice", `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","memory":"8Gi","timeout_class":"6h"}}`},
+	} {
+		p, err := decodeProfiles(t, tc.doc)
+		if err == nil {
+			t.Errorf("%s was accepted, read as %+v: a repeated member is decided by the last write with nothing left in the decoded value to refuse", tc.what, p.Profiles["standard"])
+			continue
+		}
+		for _, want := range []string{"profiles.standard", "twice"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal for %s does not say %q: %v", tc.what, want, err)
+			}
+		}
+	}
+	// The rule claims the repeat, not the spelling: each member once still
+	// decodes, so a profile is not refused for saying what it means.
+	if _, err := decodeProfiles(t, `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":["github/acme/*"]}}`); err != nil {
+		t.Errorf("a profile with each member written once was refused: %v", err)
+	}
+}
+
 // TestProfileAdmitsAlsoRequiresTheProjectList: both gates, and the project's is
 // not optional. §4.3: "there is never a state in which a shared job serves a
 // repository that has not been allowed" — so a profile whose own list is wider

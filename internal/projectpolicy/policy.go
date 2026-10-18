@@ -614,8 +614,8 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 }
 
 // checkWrittenProfileFields applies the profile rules that read the written
-// document rather than the decoded value: the spelling of a profile's members,
-// and an explicitly empty allow_repos.
+// document rather than the decoded value: a member written twice, the spelling
+// of a profile's members, and an explicitly empty allow_repos.
 //
 // A profile that names no list falls back to the project's allow_repos
 // (§4.1), and the carrier's `omitempty` means the node cannot carry an empty
@@ -634,6 +634,19 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 // same guard, and the same reason, as validProviders' member check: a name
 // that differs only in case is read by the decoder and by nothing else here.
 func checkWrittenProfileFields(name string, raw json.RawMessage) error {
+	// A member written twice is read off the document as written, before the map
+	// below folds the repeat away: encoding/json keeps the last one it reads, so
+	// `"cpu": 2, "cpu": 4` is 4 and `"allow_repos": ["github/acme/*"]` followed by
+	// `["github/*/*"]` admits every repository, either way with nothing left in
+	// the decoded value to refuse. Every other carrier of this document refuses a
+	// repeat the same way (checkNoDuplicateNames).
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: profiles.%s: %w", name, err)
+	}
+	if err := checkNoDuplicateNames("profiles."+name, names); err != nil {
+		return fmt.Errorf("projectpolicy: %w", err)
+	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return fmt.Errorf("projectpolicy: profiles.%s: %w", name, err)

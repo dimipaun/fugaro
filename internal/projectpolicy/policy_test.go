@@ -481,7 +481,8 @@ func TestDecodeValidatesProviderEntriesLikeTheCarrier(t *testing.T) {
 		// decoded as ["*"], every repository, with nothing left in the map to
 		// refuse. The name is read off the document as written
 		// (objectMemberNames) so the repetition is visible, exactly as it is in
-		// `budget`, in a model_prices entry and in the routing switch.
+		// `budget`, in a model_prices entry, in a profile entry
+		// (checkWrittenProfileFields) and in the routing switch.
 		"a repeated data list": `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme/app"], "allow_data_to": ["*"]}`,
 		"a repeated kind":      `{"kind": "anthropic-compat", "kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
 		"an alias pattern":     `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["claude-*"]}`,
