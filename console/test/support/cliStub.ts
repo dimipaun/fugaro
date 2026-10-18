@@ -79,7 +79,17 @@ export interface CliStub {
    * first, so it wins even over a machine's own `fugaro`) and the picker does
    * not open. It is for the specs whose subject is the dashboard, not the first
    * run. */
-  seedActiveInstallation(project?: string): void
+  seedActiveInstallation(project?: string, binaryPath?: string): void
+  /** seedInstallations writes `installations.json` with these entries and
+   * `active` (Task 3.4b), for a spec that needs more than one installation. */
+  seedInstallations(
+    entries: readonly { readonly id: string; readonly project: string; readonly binaryPath: string }[],
+    active: string | null,
+  ): void
+  /** extraStub installs one more stub, printing `line`, in its own directory
+   * under this scratch tree -- **not** on the app's `PATH` -- and answers its
+   * path. It is a second CLI an installation can name. */
+  extraStub(name: string, line: string): string
   /** setVersion rewrites the line the stub prints (`'0.8.1\n'`, `'banana\n'`, a
    * hostile line), in both places the stub was installed. */
   setVersion(line: string): void
@@ -124,17 +134,28 @@ export function installCliStub(line: string): CliStub {
     launchArgs(consoleDir: string): string[] {
       return [consoleDir, `--user-data-dir=${userData}`]
     },
-    seedActiveInstallation(project = 'e2e'): void {
+    seedActiveInstallation(project = 'e2e', binaryPath = join(dir, 'fugaro')): void {
       const id = '0123456789abcdef'
+      stub.seedInstallations([{ id, project, binaryPath }], id)
+    },
+    seedInstallations(entries, active): void {
       writeFileSync(
         join(userData, INSTALLATIONS_FILE_NAME),
         serializeInstallationFile({
           version: INSTALLATION_FILE_VERSION as 1,
-          active: id,
-          installations: [{ id, project, binaryPath: join(dir, 'fugaro') }],
+          active,
+          installations: entries.map((entry) => ({ id: entry.id, project: entry.project, binaryPath: entry.binaryPath })),
         }),
         { mode: 0o600 },
       )
+    },
+    extraStub(name: string, next: string): string {
+      const where = join(scratch, name)
+      mkdirSync(where, { recursive: true })
+      copyFileSync(CLI_STUB, join(where, 'fugaro'))
+      chmodSync(join(where, 'fugaro'), 0o755)
+      writeFileSync(join(where, 'version.txt'), `${next}\n`)
+      return join(where, 'fugaro')
     },
     setVersion(next: string): void {
       for (const where of [dir, wellKnown]) {

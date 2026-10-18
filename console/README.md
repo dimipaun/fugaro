@@ -1350,8 +1350,14 @@ where the operator picks one.
 writes** (design §5.1 rule 10, §7.4), and the owner ruled it in on 2026-10-18
 (**C8**) rather than letting it grow by accident:
 
-- **`installations.json`, in the app's own `userData`**, under the app name
-  `fugaro-console`. It is written `0600` inside a `0700` directory.
+- **`installations.json`, in the app's own `userData`**. Electron names that
+  directory after `package.json`'s `productName`, else its `name`; this
+  package sets no top-level `productName`, so a development run (`electron .`,
+  the e2e specs) uses `fugaro-console`, and a packaged build may use
+  electron-builder's product name, `Fugaro Console`. Neither is the CLI's
+  `fugaro`, and `test/unit/installations-store.test.ts` reads both names from
+  `package.json` and checks them. It is written `0600` inside a `0700`
+  directory.
 - **Tuples only** — `id`, `project`, `binaryPath`, an optional `configPath` and
   an optional `checkout`. **Never a credential**, and **never read from the
   operator's CLI config**: rule 7 forbids that outright, and the store's only
@@ -1359,7 +1365,10 @@ writes** (design §5.1 rule 10, §7.4), and the owner ruled it in on 2026-10-18
 - **It refuses to live under the CLI's own configuration.** `installationStorePath`
   throws if `userData` is inside `~/.config/fugaro`, `$XDG_CONFIG_HOME/fugaro`
   or the directory `$FUGARO_CONFIG` names, so the console's file and the CLI's
-  cannot be confused for one another. `cliConfigDirectories` takes `home` as an
+  cannot be confused for one another. The picker catches that refusal: the
+  console still starts, with **no store**, and the picker and the dashboard say
+  why (a `$FUGARO_CONFIG` of `~/fugaro.yaml` inherited from a shell is the case
+  that reaches it, since every `userData` is under the home directory). `cliConfigDirectories` takes `home` as an
   argument rather than calling `homedir()`, because the console's own guard
   forbids that call outside binary resolution.
 - **Schema-checked on read, and closed.** `readInstallationFile` refuses a file
@@ -1369,6 +1378,11 @@ writes** (design §5.1 rule 10, §7.4), and the owner ruled it in on 2026-10-18
   absolute or is too long — **an unknown key refuses the whole file** rather
   than being ignored, because a file the console only partly understands is a
   file it must not act on. A missing file is an empty list, not a failure.
+- **A regular file, or nothing.** The read `lstat`s the name and refuses a
+  symbolic link, a FIFO or anything else that is not a regular file, then opens
+  it `O_NOFOLLOW | O_NONBLOCK`, re-checks it with `fstat`, and reads at most one
+  byte past the bound from that descriptor — so a FIFO cannot hang startup and
+  a file that grows between the checks is still refused.
 - **Bounded.** `MAX_INSTALLATIONS` (16) and `MAX_INSTALLATION_FILE_BYTES`
   (64 KiB, refused unread past it). The bound is re-checked **after** the
   `await` in `add`, because validation spawns a child process and two adds can
@@ -1382,7 +1396,7 @@ writes** (design §5.1 rule 10, §7.4), and the owner ruled it in on 2026-10-18
   at all** until an `add`, a `choose` or a `remove` — a load, a `list` and a
   `current` write nothing.
 
-The file is `node:fs`-free and Electron-free: `fs` is injected as
+The file is Electron-free, and the store's filesystem is injected as
 `InstallationFs`, so every property above is a plain-Node unit test.
 
 ### Validation: the binary is proved, not trusted
@@ -1393,11 +1407,14 @@ installation's own `version` handshake through `probeInstallation` — so a
 candidate is stored with the `CliCompatibility` the console actually read from
 *that* binary, not from whichever `fugaro` happens to be on `PATH` (rule 4). A
 binary below the hard floor is refused and **nothing is stored**; a binary in
-the reduced range is stored and its row says `reduced`. When a checkout is
-given, the CLI's own pairing check runs as one allow-listed spawn with that
-directory as the child's working directory, and a checkout that belongs to
-another project is refused **with the CLI's sentence shown** and not stored —
-the console never reads `fugaro.yaml` itself (rule 7).
+the reduced range is stored and its row says `reduced`. The CLI's own pairing
+check (`doctor --json`) then runs on every add as one allow-listed spawn, and a
+checkout that belongs to another project is refused **with the CLI's sentence
+shown** and not stored — the console never reads `fugaro.yaml` itself (rule 7).
+Every probe of an add or a choose runs from the checkout when one is given and
+from the console's private directory otherwise — never from the binary's own
+directory — and is in the spawn log, with the candidate's project, when the
+operator has turned the log on.
 
 `isProjectName` is deliberately **stricter** than the spawn layer's
 `isSafeInstallationValue`: the latter allows a space, because a path may contain
@@ -1440,10 +1457,14 @@ dashboard's header. `src/main/picker.ts` builds it:
   `MAX_OUTSTANDING_PICKS` (8) are outstanding, the oldest is dropped past the
   bound, and every token is dropped when the window closes.
 - **The menu is the only way in.** `installationsMenuTemplate` adds
-  `Installations…` (and `Quit`); the window is opened by that item and by the
-  first run (`openOnFirstRun`, which opens only when no installation has been
-  chosen). A test asserts the window is opened from the menu item and from
-  nowhere else.
+  `Installations…` (and `Quit`), beside Electron's own Edit and Window menus so
+  the editing and window shortcuts keep working; the window is opened by that
+  item and by the first run (`openOnFirstRun`, which opens only when no
+  installation has been chosen).
+- **One mutation at a time.** An add, a choose or a remove runs only after the
+  one before it has finished — for a choose, after the window it asked for is
+  up — and the picker's controls are disabled while a request is in flight, so
+  two quick chooses cannot leave two dashboards open.
 
 `src/main/index.ts` wires it in: `installInstallationPicker(...)` with Electron's
 own `BrowserWindow`, `session.defaultSession`, `ipcMain`, `dialog`, `Menu` and
@@ -1461,7 +1482,14 @@ seam the renderer entry (Task 3.4a) needs to answer the dashboard's
   handshake for that installation in the picker and hands the answer to
   `lifecycle.choose` (`src/main/window.ts`), which registers the surface if it
   was not yet and reopens the window through `openWindowFor`. The startup
-  handshake reads the stored active installation's binary and project. Binding
+  handshake reads the stored active installation's binary — **that binary and
+  no other**: a stored binary that is missing or not executable is a refusal,
+  never a fall through to another `fugaro` on the machine — with its project,
+  and its answer is what `installation.current` and the picker's rows report
+  (an installation nothing has read in this run says `unknown`, never `ok`).
+  The dashboard draws one line from that read and no figure: the project, the
+  binary, the version and mode, or the no-installation sentence and, when the
+  store's file was refused, its path and why. Binding
   a `CliSource` to it is Task 3.4c's: until then the dashboard's reads answer
   `NO_ACTIVE_INSTALLATION`.
 - **`build.files`.** The packaged app must carry everything it loads at runtime.

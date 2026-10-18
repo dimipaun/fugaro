@@ -237,18 +237,43 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
 
   const controls = (): readonly (PickerElement | null)[] => [submit, pickers.binary.button, pickers.config.button, pickers.checkout.button]
 
+  // busy is whether a request is in flight (review S6). While it is, every
+  // control -- the form's and every row's -- is disabled, and a click that still
+  // arrives is dropped: the main process serialises its mutations as well, and
+  // this is what stops a second choose from being *sent* at all.
+  let busy = false
+  let view: InstallationView = { status: '', rows: [], canAdd: false }
+  let rowButtons: { readonly button: PickerElement; readonly activeRow: boolean }[] = []
+  const settle = (): void => {
+    for (const control of controls()) {
+      if (control !== null) control.disabled = busy || !view.canAdd
+    }
+    for (const { button, activeRow } of rowButtons) button.disabled = busy || activeRow
+  }
+  const exclusively = async (body: () => Promise<void>): Promise<void> => {
+    if (busy) return
+    busy = true
+    settle()
+    try {
+      await body()
+    } finally {
+      busy = false
+      settle()
+    }
+  }
+
   const rowElement = (row: InstallationListRow): PickerElement => {
     const item = document.createElement('li')
     item.textContent = rowText(row)
     const choose = document.createElement('button')
     choose.setAttribute('type', 'button')
     choose.textContent = row.active ? 'Chosen' : 'Choose'
-    choose.disabled = row.active
     choose.addEventListener('click', () => act(() => bridge.choose({ id: row.id })))
     const remove = document.createElement('button')
     remove.setAttribute('type', 'button')
     remove.textContent = 'Remove'
     remove.addEventListener('click', () => act(() => bridge.remove({ id: row.id })))
+    rowButtons.push({ button: choose, activeRow: row.active }, { button: remove, activeRow: false })
     item.appendChild(choose)
     item.appendChild(remove)
     return item
@@ -256,26 +281,28 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
 
   /** render draws one answer. The rows are replaced wholesale rather than
    * patched, so a row that is gone from the answer is gone from the page. */
-  const render = (view: InstallationView): void => {
-    say(view.status)
-    if (list !== null) list.replaceChildren(...view.rows.map(rowElement))
-    for (const control of controls()) {
-      if (control !== null) control.disabled = !view.canAdd
-    }
+  const render = (next: InstallationView): void => {
+    view = next
+    say(next.status)
+    rowButtons = []
+    if (list !== null) list.replaceChildren(...next.rows.map(rowElement))
+    settle()
   }
 
   const refresh = async (): Promise<void> => {
     render(viewOf(await bridge.list()))
   }
 
-  /** act sends one mutation and re-reads. A refusal is shown **after** the
-   * re-read, so the operator sees the sentence over the list as it actually is
-   * rather than over a list the failed action did not change. */
-  const act = async (send: () => Promise<InstallationReply>): Promise<void> => {
-    const reply = await send()
-    await refresh()
-    if (!reply.ok) say(reply.reason)
-  }
+  /** act sends one mutation and re-reads, with every control disabled until
+   * both are done. A refusal is shown **after** the re-read, so the operator
+   * sees the sentence over the list as it actually is rather than over a list
+   * the failed action did not change. */
+  const act = (send: () => Promise<InstallationReply>): Promise<void> =>
+    exclusively(async () => {
+      const reply = await send()
+      await refresh()
+      if (!reply.ok) say(reply.reason)
+    })
 
   const clearTokens = (): void => {
     for (const kind of ['binary', 'config', 'checkout'] as const) {
@@ -293,54 +320,54 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
     const picker = pickers[kind]
     const button = picker.button
     if (button === null) continue
-    button.addEventListener('click', async () => {
-      const reply = await picker.send()
-      if (!reply.ok) {
-        say(reply.reason)
-        return
-      }
-      const token = (reply.data as { readonly token?: unknown }).token
-      if (typeof token !== 'string' || token === '') {
-        // The main process answers a cancel with `ok: false`, so a success with
-        // no token is a shape this view does not know: it says so rather than
-        // sending an empty string to `add`, which the validator would refuse
-        // with a sentence about the wrong thing.
-        say('the console answered without a choice')
-        return
-      }
-      tokens[kind] = token
-      button.textContent = PICK_LABELS[kind].chosen
-      say('Chosen. Fill in the project name, then press Add.')
-    })
+    button.addEventListener('click', () =>
+      exclusively(async () => {
+        const reply = await picker.send()
+        if (!reply.ok) {
+          say(reply.reason)
+          return
+        }
+        const token = (reply.data as { readonly token?: unknown }).token
+        if (typeof token !== 'string' || token === '') {
+          // The main process answers a cancel with `ok: false`, so a success
+          // with no token is a shape this view does not know: it says so rather
+          // than sending an empty string to `add`, which the validator would
+          // refuse with a sentence about the wrong thing.
+          say('the console answered without a choice')
+          return
+        }
+        tokens[kind] = token
+        button.textContent = PICK_LABELS[kind].chosen
+        say('Chosen. Fill in the project name, then press Add.')
+      }),
+    )
   }
 
-  form?.addEventListener('submit', async (event) => {
+  form?.addEventListener('submit', (event) => {
     // The page is the whole application: a submit that navigated would leave
     // the console for a URL the CSP refuses, and would take the picker with it.
     event.preventDefault()
-    const args: Record<string, string> = {}
-    const named = project?.value ?? ''
-    // A key is sent only when the operator filled it in: the main process's own
-    // sentence for a missing one ("project is required") is better than a
-    // refusal this view invented about a value it sent empty.
-    if (named !== '') args['project'] = named
-    for (const kind of ['binary', 'config', 'checkout'] as const) {
-      const token = tokens[kind]
-      if (token !== undefined) args[kind] = token
-    }
-    const reply = await bridge.add(args)
-    // The tokens are dropped whether the add succeeded or not, and the reason is
-    // that this view cannot tell **how far** the payload got: the main process
-    // redeems a token where its validation reaches it, so a payload refused
-    // earlier leaves the token outstanding and one refused later spends it. A
-    // view that kept them would sometimes send a spent token, and the sentence
-    // it would get back -- "binary is not an outstanding choice" -- is about the
-    // token rather than about the installation. Choosing again is one dialog;
-    // that sentence is a puzzle.
-    clearTokens()
-    await refresh()
-    if (!reply.ok) say(reply.reason)
-    else if (project !== null) project.value = ''
+    return exclusively(async () => {
+      const args: Record<string, string> = {}
+      const named = project?.value ?? ''
+      // A key is sent only when the operator filled it in: the main process's
+      // own sentence for a missing one ("project is required") is better than a
+      // refusal this view invented about a value it sent empty.
+      if (named !== '') args['project'] = named
+      for (const kind of ['binary', 'config', 'checkout'] as const) {
+        const token = tokens[kind]
+        if (token !== undefined) args[kind] = token
+      }
+      const reply = await bridge.add(args)
+      // The tokens are dropped whether the add succeeded or not: this view
+      // cannot tell **how far** the payload got (the main process redeems a
+      // token where its validation reaches it), and a view that kept them would
+      // sometimes send a spent one. Choosing again is one dialog.
+      clearTokens()
+      await refresh()
+      if (!reply.ok) say(reply.reason)
+      else if (project !== null) project.value = ''
+    })
   })
 
   return { refresh }

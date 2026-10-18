@@ -1271,6 +1271,103 @@ export async function resolveBinary(options: {
   }
 }
 
+/**
+ * resolveInstalledBinary reads **exactly one** binary: the one an installation
+ * names. It never walks rule 4's list.
+ *
+ * That is the difference from `resolveBinary` with a `configuredPath`, and it is
+ * the whole point (desktop-console plan Task 3.4b, step 4: "its handshake decides
+ * the window"). `resolveBinary` skips a configured path that is missing or not
+ * executable and carries on to `/opt/homebrew/bin`, `/usr/local/bin`,
+ * `~/.local/bin` and `PATH` -- so a stored installation whose binary had gone
+ * would have its window decided by some *other* `fugaro`, while the header still
+ * named the stored path (review of 3.4b, B1). Here a stored binary that is not
+ * there answers `path: null` (the handshake's `not-found`), one that is there
+ * but is not an executable regular file answers its own path (`unreadable`), and
+ * a probe that fails answers its reason -- and in every case nothing else on the
+ * machine is asked.
+ */
+export async function resolveInstalledBinary(options: {
+  readonly binaryPath: string
+  readonly appEnv: Readonly<Record<string, string | undefined>>
+  readonly directory: string
+  readonly target: SpawnTarget
+  readonly spawner?: ChildSpawner
+  readonly log?: SpawnLogWriter
+  readonly timeoutMs?: number
+}): Promise<BinaryResolution> {
+  const path = options.binaryPath
+  if (path === '' || !isAbsolute(path)) {
+    return { ok: false, path, reason: `the installation's binary path is not absolute: ${path}` }
+  }
+  if (!existsSync(path)) {
+    return { ok: false, path: null, reason: `the installation's binary is not there: ${path}` }
+  }
+  if (!isExecutableFile(path)) {
+    return { ok: false, path, reason: `the installation's binary is not an executable file: ${path}` }
+  }
+  const plan = planFor('cli.version', {}, {
+    target: options.target,
+    binaryPath: path,
+    directory: options.directory,
+    appEnv: options.appEnv,
+  })
+  const probe = await probeVersion(plan, options)
+  if (!probe.ok) return { ok: false, path, reason: probe.reason }
+  return { ok: true, path, version: probe.version, source: 'configured' }
+}
+
+/**
+ * resolveHandshakeBinary is the startup handshake's resolution, in the one
+ * place a unit test can drive it (`src/main/index.ts` imports the Electron
+ * runtime and cannot be imported under `vitest`).
+ *
+ * With an active installation it reads that installation's binary and nothing
+ * else (`resolveInstalledBinary`), with that installation's project as the
+ * target, so the spawn log records which installation the bare `version` was
+ * for. With none it is Task 3.3's read: rule 4's resolution with the
+ * project-less target -- and **no** project from anywhere else, not
+ * `FUGARO_PROJECT`, not the working directory (D13: no guess).
+ */
+export async function resolveHandshakeBinary(options: {
+  readonly installation: { readonly binaryPath: string; readonly target: SpawnTarget } | null
+  readonly appEnv: Readonly<Record<string, string | undefined>>
+  readonly directory: string
+  readonly spawner?: ChildSpawner
+  readonly log?: SpawnLogWriter
+  readonly home?: string
+  readonly prefixes?: readonly string[] | undefined
+}): Promise<BinaryResolution> {
+  const shared = {
+    appEnv: options.appEnv,
+    directory: options.directory,
+    ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
+    ...(options.log === undefined ? {} : { log: options.log }),
+  }
+  if (options.installation !== null) {
+    return resolveInstalledBinary({
+      ...shared,
+      binaryPath: options.installation.binaryPath,
+      target: options.installation.target,
+    })
+  }
+  return resolveBinary({
+    ...shared,
+    target: NO_INSTALLATION_TARGET,
+    ...(options.home === undefined ? {} : { home: options.home }),
+    ...(options.prefixes === undefined ? {} : { prefixes: options.prefixes }),
+  })
+}
+
+/**
+ * NO_INSTALLATION_TARGET is the target the startup read runs with when no
+ * installation is active: no project and no config path, because `fugaro
+ * version` takes neither (`COMMANDS_WITHOUT_PROJECT`). Inventing a project here,
+ * or falling back to the ambient `FUGARO_PROJECT`, would be a target nobody
+ * chose (design section 3.4 rule 1).
+ */
+export const NO_INSTALLATION_TARGET: SpawnTarget = Object.freeze({ project: '' })
+
 function configuredSource(configuredPath: string | undefined, candidate: string): 'configured' | 'well-known' {
   if (configuredPath !== undefined && configuredPath === candidate) return 'configured'
   return 'well-known'

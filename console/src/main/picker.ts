@@ -35,7 +35,9 @@ import {
   installationChannel,
   installationOperationFor,
   installationStorePath,
+  INSTALLATIONS_FILE_NAME,
   probeInstallation,
+  refusedInstallationStore,
   validateInstallation,
   validateInstallationArguments,
 } from './installations'
@@ -141,7 +143,7 @@ export interface InstallationPickerDeps {
     readonly binaryPath: string
     /** The answer of the handshake the choose just ran: never `refused`. */
     readonly compatibility: CliCompatibility
-  }) => void
+  }) => Promise<void> | void
   /** onRemoved is the same seam for a removal that took the active installation
    * away: the console has none, and its dashboard must say so. */
   readonly onRemoved?: (id: string) => void
@@ -169,6 +171,10 @@ export interface InstallationPicker {
    * fixed. */
   readonly refusal: string | null
   readonly storePath: string
+  /** remember records the compatibility a handshake read for one
+   * installation -- the startup's, from `onDecided` in `src/main/index.ts` -- so
+   * `installation()` and the rows carry its mode and version (review S1). */
+  remember(id: string, compatibility: CliCompatibility): void
   /** close drops every outstanding pick token, so a window that is gone cannot
    * be answered for. */
   close(): void
@@ -192,6 +198,12 @@ export function installationsMenuTemplate(options: {
   // read only property 'submenu'") before the app has a window -- which is what
   // the first real launch of this file did. A fresh value per call is the
   // guard instead: nothing else holds a reference to it.
+  //
+  // The Edit and Window menus are Electron's own roles, kept beside ours
+  // (review S10): replacing the application menu drops the default one, and on
+  // macOS the editing shortcuts (copy, paste, select all -- the picker's project
+  // field needs them) and the window ones (close, minimise) are menu items, not
+  // built-ins.
   return [
     {
       label: options.appName,
@@ -201,6 +213,8 @@ export function installationsMenuTemplate(options: {
         { role: 'quit', click: options.onQuit },
       ],
     },
+    { role: 'editMenu' },
+    { role: 'windowMenu' },
   ]
 }
 
@@ -243,11 +257,26 @@ export function pickerPreloadPath(appPath: string): string {
  * with no installation, and an add is refused until the operator fixes the file.
  */
 export function createInstallationPicker(deps: InstallationPickerDeps): InstallationPicker {
-  const storePath = installationStorePath({ userData: deps.userData, env: deps.appEnv, home: deps.home })
-  const store: InstallationFileStore = createInstallationFileStore({
-    path: storePath,
-    ...(deps.fs === undefined ? {} : { fs: deps.fs }),
-  })
+  // A `userData` the path rule refuses -- `$FUGARO_CONFIG` in the home directory
+  // makes every `userData` "inside" the CLI's configuration -- is **not** a
+  // reason to quit at startup (review S7). The console starts with no store: the
+  // refusal is the sentence the picker and the dashboard draw, every add is
+  // refused, and nothing is written anywhere.
+  let storePath: string
+  let store: InstallationFileStore
+  try {
+    storePath = installationStorePath({ userData: deps.userData, env: deps.appEnv, home: deps.home })
+    store = createInstallationFileStore({
+      path: storePath,
+      ...(deps.fs === undefined ? {} : { fs: deps.fs }),
+    })
+  } catch (error) {
+    storePath = join(deps.userData, INSTALLATIONS_FILE_NAME)
+    store = refusedInstallationStore(
+      storePath,
+      error instanceof Error ? error.message : 'the console has no place to keep its installations',
+    )
+  }
   const validate = (candidate: Parameters<InstallationRegistry['add']>[0]) =>
     validateInstallation(candidate, {
       appEnv: deps.appEnv,
@@ -318,6 +347,17 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
     }
   }
 
+  // One chain for every mutation (review S6): an add, a choose or a remove runs
+  // only after the previous one -- its probe, its write and, for a choose, the
+  // window it asked for -- has finished. Two chooses clicked 50 ms apart would
+  // otherwise both probe, both persist and both open a dashboard.
+  let mutations: Promise<unknown> = Promise.resolve()
+  const serially = <T>(body: () => Promise<T>): Promise<T> => {
+    const next = mutations.then(body, body)
+    mutations = next.catch(() => undefined)
+    return next
+  }
+
   const rows = (): readonly InstallationRow[] => registry.rows()
   const current = (): ActiveInstallation => registry.current()
 
@@ -347,6 +387,18 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         return pick('config', 'Choose the config file', ['openFile'])
       case 'pickCheckout':
         return pick('checkout', 'Choose the checkout directory', ['openDirectory'])
+      case 'add':
+      case 'choose':
+      case 'remove':
+        return serially(() => mutate(name, args))
+    }
+  }
+
+  const mutate = async (
+    name: 'add' | 'choose' | 'remove',
+    args: InstallationArguments,
+  ): Promise<unknown> => {
+    switch (name) {
       case 'add': {
         const validated = await registry.add({
           project: args['project'] ?? '',
@@ -370,13 +422,14 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
             appEnv: deps.appEnv,
             ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
             ...(deps.spawnLog === undefined ? {} : { spawnLog: deps.spawnLog }),
-            ...(deps.fs === undefined ? {} : { fs: deps.fs }),
           },
         )
         if (!probed.ok) return { ok: false, reason: probed.reason }
         registry.remember(id, probed.compatibility)
         registry.choose(id)
-        deps.onChosen?.({ id, project: held.project, binaryPath: held.binary, compatibility: probed.compatibility })
+        // Awaited inside the chain: the next mutation waits for the window this
+        // choose asked for.
+        await deps.onChosen?.({ id, project: held.project, binaryPath: held.binary, compatibility: probed.compatibility })
         return { ok: true, data: { rows: rows(), active: current() } }
       }
       case 'remove': {
@@ -455,6 +508,9 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
       return registry.refusal
     },
     storePath,
+    remember(id: string, compatibility: CliCompatibility): void {
+      registry.remember(id, compatibility)
+    },
     close(): void {
       tokens.dropAll()
     },

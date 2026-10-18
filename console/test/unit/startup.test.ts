@@ -29,7 +29,9 @@
 // test: `openStartupWindow` is the order, `openWindowFor` is the two doors, and
 // the entry point is the call.
 
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
@@ -42,6 +44,9 @@ import type {
 } from 'electron'
 
 import { APP_ENTRY_URL, REFUSAL_ENTRY_URL } from '../../src/main/protocol'
+import { privateWorkingDirectory, resolveHandshakeBinary } from '../../src/main/spawn'
+import { SPAWN_LOG_ENV, createSpawnLog } from '../../src/main/spawnlog'
+import { installStub } from './stub'
 import {
   CONSOLE_WINDOW_TITLE,
   HANDSHAKE_NOT_FOUND,
@@ -498,6 +503,127 @@ describe('a choose in the picker (Task 3.4b, step 5)', () => {
     expect(windows.loaded).toEqual([REFUSAL_ENTRY_URL, APP_ENTRY_URL, APP_ENTRY_URL])
     expect(decided).toEqual(['refused', 'ok'])
   })
+
+  it('leaves one dashboard window after two rapid chooses (review S6)', async () => {
+    const windows = recordingWindows()
+    const closed = new Set<unknown>()
+    const Closable = function (this: unknown, options: BrowserWindowConstructorOptions): object {
+      const window = new windows.BrowserWindow(options) as unknown as Record<string, unknown>
+      window['close'] = () => {
+        closed.add(window)
+      }
+      window['isDestroyed'] = () => closed.has(window)
+      return window
+    } as unknown as new (options: BrowserWindowConstructorOptions) => BrowserWindow
+    const lifecycle = createConsoleLifecycle({
+      windowDeps: () => ({ BrowserWindow: Closable, session: aSession, preloadPath: PRELOAD_PATH }),
+      readVersion: readsVersion(`${CLI_VERSION_BUILT_AGAINST}\n`),
+      openWindowCount: () => windows.built.filter((window) => !closed.has(window)).length,
+    })
+    await lifecycle.start()
+    // Two chooses in the same turn: each reads the window it replaces, so run
+    // side by side both would replace the *startup's* window and leave two
+    // dashboards open.
+    await Promise.all([
+      lifecycle.choose(classifyCliVersion(CLI_VERSION_BUILT_AGAINST)),
+      lifecycle.choose(classifyCliVersion('0.9.0')),
+    ])
+    const open = windows.built.filter((window) => !closed.has(window))
+    expect(windows.built).toHaveLength(3)
+    expect(open).toEqual([windows.built[2]])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The startup handshake's resolution (Task 3.4b, steps 3 and 4; review B1, S4)
+// ---------------------------------------------------------------------------
+
+describe('the startup handshake reads the active installation, and only it', () => {
+  /** machine is a scratch "machine": a well-known prefix and a PATH entry, each
+   * holding a `fugaro` that answers an in-range version -- the binaries a
+   * fallthrough would find. */
+  function machine() {
+    const root = mkdtempSync(join(tmpdir(), 'fugaro-handshake-'))
+    const wellKnown = installStub(join(root, 'opt', 'bin'), { commands: { version: { stdout: `${CLI_VERSION_BUILT_AGAINST}\n` } } })
+    const onPath = installStub(join(root, 'path'), { commands: { version: { stdout: `${CLI_VERSION_BUILT_AGAINST}\n` } } })
+    const logPath = join(root, 'spawn.jsonl')
+    const appEnv = {
+      PATH: join(root, 'path'),
+      // Planted: an ambient project the console must never pick up (D13).
+      FUGARO_PROJECT: 'planted-ambient-project',
+      [SPAWN_LOG_ENV]: logPath,
+    }
+    const read = async (installation: Parameters<typeof resolveHandshakeBinary>[0]['installation']) => {
+      const log = createSpawnLog(appEnv)
+      try {
+        return await resolveHandshakeBinary({
+          installation,
+          appEnv,
+          directory: privateWorkingDirectory(),
+          log,
+          home: root,
+          prefixes: [join(root, 'opt', 'bin')],
+        })
+      } finally {
+        log.close()
+      }
+    }
+    const records = (): readonly { argv: string[]; project: string }[] => {
+      try {
+        return readFileSync(logPath, 'utf8')
+          .split('\n')
+          .filter((line) => line !== '')
+          .map((line) => JSON.parse(line) as { argv: string[]; project: string })
+      } catch {
+        return []
+      }
+    }
+    return { root, wellKnown, onPath, read, records }
+  }
+
+  it('refuses a missing stored binary as not-found, and asks no other fugaro (B1)', async () => {
+    const m = machine()
+    const resolution = await m.read({ binaryPath: join(m.root, 'gone', 'fugaro'), target: { project: 'gone' } })
+    expect(resolution.ok).toBe(false)
+    expect(versionReadFrom(resolution)).toEqual({ ok: false, failure: 'not-found' })
+    // The fallthrough the review reproduced: neither in-range binary was asked.
+    expect(m.wellKnown.reports()).toEqual([])
+    expect(m.onPath.reports()).toEqual([])
+    expect(m.records()).toEqual([])
+  })
+
+  it('refuses a stored binary that is not executable as unreadable, and asks no other fugaro', async () => {
+    const m = machine()
+    const plain = join(m.root, 'plain-fugaro')
+    writeFileSync(plain, '#!/bin/sh\necho 0.8.1\n', { mode: 0o644 })
+    const resolution = await m.read({ binaryPath: plain, target: { project: 'acme' } })
+    expect(versionReadFrom(resolution)).toEqual({ ok: false, failure: 'unreadable' })
+    expect(m.wellKnown.reports()).toEqual([])
+    expect(m.onPath.reports()).toEqual([])
+  })
+
+  it('reads the stored binary with its project, and the spawn log records that project', async () => {
+    const m = machine()
+    const own = installStub(join(m.root, 'own'), { commands: { version: { stdout: '0.9.0\n' } } })
+    const resolution = await m.read({ binaryPath: own.binary, target: { project: 'acme' } })
+    expect(resolution).toMatchObject({ ok: true, path: own.binary, version: '0.9.0', source: 'configured' })
+    expect(own.reports().map((report) => report.argv)).toEqual([['version']])
+    expect(m.records().map((record) => [record.argv[0], record.argv[1], record.project])).toEqual([
+      [own.binary, 'version', 'acme'],
+    ])
+    expect(m.wellKnown.reports()).toEqual([])
+  })
+
+  it('with none, walks rule 4 with no project, and never the ambient FUGARO_PROJECT', async () => {
+    const m = machine()
+    const resolution = await m.read(null)
+    expect(resolution).toMatchObject({ ok: true, path: m.wellKnown.binary })
+    const records = m.records()
+    expect(records).toHaveLength(1)
+    expect(records[0]?.project).toBe('')
+    // The child's own environment carries no project either.
+    expect(m.wellKnown.reports()[0]?.project ?? '').toBe('')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -719,7 +845,7 @@ describe('the entry point is wired to the handshake', () => {
     // that owns spawning. A version read that built its own command line here
     // would be a second spawner outside `spawn.ts` -- which `ipc.test.ts`'s
     // source scans also refuse.
-    expect(indexSource).toContain('resolveBinary(')
+    expect(indexSource).toContain('resolveHandshakeBinary(')
     expect(indexSource).toContain('privateWorkingDirectory()')
     // The resolver's reason quotes what the binary printed, so the entry point
     // hands over the category and never the reason.
@@ -866,40 +992,23 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     // The one resolution in the file is the handshake's, and it is the only
     // `resolveBinary` call: an operation that resolved a binary for itself would
     // be a second answer to "which fugaro is this console driving".
-    expect(indexSource.match(/resolveBinary\(/g) ?? []).toHaveLength(1)
+    expect(indexSource.match(/resolve\w*Binary\(/g) ?? []).toHaveLength(1)
     expect(indexSource).not.toContain('FUGARO_BIN')
     // The kill switch has no operation of its own (C10), so nothing here names
     // one: the field travels inside `live.watch`.
     expect(indexSource).not.toContain('budget.kill')
   })
 
-  it('reads the stored active installation for the handshake, and guesses nothing without one (Task 3.4b)', () => {
-    // Steps 3 and 4: with an active installation, its binary is the resolver's
-    // configured path and its project the spawn target; with none, Task 3.3's
-    // project-less target and rule 4's resolution, and no ambient guess.
-    const read = bodyOf('async function readCliVersion()')
-    expect(read).toContain('const chosen = handshakeInstallation()')
-    expect(read).toContain('configuredPath: chosen.binaryPath')
-    expect(read).toContain('target: chosen === null ? HANDSHAKE_TARGET : chosen.target')
-    const chosen = bodyOf('function handshakeInstallation()')
-    expect(chosen).toContain('picker?.installation()')
-    expect(chosen).toContain('binaryPath: chosen.binary')
-    expect(chosen).toContain('project: chosen.project')
-    expect(indexSource).not.toContain('FUGARO_PROJECT')
-    expect(indexSource).not.toContain('process.cwd()')
-  })
-
-  it('answers `installation.current` from the picker, and hands a choose to the lifecycle (Task 3.4b)', () => {
-    const gated = bodyOf('const gated: ConsoleHandlers = {')
-    expect(gated).toContain('installation: () => picker?.installation()')
-    const main = bodyOf('async function main()')
-    expect(main).toContain('lifecycle.choose(chosen.compatibility)')
-    // The picker is built before the startup handshake reads its store, and its
-    // first-run open comes after the window the handshake allows.
-    expect(main.indexOf('installInstallationPicker(')).toBeLessThan(main.indexOf('await lifecycle.start()'))
-    expect(main.indexOf('await lifecycle.start()')).toBeLessThan(main.indexOf('picker.openOnFirstRun()'))
-    expect(main.indexOf('picker.installMenu()')).toBeLessThan(main.indexOf('await lifecycle.start()'))
-  })
+  // The two Task 3.4b cases that stood here were greps of this file's text
+  // (`'configuredPath: chosen.binaryPath'` and the like), and they passed with
+  // the B1 fallthrough in place (review S4). Their behaviour is proven instead:
+  // the resolution in 'the startup handshake reads the active installation, and
+  // only it' above (`resolveHandshakeBinary`, which this file calls), and the
+  // wiring in a real window -- `test/e2e/entry.spec.ts` (a seeded installation's
+  // project in the spawn log, a missing stored binary refused, a planted
+  // `FUGARO_PROJECT` never read, the picker opened once on a first run) and
+  // `test/e2e/installations.spec.ts` (`installation.current` from the picker,
+  // a refused choose leaving the window as it was).
 
   it('logs the handshake probe, and only the handshake probe', () => {
     // Design section 5.1 rule 10: the console writes the spawn log, when asked.

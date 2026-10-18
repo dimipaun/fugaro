@@ -20,9 +20,11 @@
 //     refusal, and the app-name test is what keeps `fugaro-console` outside all
 //     three of them on every platform the console ships on.
 
-import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
@@ -47,6 +49,8 @@ import {
   validateInstallation,
   validateInstallationArguments,
   installationOperationFor,
+  nodeInstallationFs,
+  probeInstallation,
 } from '../../src/main/installations'
 import type { InstallationFs, StoredInstallation } from '../../src/main/installations'
 // The pairing check the store runs is the **source layer's own**
@@ -54,6 +58,9 @@ import type { InstallationFs, StoredInstallation } from '../../src/main/installa
 // that returns the sentence it is asserting.
 import { verifyCandidate } from '../../src/source/cli'
 import { installStub } from './stub'
+import { classifyCliVersion } from '../../src/shared/version'
+import { privateWorkingDirectory } from '../../src/main/spawn'
+import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
 
 const HOME = '/Users/owner'
 
@@ -103,18 +110,29 @@ describe('the store’s path', () => {
 
   it('names the app’s own directory, which is outside all three on every platform', () => {
     // The plan's red step for this half: an app named `fugaro` on Linux would put
-    // userData at ~/.config/fugaro, which is the CLI's. `fugaro-console` does
-    // not, on either platform, and this is the test that pins the name.
-    expect(CONSOLE_APP_NAME).toBe('fugaro-console')
-    const userDataByPlatform: readonly (readonly [string, string])[] = [
-      ['linux', join(HOME, '.config', CONSOLE_APP_NAME)],
-      ['darwin', join(HOME, 'Library', 'Application Support', CONSOLE_APP_NAME)],
-    ]
-    for (const [platform, userData] of userDataByPlatform) {
-      for (const configDirectory of cliConfigDirectories({ XDG_CONFIG_HOME: join(HOME, '.config') }, HOME)) {
-        expect(isInside(configDirectory, userData), `${platform}: ${userData}`).toBe(false)
+    // userData at ~/.config/fugaro, which is the CLI's. The name checked is the
+    // one **Electron** derives `userData` from -- `package.json`'s
+    // `productName`, else its `name` -- read from the file, not a constant
+    // compared with its own literal (review S9). `build.productName` is
+    // electron-builder's name for the packaged app, and is checked too, so a
+    // rename of either to `fugaro` fails here.
+    const manifest = JSON.parse(
+      readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'),
+    ) as { readonly name: string; readonly productName?: string; readonly build?: { readonly productName?: string } }
+    const electronName = manifest.productName ?? manifest.name
+    const names = [electronName, ...(manifest.build?.productName === undefined ? [] : [manifest.build.productName])]
+    expect(electronName).toBe(CONSOLE_APP_NAME)
+    for (const name of names) {
+      const userDataByPlatform: readonly (readonly [string, string])[] = [
+        ['linux', join(HOME, '.config', name)],
+        ['darwin', join(HOME, 'Library', 'Application Support', name)],
+      ]
+      for (const [platform, userData] of userDataByPlatform) {
+        for (const configDirectory of cliConfigDirectories({ XDG_CONFIG_HOME: join(HOME, '.config') }, HOME)) {
+          expect(isInside(configDirectory, userData), `${platform}: ${userData}`).toBe(false)
+        }
+        expect(() => installationStorePath({ userData, env: {}, home: HOME })).not.toThrow()
       }
-      expect(() => installationStorePath({ userData, env: {}, home: HOME })).not.toThrow()
     }
     // ...and `isInside` is not a prefix test: a sibling that merely starts with
     // the config directory's name is not inside it.
@@ -230,6 +248,54 @@ describe('the file’s schema', () => {
     expect(createInstallationFileStore({ path }).load().ok).toBe(false)
     expect(readFileSync(path)).toEqual(before)
   })
+
+  it('refuses a symbolic link at its name, even to a well-formed file (review S8)', () => {
+    const directory = freshDirectory()
+    const target = join(directory, 'elsewhere.json')
+    writeFileSync(target, fileText([installation()], installation().id))
+    const path = join(directory, INSTALLATIONS_FILE_NAME)
+    symlinkSync(target, path)
+    const read = createInstallationFileStore({ path }).load()
+    expect(read.ok).toBe(false)
+    if (!read.ok) expect(read.reason).toContain('symbolic link')
+    // The descriptor-level guard too: `O_NOFOLLOW` refuses the link even when a
+    // caller skipped the `lstat`.
+    expect(() => nodeInstallationFs.readRegularFile(path, MAX_INSTALLATION_FILE_BYTES + 1)).toThrow()
+  })
+
+  it('refuses a FIFO at its name without blocking on it (review S8)', () => {
+    const directory = freshDirectory()
+    const path = join(directory, INSTALLATIONS_FILE_NAME)
+    execFileSync('mkfifo', [path])
+    // A `readFileSync` here would block the test forever: there is no writer.
+    // The vitest timeout is the hang detector.
+    const read = createInstallationFileStore({ path }).load()
+    expect(read.ok).toBe(false)
+    // Refused by the `lstat`, before anything opens it.
+    if (!read.ok) expect(read.reason).toBe('the file is not a regular file')
+    // And the read itself, if it is ever reached: `O_NONBLOCK` opens the FIFO
+    // without waiting for a writer, and `fstat` refuses it.
+    expect(() => nodeInstallationFs.readRegularFile(path, MAX_INSTALLATION_FILE_BYTES + 1)).toThrow(/not a regular file/)
+  }, 5000)
+
+  it('reads at most one byte past the bound from the descriptor', () => {
+    // The `lstat` size check is a fast path, not the bound: a file that grows
+    // between the two calls is caught by the read. The fake answers a small
+    // size and then a large read.
+    const calls: number[] = []
+    const fs: InstallationFs = {
+      ...nodeInstallationFs,
+      lstat: () => ({ isFile: () => true, isSymbolicLink: () => false, size: 10 }),
+      readRegularFile: (_path, limit) => {
+        calls.push(limit)
+        return { bytes: limit, text: ' '.repeat(limit) }
+      },
+    }
+    const read = createInstallationFileStore({ path: '/nowhere/installations.json', fs }).load()
+    expect(calls).toEqual([MAX_INSTALLATION_FILE_BYTES + 1])
+    expect(read.ok).toBe(false)
+    if (!read.ok) expect(read.reason).toContain('larger than')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -255,9 +321,15 @@ function recordingFs(): InstallationFs & {
     rename: (from, to) => {
       calls.push(`rename:${from}:${to}`)
     },
-    readFile: () => {
-      calls.push('readFile')
-      return ''
+    lstat: () => {
+      calls.push('lstat')
+      const error = new Error('ENOENT') as Error & { code: string }
+      error.code = 'ENOENT'
+      throw error
+    },
+    readRegularFile: () => {
+      calls.push('readRegularFile')
+      return { bytes: 0, text: '' }
     },
     stat: () => {
       calls.push('stat')
@@ -317,7 +389,8 @@ describe('the writer', () => {
       rename: () => {
         throw new Error('ENOSPC: no space left on device')
       },
-      readFile: (target) => readFileSync(target, 'utf8'),
+      lstat: (target) => nodeInstallationFs.lstat(target),
+      readRegularFile: (target, limit) => nodeInstallationFs.readRegularFile(target, limit),
       stat: (target) => statSync(target),
       unlink: (target) => {
         // Deliberately not performed: this asserts the file the *caller* sees,
@@ -422,6 +495,38 @@ describe('validation', () => {
     if (!result.ok) expect(result.reason).toContain('0.5.0')
     // ...and the pairing check never ran: a refused CLI is not driven.
     expect(verified).toBe(0)
+  })
+
+  it('runs the add’s and the choose’s probes from the private directory, and logs them (review S2)', async () => {
+    // Design section 3.4 rule 5: with no checkout a child runs from the private
+    // directory the console owns -- never `dirname(binaryPath)`, which is
+    // `/usr/local/bin` or a directory inside an app bundle. And plan 3.4b step 2:
+    // every spawn is in the operator's spawn log with the candidate's project.
+    const directory = freshDirectory()
+    const stub = installStub(join(directory, 'bin'), {
+      commands: { version: { stdout: '0.8.1\n' }, doctor: { stdout: '{}\n' } },
+    })
+    const logPath = join(directory, 'spawn.jsonl')
+    const appEnv = { [SPAWN_LOG_ENV]: logPath }
+    const added = await validateInstallation({ project: 'acme', binaryPath: stub.binary }, { appEnv, verify })
+    expect(added.ok).toBe(true)
+    const probed = await probeInstallation(installation({ project: 'acme', binaryPath: stub.binary }), { appEnv })
+    expect(probed.ok).toBe(true)
+    const privateDirectory = privateWorkingDirectory()
+    const versionCalls = stub.reports().filter((report) => report.argv[0] === 'version')
+    expect(versionCalls).toHaveLength(2)
+    for (const report of versionCalls) {
+      expect(realpathSync(report.cwd)).toBe(privateDirectory)
+      expect(report.cwd).not.toBe(join(directory, 'bin'))
+    }
+    const logged = readFileSync(logPath, 'utf8')
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line) as { argv: string[]; project: string; cwd: string })
+    expect(logged.map((record) => [record.argv[1], record.project, record.cwd])).toEqual([
+      ['version', 'acme', privateDirectory],
+      ['version', 'acme', privateDirectory],
+    ])
   })
 
   it('stores a reduced-band CLI and marks it reduced', async () => {
@@ -547,10 +652,41 @@ describe('the registry', () => {
     const read = registry.load()
     expect(read.ok).toBe(false)
     expect(registry.refusal).not.toBeNull()
+    // The dashboard's read says so too, naming the path (plan 3.4b step 1).
+    const current = registry.current()
+    expect(current.chosen).toBe(false)
+    if (!current.chosen) {
+      expect(current.path).toBe(path)
+      expect(current.refusal).toContain('does not know')
+    }
     return registry.add({ project: 'fugaro', binaryPath: '/usr/local/bin/fugaro' }).then((result) => {
       expect(result.ok).toBe(false)
       expect(readFileSync(path, 'utf8')).toBe(broken)
     })
+  })
+
+  it('reads an installation nobody probed as unknown, never ok, and carries the handshake it remembers (review S1)', () => {
+    const directory = freshDirectory()
+    const path = join(directory, INSTALLATIONS_FILE_NAME)
+    writeFileSync(path, fileText([installation()], installation().id))
+    const registry = registryOver(path)
+    registry.load()
+    const unprobed = registry.current()
+    expect(unprobed.chosen).toBe(true)
+    if (unprobed.chosen) {
+      expect(unprobed.mode).toBe('unknown')
+      expect(unprobed.cliVersion).toBeNull()
+    }
+    expect(registry.rows()[0]?.mode).toBe('unknown')
+    // The startup's handshake, remembered: reduced, with its version, in both
+    // the dashboard's read and the picker's row.
+    registry.remember(installation().id, classifyCliVersion('0.9.0'))
+    const reduced = registry.current()
+    if (reduced.chosen) {
+      expect(reduced.mode).toBe('reduced')
+      expect(reduced.cliVersion).toBe('0.9.0')
+    }
+    expect(registry.rows()[0]?.mode).toBe('reduced')
   })
 
   it('refuses the seventeenth installation', () => {

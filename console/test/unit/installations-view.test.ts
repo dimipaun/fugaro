@@ -281,6 +281,43 @@ describe('the picker’s document and its view', () => {
     expect(recording.calls).toEqual(['list', 'choose', 'list', 'remove', 'list'])
   })
 
+  it('disables every control while a request is in flight, and sends no second choose (review S6)', async () => {
+    const document = fakeDocument()
+    const { bridge, recording } = fakeBridge({ rows: [row(), row({ id: 'fedcba9876543210', project: 'other' })] })
+    let release: () => void = () => undefined
+    const original = bridge.choose.bind(bridge)
+    const held: PickerBridge = {
+      ...bridge,
+      choose: async (args) => {
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+        return original(args)
+      },
+    }
+    const view = mountPicker(document, held)
+    await view.refresh()
+    const list = document.byId.get('picker-list') as FakeElement
+    const [first, second] = list.children as FakeElement[]
+    const inFlight = first?.button('Choose').fire('click')
+    await Promise.resolve()
+    // Every control is disabled while the first choose is out.
+    for (const id of ['picker-add-submit', 'picker-pick-binary', 'picker-pick-config', 'picker-pick-checkout']) {
+      expect((document.byId.get(id) as FakeElement).disabled, id).toBe(true)
+    }
+    expect(second?.button('Choose').disabled).toBe(true)
+    expect(second?.button('Remove').disabled).toBe(true)
+    // A click that arrives anyway is dropped, not queued.
+    await second?.button('Choose').fire('click')
+    release()
+    await inFlight
+    expect(recording.choose).toEqual([{ id: '0123456789abcdef' }])
+    // And the controls come back once the reply and the re-read are in.
+    expect((document.byId.get('picker-add-submit') as FakeElement).disabled).toBe(false)
+    const redrawn = (document.byId.get('picker-list') as FakeElement).children as FakeElement[]
+    expect(redrawn[1]?.button('Choose').disabled).toBe(false)
+  })
+
   it('sends the token it was issued, and never a path', async () => {
     const { element, recording } = await mount({ rows: [] })
     await element('picker-pick-binary').fire('click')

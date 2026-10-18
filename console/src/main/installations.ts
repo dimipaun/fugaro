@@ -4,8 +4,9 @@
 // 10, 7.4, D13, D14, D20; owner ruling C8, 2026-10-18).
 //
 // This module is the whole of the store, and it is deliberately **free of
-// Electron and of `node:fs`**: the paths it touches arrive as arguments, the
-// filesystem arrives as `InstallationFs`, and the one check that needs the CLI
+// Electron**: the paths it touches arrive as arguments, the store's filesystem
+// arrives as `InstallationFs` (`nodeInstallationFs` is the only place it meets
+// `node:fs`), and the one check that needs the CLI
 // arrives as `deps.verify`. That is what lets `test/unit/installations-store.test.ts`
 // hold the 0600 mode, the atomic rename and every refusal against a recording
 // filesystem under plain Node, and it is also what keeps the module inside
@@ -34,12 +35,25 @@
 //     work.
 
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { NO_ACTIVE_INSTALLATION } from './ipc'
-import { isSafeInstallationValue, isExecutableFile, planFor, probeVersion } from './spawn'
+import { isSafeInstallationValue, isExecutableFile, planFor, privateWorkingDirectory, probeVersion } from './spawn'
 import type { ChildSpawner, SpawnTarget } from './spawn'
+import { createSpawnLog } from './spawnlog'
 import type { SpawnLogWriter } from './spawnlog'
 import { classifyCliVersion } from '../shared/version'
 import type { CliCompatibility } from '../shared/version'
@@ -168,14 +182,21 @@ export interface InstallationFs {
   mkdir(path: string, options: { readonly recursive: true; readonly mode: number }): void
   writeFile(path: string, data: string, options: { readonly flag: 'wx'; readonly mode: number }): void
   rename(from: string, to: string): void
-  readFile(path: string): string
+  /** lstat does **not** follow a symbolic link: the store's own file is read
+   * only when it is a regular file at that name (review S8). */
+  lstat(path: string): { readonly isFile: () => boolean; readonly isSymbolicLink: () => boolean; readonly size: number }
+  /** readRegularFile opens the file with `O_NOFOLLOW | O_NONBLOCK`, refuses
+   * (throws) anything `fstat` says is not a regular file, and reads **at most
+   * `limit` bytes** from that one descriptor -- so a file swapped for a link, a
+   * FIFO or something larger between the `lstat` and the read is still refused,
+   * and a FIFO never blocks the main thread. `bytes` is how many were read. */
+  readRegularFile(path: string, limit: number): { readonly bytes: number; readonly text: string }
   stat(path: string): { readonly isFile: () => boolean; readonly isDirectory: () => boolean; readonly size: number }
   unlink(path: string): void
 }
 
-/** nodeInstallationFs is the real filesystem. `readFileSync` is called with no
- * encoding argument's sibling here -- the string is decoded by `utf8` in
- * `readInstallationFile`'s caller -- so the bound is checked against bytes. */
+/** nodeInstallationFs is the real filesystem. The read bound is checked against
+ * the bytes read from the descriptor, never against a `stat` taken earlier. */
 export const nodeInstallationFs: InstallationFs = Object.freeze<InstallationFs>({
   mkdir: (path, options) => {
     mkdirSync(path, options)
@@ -186,7 +207,26 @@ export const nodeInstallationFs: InstallationFs = Object.freeze<InstallationFs>(
   rename: (from, to) => {
     renameSync(from, to)
   },
-  readFile: (path) => readFileSync(path, 'utf8'),
+  lstat: (path) => {
+    const info = lstatSync(path)
+    return { isFile: () => info.isFile(), isSymbolicLink: () => info.isSymbolicLink(), size: info.size }
+  },
+  readRegularFile: (path, limit) => {
+    const fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK)
+    try {
+      if (!fstatSync(fd).isFile()) throw new Error('it is not a regular file')
+      const buffer = Buffer.alloc(limit)
+      let total = 0
+      while (total < limit) {
+        const read = readSync(fd, buffer, total, limit - total, null)
+        if (read === 0) break
+        total += read
+      }
+      return { bytes: total, text: buffer.subarray(0, total).toString('utf8') }
+    } finally {
+      closeSync(fd)
+    }
+  },
   stat: (path) => {
     const info = statSync(path)
     return { isFile: () => info.isFile(), isDirectory: () => info.isDirectory(), size: info.size }
@@ -401,22 +441,36 @@ export function createInstallationFileStore(options: {
   return {
     path: options.path,
     load(): InstallationRead {
-      let size: number
+      // `lstat`, not `stat`: a symbolic link at this name is refused rather than
+      // followed to whatever file it names, and a FIFO or a device is refused
+      // before anything opens it (review S8). Only a file that is not there at
+      // all is the first run's empty file.
+      let info: ReturnType<InstallationFs['lstat']>
       try {
-        size = fs.stat(options.path).size
-      } catch {
-        return { ok: true, file: EMPTY_INSTALLATION_FILE }
+        info = fs.lstat(options.path)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { ok: true, file: EMPTY_INSTALLATION_FILE }
+        return { ok: false, reason: `the file could not be examined (${error instanceof Error ? error.message : 'unknown'})` }
       }
-      if (size > MAX_INSTALLATION_FILE_BYTES) {
+      if (info.isSymbolicLink()) {
+        return { ok: false, reason: 'the file is a symbolic link, which the console does not follow' }
+      }
+      if (!info.isFile()) return { ok: false, reason: 'the file is not a regular file' }
+      if (info.size > MAX_INSTALLATION_FILE_BYTES) {
         return { ok: false, reason: `the file is larger than ${String(MAX_INSTALLATION_FILE_BYTES)} bytes` }
       }
-      let raw: string
+      let read: { readonly bytes: number; readonly text: string }
       try {
-        raw = fs.readFile(options.path)
+        // One byte past the bound, from the descriptor: a file that grew after
+        // the `lstat` is still caught here, and is never read in full.
+        read = fs.readRegularFile(options.path, MAX_INSTALLATION_FILE_BYTES + 1)
       } catch (error) {
         return { ok: false, reason: `the file could not be read (${error instanceof Error ? error.message : 'unknown'})` }
       }
-      return readInstallationFile(raw)
+      if (read.bytes > MAX_INSTALLATION_FILE_BYTES) {
+        return { ok: false, reason: `the file is larger than ${String(MAX_INSTALLATION_FILE_BYTES)} bytes` }
+      }
+      return readInstallationFile(read.text)
     },
     save(file: InstallationFile): void {
       const directory = dirname(options.path)
@@ -440,6 +494,24 @@ export function createInstallationFileStore(options: {
   }
 }
 
+/**
+ * refusedInstallationStore is the store a console gets when it has **no** place
+ * to keep its installations: `installationStorePath` refused the directory
+ * (review S7 -- a `$FUGARO_CONFIG` in the home directory makes every `userData`
+ * "inside" the CLI's config). The console still starts: `load` answers the
+ * refusal with the sentence, which the picker and the dashboard draw, and
+ * `save` refuses, so nothing is ever written there.
+ */
+export function refusedInstallationStore(path: string, reason: string): InstallationFileStore {
+  return {
+    path,
+    load: (): InstallationRead => ({ ok: false, reason }),
+    save: (): void => {
+      throw new Error(`the console keeps no installations file: ${reason}`)
+    },
+  }
+}
+
 /** ValidationDeps is everything `validateInstallation` needs, all of it handed
  * in. `verify` is the one check that runs the CLI, and it is
  * `verifyCandidate` from `src/source/cli.ts`: the verification logic stays in
@@ -450,6 +522,10 @@ export interface ValidationDeps {
   readonly spawnLog?: SpawnLogWriter
   readonly fs?: InstallationFs
   readonly verify: (candidate: InstallationCandidate) => Promise<void>
+  /** workingDirectory is where a probe without a checkout runs: the private
+   * directory (design section 3.4 rule 5), never the binary's own directory.
+   * It is a dep only so a test can see which one was used. */
+  readonly workingDirectory?: () => string
 }
 
 /** ValidatedInstallation is an installation that passed every check, with the
@@ -465,6 +541,26 @@ export interface ValidatedInstallation {
 export type InstallationValidation =
   | { readonly ok: true; readonly value: ValidatedInstallation }
   | { readonly ok: false; readonly reason: string }
+
+/**
+ * withSpawnLog runs one probe with a spawn log: the one the caller handed in, or
+ * one this function opens from the operator's `FUGARO_CONSOLE_SPAWN_LOG` and
+ * closes when the probe is done -- the same rule `verifyCandidate` and the
+ * startup handshake follow, so an add's or a choose's `version` spawn is in the
+ * log with the candidate's project (plan 3.4b step 2; review S2).
+ */
+async function withSpawnLog<T>(
+  env: Readonly<Record<string, string | undefined>>,
+  given: SpawnLogWriter | undefined,
+  body: (log: SpawnLogWriter) => Promise<T>,
+): Promise<T> {
+  const log = given ?? createSpawnLog(env)
+  try {
+    return await body(log)
+  } finally {
+    if (log !== given) log.close()
+  }
+}
 
 /** newInstallationId is the app's own identifier for an installation. */
 export function newInstallationId(): string {
@@ -557,17 +653,18 @@ export async function validateInstallation(
   // that takes neither -- but `planFor` decides that, and this is the same
   // target every other spawn from this installation uses.
   const target: SpawnTarget = { project, ...(configPath === undefined ? {} : { configPath }) }
-  const directory = checkout ?? dirname(binaryPath)
+  // The checkout, or the private directory -- the same choice `verifyCandidate`
+  // makes for step 6, so one add spawns from one directory (rule 5; review S2).
+  const directory = checkout ?? (deps.workingDirectory ?? privateWorkingDirectory)()
   const plan = planFor('cli.version', {}, {
     target,
     binaryPath,
     directory,
     appEnv: env,
   })
-  const probed = await probeVersion(plan, {
-    ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
-    ...(deps.spawnLog === undefined ? {} : { log: deps.spawnLog }),
-  })
+  const probed = await withSpawnLog(env, deps.spawnLog, (log) =>
+    probeVersion(plan, { ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }), log }),
+  )
   if (!probed.ok) return { ok: false, reason: probed.reason }
   const compatibility = classifyCliVersion(probed.version)
   if (compatibility.mode === 'refused') {
@@ -627,6 +724,7 @@ export async function probeInstallation(
     readonly appEnv?: Readonly<Record<string, string | undefined>>
     readonly spawner?: ChildSpawner
     readonly spawnLog?: SpawnLogWriter
+    readonly workingDirectory?: () => string
   },
 ): Promise<{ readonly ok: true; readonly compatibility: CliCompatibility } | { readonly ok: false; readonly reason: string }> {
   const env = deps.appEnv ?? {}
@@ -637,13 +735,12 @@ export async function probeInstallation(
   const plan = planFor('cli.version', {}, {
     target,
     binaryPath: installation.binaryPath,
-    directory: installation.checkout ?? dirname(installation.binaryPath),
+    directory: installation.checkout ?? (deps.workingDirectory ?? privateWorkingDirectory)(),
     appEnv: env,
   })
-  const probed = await probeVersion(plan, {
-    ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
-    ...(deps.spawnLog === undefined ? {} : { log: deps.spawnLog }),
-  })
+  const probed = await withSpawnLog(env, deps.spawnLog, (log) =>
+    probeVersion(plan, { ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }), log }),
+  )
   if (!probed.ok) return { ok: false, reason: probed.reason }
   const compatibility = classifyCliVersion(probed.version)
   if (compatibility.mode === 'refused') {
@@ -861,6 +958,11 @@ export function createPickTokens(): PickTokens {
 // The list the app holds for one run
 // ---------------------------------------------------------------------------
 
+/** InstallationMode is a row's mode: the compatibility the handshake last read
+ * for it, or `unknown` when nothing has read it in this run. An installation
+ * nobody probed is never reported `ok` (review S1). */
+export type InstallationMode = CliCompatibility['mode'] | 'unknown'
+
 /** InstallationRow is one row as a screen sees it. `active` is a boolean and
  * `mode` is the compatibility the handshake last read for it: the picker draws
  * a reduced installation differently, and the *reason* is the console's, not
@@ -872,12 +974,23 @@ export interface InstallationRow {
   readonly config?: string
   readonly checkout?: string
   readonly active: boolean
-  readonly mode: CliCompatibility['mode']
+  readonly mode: InstallationMode
 }
 
-/** ActiveInstallation is what the dashboard's `installation.current` answers. */
+/** ActiveInstallation is what the dashboard's `installation.current` answers.
+ *
+ * With none chosen it carries the store's refusal and path when the file was
+ * refused, so the dashboard can say so in a sentence naming the path (plan 3.4b
+ * step 1). With one, it carries the handshake's version and mode for it (plan
+ * step 6), or `cliVersion: null` and `mode: 'unknown'` when nothing has read it
+ * in this run. */
 export type ActiveInstallation =
-  | { readonly chosen: false; readonly sentence: string }
+  | {
+      readonly chosen: false
+      readonly sentence: string
+      readonly refusal?: string
+      readonly path?: string
+    }
   | {
       readonly chosen: true
       readonly id: string
@@ -885,7 +998,8 @@ export type ActiveInstallation =
       readonly binary: string
       readonly config?: string
       readonly checkout?: string
-      readonly mode: CliCompatibility['mode']
+      readonly cliVersion: string | null
+      readonly mode: InstallationMode
     }
 
 /** InstallationRegistry is the store as the rest of the app uses it. */
@@ -966,7 +1080,7 @@ export function createInstallationRegistry(options: {
         ...(installation.configPath === undefined ? {} : { config: installation.configPath }),
         ...(installation.checkout === undefined ? {} : { checkout: installation.checkout }),
         active: installation.id === file.active,
-        mode: compatibility.get(installation.id)?.mode ?? 'ok',
+        mode: compatibility.get(installation.id)?.mode ?? 'unknown',
       }))
     },
     active: activeOf,
@@ -976,7 +1090,14 @@ export function createInstallationRegistry(options: {
     },
     current(): ActiveInstallation {
       const active = activeOf()
-      if (active === null) return { chosen: false, sentence: NO_ACTIVE_INSTALLATION }
+      if (active === null) {
+        return {
+          chosen: false,
+          sentence: NO_ACTIVE_INSTALLATION,
+          ...(refusal === null ? {} : { refusal, path: options.store.path }),
+        }
+      }
+      const read = compatibility.get(active.id)
       return {
         chosen: true,
         id: active.id,
@@ -984,7 +1105,8 @@ export function createInstallationRegistry(options: {
         binary: active.binaryPath,
         ...(active.configPath === undefined ? {} : { config: active.configPath }),
         ...(active.checkout === undefined ? {} : { checkout: active.checkout }),
-        mode: compatibility.get(active.id)?.mode ?? 'ok',
+        cliVersion: read?.cliVersion ?? null,
+        mode: read?.mode ?? 'unknown',
       }
     },
     async add(candidate: InstallationCandidate): Promise<InstallationValidation> {

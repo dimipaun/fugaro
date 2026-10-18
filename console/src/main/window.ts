@@ -792,13 +792,28 @@ export function createConsoleLifecycle(deps: ConsoleLifecycleDeps): ConsoleLifec
     shown = await openWindowFor(deps.windowDeps(), decided)
   }
 
-  const choose = async (compatibility: CliCompatibility): Promise<void> => {
+  // choosing is the chain every `choose` runs on (review S6). Each one reads
+  // `previous = shown` and then awaits the new window; two of them interleaved
+  // would both capture the same old window and leave **two** dashboards open.
+  // Run one after the other, each closes the window the one before it opened.
+  let choosing: Promise<void> = Promise.resolve()
+
+  const chooseNow = async (compatibility: CliCompatibility): Promise<void> => {
     if (startup !== null) await startup
     decided = compatibility
     deps.onDecided?.(compatibility)
     const previous = shown
     shown = await openWindowFor(deps.windowDeps(), compatibility)
     if (previous !== null && !previous.isDestroyed()) previous.close()
+  }
+
+  const choose = (compatibility: CliCompatibility): Promise<void> => {
+    const next = choosing.then(
+      () => chooseNow(compatibility),
+      () => chooseNow(compatibility),
+    )
+    choosing = next.catch(() => undefined)
+    return next
   }
 
   return { start, activate, choose }

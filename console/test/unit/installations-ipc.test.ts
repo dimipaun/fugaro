@@ -19,19 +19,21 @@
 // module that reads `node:fs`) and a duplicate nobody compares is a duplicate
 // that drifts.
 
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   INSTALLATION_CHANNEL_PREFIX,
   INSTALLATION_OPERATIONS,
   MAX_OUTSTANDING_PICKS,
+  INSTALLATIONS_FILE_NAME,
   NO_ACTIVE_INSTALLATION,
   installationChannel,
+  serializeInstallationFile,
 } from '../../src/main/installations'
 import {
   INSTALLATION_BRIDGE_KEY,
@@ -55,6 +57,8 @@ import {
 // then pass for the wrong reason (a garbage frame is refused too).
 import { APP_ENTRY_URL, CONTENT_SECURITY_POLICY } from '../../src/main/protocol'
 import type { ConsoleEventLike, ConsoleHandlers, ConsoleReply, IpcMainLike } from '../../src/main/ipc'
+import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
+import { installStub } from './stub'
 
 function freshDirectory(): string {
   return mkdtempSync(join(tmpdir(), 'fugaro-picker-'))
@@ -73,12 +77,18 @@ function fakeIpcMain(): IpcMainLike & { readonly listeners: Map<string, (event: 
 
 /** fakeWindow is the slice of Electron's BrowserWindow the picker uses. */
 function fakeWindow(options: Record<string, unknown> = {}, loadFails?: 'closed' | 'closing' | 'error') {
-  const handlers = new Map<string, (...args: unknown[]) => void>()
+  // Every listener is kept, not one per event name: the picker and
+  // `buildHardenedWindow` both listen for `closed`, and a fake that kept only the
+  // last one would hide the picker's (review: the token-drop mutation survived).
+  const handlers = new Map<string, ((...args: unknown[]) => void)[]>()
+  const listen = (name: string, handler: (...args: unknown[]) => void): void => {
+    handlers.set(name, [...(handlers.get(name) ?? []), handler])
+  }
   let openHandlerSet = false
   let destroyed = false
   const contents = {
     on: (name: string, handler: (...args: unknown[]) => void) => {
-      handlers.set(name, handler)
+      listen(name, handler)
     },
     setWindowOpenHandler: () => {
       openHandlerSet = true
@@ -91,10 +101,10 @@ function fakeWindow(options: Record<string, unknown> = {}, loadFails?: 'closed' 
     webContents: contents,
     loaded: [] as string[],
     on: (name: string, handler: (...args: unknown[]) => void) => {
-      handlers.set(name, handler)
+      listen(name, handler)
     },
     once: (name: string, handler: (...args: unknown[]) => void) => {
-      handlers.set(name, handler)
+      listen(name, handler)
     },
     loadURL: async (url: string) => {
       // `loadURL` in Electron returns a promise that resolves when the document
@@ -110,7 +120,7 @@ function fakeWindow(options: Record<string, unknown> = {}, loadFails?: 'closed' 
       // The same, as macOS orders it: the close is asked for (`close` fires) and
       // the load rejects while the window does not yet report itself destroyed.
       if (loadFails === 'closing') {
-        handlers.get('close')?.()
+        for (const handler of handlers.get('close') ?? []) handler()
         throw new Error('ERR_ABORTED (-3) loading app://console/installations.html')
       }
       if (loadFails === 'error') throw new Error('ERR_FAILED (-2) loading app://console/installations.html')
@@ -119,7 +129,7 @@ function fakeWindow(options: Record<string, unknown> = {}, loadFails?: 'closed' 
     focus: () => undefined,
     show: () => undefined,
     fire(name: string, ...args: unknown[]): void {
-      handlers.get(name)?.(...args)
+      for (const handler of handlers.get(name) ?? []) handler(...args)
     },
   }
   return window
@@ -127,7 +137,15 @@ function fakeWindow(options: Record<string, unknown> = {}, loadFails?: 'closed' 
 
 /** pickerOver builds a picker over fakes, with one userData directory of its
  * own. It returns the picker and the listeners it registered. */
-function pickerOver(options: { readonly userData?: string; readonly loadFails?: 'closed' | 'closing' | 'error' } = {}) {
+function pickerOver(
+  options: {
+    readonly userData?: string
+    readonly loadFails?: 'closed' | 'closing' | 'error'
+    readonly appEnv?: Readonly<Record<string, string | undefined>>
+    readonly home?: string
+    readonly onChosen?: Parameters<typeof createInstallationPicker>[0]['onChosen']
+  } = {},
+) {
   const ipcMain = fakeIpcMain()
   const loadFails = options.loadFails
   const windows: ReturnType<typeof fakeWindow>[] = []
@@ -154,9 +172,10 @@ function pickerOver(options: { readonly userData?: string; readonly loadFails?: 
       },
     },
     userData: options.userData ?? freshDirectory(),
-    home: '/Users/owner',
+    home: options.home ?? '/Users/owner',
     appPath: '/work/repo/console',
-    appEnv: {},
+    appEnv: options.appEnv ?? {},
+    ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
   })
   return { picker, ipcMain, windows, menu: () => applicationMenu }
 }
@@ -436,8 +455,12 @@ describe('the picker’s add', () => {
   it('is opened from the menu item and from nowhere else', async () => {
     const { picker, windows, menu } = pickerOver()
     picker.installMenu()
-    const installed = menu() as readonly { readonly label: string; readonly submenu: readonly unknown[] }[]
-    expect(installed).toHaveLength(1)
+    const installed = menu() as readonly { readonly label?: string; readonly role?: string; readonly submenu?: readonly unknown[] }[]
+    // Ours, then Electron's own Edit and Window menus (review S10): without
+    // them macOS loses copy/paste/select-all in the picker's field and
+    // close/minimise on every window.
+    expect(installed).toHaveLength(3)
+    expect(installed.slice(1).map((entry) => entry.role)).toEqual(['editMenu', 'windowMenu'])
     const items = installed[0]?.submenu as readonly { readonly label?: string; readonly click?: () => void }[]
     const item = items.find((entry) => entry.label === INSTALLATIONS_MENU_LABEL)
     expect(item, INSTALLATIONS_MENU_LABEL).toBeDefined()
@@ -462,17 +485,131 @@ describe('the picker’s add', () => {
   it('drops every outstanding token when the picker closes', async () => {
     const { picker, ipcMain, windows } = pickerOver()
     await picker.open()
-    const pick = ipcMain.listeners.get(installationChannel('pickConfig'))
-    const picked = (await pick?.(eventFor(PICKER_ENTRY_URL), {})) as ConsoleReply
-    expect(picked.ok).toBe(true)
-    const token = picked.ok ? (picked.data as { token: string }).token : ''
+    // A **binary** token, redeemed as a binary: the first version of this test
+    // picked a config and redeemed it as a binary, which the kind check refuses
+    // on its own -- so removing the drop survived it (review S12).
+    const pick = ipcMain.listeners.get(installationChannel('pickBinary'))
+    const add = ipcMain.listeners.get(installationChannel('add'))
+    const issue = async (): Promise<string> => {
+      const picked = (await pick?.(eventFor(PICKER_ENTRY_URL), {})) as ConsoleReply
+      expect(picked.ok).toBe(true)
+      return picked.ok ? (picked.data as { token: string }).token : ''
+    }
+    // The control: with the window open, a binary token is redeemed (and what
+    // refuses is the validation of the path, not its provenance).
+    const open = (await add?.(eventFor(PICKER_ENTRY_URL), { project: 'fugaro', binary: await issue() })) as ConsoleReply
+    expect(open.ok).toBe(false)
+    if (!open.ok) expect(open.reason).not.toMatch(/outstanding choice|path this console offered/)
+    const token = await issue()
     // The window closes -- the operator dismissed it -- and the token it was
     // holding is dropped with it.
     windows[0]?.fire('closed')
-    const add = ipcMain.listeners.get(installationChannel('add'))
     const reply = (await add?.(eventFor(PICKER_ENTRY_URL), { project: 'fugaro', binary: token })) as ConsoleReply
     expect(reply).toEqual({ ok: false, reason: 'binary is not an outstanding choice' })
     picker.close()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Choose, against stub binaries
+// ---------------------------------------------------------------------------
+
+/** seededPicker is a picker over a userData holding `installations.json` with
+ * one installation per stub version, the first one active. */
+function seededPicker(
+  versions: readonly string[],
+  onChosen?: Parameters<typeof createInstallationPicker>[0]['onChosen'],
+) {
+  const root = freshDirectory()
+  const userData = join(root, 'user-data')
+  mkdirSync(userData, { recursive: true, mode: 0o700 })
+  const entries = versions.map((version, index) => {
+    const stub = installStub(join(root, `bin-${String(index)}`), {
+      commands: { version: { stdout: `${version}\n` }, doctor: { stdout: '{}\n' } },
+    })
+    return { id: `${String(index).padStart(2, '0')}23456789abcdef`, project: `p${String(index)}`, binaryPath: stub.binary }
+  })
+  writeFileSync(
+    join(userData, INSTALLATIONS_FILE_NAME),
+    serializeInstallationFile({ version: 1, active: entries[0]?.id ?? null, installations: entries }),
+    { mode: 0o600 },
+  )
+  return { ...pickerOver({ userData, ...(onChosen === undefined ? {} : { onChosen }) }), entries }
+}
+
+describe('the picker’s choose', () => {
+  it('does not choose a refused CLI: the active one stays, and nothing is handed to the window (review S11)', async () => {
+    const chosen: string[] = []
+    const { picker, ipcMain, entries } = seededPicker([CLI_VERSION_BUILT_AGAINST, '0.5.0'], (installation) => {
+      chosen.push(installation.id)
+    })
+    const choose = ipcMain.listeners.get(installationChannel('choose'))
+    const refusedId = entries[1]?.id ?? ''
+    const reply = (await choose?.(eventFor(PICKER_ENTRY_URL), { id: refusedId })) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (!reply.ok) expect(reply.reason).toContain('0.5.0')
+    // Not chosen: the active installation is the one it was, on disk and in the
+    // dashboard's read, and the lifecycle was never asked for a window.
+    const current = picker.installation()
+    expect(current.chosen && current.id).toBe(entries[0]?.id)
+    expect(chosen).toEqual([])
+    // And an ok one is chosen, which is what makes the refusal above a decision
+    // rather than a choose that never works.
+    const ok = (await choose?.(eventFor(PICKER_ENTRY_URL), { id: entries[0]?.id ?? '' })) as ConsoleReply
+    expect(ok.ok).toBe(true)
+    expect(chosen).toEqual([entries[0]?.id])
+  })
+
+  it('runs one mutation at a time: a second choose waits for the first one’s window (review S6)', async () => {
+    let release: () => void = () => undefined
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const handed: string[] = []
+    const { picker, ipcMain, entries } = seededPicker([CLI_VERSION_BUILT_AGAINST, CLI_VERSION_BUILT_AGAINST], async (installation) => {
+      handed.push(installation.id)
+      // The first choose's window is still opening.
+      if (handed.length === 1) await held
+    })
+    const choose = ipcMain.listeners.get(installationChannel('choose'))
+    const first = choose?.(eventFor(PICKER_ENTRY_URL), { id: entries[0]?.id ?? '' })
+    const second = choose?.(eventFor(PICKER_ENTRY_URL), { id: entries[1]?.id ?? '' })
+    // The first choose reaches its window; then, long enough for the second
+    // probe to have finished were it allowed to run, the second has not.
+    await vi.waitFor(() => {
+      expect(handed).toHaveLength(1)
+    }, { timeout: 10_000 })
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    expect(handed).toEqual([entries[0]?.id])
+    release()
+    await Promise.all([first, second])
+    expect(handed).toEqual([entries[0]?.id, entries[1]?.id])
+    const current = picker.installation()
+    expect(current.chosen && current.id).toBe(entries[1]?.id)
+  }, 20_000)
+})
+
+describe('a store the path rule refuses', () => {
+  it('starts with no store and says why, rather than quitting the console (review S7)', async () => {
+    // `$FUGARO_CONFIG` at `~/fugaro.yaml` makes the home directory the CLI's
+    // config directory, and every `userData` is under the home directory.
+    const home = freshDirectory()
+    const userData = join(home, 'Library', 'Application Support', 'fugaro-console')
+    let built: ReturnType<typeof pickerOver> | undefined
+    expect(() => {
+      built = pickerOver({ userData, home, appEnv: { FUGARO_CONFIG: join(home, 'fugaro.yaml') } })
+    }).not.toThrow()
+    if (built === undefined) return
+    expect(built.picker.refusal).toContain('refuses to keep its installations')
+    const current = built.picker.installation()
+    expect(current.chosen).toBe(false)
+    if (!current.chosen) {
+      expect(current.refusal).toContain('refuses to keep its installations')
+      expect(current.path).toBe(join(userData, INSTALLATIONS_FILE_NAME))
+    }
+    const list = (await built.ipcMain.listeners.get(installationChannel('list'))?.(eventFor(PICKER_ENTRY_URL), {})) as ConsoleReply
+    expect(list.ok && (list.data as { refusal?: string }).refusal).toContain('refuses to keep its installations')
+    expect(existsSync(join(userData, INSTALLATIONS_FILE_NAME))).toBe(false)
   })
 })
 
