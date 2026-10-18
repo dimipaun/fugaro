@@ -44,8 +44,8 @@ type projectJobFixture struct {
 
 // projectJobPolicy is the policy the fixture publishes: the standard profile
 // serving github, and every repository of the fixture's owner admitted to it.
-// The profile mounts no secret, so its job runs as no Claude account and the
-// job's account segment is empty (config.ClaudeAccountOfSecrets).
+// The profile lists no Claude account, so its job runs as no account and the
+// job's account segment is empty (config.ProjectJobAccounts).
 const projectJobPolicy = `{"version":3,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
 

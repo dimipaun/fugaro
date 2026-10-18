@@ -84,41 +84,46 @@ func ClaudeAccountSecret(name string) string {
 	return ClaudeOAuthTokenPrefix + name
 }
 
-// ClaudeAccountOfSecrets is the Claude account a job that mounts exactly
-// these secrets runs as: DefaultClaudeAccount when the list holds the
-// reserved claude-oauth-token (ClaudeAccountSecret(DefaultClaudeAccount)),
-// the name when it holds a named account's token (ClaudeAccountSecret(name)),
-// and "" when it holds neither — an api-key or Vertex profile runs as no
-// Claude account and its job's account segment is empty. ok is false in that
-// last case.
+// ProjectJobAccounts is the account axis of every project job a profile
+// serves, sorted, the empty account first: the profile's own no-account job
+// (""), which every profile keeps whatever it lists, plus one entry per
+// account the profile lists other than the default.
 //
-// It is a pure function of the secret NAMES, and it exists because the two
-// places that need the answer hold different documents: internal/infra builds
-// a project job's name from the operator's local config (projectJobSecrets,
-// which resolves the account through the claude_accounts block) and
-// internal/runner has to reproduce that name from the policy node, which
-// carries a profile's mount list and nothing else (plan task 3.3 step 1). One
-// function for the axis both sides share, so the two cannot disagree about
-// which job a run is in — the runner matching a name the deployer would not
-// have built is a halt on every run of that profile.
+// The default account is deliberately not an entry of its own. Its token is
+// the unsuffixed claude-oauth-token and it rides the profile's no-account job
+// (design project-named-oauth-tokens D5): that is the job every profile has,
+// so a profile listing `default` serves it there and a profile listing
+// nothing serves no token on that same job. That is also why the no-account
+// job's name never moves when a profile gains an account (D9): a job's name is
+// a function of its (profile, provider, account) triple
+// (gcp.ProjectJobName) and of no mount.
 //
-// A profile listing two Claude accounts is refused at deploy time (both mount
-// CLAUDE_CODE_OAUTH_TOKEN, and projectJobSecrets refuses the duplicate
-// variable), and a name shaped like a named account's secret that no
-// claude_accounts entry defines is refused there too (projectSecretEnv: a
-// secret Fugaro neither reserves nor has configured). This reads the first
-// account it finds and does not try to be the second door on either rule:
-// neither case can reach a deployed job.
-func ClaudeAccountOfSecrets(secrets []string) (string, bool) {
-	for _, s := range secrets {
-		if s == ClaudeAccountSecret(DefaultClaudeAccount) {
-			return DefaultClaudeAccount, true
-		}
-		if name, ok := strings.CutPrefix(s, ClaudeOAuthTokenPrefix); ok && name != "" {
-			return name, true
+// It is the ONE function the three sides of a project job compute a profile's
+// job set with (the plan's review focus 2): internal/infra deploys one job per
+// entry, internal/runner recomputes the names it matches CLOUD_RUN_JOB against
+// (projectJobCandidates), and internal/cli picks the entry a launch targets
+// (projectJobAccountFor). A second copy of this rule would let one side build
+// or launch a job another would not recompute, and the run would halt on the
+// name it is in (the runner's cannotPlaceJob).
+//
+// The input is the profile's own field and nothing else. The account used to
+// be read out of the profile's secrets:, which was the same answer while no
+// profile could mount a Claude token at all; the field is what a profile
+// states now (config.JobProfile.ClaudeAccounts), and a Claude token in
+// secrets: is still refused (projectpolicy's isClaudeOAuthSecret), so the two
+// readings cannot disagree.
+func ProjectJobAccounts(pr JobProfile) []string {
+	// A fresh slice: the caller's list is never written to, and "default" is
+	// spelled as the empty account here because that is what the axis of a
+	// job's name holds for it.
+	out := append([]string{""}, pr.ClaudeAccounts...)
+	for i, name := range out {
+		if name == DefaultClaudeAccount {
+			out[i] = ""
 		}
 	}
-	return "", false
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // ClaudeAccountBySecret is the account name whose secret is secret, the

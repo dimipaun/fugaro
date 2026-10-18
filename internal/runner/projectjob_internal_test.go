@@ -73,9 +73,12 @@ func identitySlug(t *testing.T, provider, repo string) string {
 }
 
 // profileOf is one profile of a policy fixture: the provider it pins and the
-// secrets it mounts, which are the two axes the identity is computed from.
-func profileOf(provider string, secrets ...string) config.JobProfile {
-	return config.JobProfile{Provider: provider, Secrets: secrets}
+// Claude accounts it serves, which are the two axes the identity is computed
+// from (the account axis is the profile's claude_accounts field,
+// config.ProjectJobAccounts — a profile's secrets: can never carry a Claude
+// token, so it never names an account).
+func profileOf(provider string, accounts ...string) config.JobProfile {
+	return config.JobProfile{Provider: provider, ClaudeAccounts: accounts}
 }
 
 // policyOf is a published policy carrying these profiles, by name. It is built
@@ -100,13 +103,13 @@ func policyOf(profiles map[string]config.JobProfile) *projectpolicy.Policy {
 // The named-account case fails alone, which is the axis the job's own service
 // account and its Claude token are separated by (design §7).
 //
-// The two Claude cases are arithmetic on profiles a *published* policy cannot
-// carry in this release: projectpolicy.validProfiles refuses a profile that
-// mounts any Claude OAuth token (the rule `fugaro init` deploys by), which is
-// why the launcher, the runner and the deployer can never disagree about a
-// job's account segment today. They are kept because the axis is what phase 5
-// reaches, and the candidate set must agree with the deployer's naming then as
-// it does now.
+// The two Claude cases are the account axis as the profile states it now
+// (claude_accounts), which is what internal/infra deploys the names from: a
+// profile listing the default account serves it on its own no-account job, and
+// a profile listing a named account gets a job of that account's name. A
+// policy still cannot carry the *mount* (projectpolicy.validProfiles refuses a
+// profile mounting a Claude OAuth token in secrets:), which is why the axis is
+// read from the field and never from the mounts.
 func TestJobIdentityMatchesAComputedProjectJobName(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -116,11 +119,11 @@ func TestJobIdentityMatchesAComputedProjectJobName(t *testing.T) {
 		{"an api-key profile runs as no account",
 			map[string]config.JobProfile{"standard": profileOf("github")},
 			jobTriple{Profile: "standard", Provider: "github", Account: ""}},
-		{"a profile mounting the reserved token runs as the default account",
-			map[string]config.JobProfile{"standard": profileOf("github", "claude-oauth-token", "github-app-key")},
-			jobTriple{Profile: "standard", Provider: "github", Account: config.DefaultClaudeAccount}},
-		{"a profile mounting a named account's token runs as that account",
-			map[string]config.JobProfile{"standard": profileOf("bitbucket", "claude-oauth-token-acme-personal")},
+		{"a profile serving the default account serves it on its no-account job",
+			map[string]config.JobProfile{"standard": profileOf("github", config.DefaultClaudeAccount)},
+			jobTriple{Profile: "standard", Provider: "github", Account: ""}},
+		{"a profile serving a named account has that account's job",
+			map[string]config.JobProfile{"standard": profileOf("bitbucket", "acme-personal")},
 			jobTriple{Profile: "standard", Provider: "bitbucket", Account: "acme-personal"}},
 		{"a provider is part of the identity",
 			map[string]config.JobProfile{"standard": profileOf("bitbucket")},
@@ -197,11 +200,15 @@ func TestJobIdentityIsNotAParser(t *testing.T) {
 			not:     map[string]config.JobProfile{"standard": profileOf("bitbucket")},
 		},
 		{
-			why:     "an api-key job with an empty account segment",
-			job:     gcp.ProjectJobName("standard", "github", ""),
-			defines: map[string]config.JobProfile{"standard": profileOf("github")},
-			triple:  jobTriple{Profile: "standard", Provider: "github", Account: ""},
-			not:     map[string]config.JobProfile{"standard": profileOf("github", "claude-oauth-token")},
+			why:     "an account job with a named account segment",
+			job:     gcp.ProjectJobName("standard", "github", "acme-personal"),
+			defines: map[string]config.JobProfile{"standard": profileOf("github", "acme-personal")},
+			triple:  jobTriple{Profile: "standard", Provider: "github", Account: "acme-personal"},
+			// The same profile serving a different account computes a
+			// different name: the account segment is what tells one account's
+			// job from another's, and the name a policy does not compute is
+			// not one the run may adopt.
+			not: map[string]config.JobProfile{"standard": profileOf("github", "acme-work")},
 		},
 		{
 			why:     "a name truncated at Cloud Run's length limit",

@@ -544,23 +544,27 @@ func TestInstallationWithoutProfilesWritesNoProjectJobs(t *testing.T) {
 }
 
 // projectAccountLCBlock is the local config block the recomputation test is
-// built with: a profile mounting no Claude token (an api-key profile, whose
-// job's account segment is empty), the only shape a shared job deploys in
-// phase 3 — a profile mounting a Claude account's token is refused by
-// projectJobSecrets until phase 5 (plan task 3.2's fix round).
-const projectAccountLCBlock = `profiles:
-  apikey: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h }
-  standard: { provider: github, cpu: 1, memory: 2Gi, timeout_class: 1h }
+// built with: a profile serving no Claude account (an api-key profile, whose
+// job's account segment is empty) and one serving a named account and the
+// default one, with the project-wide copies both need.
+const projectAccountLCBlock = `claude_accounts:
+  acme-personal: { allow_data_to: [acme/webapp] }
+project_secrets:
+  claude-oauth-token: { allow_data_to: [acme/webapp] }
+  github-app-key: { allow_data_to: [acme/webapp] }
+profiles:
+  apikey: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, secrets: [github-app-key] }
+  standard: { provider: github, cpu: 1, memory: 2Gi, timeout_class: 1h, allow_repos: [github/acme/webapp], claude_accounts: [acme-personal, default], secrets: [github-app-key] }
 `
 
 // The account axis is computed on two sides, from two different documents: the
-// deployer resolves it while it deploys (always empty in phase 3, since no
-// profile may mount a Claude token), and the runner recomputes it at run start
-// from the published policy's profile, which carries the secret names and
-// nothing else (config.ClaudeAccountOfSecrets, plan task 3.3 step 1). They
-// must agree: a job whose name the runner would not recompute is a job every
-// run of that profile halts on, because the run cannot place the name it is
-// in and adopts no identity from it.
+// deployer computes it while it deploys (config.ProjectJobAccounts of the
+// profile it is building jobs for), and the runner recomputes it at run start
+// from the published policy's profile, which carries the same field
+// (projectJobCandidates, plan task 3.3 step 1). They must agree: a job whose
+// name the runner would not recompute is a job every run of that profile halts
+// on, because the run cannot place the name it is in and adopts no identity
+// from it.
 //
 // What is asserted is the deployed *name* — the key the runner matches its
 // CLOUD_RUN_JOB against — and not only the field beside it, because the name is
@@ -571,26 +575,31 @@ func TestProjectJobAccountIsWhatTheRunnerRecomputes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{
-		gcp.ProjectJobName("apikey", "github", ""):   "",
-		gcp.ProjectJobName("standard", "github", ""): "",
+	// The deployer's set: one job per (profile, provider, account), the
+	// no-account job of each profile included. Written out rather than
+	// computed here, because what the runner recomputes is exactly the list
+	// this literal is: the axis config.ProjectJobAccounts returns is asserted
+	// against the field below.
+	want := []string{
+		gcp.ProjectJobName("apikey", "github", ""),
+		gcp.ProjectJobName("standard", "github", ""),
+		gcp.ProjectJobName("standard", "github", "acme-personal"),
 	}
-	if !slices.Equal(slices.Sorted(maps.Keys(jobs)), slices.Sorted(maps.Keys(want))) {
-		t.Fatalf("jobs = %v, want %v", slices.Sorted(maps.Keys(jobs)), slices.Sorted(maps.Keys(want)))
+	slices.Sort(want)
+	if got := slices.Sorted(maps.Keys(jobs)); !slices.Equal(got, want) {
+		t.Fatalf("jobs = %v, want the names the runner recomputes, %v", got, want)
 	}
-	for name, account := range want {
+	for _, name := range want {
 		j := jobs[name]
-		if j.Account != account {
-			t.Errorf("job %s runs as %q, want %q", name, j.Account, account)
+		// The account is one the profile's own field holds: the runner
+		// recomputes the name from that field alone, so an account the axis
+		// does not carry is a job the run would never place.
+		if !slices.Contains(config.ProjectJobAccounts(lc.Profiles[j.Profile]), j.Account) {
+			t.Errorf("the job %s runs as the account %q, which the profile %s does not serve (config.ProjectJobAccounts = %v): the run in it would recompute a name the deployer never built",
+				name, j.Account, j.Profile, config.ProjectJobAccounts(lc.Profiles[j.Profile]))
 		}
-		// The runner's recomputation, from the profile's secret names alone.
-		got, _ := config.ClaudeAccountOfSecrets(lc.Profiles[j.Profile].Secrets)
-		if got != account {
-			t.Errorf("the profile %s (%v) recomputes to the account %q, and its job is named for %q: the run would not find the job it is in",
-				j.Profile, lc.Profiles[j.Profile].Secrets, got, account)
-		}
-		if recomputed := gcp.ProjectJobName(j.Profile, j.Provider, got); recomputed != name {
-			t.Errorf("the runner computes the job name %s for the profile %s, and the deployed one is %s", recomputed, j.Profile, name)
+		if recomputed := gcp.ProjectJobName(j.Profile, j.Provider, j.Account); recomputed != name {
+			t.Errorf("the runner computes the job name %s for the job the deployer built as %s (profile %s, account %q)", recomputed, name, j.Profile, j.Account)
 		}
 	}
 }
