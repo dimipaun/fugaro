@@ -2154,6 +2154,11 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading head sha: %w", err)
 	}
+	// Read once more now that the run's own commits are final: work the
+	// agent left uncommitted was just committed above, and those paths are
+	// this run's too. A failed read keeps the set read at the top of
+	// finalize, which is still this run's work.
+	r.recordChangedFiles(ctx)
 	records, err := verify.Records(r.d.StateDir)
 	if err != nil {
 		return fmt.Errorf("reading verify records: %w", err)
