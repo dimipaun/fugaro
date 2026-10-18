@@ -542,16 +542,15 @@ function checkEntries(list, field, listCode, entryCode) {
         `two entries share the spoken name "${key}", so neither can be addressed`,
       );
     }
+    // The entry's values, in a frozen object of this module's own making: the
+    // caller's values verbatim, never the caller's object. Everything that
+    // leaves this module -- a resolved project, a default agent -- hands back
+    // one of these, which is why nothing downstream copies again.
     const copy = Object.freeze({ id, spokenName });
     byName.set(key, copy);
     values.push(copy);
   }
   return { ok: true, values: Object.freeze(values), byName };
-}
-
-/** A frozen copy of an entry: the caller's values verbatim, never the caller's object. */
-function copyEntry(entry) {
-  return Object.freeze({ id: entry.id, spokenName: entry.spokenName });
 }
 
 /** A frozen "not understood": D164's sentence, and no route to the agent. */
@@ -704,7 +703,7 @@ export function routeUtterance(input = {}) {
       forwarded: false,
       command: match.rule.command,
     };
-    result[match.rule.slot] = copyEntry(entry);
+    result[match.rule.slot] = entry;
     return Object.freeze(result);
   }
 
@@ -850,13 +849,13 @@ export function defaultAgent(input = {}) {
   if (remembered !== undefined) {
     for (const agent of agents.values) {
       if (agent.id === remembered) {
-        return Object.freeze({ ok: true, agent: copyEntry(agent), source: SOURCE.LAST_USED });
+        return Object.freeze({ ok: true, agent, source: SOURCE.LAST_USED });
       }
     }
   }
   return Object.freeze({
     ok: true,
-    agent: copyEntry(agents.values[0]),
+    agent: agents.values[0],
     source: SOURCE.FIRST_ADVERTISED,
   });
 }
