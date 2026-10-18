@@ -185,10 +185,25 @@ type Execution struct {
 	Scheduled time.Time
 	LogURL    string
 	// Run is "<slug>/<run id>", the FUGARO_RUN the execution was launched
-	// with, when the platform reports the execution's environment; empty
-	// when it does not (the sweeper then treats the execution as possibly
-	// anyone's of its job). Anyone who can start the job can set it, so
-	// it is a hint to keep a registry entry, never evidence to act on.
+	// with, as the platform reports the execution's own environment (Cloud
+	// Run's execution template, internal/backend/gcp); empty when it reports
+	// no such variable (the sweeper then treats the execution as possibly
+	// anyone's of its job, internal/budget).
+	//
+	// It is the binding the CLI's checkExecution applies, and the only one:
+	// gcp.CheckRunExecution refuses an execution whose FUGARO_RUN is not the
+	// run's own <slug>/<run id> before `ls`, `logs`, `diagnose`, `cancel` and
+	// the retry paths act on a name the run's bucket objects — which the run's
+	// own service account can write — named. The job used to be that binding
+	// (JobName(slug, variant)); one project job serves every repository
+	// admitted to a profile, so an execution's job no longer says which run it
+	// is (design §4.1, plan task 3.4 step 2).
+	//
+	// Its limit is stated with it: whoever may start an execution of the job
+	// may set the variable, so it says which launch an execution is, never who
+	// asked for it — while the run's own service account, the writer of the
+	// objects this binds, cannot set another execution's environment. That is
+	// the whole of what it is evidence of, and why it is enough here.
 	Run string
 }
 

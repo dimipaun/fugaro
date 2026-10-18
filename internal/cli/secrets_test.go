@@ -685,6 +685,143 @@ func TestSecretsSetProviderKey(t *testing.T) {
 	}
 }
 
+// TestSecretsSetRefusesCodexOAuthNames: codex-oauth-token, and the whole
+// codex-oauth-token-<name> namespace behind it, are reserved for the Codex
+// harness's OAuth credential ahead of the harness (owner ruling of
+// 2026-10-18), so no spelling of `secrets set` — this repository's copy,
+// another repository's (--repo), or the project's (--project-wide) — stores a
+// value under one. The refusal is made before the value is read, before the
+// checkout is consulted and before any cloud call, and it does not depend on
+// config.Validate having refused a workflow that declares the name: it is the
+// write path's own refusal.
+func TestSecretsSetRefusesCodexOAuthNames(t *testing.T) {
+	for _, tc := range []struct {
+		what string
+		args []string
+	}{
+		{"bare in a checkout", []string{"secrets", "set", "codex-oauth-token"}},
+		{"bare with --repo", []string{"secrets", "set", "codex-oauth-token", "--repo", "acme/app"}},
+		{"suffixed in a checkout", []string{"secrets", "set", "codex-oauth-token-acme"}},
+		{"suffixed with --repo", []string{"secrets", "set", "codex-oauth-token-acme", "--repo", "acme/app"}},
+		{"suffixed project-wide", []string{"secrets", "set", "codex-oauth-token-acme", "--project-wide"}},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			sm := secretsFixture(t)
+			// No checkout: the refusal must not need one (it is made before the
+			// scope decision), so a bare command run outside a repository is
+			// refused the same way rather than complaining about the checkout.
+			t.Chdir(t.TempDir())
+			spy := &readerSpy{Reader: strings.NewReader(tokenValue + "\n")}
+			cmd := NewRootCmd()
+			var out, errOut bytes.Buffer
+			cmd.SetIn(spy)
+			cmd.SetOut(&out)
+			cmd.SetErr(&errOut)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+			}
+			for _, want := range []string{"reserved for the Codex harness's OAuth credential", "codex-oauth-token"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			if strings.Contains(out.String()+errOut.String()+err.Error(), tokenValue) {
+				t.Fatal("the refusal echoed the value")
+			}
+			if spy.read {
+				t.Fatal("the value was read before the refusal")
+			}
+			for _, r := range sm.Requests() {
+				t.Fatalf("a refused command called the API: %s %s", r.Method, r.Path)
+			}
+		})
+	}
+}
+
+// TestSecretsSetRefusesAnotherProvidersConventionalName is the capture this
+// change closes: a configured provider's key is conventionally named after
+// its entry (openrouter -> openrouter-api-key), and that name belongs to that
+// provider whether or not its .secret is written that way today. A workflow's
+// (or anyone's) value stored under it would be read as the provider's key the
+// day the key is renamed to the convention. Both scopes refuse it before the
+// value is read; the provider's own key — whatever it is spelled — still
+// stores, which is what keeps the refusal from being a rename.
+func TestSecretsSetRefusesAnotherProvidersConventionalName(t *testing.T) {
+	sm := secretsFixture(t)
+	t.Chdir(t.TempDir())
+	// openrouter is configured off convention on purpose: its own key is
+	// other-key, which is what makes openrouter-api-key a name that belongs to
+	// it while being nobody's .secret today.
+	appendConfig(t, `providers:
+  openrouter: { kind: anthropic-compat, base_url: "https://openrouter.ai/api", auth: bearer, secret: other-key, models: ["deepseek/*"], allow_data_to: ["acme/app"] }
+`)
+	const key = "not-a-real-key-1234"
+	for _, tc := range []struct {
+		what string
+		args []string
+	}{
+		{"repo scope", []string{"secrets", "set", "openrouter-api-key", "--repo", "acme/app"}},
+		{"project-wide", []string{"secrets", "set", "openrouter-api-key", "--project-wide"}},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			spy := &readerSpy{Reader: strings.NewReader(key + "\n")}
+			cmd := NewRootCmd()
+			var out, errOut bytes.Buffer
+			cmd.SetIn(spy)
+			cmd.SetOut(&out)
+			cmd.SetErr(&errOut)
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+			}
+			for _, want := range []string{"reserved for model provider openrouter", "openrouter-api-key"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			if strings.Contains(out.String()+errOut.String()+err.Error(), key) {
+				t.Fatal("the refusal echoed the value")
+			}
+			if spy.read {
+				t.Fatal("the value was read before the refusal")
+			}
+			for _, r := range sm.Requests() {
+				t.Fatalf("a refused command called the API: %s %s", r.Method, r.Path)
+			}
+		})
+	}
+	// The provider's own key is not the conventional name and stores as before:
+	// the convention is a warning and a reservation, never a rename.
+	if _, _, err := executeStdin(t, key, "secrets", "set", "other-key", "--repo", "acme/app"); err != nil {
+		t.Fatalf("the provider's own key: %v", err)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "other-key"))); got != key {
+		t.Fatalf("stored %q", got)
+	}
+}
+
+// TestProviderConventionRefusalIsPrintable: the refusal names a
+// config-sourced provider and secret, so neither may reach the terminal raw —
+// the same bounding every other config-sourced name gets
+// (pluginwire.Printable).
+func TestProviderConventionRefusalIsPrintable(t *testing.T) {
+	bidi := string(rune(0x202e)) // a right-to-left override character
+	err := providerConventionRefusal("open‮router", "openrouter-api-key\x1b[2J")
+	if err == nil {
+		t.Fatal("nil error")
+	}
+	if strings.ContainsAny(err.Error(), "\x1b") || strings.Contains(err.Error(), bidi) {
+		t.Fatalf("a control or bidi character leaked raw: %q", err.Error())
+	}
+	escEsc, escBidi := fmt.Sprintf("\\u%04x", 0x1b), fmt.Sprintf("\\u%04x", 0x202e)
+	if !strings.Contains(err.Error(), escEsc) || !strings.Contains(err.Error(), escBidi) {
+		t.Fatalf("the escaped form is missing: %q", err.Error())
+	}
+}
+
 // appendConfig appends a block to the fixture's local config file (the
 // append-to-FUGARO_CONFIG pattern the provider and claude_accounts fixtures
 // above use).
@@ -2063,5 +2200,25 @@ func TestSecretsBoolFlagsMatchTheFlags(t *testing.T) {
 		if !declared[name] {
 			t.Errorf("secretsBoolFlags lists %s, which the secrets commands do not declare as a flag that takes no value", name)
 		}
+	}
+}
+
+// TestSecretsSetAnthropicKeyWithAnthropicNamedProvider: a provider entry named
+// `anthropic` has anthropic-api-key as its conventional name, which is the
+// platform's own direct Anthropic key (config.AnthropicSecret). The
+// reservation must not take that name from the platform: the key still
+// stores in the repository's scope.
+func TestSecretsSetAnthropicKeyWithAnthropicNamedProvider(t *testing.T) {
+	sm := secretsFixture(t)
+	t.Chdir(t.TempDir())
+	appendConfig(t, `providers:
+  anthropic: { kind: anthropic-compat, base_url: "https://openrouter.ai/api", auth: bearer, secret: anthropic-proxy-key, models: ["deepseek/*"], allow_data_to: ["acme/app"] }
+`)
+	const key = "not-a-real-key-1234"
+	if _, _, err := executeStdin(t, key, "secrets", "set", config.AnthropicSecret, "--repo", "acme/app"); err != nil {
+		t.Fatalf("the platform's Anthropic key was refused: %v", err)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, config.AnthropicSecret))); got != key {
+		t.Fatalf("stored %q", got)
 	}
 }

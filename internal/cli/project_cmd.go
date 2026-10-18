@@ -572,7 +572,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	}
 	// A policy that carries profiles must define the one every workflow that
 	// names none runs on (projectpolicy.validProfiles applies the same rule to
-	// the node, and checkPolicyWeWouldWrite would refuse it there). It is
+	// the node, and checkPolicyBytes would refuse it there). It is
 	// refused here, before the node is built, so that the operator is told
 	// which file to fix: the alternative is a repository selecting a profile
 	// nobody defined, which is refused at run start, one run at a time.
@@ -688,7 +688,7 @@ func policyProviders(lc *localcfg.Config) map[string]projectpolicy.Provider {
 //
 // The block is published exactly as the file spells it, and the rules that
 // make it usable are the policy's own (projectpolicy.validProfiles, run by
-// checkPolicyWeWouldWrite before anything is written): the default profile
+// checkPolicyBytes before anything is written): the default profile
 // defined, every provider named and known, cpu/memory a Cloud Run shape, the
 // timeout within Cloud Run's ceiling, and every allow_repos pattern of the
 // profile's own provider. Refusing them here too would be a second copy of

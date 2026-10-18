@@ -34,8 +34,8 @@ func (b *Backend) JobPath(slug, workflow string) string {
 // nameRE is what every part of a name the backend follows must look like:
 // project IDs and numbers, regions, job and execution names. The execution
 // name's own parts are checked by the codec
-// (backend.CloudRunCodec().ValidateRun); this one covers the job names the
-// backend builds and reads itself.
+// (backend.CloudRunCodec().ParseInRegion, through parseInRegion below); this
+// one covers the job names the backend builds and reads itself.
 var nameRE = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 // Codec is Cloud Run's name codec (design compute-backend.md §2.5): the

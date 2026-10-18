@@ -99,6 +99,15 @@ func TestParseProblems(t *testing.T) {
 		// claude_accounts' allow_data_to allow-list entirely (the local
 		// config, never fugaro.yaml, controls that list — T1).
 		{"claude-oauth-token-prefixed workflow secret reserved", minimalYAML + "    secrets:\n      - { name: claude-oauth-token-acme-personal, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for named Claude accounts", 0},
+		// Codex's OAuth credential names, reserved ahead of that harness
+		// (config.CodexOAuthToken, owner ruling of 2026-10-18): Fugaro does
+		// not drive Codex, so nothing mounts them and no account or provider
+		// of it exists to allow one — every name of either shape in
+		// fugaro.yaml is refused, whether or not a Codex provider ever names
+		// it. Both rows so the bare name and the namespace are pinned: a
+		// mutation that checked only the prefix would pass the first.
+		{"codex-oauth-token workflow secret reserved", minimalYAML + "    secrets:\n      - { name: codex-oauth-token, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for the Codex harness", 0},
+		{"codex-oauth-token-prefixed workflow secret reserved", minimalYAML + "    secrets:\n      - { name: codex-oauth-token-acme-personal, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for the Codex harness", 0},
 		{"cache key", minimalYAML + "    cache:\n      - { key: [], paths: [~/.gradle] }\n", "workflows.server.cache[0].key", "at least one file", 0},
 		// A verbatim tag's own text stands in for !!str in yaml.v3's type
 		// error, so a fugaro.yaml can put anything a YAML tag allows,
