@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
@@ -133,8 +134,16 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 	}
 	// And a run whose own credential is an OAuth account cannot run here at
 	// all: the job it would land on has none to read until phase 5 (task 3.4a,
-	// the owner's ruling of 2026-10-17).
-	if err := checkProjectJobOAuth(profile, co.Agent.Auth, spec.OAuthToken); err != nil {
+	// the owner's ruling of 2026-10-17). The auth is re-resolved over the
+	// layer the run itself carries rather than read off co — the checkout's
+	// own, leniently made resolution, which a repeated run's stored layer can
+	// legitimately disagree with — and a credential that cannot be resolved is
+	// refused rather than guessed at (projectJobAgentAuth).
+	auth, err := projectJobAgentAuth(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkProjectJobOAuth(profile, auth, spec.OAuthToken); err != nil {
 		return nil, err
 	}
 	// The timeout_class of a decoded policy is a duration: projectpolicy's
@@ -350,4 +359,92 @@ func checkProjectJobOAuth(profile, auth, selected string) error {
 	}
 	return userErr("%s, and the launch would run it on the shared project job of the job profile %q: a Claude OAuth account is not supported on a shared project job until phase 5. A project job's Claude account is fixed where the job is deployed — it is the account segment of the job's own name, computed from the profile's secrets — and no profile may mount a Claude OAuth token in this release (fugaro init refuses to deploy such a job, and an account's allow_data_to is a per-repository list a shared job cannot honour), so an installation on auth: oauth has no usable shared job, and this launch is refused rather than started on a job that cannot serve it. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Run this repository on an API-key workflow (agent.auth: api-key); a repository that keeps its per-repository job — a baked workflow, or an installation that has published no profiles — is not refused here and launches exactly as it did",
 		what, profile)
+}
+
+// projectJobAgentAuth is the agent.auth a launch on a shared project job runs
+// under: the checkout's fugaro.yaml resolved over spec.ProjectLayer — the
+// project layer the task carries into task.json, which is what the runner
+// applies over the fugaro.yaml of the ref it checks out (config.Resolve, the
+// same two documents through the same function).
+//
+// It is deliberately not the checkout's own resolution (co.Agent.Auth), which
+// launchProjectJobFor has in hand and used to read here. Three things make that
+// one a different document from the run's:
+//
+//   - It is the *launcher's* resolution, made leniently (decision L16: launches
+//     are strict, the in-checkout readers are not), so a project layer the
+//     launcher could not read leaves it with the file's own values and a
+//     problem rather than the layer's defaults — the values a run does not use.
+//   - It may stand on a cached copy of the layer, up to seven days old (L13),
+//     while the run's task carries the layer that was resolved for real.
+//   - It is resolved *before* createTask adopts a repeated --run-id's stored
+//     project layer over the freshly resolved one (run.go's
+//     adoptStoredProjectLayer and createTask: a layer republished between the
+//     first launch and the repeat makes the two differ, deliberately, because
+//     the stored task is what the job reads). A task stored while the layer
+//     still said `agent.auth: oauth`, repeated after the layer stopped saying
+//     it, carries an OAuth layer into a run while the launcher's own resolution
+//     now says api-key — the exact launch task 3.4a exists to refuse, and one
+//     this check would let through if it read co.
+//
+// A resolution that cannot be made is refused rather than guessed at: an
+// unknown credential is one the job may not be able to serve, and the run would
+// halt inside Cloud Run, past the claim and the budget token, instead of here.
+func projectJobAgentAuth(ctx context.Context, spec *task.Spec) (string, error) {
+	var data []byte
+	root := checkoutRoot(ctx, spec.Repo)
+	if root == "" {
+		// launchProjectJobFor only reaches this from a launch that has a
+		// checkout of its own (checkoutConfig returned a config), so this is
+		// that checkout having gone away between the two reads.
+		return "", checkProjectJobAuthUnknown(spec.Repo, "the repository's own checkout could not be found")
+	}
+	data, err := readCheckoutFugaroYAML(filepath.Join(root, "fugaro.yaml"))
+	if err != nil {
+		return "", checkProjectJobAuthUnknown(spec.Repo, "the fugaro.yaml it resolves against could not be read ("+oneLineCLI(err.Error())+")")
+	}
+	var layer *config.ProjectLayer
+	if pl := spec.ProjectLayer; pl != nil {
+		// The same parse announceProjectLayer makes of the same bytes: the
+		// stored layer was validated when it was first embedded or first
+		// stored, and this only re-derives it against the anchor of the
+		// file it is resolved over. A layer that no longer parses against
+		// that anchor is refused rather than dropped: resolving without it
+		// would answer the file's own auth, which is exactly the wrong
+		// answer for a run whose task carries a layer that sets one.
+		project, _ := config.ProjectOf(data)
+		gcpProject, _ := config.GCPProjectOf(data)
+		l, ps := config.ParseProjectLayer([]byte(pl.YAML), config.LayerAnchor{Project: project, GCPProject: gcpProject})
+		if len(ps) > 0 {
+			return "", checkProjectJobAuthUnknown(spec.Repo, "the project layer its task carries is invalid ("+oneLineCLI(layerProblemsText(ps))+")")
+		}
+		layer = l
+	}
+	cfg, _, ps := config.Resolve(data, layer)
+	if len(ps) > 0 {
+		return "", checkProjectJobAuthUnknown(spec.Repo, "its fugaro.yaml and the project layer its task carries do not resolve ("+oneLineCLI(layerProblemsText(ps))+")")
+	}
+	return cfg.Agent.Auth, nil
+}
+
+// checkProjectJobAuthUnknown refuses a launch onto a shared project job whose
+// own Claude credential the launcher cannot resolve, with the same guarantee
+// checkProjectJobOAuth makes: nothing of the launch happened.
+//
+// Refusing rather than launching is the conservative direction, and it is the
+// only one that keeps task 3.4a's promise: a launch whose agent.auth cannot be
+// told may be an OAuth one, and a shared project job has no account's token to
+// serve it with. The launch is where the job is decided (launchProjectJobFor),
+// so this runs before the claim, before the budget token and before any Cloud
+// Run call — an unknown credential costs a refusal here, not a run that stops
+// inside a job that cannot hold it.
+//
+// The fix named is the two ways out an operator has: repair the document the
+// message names (a fugaro.yaml that does not resolve, a layer that no longer
+// parses), or take the workflow off the shared-job path — a workflow that is
+// not `checkout: clone` keeps the per-repository job it has always had
+// (design §4.4).
+func checkProjectJobAuthUnknown(repo, why string) error {
+	return userErr("cannot tell which Claude credential a run of %s would use on the shared project job its workflow selects, so nothing was launched: %s. A run resolves agent.auth from the fugaro.yaml at the ref it checks out, over the project layer its own task carries (project_layer in task.json), and this launch is judged on those same two documents rather than on a guess: a shared job holds the credential its profile was deployed with — the account segment of its own name — so a launch whose credential cannot be resolved is refused instead of started on a job that may not be able to serve it. Fix what the message names, or keep this repository on its own per-repository job (a workflow that is not `checkout: clone` keeps the job it has always had). Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called",
+		repo, why)
 }
