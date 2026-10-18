@@ -203,3 +203,19 @@ test('a page that drops the install section\'s own sentence is refused too', (t)
   assert.equal(failures.length, 1, failures.join('\n'))
   assert.match(failures[0], /carries no sentence of its own after the commands/)
 })
+
+test('a homepage with an empty lead, or with no section after its h1, is refused', (t) => {
+  // The two remaining refusals of rule 1, each planted alone: a lead paragraph with no words
+  // in it (the page's gist above the fold would be nothing), and a homepage with no `h2`
+  // after its `h1` (no first section, so no lead region to read). Both were unexercised
+  // before this case: removing either branch from `foldFailures` left every case green.
+  const empty = distOf(t, { 'index.html': page('<h1>t</h1><p class="hero-lead"></p><h2>Install</h2><pre>x</pre>') })
+  const emptyFailures = foldFailures(empty)
+  assert.equal(emptyFailures.length, 1, emptyFailures.join('\n'))
+  assert.match(emptyFailures[0], /opens with an empty lead paragraph/)
+
+  const noH2 = distOf(t, { 'index.html': page('<h1>t</h1><p class="hero-lead">the promise</p>') })
+  const noH2Failures = foldFailures(noH2)
+  assert.equal(noH2Failures.length, 1, noH2Failures.join('\n'))
+  assert.match(noH2Failures[0], /renders no `h2` after its `h1`/)
+})
