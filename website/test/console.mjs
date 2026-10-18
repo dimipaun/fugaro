@@ -1,10 +1,12 @@
 // website/test/console.mjs — the console page (website plan, Task W1.6).
 //
 // The spec asks for "Console downloads: per-OS download links (placeholder until the
-// console ships)" and there is nothing to download: `console/` holds two documents and no
-// code, the release notes list the desktop console under "Not in this release", and a link
-// to an unsigned or unreleased artifact is the one outcome here with a real consequence for
-// a reader (finding 23, finding 25, D95). Four things are checked here:
+// console ships)" and there is nothing to download: the console is built — `console/` holds
+// the application, its packaging and the workflow that signs, notarises and staples its macOS
+// artifacts — but it is **unreleased**: that workflow creates the release as a draft the owner
+// publishes, `site.yaml`'s `features.console_downloads` is false until then, and a link to an
+// unsigned or unpublished artifact is the one outcome here with a real consequence for a
+// reader (finding 23, finding 25, D95). Four things are checked here:
 //
 //   1. **The placeholder carries no link.** While `features.console_downloads` is false the
 //      built page contains no download URL, and the downloads section contains no element a
@@ -41,13 +43,18 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { linkNodeModules } from './lib/build.mjs'
 import {
+  CONSOLE_README,
   DOWNLOADS_JSON,
+  RELEASE_WORKFLOW,
   SITE_YAML,
+  assertReleaseURL,
   consoleTag,
   downloadNeedle,
   downloadsData,
+  publishedAssets,
   publishedDownloads,
   repoFile,
+  workflowTagPrefix,
 } from './lib/console-downloads.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -317,25 +324,50 @@ test("the console's guarantees are stated as the document that decides them stat
   }
 })
 
-test('the release the download URLs are built from is a version this repository has released', () => {
-  const { release } = downloadsData()
+test('the release the download URLs are built from is one this repository has released', () => {
+  const data = downloadsData()
+  const { release } = data
 
-  // The tag is the console's own, `console-vX.Y.Z`, and `docs/release.md` is the document the
-  // data file names as the source of this block — so the tag shape is read out of that
-  // document rather than taken on trust.
-  const doc = repoFile(release.source.split(/\s+/)[0])
+  // The tag is the console's own, `console-vX.Y.Z`, and the PREFIX is the release workflow's:
+  // `CONSOLE_TAG="console-v$VERSION"` is the line that cuts it, so the data file is held to the
+  // file that publishes the release rather than to a remembered spelling. The document the data
+  // file names as the block's source is held to the same tag, because that is what it is cited
+  // for.
+  assert.equal(
+    release.tag_prefix,
+    workflowTagPrefix(),
+    `${DOWNLOADS_JSON}'s release.tag_prefix is not the prefix ${RELEASE_WORKFLOW} composes the console's tag with`,
+  )
+  assert.equal(consoleTag(), `console-v${release.version}`, 'the tag the URLs are built from is not the prefix and the version the data file carries')
   assert.match(
-    doc,
+    repoFile(release.source.split(/\s+/)[0]),
     /console-vX\.Y\.Z/,
     `${release.source} no longer documents the console's own release tag, and ${DOWNLOADS_JSON}'s URLs are built from it`,
   )
-  assert.equal(consoleTag(), `console-v${release.version}`, 'the tag the URLs are built from is not the prefix and the version the data file carries')
 
-  // And the version exists: the console's release is cut from the CLI's own tag, and from
-  // 0.4.0 on a tag cannot be cut without a non-empty `docs/releases/vX.Y.Z.md` on `main`
-  // (docs/release.md; both tag workflows run `scripts/release-policy.sh check-highlights`).
-  // A version with no release file is therefore a version the console was not built from, and
-  // every button would 404 on the day it was rendered.
+  // The names are the release's own too: `console/README.md` prints what the packaging step
+  // produces, and the data file's `file` entries are those names with `{version}` where the
+  // version goes. A data file that drifted from the release puts a 404 behind every button on
+  // the day the flag is flipped, and nothing in the build would notice.
+  assert.deepEqual(
+    data.downloads.map((entry) => entry.file.split('{version}').join(release.version)),
+    publishedAssets(data),
+    `${DOWNLOADS_JSON}'s asset names are not the names ${CONSOLE_README} documents for the release`,
+  )
+
+  // And the version is one this repository has released: the console's release is cut from the
+  // CLI's own `vX.Y.Z` tag, and from 0.4.0 on a tag cannot be cut without a non-empty
+  // `docs/releases/vX.Y.Z.md` on `main` (docs/release.md; both tag workflows run
+  // `scripts/release-policy.sh check-highlights`). A version with no release file is therefore
+  // a version the CLI was not released at, and not one the console was built from.
+  //
+  // **What this cannot prove, and nothing offline can: that `console-vX.Y.Z` is a release that
+  // exists.** That is W3.1's check — the Go boundary test fails a true flag until its commit
+  // extends `TestWebsiteLinksNoConsoleWhileTheFlagIsOff` to hold every release-asset URL under
+  // `website/` against an asset of a tag that exists (plan Task W3.1, W1.6 step 2) — and it is
+  // the owner's check against the published release. What is pinned here is the offline half:
+  // the version is one the CLI was released at, and the prefix and the names are the release
+  // workflow's and the release's own.
   const highlights = `docs/releases/v${release.version}.md`
   assert.ok(
     existsSync(path.join(REPO, highlights)),
@@ -396,12 +428,25 @@ test('with the console released, the section renders the downloads the release p
   const expected = publishedDownloads()
   assert.ok(expected.length >= 2, `the data file names ${expected.length} asset(s), which is too few to prove the section renders the release`)
 
-  for (const download of expected) {
-    assert.ok(
-      page.includes(`href="${download.url}"`),
-      `the section does not render the derived URL of "${download.id}": ${download.url}`,
+  // The rendered links, in document order, held one at a time to the release's own facts: the
+  // repository, the release path, the tag and the published name. `assertReleaseURL` is where
+  // that happens, and it is deliberately not a URL composed here — see `test/lib`.
+  const links = [...downloadsSection(page).matchAll(/<a[^>]*href="([^"]+)"[^>]*>([^<]*)<\/a>/g)].map((match) => ({
+    href: match[1],
+    label: match[2].trim(),
+  }))
+  assert.equal(
+    links.length,
+    expected.length,
+    `the section renders ${links.length} download link(s) with ${expected.length} asset(s) published (${links.map((link) => link.href).join(', ')})`,
+  )
+  for (const [index, download] of expected.entries()) {
+    assertReleaseURL(links[index].href, download.name)
+    assert.equal(
+      links[index].label,
+      download.label,
+      `the section offers ${JSON.stringify(links[index].label)} for ${JSON.stringify(download.name)}, and the release's own name for that asset is a ${download.platform} ${download.label.slice(download.platform.length + 1)}`,
     )
-    assert.ok(page.includes(download.label), `the section does not offer "${download.label}", the label the published name makes`)
   }
   assert.ok(
     !page.includes(downloadsData().not_released.text),

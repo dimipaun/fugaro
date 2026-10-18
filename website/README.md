@@ -321,11 +321,40 @@ D188's 250-word ceiling — the owner's flip has to be the whole change and may 
 that breaks the ceiling. A data file that says the console has shipped while the flag says it
 has not stops the build, naming both files: they are one fact.
 
-**The flip, in full:** `site.yaml`'s `features.console_downloads: true`, `downloads.json`'s
-`available: true`, and `release.version` bumped — nothing else. The console is built for macOS
-and nothing else (`console/README.md`, `.github/workflows/console-release.yml`: one universal
-`.dmg` and one `.zip`), which is why the platform, and not an invented second one, is the word
-each button carries.
+**The flip, in the site's own data, is three values:** `site.yaml`'s
+`features.console_downloads: true`, `downloads.json`'s `available: true`, and `release.version`
+bumped to the CLI tag the console was built from. The download list does not change — it already
+carries the release's published names — so no URL is typed anywhere and every button, label and
+URL follows from those three.
+
+**It is not a one-line change, and four checks are written to say so.** Each exists to keep the
+unreleased state true, so each refuses the flip until the commit that makes it extends it — and
+following the three values alone leaves both `npm run check` and `go test ./...` red:
+
+- `internal/cli/docs_website_boundary_test.go`'s `TestWebsiteLinksNoConsoleWhileTheFlagIsOff`
+  fails on a true flag (`t.Fatalf`, *"this test has not been extended"*). The flip's commit
+  extends it to hold every release-asset URL under `website/` against an asset of a **tag that
+  exists** (W1.6 step 2, plan Task W3.1) — that is the check nothing offline can make, and the
+  one the owner runs against the published release.
+- The same file's `TestWebsiteFactsMatchTheRepository` refuses a true flag too, and the same
+  commit relaxes that pin: the file is one writer per level in the plan, and W3.1's row names it.
+- `website/test/console.mjs` guards its unreleased-state case with an assertion that `site.yaml`
+  says `false` — the case is *about* the unreleased console, so the flip's commit retires it
+  rather than leaving it failing.
+- `website/test/console-option.mjs` carries the same guard for the same reason, and the same
+  commit retires that one with it.
+
+One more thing the flip does **not** have to touch, and this is the point of deriving the URLs:
+nothing under `website/src/` or `website/content/` changes beyond the two values and the version,
+and no test needs a new expectation, because the released-state cases hold the built page to the
+release's own documentation (`console/README.md`) and to the workflow that cuts its tag rather
+than to a URL the test composed the way the build does.
+
+The console is built for macOS and nothing else (`console/README.md`,
+`.github/workflows/console-release.yml`: one universal `.dmg` and one `.zip`), which is why the
+platform, and not an invented second one, is the word each button carries. Its release is a
+**draft until the owner publishes it** (the workflow creates `console-vX.Y.Z` with `--draft`),
+so the buttons land with the published release and not with the draft.
 
 ## The rule this directory is written to
 

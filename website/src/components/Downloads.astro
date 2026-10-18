@@ -4,12 +4,14 @@
  * Task W1.6).
  *
  * This is the section the spec asks for as *"per-OS download links (placeholder until the
- * console ships)"*, and the console has not shipped: `console/` holds two documents and no
- * code, and `docs/releases/v0.8.0.md` lists the desktop console under *"Not in this
- * release"* (finding 23). So the section ships as a placeholder whose links a test refuses
- * to emit (D95, Global Constraint 9) — the one outcome here with a real consequence for a
- * reader, because a download link to an unsigned or unreleased artifact either 404s or
- * points at something nobody has built.
+ * console ships)"*, and the console has not been **released**: `console/` holds the
+ * application, its packaging and the workflow that signs, notarises and staples its macOS
+ * artifacts, and that workflow creates the release as a draft the owner publishes — while
+ * `site.yaml`'s `features.console_downloads` is false, this site may not link any of it
+ * (finding 23, finding 25, D95, Global Constraint 9). So the section ships as a placeholder
+ * whose links a test refuses to emit — the one outcome here with a real consequence for a
+ * reader, because a download link to an unsigned or unpublished artifact either 404s or points
+ * at something nobody has published.
  *
  * **The rule is structural, not editorial.** The two states are one `if`: the link list is
  * rendered from `downloads.json`'s `downloads` array and *only* when `available` is true,
@@ -43,7 +45,12 @@ interface Props {
   available: boolean
   /** The data file's `not_released` sentence, rendered while `available` is false. */
   note: string
-  /** The data file's `downloads` entries. Empty while `available` is false. */
+  /**
+   * The data file's `downloads` entries: the release's published names, which the data file
+   * carries from the day they are known and not only once the console ships. They are rendered
+   * while `available` is true and never otherwise, which is what makes the unreleased state
+   * structural rather than editorial.
+   */
   downloads: DownloadFacts[]
 }
 

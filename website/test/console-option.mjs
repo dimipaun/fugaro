@@ -51,6 +51,7 @@ import { DIST, SITE, find, parse, textOf, walk } from './lib/html.mjs'
 import { buildCopy } from './lib/build.mjs'
 import {
   SITE_YAML,
+  assertReleaseURL,
   downloadNeedle,
   downloadsData,
   publishedDownloads,
@@ -192,16 +193,23 @@ test('with the console released, the option renders the release\'s own assets an
   assert.ok(expected.length >= 2, `the data file names ${expected.length} asset(s), which is too few to prove the option renders the release`)
 
   const links = linksWithin(consoleOption)
-  assert.deepEqual(
-    links.map((el) => el.attrs.get('href')),
-    [...expected.map((download) => download.url), '/console/'],
-    'the console option does not render one link per published asset, at the URL derived from the release\'s tag and the asset\'s published name, followed by the way to the console page',
+  assert.equal(
+    links.length,
+    expected.length + 1,
+    `the console option carries ${links.length} link(s) with ${expected.length} asset(s) published and the way to the console page (${links.map((el) => el.attrs.get('href')).join(', ')})`,
   )
   assert.deepEqual(
     links.map((el) => textOf(el).trim()),
     [...expected.map((download) => download.label), 'Learn more'],
-    'the console option does not label each download with the platform and the asset\'s extension',
+    'the console option does not label each download with the platform and the asset\'s extension, in the order the release lists them, with the way to the console page last',
   )
+  // Each download's URL is held to the release's own facts — the repository, the release path,
+  // the tag and the published name — rather than compared with a URL composed in the test: see
+  // `assertReleaseURL`. (`publishedDownloads` carries no URL for exactly that reason.)
+  for (const [index, download] of expected.entries()) {
+    assertReleaseURL(links[index].attrs.get('href'), download.name)
+  }
+  assert.equal(links[links.length - 1].attrs.get('href'), '/console/', 'the console option\'s last link is not the way to the console page')
 
   // The unreleased sentence is gone, and the way to the console page is not: "what is this
   // thing" is a question the released state answers no better than the unreleased one.
@@ -210,14 +218,20 @@ test('with the console released, the option renders the release\'s own assets an
     'the console option still says the console is unreleased with the console released',
   )
 
-  // One reader, two pages: the console page's own section renders the same URLs.
+  // One reader, two pages: the console page's own section renders each asset at the URL of the
+  // release, held to the same facts as the option's links above.
   const consolePage = readFileSync(path.join(built.dist, 'console', 'index.html'), 'utf8')
-  for (const download of expected) {
-    assert.ok(
-      consolePage.includes(`href="${download.url}"`),
-      `the console page does not render the derived URL of "${download.id}": ${download.url}`,
-    )
-  }
+  const section = /<section[^>]*id="downloads"[\s\S]*?<\/section>/.exec(consolePage)
+  assert.ok(section, 'the console page carries no downloads section')
+  const consoleHrefs = [...section[0].matchAll(/<a[^>]*href="([^"]+)"[^>]*>/g)].map((match) => match[1])
+  assert.deepEqual(
+    consoleHrefs,
+    // The option's links, less the way to the console page: those two were just held to the
+    // release's own facts, so this compares the console page against facts rather than against
+    // a second derivation of them.
+    links.slice(0, expected.length).map((el) => el.attrs.get('href')),
+    'the console page and Getting Started\'s console option render different URLs for the same assets, and they are one reader of one data file',
+  )
 
   // And the flip is the whole change: the CLI's commands are what they were before it.
   assert.deepEqual(
