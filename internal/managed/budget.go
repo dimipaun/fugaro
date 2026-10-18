@@ -126,7 +126,7 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 	switch {
 	case r.Err != nil:
 		return Enable{}, fmt.Errorf("%w: the apply-time budget read of %s could not be made, and a read that did not answer is an apply with no budget control at all: %s",
-			ErrNotEnabled, r.Project, safetext.Field(r.Err.Error()))
+			ErrNotEnabled, safetext.Field(r.Project), safetext.Field(r.Err.Error()))
 	case r.OK && b.Valid():
 		return Enable{budget: b, read: true}, nil
 	case r.OK || r.Invalid || r.Amount != 0 || r.Currency != "":
@@ -143,7 +143,7 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 			why = err.Error()
 		}
 		return Enable{}, fmt.Errorf("%w: the budget recorded in the marker of %s is invalid: %s",
-			ErrNotEnabled, r.Project, safetext.Field(why))
+			ErrNotEnabled, safetext.Field(r.Project), safetext.Field(why))
 	case !r.Managed:
 		// Not managed at all: the project keeps the coding agent's refusal, and
 		// the sentence is the one the command already prints for that.
@@ -152,7 +152,7 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 			reason = "its creation fact was not believed"
 		}
 		return Enable{}, fmt.Errorf("%w: %s is not managed (%s), so its plans keep the coding agent's refusal and are applied by fugaro init's own path with its confirmation",
-			ErrNotEnabled, r.Project, reason)
+			ErrNotEnabled, safetext.Field(r.Project), reason)
 	default:
 		// Managed, and the creation fact records no amount: the marker's
 		// version 1, which is a creation before Task 4.2 or a creation that
@@ -167,6 +167,6 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 			reason = "the creation fact records no amount"
 		}
 		return Enable{}, fmt.Errorf("%w: %s has no budget recorded (%s), so the project's own owner can add one by flagging it managed — `fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC`, typed at their own terminal, which replaces this creation fact with the version that records the amount — or a managed project is created with one: `fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID`",
-			ErrNotEnabled, r.Project, reason)
+			ErrNotEnabled, safetext.Field(r.Project), reason)
 	}
 }
