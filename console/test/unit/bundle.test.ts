@@ -145,6 +145,44 @@ describe('the bundle', () => {
     expect(PATHS.out).toBe(join(CONSOLE_ROOT, 'dist', 'bundle', 'console.js'))
     expect(PATHS.entry).toBe(join(CONSOLE_ROOT, 'dist', 'renderer', 'entry.js'))
   })
+
+  it('ships the built preload, the bundle and both documents -- once Task 4.1 lands', (context) => {
+    // **The one thing this task cannot finish from here.** `build.files` is
+    // electron-builder's list of what goes into the packaged app, and it arrives
+    // with Task 4.1 (PR #540), which has not merged. Until it does, the compiled
+    // preload and the served root are outside every list of packaged files: a
+    // packaged console would come up with no script to run and no bridge to
+    // read, which is the defect this task exists to close, reintroduced at the
+    // packager. The plan's 3.4a note says so and this test is the half of it
+    // that can be written now: the four entries are named, derived rather than
+    // retyped (`SERVED_FILES` plus the preload path the window is given), and
+    // asserted the moment the list exists. Whichever of #540 and this lands
+    // second adds them.
+    const pkg = JSON.parse(readFileSync(join(CONSOLE_ROOT, 'package.json'), 'utf8')) as {
+      build?: { files?: readonly string[] }
+    }
+    const required = [
+      'dist/preload/index.js',
+      ...SERVED_FILES.map((path) => `dist/bundle${path}`),
+    ]
+    // Non-vacuity: an empty `SERVED_FILES` would make the loop below assert
+    // nothing at all, and the loop is the whole claim.
+    expect(required.length, 'SERVED_FILES names nothing: the check below would be vacuous').toBe(4)
+    const files = pkg.build?.files
+    if (files === undefined) {
+      context.skip(
+        'PR #540 (Task 4.1) has not merged, so package.json has no build.files yet; when it does, it must ' +
+          `list ${required.join(', ')}`,
+      )
+      return
+    }
+    for (const entry of required) {
+      expect(
+        files,
+        `${entry} is not in package.json's build.files: a packaged console would not ship it`,
+      ).toContain(entry)
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------
