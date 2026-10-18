@@ -160,7 +160,10 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, addresses []string) error {
 	// the bucket is this project's.
 	number, err := infra.ProjectNumber(ctx, c, lc.GCPProject)
 	if err != nil {
-		return remote(err)
+		// The API's own text can carry a body: one bounded field, as the
+		// apply and the flag print the same read's failure. The chain stays
+		// (safetext.FieldErr), so the exit code is still the remote one.
+		return remote(safetext.FieldErr(err))
 	}
 	w := cmd.OutOrStdout()
 	// What is approved now, read once and before the write: it is what the

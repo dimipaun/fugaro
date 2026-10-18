@@ -3,6 +3,7 @@ package managed
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -225,5 +226,66 @@ func TestAllowDeleteReturnsTheOwnersAddressesUntouched(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("address %d = %q, want the owner's own text %q", i, got[i], want[i])
 		}
+	}
+}
+
+// TestTheFlagsWriteErrorIsBounded: WriteFlag is the owner-run flag's writer
+// (Task 6.1), and like WriteMarker its error carries the bucket's name, the
+// project and an API's own words about a read that failed — the marker read it
+// makes before it writes — all of which `fugaro managed flag` prints. The bound
+// is on the message alone: ErrRefused is still matched through it.
+func TestTheFlagsWriteErrorIsBounded(t *testing.T) {
+	ctx := context.Background()
+	budget := Budget{Amount: 50, Currency: "USD"}
+	for name, v := range hostileValues() {
+		t.Run(name+" in the read's error", func(t *testing.T) {
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, testManaged)
+			f.RefusePath(MarkerObject, http.StatusInternalServerError, "INTERNAL", "", "backend error"+v)
+			_, err := WriteFlag(ctx, s, testBucket, testProject, testProjectNumber, budget)
+			if err == nil {
+				t.Fatal("the marker read failed, and the flag was written anyway")
+			}
+			bounded(t, name+" in WriteFlag's error", err.Error(), 1)
+		})
+		t.Run(name+" in the project", func(t *testing.T) {
+			_, err := WriteFlag(ctx, nil, testBucket, v, testProjectNumber, budget)
+			if err == nil {
+				t.Fatal("a flag with no storage client was written")
+			}
+			if !errors.Is(err, ErrRefused) {
+				t.Errorf("the bound hid the refusal's identity: %v", err)
+			}
+			bounded(t, name+" in WriteFlag's refusal", err.Error(), 1)
+		})
+	}
+}
+
+// TestTheGuardsRefusalCapsItsListing: the addresses a command line named are
+// as many as the session passed, so the refusal that repeats them (twice) is
+// capped at safetext.FieldListMax and says how many it left out — and never
+// leaves out the fact that it left some out.
+func TestTheGuardsRefusalCapsItsListing(t *testing.T) {
+	total := safetext.FieldListMax + 5
+	applied := make([]string, 0, total)
+	for i := 0; i < total; i++ {
+		applied = append(applied, fmt.Sprintf("google_storage_bucket.a%02d", i))
+	}
+	_, err := GuardAllowList(context.Background(), nil, testBucket, testProject, testProjectNumber, applied)
+	if err == nil {
+		t.Fatal("addresses the applying command passed were admitted")
+	}
+	msg := err.Error()
+	if got := strings.Count(msg, safetext.FieldListNote(5)); got != 2 {
+		t.Errorf("the refusal says %d time(s) that it left 5 out, want 2 (once per listing):\n%s", got, msg)
+	}
+	if last := applied[total-1]; strings.Contains(msg, last) {
+		t.Errorf("the refusal carries %q, past the cap", last)
+	}
+	if edge := applied[safetext.FieldListMax-1]; !strings.Contains(msg, edge) {
+		t.Errorf("the refusal leaves out %q, the last entry inside the cap", edge)
+	}
+	if edge := applied[safetext.FieldListMax]; strings.Contains(msg, edge) {
+		t.Errorf("the refusal carries %q, the first entry past the cap", edge)
 	}
 }

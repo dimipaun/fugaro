@@ -424,10 +424,10 @@ func strictFields(data []byte) error {
 // routing them through this call — with the wording of the refusal, which
 // D74 leaves to the managed mode's own message — is Tasks 3.1 and 3.2.
 // Every value the refusal interpolates is bounded where it is written and not
-// as a whole: the addresses are Field'd one by one (the comment below), and
-// the bucket's name is Field'd here. The sentence itself is not cut short —
-// this refusal enumerates every address the command line named, and its last
-// clause is the one its reader acts on.
+// as a whole: the addresses are Field'd one by one and capped at
+// safetext.FieldListMax with the rest counted (the comment below), and the
+// bucket's name is Field'd here. The sentence itself is not cut short — its
+// last clause is the one its reader acts on.
 func GuardAllowList(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64, applied []string) ([]string, error) {
 	if len(applied) > 0 {
 		// The addresses are repeated to the person they were given by, and
@@ -435,13 +435,15 @@ func GuardAllowList(ctx context.Context, s *storage.Service, bucket, gcpProject 
 		// each is one bounded field (safetext.Field), so none can add a line,
 		// a control or a bidi override to the refusal, or push its advice out
 		// of sight.
-		named := make([]string, len(applied))
-		for i, a := range applied {
-			named[i] = safetext.Field(a)
-		}
+		// The listing is capped as its source is — a command line holds as
+		// many arguments as the session passed — and what it leaves out is
+		// counted in this program's own words (safetext.FieldListLine), the
+		// way internal/managed's refuseSession says the same refusal.
+		named := slices.Clone(applied)
 		slices.Sort(named)
+		line := safetext.FieldListLine(named)
 		return nil, fmt.Errorf("refusing the addresses the applying command was given on its own command line (%s): in a managed project the addresses a run may delete or replace come from the owner's own list at gs://%s/%s, written with the operator's credentials by fugaro allow-delete, never from the arguments of the command that applies the plan; ask the owner to approve %s",
-			strings.Join(named, ", "), safetext.Field(bucket), AllowDeleteObject, strings.Join(named, ", "))
+			line, safetext.Field(bucket), AllowDeleteObject, line)
 	}
 	return AllowDelete(ctx, s, bucket, gcpProject, number)
 }

@@ -369,7 +369,18 @@ func writeMarker(ctx context.Context, s *storage.Service, bucket, created, proje
 // without one. replaced says which of the two writes happened — the object was
 // created, or this project's version-1 fact was replaced — because the
 // command's own output has to say what it did.
+//
+// The error is one bounded field (safetext.FieldErr), as WriteMarker's is: it
+// carries the project, the bucket's name, the object's own content and an
+// API's words, and the owner-run command prints it. The bound is on the
+// message alone, so ErrAlreadyMarked, ErrRefused and a *googleapi.Error inside
+// it are still matched.
 func WriteFlag(ctx context.Context, s *storage.Service, bucket, project string, number uint64, budget Budget) (replaced bool, err error) {
+	replaced, err = writeFlag(ctx, s, bucket, project, number, budget)
+	return replaced, safetext.FieldErr(err)
+}
+
+func writeFlag(ctx context.Context, s *storage.Service, bucket, project string, number uint64, budget Budget) (replaced bool, err error) {
 	switch {
 	case bucket == "" || number == 0:
 		return false, refusedf("to write %s for %s: no runs bucket, or no project number to check it against", MarkerObject, project)
@@ -429,7 +440,7 @@ func alreadyFlagged(bucket, project string, cur []byte) error {
 	} else if m, err := parseMarker(cur, bucket, project); err == nil {
 		switch {
 		case m.GCPProject != project:
-			what = fmt.Sprintf("names project %s, not %s", m.GCPProject, project)
+			what = fmt.Sprintf("names project %s, not %s", safetext.Field(m.GCPProject), safetext.Field(project))
 		case m.Version == MarkerVersionBudget:
 			what = "already records whether it is managed and the budget amount it records"
 		default:

@@ -423,3 +423,95 @@ func TestTheCallersOwnRefusalIsBounded(t *testing.T) {
 		})
 	}
 }
+
+// TestAllowDeleteProjectNumberErrorIsBounded: the project number is read from
+// the cloud before anything else, and a read that fails answers with the API's
+// own words (a 5xx body, a proxy's page). `fugaro managed apply` and `fugaro
+// managed flag` print that text as one bounded field; allow-delete, the third
+// command of the same feature, prints it the same way, and still exits as a
+// remote failure.
+func TestAllowDeleteProjectNumberErrorIsBounded(t *testing.T) {
+	for name, v := range hostileCLIValues() {
+		t.Run(name, func(t *testing.T) {
+			r := allowDeleteRig(t)
+			r.crm.FailGet(initProject, http.StatusBadRequest, "FAILED_PRECONDITION", "backend error"+v)
+			out, errOut, err := execute(t, "allow-delete")
+			if err == nil {
+				t.Fatalf("the project number was not read, and the command went on:\n%s%s", out, errOut)
+			}
+			if ExitCode(err) != ExitRemoteError {
+				t.Errorf("exit %d, want %d: the bound must not change what kind of failure this is", ExitCode(err), ExitRemoteError)
+			}
+			noRawHostile(t, name+" in allow-delete's project-number error", err.Error(), 1)
+		})
+	}
+}
+
+// TestManagedFlagProjectNumberErrorIsBounded: the same read, in the flag
+// command (Task 6.1), which prints it before the confirmation is asked for.
+func TestManagedFlagProjectNumberErrorIsBounded(t *testing.T) {
+	for name, v := range hostileCLIValues() {
+		t.Run(name, func(t *testing.T) {
+			r := managedFlagRig(t)
+			r.crm.FailGet(initProject, http.StatusBadRequest, "FAILED_PRECONDITION", "backend error"+v)
+			terminal(t, true)
+			out, errOut, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+			if err == nil {
+				t.Fatalf("the project number was not read, and the flag went on:\n%s%s", out, errOut)
+			}
+			noRawHostile(t, name+" in the flag's project-number error", err.Error(), 1)
+		})
+	}
+}
+
+// TestManagedFlagErrBoundsEveryValue: managedFlagErr is where the flag's write
+// failures become the sentence the owner reads, and every value it
+// interpolates — the project, the runs bucket, and the error's own text,
+// whether an API's or the writer's — is bounded there, as managedListErr's are
+// for the apply. The default branch is the one a wrapped provider error
+// reaches: it keeps its chain (the exit code is still remote) and loses its
+// lines.
+func TestManagedFlagErrBoundsEveryValue(t *testing.T) {
+	for name, v := range hostileCLIValues() {
+		t.Run(name, func(t *testing.T) {
+			// The GCP project and the bucket are the validated project ID and
+			// the name built from it (the command refuses any other before it
+			// writes), so the hostile value is the project's own name and the
+			// error's text; each sentence then carries at most three bounded
+			// values, which is what the line-length check measures.
+			lc := &localcfg.Config{Name: v, GCPProject: initProject}
+			for what, err := range map[string]error{
+				"an already-marked one": managedFlagErr(lc, initRunsBucket, fmt.Errorf("%w: %s", managed.ErrAlreadyMarked, v)),
+				"a refused one":         managedFlagErr(lc, initRunsBucket, fmt.Errorf("%w: %s", managed.ErrRefused, v)),
+				"a denied one":          managedFlagErr(lc, initRunsBucket, &googleapi.Error{Code: http.StatusForbidden, Message: v}),
+				"an unknown one":        managedFlagErr(lc, initRunsBucket, errors.New(v)),
+			} {
+				noRawHostile(t, name+" in "+what, err.Error(), 1)
+			}
+			if err := managedFlagErr(lc, initRunsBucket, errors.New(v)); ExitCode(err) != ExitRemoteError {
+				t.Errorf("an unknown write failure exits %d, want %d", ExitCode(err), ExitRemoteError)
+			}
+		})
+	}
+}
+
+// TestConfirmTypedStrictBoundsTheNameAndComparesTheNameItself: allow-delete's
+// confirmation prints the project's name twice and compares the typed line
+// with the name itself — the bound is on the text and never on the comparison.
+func TestConfirmTypedStrictBoundsTheNameAndComparesTheNameItself(t *testing.T) {
+	terminal(t, true)
+	for name, v := range hostileCLIValues() {
+		t.Run(name, func(t *testing.T) {
+			lc := &localcfg.Config{Name: v}
+			cmd := newManagedApplyCmd()
+			var out strings.Builder
+			cmd.SetOut(&out)
+			cmd.SetIn(strings.NewReader(v + "\n"))
+			err := confirmTypedStrict(cmd, lc, "why", "what")
+			noRawHostile(t, name+" in the confirmation", out.String(), 2)
+			if want := !strings.ContainsAny(v, "\n\r"); (err == nil) != want {
+				t.Errorf("the typed name was confirmed=%v, want %v (err %v): the bound is not on the comparison", err == nil, want, err)
+			}
+		})
+	}
+}
