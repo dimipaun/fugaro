@@ -28,6 +28,16 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	if spec.Repo.Slug == "" || spec.Workflow == "" || spec.RunID == "" {
 		return backend.ExecutionRef{}, notCreated(fmt.Errorf("launching: a run needs a repository slug, a workflow and a run id (got %q, %q, %q)", spec.Repo.Slug, spec.Workflow, spec.RunID))
 	}
+	if spec.Job != "" {
+		// A shared project job (phase 3, plan task 3.4 step 1) is a Cloud Run
+		// job the installation deploys per profile, with the profile's own
+		// account, secrets and limits. This backend builds a single-use job per
+		// run from the repository's own settings and has no counterpart for a
+		// profile yet, so running the per-repository job here would run the
+		// workflow as an identity the project's policy did not choose. Refused,
+		// not guessed at, until the compute backend learns project jobs.
+		return backend.ExecutionRef{}, notCreated(fmt.Errorf("launching %s/%s: the workflow runs on the project job %s, and Cloud Batch has no project jobs yet; nothing was created", spec.Repo.Slug, spec.Workflow, spec.Job))
+	}
 	timeout, err := b.timeout(spec)
 	if err != nil {
 		return backend.ExecutionRef{}, notCreated(err)

@@ -259,7 +259,9 @@ jobs:
           firebase hosting:channel:deploy "$CHANNEL" \
             --project "$FIREBASE_PROJECT_ID" \
             --expires 7d \
-            --json > "$RUNNER_TEMP/preview.json"
+            --json > "$RUNNER_TEMP/preview.json" 2> "$RUNNER_TEMP/preview.err" \
+            || { echo "website-preview: the firebase CLI failed" >&2; cat "$RUNNER_TEMP/preview.json" "$RUNNER_TEMP/preview.err" >&2; exit 1; }
+
           url=$(jq -r 'if .status == "success" then (.result | to_entries[0].value.url) else "" end' "$RUNNER_TEMP/preview.json")
           case $url in
             "" | null)

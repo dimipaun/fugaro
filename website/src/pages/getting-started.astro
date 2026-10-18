@@ -73,7 +73,13 @@ const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
 
   <section id="install">
     <h2>Install</h2>
-    <p>The plugin is a step of the install, not an extra: the commands that drive a run come with it.</p>
+
+    {/* The section opens with the paths themselves (P5): the first thing under the heading is
+        the first install path's own commands, and a reader who came for the command they run
+        meets it on the first screen rather than under a sentence about the page. The one
+        sentence the section carries — that the plugin is a step of the install and not an
+        extra — moves with the order and closes the section, after the paths it is about.
+        Its words are P4's and are unchanged: ordering is this part's, copy is not. */}
 
     {install.paths.map((installPath) => (
       <article data-path={installPath.id}>
@@ -107,6 +113,8 @@ const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
         ))}
       </article>
     ))}
+
+    <p>The plugin is a step of the install, not an extra: the commands that drive a run come with it.</p>
   </section>
 
   <section id="platforms">

@@ -24,6 +24,7 @@ Flags:
 Subcommands:
 
 - `fugaro accounts` -- List the named Claude accounts a repository may use
+- `fugaro allow-delete` -- Record the Terraform addresses a run may delete or replace (the project's owner)
 - `fugaro artifacts` -- List and download what an artifact run delivered
 - `fugaro budget` -- Show and change the project's model-spend caps and kill switches
 - `fugaro cancel` -- Cancel a run, letting the runner open a draft PR first
@@ -35,9 +36,12 @@ Subcommands:
 - `fugaro image` -- Build and inspect a workflow's derived container image
 - `fugaro init` -- Stand up or adopt the installation's, or a repository's, cloud resources through Terraform
 - `fugaro logs` -- Print a run's logs from Cloud Logging
+- `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
+- `fugaro plan` -- Read a plan's graph artifact
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
 - `fugaro recipes` -- List, show, validate and publish recipes, the task loop a run follows after implement
 - `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model or person
+- `fugaro restore` -- Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
 - `fugaro runs` -- List and inspect runs
 - `fugaro secrets` -- Store and list a repository's secrets in Secret Manager
@@ -99,6 +103,66 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | repository as owner/name (default: this checkout's origin) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro allow-delete`
+
+Record the Terraform addresses a run may delete or replace (the project's owner)
+
+Record which Terraform addresses the project's owner approves for deletion or
+replacement, in a managed project's fugaro/allow-delete.json at the root of
+the runs bucket. An approval lives in that object and nowhere else: this
+command is Fugaro's only writer of it, with the operator's own credentials.
+
+An address is the Terraform address a plan reports, as in
+google_cloud_run_v2_job.web or module.web.google_storage_bucket.data, and
+nothing else is recorded — no note and no reason: the object's own version
+history is the record of who approved what and when.
+
+Run it in your own terminal, as an operator, with your own credentials. Pass
+the addresses to approve, and they replace the list: an invocation that leaves
+an address out removes that approval, so the command names the entries it
+would drop and asks for the project's name before writing such a list. With no
+addresses the command prints the list and writes nothing; it never empties the
+list, because an empty list is what an absent one already means.
+
+What the object is for: a run's own credentials cannot write it, and the
+deployer account a managed apply impersonates will not be able to (D75, Task
+1.5), so a managed apply can take its allow-list from the owner's object
+instead of from the command line of whatever session is applying. That apply is not built yet — the managed apply
+is Task 3.1, and until it lands fugaro init still honours its own flag. What
+this does not do: a coding agent's session holds the operator's credentials,
+so it can write this object directly (gcloud storage cp) or unset its agent
+marker and run this command itself. The refusal below is a speed bump against
+an agent that uses the program, not a boundary against one that goes around it
+(SECURITY.md records the wider Owner/Editor bypass).
+
+On a project that is not managed, this writes an object nothing reads: the
+check below is that the bucket is the project's own runs bucket, which every
+installation has, not that the project is Fugaro-managed.
+
+The list is read fail-closed: an absent object, an empty one, one naming
+another project, one whose fields are not exactly the three this command
+writes, or one this package cannot read is no addresses — and no addresses
+refuses every delete and replacement rather than permitting them. The write
+is fail-closed too: if the current list cannot be read, nothing is written,
+and the write is conditioned on the object being unchanged since that read,
+so a concurrent write is never silently overwritten (run the command again).
+
+Usage: `fugaro allow-delete [ADDRESS...]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for allow-delete |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -674,6 +738,7 @@ Subcommands:
 - `fugaro config example` -- Print an annotated fugaro.yaml template
 - `fugaro config init` -- Write the minimal fugaro.yaml of a repository whose project publishes a project layer
 - `fugaro config layer` -- Print the project layer published for this checkout's project
+- `fugaro config list` -- List the Fugaro installations this machine has
 - `fugaro config publish` -- Publish the project layer: defaults and profiles for every repository of the project (fugaro/project-layer.yaml in the runs bucket)
 - `fugaro config show` -- Print the checkout's fugaro.yaml resolved over the project layer, with where each value comes from
 
@@ -733,6 +798,30 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for layer |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro config list`
+
+List the Fugaro installations this machine has
+
+List the project configs under $XDG_CONFIG_HOME/fugaro/projects (else
+~/.config/fugaro/projects), with the GCP project and region of each and what
+is known about its published shared config.
+
+This is a local read: it opens no bucket and needs no project selected, so it
+works outside a checkout and with no config at all (an empty list).
+
+Usage: `fugaro config list`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for list |
 | `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:
@@ -1344,6 +1433,7 @@ Flags:
 | `--json` | bool | `false` | no | print the result as JSON on stdout (progress goes to stderr) |
 | `--launcher` | stringArray | `[]` | no | an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--link-billing` | string | "" | no | with --create-project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, after you type the account's ID at a terminal. This may incur charges on that account; never with --yes. It never changes a project's existing billing link |
+| `--managed` | bool | `false` | no | with --create-project: create a Fugaro-managed project. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is not yet possible in this release (never by init) |
 | `--name` | string | "" | no | the project's name: for a project config fugaro init creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; adopting an installation defaults it to the installation's) |
 | `--no-build` | bool | `false` | no | with --repo: don't offer the first image builds |
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
@@ -1394,6 +1484,119 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--url` | bool | `false` | no | print the execution's Cloud console link instead of the logs |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro managed`
+
+Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
+
+Act on a managed project: one Fugaro created with the coding agent's
+confirmation refusal removed, where what may be applied is decided by a
+deterministic gate over the saved plan rather than by a prompt.
+
+This is not fugaro project (the project's own configuration) and not fugaro
+init (which creates and re-installs an installation): a managed project's
+agent-authored root is applied by fugaro managed apply.
+
+Usage: `fugaro managed`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for managed |
+
+Subcommands:
+
+- `fugaro managed apply` -- Apply the agent-authored Terraform root of a managed project, as the deployer account
+
+## `fugaro managed apply`
+
+Apply the agent-authored Terraform root of a managed project, as the deployer account
+
+Apply the agent-authored Terraform root ROOT of a managed project.
+
+ROOT is a directory in this repository's checkout (the checkout whose
+fugaro.yaml names the project). Its files are copied into this command's own
+workdir — never run in place, so terraform's plan file, lock file and provider
+directory are not written beside the configuration under review — the state
+backend is set to the project's own managed state bucket, the root is planned
+into a saved plan file, the plan is gated against the project's managed
+allowlist and against the addresses the project's OWNER approved, and the saved
+plan file is applied as the project's deployer service account.
+
+An address this command may delete or replace is never one of this command's
+arguments: an approval lives in the owner's object at
+gs://<runs bucket>/fugaro/allow-delete.json, written with the operator's own
+credentials by fugaro allow-delete. This command registers no flag for one, so
+there is no way to pass one.
+
+The refusal this command's apply does not carry is the coding agent's: in a
+managed project a coding agent's session applies cloud changes with no human
+prompt, and what replaces the prompt is the gate (a refused plan is not
+applied), the marker (an unreadable one is not an apply), the owner's list (an
+address the owner did not approve is refused) and the deployer account (which
+holds no project-level IAM permission and cannot write the runs bucket). None
+of the four is a boundary against a session that goes around this program.
+
+Usage: `fugaro managed apply ROOT`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for apply |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro plan`
+
+Read a plan's graph artifact
+
+Usage: `fugaro plan`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for plan |
+
+Subcommands:
+
+- `fugaro plan graph` -- Print a plan's graph: its tasks, their dependencies and their footprints
+
+## `fugaro plan graph`
+
+Print a plan's graph: its tasks, their dependencies and their footprints
+
+Print the graph artifact written beside a plan.
+
+The artifact is `<plan>.graph.json` — for docs/plans/foo.md it is
+docs/plans/foo.graph.json. With no --plan, the one graph artifact under
+docs/plans/ is read; more than one is refused rather than guessed at.
+
+A graph this build does not understand is refused rather than rendered: a
+future schema version, a malformed document, an edge to a node that is not
+there, or a cycle. This is a local read and it writes nothing.
+
+Usage: `fugaro plan graph`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for graph |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--plan` | string | "" | no | the plan document the graph sits beside (default: the one graph artifact under docs/plans) |
 
 Subcommands:
 
@@ -1795,6 +1998,82 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro restore`
+
+Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
+
+Rebuild a managed project from zero into a NEW GCP project ID.
+
+A managed project is one fugaro created, with a marker and an owner-written
+delete list. When it is lost — deleted, or closed — its ID stays reserved for
+about thirty days, so this is a restore into a new project:
+
+  - NEW_PROJECT_ID is the GCP project the installation is rebuilt in. It is
+    created through the same path fugaro init --create-project --managed uses,
+    which is also what re-marks the project as managed and re-creates the
+    deployer account with the rest of the installation, so neither is a
+    separate step here. The repository's gcp_project: line is moved to it, so
+    teammates find the shared config again.
+  - ROOT is the repository's agent-authored Terraform root, in the checkout
+    whose fugaro.yaml names the project. It is applied from zero through the
+    SAME path fugaro managed apply runs — the managed allowlist, the
+    deterministic gate over the saved plan, the owner's delete list, and the
+    deployer account of D75 — into the dedicated state bucket the new project
+    was created with. No prior state is read: the state lived in the project
+    that was lost.
+
+The OLD project's own creation fact is read whenever the old project can
+still be read: a project that is not managed is refused, whatever flags are
+given, and a managed one gives the monthly budget amount unless --budget and
+--budget-currency are given. When the old project cannot be read (deleted,
+closed, not yours to read) the restore proceeds only on --budget and
+--budget-currency. The billing account is always yours to give: the creation
+fact is not a credential and records none.
+
+NEW_PROJECT_ID must not exist: an existing project is refused, never adopted.
+If the creation fails or does not end in a project this run created and
+marked, the local project config file is put back as it was and the restore
+can be run again; what the creation did in the cloud (the project, its
+billing link, its state bucket, the installation's resources, any secrets)
+is not undone, and the message says so.
+
+Every step is money or permanent, so the project's name is typed at a real
+terminal, and there is no --yes, no --non-interactive and no address argument.
+The command is refused in a coding agent's session.
+
+It ends by printing what was NOT restored, as a list: the runs that were in
+flight and their counters, the spend history and the kill-switch state, the
+Firestore and RTDB application data, the Firestore database's location (which
+is permanent and can never be changed), every secret value, the plan files
+that were never stored, and the owner-written delete list — fugaro/allow-delete.json
+is not carried across and nothing here re-creates it, so until the owner writes
+it again with fugaro allow-delete every delete and replace in the new project
+is refused (D74). The project layer and the project's recipes are not held by
+the repository and are not re-published: the command names them and the one
+command that publishes each. The deployer account is the one thing that is
+re-created rather than lost, and the output says so.
+
+Usage: `fugaro restore NEW_PROJECT_ID ROOT`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--billing-account` | string | "" | no | the billing account the new project is linked to (required: the creation fact records the amount and no account) |
+| `--budget` | int64 | `0` | no | the new project's monthly budget amount, in whole units of --budget-currency (default: the amount the OLD project's creation fact records) |
+| `--budget-currency` | string | "" | no | the budget's currency, such as USD (travels with --budget) |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--display-name` | string | "" | no | with the creation: the new project's display name (default: its ID) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for restore |
+| `--parent` | string | "" | no | with the creation: organizations/<number> or folders/<number> to create the project under (default: no parent; an organization is never guessed) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro run`
 
 Launch a task in the cloud; it always ends with a PR
@@ -1820,6 +2099,14 @@ batch, under one batch label (bestof-<first run id> unless --batch is given); on
 they have all opened a pull request, compare them with fugaro run --recipe pick.
 It takes no --pr, --run-id or --retry.
 
+--title TEXT names the run: one line, at most 100 characters. It is what
+fugaro watch and runs ls list the run by, and the title (with the body's first
+heading) of the pull request the run opens when the agent writes no pr.md of
+its own. Without it the run is named by the task's first line, so briefs that
+start with the same preamble all read alike. A follow-up (--pr) keeps its run's
+title unless --title is given, and --retry takes none (the stored task keeps its
+own).
+
 Usage: `fugaro run [TEXT]`
 
 Flags:
@@ -1843,6 +2130,7 @@ Flags:
 | `--retry` | string | "" | no | launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
+| `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given |
 | `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's) |
 | `--total-timeout` | string | "" | no | override the workflow's timeouts.total for this run, such as 45m |
 | `--workflow` | string | "" | no | workflow to run (default: the repo's only workflow) |
@@ -1943,6 +2231,28 @@ container), project (a project-wide container this repository may use and
 has no copy of), or "project, repo override stored" (both exist; the
 repository's own version wins). Nothing about a repository is listed
 without --repo: the project's containers are not one repository's.
+
+In a --repo listing, MISSING marks a name a job of that repository needs
+and no enabled version resolves for: the answer to "which required secret
+is gone" after a restore. "Required" is what the jobs of the repository's workflows mount and
+cannot run without, worked out from the checkout's fugaro.yaml the way a
+deploy works it out: the git credential of its provider, the model
+credentials its agent.auth names (claude-oauth-token and each allowed
+claude_accounts token for oauth; each allowed model provider's key for
+api-key; none for vertex), and each workflows.<w>.secrets name.
+anthropic-api-key is never marked: the job mounts it only when it has a
+version and runs without it, and fugaro validate says when a pinned model
+needs it. A required name with nothing behind it gets a row of its own — a
+missing secret has no container to be listed from, so its SECRET, LATEST and
+CREATED read "-" (in --json its id is empty and it has no created). The same
+marks a container that exists with no enabled version behind it, which
+resolves to nothing as surely as no container at all. Run this from a
+checkout of the repository: only its fugaro.yaml says what is required, so
+elsewhere, or with a fugaro.yaml that does not parse, nothing is marked and a
+note on stderr says so.
+
+The default (project-wide) listing has no MISSING column: a name absent
+there may be stored per repository and perfectly present.
 
 Usage: `fugaro secrets ls`
 

@@ -1,0 +1,877 @@
+// Both document shapes, and nothing else (desktop-console plan Task 2.0;
+// design section 5.1 rule 3; console/docs/json-contract.md sections 2 and 5).
+//
+// The plan's four claims about this file, one describe block each:
+//
+//   * **both document shapes decode** -- an ordinary `JSONDoc` (every live
+//     document of the committed fixture, decoded, so the corpus is exercised
+//     rather than assumed) and a `watchDegradedDoc`;
+//   * **a degraded document is not mistaken for a normal one** -- the
+//     discriminator is the `degraded` key, `decodeSnapshot` refuses the
+//     degraded shape by name, and a decoded degraded document has no `total`
+//     and no `repos` for a screen to read a zero out of;
+//   * **an unknown shape yields the skew state and not an empty screen** -- `{}`
+//     and a document with a rogue key are refused by name, and the skew says
+//     what the console could not read;
+//   * **a document missing a field the screens read fails decoding by name** --
+//     `total`, `total.counted_usd`, `repos[0].repo`, `runs[0].repo`,
+//     `runs[0].title`, `runs[0].round`, `runs[0].deadline`, each refused with
+//     the wire path in the refusal.
+//
+// Two more are this file's own, because a decoder is where a wire near-miss
+// becomes a wrong screen: **the classification is total** (every string leaf of
+// every document either has a text class or is one of the declared non-text
+// keys, walked, with a planted key to prove the walk can fail) and **the null
+// pointers are unavailable and not zero** (`daily_cap_usd`, `percent`,
+// `spent_usd`, `age_seconds`, `kill`).
+
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { describe, expect, it } from 'vitest'
+
+import { UNAVAILABLE_MARK, formatReading, readNumber } from '../../src/shared/availability'
+import {
+  DEGRADED_KEYS,
+  LIVE_KEYS,
+  RECORD_KEYS,
+  REPO_KEYS,
+  LIVE_MARKERS,
+  NON_TEXT_STRING_KEYS,
+  WIRE_TEXT_CLASSES,
+  decodeDocument,
+  decodeSnapshot,
+  knownTopLevelKeys,
+  wireTextClass,
+} from '../../src/shared/schema'
+import type { LiveDocument } from '../../src/shared/schema'
+import type { JSONDoc } from '../../src/source/source'
+import { loadFixture } from '../../src/source/fixture'
+
+const FIXTURE = readFileSync(join('test', 'fixtures', 'synthetic.ndjson'), 'utf8')
+
+/** fixture is the committed fixture, verified by the loader (a fixture whose
+ * marker or digest does not verify never gets this far). */
+const fixture = loadFixture(FIXTURE, 'the synthetic fixture')
+
+/** documents is every document the fixture carries, in order: the notices are
+ * not documents, and the reader that owns them is `src/main/spawn.ts`. */
+const documents: readonly JSONDoc[] = fixture.records
+  .filter((record): record is { at: string; document: JSONDoc } => 'document' in record)
+  .map((record) => record.document)
+
+/** first is the fixture's first document, which every test here starts from. */
+const first: JSONDoc = documents[0] ?? {}
+
+/**
+ * RUNVIEW_SOURCE is `internal/runview/runview.go`, read from this file's own
+ * location (the console tree sits two levels inside the repository).
+ *
+ * It is read rather than transcribed because the transcriptions are exactly what
+ * failed: `RECORD_KEYS` and the list this file compared it against were two
+ * hand-written readings of the same struct, so both omitted `artifact_count` and
+ * `artifact_bytes` at once and neither copy could notice. The struct is the
+ * authority -- the console reads the CLI's own json tags -- so the tags are read
+ * off it.
+ */
+const RUNVIEW_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../internal/runview/runview.go', import.meta.url)),
+  'utf8',
+)
+
+/** structTag is one field's `json:` tag: the key it writes, and whether the tag
+ * carries `omitempty`. */
+interface StructTag {
+  readonly key: string
+  readonly optional: boolean
+}
+
+/** structTags is every `json:"…"` tag of one struct in `source`, in declaration
+ * order. A field tagged `json:"-"` writes no key at all, so it is not one of
+ * these. It throws rather than answering an empty list: a pin that silently
+ * finds nothing would pass while checking nothing. */
+function structTags(source: string, name: string): readonly StructTag[] {
+  const start = source.indexOf(`type ${name} struct {`)
+  if (start < 0) throw new Error(`internal/runview/runview.go has no \`type ${name} struct\``)
+  const end = source.indexOf('\n}', start)
+  if (end < 0) throw new Error(`the ${name} struct is not closed at column 0, so its tags cannot be read`)
+  const tags: StructTag[] = []
+  for (const match of source.slice(start, end).matchAll(/`json:"([^"]*)"/g)) {
+    const [key, ...options] = (match[1] ?? '').split(',')
+    if (key === undefined || key === '' || key === '-') continue
+    tags.push({ key, optional: options.includes('omitempty') })
+  }
+  if (tags.length === 0) throw new Error(`the ${name} struct carries no json tags to read`)
+  return tags
+}
+
+/** clone deep-copies a document so a test can move one field without touching
+ * the corpus. */
+function clone(document: JSONDoc): Record<string, unknown> {
+  return structuredClone(document) as Record<string, unknown>
+}
+
+/** patched is `clone` with one field set, addressed by a path. */
+function patched(document: JSONDoc, path: readonly (string | number)[], value: unknown): JSONDoc {
+  const copy = clone(document)
+  let at: unknown = copy
+  for (const step of path.slice(0, -1)) {
+    if (at === null || typeof at !== 'object') throw new Error(`no ${String(step)} in the path`)
+    at = (at as Record<string | number, unknown>)[step]
+  }
+  const last = path[path.length - 1]
+  if (last === undefined || at === null || typeof at !== 'object') throw new Error('path is empty')
+  ;(at as Record<string | number, unknown>)[last] = value
+  return copy
+}
+
+/** without is `patched` with the field removed: the absent-key case. */
+function without(document: JSONDoc, path: readonly (string | number)[]): JSONDoc {
+  const copy = clone(document)
+  let at: unknown = copy
+  for (const step of path.slice(0, -1)) {
+    if (at === null || typeof at !== 'object') throw new Error(`no ${String(step)} in the path`)
+    at = (at as Record<string | number, unknown>)[step]
+  }
+  const last = path[path.length - 1]
+  if (last === undefined || at === null || typeof at !== 'object') throw new Error('path is empty')
+  delete (at as Record<string | number, unknown>)[last]
+  return copy
+}
+
+/** decoded is a document that must decode, or the test that called it fails
+ * with the refusal's own sentence. */
+function decoded(raw: unknown, where = 'the document'): LiveDocument {
+  const result = decodeDocument(raw, where)
+  if (!result.ok) throw new Error(result.skew.because)
+  if (result.value.shape !== 'live') throw new Error(`decoded a ${result.value.shape} document`)
+  return result.value
+}
+
+/** label is a field path in the console's own notation (`runs[0].round`), which
+ * is the notation a refusal names -- the plain `join('.')` a test would
+ * otherwise write is a different string, and this test is about the strings. */
+function label(path: readonly (string | number)[]): string {
+  let out = ''
+  for (const step of path) {
+    out = typeof step === 'number' ? `${out}[${String(step)}]` : out === '' ? step : `${out}.${step}`
+  }
+  return out
+}
+
+/** refusalFor is the refusal of a document that must be refused. */
+function refusalFor(raw: unknown): { field: string; name: string; because: string } {
+  const result = decodeDocument(raw, 'the live feed document')
+  if (result.ok) throw new Error('expected a refusal')
+  return { ...result.skew.refusal, because: result.skew.because }
+}
+
+/**
+ * DEGRADED is `watchDegradedDoc`: `lsDoc` **embedded** plus `degraded: true`
+ * and a `notice` (`internal/cli/watch.go:401`). It is built here rather than
+ * taken from the corpus because the corpus is a recording of the *live* feed --
+ * and because the discrimination is the thing under test, so the document that
+ * tests it should be written by hand.
+ */
+const DEGRADED: JSONDoc = Object.freeze({
+  project: '<project>',
+  runs: [
+    {
+      run: '20261015-120000-aa01',
+      run_id: '20261015-120000-aa01',
+      repo: 'r-4c25cf20/r-f1aa9214',
+      workflow: 'web',
+      oauth_account: 'redacted@example.invalid',
+      recipe: 'console-text-path',
+      status: 'succeeded',
+      stage: 'done',
+      reason: '',
+      branch: 'feat/console-fixtures',
+      outcome: 'ready',
+      pr_url: 'https://example.invalid/r-4c25cf20/r-f1aa9214/pull/412',
+      requested_by: 'redacted@example.invalid',
+      log_url: 'https://example.invalid/logs/20261015-120000-aa01',
+      created: '2026-10-15T10:15:00Z',
+      cost: {
+        // `runstore.Cost` has no `model_notional_usd` (the notional split is on
+        // `runview.Totals`, once per sum): an earlier revision of this corpus
+        // carried one, which is how a reading that is permanently unavailable
+        // in production passed for tested.
+        model_usd: 12.5,
+        compute_usd: 0.4,
+        compute_estimated: true,
+        total_usd: 12.9,
+        estimate: true,
+        model_basis: 'subscription',
+        model_source: 'gateway',
+        compute_source: 'n1-standard-4',
+        model_by: { 'claude-sonnet-4-5-20250929': 12.5 },
+        reported_usd: 12.4,
+        unreconciled: 0.1,
+        usage_unparsed: 2,
+        catalog_stale: false,
+      },
+    },
+  ],
+  totals: {
+    runs: 1,
+    model_usd: 12.5,
+    model_notional_usd: 3.25,
+    compute_usd: 0.4,
+    total_usd: 12.9,
+    compute_not_estimated: 0,
+  },
+  warnings: ['the repository list came from the bucket'],
+  degraded: true,
+  notice: 'no budget backend: showing run records only',
+})
+
+/**
+ * FULL_ROW is a `runview.Row` as `runs ls --json` writes one: **every** key the
+ * struct can write, the four without `omitempty` (`terminal`, `settled`,
+ * `pushed`, `follow_up`) among them, and the optional ones populated
+ * (`internal/runview/runview.go:57`; contract section 5).
+ *
+ * It exists because the hand-built `DEGRADED` above is a *readable* document and
+ * not a *realistic* one: it was written from the fields this decoder read, so it
+ * could not catch a key the decoder's `closed()` did not know about -- and one
+ * did not (eleven of the thirty-six), which made every real degraded document
+ * refuse at `runs[0].terminal`. This is the same probe a reviewer would run.
+ */
+const FULL_ROW: JSONDoc = Object.freeze({
+  run: '20261015-120000-aa01',
+  repo: 'r-4c25cf20/r-f1aa9214',
+  workflow: 'web',
+  oauth_account: 'redacted@example.invalid',
+  recipe: 'console-text-path',
+  // `fugaro run --title` (0.8.5): the run's title, from the stored task.
+  title: 'wire the console to the live feed',
+  project_layer: { name: 'base', sha256: 'a'.repeat(64) },
+  config_sha256: 'b'.repeat(64),
+  run_id: '20261015-120000-aa01',
+  status: 'succeeded',
+  stage: 'done',
+  reason: '',
+  halt: { by: 'redacted@example.invalid', at: '2026-10-15T11:00:00Z', reason: 'budget kill <project>' },
+  batch: '2026-10-15',
+  requested_by: 'redacted@example.invalid',
+  pr_url: 'https://example.invalid/r-4c25cf20/r-f1aa9214/pull/412',
+  execution: 'fugaro-20261015-120000-aa01',
+  log_url: 'https://example.invalid/logs/20261015-120000-aa01',
+  created: '2026-10-15T10:15:00Z',
+  cost: {
+    model_usd: 12.5,
+    compute_usd: 0.4,
+    compute_estimated: true,
+    total_usd: 12.9,
+    estimate: false,
+    model_basis: 'api-list',
+  },
+  image_age_s: 3600,
+  terminal: true,
+  settled: true,
+  branch: 'feat/console-fixtures',
+  outcome: 'ready',
+  // The run's own record of the paths it changed (console v2 design D27, F17;
+  // `runstore.ChangedFiles`): absent for a run that recorded none.
+  changed_files: { paths: ['console/src/shared/schema.ts', 'internal/runview/runview.go'], total: 2 },
+  // What a run that delivered artifacts carries (`internal/runview/runview.go`,
+  // between `outcome` and `task_pr`): the record's own count and byte total.
+  // Absent for every run that opens a pull request, which is why the omission
+  // from `RECORD_KEYS` survived this file -- `DEGRADED` and the committed
+  // fixture are both rows of that kind.
+  artifact_count: 3,
+  artifact_bytes: 12_345_678,
+  task_pr: 411,
+  record_pr: 412,
+  pr: 412,
+  pushed: true,
+  pushed_head: 'c'.repeat(40),
+  started_at: '2026-10-15T10:20:00Z',
+  base_branch: 'main',
+  previous_run: '20261015-101500-aa02',
+  follow_up: true,
+  draft_fallback: false,
+  pr_status_at: '2026-10-15T11:30:00Z',
+  stale_draft: false,
+})
+
+/** DEGRADED_REAL is `watchDegradedDoc` carrying that row: the document the CLI
+ * actually writes for a project with no budget backend. */
+const DEGRADED_REAL: JSONDoc = Object.freeze({
+  project: '<project>',
+  runs: [FULL_ROW],
+  totals: {
+    runs: 1,
+    model_usd: 12.5,
+    model_notional_usd: 0,
+    compute_usd: 0.4,
+    total_usd: 12.9,
+    compute_not_estimated: 0,
+  },
+  warnings: [],
+  degraded: true,
+  notice: 'no budget backend: showing run records only',
+})
+
+describe('both document shapes decode', () => {
+  it('decodes every document of the committed fixture', () => {
+    expect(documents.length).toBeGreaterThan(0)
+    for (const [index, document] of documents.entries()) {
+      const value = decoded(document, `record ${String(index)}`)
+      expect(value.shape, `record ${String(index)}`).toBe('live')
+      expect(value.project, `record ${String(index)}`).toBe('<project>')
+      expect(value.connection.state).toMatch(/^(live|stale|offline|refused|polling)$/)
+    }
+  })
+
+  it('reads the fields the live screens read off the first record', () => {
+    const value = decoded(first)
+    expect(value.mode).toBe('observe')
+    expect(value.day).toBe('2026-10-15')
+    expect(value.now).toBe('2026-10-15T12:00:00Z')
+    expect(value.repos).toHaveLength(1)
+    expect(value.repos[0]?.repo).toBe('r-4c25cf20/r-f1aa9214')
+    expect(value.runs[0]?.title).toBe('wire the console to the live feed')
+    expect(value.runs[0]?.round).toBe('2')
+    expect(value.runs[0]?.deadline).toBe('ok')
+    expect(value.finished).toEqual([])
+    expect(value.ready).toEqual([])
+    // `queued_note` is `omitempty`: absent is the normal case, and it reads as
+    // "the bucket was read", which is not the same as an empty sentence.
+    expect(value.queuedNote).toBeNull()
+  })
+
+  it('reads a queued run, whose round the CLI writes as a dash', () => {
+    // The near-miss this corpus exists for: `round` is a string on this shape
+    // and an int on `budget show --json`. A decoder written from the other one
+    // refuses every queued row, and the row below is the one that catches it.
+    const last = documents[documents.length - 1] ?? {}
+    const value = decoded(last)
+    const queued = value.runs.find((run) => run.queued)
+    expect(queued).toBeDefined()
+    expect(queued?.round).toBe('-')
+    expect(queued?.verify).toBe('-')
+    expect(queued?.models).toBe('-')
+    expect(queued?.auth).toBe('-')
+    // `spent_usd` is null on a queued run: nothing is recorded yet, and the
+    // reading says so rather than reading as a spend of zero.
+    expect(queued?.spentUsd.state).toBe('unavailable')
+    expect(formatReading(queued?.spentUsd ?? readNumber(null, 'x'), 'usd')).toBe(UNAVAILABLE_MARK)
+  })
+
+  it('decodes the degraded shape, which is a different document and not a subset', () => {
+    const result = decodeDocument(DEGRADED, 'the degraded feed document')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.shape).toBe('degraded')
+    if (result.value.shape !== 'degraded') return
+    expect(result.value.notice).toBe('no budget backend: showing run records only')
+    expect(result.value.warnings).toHaveLength(1)
+    expect(result.value.runs[0]?.run).toBe('20261015-120000-aa01')
+    expect(result.value.runs[0]?.cost.modelBasis).toBe('subscription')
+    // The half the degraded shape cannot carry. A screen that read these off it
+    // would draw zeros for a document that never had the numbers.
+    expect(result.value).not.toHaveProperty('total')
+    expect(result.value).not.toHaveProperty('repos')
+    expect(result.value).not.toHaveProperty('connection')
+  })
+
+  it('decodes a degraded document carrying every key `runview.Row` can write', () => {
+    // The finding this test exists for: `closed()` refuses a key the shape does
+    // not list, so a `RECORD_KEYS` written from the fields the console reads
+    // rather than from the struct refuses the very document this shape is for.
+    const result = decodeDocument(DEGRADED_REAL, 'a degraded document')
+    expect(result.ok, result.ok ? '' : result.skew.because).toBe(true)
+    if (!result.ok || result.value.shape !== 'degraded') return
+    const row = result.value.runs[0]
+    expect(row?.run).toBe('20261015-120000-aa01')
+    expect(row?.runId).toBe('20261015-120000-aa01')
+    expect(row?.status).toBe('succeeded')
+    expect(row?.cost.modelUsd.value).toBe(12.5)
+    expect(row?.cost.modelBasis).toBe('api-list')
+    // The optional keys it does not read are accepted rather than refused.
+    expect(row?.workflow).toBe('web')
+    expect(row?.prUrl).toBe('https://example.invalid/r-4c25cf20/r-f1aa9214/pull/412')
+  })
+
+  it('lists every key of `runview.Row`, and refuses one the struct cannot write', () => {
+    // The list, pinned against the struct it was read off -- **the struct
+    // itself**, not a second copy of the list. This test used to hold a
+    // hand-written copy of the same reading, so when `artifact_count` and
+    // `artifact_bytes` were missing from `RECORD_KEYS` they were missing from
+    // both sides and the comparison agreed: a real `runs ls --json` row from a
+    // run that delivered artifacts was refused whole as `unknown-key`, and this
+    // test passed.
+    const tags = structTags(RUNVIEW_SOURCE, 'Row')
+    const fromTheStruct = tags.map((tag) => tag.key)
+    for (const found of ['artifact_count', 'artifact_bytes']) {
+      expect(fromTheStruct, `${found} is the omission this pin exists for`).toContain(found)
+    }
+    expect([...RECORD_KEYS].sort()).toEqual([...fromTheStruct].sort())
+    expect(RECORD_KEYS.length).toBe(fromTheStruct.length)
+    // The keys without `omitempty` are the ones whose absence broke it, and they
+    // are the struct's own reading as well: a required tag this fixture does not
+    // carry would make `FULL_ROW` a document the CLI cannot write.
+    const required = tags.filter((tag) => !tag.optional).map((tag) => tag.key)
+    expect(required).toContain('terminal')
+    for (const always of required) {
+      expect(RECORD_KEYS, always).toContain(always)
+      expect(Object.keys(FULL_ROW), always).toContain(always)
+    }
+    // And a key no version of `Row` writes is still a refusal: the shape is
+    // closed, so a CLI the console does not understand is skew, not a list.
+    const refusal = refusalFor(patched(DEGRADED_REAL, ['runs', 0, 'rogue'], 1))
+    expect(refusal.name).toBe('unknown-key')
+    expect(refusal.field).toBe('runs[0].rogue')
+  })
+
+  it("lists every key of `JSONRepo`, and refuses the two a total carries alone", () => {
+    // Review round 5 of PR 478. `REPO_KEYS` was `['slug', 'repo', ...TOTAL_KEYS]`,
+    // and a `repos[]` entry is *not* a total: `runs` and `run_hours` are written
+    // by `JSONTotal` alone (`internal/watch/json.go:42`). Spreading the total's
+    // list in meant the console accepted those two on a repository -- keys no
+    // version of the CLI can write there -- and decoded the document as
+    // understood instead of becoming the skew state, which is the one thing the
+    // live half of this module promises for a key it does not know.
+    const fromTheStruct = [
+      'slug', 'repo', 'counted_usd', 'spent_usd', 'notional_usd',
+      'daily_cap_usd', 'percent', 'burn', 'kill',
+    ]
+    expect([...REPO_KEYS].sort()).toEqual([...fromTheStruct].sort())
+    expect(REPO_KEYS.length).toBe(fromTheStruct.length)
+    for (const notARepository of ['runs', 'run_hours']) {
+      expect(REPO_KEYS, notARepository).not.toContain(notARepository)
+      // The same two keys are the total's, and the document above still writes
+      // them there: dropping them from `repos[]` must not have dropped them
+      // from `total`, where they are accepted (read as neither yet, which is
+      // what `TotalsView` says) rather than refused.
+      expect(Object.keys(first.total ?? {}), notARepository).toContain(notARepository)
+      const refusal = refusalFor(patched(first, ['repos', 0, notARepository], 1))
+      expect(refusal.name, notARepository).toBe('unknown-key')
+      expect(refusal.field, notARepository).toBe(`repos[0].${notARepository}`)
+    }
+    // And the entry the fixture does carry still decodes, key by key: the list
+    // is what the struct writes, not merely what the test asserts.
+    const value = decoded(first)
+    const repo = value.repos[0]
+    expect(repo).toBeDefined()
+    const wireRepo = (first as { repos?: readonly Record<string, unknown>[] }).repos?.[0] ?? {}
+    expect(Object.keys(wireRepo).sort()).toEqual([...fromTheStruct].sort())
+    expect(repo?.repo).toBe('r-4c25cf20/r-f1aa9214')
+    expect(repo?.countedUsd.value).toBeGreaterThan(0)
+    expect(value.total.countedUsd.state).toBe('measured')
+  })
+
+  it('carries notional as the wire wrote it, and never infers it from auth', () => {
+    // `notional` is `e.Auth == "oauth"` on the way *out* of the CLI
+    // (`internal/watch/build.go:394`). A decoder that recomputed it from `auth`
+    // would be a second implementation of a rule the wire already decided --
+    // and would disagree with the CLI the day the rule changes.
+    const value = decoded(first)
+    expect(value.runs[0]?.auth).toBe('oauth')
+    expect(value.runs[0]?.notional).toBe(true)
+    const disagreeing = decoded(patched(first, ['runs', 0, 'notional'], false))
+    expect(disagreeing.runs[0]?.notional).toBe(false)
+    expect(disagreeing.runs[0]?.auth).toBe('oauth')
+    // And the two accounts are separate readings, so neither can be summed into
+    // the other by accident.
+    expect(value.total.countedUsd.state).toBe('measured')
+    expect(value.total.notionalUsd.value).toBe(3.25)
+    expect(value.total.countedUsd.value).not.toBe(value.total.notionalUsd.value)
+  })
+
+  it('names the keys of both shapes, and the markers that identify the live one', () => {
+    expect(knownTopLevelKeys('live')).toEqual(LIVE_KEYS)
+    expect(knownTopLevelKeys('degraded')).toEqual(DEGRADED_KEYS)
+    // The markers are the live shape's own keys: a document carrying one of
+    // them is the live feed, and the degraded document carries none.
+    for (const marker of LIVE_MARKERS) {
+      expect(LIVE_KEYS).toContain(marker)
+      expect(DEGRADED_KEYS).not.toContain(marker)
+    }
+    expect(LIVE_MARKERS.length).toBeGreaterThan(0)
+    // The corpus exercises every live key but `queued_note`, which is the one
+    // key its shape may leave out -- asserted rather than assumed, because a
+    // key added to `LIVE_KEYS` and never carried by a document is a key the
+    // walk below would never see.
+    const carried = new Set<string>()
+    for (const document of documents) for (const key of Object.keys(document)) carried.add(key)
+    expect([...carried].sort()).toEqual(LIVE_KEYS.filter((key) => key !== 'queued_note').sort())
+  })
+})
+
+describe('a degraded document is not mistaken for a normal one', () => {
+  it('is refused by the snapshot door, by name', () => {
+    const result = decodeSnapshot(DEGRADED, 'the snapshot')
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.skew.name).toBe('skew')
+    expect(result.skew.refusal.name).toBe('wrong-shape')
+    expect(result.skew.refusal.field).toBe('degraded')
+    expect(result.skew.because).toContain('the snapshot')
+    expect(result.skew.because).toContain('wrong-shape')
+  })
+
+  it('is not admitted when its `degraded` key is not `true`', () => {
+    // `watchDegradedDoc` always writes `true` (`internal/cli/watch.go:403`), so
+    // `false` is a document no CLI writes. Reading it as a live document would
+    // be a guess about what the writer meant; refusing it says so.
+    for (const value of [false, 'true', 1, null, {}]) {
+      const refusal = refusalFor(patched(DEGRADED, ['degraded'], value))
+      expect(refusal.name, JSON.stringify(value)).toBe('degraded-not-true')
+      expect(refusal.field).toBe('degraded')
+    }
+  })
+
+  it('refuses a document that claims to be both shapes', () => {
+    // The other direction, and the one a reader would not guess: a document
+    // carrying `degraded: true` *and* the live feed's keys is neither shape.
+    // No version of `watch` writes both, so the refusal is by the live marker
+    // that makes the contradiction visible rather than by whichever key the
+    // degraded shape happened to check first.
+    const refusal = refusalFor(patched(first, ['degraded'], true))
+    expect(refusal.name).toBe('wrong-shape')
+    expect(LIVE_MARKERS).toContain(refusal.field)
+  })
+})
+
+describe('an unknown shape yields the skew state', () => {
+  it('refuses a document that is not an object at all', () => {
+    for (const value of [null, undefined, 'a string', 42, true, [], ['a']]) {
+      const refusal = refusalFor(value)
+      expect(refusal.name, JSON.stringify(value)).toBe('not-an-object')
+      expect(refusal.because).toContain('the live feed document')
+    }
+  })
+
+  it('refuses a document with none of either shape`s keys, rather than reading it as empty', () => {
+    // `{}` is not an empty feed. An empty feed is `repos: []` with a connection,
+    // a total and a day -- this is a document the console cannot read, and the
+    // difference is the whole reason Task 3.2 has a skew state.
+    for (const value of [{}, { hello: 'world' }, { hello: 'world', project: '<project>' }]) {
+      const refusal = refusalFor(value)
+      expect(refusal.name, JSON.stringify(value)).toBe('unknown-shape')
+      expect(refusal.because).toContain('unknown-shape')
+    }
+  })
+
+  it('refuses a rogue key by name, and sanitizes the name it draws', () => {
+    // The plan's red step in this file: a field the console does not know is a
+    // refusal, not a document with a field nobody read. The second half is this
+    // module's own rule -- an unknown key is *text a document chose*, and it
+    // ends up in a banner, so it goes through the sanitizer like any other.
+    const rogue = refusalFor(patched(first, ['rogue'], 1))
+    expect(rogue.name).toBe('unknown-key')
+    expect(rogue.field).toBe('rogue')
+    expect(rogue.because).toContain('rogue')
+
+    const nested = refusalFor(patched(first, ['connection', 'rogue'], 1))
+    expect(nested.name).toBe('unknown-key')
+    expect(nested.field).toBe('connection.rogue')
+
+    // A key shaped like a credential is neutralised before it can be drawn, and
+    // a key no class admits is not drawn at all.
+    const credential = ['gh', 'p_', 'a'.repeat(36)].join('')
+    const hostile = refusalFor(patched(first, [credential], 1))
+    expect(hostile.field).not.toContain(credential)
+    expect(hostile.because).not.toContain(credential)
+    const unprintable = refusalFor(
+      patched(first, ['x'.repeat(2000)], 1),
+    )
+    expect(unprintable.field).toBe('a key the console will not draw')
+  })
+
+  it('says what it could not read, in the console`s own words', () => {
+    const result = decodeDocument(patched(first, ['rogue'], 1), 'the live feed document')
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.skew.because).toBe(
+      'the live feed document is not one the console reads: rogue is unknown-key',
+    )
+    // And never the document itself: a skew banner that echoed a hostile
+    // document would put it on screen, which is the failure this whole layer
+    // exists to prevent.
+    const hostile = ['<script>', 'alert(1)', '</script>'].join('')
+    const withHostileValue = decodeDocument(
+      patched(first, ['runs', 0, 'title'], [hostile]),
+      'the live feed document',
+    )
+    expect(withHostileValue.ok).toBe(false)
+    if (withHostileValue.ok) return
+    expect(withHostileValue.skew.refusal.name).toBe('not-a-string')
+    expect(withHostileValue.skew.because).not.toContain('<script>')
+    expect(withHostileValue.skew.because).not.toContain('alert')
+    expect(withHostileValue.skew.because).toContain('runs[0].title')
+  })
+})
+
+describe('a document missing a field the screens read fails decoding by name', () => {
+  it('refuses each field the screens read, naming it', () => {
+    const cases: readonly (readonly (string | number)[])[] = [
+      ['total'],
+      ['connection'],
+      ['now'],
+      ['ready'],
+      ['runs'],
+      ['runs', 0, 'run'],
+      ['repos', 0, 'repo'],
+      ['repos', 0, 'slug'],
+      ['runs', 0, 'repo'],
+      ['runs', 0, 'title'],
+      ['runs', 0, 'round'],
+      ['runs', 0, 'verify'],
+      ['runs', 0, 'deadline'],
+      ['runs', 0, 'health'],
+      ['runs', 0, 'stage'],
+    ]
+    for (const path of cases) {
+      const refusal = refusalFor(without(first, path))
+      expect(refusal.name, label(path)).toBe('missing')
+      expect(refusal.field, label(path)).toBe(label(path))
+    }
+  })
+
+  it('reads a missing number as unavailable, and does not refuse the document', () => {
+    // The tolerant axis, and the contract's own convention: `*float64` makes an
+    // absent or null number a normal value ("no cap set"), not a document the
+    // console cannot read. This is the task's headline rule -- a missing field
+    // is `n/a`, never `0` -- so it is asserted here as an *unavailable reading*
+    // on a document that decoded, which is the distinction a screen depends on.
+    const value = decoded(without(first, ['total', 'counted_usd']))
+    expect(value.total.countedUsd.value).toBeNull()
+    expect(value.total.countedUsd.state).toBe('unavailable')
+    expect(value.total.burn.known).toBe(true)
+    const gone = decoded(without(first, ['total', 'daily_cap_usd']))
+    expect(gone.total.dailyCapUsd.value).toBeNull()
+    expect(gone.total.countedUsd.value).toBe(12.5)
+  })
+
+  it('refuses a field that is there with the wrong type, naming it too', () => {
+    const wrong: readonly { readonly path: readonly (string | number)[]; readonly value: unknown; readonly name: string }[] = [
+      { path: ['project'], value: 12, name: 'not-a-string' },
+      { path: ['mode'], value: null, name: 'not-a-string' },
+      { path: ['repos'], value: 'not-an-array', name: 'not-an-array' },
+      { path: ['runs'], value: {}, name: 'not-an-array' },
+      { path: ['runs', 0, 'notional'], value: 'yes', name: 'not-a-boolean' },
+      { path: ['connection'], value: 'live', name: 'not-an-object' },
+      { path: ['total', 'burn'], value: [], name: 'not-an-object' },
+      { path: ['runs', 0, 'title'], value: ['a', 'b'], name: 'not-a-string' },
+    ]
+    for (const { path, value, name } of wrong) {
+      const refusal = refusalFor(patched(first, path, value))
+      expect(refusal.name, label(path)).toBe(name)
+      expect(refusal.field, label(path)).toBe(label(path))
+    }
+  })
+
+  it('refuses a now that is not a timestamp, by name (review round 3 of PR 494)', () => {
+    // An unparseable `now` used to decode, and the burn history cannot place a
+    // sample with no time: pruning stopped and the history grew by one sample
+    // per frame for as long as the console stayed open.
+    for (const value of ['', 'not a time', 'yesterday', '2026-13-45T99:99:99Z', '1760000000', '2026-10-15']) {
+      const refusal = refusalFor(patched(first, ['now'], value))
+      expect(refusal.name, value).toBe('not-a-timestamp')
+      expect(refusal.field, value).toBe('now')
+    }
+    expect(decoded(patched(first, ['now'], '2026-10-15T12:00:00.250+02:00')).now).toBe('2026-10-15T12:00:00.250+02:00')
+  })
+
+  it('refuses a run whose round is a number, which is the near-miss that matters', () => {
+    // `budget show --json` carries `round` as an int. A console that typed this
+    // shape's `round` as a number would pass every fixture until a queued run
+    // arrived with `"-"`, and then refuse a document the CLI writes every day.
+    const refusal = refusalFor(patched(first, ['runs', 0, 'round'], 2))
+    expect(refusal.name).toBe('not-a-string')
+    expect(refusal.field).toBe('runs[0].round')
+  })
+})
+
+describe('the null pointers are unavailable, and never zero', () => {
+  it('reads a null cap, percent, spend and age as unavailable', () => {
+    const document = patched(first, ['total', 'daily_cap_usd'], null)
+    const noPercent = patched(document, ['total', 'percent'], null)
+    const noSpend = patched(noPercent, ['runs', 0, 'spent_usd'], null)
+    const noAge = patched(noSpend, ['runs', 0, 'age_seconds'], null)
+    const value = decoded(noAge)
+
+    // The design's first UI rule, at the decoder: not one of these is drawn as
+    // a zero, and each says which field it is that the document does not carry.
+    for (const [reading, field] of [
+      [value.total.dailyCapUsd, 'total.daily_cap_usd'],
+      [value.total.percent, 'total.percent'],
+      [value.runs[0]?.spentUsd, 'runs[0].spent_usd'],
+      [value.runs[0]?.ageSeconds, 'runs[0].age_seconds'],
+    ] as const) {
+      expect(reading?.state, field).toBe('unavailable')
+      expect(reading?.value, field).toBeNull()
+      expect(reading?.because, field).toContain(field)
+      expect(formatReading(reading ?? readNumber(null, field), 'usd'), field).toBe(UNAVAILABLE_MARK)
+    }
+  })
+
+  it('reads a burn rate the document does not know as unavailable, not as zero', () => {
+    // `JSONBurn` carries `known` and a `usd_per_min` that is a zero when the
+    // rate is unknown (contract section 2: read the flag first). The zero is
+    // what a chart would draw as a flat line at the bottom.
+    const value = decoded(patched(first, ['total', 'burn'], { known: false, usd_per_min: 0, fast: false }))
+    expect(value.total.burn.known).toBe(false)
+    expect(value.total.burn.usdPerMin.state).toBe('unavailable')
+    expect(formatReading(value.total.burn.usdPerMin, 'usd')).toBe(UNAVAILABLE_MARK)
+  })
+
+  it('reads a null kill switch as not killed, which is a measured fact', () => {
+    const value = decoded(first)
+    expect(value.total.kill).toBeNull()
+    expect(value.repos[0]?.kill).toBeNull()
+    // And when it is on, the operator, the time and the reason come through --
+    // with the operator a person and the reason a sentence, so a screen that
+    // draws them draws text.
+    const killed = decoded(
+      patched(first, ['total', 'kill'], {
+        by: 'fixture-operator',
+        at: '2026-10-15T12:00:00Z',
+        reason: 'budget kill fixture-sandbox',
+      }),
+    )
+    expect(killed.total.kill).toEqual({
+      by: 'fixture-operator',
+      at: '2026-10-15T12:00:00Z',
+      reason: 'budget kill fixture-sandbox',
+    })
+  })
+
+  it('leaves a finished run`s absent pull request absent', () => {
+    // `pr_url` and `pr_number` are `omitempty` on `JSONFinished`: absent means
+    // the run has no pull request. Design section 4.3's gap 7 is that the
+    // console builds no link from them; this is the half that says the number
+    // is not an invented one.
+    const second = documents[1] ?? {}
+    const value = decoded(second)
+    expect(value.finished[0]?.prNumber).toBe(412)
+    // The recorder redacts a URL on the way into a fixture, so the URL the
+    // console actually reads is the marker -- and the number beside it is the
+    // real one. That pair is design section 4.3's gap 7 in one line: the
+    // console has a number and a URL, neither of which is a link it built.
+    expect(value.finished[0]?.prUrl).toBe('[redacted-url]')
+    const noPR = without(second, ['finished', 0, 'pr_url'])
+    const value2 = decoded(without(noPR, ['finished', 0, 'pr_number']))
+    expect(value2.finished[0]?.prUrl).toBeNull()
+    expect(value2.finished[0]?.prNumber).toBeNull()
+  })
+})
+
+describe('every wire string is classified', () => {
+  /** Leaf is one string leaf: the key that holds it, the path to it, and the
+   * value the walk found. */
+  interface Leaf {
+    readonly key: string
+    readonly path: string
+    readonly value: string
+  }
+
+  /** stringLeaves walks a document and returns every string leaf. Arrays keep
+   * their parent key (`warnings[0]` is a `warnings`), because the class is
+   * per-key and not per-element. */
+  function stringLeaves(value: unknown, key = '', path = ''): readonly Leaf[] {
+    if (typeof value === 'string') return [{ key, path, value }]
+    if (Array.isArray(value)) {
+      return value.flatMap((item, index) => stringLeaves(item, key, `${path}[${String(index)}]`))
+    }
+    if (value !== null && typeof value === 'object') {
+      return Object.entries(value).flatMap(([name, child]) =>
+        stringLeaves(child, name, path === '' ? name : `${path}.${name}`),
+      )
+    }
+    return []
+  }
+
+  /** unclassified is the leaves with no class and no exemption. */
+  function unclassified(document: unknown): readonly string[] {
+    return stringLeaves(document)
+      .filter((leaf) => wireTextClass(leaf.key) === undefined && !NON_TEXT_STRING_KEYS.includes(leaf.key))
+      .map((leaf) => leaf.path)
+  }
+
+  it('classifies every string leaf of every document', () => {
+    const all = [...documents, DEGRADED, DEGRADED_REAL, patched(first, ['total', 'kill'], {
+      by: 'fixture-operator',
+      at: '2026-10-15T12:00:00Z',
+      reason: 'budget kill fixture-sandbox',
+    }), patched(first, ['queued_note'], 'the bucket was read a minute ago')]
+    for (const document of all) {
+      expect(unclassified(document), JSON.stringify(stringLeaves(document).map((l) => l.path))).toEqual([])
+    }
+    // Not vacuous: the walk found leaves, and it found the two halves of the
+    // claim -- a text key and a non-text key.
+    const leaves = stringLeaves(first)
+    expect(leaves.length).toBeGreaterThan(10)
+    expect(leaves.some((leaf) => wireTextClass(leaf.key) === 'sentence')).toBe(true)
+    expect(leaves.some((leaf) => NON_TEXT_STRING_KEYS.includes(leaf.key))).toBe(true)
+    expect(leaves.map((leaf) => leaf.path)).toContain('runs[0].title')
+    // `queued_note` is the one live key the corpus omits, so it is the one key
+    // this walk could not otherwise see: it is asserted separately, with a
+    // document that carries it, because a map that is total over the corpus is
+    // not the same as a map that is total over the wire.
+    expect(wireTextClass('queued_note')).toBe('sentence')
+    const withNote = stringLeaves(patched(first, ['queued_note'], 'a note'))
+    expect(withNote.some((leaf) => leaf.key === 'queued_note')).toBe(true)
+    expect(unclassified(patched(first, ['queued_note'], 'a note'))).toEqual([])
+    // Every key of a realistic `runview.Row` is classified too.
+    expect(unclassified(DEGRADED_REAL)).toEqual([])
+  })
+
+  it('reports a key it has no class for, which is what makes the walk a test', () => {
+    // The walk's own red step: the same function, over a document with a planted
+    // key, must report it.
+    const planted = { project: '<project>', rogue_key: 'a value' }
+    expect(unclassified(planted)).toEqual(['rogue_key'])
+    expect(unclassified(first)).toEqual([])
+  })
+
+  it('classifies the text keys by what they are, not by what they contain', () => {
+    // The class of a key is a fact about the key, so a hostile value cannot
+    // change it -- and a key with no class is refused rather than guessed at.
+    expect(wireTextClass('title')).toBe('sentence')
+    expect(wireTextClass('repo')).toBe('repository')
+    expect(wireTextClass('branch')).toBe('branch')
+    expect(wireTextClass('requested_by')).toBe('person')
+    expect(wireTextClass('pr_url')).toBe('url')
+    expect(wireTextClass('round')).toBe('label')
+    expect(wireTextClass('round')).not.toBe('sentence')
+    expect(wireTextClass('mode')).toBeUndefined()
+    expect(wireTextClass('rogue_key')).toBeUndefined()
+    // A commit digest is not text. Classed as a label it would have gone
+    // through the free-text rules, and the entropy net draws a 40-character
+    // hex sha as `[redacted-token]` -- which is the recorder's own stated
+    // reason for keeping hex digests as written (`src/source/redact.ts:409`).
+    expect(wireTextClass('pushed_head')).toBeUndefined()
+    expect(NON_TEXT_STRING_KEYS).toContain('pushed_head')
+    // The two lists do not overlap, and neither is empty: a key in both would
+    // be a key whose class is two answers.
+    for (const key of NON_TEXT_STRING_KEYS) expect(wireTextClass(key), key).toBeUndefined()
+    expect(Object.keys(WIRE_TEXT_CLASSES).length).toBeGreaterThan(10)
+    expect(NON_TEXT_STRING_KEYS.length).toBeGreaterThan(5)
+  })
+})
+
+describe('an optional boolean is a boolean or absent (review round 2 of PR 494)', () => {
+  it('refuses a present non-boolean by field name instead of reading it as false', () => {
+    const wrong: readonly { readonly document: JSONDoc; readonly path: readonly (string | number)[]; readonly value: unknown }[] = [
+      { document: first, path: ['runs', 0, 'queued'], value: 'true' },
+      { document: first, path: ['runs', 0, 'stuck'], value: 1 },
+      { document: DEGRADED_REAL, path: ['runs', 0, 'cost', 'compute_estimated'], value: 'true' },
+      { document: DEGRADED_REAL, path: ['runs', 0, 'cost', 'compute_estimated'], value: {} },
+    ]
+    for (const { document, path, value } of wrong) {
+      const refusal = refusalFor(patched(document, path, value))
+      expect(refusal.name, label(path)).toBe('not-a-boolean')
+      expect(refusal.field, label(path)).toBe(label(path))
+    }
+  })
+
+  it('still reads absent and null as false', () => {
+    expect(decodeDocument(patched(DEGRADED_REAL, ['runs', 0, 'cost', 'compute_estimated'], null)).ok).toBe(true)
+  })
+})

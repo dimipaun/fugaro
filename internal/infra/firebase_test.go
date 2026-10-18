@@ -63,8 +63,12 @@ func TestFirebaseTfvarsGolden(t *testing.T) {
 	checkGolden(t, "firebase.tfvars.json", data)
 
 	// The installation's, with the history account only, and with the job.
+	// It carries the local config's profiles, so the fixture and the golden
+	// plan its script makes hold project jobs (plan task 3.2 step 5): one
+	// job and one job service account per (profile, provider, account), and
+	// no repository ever reaches this root.
 	for name, deploy := range map[string]bool{"installation-budget.tfvars.json": false, "installation-budget-job.tfvars.json": true} {
-		spec := installationSpec(t)
+		spec := installationSpecWith(t, projectProfilesLCBlock)
 		h, err := History(parseLC(t, m4LocalConfig+m5Additions))
 		if err != nil {
 			t.Fatal(err)

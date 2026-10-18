@@ -115,6 +115,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/repourl"
 )
 
 // Policy is the shared, readable node, decoded as JSON.
@@ -131,6 +132,40 @@ type Policy struct {
 	Providers  map[string]Provider `json:"providers,omitempty"`
 	Prices     Prices              `json:"model_prices,omitempty"` // the owner's price overrides, keyed by model ID (Prices documents the node's own spelling)
 	Routing    *Routing            `json:"routing,omitempty"`      // the run applies it (internal/runner's applyRouting); nil = direct (D1b)
+
+	// Profiles are the project's job profiles (design project-centric §4.1,
+	// task 3.1), keyed by profile name. A repository's workflow selects one by
+	// name (config.Workflow.JobProfile, default DefaultProfileName) and the
+	// runner refuses the run when the policy does not define it (§5(3), fail
+	// closed), so this block is a closed set a workflow may only name, never
+	// extend. In this release the selection is checked by name only; the
+	// profile's cpu, memory, timeout, secrets and allow_repos are validated
+	// here and applied by the job layout and admission check of later phase 3
+	// tasks (3.2, 3.3), which build the job a run is launched as from it.
+	//
+	// An absent block is a phase-1 node: it declares no profile, and a workflow
+	// that selects one is then refused at run start rather than run on
+	// something else. validProfiles holds the block to the rule that makes that
+	// safe — a block that is present must define the default.
+	Profiles map[string]Profile `json:"profiles,omitempty"`
+
+	// CloneURLs are the project's clone URLs, keyed by canonical repository
+	// (Canonical: "github/owner/name", the spelling allow_repos patterns and
+	// the runner's slug already use). A repository that is not listed here
+	// clones from its provider's usual host, which is what every repository
+	// does today; an entry exists for a repository reached another way (a
+	// mirror, a proxy, an owner's own host).
+	//
+	// It is data, not an environment value, because on a project job the clone
+	// URL cannot be one: FUGARO_REMOTE is launcher-writable and a shared job
+	// sets none, so the runner computes the URL from task.json's repository,
+	// the provider the job's name pins and this block (plan task 3.3 step 3,
+	// design §4.1(1)). The URL is validated on the node against the same rules
+	// the deployer applies (repourl.CloneURL), so an entry can never point a
+	// run at another repository or another provider's host. The member names
+	// are escaped for RTDB — a canonical name carries slashes — which is
+	// CloneURLs' own business and not a reader's.
+	CloneURLs CloneURLs `json:"clone_urls,omitempty"`
 
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
@@ -149,6 +184,7 @@ type Policy struct {
 var knownTopLevelKeys = map[string]bool{
 	"version": true, "budget": true, "allow_repos": true,
 	"providers": true, "model_prices": true, "routing": true,
+	"profiles": true, "clone_urls": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -376,6 +412,26 @@ func Decode(raw []byte) (*Policy, bool, error) {
 			return nil, true, err
 		}
 	}
+	if fraw, ok := doc["profiles"]; ok && !IsNull(fraw) {
+		// decodeProfileBlock's errors name their place themselves
+		// ("projectpolicy: profiles.<name>..."), so they are returned as they are.
+		ps, err := decodeProfileBlock(fraw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.Profiles = ps
+		if err := validProfiles(p.Profiles); err != nil {
+			return nil, true, err
+		}
+	}
+	if craw, ok := doc["clone_urls"]; ok && !IsNull(craw) {
+		if err := json.Unmarshal(craw, &p.CloneURLs); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: clone_urls: %w", err)
+		}
+		if err := validCloneURLs(p.CloneURLs); err != nil {
+			return nil, true, err
+		}
+	}
 	// Routing is judged *after* the providers block, and against it: D1b's
 	// safeguard (a route resolves to a provider only when that provider's
 	// allow_data_to is written) is a property of the two blocks together, and
@@ -394,6 +450,83 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 	}
 	return &p, true, nil
+}
+
+// validCloneURLs checks the clone_urls block, entry by entry: each key a
+// canonical repository name, and each value an https URL without credentials
+// that names exactly that repository on that repository's own provider's host
+// — the rules the deployer applies to a repository URL (repourl.CloneURL, the
+// one function internal/infra's repoURL and the runner share).
+//
+// Both halves are the security property. A key that is not canonical names no
+// repository the runner can look up, so the entry would silently never be
+// used; a value naming another repository, or another provider's host, would
+// point a run at a repository other than the one its slug, its locks, its
+// cache and its budget session name — the very thing the run's own remote
+// checks refuse when a launcher sets FUGARO_REMOTE, and the reason the node
+// is checked here rather than trusted.
+func validCloneURLs(urls CloneURLs) error {
+	for _, key := range sortedStringKeys(urls) {
+		at := fmt.Sprintf("projectpolicy: clone_urls[%s]", key)
+		provider, repo, ok := strings.Cut(key, "/")
+		if !ok || provider == "" || repo == "" {
+			return fmt.Errorf("%s: a clone_urls key is a canonical repository name, like github/owner/name", at)
+		}
+		if c, err := Canonical(provider, repo); err != nil || c != key {
+			return fmt.Errorf("%s: a clone_urls key is a canonical repository name, like github/owner/name", at)
+		}
+		if _, err := repourl.CloneURL(provider, repo, urls[key]); err != nil {
+			return fmt.Errorf("%s: %w", at, err)
+		}
+	}
+	return nil
+}
+
+// CloneURL is the clone URL the project gives a canonical repository, and ""
+// when the policy names none — the provider's usual host, which is what the
+// runner's own helper then builds. It is a plain lookup and not a decision:
+// whether a repository may run at all is Admits'.
+func (p *Policy) CloneURL(canonical string) string { return p.CloneURLs[canonical] }
+
+// sortedStringKeys is a stable order for error messages, like sortedKeys.
+func sortedStringKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// decodeProfileBlock reads the profiles block off the node, refusing a key inside
+// an entry this Fugaro does not know. A profile is what a job is deployed as —
+// its cpu, memory, task timeout, provider and the secrets it mounts — so a
+// misspelt key is not a dropped field: a misspelt timeout_class would deploy a
+// job with no timeout, a misspelt allow_repos would deploy it with the
+// project's wider list, and a misspelt secrets entry would mount nothing where
+// the owner listed a secret. The node tolerates unknown *top-level* keys so a
+// newer Fugaro's field does not brick an older runner (P8); inside this block
+// the same tolerance fails open, and a newer profile field bumps Version,
+// which is what refuses a node this binary cannot read.
+func decodeProfileBlock(raw json.RawMessage) (map[string]Profile, error) {
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, fmt.Errorf("projectpolicy: profiles: %w", err)
+	}
+	out := make(map[string]Profile, len(entries))
+	for _, name := range sortedProfileNames(entries) {
+		dec := json.NewDecoder(bytes.NewReader(entries[name]))
+		dec.DisallowUnknownFields()
+		var pr Profile
+		if err := dec.Decode(&pr); err != nil {
+			return nil, fmt.Errorf("projectpolicy: profiles.%s: %w", name, err)
+		}
+		if err := checkWrittenProfileFields(name, entries[name]); err != nil {
+			return nil, err
+		}
+		out[name] = pr
+	}
+	return out, nil
 }
 
 // decodeProviders reads the providers block off the node, refusing a key inside
@@ -436,12 +569,76 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 	return out, nil
 }
 
-// providerMembers are the member names a provider entry is spelled with, read
-// from the carrier's own json tags so a field internal/config adds is picked up
-// without a second list. It is the json twin of internal/config's providerKeys,
-// which holds a fugaro.yaml entry to the same names; a field with a tag is
-// known by its tag alone, exactly as encoding/json matches it.
-var providerMembers = func() []string {
+// checkWrittenProfileFields applies the profile rules that read the written
+// document rather than the decoded value: the spelling of a profile's members,
+// and an explicitly empty allow_repos.
+//
+// A profile that names no list falls back to the project's allow_repos
+// (§4.1), and the carrier's `omitempty` means the node cannot carry an empty
+// list at all — so `"allow_repos": []` and `"allow_repos": null` would both be
+// read as "the project's list applies". That is the ambiguity
+// providers.allow_data_to is refused for, in the wider direction: an operator
+// who wrote "[]" believing it admits nobody would get every repository the
+// project enrolls, with nothing in the node to show the difference. Leaving
+// the key out is how a profile says the project's list applies.
+//
+// The member spelling is checked first, and it is what makes the second check
+// hold: encoding/json matches a member to its field case-insensitively, so
+// `"Allow_Repos": []` decodes into AllowRepos while the `fields["allow_repos"]`
+// lookup below — which reads the name as written — never sees it, and the
+// empty list becomes the nil slice that means the project's list. It is the
+// same guard, and the same reason, as validProviders' member check: a name
+// that differs only in case is read by the decoder and by nothing else here.
+func checkWrittenProfileFields(name string, raw json.RawMessage) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return fmt.Errorf("projectpolicy: profiles.%s: %w", name, err)
+	}
+	for _, member := range memberNames(fields) {
+		known := spelledMember(profileMembers, member)
+		if known == member {
+			continue
+		}
+		if known == "" {
+			// Unreachable through Decode: decodeProfileBlock decodes the entry
+			// with DisallowUnknownFields first, so a name no member answers to
+			// is refused there. Kept so this function holds on its own too.
+			return fmt.Errorf("projectpolicy: profiles.%s: unknown field %q", name, member)
+		}
+		// The consequence is named only where it is that member's: an
+		// "Allow_Repos" the check never saw is the silent fall-back to the
+		// project's list, and any other member is the same silence without
+		// that particular effect. A refusal that promised the fall-back for
+		// "Provider" would be describing something that cannot happen.
+		why := "so the decoder would read the entry this check never saw"
+		if known == "allow_repos" {
+			why = "so an \"" + member + "\": [] would fall back to the project's allow_repos instead of being refused"
+		}
+		return fmt.Errorf("projectpolicy: profiles.%s.%s: a profile's members are spelled as fugaro.yaml spells them — write %s. A name that differs only in case is read by the decoder and not by this document's own checks, %s", name, member, known, why)
+	}
+	v, ok := fields["allow_repos"]
+	if !ok {
+		return nil
+	}
+	var patterns []string
+	empty := IsNull(v)
+	if err := json.Unmarshal(v, &patterns); err == nil && len(patterns) == 0 {
+		empty = true
+	}
+	if empty {
+		return fmt.Errorf("projectpolicy: profiles.%s.allow_repos: an explicit empty list is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's allow_repos is still required, so a profile's list can only narrow it)", name)
+	}
+	return nil
+}
+
+// carrierMembers are the member names an entry of that carrier is spelled
+// with, read from the struct's own json tags so a field internal/config adds is
+// picked up without a second list. It is the json twin of internal/config's
+// providerKeys, which holds a fugaro.yaml entry to the same names; a field with
+// a tag is known by its tag alone, exactly as encoding/json matches it. An
+// embedded struct contributes its own members, which is how a policy's Profile
+// is spelled with config.JobProfile's fields.
+func carrierMembers(t reflect.Type) []string {
 	var out []string
 	var walk func(reflect.Type)
 	walk = func(t reflect.Type) {
@@ -470,10 +667,19 @@ var providerMembers = func() []string {
 			}
 		}
 	}
-	walk(reflect.TypeOf(Provider{}))
+	walk(t)
 	sort.Strings(out)
 	return out
-}()
+}
+
+// providerMembers, profileMembers are the two carriers whose member spelling
+// this package reads off the raw document. One guard serves both: a second
+// spelling rule for the profiles block would be a second thing to keep in step
+// with the first.
+var (
+	providerMembers = carrierMembers(reflect.TypeOf(Provider{}))
+	profileMembers  = carrierMembers(reflect.TypeOf(Profile{}))
+)
 
 // memberNames is a stable order for error messages (a map's range is random).
 func memberNames(fields map[string]json.RawMessage) []string {
@@ -485,17 +691,17 @@ func memberNames(fields map[string]json.RawMessage) []string {
 	return names
 }
 
-// spelledMember is the member of a provider entry name is a spelling of: name
+// spelledMember is the member of that carrier name is a spelling of: name
 // itself when it is spelled as this Fugaro spells it, the documented spelling
 // when it differs only in case, and "" when no member is known by that name at
 // all.
-func spelledMember(name string) string {
-	for _, known := range providerMembers {
+func spelledMember(members []string, name string) string {
+	for _, known := range members {
 		if known == name {
 			return name
 		}
 	}
-	for _, known := range providerMembers {
+	for _, known := range members {
 		if strings.EqualFold(known, name) {
 			return known
 		}
@@ -553,7 +759,7 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 			var fields map[string]json.RawMessage
 			if err := json.Unmarshal(entry, &fields); err == nil {
 				for _, member := range memberNames(fields) {
-					known := spelledMember(member)
+					known := spelledMember(providerMembers, member)
 					if known == member {
 						continue
 					}

@@ -44,7 +44,7 @@ func TestCancelRunnerFinalizesInGrace(t *testing.T) {
 	// Land the runner's finalize exactly after cancel's entry read sees the
 	// execution still running, in place of a sleeping goroutine racing the
 	// poll loop on wall-clock time.
-	env.be = onFirstExecutionRead(env.be, func() {
+	env.be = afterEntryRead(env.be, func() {
 		writeFinal(t, f, id, exec)
 		f.run.SetState(exec, backend.StateSucceeded)
 	})
@@ -117,7 +117,7 @@ func TestDoubleLaunchViewsFollowTheRecord(t *testing.T) {
 	// `ls` hides runs older than its window, so the ID's date must follow the clock.
 	id := time.Now().UTC().Format("20060102-150405") + "-abcd"
 	dup := seedRun(t, f, id, "", "", true) // launch.json names this one
-	owner := f.run.Start(gcp.JobName(appSlug, "web"))
+	owner := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, id)
 	f.run.SetState(dup, backend.StateFailed)
 	f.run.SetState(owner, backend.StateRunning)
 	writeStage(t, f, id, owner, "implement")
@@ -263,24 +263,26 @@ func TestCancelFinalizedCleanGateNeverMentionsAPR(t *testing.T) {
 	}
 }
 
-// entryHook runs fire synchronously right after Execution's first call
-// returns: cancelRun's entry read, before it writes the marker or starts
-// its poll loop. Tests use it to land a state change exactly where a
-// sleeping goroutine used to race the poll loop on wall-clock time, making
-// the sequencing deterministic regardless of system load.
+// entryHook runs fire synchronously right after the execution read that
+// follows cancelRun's entry read returns: the entry read is Execution's
+// first call (ownerLaunch checks the execution the run names, task 3.4 step
+// 2), and the read after it is the one whose state cancelRun's own switch
+// decides on. Tests use it to land a state change exactly where a sleeping
+// goroutine used to race the poll loop on wall-clock time, making the
+// sequencing deterministic regardless of system load.
 type entryHook struct {
 	backend.Backend
 	calls atomic.Int32
 	fire  func()
 }
 
-func onFirstExecutionRead(be backend.Backend, fire func()) backend.Backend {
+func afterEntryRead(be backend.Backend, fire func()) backend.Backend {
 	return &entryHook{Backend: be, fire: fire}
 }
 
 func (h *entryHook) Execution(ctx context.Context, name string) (backend.Execution, error) {
 	e, err := h.Backend.Execution(ctx, name)
-	if h.calls.Add(1) == 1 {
+	if h.calls.Add(1) == 2 {
 		h.fire()
 	}
 	return e, err
@@ -386,7 +388,7 @@ func TestCancelReportsARunThatEndedUnfinalized(t *testing.T) {
 	// Flip the execution to failed right after cancel's entry read sees it
 	// still running, instead of racing a sleeping goroutine against the
 	// poll loop on wall-clock time.
-	env.be = onFirstExecutionRead(base, fail)
+	env.be = afterEntryRead(base, fail)
 	var out strings.Builder
 	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
 	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
@@ -398,7 +400,7 @@ func TestCancelReportsARunThatEndedUnfinalized(t *testing.T) {
 	}
 
 	f.run.SetState(exec, backend.StateRunning)
-	env.be = onFirstExecutionRead(base, fail)
+	env.be = afterEntryRead(base, fail)
 	var human strings.Builder
 	o2 := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond}
 	if err := cancelRun(context.Background(), env, o2, id, &human, io.Discard); err != nil {
@@ -429,7 +431,7 @@ func TestCancelClearsTheLockWhenEndedUnfinalizedAndExecutionIsTerminal(t *testin
 	}
 	env := envOn(t, f, bucket)
 	defer env.Close()
-	env.be = onFirstExecutionRead(env.be, func() { f.run.SetState(exec, backend.StateFailed) })
+	env.be = afterEntryRead(env.be, func() { f.run.SetState(exec, backend.StateFailed) })
 	var out, errOut strings.Builder
 	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
 	if err := cancelRun(context.Background(), env, o, id, &out, &errOut); err != nil {
@@ -591,7 +593,7 @@ func TestCancelFollowUp(t *testing.T) {
 	// Land the runner's finalize exactly after cancel's entry read sees the
 	// execution still running, in place of a sleeping goroutine racing the
 	// poll loop on wall-clock time.
-	env.be = onFirstExecutionRead(env.be, func() {
+	env.be = afterEntryRead(env.be, func() {
 		rec := prRecord(id, exec, 7, 1)
 		rec.Status, rec.Stage, rec.Branch = runstore.StatusCancelled, "finalize", "fugaro/"+root
 		rec.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: root}
@@ -687,7 +689,7 @@ func TestCancelForbiddenDeleteReportsLockHeldAndTheOperatorCommand(t *testing.T)
 	if err := s.CreateTask(ctx, &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, id)
 	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Execution: exec, LaunchedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
@@ -755,7 +757,7 @@ func TestCancelAlreadyFinishedToleratesCorruptRecord(t *testing.T) {
 	// and pre-existing behavior this test doesn't touch) sees it fine, and
 	// only the fresh read in the e.State.Terminal() branch meets the
 	// corruption.
-	env.be = onFirstExecutionRead(env.be, func() {
+	env.be = afterEntryRead(env.be, func() {
 		putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/result.json", []byte("{not json"))
 	})
 	var out strings.Builder
@@ -794,7 +796,7 @@ func TestCancelAlreadyFinishedToleratesATransientRecordReadError(t *testing.T) {
 	// ownerLaunch's own read must still succeed (a separate, pre-existing
 	// behavior this test doesn't touch), so the permission is dropped only
 	// once cancel reaches the e.State.Terminal() branch's own fresh read.
-	env.be = onFirstExecutionRead(env.be, func() {
+	env.be = afterEntryRead(env.be, func() {
 		if err := os.Chmod(path, 0); err != nil {
 			t.Fatal(err)
 		}

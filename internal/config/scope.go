@@ -71,6 +71,7 @@ var Scopes = []ScopeRow{
 	{Key: "budget.allowed_models", In: InRepo, Why: whyPolicy},
 	{Key: "budget.per_day_usd", In: InRepo, Why: whyPolicy},
 	{Key: "workflows.*.profile", In: InRepo, Why: "it chooses a profile"},
+	{Key: "workflows.*.job_profile", In: InRepo, Why: "it chooses a job profile of the project policy; the policy is the project's, so a repository picks among the profiles it defines and never writes them"},
 	{Key: "workflows.*.base", In: InProfile | InRepo, Why: whyRemoved},
 	{Key: "workflows.*.checkout", In: InProfile | InRepo},
 	{Key: "workflows.*.image.node", In: InProfile | InRepo, Why: whyRemoved},

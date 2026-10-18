@@ -19,19 +19,15 @@
  *      transition durations for a visitor who has asked their system for less motion, and
  *      it is written here rather than in each component so that a new component cannot
  *      forget it (step 3, D105).
- *   4. **The analytics gate.** The loader is emitted only when `site.yaml` says analytics
- *      are on, and even then it fetches nothing until the visitor has consented. The gate,
- *      not the flag, decides (D93, D106): the loader reads a stored decision and nothing
- *      else, so a visitor who never chooses is measured by nothing. W1.12 owns the banner
- *      that writes the decision — `ConsentBanner.astro`, rendered here only when the flag is
- *      on — and this file holds no copy of it.
- *
- *      The deployed policy does not admit this loader yet, and deliberately so: with the flag
- *      off the built site ships no inline script and no analytics origin at all, so there is
- *      nothing for a policy to allow. W3.2 is the task that widens `firebase.json`'s
- *      `script-src` and `connect-src` in the commit that turns analytics on, with the SHA-256
- *      hashes `website/test/origins.mjs` lists — the loader's own hash depends on the
- *      measurement id, so it cannot be written down before the property exists.
+ *   4. **The analytics gate's configuration.** The gate itself is code, and it lives in the
+ *      site's one script file (D183, `public/scripts/site.js`) — this file emits no inline
+ *      script, which is why the deployed policy needs no hash and no `'unsafe-inline'`. What
+ *      the layout contributes is the gate's three facts, and it contributes them only when
+ *      `site.yaml` says analytics are on: the consent key and the property id and origin go
+ *      into the banner's own markup (`ConsentBanner.astro`, rendered here when the flag is
+ *      on), and `site.js` reads them from there. With the flag off there is no banner, no
+ *      configuration and no analytics origin anywhere in the artifact, so the deployed policy
+ *      is the only place the exception is written down.
  *
  *   5. **The site's one script.** `public/scripts/site.js` (D183) is loaded here, once, for
  *      every page: it is the copy control on the command blocks (P6), and it is the only
@@ -158,19 +154,15 @@ const FOOTER_NAV = [...['/security/', '/changelog/'].map(navItem), { href: '/pri
 // the wordmark on the home page, the menu link on every other page it lists (P3, RF4).
 const isCurrent = (href: string) => pagePath === href
 
-// Analytics (D93): off in site.yaml today, and gated on consent even when it is on. The
-// origin is written here rather than added to `site.yaml`'s `allowed_hosts`, because that
-// list is the hosts the site's own pages link to and this one is the single third-party
-// exception the owner decided on — admitted by W1.11's origins check as its one allowed
-// exception and widened by W1.12 (D106, §7's file-conflict note).
+// Analytics (D93, D106; the owner's ruling of 2026-10-18 in the amendment under plan Task
+// W3.2). The origin is written here rather than added to `site.yaml`'s `allowed_hosts`,
+// because that list is the hosts the site's own pages link to and this one is the single
+// third-party exception the owner decided on — admitted by W1.11's origins check as its one
+// allowed exception, widened by W1.12 and pinned by the deployed policy's `script-src` in
+// `firebase.json`. It reaches the gate through the banner's markup, so nothing under
+// `public/scripts/` names a host and a build with the flag off names none at all.
 const ANALYTICS_ORIGIN = 'https://www.googletagmanager.com'
-const ANALYTICS_SCRIPT_PATH = '/gtag/js'
 const analyticsEnabled = facts.analytics.enabled
-
-// The consent decision's key. `ConsentBanner.astro` writes it and this loader reads it, and
-// nothing else does: with the flag on and nothing stored, this page fetches nothing, which
-// is why the loader below is written to read a decision rather than a flag (D93).
-const CONSENT_KEY = 'fugaro:analytics-consent'
 ---
 
 <!doctype html>
@@ -267,62 +259,27 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
       }
     </style>
 
-    {/* The site's one script (D183, P6). A file, not an inline block: `firebase.json`'s
-        `script-src 'self'` already admits it, so the deployed policy needs no new hash for
-        the copy control, and the whole of the site's behaviour is one file a reader can
-        read. `defer` puts it after the parse, which is when the blocks it drives exist. */}
+    {/* The site's one script (D183, P6, W3.2). A file, not an inline block: `firebase.json`'s
+        `script-src 'self'` already admits it, so the deployed policy needs no hash for the
+        copy control or for the consent gate, and the whole of the site's behaviour is one
+        file a reader can read. `defer` puts it after the parse, which is when the blocks it
+        drives and the banner it reads its configuration from exist. */}
     <script src="/scripts/site.js" defer></script>
-
-    {analyticsEnabled && (
-      <script is:inline define:vars={{ measurementID: facts.analytics.measurementID, origin: ANALYTICS_ORIGIN, scriptPath: ANALYTICS_SCRIPT_PATH, consentKey: CONSENT_KEY }}>
-        // The analytics gate (D93, D106): nothing is fetched, and nothing is stored, until
-        // the visitor has consented. The decision is the banner's (ConsentBanner.astro); this
-        // reads it, and the listener below is how a choice takes effect on the page the
-        // visitor is already on. `load` is idempotent, so a second acceptance fetches once.
-        ;(function () {
-          function decide() {
-            // Storage the browser refuses is not consent: the loader stays off.
-            try {
-              return window.localStorage.getItem(consentKey)
-            } catch (err) {
-              return null
-            }
-          }
-
-          var loaded = false
-
-          function load() {
-            if (loaded) return
-            loaded = true
-            window.dataLayer = window.dataLayer || []
-            function gtag() {
-              window.dataLayer.push(arguments)
-            }
-            gtag('js', new Date())
-            gtag('config', measurementID, { anonymize_ip: true })
-            var script = document.createElement('script')
-            script.async = true
-            script.src = origin + scriptPath + '?id=' + encodeURIComponent(measurementID)
-            document.head.appendChild(script)
-          }
-
-          if (decide() === 'granted') load()
-          window.addEventListener('fugaro:consent', function (event) {
-            if (event && event.detail && event.detail.analytics === 'granted') load()
-          })
-        })()
-      </script>
-    )}
   </head>
 
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
 
-    {/* The consent banner (W1.12): the only thing that writes the decision the loader above
-        reads, and it is rendered only when analytics are on — so with the flag off there is
-        no banner, no script and no analytics origin anywhere in the artifact. It sits after
-        the skip link and before the header, which is where a keyboard reaches it first. */}
-    {analyticsEnabled && <ConsentBanner alwaysOffer={alwaysOffer} />}
+    {/* The consent banner (W1.12, W3.2): the only thing that writes the decision the gate in
+        `site.js` reads, and the element the gate reads its configuration from — the property
+        id from site.yaml and the one admitted origin above, both as data attributes, so no
+        script has to be inline for the gate to know what it gates. It is rendered only when
+        analytics are on, so with the flag off there is no banner, no configuration and no
+        analytics origin anywhere in the artifact. It sits after the skip link and before the
+        header, which is where a keyboard reaches it first. */}
+    {analyticsEnabled && (
+      <ConsentBanner alwaysOffer={alwaysOffer} measurementID={facts.analytics.measurementID} analyticsOrigin={ANALYTICS_ORIGIN} />
+    )}
 
     <header class="site-header">
       {/* The logo is decoration beside the name, so its alt is empty: the link's

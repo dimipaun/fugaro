@@ -27,13 +27,157 @@ import (
 type Plan struct {
 	FormatVersion   string           `json:"format_version"`
 	ResourceChanges []ResourceChange `json:"resource_changes"`
+	// Configuration is the plan's configuration, nil when the document has
+	// none. Only the managed cover reads it (ManagedCover): what runs at apply
+	// besides the resources' own API calls — a provisioner, a provider, a data
+	// source — is declared there and not in resource_changes.
+	Configuration *Configuration `json:"configuration"`
+
+	// fields is every top-level key of the document, decoded or not: the
+	// managed cover refuses a key it does not know carries nothing that runs
+	// (action_invocations, deferred_changes, or one a later terraform adds),
+	// which a struct of the known fields alone would drop unseen.
+	fields map[string]json.RawMessage
+}
+
+// UnmarshalJSON decodes a plan and keeps its top-level keys (fields).
+func (p *Plan) UnmarshalJSON(data []byte) error {
+	type plain Plan
+	if err := json.Unmarshal(data, (*plain)(p)); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &p.fields)
 }
 
 // ResourceChange is one entry of a plan's resource_changes.
 type ResourceChange struct {
 	Address string `json:"address"`
-	Type    string `json:"type"`
-	Change  Change `json:"change"`
+	// Mode is "managed" for a resource and "data" for a data source.
+	Mode string `json:"mode"`
+	Type string `json:"type"`
+	// ProviderName is the provider's full source address, such as
+	// registry.terraform.io/hashicorp/google.
+	ProviderName string `json:"provider_name"`
+	// PreviousAddress is set when a moved block (or a refactoring terraform
+	// infers) moves the resource here from another address: the object the
+	// change acts on — the one in before — was at PreviousAddress. A delete
+	// or a replace that carries one removes the object of another address
+	// than its own, so the delete rule refuses it (removesUnderAnotherAddress).
+	PreviousAddress string `json:"previous_address"`
+	// Deposed is the deposed key when the change acts on a deposed object of
+	// the address rather than its current one.
+	Deposed string `json:"deposed"`
+	// ActionReason is terraform's reason for the actions, such as
+	// delete_because_no_resource_config or replace_because_tainted; empty
+	// when it gives none.
+	ActionReason string `json:"action_reason"`
+	Change       Change `json:"change"`
+}
+
+// Configuration is what the managed cover reads of a plan's configuration:
+// the providers it declares and the resources of every module it calls.
+type Configuration struct {
+	ProviderConfig map[string]ProviderConfig `json:"provider_config"`
+	RootModule     ConfigModule              `json:"root_module"`
+
+	// fields are its keys, as Plan's are; raw is the whole of it, which the
+	// managed cover reads for references to an ephemeral resource wherever an
+	// expression carries one.
+	fields map[string]json.RawMessage
+	raw    json.RawMessage
+}
+
+// UnmarshalJSON decodes a configuration and keeps its keys and its text.
+func (c *Configuration) UnmarshalJSON(data []byte) error {
+	type plain Configuration
+	if err := json.Unmarshal(data, (*plain)(c)); err != nil {
+		return err
+	}
+	c.raw = slices.Clone(data)
+	return json.Unmarshal(data, &c.fields)
+}
+
+// ProviderConfig is one entry of a configuration's provider_config: a
+// provider the configuration requires or configures, in any module. The key
+// is "<name>", "<name>.<alias>" or "<module address>:<name>".
+type ProviderConfig struct {
+	Name              string `json:"name"`
+	FullName          string `json:"full_name"`
+	Alias             string `json:"alias"`
+	ModuleAddress     string `json:"module_address"`
+	VersionConstraint string `json:"version_constraint"`
+	// Expressions are the settings of the provider block, each as terraform
+	// writes an expression ({"constant_value": ...} or {"references": [...]})
+	// or, for a nested block, a list of them; kept raw so a setting of any
+	// shape is read rather than failing the whole plan.
+	Expressions map[string]json.RawMessage `json:"expressions"`
+
+	fields map[string]json.RawMessage
+}
+
+// UnmarshalJSON decodes a provider entry and keeps its keys.
+func (pc *ProviderConfig) UnmarshalJSON(data []byte) error {
+	type plain ProviderConfig
+	if err := json.Unmarshal(data, (*plain)(pc)); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &pc.fields)
+}
+
+// ConfigModule is one module of a configuration: its resources, and the
+// modules it calls with theirs.
+type ConfigModule struct {
+	Resources   []ConfigResource      `json:"resources"`
+	ModuleCalls map[string]ModuleCall `json:"module_calls"`
+
+	// fields are its keys, as Plan's are: an action block shows here (as
+	// "actions") and nowhere a struct of resources would read.
+	fields map[string]json.RawMessage
+}
+
+// UnmarshalJSON decodes a module and keeps its keys.
+func (m *ConfigModule) UnmarshalJSON(data []byte) error {
+	type plain ConfigModule
+	if err := json.Unmarshal(data, (*plain)(m)); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &m.fields)
+}
+
+// ConfigResource is a resource or data block of a configuration, with the
+// provisioners declared on it. Address is relative to its module.
+type ConfigResource struct {
+	Address      string            `json:"address"`
+	Mode         string            `json:"mode"`
+	Type         string            `json:"type"`
+	Provisioners []json.RawMessage `json:"provisioners"`
+	// Expressions are the resource's arguments as the configuration writes
+	// them; the managed cover reads whether project is among them.
+	Expressions map[string]json.RawMessage `json:"expressions"`
+}
+
+// ModuleCall is a module block of a configuration and the module it calls.
+type ModuleCall struct {
+	Source string       `json:"source"`
+	Module ConfigModule `json:"module"`
+
+	// fields are its keys, as a module's are: a call's arguments, its
+	// version constraint and the meta-arguments that decide what the call
+	// makes (count, for_each), which provider configurations its block uses
+	// (providers) and what it waits for (depends_on) live under keys this
+	// struct does not decode, and the managed cover reads a call's own keys
+	// rather than taking them to be inert (managedModuleCallKeys and
+	// managedModuleCallArguments, managed_cover.go).
+	fields map[string]json.RawMessage
+}
+
+// UnmarshalJSON decodes a module call and keeps its keys.
+func (mc *ModuleCall) UnmarshalJSON(data []byte) error {
+	type plain ModuleCall
+	if err := json.Unmarshal(data, (*plain)(mc)); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &mc.fields)
 }
 
 // Change is what a plan will do to one resource instance.
@@ -78,10 +222,18 @@ type TF struct {
 	Out io.Writer
 }
 
-// The supported terraform versions: >= 1.7.0 (import for_each, removed
-// blocks, mock providers) and < 2.0.0.
+// The supported terraform versions: >= 1.9.0 and < 2.0.0.
+//
+// 1.7 was the floor while the tree's features arrived there (import
+// for_each, removed blocks, mock providers). 1.9 is the floor because a
+// variable validation may only read the variable it validates before it: the
+// project module's `secrets` validation reads var.job.secret_env, and on
+// 1.8.5 `terraform init` refuses the installation root outright with "Invalid
+// reference in variable validation" — every installation on 1.7 or 1.8 stops
+// there, rather than merely losing a check. The floor is the version at which
+// the tree can be planned at all, so it moves with the tree.
 const (
-	minMinor    = 7
+	minMinor    = 9
 	lockTimeout = "-lock-timeout=60s"
 	stderrTail  = 4096
 )
@@ -120,7 +272,7 @@ func checkVersion(v string) error {
 	minor, _ := strconv.Atoi(m[2])
 	patch, _ := strconv.Atoi(m[3])
 	pre := m[4] != ""
-	// A pre-release sorts before its release, so 1.7.0-beta1 is < 1.7.0.
+	// A pre-release sorts before its release, so 1.9.0-beta1 is < 1.9.0.
 	if major != 1 || minor < minMinor || (minor == minMinor && patch == 0 && pre) {
 		return fmt.Errorf("terraform %s is not supported: fugaro needs >= 1.%d.0 and < 2.0.0", v, minMinor)
 	}

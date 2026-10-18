@@ -311,7 +311,7 @@ func (e *cloudEnv) batchBudgetPrecheck(ctx context.Context, slug, repo string, n
 // object left by an earlier attempt is replaced (PutObject never overwrites,
 // and the new mint supersedes the old identity's delivery). On error nothing
 // of this attempt remains in the bucket.
-func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.Spec) (minted bool, err error) {
+func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.Spec, job *launchProjectJob) (minted bool, err error) {
 	on, err := e.budgetMintOn(ctx)
 	if err != nil || !on {
 		return false, err
@@ -329,22 +329,30 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 		return false, err
 	}
 	// The identity window is the target job's own timeout (a long job
-	// elsewhere must not lengthen it): the job a named run actually starts,
+	// elsewhere must not lengthen it). On a shared project job the launch
+	// resolved it already (project_job.go, from the profile's timeout_class —
+	// the same number the job was deployed with, so there is nothing to read
+	// back from the API). Elsewhere it is the job a named run actually starts,
 	// gcp.WorkflowVariant(spec.Workflow, spec.OAuthToken), not the bare
 	// workflow — the two can have different timeouts (review finding: this
 	// used to read the default account's job's timeout for every named run).
 	var jobTimeout time.Duration
-	if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
-		jobTimeout, err = e.be.TaskTimeout(ctx, slug, variant)
-	} else {
-		err = backend.ErrNotFound // not a workflow name: no job can match it either
-	}
-	if errors.Is(err, backend.ErrNotFound) {
-		// No such job: the launch itself reports that, after the mint.
-		jobTimeout, err = backend.DefaultTaskTimeout, nil
-	}
-	if err != nil {
-		return false, remote(err)
+	switch {
+	case job != nil:
+		jobTimeout = job.Timeout
+	default:
+		if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
+			jobTimeout, err = e.be.TaskTimeout(ctx, slug, variant)
+		} else {
+			err = backend.ErrNotFound // not a workflow name: no job can match it either
+		}
+		if errors.Is(err, backend.ErrNotFound) {
+			// No such job: the launch itself reports that, after the mint.
+			jobTimeout, err = backend.DefaultTaskTimeout, nil
+		}
+		if err != nil {
+			return false, remote(err)
+		}
 	}
 	if o := launchTimeoutOf(spec); o > 0 {
 		jobTimeout = max(jobTimeout, o+backend.TaskTimeoutSlack)

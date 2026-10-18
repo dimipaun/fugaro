@@ -84,7 +84,7 @@ func (r *initRun) historyJob(ctx context.Context, c *infra.Clients, lc *localcfg
 //
 // imports are the import blocks the root's discovery wrote: the run's one
 // confirmation covers an import only when it is one of them.
-func (r *initRun) applyRoot(ctx context.Context, t *tf.TF, wd *infra.Workdir, root, what string, imports []tf.ImportKey) (applied, stop bool, err error) {
+func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, root, what string, imports []tf.ImportKey) (applied, stop bool, err error) {
 	changed, err := t.Plan(ctx, infra.PlanFile)
 	if err != nil {
 		return false, false, remote(err)
@@ -98,7 +98,7 @@ func (r *initRun) applyRoot(ctx context.Context, t *tf.TF, wd *infra.Workdir, ro
 		return false, false, remote(err)
 	}
 	fmt.Fprint(r.w, tf.Summary(plan))
-	if err := guard(plan, r.o.allowDelete); err != nil {
+	if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
 		return false, false, err
 	}
 	counts := infra.CountPlan(plan)
@@ -286,7 +286,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if names := adoptedNames(im); names != "" {
 		what = fmt.Sprintf("to the Firebase project %s (adopting the existing %s; the Realtime Database, a restricted web API key, the token signer and the grants on it)", fp, names)
 	}
-	applied, stop, err := r.applyRoot(ctx, ft, fwd, "firebase", what, im.Keys())
+	applied, stop, err := r.applyRoot(ctx, c, ft, fwd, "firebase", what, im.Keys())
 	if err != nil || stop {
 		return err
 	}
