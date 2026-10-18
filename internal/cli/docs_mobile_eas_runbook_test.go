@@ -47,12 +47,22 @@ import (
 
 const mobileEasRunbook = "docs/mobile/eas-signing-runbook.md"
 
+// runbook reads the page with its whitespace normalised to single spaces, so a
+// sentence that wraps in the file still matches -- the convention the
+// neighbouring docs tests use (docs_project_wide_git_test.go). The two tests
+// that scan the page's *bytes* for a URL or a credential-shaped literal read it
+// raw, because normalising is exactly what a scanner must not do to a value.
+func runbook(t *testing.T) string {
+	t.Helper()
+	return strings.Join(strings.Fields(readDoc(t, mobileEasRunbook)), " ")
+}
+
 // TestDocsMobileEasRunbookNamesTheTaskAndTheCheck asserts the runbook is the
 // one Task P4.4 asks for and that it hands the running of the check to the
 // register rather than paraphrasing it: Check 89's text is P4.2a's (PR #580),
 // and a runbook that restated the steps would be a second copy to drift.
 func TestDocsMobileEasRunbookNamesTheTaskAndTheCheck(t *testing.T) {
-	doc := readDoc(t, mobileEasRunbook)
+	doc := runbook(t)
 	for _, want := range []string{
 		"Task P4.4",
 		"EAS project, the signing keys and the store entries",
@@ -93,7 +103,7 @@ func TestDocsMobileEasRunbookNamesTheTaskAndTheCheck(t *testing.T) {
 // invitation: to run a build, to hold a token, to paste a value, or to write
 // the workflow the build would use.
 func TestDocsMobileEasRunbookStatesEveryOwnerOnlyWarning(t *testing.T) {
-	doc := readDoc(t, mobileEasRunbook)
+	doc := runbook(t)
 	for _, want := range []struct{ what, line string }{
 		{"that no agent performs a step", "No agent performs any step of this runbook"},
 		{"that no agent builds or submits", "No agent runs `eas build` or `eas submit`"},
@@ -121,7 +131,7 @@ func TestDocsMobileEasRunbookStatesEveryOwnerOnlyWarning(t *testing.T) {
 // lives is one an owner completes by putting it somewhere -- which is how a key
 // reaches CI.
 func TestDocsMobileEasRunbookNamesEveryCredentialAndWhereItLives(t *testing.T) {
-	doc := readDoc(t, mobileEasRunbook)
+	doc := runbook(t)
 	for _, want := range []string{
 		// The two answers EAS offers, and the difference between them.
 		"EAS-managed",
@@ -155,7 +165,7 @@ func TestDocsMobileEasRunbookNamesEveryCredentialAndWhereItLives(t *testing.T) {
 // and that the runbook writes no workflow file, only the shape a later staged
 // file under docs/pending-workflows/ would have (Global Constraint 8).
 func TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape(t *testing.T) {
-	doc := readDoc(t, mobileEasRunbook)
+	doc := runbook(t)
 	for _, want := range []string{
 		"mobile-release",
 		"required reviewer",
@@ -189,7 +199,7 @@ func TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape(t *t
 // way the check names them, so the two files cannot drift into disagreement
 // about which profile is the store one.
 func TestDocsMobileEasRunbookDoesNotRestateCheck89(t *testing.T) {
-	doc := readDoc(t, mobileEasRunbook)
+	doc := runbook(t)
 	for _, want := range []string{
 		"This runbook does not restate Check 89.",
 		"The register is its authority.",
@@ -217,7 +227,7 @@ func TestDocsMobileEasRunbookDoesNotRestateCheck89(t *testing.T) {
 // which is amended -- so it must say so, name both files, and say the owner
 // rules.
 func TestDocsMobileEasRunbookRecordsTheBundleIdentityTension(t *testing.T) {
-	doc := readDoc(t, mobileEasRunbook)
+	doc := runbook(t)
 	for _, want := range []string{
 		"Recorded tensions, not resolved here",
 		"app-config.test.js",
@@ -257,7 +267,7 @@ var runbookDocHosts = map[string]bool{
 // look-alike.
 func TestDocsMobileEasRunbookCitesOnlyTheAccountsOwnDocumentation(t *testing.T) {
 	doc := readDoc(t, mobileEasRunbook)
-	links := regexp.MustCompile(`https?://[^\s)\]<>"']+`).FindAllString(doc, -1)
+	links := regexp.MustCompile("https?://[^\\s)\\]<>\"'`]+").FindAllString(doc, -1)
 	if len(links) < 8 {
 		t.Fatalf("%s cites %d URLs: the vendor steps are supposed to point at the vendors' documentation", mobileEasRunbook, len(links))
 	}
