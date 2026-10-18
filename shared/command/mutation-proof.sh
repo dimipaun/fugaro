@@ -61,11 +61,11 @@ runner_works() {
   node --version >/dev/null 2>&1
 }
 
-# A runner, found rather than assumed. A working one on PATH is the ordinary
-# case; this repository's base image keeps node off PATH on purpose
-# (docs/base-image.md), and mise holds the toolchains, so a machine that has
-# mise gets one from there rather than from any one machine's home directory.
-# node@22 is the line package.json's engines declares (>=22 <23).
+# A runner, found rather than assumed. This repository's toolchains come from
+# mise (docs/base-image.md: mise's shims are first on PATH, and `mise install`
+# runs in the checkout before the build), so a machine that has mise gets node
+# from there rather than from any one machine's home directory. node@22 is the
+# line package.json's engines declares (>=22 <23).
 if ! runner_works && command -v mise >/dev/null 2>&1; then
   for tool in node@22 node; do
     dir=$(mise where "$tool" 2>/dev/null || true)
