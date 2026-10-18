@@ -251,6 +251,27 @@ run "a spoken name with no words in it is refused" \
 run "agent text is forwarded verbatim, not folded" \
   "      text: utterance," "      text: words.join(' '),"
 
+# Review findings on PR #585: the wake word is recognised whatever punctuation
+# follows it, invisible format characters are refused, and folding stays
+# case-only.
+run "punctuation is stripped from both ends of a word, not only a trailing ,.!?" \
+  "const EDGE_PUNCTUATION = /^\p{P}+|\p{P}+\$/gu;" \
+  "const EDGE_PUNCTUATION = /[,.!?]+\$/g;"
+
+run "clause marks separate words, so 'Fugaro,confirm' begins with the wake word" \
+  "const WORD_SEPARATORS = /[\s,;:…–—]+/u;" \
+  "const WORD_SEPARATORS = /\s+/u;"
+
+run "an invisible format character is refused, not routed" \
+  "  if (FORMAT_CHARACTER.test(value)) {" "  if (false) {"
+
+run "folding is case only: no accent stripping or compatibility normalisation" \
+  "    .toLowerCase()
+    .split(WORD_SEPARATORS)" \
+  "    .normalize('NFKD').replace(/\p{M}/gu, '').normalize('NFKC')
+    .toLowerCase()
+    .split(WORD_SEPARATORS)"
+
 # The input checks that stand between a transcript and a route.
 run "a control character is refused, not routed" \
   "  const bad = badCharacter(utterance, true);

@@ -219,6 +219,7 @@ export const REFUSAL = Object.freeze({
   UTTERANCE_TOO_LONG: 'utterance-too-long',
   UTTERANCE_CONTROL_CHARACTER: 'utterance-control-character',
   UTTERANCE_BAD_CHARACTER: 'utterance-bad-character',
+  UTTERANCE_FORMAT_CHARACTER: 'utterance-format-character',
 
   INVALID_ALIASES: 'invalid-aliases',
   INVALID_PROJECTS: 'invalid-projects',
@@ -258,9 +259,9 @@ const NAME_SLOT = '<name>';
  * always last. Nothing matches a row by prefix, score or similarity: a row
  * either equals the utterance's tokens (after the wake word) or it does not.
  *
- * "what's pending" has two rows because an on-device engine renders the
- * apostrophe either way; that is the one spelling variance the grammar admits,
- * and it is data like everything else here.
+ * "what's pending" has three rows because an on-device engine renders the
+ * apostrophe as ' or as a typographic ’, or drops it; that is the one
+ * spelling variance the grammar admits, and it is data like everything else.
  */
 const GRAMMAR = Object.freeze([
   Object.freeze({
@@ -296,6 +297,10 @@ const GRAMMAR = Object.freeze([
     pattern: Object.freeze(['whats', 'pending']),
   }),
   Object.freeze({
+    command: COMMAND.WHATS_PENDING,
+    pattern: Object.freeze(['what’s', 'pending']),
+  }),
+  Object.freeze({
     command: COMMAND.CONFIRM,
     pattern: Object.freeze(['confirm']),
   }),
@@ -313,12 +318,32 @@ const DEFAULT_AGENT_FIELDS = Object.freeze(['project', 'lastUsedByProject', 'age
 const ENTRY_FIELDS = Object.freeze(['id', 'spokenName']);
 
 /**
- * Sentence punctuation, stripped from the END of each word. Trailing only, and
- * deliberately so: an engine punctuates what it hears ("Fugaro, list
- * projects?"), and a comma or a question mark is not part of any word. Internal
- * punctuation is left alone, so "v1.2" and "v12" stay two different names.
+ * What separates words: whitespace, and the clause marks an engine (or a typed
+ * transcript) puts between the wake word and the command with or without a space
+ * -- comma, semicolon, colon, the one-character ellipsis, en and em dashes.
+ * "Fugaro,confirm" and "Fugaro—confirm" are two words, as they were spoken.
  */
-const TRAILING_PUNCTUATION = /[,.!?]+$/;
+const WORD_SEPARATORS = /[\s,;:…–—]+/u;
+
+/**
+ * Punctuation (Unicode category P), stripped from BOTH ENDS of each word. An
+ * engine punctuates what it hears ("Fugaro: list projects?", a quoted
+ * transcript), and a mark at a word's edge is not part of the word. Review
+ * finding on PR #585: stripping only a trailing `,.!?` left "fugaro:" and
+ * "\"fugaro" as first tokens, so a heard app command was forwarded as agent
+ * text. Internal punctuation is left alone, so "v1.2" and "v12", and "con-firm"
+ * and "confirm", stay different words; letters are never folded beyond case.
+ */
+const EDGE_PUNCTUATION = /^\p{P}+|\p{P}+$/gu;
+
+/**
+ * An invisible format character (Unicode category Cf): zero-width space and
+ * joiners, the BOM, the soft hyphen, the bidi embeddings, overrides and
+ * isolates. None is spoken; each lets the text a person SEES differ from the
+ * text this module ROUTES ("Fugaro\u200b, confirm" looks like an app command and
+ * is not one), so it is refused rather than stripped or routed.
+ */
+const FORMAT_CHARACTER = /\p{Cf}/u;
 
 /** A database key, as an entry id must be. RTDB admits no `.`, `$`, `#`, `[`, `]`, `/`. */
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -374,6 +399,9 @@ function badCharacter(value, lineBreaks) {
       return 'control';
     }
   }
+  if (FORMAT_CHARACTER.test(value)) {
+    return 'format';
+  }
   return null;
 }
 
@@ -390,8 +418,8 @@ function badCharacter(value, lineBreaks) {
 function wordsOf(text) {
   return text
     .toLowerCase()
-    .split(/\s+/)
-    .map((word) => word.replace(TRAILING_PUNCTUATION, ''))
+    .split(WORD_SEPARATORS)
+    .map((word) => word.replace(EDGE_PUNCTUATION, ''))
     .filter((word) => word !== '');
 }
 
@@ -441,6 +469,9 @@ function checkAliases(list) {
     }
     if (bad === 'surrogate') {
       return refuse(REFUSAL.INVALID_ALIASES, `aliases[${i}]`, 'an alias must be encodable text');
+    }
+    if (bad === 'format') {
+      return refuse(REFUSAL.INVALID_ALIASES, `aliases[${i}]`, 'an alias may not carry an invisible format character');
     }
     const key = fold(alias);
     if (key === '') {
@@ -529,6 +560,9 @@ function checkEntries(list, field, listCode, entryCode) {
     }
     if (bad === 'surrogate') {
       return refuse(entryCode, `${where}.spokenName`, 'a spoken name must be encodable text');
+    }
+    if (bad === 'format') {
+      return refuse(entryCode, `${where}.spokenName`, 'a spoken name may not carry an invisible format character');
     }
 
     const key = fold(spokenName);
@@ -645,6 +679,13 @@ export function routeUtterance(input = {}) {
   }
   if (bad === 'surrogate') {
     return refuse(REFUSAL.UTTERANCE_BAD_CHARACTER, 'utterance', 'an utterance must be encodable text');
+  }
+  if (bad === 'format') {
+    return refuse(
+      REFUSAL.UTTERANCE_FORMAT_CHARACTER,
+      'utterance',
+      'an utterance may not carry an invisible format character: what is shown must be what is routed',
+    );
   }
 
   const words = wordsOf(utterance);

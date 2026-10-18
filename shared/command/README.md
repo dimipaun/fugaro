@@ -55,15 +55,24 @@ one frozen table, and a row is a list of tokens with at most one name slot, alwa
 | `talk-to-agent` | "Fugaro, talk to ⟨name⟩" | an **agent**, matched only against `agents` |
 | `where-am-i` | "Fugaro, what project am I on" | — |
 | `list` | "Fugaro, list projects" / "Fugaro, list agents" | — (`result.list` is the closed pair) |
-| `whats-pending` | "Fugaro, what's pending" / "Fugaro, whats pending" | — |
+| `whats-pending` | "Fugaro, what's pending" / "Fugaro, what’s pending" / "Fugaro, whats pending" | — |
 | `confirm` | "Fugaro, confirm" | — |
 | `cancel-that` | "Fugaro, cancel that" | — |
 
 There is **no intent detection, no prefix match, no scoring and no "did you mean"**. A row either
 equals the utterance's tokens (after the wake word) or it does not. That is why:
 
-- **`what's pending` has two rows**: an on-device engine renders the apostrophe either way, and
-  that is the only spelling variance the grammar admits.
+- **`what's pending` has three rows**: an on-device engine renders the apostrophe as `'` or `’`,
+  or drops it, and that is the only spelling variance the grammar admits.
+- **Words are folded by case only.** An utterance and every configured name and alias are split
+  on whitespace and on the clause marks `, ; : … – —`, and punctuation (Unicode
+  category P) is stripped from both ends of each word, so "Fugaro: confirm", "Fugaro,confirm" and
+  a quoted transcript all begin with the wake word. Internal punctuation stays (`con-firm` is not
+  `confirm`), and letters are never folded beyond lowercase: no accent stripping, no compatibility
+  normalisation, no look-alike mapping. A look-alike wake word (`Fug\u0430ro`, with a Cyrillic `a`) is
+  therefore a missed wake word — agent text, D164's other direction — and never a confirmation.
+- **A leading filler is a missed wake word.** "Um, Fugaro, confirm" is agent text under the
+  first-token rule; stripping fillers would widen what may precede the phrase.
 - **A name is matched against the configured list only**, exactly, never as a prefix: `Belong`
   and `Belong dev` are two different names, and `Bel` matches neither. A name that is not
   configured is `not-understood`, with the name echoed in its folded form — never the raw
@@ -120,9 +129,10 @@ apart:
 | `utterance-too-long` | the transcript exceeds `MAX_UTTERANCE_LENGTH` (4096, P0.2's `TEXT_MAX`) |
 | `utterance-control-character` | the transcript carries a control character |
 | `utterance-bad-character` | the transcript carries an unpaired surrogate — text that cannot be encoded |
+| `utterance-format-character` | the transcript carries an invisible format character (Unicode Cf: zero-width, BOM, soft hyphen, bidi controls), which would let the text shown differ from the text routed |
 | `invalid-aliases` | the alias set is not an array, is empty, is over `MAX_ALIASES` (8), or carries a malformed alias |
 | `invalid-projects` / `invalid-agents` | the configured list is not an array, or is over `MAX_ENTRIES` (32) |
-| `invalid-project` / `invalid-agent` | an entry is not a plain object, carries an unknown field, lacks an id or a spoken name, has an id outside `[A-Za-z0-9_-]{1,64}`, has a spoken name over 64 characters or carrying a control character, or has a spoken name with no words in it |
+| `invalid-project` / `invalid-agent` | an entry is not a plain object, carries an unknown field, lacks an id or a spoken name, has an id outside `[A-Za-z0-9_-]{1,64}`, has a spoken name over 64 characters or carrying a control or format character, or has a spoken name with no words in it |
 | `ambiguous-spoken-name` | two entries fold to the same spoken name, so neither can be addressed |
 | `alias-collides-with-confirmation` | the wake-word set contains a confirmation word or a yes-word |
 | `invalid-project-id` | (`defaultAgent`) the project id is not a database key |
@@ -183,7 +193,7 @@ against a stub router that forwards, failing on it before the real branch existe
 `mutation-proof.sh`'s first guard, so it stays re-runnable rather than living only in a
 pull-request transcript.
 
-`mutation-proof.sh` plants 25 one-line bugs in `index.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 29 one-line bugs in `index.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. It
