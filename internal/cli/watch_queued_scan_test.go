@@ -480,8 +480,8 @@ func TestScanCachesFinishedRunsAcrossPolls(t *testing.T) {
 func TestPruneFinishedCacheDropsStaleEntries(t *testing.T) {
 	sc := newQueuedScanner(&localcfg.Config{}, "")
 	now := time.Now()
-	sc.cacheFinished("acme-a/old", watch.FinishedRun{FinishedAt: now.Add(-finishedLookback - time.Minute)})
-	sc.cacheFinished("acme-a/new", watch.FinishedRun{FinishedAt: now.Add(-time.Hour)})
+	sc.cacheFinished("acme-a/old", cachedFinishedRun{row: watch.FinishedRun{FinishedAt: now.Add(-finishedLookback - time.Minute)}})
+	sc.cacheFinished("acme-a/new", cachedFinishedRun{row: watch.FinishedRun{FinishedAt: now.Add(-time.Hour)}})
 	sc.pruneFinishedCache(now.Add(-finishedLookback))
 	if _, ok := sc.cachedFinished("acme-a/old"); ok {
 		t.Fatal("an entry older than the lookback must be pruned")
