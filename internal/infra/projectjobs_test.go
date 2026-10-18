@@ -448,11 +448,17 @@ profiles:
 `},
 	} {
 		lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+c.lc)
-		want := projectpolicy.CheckProfiles(profilesAsPolicy(lc.Profiles))
+		// The accounts block the deployer judges the profiles against is
+		// derived from the same config, exactly as ProjectJobs derives it.
+		accounts, err := projectpolicy.DeriveAccounts(profilesAsPolicy(lc.Profiles), lc.ClaudeAccounts, lc.ProjectSecrets)
+		if err != nil {
+			t.Fatalf("%s: DeriveAccounts: %v", c.name, err)
+		}
+		want := projectpolicy.CheckProfiles(profilesAsPolicy(lc.Profiles), accounts)
 		if want == nil {
 			t.Fatalf("%s: the policy admits the profile, so nothing below is about the layer that refuses it", c.name)
 		}
-		_, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
+		_, err = ProjectJobs(lc, "fugaro-runs-proj-1234", false)
 		if err == nil {
 			t.Fatalf("%s: ProjectJobs deployed a job for a profile mounting a Claude OAuth token", c.name)
 		}

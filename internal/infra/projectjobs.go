@@ -72,7 +72,20 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	// to a second copy of them: `fugaro init` must not deploy a job that
 	// `fugaro project policy publish` would refuse, and a profile the nodes
 	// refuse describes a job no workflow could ever select.
-	if err := projectpolicy.CheckProfiles(profilesAsPolicy(lc.Profiles)); err != nil {
+	//
+	// The rules are the policy's own, and so is the accounts block they are
+	// judged against: it is derived here from the same config by the same
+	// function `fugaro project policy publish` derives it with
+	// (projectpolicy.DeriveAccounts), so a profile that names an account
+	// nothing defines, or admits a repository its account does not cover, is
+	// refused at init with the sentence publish would print — and never
+	// deployed as a job whose token is bounded by a list no node states.
+	profiles := profilesAsPolicy(lc.Profiles)
+	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
+	if err != nil {
+		return nil, userErr("%v", err)
+	}
+	if err := projectpolicy.CheckProfiles(profiles, accounts); err != nil {
 		return nil, userErr("%v", err)
 	}
 	// Every project job is a github one in this phase (the bitbucket refusal

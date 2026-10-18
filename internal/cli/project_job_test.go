@@ -46,7 +46,7 @@ type projectJobFixture struct {
 // serving github, and every repository of the fixture's owner admitted to it.
 // The profile mounts no secret, so its job runs as no Claude account and the
 // job's account segment is empty (config.ClaudeAccountOfSecrets).
-const projectJobPolicy = `{"version":2,"allow_repos":["github/acme/*"],` +
+const projectJobPolicy = `{"version":3,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
 
 // projectJobTimeout is the profile's task timeout: what a project job's
@@ -519,7 +519,7 @@ func TestLaunchRefusesAnAccountTheProfileDoesNotMount(t *testing.T) {
 // the claim, minted the budget token and reached Cloud Run on a job that does
 // not exist, and every run of the profile halted with cannotPlaceJob, which
 // blames a stale module version instead of the profile.
-const projectJobReservedTokenPolicy = `{"version":2,"allow_repos":["github/acme/*"],` +
+const projectJobReservedTokenPolicy = `{"version":3,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"secrets":["claude-oauth-token"]}}}`
 
@@ -668,7 +668,7 @@ func TestLaunchRefusesABitbucketProfile(t *testing.T) {
 	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
 	// The policy carries both profiles, as a publish from a local config that
 	// declares a bitbucket one leaves it, and admits the repository.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":2,"allow_repos":["github/acme/*","bitbucket/acme/*"],`+
+	publishPolicy(t, f.launchBudgetFixture, `{"version":3,"allow_repos":["github/acme/*","bitbucket/acme/*"],`+
 		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},`+
 		`"bb":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`)
 
@@ -716,7 +716,7 @@ func TestLaunchRefusesARepositoryTheProfileDoesNotAdmit(t *testing.T) {
 	f := newProjectJobFixture(t)
 	// The project admits both of the fixture's repositories; the profile
 	// admits one of them.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":2,"allow_repos":["github/acme/*"],`+
+	publishPolicy(t, f.launchBudgetFixture, `{"version":3,"allow_repos":["github/acme/*"],`+
 		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",`+
 		`"allow_repos":["github/acme/other"]}}}`)
 	projectJobCheckout(t)
