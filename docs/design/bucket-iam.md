@@ -86,14 +86,14 @@ People are made launchers or operators by `fugaro init --launcher/--operator`, s
 
 ## 3. The end state
 
-| Principal | `fugaro/` | `builds/<slug>/` | `runs/` | `cache/`, `locks/` | How |
-|---|---|---|---|---|---|
-| Operator | read, write | read, write | read, write | read, write | `objectAdmin`, no condition (unchanged) |
-| Launcher (not an operator) | read | read | **read, write** | read | `objectViewer`, no condition; plus `objectUser` with the condition `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/")` |
-| Job account | none | none | its slug only | its slug only | unchanged |
-| **Project job account** (phase 3) | none | none | **every slug** | **every slug** | `objectUser` with the condition `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/") \|\| resource.name.startsWith(…"cache/") \|\| resource.name.startsWith(…"locks/")` — `gcp.ProjectBucketCondition`, one clause per prefix and no slug, and the same condition for every profile's account |
-| Build account | none | its slug only | none | none | unchanged |
-| History account | read | read | read | read | unchanged |
+| Principal | `fugaro/` | `builds/<slug>/` | `runs/` | `cache/`, `locks/` | `tokens/` | How |
+|---|---|---|---|---|---|---|
+| Operator | read, write | read, write | read, write | read, write | read, write | `objectAdmin`, no condition (unchanged) |
+| Launcher (not an operator) | read | read | **read, write** | read | **read, write** | `objectViewer`, no condition; plus `objectUser` with the condition `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/") \|\| resource.name.startsWith(…"tokens/")` (`gcp.LauncherBucketCondition`, titled `fugaro-launchers-runs-tokens`) |
+| Job account | none | none | its slug only | its slug only | its slug only, **read-only** | unchanged; plus `objectViewer` on `tokens/<slug>/` (`gcp.TokenBucketCondition`) |
+| **Project job account** (phase 3) | none | none | **every slug** | **every slug** | **every slug, read-only** | `objectUser` with the condition `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/") \|\| resource.name.startsWith(…"cache/") \|\| resource.name.startsWith(…"locks/")` — `gcp.ProjectBucketCondition`, one clause per prefix and no slug, and the same condition for every profile's account; plus `objectViewer` (never `objectUser`) on the whole of `tokens/` (`gcp.ProjectTokenBucketCondition`, one clause, no slug) |
+| Build account | none | its slug only | none | none | none | unchanged |
+| History account | read | read | read | read | read | unchanged |
 
 So:
 

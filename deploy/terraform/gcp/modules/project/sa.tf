@@ -48,6 +48,34 @@ resource "google_storage_bucket_iam_member" "job" {
   }
 }
 
+# The runs bucket's budget token objects, the whole of tokens/, read-only
+# (gcp.ProjectTokenBucketCondition, plan task 3.2 step 2; budget-token-channel
+# §7.2). The widened objectUser grant above is on runs/, cache/ and locks/ and
+# never covers tokens/; this one is objectViewer, so the account can read a
+# queued run's sealed token and can neither delete nor replace it, and what it
+# reads is ciphertext — sealed under a key only the execution its launch minted
+# it for receives — so the reach is over bytes, not over tokens. The widening
+# is the same one D4 documents for the other three prefixes, for the same
+# reason: one job serves every repository admitted to its profile, so its token
+# read cannot name one repository's prefix.
+resource "google_storage_bucket_iam_member" "job_tokens" {
+  bucket = var.runs_bucket
+  role   = "roles/storage.objectViewer"
+  member = google_service_account.job.member
+
+  condition {
+    title      = var.job.token_condition.title
+    expression = var.job.token_condition.expression
+  }
+
+  lifecycle {
+    precondition {
+      condition     = startswith(var.job.token_condition.expression, "resource.name.startsWith(\"projects/_/buckets/${var.runs_bucket}/objects/tokens/") && !strcontains(var.job.token_condition.expression, "||")
+      error_message = "job.token_condition must name tokens/ of this runs bucket, in one clause (gcp.ProjectTokenBucketCondition)."
+    }
+  }
+}
+
 # Each project-wide secret the profile mounts, at the secret level, never the
 # project's. The value is the logical name, so the grant waits for the
 # container the installation module creates or adopts.

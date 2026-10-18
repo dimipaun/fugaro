@@ -642,6 +642,82 @@ func TestTakeRefusesDisallowedClaudeOAuthName(t *testing.T) {
 	}
 }
 
+// TestTakeRefusesCodexOAuthName is the same independent backstop for the
+// Codex harness's reserved names (config.CodexOAuthToken and the whole
+// codex-oauth-token-<name> namespace, owner ruling of 2026-10-18):
+// allowedHarnessOAuthMounts keeps them out of tg.wanted, and take() refuses
+// one itself — before the prompt, before the value is read, before anything
+// is stored — even called for a name that filter should never have offered.
+func TestTakeRefusesCodexOAuthName(t *testing.T) {
+	for _, name := range []string{"codex-oauth-token", "codex-oauth-token-acme"} {
+		spy := &readerSpy{Reader: strings.NewReader(tokenValue + "\n")}
+		r := newSecretsRig(t, githubOrigin, spy)
+		r.stage.tg = &secretTarget{repo: "acme/app", slug: appSlug}
+		err := r.stage.take(context.Background(), r.store, nil, io.Discard, name)
+		if err == nil || !strings.Contains(err.Error(), "reserved for the Codex harness's OAuth credential") {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+		if spy.read {
+			t.Fatalf("%s: the value was read before the refusal", name)
+		}
+		if r.store.setCalls() != 0 {
+			t.Fatalf("%s: a value was stored despite the refusal", name)
+		}
+		if s := r.out.String() + r.errOut.String(); strings.Contains(s, name) {
+			t.Fatalf("%s: a prompt was written for a reserved name: %q", name, s)
+		}
+	}
+}
+
+// TestTakeRefusesAnotherProvidersConventionalName: the name reserved for a
+// configured provider's key is refused by take() too when the provider's key
+// is stored under another name — the same independent backstop, for the same
+// reason as the Codex names — while the provider's own key is what this stage
+// exists to take. A refusal here is what keeps init from storing a workflow's
+// value under a name that becomes the provider's credential the day the key is
+// renamed to the convention.
+func TestTakeRefusesAnotherProvidersConventionalName(t *testing.T) {
+	const key = "not-a-real-key-1234"
+	// openrouter's key is off convention on purpose: openrouter-api-key is
+	// then a name reserved for it and nobody's .secret today.
+	provider := config.ModelProvider{Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api",
+		Auth: "bearer", Secret: "other-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/app"}}
+
+	spy := &readerSpy{Reader: strings.NewReader(key + "\n")}
+	r := newSecretsRig(t, githubOrigin, spy)
+	r.e.lc.Providers = map[string]config.ModelProvider{"openrouter": provider}
+	r.stage.tg = &secretTarget{repo: "acme/app", slug: appSlug}
+	err := r.stage.take(context.Background(), r.store, nil, io.Discard, "openrouter-api-key")
+	if err == nil || !strings.Contains(err.Error(), "reserved for model provider openrouter") {
+		t.Fatalf("err = %v", err)
+	}
+	if spy.read {
+		t.Fatal("the value was read before the refusal")
+	}
+	if r.store.setCalls() != 0 {
+		t.Fatal("a value was stored despite the refusal")
+	}
+
+	// The provider's own key is still asked for: the reservation is about the
+	// name the convention gives a provider's key, never about the key itself.
+	r2 := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	r2.e.lc.Providers = map[string]config.ModelProvider{"openrouter": provider}
+	// A pin openrouter claims, so its key is mounted and therefore wanted.
+	r2.writeConfig(t, "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key, model: deepseek/deepseek-v4-flash }\n"+
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	res, err := r2.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmds := strings.Join(res.Left[0].Commands, "\n")
+	if !strings.Contains(cmds, "secrets set other-key") {
+		t.Fatalf("the provider's own key is not asked for: %v", res.Left)
+	}
+	if strings.Contains(cmds, "openrouter-api-key") {
+		t.Fatalf("a name reserved for openrouter's key was asked for: %v", res.Left)
+	}
+}
+
 // TestInitNeverPromptsForWorkflowDeclaredClaudeOAuthName is the review's
 // exact probe: a workflow's own secrets: names
 // claude-oauth-token-other-team, where other-team is a real
@@ -678,7 +754,7 @@ func TestInitNeverPromptsForWorkflowDeclaredClaudeOAuthName(t *testing.T) {
 	}
 }
 
-// TestAllowedClaudeOAuthMountsDropsDisallowedNames is a surgical,
+// TestAllowedHarnessOAuthMountsDropsDisallowedNames is a surgical,
 // bypass-the-YAML-pipeline unit test of resolve()'s defense-in-depth
 // filter: config.Validate is supposed to stop infra.SecretMounts from ever
 // carrying a claude-oauth-token-<name> entry a workflow declared itself
@@ -686,28 +762,46 @@ func TestInitNeverPromptsForWorkflowDeclaredClaudeOAuthName(t *testing.T) {
 // to end), but this filter must not assume that upstream refusal ran —
 // constructing the mounts slice directly, as SecretMounts would return it
 // for an (otherwise impossible, post-Validate) workflow secret of that
-// shape, proves the filter itself drops it independently.
-func TestAllowedClaudeOAuthMountsDropsDisallowedNames(t *testing.T) {
+// shape, proves the filter itself drops it independently. The Codex names
+// (codex-oauth-token, reserved ahead of the harness) and the name reserved
+// for a configured provider's key are dropped by the same filter, and the
+// provider's *own* key mount (the conventional name, actually in use) is
+// kept.
+func TestAllowedHarnessOAuthMountsDropsDisallowedNames(t *testing.T) {
 	accounts := map[string]config.ClaudeAccount{
 		"acme-personal": {AllowDataTo: []string{"acme/app"}},
 		"other-team":    {AllowDataTo: []string{"acme/other"}}, // not acme/app
 	}
+	providers := map[string]config.ModelProvider{
+		// Its key IS the conventional name: the mount SecretMounts builds for
+		// it must survive the filter.
+		"openrouter": {Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/app"}},
+		// Its key is not: `deepseek-api-key` is reserved for it and belongs to
+		// no mount of anyone else's.
+		"deepseek": {Kind: config.ModelProviderKind, BaseURL: "https://api.deepseek.com/anthropic", Auth: "bearer",
+			Secret: "ds-key", Models: []string{"qwen/*"}, AllowDataTo: []string{"acme/app"}},
+	}
 	mounts := []infra.SecretMount{
 		{Logical: "github-app-key", Env: "FUGARO_GITHUB_APP_PRIVATE_KEY"},
 		{Logical: "claude-oauth-token", Env: "CLAUDE_CODE_OAUTH_TOKEN"},
-		{Logical: "claude-oauth-token-acme-personal", Env: "SHOULD_NOT_APPEAR"}, // allowed
-		{Logical: "claude-oauth-token-other-team", Env: "FOO_TOKEN"},            // configured, not allowed here
-		{Logical: "claude-oauth-token-nobody", Env: "BAR_TOKEN"},                // not configured at all
-		{Logical: "npm-token", Env: "NPM_TOKEN"},                                // an ordinary workflow secret, untouched
+		{Logical: "claude-oauth-token-acme-personal", Env: "SHOULD_NOT_APPEAR"},        // allowed
+		{Logical: "claude-oauth-token-other-team", Env: "FOO_TOKEN"},                   // configured, not allowed here
+		{Logical: "claude-oauth-token-nobody", Env: "BAR_TOKEN"},                       // not configured at all
+		{Logical: "codex-oauth-token", Env: "CODEX_TOKEN"},                             // reserved: no Codex harness
+		{Logical: "codex-oauth-token-acme", Env: "CODEX_ACME_TOKEN"},                   // reserved: not a workflow's
+		{Logical: "deepseek-api-key", Env: "DS_TOKEN"},                                 // reserved for deepseek's key
+		{Logical: "openrouter-api-key", Env: "FUGARO_PROVIDER_KEY_OPENROUTER_API_KEY"}, // openrouter's own key
+		{Logical: "npm-token", Env: "NPM_TOKEN"},                                       // an ordinary workflow secret, untouched
 	}
-	got := allowedClaudeOAuthMounts(accounts, "acme/app", mounts)
+	got := allowedHarnessOAuthMounts(&localcfg.Config{ClaudeAccounts: accounts, Providers: providers}, "acme/app", mounts)
 	var logicals []string
 	for _, m := range got {
 		logicals = append(logicals, m.Logical)
 	}
-	want := []string{"github-app-key", "claude-oauth-token", "claude-oauth-token-acme-personal", "npm-token"}
+	want := []string{"github-app-key", "claude-oauth-token", "claude-oauth-token-acme-personal", "openrouter-api-key", "npm-token"}
 	if strings.Join(logicals, ",") != strings.Join(want, ",") {
-		t.Fatalf("allowedClaudeOAuthMounts = %v, want %v", logicals, want)
+		t.Fatalf("allowedHarnessOAuthMounts = %v, want %v", logicals, want)
 	}
 }
 

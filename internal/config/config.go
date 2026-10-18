@@ -479,11 +479,19 @@ const BitbucketSecret = "bitbucket-token"
 // mapped to the variable each one becomes. A workflow's secrets may not
 // reuse them (design §5.1, §6.1).
 var ReservedSecrets = map[string]string{
-	BitbucketSecret:      "FUGARO_BITBUCKET_TOKEN",
-	"github-app-key":     "FUGARO_GITHUB_APP_PRIVATE_KEY",
-	"claude-oauth-token": "CLAUDE_CODE_OAUTH_TOKEN",
-	AnthropicSecret:      "ANTHROPIC_API_KEY",
+	BitbucketSecret:  "FUGARO_BITBUCKET_TOKEN",
+	"github-app-key": "FUGARO_GITHUB_APP_PRIVATE_KEY",
+	ClaudeOAuthToken: "CLAUDE_CODE_OAUTH_TOKEN",
+	AnthropicSecret:  "ANTHROPIC_API_KEY",
 }
+
+// CodexOAuthToken is reserved for the Codex harness's OAuth credential but is
+// deliberately NOT in ReservedSecrets: this map is the names the platform
+// itself *mounts*, each with the variable it becomes, and nothing mounts a
+// Codex credential yet. What the name needs now is to be refused wherever a
+// secret name is accepted or written (CodexOAuthSecret), which is a different
+// question from this one — and an entry here would claim a mount, a project
+// job variable and a project-scope default that do not exist.
 
 // Resources are the task resources for the workflow's job. The backend checks them against its own limits (Cloud Run: gcp.CheckResources).
 type Resources struct {

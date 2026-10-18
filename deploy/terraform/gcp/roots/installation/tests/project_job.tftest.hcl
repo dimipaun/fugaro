@@ -58,6 +58,10 @@ variables {
         "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/locks/\")",
       ])
     }
+    token_condition = {
+      title      = "fugaro-project-tokens-fugaro-p-standard-git-63f23ec6"
+      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
+    }
     vertex = false
   }
 }
@@ -149,6 +153,21 @@ run "project_job" {
     condition     = google_storage_bucket_iam_member.job.bucket == "fugaro-runs-proj-1234" && google_storage_bucket_iam_member.job.condition[0].title == "fugaro-project-job-runs"
     error_message = "a project job's bucket grant must be on the runs bucket, under the title internal/infra gave it"
   }
+  # The tokens/ grant (the seal, #563): objectViewer, never objectUser, so the
+  # account can read a queued run's sealed token and can neither delete nor
+  # replace it; the whole of tokens/ in one clause, to this account alone.
+  assert {
+    condition     = google_storage_bucket_iam_member.job_tokens.role == "roles/storage.objectViewer" && google_storage_bucket_iam_member.job_tokens.bucket == "fugaro-runs-proj-1234"
+    error_message = "a project job's tokens/ grant must be read-only (objectViewer) on the runs bucket"
+  }
+  assert {
+    condition     = google_storage_bucket_iam_member.job_tokens.member == "serviceAccount:fugaro-p-standard-git-63f23ec6@proj-1234.iam.gserviceaccount.com"
+    error_message = "the tokens/ grant must be to the job's own account"
+  }
+  assert {
+    condition     = google_storage_bucket_iam_member.job_tokens.condition[0].expression == "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")" && google_storage_bucket_iam_member.job_tokens.condition[0].title == "fugaro-project-tokens-fugaro-p-standard-git-63f23ec6"
+    error_message = "a project job's tokens/ condition must be exactly gcp.ProjectTokenBucketCondition, under the title internal/infra gave it"
+  }
   # The rest of the job account's grant surface, for a profile that mounts no
   # secret and does not use Vertex AI: nothing.
   assert {
@@ -209,6 +228,10 @@ run "github_job_without_the_app_id_fails_the_plan" {
         title      = "fugaro-project-job-runs"
         expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
       }
+      token_condition = {
+        title      = "fugaro-project-tokens-fugaro-p-standard-git-0ca96e64"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
+      }
       vertex = false
     }
   }
@@ -248,6 +271,10 @@ run "bitbucket_job_needs_no_app_id" {
       bucket_condition = {
         title      = "fugaro-project-job-runs"
         expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
+      }
+      token_condition = {
+        title      = "fugaro-project-tokens-fugaro-p-standard-bit-31e1bbd3"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
       }
       vertex = false
     }

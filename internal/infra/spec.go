@@ -176,8 +176,12 @@ type WorkflowSpec struct {
 	Env             map[string]string `json:"env"`
 	SecretEnv       map[string]string `json:"secret_env"` // env var → logical secret name
 	BucketCondition Condition         `json:"bucket_condition"`
-	Vertex          bool              `json:"vertex"`
-	DeployJob       bool              `json:"deploy_job"`
+	// TokenCondition is the job account's read-only grant on its own
+	// repository's budget token objects, tokens/<slug>/
+	// (gcp.TokenBucketCondition; budget-token-channel.md §7.2, D16).
+	TokenCondition Condition `json:"token_condition"`
+	Vertex         bool      `json:"vertex"`
+	DeployJob      bool      `json:"deploy_job"`
 
 	Name                string            `json:"-"`
 	Slug                string            `json:"-"`
@@ -596,6 +600,18 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 		if p, ok := config.ProviderBySecret(lc.Providers, s.Name); ok {
 			return nil, userErr("workflow %s: secret %s is the key of model provider %s, which only the owner's local config may use", name, s.Name, p)
 		}
+		if p, ok := config.ReservedProviderSecret(lc.Providers, s.Name); ok {
+			// The conventional name of a configured provider's key, and not
+			// that provider's own .secret (a name that IS its key took the
+			// branch above). No workflow may mount it: the name belongs to
+			// that provider's key (config.ReservedProviderSecret), so a value
+			// stored under it would be read as the provider's credential the
+			// day the key is renamed to the convention, and `fugaro secrets
+			// set` refuses to store one — the job would mount a name that can
+			// have no version. Refused here rather than left to the readiness
+			// check, which would blame a missing secret.
+			return nil, userErr("workflow %s: secret %s is the name reserved for model provider %s's key (the convention names a provider's key after its entry), so no workflow may declare it", name, s.Name, p)
+		}
 		out = append(out, SecretMount{s.Name, s.Env})
 	}
 	return out, nil
@@ -686,6 +702,10 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		BucketCondition: Condition{
 			Title:      gcp.BucketConditionTitle(saID),
 			Expression: gcp.BucketCondition(c.bucket, gcp.JobBucketPrefixes, slug),
+		},
+		TokenCondition: Condition{
+			Title:      gcp.TokenBucketConditionTitle(saID),
+			Expression: gcp.TokenBucketCondition(c.bucket, slug),
 		},
 		Vertex:    c.in.Cfg.Agent.Auth == "vertex",
 		DeployJob: true,
@@ -1196,6 +1216,7 @@ func (rs RepoSpec) Addresses() []string {
 			add(p + "google_service_account_iam_member.operator[" + q(member) + "]")
 		}
 		add(p + "google_storage_bucket_iam_member.job")
+		add(p + "google_storage_bucket_iam_member.job_tokens")
 		for _, logical := range uniqueSecrets(ws) {
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
 		}

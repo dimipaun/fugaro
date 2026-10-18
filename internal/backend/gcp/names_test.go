@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -310,9 +311,27 @@ func TestDisplayNamesAndConditions(t *testing.T) {
 		{BucketConditionTitle("fugaro-x-12345678"), "fugaro-fugaro-x-12345678"},
 		{BucketCondition("b", []string{"runs", "cache"}, "s"),
 			`resource.name.startsWith("projects/_/buckets/b/objects/runs/s/") || resource.name.startsWith("projects/_/buckets/b/objects/cache/s/")`},
-		{LauncherBucketConditionTitle, "fugaro-launchers-runs"},
+		{LauncherBucketConditionTitle, "fugaro-launchers-runs-tokens"},
 		{LauncherBucketCondition("fugaro-runs-proj-1234"),
-			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/")`},
+			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/") || resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/")`},
+		{TokenBucketConditionTitle("fugaro-x-12345678"), "fugaro-tokens-fugaro-x-12345678"},
+		{TokenBucketCondition("b", "s"), `resource.name.startsWith("projects/_/buckets/b/objects/tokens/s/")`},
+		// The project job's pair (plan task 3.2 step 2): the widened objectUser
+		// grant on runs/, cache/ and locks/, and the read-only one on the whole
+		// of tokens/. Both are slugless, and neither is the per-repository
+		// builder called with an empty slug, which refuses
+		// (TestProjectBucketConditionHasNoSlug).
+		{ProjectBucketCondition("b", []string{"runs", "cache"}),
+			`resource.name.startsWith("projects/_/buckets/b/objects/runs/") || resource.name.startsWith("projects/_/buckets/b/objects/cache/")`},
+		{ProjectTokenBucketCondition("fugaro-runs-proj-1234"),
+			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/")`},
+		{ProjectTokenBucketConditionTitle("fugaro-x-12345678"), "fugaro-project-tokens-fugaro-x-12345678"},
+		// The two title prefixes the plan reader matches on
+		// (internal/infra/tf) are these, and a project job's title must not
+		// read as a per-repository job's: the prefix of one is not a prefix of
+		// the other's titles.
+		{BucketConditionTitlePrefix, "fugaro-"},
+		{ProjectTokenBucketConditionTitlePrefix, "fugaro-project-tokens-"},
 	} {
 		if c.got != c.want {
 			t.Errorf("got %q, want %q", c.got, c.want)
@@ -1005,4 +1024,21 @@ func TestProjectBucketConditionHasNoSlug(t *testing.T) {
 		}()
 		BucketCondition(bucket, JobBucketPrefixes, "")
 	}()
+}
+
+// TestTheTokenPrefixIsTheTokenPackages: the grants name the prefix the token
+// objects live under (token.ObjectKey), and the job's prefixes never include
+// it: the job's objectUser on tokens/ would let a peer run delete a queued
+// run's token (docs/design/budget-token-channel.md §7.2, D16). The prefix is
+// one constant on both sides, so a move of the object without the grants (or
+// the reverse) fails here.
+func TestTheTokenPrefixIsTheTokenPackages(t *testing.T) {
+	if TokenBucketPrefix != token.ObjectPrefix || !strings.HasPrefix(token.ObjectKey("s", "r"), TokenBucketPrefix+"/s/") {
+		t.Fatalf("TokenBucketPrefix = %q, token.ObjectKey = %q", TokenBucketPrefix, token.ObjectKey("s", "r"))
+	}
+	for _, p := range append(append([]string{}, JobBucketPrefixes...), BuildBucketPrefixes...) {
+		if p == TokenBucketPrefix {
+			t.Fatalf("%q is a prefix an account may write", p)
+		}
+	}
 }

@@ -141,7 +141,10 @@ func (p *Policy) ProfileAllowRepos(profile string) ([]string, error) {
 // its job. A run in a per-repository job is held to the project's allow_repos
 // alone, because the job it is in carries no selected profile: that is a baked
 // workflow, or a policy that defines no profiles, and internal/cli's
-// run_allowlist.go is the launcher's advisory twin of that one gate.
+// run_allowlist.go is the launcher's advisory twin of that one gate — while
+// the launcher's twin of *this* gate is profileAdmissionRefusal in the same
+// file, called where the launcher decides which job a launch runs on
+// (launchProjectJobFor), which is where a launch's profile is known.
 // ProfileAllowRepos answers the narrower question a message or a listing asks
 // ("what does this profile name"), never the verdict. A profile's list is
 // validated strictly where it is published (validProfiles) because this is the
@@ -222,9 +225,11 @@ func providerOf(canonical string) string {
 // Cloud Run accepts, and every allow_repos pattern name a repository of that
 // one provider — a pattern of another provider could never match and is
 // refused here instead of silently admitting nothing. A secret entry must be a
-// name (CheckSecretName) and never a Claude OAuth token, which no shared job
-// may mount until phase 5 (isClaudeOAuthSecret): the rule `fugaro init` deploys
-// by, stated here so that the two cannot disagree about one profile.
+// name (CheckSecretName), never a Claude OAuth token, which no shared job
+// may mount until phase 5 (isClaudeOAuthSecret), and never a Codex OAuth
+// token, whose name is reserved ahead of the harness that would read it
+// (config.CodexOAuthSecret): the rule `fugaro init` deploys by, stated here so
+// that the two cannot disagree about one profile.
 func validProfiles(profiles map[string]Profile) error {
 	if len(profiles) == 0 {
 		// A block that carries nothing defines nothing — not even the profile
@@ -290,6 +295,17 @@ func validProfiles(profiles map[string]Profile) error {
 			// two refusals above, it never echoes the entry.
 			if isClaudeOAuthSecret(secret) {
 				return fmt.Errorf("%s.secrets[%d]: a Claude OAuth token is person-owned (design D2), and its allow_data_to is a per-repository list a shared job cannot honour — a profile is shared by every repository admitted to it — so no profile mounts one until phase 5 decides how an account reaches a shared job. `fugaro init` refuses to deploy the job such a profile names, and this node must not name one either", at, i)
+			}
+			// The Codex harness's OAuth credential is the same KIND of name,
+			// reserved ahead of the harness itself (config.CodexOAuthToken,
+			// owner ruling of 2026-10-18): Fugaro does not drive Codex, so
+			// nothing mints a value for it and `fugaro secrets set` refuses to
+			// store one — a profile naming it would mount a container that can
+			// never have a version, and would name the credential the harness
+			// reads the day it lands. Refused here by the same rule the
+			// deployer holds a profile to, rather than by one of its own.
+			if config.CodexOAuthSecret(secret) {
+				return fmt.Errorf("%s.secrets[%d]: %s and the names starting %s are reserved for the Codex harness's OAuth credential, which Fugaro does not drive yet: no job mounts one, so no profile may name it", at, i, config.CodexOAuthToken, config.CodexOAuthTokenPrefix)
 			}
 			if seen[secret] {
 				return fmt.Errorf("%s.secrets[%d]: a secret is listed twice; list each secret once", at, i)

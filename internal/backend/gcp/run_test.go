@@ -618,3 +618,25 @@ func TestExecutionReportsRun(t *testing.T) {
 		t.Fatalf("a bare execution reports Run %q, %v", e.Run, err)
 	}
 }
+
+// TestLaunchCarriesTheSecretEnvInTheOverride: Cloud Run carries a launch's
+// secret entry (the budget seal key, D15) in the execution's own container
+// override, the carrier the design accepts and prices
+// (docs/design/budget-token-channel.md §7.1): the value reaches this
+// execution and not the job's definition.
+func TestLaunchCarriesTheSecretEnvInTheOverride(t *testing.T) {
+	ctx := context.Background()
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob(webJob, "4", "8Gi")
+	var gotEnv map[string]string
+	fr.OnRun = func(c gcpfake.RunCall) { gotEnv = c.Env }
+	v := strings.Repeat("k", 43)
+	spec := backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd",
+		SecretEnv: []string{"FUGARO_BUDGET_TOKEN=" + v}}
+	if _, err := b.Launch(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	if gotEnv["FUGARO_BUDGET_TOKEN"] != v {
+		t.Fatalf("override env = %v, want the secret entry in it", gotEnv)
+	}
+}
