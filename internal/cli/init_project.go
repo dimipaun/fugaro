@@ -177,6 +177,14 @@ func (s *projectStage) read(ctx context.Context) error {
 	// from one that never reached the creation at all (see
 	// initRun.projectExisted).
 	s.e.r.projectExisted = info.Exists
+	// fugaro restore's child: a project that is already there is refused,
+	// never adopted (an adopted project gets no creation fact, and the
+	// installation would be applied into someone else's or a stale project).
+	// The project this run created itself is the one exception: the stage
+	// reads it again after the creation.
+	if info.Exists && s.o().strictCreate && s.e.r.res.Created != s.id {
+		return userErr("GCP project %s already exists, and this creation must make a new one (fugaro restore never adopts a project): nothing was created or applied", s.id)
+	}
 	s.create, s.addFirebase, s.link, s.guide = false, false, false, false
 	if !info.Exists {
 		s.create = true
