@@ -100,12 +100,16 @@ func TestRunWithoutTitleWritesNoTitleField(t *testing.T) {
 
 // The title is refused, before anything is written, unless it is one line
 // of at most task.MaxTitleRunes runes, non-empty, with no control
-// character: it becomes a terminal line and a pull request's title.
+// character: it becomes a terminal row, a watch row and — when the agent
+// writes no pr.md — a pull request's title.
 //
 // Mutation (drop the TitleProblem call from titleFlag, storing the raw
 // value): the newline case is accepted, the launch goes through and those
 // subtests fail; mutation (check the title before trimming it instead of
-// after): "   " is stored as a title of spaces.
+// after): "   " is stored as a title of spaces; mutation (drop the
+// emptiness check that follows safetext.Field, keeping only the one before
+// it): the invisible-only rows pass validation, sanitiser and all, and
+// store a run whose title is nothing.
 func TestRunTitleValidation(t *testing.T) {
 	for _, tc := range []struct{ name, title, want string }{
 		{"empty", "", "is empty"},
@@ -115,6 +119,17 @@ func TestRunTitleValidation(t *testing.T) {
 		{"a line separator", "Fix it ship it", "must be one line"},
 		{"a control character", "Fix \x1b[31mit", "holds a control character"},
 		{"a tab", "Fix\tit now", "holds a control character"},
+		// Invisible-only titles: every one of these characters survives
+		// TrimSpace and TitleProblem, and safetext.Field then deletes it,
+		// so only a check AFTER the sanitiser keeps --title from storing a
+		// title of nothing at all — the silent no-op titleFlag is there to
+		// refuse.
+		{"a zero-width space", "​", "is empty"},
+		// The BOM is written as a rune: Go refuses the character itself
+		// anywhere in a source file.
+		{"a BOM and a bidi override", string(rune(0xFEFF)) + "‮", "is empty"},
+		{"a soft hyphen", "­", "is empty"},
+		{"an isolate around spaces", "⁦ ⁩", "is empty"},
 		{"a NUL", "Fix it\x00", "holds a control character"},
 		{"too long", strings.Repeat("x", task.MaxTitleRunes+1), "longer than 100 characters"},
 	} {
@@ -337,7 +352,7 @@ func TestRunTitleGatesOnTheImageThatKnowsIt(t *testing.T) {
 
 // A checkout: clone workflow has no build record to judge, so the same gate
 // is judged against base_images.base itself: 0.7.5 is cloneSince, so the
-// clone floor passes and the title floor (0.9.0) is what refuses.
+// clone floor passes and the title floor (0.8.5) is what refuses.
 //
 // Mutation (drop the spec.Title != "" block from finishLaunch's clone
 // branch): the launch goes through on an image whose runner refuses the
@@ -358,6 +373,87 @@ func TestRunTitleGatesOnACloneWorkflow(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--title needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") ||
 		!strings.Contains(err.Error(), "ghcr.io/dimipaun/fugaro-base:0.7.5, release 0.7.5") {
 		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// The title gate is the FIELD's, not the flag's, and a follow-up is where
+// the two come apart: --pr with no --title carries a title into a spec of
+// its own (the run's, inherited), so an image older than titlesSince must
+// refuse the follow-up just as it refuses a first run that typed the flag.
+// Otherwise the operator gets, one launch later, exactly the bootstrap
+// failure the gate exists to prevent — and never typed --title at all.
+//
+// Mutation (judge the gate from the invocation rather than the spec, e.g.
+// `if o.title != ""` instead of `if spec.Title != ""`): an inherited title
+// is never gated, the follow-up launches on the 0.8.0 image, and this test
+// fails.
+func TestRunTitleGatesOnAFollowUpThatInheritsOne(t *testing.T) {
+	f := newCloudFixture(t)
+	root := firstRunSpec(rootID)
+	root.Title = "Ship the flaky-test fix"
+	seedSpec(t, f, root, false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.StartedAt = time.Now().Add(-72 * time.Hour)
+	writeRecord(t, f, rootID, rec)
+
+	writeBuildRecord(t, f, appSlug, "web", release080)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--title needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") {
+		t.Fatalf("err = %v, want the inherited title gated", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// The same launch with an explicit --title is gated too — the follow-up
+// path builds its spec in newFollowUpSpec, and the gate reads the spec that
+// came out of it, whichever of the two put the title there.
+//
+// Mutation (gate only a launch that reaches buildAttemptSpec, i.e. scope
+// the block to the first-run branch): this follow-up launches with a title
+// its runner cannot read and this test fails.
+func TestRunTitleGatesOnAFollowUpThatOverridesIt(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	writeBuildRecord(t, f, appSlug, "web", release080)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--title", "Rename it properly", "also rename x")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--title needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") {
+		t.Fatalf("err = %v, want the overridden title gated", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// --retry replays a stored task as it is, title and all (that is why it
+// takes no --title): the gate has to judge that stored title too, or the
+// run it retries dies at bootstrap on a field nobody typed in this
+// invocation. The precedent is the named-token gate, which had exactly this
+// gap until run_oauth_retry_test.go pinned it.
+//
+// Mutation (scope the gate to `o.retry == ""`): the retry launches against
+// the 0.8.0 image and this test fails.
+func TestRunTitleGatesOnARetryOfAStoredTitle(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release080)
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	spec := &task.Spec{Version: 1, RunID: "20261018-120000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		Task: "Add a feature", RequestedBy: "someone@example.com", Title: "Ship the flaky-test fix"}
+	if err := runstore.Open(b, appSlug, spec.RunID).CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = execute(t, "run", "--retry", spec.RunID)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--title needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") {
+		t.Fatalf("err = %v, want the stored title gated", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Fatalf("%d executions, want none", n)
