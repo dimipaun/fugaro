@@ -94,6 +94,11 @@ type BudgetRead struct {
 	OK       bool
 	Reason   string
 	Err      error
+	// Invalid is internal/infra/managed's BudgetAnswer.Invalid: the marker is
+	// a version 2 about this project whose recorded figure fails Check —
+	// including an empty "budget":{}, whose zero figure the Amount and
+	// Currency above cannot tell from "no figure".
+	Invalid bool
 	// Managed and ManagedReason are internal/infra/managed's IsManaged, and
 	// they are filled in for one case only: when ReadBudget answered with no
 	// amount and no error, which is the case ReadBudget's own reason cannot
@@ -124,7 +129,7 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 			ErrNotEnabled, r.Project, safetext.Field(r.Err.Error()))
 	case r.OK && b.Valid():
 		return Enable{budget: b, read: true}, nil
-	case r.OK || r.Amount != 0 || r.Currency != "":
+	case r.OK || r.Invalid || r.Amount != 0 || r.Currency != "":
 		// A recorded figure that fails the marker's own Check. Through
 		// ReadBudget this is a version-2 marker whose amount or currency is
 		// outside the shape the write enforces (ReadBudget answers OK only for
@@ -160,7 +165,7 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 		if reason == "" {
 			reason = "the creation fact records no amount"
 		}
-		return Enable{}, fmt.Errorf("%w: %s has no budget recorded (%s), and this release cannot add a budget to an existing project; a managed project must be created with `fugaro init --create-project --managed --budget N --budget-currency CCC`",
+		return Enable{}, fmt.Errorf("%w: %s has no budget recorded (%s), and this release cannot add a budget to an existing project; a managed project must be created with `fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID`",
 			ErrNotEnabled, r.Project, reason)
 	}
 }

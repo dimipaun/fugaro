@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/spf13/cobra"
+	"google.golang.org/api/googleapi"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
@@ -672,4 +674,22 @@ func TestAllowDeletePrintsBucketAddressesSanitised(t *testing.T) {
 		}
 		assertNoRawHostile(t, out)
 	})
+}
+
+// Round 3, L2: every user-facing branch of allowDeleteWriteErr interpolates
+// the cause through safetext.Field.
+func TestAllowDeleteWriteErrSanitisesTheCause(t *testing.T) {
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject}
+	payload := "csi\u009b31m bidi‮ line\nforged " + strings.Repeat("z", 5000)
+	for name, err := range map[string]error{
+		"too large":     fmt.Errorf("%w: %s", managed.ErrTooLarge, payload),
+		"refused":       fmt.Errorf("%w: %s", managed.ErrRefused, payload),
+		"changed":       fmt.Errorf("%w: %s", managed.ErrChanged, payload),
+		"access denied": &googleapi.Error{Code: http.StatusForbidden, Message: payload},
+	} {
+		got := allowDeleteWriteErr(lc, initRunsBucket, err).Error()
+		if strings.ContainsAny(got, "\u009b‮\n") || len([]rune(got)) > 1500 {
+			t.Errorf("%s: the refusal carries the raw cause: %q", name, got[:300])
+		}
+	}
 }

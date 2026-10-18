@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -1326,4 +1327,51 @@ func TestEveryManagedRefusalSiteBoundsUntrustedText(t *testing.T) {
 			t.Errorf("%s: the refused apply applied something: %v", name, applied)
 		}
 	}
+}
+
+// TestApplyConsultsNoInventory pins the accepted gap of the owner's ruling of
+// 2026-10-18: the whole-project inventory (Task 4.1) is built and tested but
+// the managed apply does not consult it in 0.8.5, so a resource created
+// outside Fugaro is not detected by the apply. Request carries no Inventory,
+// Assets or Decision, at any depth a field can hold one; wiring the inventory
+// in (Task 4.5, unscheduled, 0.9.0 with Task 6.1) has to change this test on
+// purpose rather than slip in or out unnoticed.
+func TestApplyConsultsNoInventory(t *testing.T) {
+	banned := map[reflect.Type]bool{
+		reflect.TypeOf(Inventory{}):           true,
+		reflect.TypeOf(Decision{}):            true,
+		reflect.TypeOf((*Assets)(nil)).Elem(): true,
+	}
+	seen := map[reflect.Type]bool{}
+	var walk func(reflect.Type, string)
+	walk = func(ty reflect.Type, path string) {
+		if seen[ty] {
+			return
+		}
+		seen[ty] = true
+		if banned[ty] {
+			t.Errorf("managed.Request reaches %s at %s: the apply now consults the inventory — update the ruling's docs (D59, Task 4.5) with it", ty, path)
+			return
+		}
+		switch ty.Kind() {
+		case reflect.Struct:
+			for i := 0; i < ty.NumField(); i++ {
+				walk(ty.Field(i).Type, path+"."+ty.Field(i).Name)
+			}
+		case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Map, reflect.Chan:
+			walk(ty.Elem(), path+"[]")
+		case reflect.Interface:
+			for i := 0; i < ty.NumMethod(); i++ {
+				walk(ty.Method(i).Type, path+"."+ty.Method(i).Name)
+			}
+		case reflect.Func:
+			for i := 0; i < ty.NumIn(); i++ {
+				walk(ty.In(i), path+"(in)")
+			}
+			for i := 0; i < ty.NumOut(); i++ {
+				walk(ty.Out(i), path+"(out)")
+			}
+		}
+	}
+	walk(reflect.TypeOf(Request{}), "Request")
 }

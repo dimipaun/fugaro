@@ -121,7 +121,7 @@ func TestManagedApplyRefusesWhenNoBudgetReadOpensTheGate(t *testing.T) {
 	}{
 		{"the marker is version 1: managed, and no amount recorded",
 			[]byte(`{"version":1,"gcp_project":"proj-1234"}`), false,
-			[]string{"has no budget recorded", "this release cannot add a budget to an existing project", "fugaro init --create-project --managed --budget N --budget-currency CCC"}},
+			[]string{"has no budget recorded", "this release cannot add a budget to an existing project", "fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID"}},
 		{"there is no marker at all", nil, false, []string{"is not managed", "is not there"}},
 		{"the marker exists and cannot be read", []byte(v2), true, []string{"is not managed", "cannot be read"}},
 		// A version-2 marker whose figure fails Budget.Check is reported as an
@@ -145,6 +145,12 @@ func TestManagedApplyRefusesWhenNoBudgetReadOpensTheGate(t *testing.T) {
 		{"the currency is four letters",
 			[]byte(`{"version":2,"gcp_project":"proj-1234","budget":{"amount":5000,"currency":"EURO"}}`), false,
 			[]string{"is invalid", "not three ASCII uppercase letters"}},
+		{"the budget is empty",
+			[]byte(`{"version":2,"gcp_project":"proj-1234","budget":{}}`), false,
+			[]string{"is invalid", "amount 0 is outside"}},
+		{"an invalid figure in a marker naming another project",
+			[]byte(`{"version":2,"gcp_project":"proj-9999","budget":{"amount":5000,"currency":"usd"}}`), false,
+			[]string{"is not managed", "names project proj-9999"}},
 		{"the amount is above ten million",
 			[]byte(`{"version":2,"gcp_project":"proj-1234","budget":{"amount":10000001,"currency":"USD"}}`), false,
 			[]string{"is invalid", "amount 10000001 is outside"}},
@@ -1253,5 +1259,20 @@ func TestManagedListErrSanitisesTheReadError(t *testing.T) {
 				t.Errorf("%s: the refusal is %d runes: the error was not cut", name, len([]rune(got)))
 			}
 		}
+	}
+}
+
+// Round 3, L2: a failed project-number read is reported through
+// safetext.Field: the API's own text (a body) cannot reach the terminal raw.
+func TestManagedApplyProjectNumberErrorIsSanitised(t *testing.T) {
+	noAgentSession(t)
+	r, root := managedBudgetRig(t)
+	r.crm.Refuse(http.StatusBadRequest, "INVALID_ARGUMENT", "", "csi\u009b31m bidi‮ line\nforged "+strings.Repeat("z", 5000))
+	_, _, err := execute(t, "managed", "apply", root)
+	if err == nil {
+		t.Fatal("a failed number read did not refuse")
+	}
+	if got := err.Error(); strings.ContainsAny(got, "\u009b‮\n") || len([]rune(got)) > 1500 || !strings.Contains(got, "reading the number") {
+		t.Errorf("the refusal carries the raw API text or is not the number read's: %q", got[:min(len(got), 300)])
 	}
 }

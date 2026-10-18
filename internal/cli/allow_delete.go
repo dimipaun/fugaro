@@ -270,17 +270,17 @@ func allowDeleteWriteErr(lc *localcfg.Config, bucket string, err error) error {
 	// fix is fewer addresses, and this case comes first so the owner is not
 	// sent to check gcp_project and runs_bucket, which are fine.
 	case errors.Is(err, managed.ErrTooLarge):
-		return userErr("nothing was written for %s: the list is over the size this command reads back, so it would be recorded and then read as no addresses — refusing every delete it looks like it approves. Approve fewer addresses (or shorter ones), in gs://%s/%s: %v",
-			lc.Name, bucket, managed.AllowDeleteObject, err)
+		return userErr("nothing was written for %s: the list is over the size this command reads back, so it would be recorded and then read as no addresses — refusing every delete it looks like it approves. Approve fewer addresses (or shorter ones), in gs://%s/%s: %s",
+			lc.Name, bucket, managed.AllowDeleteObject, safetext.Field(err.Error()))
 	case errors.Is(err, managed.ErrRefused):
-		return userErr("nothing was written for %s: the delete list goes into the project's own runs bucket, at gs://%s/%s, and that bucket is not %s's: check gcp_project and runs_bucket in the project config, or run fugaro project check: %v",
-			lc.Name, bucket, managed.AllowDeleteObject, lc.GCPProject, err)
+		return userErr("nothing was written for %s: the delete list goes into the project's own runs bucket, at gs://%s/%s, and that bucket is not %s's: check gcp_project and runs_bucket in the project config, or run fugaro project check: %s",
+			lc.Name, bucket, managed.AllowDeleteObject, lc.GCPProject, safetext.Field(err.Error()))
 	case errors.Is(err, managed.ErrChanged):
-		return userErr("nothing was written for %s: gs://%s/%s changed after this command read it, so another write happened in between: run the command again to see the list as it is now: %v",
-			lc.Name, bucket, managed.AllowDeleteObject, err)
+		return userErr("nothing was written for %s: gs://%s/%s changed after this command read it, so another write happened in between: run the command again to see the list as it is now: %s",
+			lc.Name, bucket, managed.AllowDeleteObject, safetext.Field(err.Error()))
 	case isAccessDenied(err):
-		return userErr("nothing was written for %s: gs://%s/%s is at the runs bucket's root, where only an operator's own credential may write (since 0.7.0 a launcher writes runs/ only, and no run account may write the bucket's root at all): run this as an operator, or ask one to approve the addresses: %v",
-			lc.Name, bucket, managed.AllowDeleteObject, err)
+		return userErr("nothing was written for %s: gs://%s/%s is at the runs bucket's root, where only an operator's own credential may write (since 0.7.0 a launcher writes runs/ only, and no run account may write the bucket's root at all): run this as an operator, or ask one to approve the addresses: %s",
+			lc.Name, bucket, managed.AllowDeleteObject, safetext.Field(err.Error()))
 	default:
 		return remote(fmt.Errorf("writing %s in gs://%s for %s: %w", managed.AllowDeleteObject, bucket, lc.Name, err))
 	}

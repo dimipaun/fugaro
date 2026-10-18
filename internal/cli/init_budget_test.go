@@ -123,7 +123,7 @@ func TestManagedBudgetIsRequiredAtCreation(t *testing.T) {
 	})
 
 	// --managed is about the project this run creates: a project that already
-	// exists is flagged managed by an owner-run command of its own (D58), and
+	// exists cannot be flagged managed in this release (D58, Task 6.1), and
 	// init --firebase adds Firebase to such a project, which is never what
 	// makes one managed (D73).
 	t.Run("--managed without --create-project", func(t *testing.T) {

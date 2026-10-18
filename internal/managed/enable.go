@@ -9,12 +9,18 @@ import (
 // and the one Task 4.4 opens.
 //
 // Why it exists (the plan's Task 3.1, "The apply is inert until phase 4
-// lands"): Task 4.1 (the whole-project inventory and its fallback to
-// confirmations) and Task 4.2 (the budget amount, required at creation) are in
-// a later phase, and an apply that shipped with phase 3 would run in a managed
-// project with no inventory fallback and no budget — two of the spec's own
-// safeguards. So the apply was built, tested and unreachable: every path into
-// it passes through Request.Enable, whose zero value is closed.
+// lands"): an apply that shipped with phase 3 would have run in a managed
+// project with no recorded budget. So the apply was built, tested and
+// unreachable: every path into it passes through Request.Enable, whose zero
+// value is closed.
+//
+// What it is opened WITHOUT, by the owner's ruling of 2026-10-18: the
+// whole-project inventory (Task 4.1, inventory.go) is built and tested but is
+// NOT consulted by the managed apply, so D59's fallback to confirmations for a
+// resource created outside Fugaro does not happen in this release. The ruling
+// accepts that for 0.8.5, where a managed project is one `fugaro init
+// --create-project --managed` created fresh; wiring the inventory into the
+// apply is the plan's Task 4.5 (UNSCHEDULED, targeted at 0.9.0 with Task 6.1).
 //
 // Task 4.4 is the task that opens it, and it opens it in exactly one way: the
 // apply-time budget read of internal/managed/budget.go succeeded. The gate is

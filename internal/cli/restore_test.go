@@ -1428,7 +1428,7 @@ func TestRestoreAProjectThatAppearsDuringTheConfirmationIsNotAdopted(t *testing.
 // and this run marked the project, but the marker in the new project's bucket
 // does not open the managed apply's gate (a version 1, or a version 2 whose
 // figure fails Budget.Check). The restore stops at verifyCreated — before the
-// checkout's line moves and before the apply — and the config is put back.
+// checkout's line moves and before the apply; the config stays moved (L4).
 // The marker is overwritten after the real creating path ran, which is the
 // shape of an owner or an agent with bucket write changing it in between.
 func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
@@ -1463,14 +1463,28 @@ func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "does not open the managed apply") || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("want verifyCreated's budget-gate refusal carrying %q, got %v\n%s", tc.want, err, out)
 			}
+			// L4: the project exists and is this run's, so the message says
+			// so and how to finish it, or when another ID is right — and the
+			// config is NOT put back (it names the real new project).
+			for _, want := range []string{newProj + " exists", "fugaro managed apply " + root, "another NEW_PROJECT_ID", "Task 6.1"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q:\n%v", want, err)
+				}
+			}
+			if strings.Contains(err.Error(), "is back as it was") {
+				t.Errorf("the refusal says the config was put back:\n%v", err)
+			}
 			if len(r.crm.Creates()) != 1 {
 				t.Errorf("%d creation(s), want 1", len(r.crm.Creates()))
 			}
 			if len(*calls) != 0 {
 				t.Errorf("a project with no valid budget reached the apply %d time(s)", len(*calls))
 			}
-			if !bytes.Equal(mustRead(t, r.cfg), before) || !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
-				t.Error("the project config or the checkout moved for a project with no valid budget")
+			if bytes.Equal(mustRead(t, r.cfg), before) || !strings.Contains(string(mustRead(t, r.cfg)), newProj) {
+				t.Error("the project config was put back although the new project exists and is this run's")
+			}
+			if !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
+				t.Error("the checkout moved for a project with no valid budget")
 			}
 		})
 	}
@@ -1498,7 +1512,7 @@ func TestRestorePreflightRefusesEachBadInputWithoutASideEffect(t *testing.T) {
 		"an amount over the cap":   {o: restoreOptions{budget: managed.MaxBudgetAmount + 1, budgetCurrency: "EUR", billingAccount: billingAcc}, reason: "outside"},
 		"a fact with a bad currency": {o: restoreOptions{billingAccount: billingAcc}, setup: func(_ *testing.T, r *projectRig, _ string) {
 			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":2,"gcp_project":"`+initProject+`","budget":{"amount":7,"currency":"usd"}}`))
-		}, reason: "not managed"},
+		}, reason: "is invalid"},
 		"an old project that is not managed": {o: flags, setup: func(_ *testing.T, r *projectRig, _ string) {
 			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{}`))
 		}, reason: "not managed"},
@@ -1695,4 +1709,115 @@ func TestRestoreSeamsAreProductionsFunctions(t *testing.T) {
 			t.Errorf("%s is not its production function", name)
 		}
 	}
+}
+
+// restoreBudgetOf runs budgetOf over the init rig with o, capturing stderr.
+func restoreBudgetOf(t *testing.T, r *initRig, o restoreOptions) (*managed.Budget, string, error) {
+	t.Helper()
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := newInitClients(t.Context(), lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd, _ := restoreTestCmd("")
+	var errOut bytes.Buffer
+	cmd.SetErr(&errOut)
+	b, err := (&restoreRun{cmd: cmd, o: o, lc: lc, newID: restoreNewProj}).budgetOf(t.Context(), c)
+	return b, errOut.String(), err
+}
+
+// Round 3, L1: the not-managed refusal carries the read's reason through
+// safetext.Field — the reason can name a project read out of the marker, so a
+// 3,900-character name is cut rather than printed whole.
+func TestRestoreNotManagedReasonIsCut(t *testing.T) {
+	r := newInitRig(t)
+	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+	r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":1,"gcp_project":"`+strings.Repeat("a", 3900)+`"}`))
+	_, _, err := restoreBudgetOf(t, r, restoreOptions{billingAccount: billingAcc})
+	if err == nil || !strings.Contains(err.Error(), "is not managed") {
+		t.Fatalf("want the not-managed refusal, got %v", err)
+	}
+	if n := len([]rune(err.Error())); n > 1500 {
+		t.Errorf("the refusal is %d runes: the reason was not cut", n)
+	}
+}
+
+// Round 3, L3: a version-2 fact about the old project whose figure fails
+// Check — the empty "budget":{} included — is refused as an invalid recorded
+// budget, with or without flags, never as "not managed".
+func TestRestoreRefusesAnInvalidOldBudget(t *testing.T) {
+	for _, fact := range []string{
+		`{"version":2,"gcp_project":"` + initProject + `","budget":{}}`,
+		`{"version":2,"gcp_project":"` + initProject + `","budget":{"amount":7,"currency":"usd"}}`,
+	} {
+		for name, o := range map[string]restoreOptions{
+			"no flags":   {billingAccount: billingAcc},
+			"with flags": {budget: 9, budgetCurrency: "EUR", billingAccount: billingAcc},
+		} {
+			r := newInitRig(t)
+			r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
+			_, _, err := restoreBudgetOf(t, r, o)
+			if err == nil || !strings.Contains(err.Error(), "is invalid") || strings.Contains(err.Error(), "not managed") {
+				t.Errorf("%s, %s: want the invalid-budget refusal, got %v", fact, name, err)
+			}
+		}
+	}
+}
+
+// Round 3, L5: flags that differ from a readable old fact win, and one line
+// says what the old fact recorded; flags that agree say nothing.
+func TestRestoreSaysWhenTheFlagsDifferFromTheOldFact(t *testing.T) {
+	for name, tc := range map[string]struct {
+		o    restoreOptions
+		want bool
+	}{
+		"different": {restoreOptions{budget: 9, budgetCurrency: "EUR", billingAccount: billingAcc}, true},
+		"the same":  {restoreOptions{budget: 7, budgetCurrency: "USD", billingAccount: billingAcc}, false},
+	} {
+		r := newInitRig(t)
+		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":2,"gcp_project":"`+initProject+`","budget":{"amount":7,"currency":"USD"}}`))
+		b, errOut, err := restoreBudgetOf(t, r, tc.o)
+		if err != nil || b.Amount != tc.o.budget {
+			t.Fatalf("%s: %v, %+v", name, err, b)
+		}
+		said := strings.Contains(errOut, "records 7 USD") && strings.Contains(errOut, "9 EUR")
+		if said != tc.want || (!tc.want && errOut != "") {
+			t.Errorf("%s: stderr %q", name, errOut)
+		}
+	}
+}
+
+// Round 3, L2: the API's own error text in the restore's two read refusals
+// (whether NEW_PROJECT_ID exists, whether the old project can be read) is
+// safetext.Field'd: a C1 CSI, a bidi override, a newline and a long body.
+func TestRestoreReadErrorsAreSanitised(t *testing.T) {
+	payload := "csi\u009b31m bidi\u202e line\nforged " + strings.Repeat("z", 5000)
+	check := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("no refusal")
+		}
+		if strings.ContainsAny(err.Error(), "\u009b\u202e\n") || len([]rune(err.Error())) > 1500 {
+			t.Errorf("the refusal carries the raw API text: %q", err.Error()[:min(len(err.Error()), 300)])
+		}
+	}
+	t.Run("the new project's existence", func(t *testing.T) {
+		r, lc := newRestoreRig(t)
+		r.crm.Refuse(http.StatusBadRequest, "INVALID_ARGUMENT", "", payload)
+		check(t, (&restoreRun{lc: lc, newID: restoreNewProj}).refuseExisting(t.Context()))
+	})
+	t.Run("the old project's readability", func(t *testing.T) {
+		r := newInitRig(t)
+		r.crm.Refuse(http.StatusBadRequest, "INVALID_ARGUMENT", "", payload)
+		_, _, err := restoreBudgetOf(t, r, restoreOptions{billingAccount: billingAcc})
+		check(t, err)
+		if err != nil && !strings.Contains(err.Error(), "did not get an answer") {
+			t.Errorf("not the readability refusal: %v", err)
+		}
+	})
 }

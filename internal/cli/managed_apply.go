@@ -178,7 +178,8 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	// bucket name is global), and both reads below prove it with.
 	number, err := infra.ProjectNumber(ctx, c, lc.GCPProject)
 	if err != nil {
-		return remote(err)
+		// The API's own text can carry a body: one sanitised line.
+		return remote(fmt.Errorf("reading the number of GCP project %s: %s", lc.GCPProject, safetext.Field(err.Error())))
 	}
 	// The apply-time budget read, and the gate it opens (Task 4.4). Both
 	// happen here, after the project and its number are known and before
@@ -954,12 +955,12 @@ func managedBudgetGate(ctx context.Context, c *infra.Clients, lc *localcfg.Confi
 // before the checkout line moves. One function, so the restore's check and
 // the apply's gate are the same read and the same decision.
 func managedBudgetGateOf(ctx context.Context, s *storage.Service, r *crm.Service, name, gcpProject string) (managedmode.Enable, managedmode.Fact, error) {
-	budget, ok, reason, err := managed.ReadBudget(ctx, s, r, name, gcpProject)
+	answer, err := managed.ReadBudgetAnswer(ctx, s, r, name, gcpProject)
 	read := managedmode.BudgetRead{
-		Project: name, Amount: budget.Amount, Currency: budget.Currency,
-		OK: ok, Reason: reason, Err: err,
+		Project: name, Amount: answer.Budget.Amount, Currency: answer.Budget.Currency,
+		OK: answer.OK, Reason: answer.Reason, Err: err, Invalid: answer.Invalid,
 	}
-	if !ok && err == nil {
+	if !answer.OK && !answer.Invalid && err == nil {
 		isManaged, managedReason, managedErr := managed.IsManaged(ctx, s, r, name, gcpProject)
 		read.Managed, read.ManagedReason = isManaged, managedReason
 		if managedErr != nil {

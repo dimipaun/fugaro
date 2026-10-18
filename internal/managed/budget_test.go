@@ -55,7 +55,7 @@ func TestApplyGateRefusesEveryReadThatAnsweredNoAmount(t *testing.T) {
 		{
 			what: "the marker is version 1: managed, and no amount recorded",
 			read: BudgetRead{Project: project, Managed: true, Reason: reason},
-			want: []string{"has no budget recorded", "this release cannot add a budget to an existing project", "fugaro init --create-project --managed --budget N --budget-currency CCC", reason},
+			want: []string{"has no budget recorded", "this release cannot add a budget to an existing project", "fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID", reason},
 		},
 		{
 			what: "the marker is absent",
@@ -132,6 +132,11 @@ func TestApplyGateRefusesEveryReadThatAnsweredNoAmount(t *testing.T) {
 		// L3: a version-2 marker whose figure fails Check comes back from
 		// ReadBudget with OK false and the refused figure: it is reported as
 		// an invalid recorded budget, never as "is not managed".
+		{
+			what: "a version 2 marker whose budget is empty",
+			read: BudgetRead{Project: project, Invalid: true, Reason: "records no budget amount a managed creation could have chosen"},
+			want: []string{"the budget recorded in the marker of aurora is invalid", "amount 0 is outside"},
+		},
 		{
 			what: "a version 2 marker whose recorded figure fails Check",
 			read: BudgetRead{Project: project, Amount: 5000, Currency: "usd", Reason: "records no budget amount a managed creation could have chosen"},

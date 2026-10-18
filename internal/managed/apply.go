@@ -21,11 +21,16 @@
 // rules admit.
 //
 // And every path below is behind Request.Enable, whose zero value is closed
-// (enable.go): the whole-project inventory (Task 4.1) and the required budget
-// (Task 4.2) are in the build, and the one thing that opens the gate is the
+// (enable.go). The required budget (Task 4.2) is in the build, and the one
+// thing that opens the gate is the
 // apply-time budget read (Task 4.4) — internal/cli's managed apply makes it and
 // hands the answer in, and this package refuses a gate that read did not open
-// as its own first step.
+// as its own first step. The whole-project inventory (Task 4.1, inventory.go)
+// is built and tested but NOT consulted here: Apply has no inventory input,
+// so a resource created outside Fugaro in a managed project is not detected
+// by the apply (accepted for 0.8.5 by the owner's ruling of 2026-10-18; the
+// wiring is the plan's Task 4.5, unscheduled, with Task 6.1 in 0.9.0).
+// TestApplyConsultsNoInventory pins that, so wiring it is a deliberate change.
 package managed
 
 import (

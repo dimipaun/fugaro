@@ -339,7 +339,15 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 		return err
 	}
 	if err := rr.verifyCreated(ctx, c, made); err != nil {
-		return err
+		var notOpen *createdNotOpenError
+		if !errors.As(err, &notOpen) {
+			return err
+		}
+		// The creation is this run's and complete; only the budget gate
+		// refused. The config stays moved (no putBack), the checkout does not.
+		moved = false
+		return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so it is a complete managed project except for the apply, and the project config now names it (its previous content is in the backup %s); the checkout's gcp_project: line did not move. If the marker read failed for a passing reason, change that line to gcp_project: %s and run fugaro managed apply %s to finish. If the marker records no valid budget, this release cannot add one to an existing project (Task 6.1, unscheduled): shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
+			rr.newID, rr.backup, rr.newID, rr.rootArg, rr.newID, rr.newID)
 	}
 	// The project exists, this run created it and wrote its fact: from here
 	// the config names a project that is the installation's, and it stays.
@@ -380,7 +388,7 @@ func (rr *restoreRun) refuseExisting(ctx context.Context) error {
 		return userErr("nothing was restored: GCP project %s already exists (%s), and a restore never adopts a project — it creates a new one, which is what makes it managed. Choose a NEW_PROJECT_ID nobody holds", rr.newID, oneLine(info.State))
 	}
 	if err != nil {
-		return userErr("nothing was restored: whether GCP project %s already exists could not be read (%v), and a restore creates its project rather than adopting one, so an unanswered read is a refusal", rr.newID, err)
+		return userErr("nothing was restored: whether GCP project %s already exists could not be read (%s), and a restore creates its project rather than adopting one, so an unanswered read is a refusal", rr.newID, safetext.Field(err.Error()))
 	}
 	return nil
 }
@@ -415,10 +423,21 @@ func (rr *restoreRun) verifyCreated(ctx context.Context, c *infra.Clients, made 
 	// refused here, while the config can still be put back and before the
 	// checkout's gcp_project: line moves.
 	if _, _, err := managedBudgetGateOf(ctx, s, r, rr.lc.Name, rr.newID); err != nil {
-		return userErr("the creation of %s ended and its creation fact does not open the managed apply: %v", rr.newID, err)
+		return &createdNotOpenError{err: userErr("the creation of %s ended and its creation fact does not open the managed apply: %v", rr.newID, err)}
 	}
 	return nil
 }
+
+// createdNotOpenError is verifyCreated's one refusal that comes AFTER this
+// run is proved to have created NEW_PROJECT_ID and written its fact: the
+// project exists and is the installation's, and only the managed apply's
+// budget gate refused it. restoreSteps keeps the config moved for it (the
+// project is real, and putting the config back would hide it) and says how
+// to finish by hand, or when another NEW_PROJECT_ID is right.
+type createdNotOpenError struct{ err error }
+
+func (e *createdNotOpenError) Error() string { return e.err.Error() }
+func (e *createdNotOpenError) Unwrap() error { return e.err }
 
 // putBack is the rollback of the local config's move, for a run that failed
 // after the move and before the new project was verified: the config FILE
@@ -546,7 +565,7 @@ func (rr *restoreRun) budgetOf(ctx context.Context, c *infra.Clients) (*managed.
 	}
 	readable, err := restoreOldReadable(ctx, c, old)
 	if err != nil {
-		return nil, userErr("nothing was restored: whether %s can still be read did not get an answer (%v), and a restore reads the old project's creation fact whenever it can", old, err)
+		return nil, userErr("nothing was restored: whether %s can still be read did not get an answer (%s), and a restore reads the old project's creation fact whenever it can", old, safetext.Field(err.Error()))
 	}
 	if !readable {
 		if flags == nil {
@@ -557,19 +576,33 @@ func (rr *restoreRun) budgetOf(ctx context.Context, c *infra.Clients) (*managed.
 		}
 		return flags, nil
 	}
-	// The old fact is read through ReadBudget, the read the managed apply's
-	// gate makes, once: a valid version-2 fact is managed and gives the amount
-	// (the flags still win over it). Only when it answers with no amount is
-	// IsManaged asked, to tell a managed version-1 fact (the flags are then
-	// required) from a project that is not managed (refused whatever the
-	// flags say). A version-2 fact whose figure fails Budget.Check is not
-	// believed by either read, so it is refused as not managed.
-	b, ok, reason, err := managed.ReadBudget(ctx, c.Storage, c.CRM, rr.lc.Name, old)
+	// The old fact is read through ReadBudgetAnswer, the read the managed
+	// apply's gate makes, once: a valid version-2 fact is managed and gives
+	// the amount (the flags still win over it, and a difference is said in
+	// one line). A version-2 fact about this project whose figure fails
+	// Budget.Check is refused as an invalid recorded budget, whatever the
+	// flags say: it is not a fact this build wrote. Only when it answers
+	// with no amount at all is IsManaged asked, to tell a managed version-1
+	// fact (the flags are then required) from a project that is not managed
+	// (refused whatever the flags say).
+	answer, err := managed.ReadBudgetAnswer(ctx, c.Storage, c.CRM, rr.lc.Name, old)
 	if err != nil {
 		return nil, userErr("nothing was restored: the creation fact of %s could not be read, and a restore refuses a project that is not managed: %s", old, safetext.Field(err.Error()))
 	}
-	if ok {
+	b, reason := answer.Budget, answer.Reason
+	if answer.Invalid {
+		why := "the recorded figure was refused"
+		if cerr := b.Check(); cerr != nil {
+			why = cerr.Error()
+		}
+		return nil, userErr("nothing was restored: the budget recorded in %s's creation fact is invalid: %s. A restore rebuilds a managed project from a fact this build wrote, and no flag stands in for one it did not", old, safetext.Field(why))
+	}
+	if answer.OK {
 		if flags != nil {
+			if *flags != b && rr.cmd != nil {
+				fmt.Fprintf(rr.cmd.ErrOrStderr(), "fugaro: %s's creation fact records %d %s; the new project is created with the flags' %d %s\n",
+					old, b.Amount, safetext.Field(b.Currency), flags.Amount, safetext.Field(flags.Currency))
+			}
 			return flags, nil
 		}
 		return &b, nil
