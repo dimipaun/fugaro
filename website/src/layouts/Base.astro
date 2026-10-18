@@ -27,11 +27,18 @@
  *      on — and this file holds no copy of it.
  *
  *      The deployed policy does not admit this loader yet, and deliberately so: with the flag
- *      off the built site ships no script at all, so there is nothing for a policy to allow.
- *      W3.2 is the task that widens `firebase.json`'s `script-src` and `connect-src` in the
- *      commit that turns analytics on, with the SHA-256 hashes `website/test/origins.mjs`
- *      lists — the loader's own hash depends on the measurement id, so it cannot be written
- *      down before the property exists.
+ *      off the built site ships no inline script and no analytics origin at all, so there is
+ *      nothing for a policy to allow. W3.2 is the task that widens `firebase.json`'s
+ *      `script-src` and `connect-src` in the commit that turns analytics on, with the SHA-256
+ *      hashes `website/test/origins.mjs` lists — the loader's own hash depends on the
+ *      measurement id, so it cannot be written down before the property exists.
+ *
+ *   5. **The site's one script.** `public/scripts/site.js` (D183) is loaded here, once, for
+ *      every page: it is the copy control on the command blocks (P6), and it is the only
+ *      script file the artifact carries. `defer` is the load's whole contract — the script
+ *      runs after the document is parsed, so every block it drives is already in the tree —
+ *      and nothing on any page depends on it: the commands are in the markup in full and the
+ *      controls are emitted `hidden` and revealed by it.
  *
  * Nothing in this file fetches anything at build time: the site is built from the files in
  * this repository, with no network and no clock (Global Constraints 4 and 5).
@@ -237,6 +244,12 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
         color: CanvasText;
       }
     </style>
+
+    {/* The site's one script (D183, P6). A file, not an inline block: `firebase.json`'s
+        `script-src 'self'` already admits it, so the deployed policy needs no new hash for
+        the copy control, and the whole of the site's behaviour is one file a reader can
+        read. `defer` puts it after the parse, which is when the blocks it drives exist. */}
+    <script src="/scripts/site.js" defer></script>
 
     {analyticsEnabled && (
       <script is:inline define:vars={{ measurementID: facts.analytics.measurementID, origin: ANALYTICS_ORIGIN, scriptPath: ANALYTICS_SCRIPT_PATH, consentKey: CONSENT_KEY }}>

@@ -45,6 +45,7 @@ import { loadSite, REPO_ROOT } from '../content.ts'
 // fragments it links and `test/docs-hub.mjs` resolves them again, so the two have to be
 // the same rule rather than two approximations of it (see the module's own note).
 import { escapeRawHtml } from '../lib/escape-raw-html.mjs'
+import { commandBlockHTML } from '../lib/copy-control.mjs'
 import { headingAnchor, headingText } from '../lib/github-slug.mjs'
 
 // The generated reference is imported as a document rather than read as bytes: Astro
@@ -218,9 +219,37 @@ function demotedTitle(html: string, file: string, title: string): string {
   return html.replace(titles[0][0], rendered)
 }
 
+/**
+ * The rendered reference with a copy control on every code block it carries (P6, D183).
+ *
+ * The control is added **here** and not in the generated document, and that is the whole
+ * reason this function exists: `website/content/cli-reference.md` is generated from the
+ * command tree and is never edited by hand, so a control written into it would be gone the
+ * next time `go run ./internal/clidoc` ran. The transform reads the rendered HTML and
+ * refuses to be quiet about anything it does not understand — a `<pre>` the pattern does not
+ * reach, or a count that disagrees with the blocks the document opened, stops the build
+ * rather than leaving one command on the page with no way to copy it.
+ */
+function withCopyControls(html: string): string {
+  const opened = (html.match(/<pre\b/g) ?? []).length
+  let wrapped = 0
+  const out = html.replace(/<pre\b[\s\S]*?<\/pre>/g, (block) => {
+    wrapped++
+    return commandBlockHTML(block, 'Copy this command')
+  })
+  if (wrapped !== opened) {
+    throw new Error(
+      `${reference.path} renders ${opened} "<pre>" blocks and this page wrapped ${wrapped} of them: the copy control goes on every command the site prints, so a block the transform did not reach is a command a reader cannot copy (P6).`,
+    )
+  }
+  return out
+}
+
 // Raw HTML in the generated document is text, not markup: `<name>` is a placeholder a
 // reader reads, and a browser would drop it as an unknown element (see the module's note).
-const referenceHTML = demotedTitle(escapeRawHtml(await cliReference.compiledContent()), reference.path, referenceTitle)
+const referenceHTML = withCopyControls(
+  demotedTitle(escapeRawHtml(await cliReference.compiledContent()), reference.path, referenceTitle),
+)
 
 const entries = [...guides, referenceEntry]
 ---

@@ -33,6 +33,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { REPO_ROOT, loadSite } from '../content.ts'
+import { copyControlHTML } from '../lib/copy-control.mjs'
 
 const site = loadSite()
 
@@ -64,16 +65,24 @@ if (!reference.body.includes(`\`${PROGRAM}\``)) {
 const characters = COMMAND.length
 ---
 
-<div class="terminal" data-source="website/content/cli-reference.md">
-  {/* The window's chrome, which is decoration: three dots with nothing behind them. */}
-  <div class="terminal-chrome" aria-hidden="true">
-    <span class="terminal-dot"></span>
-    <span class="terminal-dot"></span>
-    <span class="terminal-dot"></span>
+<div class="terminal" data-copy data-source="website/content/cli-reference.md">
+  {/* The window's chrome. The dots are decoration — three circles with nothing behind them —
+     and they are marked as such one by one rather than by hiding the whole bar, because the
+     copy control sits in the bar too and a focusable control inside `aria-hidden` is a
+     control the keyboard reaches and a screen reader cannot see (P6). */}
+  <div class="terminal-chrome">
+    <div class="terminal-dots" aria-hidden="true">
+      <span class="terminal-dot"></span>
+      <span class="terminal-dot"></span>
+      <span class="terminal-dot"></span>
+    </div>
+
+    <Fragment set:html={copyControlHTML('Copy the command')} />
   </div>
 
   <pre class="terminal-body"><code><span class="terminal-prompt" aria-hidden="true">$ </span><span
         class="terminal-command"
+        data-copy-source
         style={`--terminal-characters: ${characters}`}>{COMMAND}</span><span
         class="terminal-caret"
         aria-hidden="true"></span></code></pre>
@@ -90,10 +99,17 @@ const characters = COMMAND.length
 
   .terminal-chrome {
     display: flex;
-    gap: var(--space-3xs);
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2xs);
     padding: var(--space-2xs) var(--space-sm);
     border-bottom: var(--border-width) solid var(--border);
     background: var(--ground);
+  }
+
+  .terminal-dots {
+    display: flex;
+    gap: var(--space-3xs);
   }
 
   .terminal-dot {

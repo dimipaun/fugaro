@@ -22,6 +22,7 @@
  * hero holds no fact of its own: what it renders, it reads.
  */
 import { loadSite } from '../content.ts'
+import { copyControlHTML } from '../lib/copy-control.mjs'
 import Terminal from './Terminal.astro'
 
 const site = loadSite()
@@ -69,8 +70,15 @@ const videoExists = facts.features.video
         <div class="hero-install-path" data-path={path.id} data-source={path.source}>
           <p class="hero-install-name">{path.name}</p>
           {/* Written on one line: whitespace inside `<pre>` is shown, so an indented
-              template would indent the command on the page. */}
-          {path.commands.map((command) => <pre class="hero-install-command"><code>{command}</code></pre>)}
+              template would indent the command on the page. The control beside it is
+              `src/lib/copy-control.mjs`'s markup, emitted `hidden` and revealed by the
+              site's script (P6, D183). */}
+          {path.commands.map((command) => (
+            <div class="command-block" data-copy>
+              <Fragment set:html={copyControlHTML('Copy the install command')} />
+              <pre class="hero-install-command"><code>{command}</code></pre>
+            </div>
+          ))}
           {path.note && <p class="hero-install-note">{path.note}</p>}
         </div>
       ))

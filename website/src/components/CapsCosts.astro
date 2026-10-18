@@ -29,6 +29,7 @@
  * pipeline rather than reaching a reader (D96's answer fixes the minimum at 20 runs).
  */
 import { loadSite } from '../content.ts'
+import { copyControlHTML } from '../lib/copy-control.mjs'
 
 const site = loadSite()
 
@@ -210,7 +211,10 @@ const windowRecipes = countOf('recipes')
       return (
         <div class="command" data-guide={entry.path}>
           <dt>
-            <code class="usage" data-command={command?.usage}>{command?.usage}</code>
+            <div class="command-block" data-copy>
+              <Fragment set:html={copyControlHTML('Copy the usage line')} />
+              <code class="usage" data-command={command?.usage}>{command?.usage}</code>
+            </div>
           </dt>
           <dd>
             <p>{command?.short}</p>

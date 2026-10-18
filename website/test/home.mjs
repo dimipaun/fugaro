@@ -42,6 +42,7 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse, textOf, walk } from './lib/html.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -212,15 +213,20 @@ test("the hero's lead sentence is a sentence of README.md", () => {
 
 test('the hero renders the install commands install.yaml carries, and types none of them', () => {
   const page = builtPage('')
-  const rendered = [...page.matchAll(/<div[^>]*class="hero-install-path"[^>]*>([\s\S]*?)<\/div>/g)].map((m) => m[0])
+  // Read as a document rather than sliced with a regex: each path's block now holds a copy
+  // control as well as its commands (P6), and a non-greedy `<div>…</div>` would stop at the
+  // control's own closing tag and check half a block.
+  const blocks = [...walk(parse(page))].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-install-path'))
 
-  assert.equal(rendered.length, 2, `the hero renders ${rendered.length} install paths, and it shows the two commands the plan names (W1.4 step 1)`)
+  assert.equal(blocks.length, 2, `the hero renders ${blocks.length} install paths, and it shows the two commands the plan names (W1.4 step 1)`)
 
-  for (const block of rendered) {
-    const id = /data-path="([^"]*)"/.exec(block)?.[1]
+  for (const block of blocks) {
+    const id = block.attrs.get('data-path')
     assert.ok(id, 'an install path in the hero names no id, so nothing says which path of install.yaml it is')
 
-    const commands = [...block.matchAll(/<pre[^>]*class="hero-install-command"[^>]*>([\s\S]*?)<\/pre>/g)].map((m) => text(m[1]))
+    const commands = [...walk(block)]
+      .filter((el) => el.name === 'pre')
+      .map((el) => textOf(el).trim())
     assert.deepEqual(
       commands,
       installPathCommands(id),

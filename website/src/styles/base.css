@@ -184,6 +184,53 @@ a.skip-link:focus {
   outline-offset: var(--focus-ring-offset);
 }
 
+/* ---- 2b. the copy control (redesign part P6, D183) --------------------------------------- */
+
+/* Every command the site prints — the hero's install blocks, the getting-started page's, the
+ * terminal's own line, the usage lines on the caps guide and every code block of the rendered
+ * CLI reference — carries one of these, and the markup is written once in
+ * `src/lib/copy-control.mjs`. The control is emitted `hidden` and `public/scripts/site.js`
+ * reveals it, so a reader whose browser runs no script sees the command and no button rather
+ * than a button that copies nothing.
+ *
+ * The control is a row above the block it belongs to and right-aligned on it: it is in the
+ * flow, so it can never overlap the command, and the confirmation has room beside the button.
+ * With no script the row holds nothing and is therefore no taller than nothing. */
+.command-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2xs);
+}
+
+/* Deliberately no `display` here. The `hidden` attribute is the whole mechanism that keeps
+ * the control out of a reader's way until the script has revealed it, and an author `display`
+ * would win over the user agent's `[hidden]` rule and put the button back on the page. */
+.copy-button {
+  padding: var(--space-3xs) var(--space-2xs);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--accent-on-dark);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.copy-button:hover {
+  border-color: var(--accent);
+}
+
+/* What the control says: the live region the markup carries, and the visible half of the
+ * "copied" state. It is empty until the script writes into it, so it takes no space. */
+.copy-status {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
 /* ---- 3. the element defaults (all zero-specificity) ------------------------------------- */
 
 :where(h1, h2, h3, h4, h5, h6) {
