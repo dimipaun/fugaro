@@ -297,7 +297,7 @@ installed, nothing is fetched, and the entry point the phone loads imports nothi
 all. The tests are the plan's verification list (a missing
 id, a wrong type, an oversize body and an unknown field refused; a well-formed message
 accepted) plus the fail-closed families above and P6.3's kind, action, tag and
-canonical-byte cases: 313 tests over the package, 37 of them this module's.
+canonical-byte cases: 313 tests over the package, 40 of them in this module's test file.
 
 **Every guard is mutation-proved**, not merely covered — 67 guards over `index.js` and
 `mac.js`, one mutation each:
