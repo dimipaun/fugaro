@@ -171,8 +171,17 @@ type Record struct {
 	// a first run may set to another branch). A follow-up takes it as its
 	// ref. Absent in records from before it was kept.
 	BaseBranch string `json:"base_branch,omitempty"`
-	HeadSHA    string `json:"head_sha,omitempty"`
-	PR         *PRRef `json:"pr,omitempty"`
+	// StartSHA is the commit the run's branch was cut from: the task's ref
+	// (--ref, or the base branch) as bootstrap read it, right after the
+	// checkout and before the agent ran. It is the base every question of
+	// "did this run change X" is measured against — the workflow guard most
+	// of all — which is not the base branch when the run was started from
+	// another ref. A follow-up records the commit it started from in
+	// follow_up.start_sha instead, and a mode: review run has no branch.
+	// Absent in records from before it was kept.
+	StartSHA string `json:"start_sha,omitempty"`
+	HeadSHA  string `json:"head_sha,omitempty"`
+	PR       *PRRef `json:"pr,omitempty"`
 	// DraftFallback is set when the host refused real draft pull requests,
 	// so the PR is an ordinary one marked "[DRAFT]" in its title.
 	DraftFallback bool            `json:"draft_fallback,omitempty"`

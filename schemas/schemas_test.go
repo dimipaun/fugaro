@@ -380,8 +380,11 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Execution: "projects/p/locations/r/jobs/j/executions/e",
 		Status:    runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
 		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", BaseBranch: "main", HeadSHA: "abcdef1234567",
-		PR:      &runstore.PRRef{Number: 7, URL: "https://example.com/pr/7"},
-		Reviews: []runstore.ReviewSummary{{Round: 1, Tier: runstore.TierFirst, Verdict: "changes", Findings: 2}, {Round: 1, Tier: runstore.TierSenior, Verdict: "ship"}},
+		// The commit the run was cut from, which its guards compare against
+		// (design v1.md §4.6).
+		StartSHA: strings.Repeat("c", 40),
+		PR:       &runstore.PRRef{Number: 7, URL: "https://example.com/pr/7"},
+		Reviews:  []runstore.ReviewSummary{{Round: 1, Tier: runstore.TierFirst, Verdict: "changes", Findings: 2}, {Round: 1, Tier: runstore.TierSenior, Verdict: "ship"}},
 		Verify: []verify.Record{{
 			N: 1, Kind: verify.KindTest, Rerun: true, HeadSHA: "abcdef1234567", CleanTree: true, ExitCode: 1,
 			TimedOut: true, Tests: 3, Failures: 1, Skipped: 1, Failed: []string{"pkg.A"}, Flaky: []string{"pkg.B"},
