@@ -141,7 +141,10 @@ func (p *Policy) ProfileAllowRepos(profile string) ([]string, error) {
 // its job. A run in a per-repository job is held to the project's allow_repos
 // alone, because the job it is in carries no selected profile: that is a baked
 // workflow, or a policy that defines no profiles, and internal/cli's
-// run_allowlist.go is the launcher's advisory twin of that one gate.
+// run_allowlist.go is the launcher's advisory twin of that one gate — while
+// the launcher's twin of *this* gate is profileAdmissionRefusal in the same
+// file, called where the launcher decides which job a launch runs on
+// (launchProjectJobFor), which is where a launch's profile is known.
 // ProfileAllowRepos answers the narrower question a message or a listing asks
 // ("what does this profile name"), never the verdict. A profile's list is
 // validated strictly where it is published (validProfiles) because this is the

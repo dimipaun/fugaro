@@ -691,3 +691,67 @@ func TestLaunchRefusesABitbucketProfile(t *testing.T) {
 		t.Errorf("the launch reached Cloud Run anyway: %+v", calls)
 	}
 }
+
+// TestLaunchRefusesARepositoryTheProfileDoesNotAdmit: the admission a shared
+// project job adds to the project's allow-list (design §4.1, plan task 3.3
+// step 4). The two lists are asked separately and the profile's is the
+// narrower one here, so the repository passes the project's gate and only the
+// profile's refusal stops it — which is the half the launcher did not have:
+// the launch reached Cloud Run, took the claim and minted the budget token,
+// and the repository was refused by the runner instead, one run at a time and
+// with an operator no longer watching. A repository's own fugaro.yaml selects
+// the profile, so this is also what keeps a repository from widening its own
+// access by selecting a profile whose list is wider.
+//
+// The second half is the paired mutation-proof: the profile admits the other
+// repository of the fixture, and its launch still takes the shared job.
+//
+// Mutation (run, restore): drop the profileAdmissionRefusal call in
+// launchProjectJobFor — the refused repository's launch makes a jobs.run call
+// on the shared job and arrives at the runner.
+func TestLaunchRefusesARepositoryTheProfileDoesNotAdmit(t *testing.T) {
+	f := newProjectJobFixture(t)
+	// The project admits both of the fixture's repositories; the profile
+	// admits one of them.
+	publishPolicy(t, f.launchBudgetFixture, `{"version":2,"allow_repos":["github/acme/*"],`+
+		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",`+
+		`"allow_repos":["github/acme/other"]}}}`)
+	projectJobCheckout(t)
+
+	const run = "20261017-110000-cccc"
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
+	}
+	for _, want := range []string{
+		"github/acme/app", "standard", "github/acme/other", "never widen", "before any execution exists",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions were created for a launch the profile does not admit", n)
+	}
+	if storedTask(t, f.cloudFixture) {
+		t.Error("the refused launch stored a task")
+	}
+	if tok := readToken(t, f.cloudFixture, run); tok != "" {
+		t.Errorf("the refused launch minted a budget token: %q", tok)
+	}
+	// The same policy, the repository the profile does admit: the launch takes
+	// the shared job, so what refused the one above is the profile's list and
+	// not the profile's admission being applied to every launch.
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": projectJobRepoYAML})
+	t.Chdir(dir)
+	if _, _, err := execute(t, "run", "--repo", otherRepo, "--run-id", "20261017-110001-dddd", "Add a feature"); err != nil {
+		t.Fatalf("launch of the repository the profile admits: %v", err)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 1 || calls[0].Job != f.job {
+		t.Fatalf("the admitted repository's launch made %d jobs.run calls (%+v), want one on the shared job %s", len(calls), calls, f.job)
+	}
+}

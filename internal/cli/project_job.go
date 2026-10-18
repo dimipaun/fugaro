@@ -108,8 +108,20 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 	// repository on another provider (design §4.5, D5 as amended, and
 	// internal/infra's ProjectJobs) stays on its per-repository job, decided
 	// here before any claim is taken or budget token minted.
-	if provider := e.repoProvider(spec.Repo, co); provider != pr.Provider {
+	provider := e.repoProvider(spec.Repo, co)
+	if provider != pr.Provider {
 		return nil, nil
+	}
+	// The repository must be admitted to the profile, not only to the
+	// project's allow_repos the launch gate checked (run_allowlist.go's
+	// profileAdmissionRefusal, the launcher's half of the profile admission
+	// the runner makes at run start). This is the first point at which the
+	// launcher knows which profile that is, and the profile's list can be the
+	// narrower of the two, so a repository whose own fugaro.yaml selects a
+	// profile it is not admitted to would otherwise reach Cloud Run, take the
+	// claim and mint the token, and stop only in the runner.
+	if err := profileAdmissionRefusal(p, profile, provider, spec.Repo); err != nil {
+		return nil, err
 	}
 	account, _ := config.ClaudeAccountOfSecrets(pr.Secrets)
 	if err := checkProjectJobAccount(profile, spec.OAuthToken, account); err != nil {
