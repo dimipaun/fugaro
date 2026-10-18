@@ -63,6 +63,10 @@ belong in this file:
   per-pairing MAC key, and every record it reads -- outbox messages and the
   heartbeat -- is verified against that key before a word is spoken or an ack
   is written.
+* **One pass at a time.** `send`, `flush` and `poll` share a queue: an ack is
+  written only after the message was spoken, so two passes in flight together
+  would both speak it, and a screen that polls on a timer and on a reconnect
+  would do that without meaning to.
 * **The key is reached through `SecretStore.use`**: the material is handed to a
   callback for the duration of one call and never returned (a result that
   carries it is refused as `leaked`). No module under `src/mailbox/` can read

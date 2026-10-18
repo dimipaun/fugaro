@@ -107,6 +107,17 @@ exports `toPresenceHeartbeat(heartbeat)` -- `boot` to `bootId` and nothing else
 same heartbeat is readable through the mapping. When the owner rules, this
 function is the one place that changes.
 
+## One pass at a time
+
+`send`, `flush` and `poll` run on one queue, in call order, and never overlap.
+The reason is the ack's own rule: the ack is written only **after** the speak, so
+a second pass that starts while the first is still running reads the same
+message unacked and would speak it again -- the owner hears the sentence twice,
+which is the thing the order exists to prevent. A screen that polls on a timer
+and again on a reconnect does that without meaning to. The queue is the client's
+whole concurrency control and it carries no state of its own: a refusal comes
+back to its own caller and leaves the queue settled.
+
 ## Retry, reconnect, and D118's TTL
 
 `send` keeps the record it wrote. `flush` (and `poll`, which flushes first)
@@ -157,7 +168,7 @@ P3.6 is the task that needed it; the PR says so.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 14 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 15 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard in `client.js` and must make
@@ -185,6 +196,7 @@ than a claim.
 | a failed speak still acks (the `continue` drops) | `it acks nothing it has not spoken` |
 | the `spoken` set stops suppressing a second speak | `an ack that did not land is retried, and the message is not spoken a second time` |
 | the `acked === true` guard drops | `a message this phone acked in an earlier run is not spoken again after a restart` |
+| the queue is bypassed (`serial` calls the pass directly) | `two polls in flight together speak the message once, not twice` |
 
 Two of those mutations **survived** when the proof was first run, and both were
 fixed rather than argued away -- the two guards had no test that could tell them
