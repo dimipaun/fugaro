@@ -250,8 +250,10 @@ readable in this file and in that plan, and not in the price catalog's PR
 `ba03ab5` — its row **is** in the table below, between 44 and 57); **"the next
 free number above them is 48" above is out of date on that reading**, because
 **48–56 are reserved by the project-centric plan** (PR #366, merged as
-`c86eb92` — the reservation stands and its rows are not written yet, and this
-checklist does not name its sub-checks); and **57 is reserved by the
+`c86eb92` — the reservation stands and its rows are written as the plan's tasks
+land: 49, 50 and 52 are in the table below with their sections, **53** is added
+by Task 3.7, and the rest are still unwritten, so this checklist does not name
+its sub-checks); and **57 is reserved by the
 compute-backend design** (`docs/design/compute-backend.md` §7, **PR #375** —
 the design that owns the number; the restore of generic-tool's Task 28 that
 this design's status line cites is a different pull request, **PR #374**,

@@ -22,13 +22,13 @@ A workflow's **job profile** is a different selection on a different key: `workf
 
 ### Which runs work on a shared job today
 
-**None, end to end, in this release.** The shared-job path is in the tree and every step of it fails closed, and one gate still stands before any run completes on one (the launch gate, the other, is open):
+**Not yet run, end to end, in this release.** The shared-job path is in the tree and every step of it fails closed, and the two gates that used to stand before a run completes on one are open — the launch gate, and the App's ID the runner builds its github provider from. What is missing is the run itself: **Check 53** ([gcp-live-checklist.md](gcp-live-checklist.md)) is the live check that exercises the path end to end, and it has not been run.
 
 - **The launch gate is open.** `checkout: clone` shipped in 0.9.0: `cloneShipped` is true (`internal/cli/recipes_skew.go`), live Check 38 passed on 2026-10-17 (the owner's ruling: `docs/gcp-live-checklist.md`'s own Check 38 record has still to be written up), and a `checkout: clone` launch of a current base image reaches a shared job. (Before the flip this was a second gate: a launch was refused on every image a release could build, and only a dev build with that gate opened reached a shared job.) What a launch still checks is the job image's release — `cloneSince`, fugaro 0.7.5.
-- **GitHub repositories stop at the provider.** A project job's environment (`internal/infra`'s `projectJobEnv`) carries the installation's identity, the bucket, Vertex's project and region, and the budget backend's address and web key — and **not** `FUGARO_GITHUB_APP_ID`. The plan (Task 3.3 step 6) has the runner read the App's ID from the policy; that is not built, so a GitHub run on a shared job is refused when it opens its provider ("FUGARO_GITHUB_APP_ID is not set"), after its admission check and before any git credential exists.
+- **GitHub repositories no longer stop at the provider.** A project job's environment (`internal/infra`'s `projectJobEnv`) carries the installation's identity, the bucket, Vertex's project and region, the budget backend's address and web key, and — since Task 3.5 — `FUGARO_GITHUB_APP_ID`, resolved from the App ID the installation's GitHub repositories record (`projectJobGitHubAppID`: one App per project, so two recorded IDs are refused, and so is none). The App's private key arrives the other way, as the `github-app-key` secret the profile mounts.
 - **Bitbucket repositories never reach one.** No shared job serves Bitbucket in phase 3 (`fugaro init` refuses a Bitbucket profile), and a launch keeps a repository whose provider is not the profile's on its per-repository job.
 
-Once those are lifted, these still differ from a per-repository job, because the shared job's environment deliberately leaves out what the per-repository job takes from one repository's config:
+Beyond those, these still differ from a per-repository job, because the shared job's environment deliberately leaves out what the per-repository job takes from one repository's config:
 
 | Missing from a shared job | Effect |
 |---|---|
