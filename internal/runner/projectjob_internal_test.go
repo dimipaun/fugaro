@@ -658,7 +658,14 @@ func accountRun(t *testing.T, job, slug string, spec *task.Spec, p *projectpolic
 //
 // Mutation (run, restored): drop the AdmitRepo arm (admit once the account's
 // list has been read). The first case is admitted with a token its account's
-// list does not cover. Mutation (run, restored): drop the serves arm for an
+// list does not cover. Mutation (run, restored): return nil for a run that is
+// not an OAuth one once the job's account matches (skip the list for the runs
+// that hold the token without asking for it). The default-account case is
+// admitted — a non-OAuth run in a job carrying the default account's token,
+// for a repository the token's own list does not cover — and it is the only
+// case that fails, which is what makes it the one that pins the rule for the
+// runs whose own credential never selects an account.
+// Mutation (run, restored): drop the serves arm for an
 // OAuth run (admit a job that holds no token at all). The last case is
 // admitted as a credential-less OAuth run. Mutation (run, restored): compare
 // nothing but the job's account against the profile (drop the
@@ -698,6 +705,24 @@ func TestRunnerRefusesUncoveredAccount(t *testing.T) {
 			account: personal, selects: personal, auth: "oauth",
 			want: []string{job(personal), "claude-oauth-token-" + personal, "accounts." + personal + ".allow_repos",
 				"github/acme/other", "github/acme/app", "claude_accounts." + personal + ".allow_data_to"},
+		},
+		{
+			// The default account's token rides the no-account job (D5), so a
+			// profile listing it hands that token to every run of that job —
+			// including one that is not an OAuth run at all. The list is the
+			// token's bound whatever the run's own credential is, which is why
+			// the coverage rule is asked of the job's token account and not of
+			// the run's selection (and why this case is the one a check that
+			// skips non-OAuth runs leaves unrefused).
+			name: "a run that is not an OAuth run in the no-account job of a profile whose default list does not cover this repository",
+			policy: servingPolicy([]string{personal, config.DefaultClaudeAccount}, map[string][]string{
+				personal:                    {"github/acme/app"},
+				config.DefaultClaudeAccount: {"github/acme/other"},
+			}),
+			account: "", selects: "", auth: "api-key",
+			want: []string{job(""), config.ClaudeAccountSecret(config.DefaultClaudeAccount),
+				"accounts." + config.DefaultClaudeAccount + ".allow_repos", "github/acme/other", "github/acme/app",
+				"project_secrets." + config.ClaudeAccountSecret(config.DefaultClaudeAccount) + ".allow_data_to"},
 		},
 		{
 			name: "the policy defines no list for the job's account",

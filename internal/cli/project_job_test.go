@@ -691,6 +691,71 @@ func TestProjectJobOAuthRefusedRepoNotAllowed(t *testing.T) {
 	}
 }
 
+// TestProjectJobNonOAuthRefusedWhereTheJobTokenIsNotAllowed is the coverage
+// refusal's other half (design §4.4 rows 3 and 4, D5): a profile that lists
+// `default` mounts that token into its no-account job, and every run of that
+// job holds it — including a run whose own credential selects no account at
+// all, which the axis rule above admits onto that job precisely because it is
+// not an OAuth one. The job's token is what has a list, so the rule is asked of
+// the *job's* token account and not of the run's selection: a non-OAuth launch
+// is refused where the default account's list does not cover the repository it
+// runs for, exactly as an OAuth one is. Without this, a check that asked the
+// coverage question only of OAuth runs would leave an api-key or Vertex run
+// holding a token its account's list does not admit this repository to.
+//
+// Values-level, for the reason its sibling above is: the subset rule
+// (projectpolicy.validProfileAccounts) means no *decoded* policy can state a
+// profile admitting a repository its default account does not cover, so this is
+// the backstop's own door.
+//
+// Mutation (run, restore): ask the coverage rule only of an OAuth run
+// (`if servesToken && auth == "oauth"` in projectJobAccountFor, or an early
+// return for every other auth) — the launches below are admitted onto a job
+// whose container hands them the default account's token, for a repository that
+// token's list does not cover.
+func TestProjectJobNonOAuthRefusedWhereTheJobTokenIsNotAllowed(t *testing.T) {
+	serving := projectpolicy.Profile{JobProfile: config.JobProfile{
+		Provider:       "github",
+		ClaudeAccounts: []string{"acme-personal", config.DefaultClaudeAccount},
+	}}
+	p := &projectpolicy.Policy{Version: projectpolicy.Version, Accounts: map[string]projectpolicy.Account{
+		"acme-personal":             {AllowRepos: []string{"github/acme/app"}},
+		config.DefaultClaudeAccount: {AllowRepos: []string{"github/acme/other"}},
+	}}
+	for _, auth := range []string{"api-key", "vertex", "fake", ""} {
+		got, err := projectJobAccountFor(p, "standard", serving, auth, "", "github", "acme/app")
+		if err == nil {
+			t.Fatalf("a launch whose agent.auth is %q was admitted as the account %q onto the no-account job, which holds the default account's token for a repository its list does not cover", auth, got)
+		}
+		for _, want := range []string{
+			config.DefaultClaudeAccount,                                // the account whose token the job holds
+			config.ClaudeAccountSecret(config.DefaultClaudeAccount),    // the token itself
+			"accounts." + config.DefaultClaudeAccount + ".allow_repos", // the rule that refused it
+			"github/acme/other",                                        // the list as published
+			"github/acme/app",                                          // the repository that is not on it
+			"project_secrets." + config.ClaudeAccountSecret(config.DefaultClaudeAccount) + ".allow_data_to", // where the default account's list is derived from
+			"no claim was taken", // and that nothing was launched
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal of an agent.auth %q launch does not name %q: %v", auth, want, err)
+			}
+		}
+	}
+	// The same launches on a default account that covers the repository are
+	// admitted, onto the profile's no-account job: the refusal is the uncovered
+	// repository's, not the run's.
+	p.Accounts[config.DefaultClaudeAccount] = projectpolicy.Account{AllowRepos: []string{"github/acme/app"}}
+	for _, auth := range []string{"api-key", "vertex", "fake", ""} {
+		got, err := projectJobAccountFor(p, "standard", serving, auth, "", "github", "acme/app")
+		if err != nil {
+			t.Fatalf("a launch whose agent.auth is %q, on a default account that covers the repository: %v", auth, err)
+		}
+		if got != "" {
+			t.Errorf("a launch whose agent.auth is %q targets the account %q, want the no-account job", auth, got)
+		}
+	}
+}
+
 // TestProjectJobOAuthSelectsAccountJob is the gate end to end: an OAuth run's
 // own credential picks the job it runs on — the account's own job for a named
 // account, the profile's no-account job for the default one — and that job is
