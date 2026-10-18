@@ -608,9 +608,10 @@ func TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer(t *testing.T
 	if err := rr.create(t.Context(), &made); err != nil {
 		t.Fatalf("the creating path: %v\n%s", err, out.String())
 	}
-	// The creating run's own account, which verifyCreated binds to.
-	if made != (initCreation{Created: newProj, Marked: true}) {
-		t.Errorf("the creating run reported %+v, want it created %s, did not find it there, and wrote its fact", made, newProj)
+	// The creating run's own account, which verifyCreated binds to: both
+	// halves of the mark, so the project it created is managed (Task 3.0).
+	if made != (initCreation{Created: newProj, Fact: true, Marked: true}) {
+		t.Errorf("the creating run reported %+v, want it created %s, did not find it there, and wrote both halves of its mark", made, newProj)
 	}
 	if strings.Contains(out.String(), "left for you") {
 		t.Errorf("the creating path left a typed step for the user: it was not given the user's terminal\n%s", out.String())
@@ -1268,8 +1269,9 @@ func TestRestoreAFailedCreationPutsTheConfigBack(t *testing.T) {
 // path can succeed and still leave a project that is not managed — its
 // marker write is a warning, never a failure (markCreated). Here the new
 // project's runs bucket reports another project's number, so the marker is
-// refused; the restore must catch that before the checkout's line moves and
-// before the apply, and put the config back.
+// refused — neither half of the mark is written; the restore must catch that
+// before the checkout's line moves and before the apply, and put the config
+// back.
 func TestRestoreACreationThatEndsUnmarkedStopsBeforeTheCheckout(t *testing.T) {
 	r, _ := newRestoreRig(t)
 	restoreManagedOld(r)
@@ -1289,6 +1291,65 @@ func TestRestoreACreationThatEndsUnmarkedStopsBeforeTheCheckout(t *testing.T) {
 	}
 	if !bytes.Equal(mustRead(t, r.cfg), before) || !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
 		t.Error("an unmarked creation left the project config or the checkout moved")
+	}
+}
+
+// TestRestoreAHalfMarkedCreationKeepsTheConfigAndItsWayToFinish: the mark is
+// two writes (Task 3.0), and the creating run wrote the first and not the
+// second — the runs bucket's creation fact landed and the project's
+// fugaro_managed label did not, because the credentials an init run holds
+// need not carry resourcemanager.projects.update.
+//
+// The project is this run's all the same: the create-only fact write is what
+// proves that, and it is on disk. So this is NOT putBack's case — "shut the
+// project down and retry with another NEW_PROJECT_ID" would orphan a project
+// one owner-run line away from being complete — and it is not the
+// budget-gate case either, whose message says the project is complete for
+// the apply. The config keeps naming the new project, the checkout does not
+// move, nothing reaches the apply, and the refusal says what is missing
+// (the label), that only the owner writes it, and where that one line is.
+func TestRestoreAHalfMarkedCreationKeepsTheConfigAndItsWayToFinish(t *testing.T) {
+	r, _ := newRestoreRig(t)
+	restoreManagedOld(r)
+	// The project can be read and its label cannot be written: exactly the
+	// shape of a credential holding resourcemanager.projects.get and not
+	// resourcemanager.projects.update.
+	r.crm.DenyUpdate(newProj)
+	calls := recordRestoreApply(t, r)
+	checkout, root := restoreCheckout(t)
+	before, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
+	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	if err == nil || !strings.Contains(err.Error(), "but not its fugaro_managed=true label") {
+		t.Fatalf("want the half mark to refuse and name the missing label, got %v\n%s", err, out)
+	}
+	if len(r.crm.Creates()) != 1 {
+		t.Errorf("%d creation(s), want 1: the case is a creation that ran and wrote one half of the mark", len(r.crm.Creates()))
+	}
+	if len(*calls) != 0 {
+		t.Errorf("a half-marked project reached the apply %d time(s)", len(*calls))
+	}
+	// The local config still names the new project: this run created it, and
+	// putting the config back is what would make the operator restart with
+	// another ID.
+	cfg := mustRead(t, r.cfg)
+	if !bytes.Contains(cfg, []byte(newProj)) {
+		t.Errorf("the project config was put back, so a retry would orphan %s:\n%s", newProj, cfg)
+	}
+	if bytes.Equal(cfg, before) {
+		t.Errorf("the project config was put back byte for byte:\n%s", cfg)
+	}
+	if !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
+		t.Error("a half-marked creation moved the checkout's gcp_project: line")
+	}
+	// The way out is named, and it is not a command in the refusal: the
+	// label's writer is the owner's, in their own terminal (Task 3.0 §5).
+	for _, want := range []string{"docs/gcp-setup.md", "fugaro managed apply", "gcloud projects delete"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %s: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "gcloud projects update") {
+		t.Errorf("the refusal names the label-writing command, which is the owner's to run: %v", err)
 	}
 }
 

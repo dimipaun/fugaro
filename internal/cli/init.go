@@ -128,13 +128,24 @@ func newInitCmd() *cobra.Command { return newInitCmdWith(&initOptions{}) }
 
 // initCreation is what a run of init --create-project did, as the run itself
 // knows it (not inferred from the cloud afterwards): the project it created,
-// whether the project was already there when it was read, and whether this
-// run wrote the creation fact — with managed.WriteMarker's create-only
-// precondition, so a fact someone else put there first is never this run's.
+// whether the project was already there when it was read, and how much of the
+// mark it wrote.
+//
+// The mark is TWO writes (Task 3.0) and both are kept apart here, because the
+// half state is real and its recovery differs: Fact is the creation fact in
+// the runs bucket, written with managed.WriteMarker's create-only
+// precondition, so a fact someone else put there first is never this run's;
+// Marked is both halves — Fact and the fugaro_managed label on the project —
+// which is what the read requires and so the only thing that makes the
+// project managed. A run that wrote Fact and not the label (the label needs
+// resourcemanager.projects.update, which the credentials init runs on may
+// lack) has created a project the read answers "not managed" for, and the
+// owner-run label write is its way back.
 type initCreation struct {
 	Created string
 	Existed bool
-	Marked  bool
+	Fact    bool // the creation fact is in the runs bucket: this run wrote it
+	Marked  bool // and the project carries the label: both halves, so managed
 }
 
 // newInitCmdWith is newInitCmd over options the caller holds: fugaro
@@ -791,6 +802,15 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	number, err := infra.ProjectNumber(ctx, e.c, r.res.Created)
 	if err == nil {
 		err = managed.WriteMarker(ctx, e.c.Storage, bucket, r.res.Created, r.gcpProject, number, budget)
+	}
+	// The first half is on disk from here on, and a caller that acts on what
+	// this run did (fugaro restore) has to tell it from the whole mark: the
+	// object without the label is a project the read answers "not managed"
+	// for, and it is a project an owner-run label away from being complete.
+	if err == nil {
+		if c := r.o.created; c != nil {
+			c.Fact = true
+		}
 	}
 	// The other half of the same fact, in the same step and on the same
 	// values: the fugaro_managed label on the project itself (Task 3.0).
