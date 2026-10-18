@@ -43,6 +43,7 @@ import { linkNodeModules } from './lib/build.mjs'
 import {
   DOWNLOADS_JSON,
   SITE_YAML,
+  consoleTag,
   downloadNeedle,
   downloadsData,
   publishedDownloads,
@@ -314,6 +315,32 @@ test("the console's guarantees are stated as the document that decides them stat
       `what.text does not carry "${part}", and ${JSON.stringify(isWhat[0])} is where the page's sentence comes from`,
     )
   }
+})
+
+test('the release the download URLs are built from is a version this repository has released', () => {
+  const { release } = downloadsData()
+
+  // The tag is the console's own, `console-vX.Y.Z`, and `docs/release.md` is the document the
+  // data file names as the source of this block — so the tag shape is read out of that
+  // document rather than taken on trust.
+  const doc = repoFile(release.source.split(/\s+/)[0])
+  assert.match(
+    doc,
+    /console-vX\.Y\.Z/,
+    `${release.source} no longer documents the console's own release tag, and ${DOWNLOADS_JSON}'s URLs are built from it`,
+  )
+  assert.equal(consoleTag(), `console-v${release.version}`, 'the tag the URLs are built from is not the prefix and the version the data file carries')
+
+  // And the version exists: the console's release is cut from the CLI's own tag, and from
+  // 0.4.0 on a tag cannot be cut without a non-empty `docs/releases/vX.Y.Z.md` on `main`
+  // (docs/release.md; both tag workflows run `scripts/release-policy.sh check-highlights`).
+  // A version with no release file is therefore a version the console was not built from, and
+  // every button would 404 on the day it was rendered.
+  const highlights = `docs/releases/v${release.version}.md`
+  assert.ok(
+    existsSync(path.join(REPO, highlights)),
+    `${DOWNLOADS_JSON}'s release.version is ${release.version} and ${highlights} is not in this repository: the console's release is cut from the CLI's own tag, and that tag cannot be cut without its highlights file`,
+  )
 })
 
 test('the build refuses a download URL while the flag is false', async (t) => {

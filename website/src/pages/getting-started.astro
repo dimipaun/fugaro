@@ -97,16 +97,16 @@ const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
   <section id="install">
     <h2>Install</h2>
 
-    {/* The section opens with the paths themselves (P5): the first thing under the heading is
-        the first install path's own commands, and a reader who came for the command they run
-        meets it on the first screen rather than under a sentence about the page. The one
-        sentence the section carries — that the plugin is a step of the install and not an
-        extra — moves with the order and closes the section, after the paths it is about.
-        Its words are P4's and are unchanged: ordering is this part's, copy is not. */}
+    {/* The section opens with the paths themselves (P5): under the heading comes the CLI
+        option and, at the top of it, the first install path's own commands — a reader who came
+        for the command they run meets it on the first screen rather than under a sentence
+        about the page, in the two-column layout and in the stacked one alike. The one sentence
+        the section carries — that the plugin is a step of the install and not an extra — moves
+        with the order and closes the section, after the options it is about. Its words are
+        P4's and are unchanged: ordering is this part's, copy is not.
 
-    {/* The two options, in document order: the CLI first, the console second. The order is
-        the page's own — a reader who came for a command meets the CLI's paths first — and it
-        is what the stacked layout renders at 390 px. */}
+        The two options are one grid, in document order: the CLI first, the console second,
+        which is the order the stacked layout renders at 390 px. */}
     <div class="install-options">
       <div class="install-option" data-option="cli">
         <h3>CLI</h3>
