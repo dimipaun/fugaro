@@ -151,9 +151,14 @@ func newRunsStatsCmd() *cobra.Command {
 			"person's -- so it is not shown as the caller's own either, and the table says\n" +
 			"which of the two it is.\n\n" +
 			"The launcher text is what a launcher wrote and is read for nothing else: it is\n" +
-			"sanitised and size-capped before it is printed, and nothing is authorised,\n" +
-			"admitted or filtered by it. Two identities that differ only past the cap are one\n" +
-			"row.\n\n" +
+			"sanitised and size-capped before it is printed, and it authorises and admits\n" +
+			"nothing. Two identities that differ only in what the sanitising drops -- an\n" +
+			"invisible character a paste left in one of them, say -- or only past the cap are\n" +
+			"one key and one row: the row is the key, not the person. A private view is not\n" +
+			"read off that key. It holds the runs whose launch recorded your identity itself,\n" +
+			"compared as runs ls --mine compares it, so someone whose identity merely\n" +
+			"sanitises to the same text is never counted in it and your own row can be\n" +
+			"smaller than that key's row in the full table.\n\n" +
 			"A window can hold every run of every repository in the bucket, so the read is\n" +
 			"bounded: at most --max-runs records are read per call, newest first, and a window\n" +
 			"holding more says so in the output rather than publishing figures over a part of\n" +
@@ -243,25 +248,31 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 		return err
 	}
 	if view == userStatsViewOwn {
-		// Matched in the table's own domain: a row's key is IdentityOf's
-		// sanitised form, so the caller's identity is compared through the same
-		// function -- `you` itself. For an ordinary address the two are the
-		// same value; for one a paste left an invisible character in, only this
-		// comparison finds the caller's own row rather than none.
+		// Matched on the identity the run recorded, exactly as runs ls --mine
+		// matches: launch.json's launched_by is the requester the launch was
+		// made for (run.go), so "your own runs" has one meaning in this CLI and
+		// this is it.
 		//
-		// Only a key of the caller's own is a match. `you` is "" when their
-		// identity has nothing printable in it, and the unattributed row's key
-		// is not theirs to claim: it holds every run of the window that
-		// recorded no launcher, so showing it under "your own runs only" would
-		// credit the caller with other people's runs. Either way the own view
-		// is empty -- nobody's figures, rather than somebody else's.
+		// Not on the row's key. A key is sanitised text two people can share --
+		// identities that differ only in characters the sanitising drops, or
+		// only past the cap, are one row -- and a shared key is not a person:
+		// showing its row under "your own runs only" would credit the caller
+		// with a stranger's runs, which is the mistake the unattributed key's
+		// guard below removes in the other direction. The row a private view
+		// does show is keyed by `you`, since every run in it recorded this
+		// identity and its key is IdentityOf of it.
+		//
+		// Two identities are shown nothing at all: one with nothing printable
+		// in it (`you` is ""), and one whose text reads as the unattributed
+		// key itself. The row under that key holds every run of the window that
+		// recorded no launcher, so it is nobody's own figures.
 		own := you
 		if own == userstats.UnknownUser {
 			own = ""
 		}
-		read.runs = slices.DeleteFunc(read.runs, func(r userstats.Run) bool { return own == "" || r.User != own })
+		read.runs = slices.DeleteFunc(read.runs, func(r userStatsRecorded) bool { return own == "" || r.recorded != me })
 	}
-	res := userstats.Aggregate(read.runs)
+	res := userstats.Aggregate(userStatsRuns(read.runs))
 	return writeUserStats(cmd.OutOrStdout(), userStatsDoc{
 		Project:    env.lc.Name,
 		By:         userStatsByUser,
@@ -286,11 +297,30 @@ const (
 	userStatsViewOwn = "own"
 )
 
+// userStatsRecorded is one run as the window read it: the aggregation's own
+// view of it, and the launcher text its launch.json recorded -- the raw text,
+// which is what a caller's private view is filtered by and what the
+// aggregation never receives. Two of them can be one row and are still two
+// launchers.
+type userStatsRecorded struct {
+	run      userstats.Run
+	recorded string
+}
+
+// userStatsRuns is the aggregation's view of the window's runs.
+func userStatsRuns(seen []userStatsRecorded) []userstats.Run {
+	runs := make([]userstats.Run, len(seen))
+	for i, s := range seen {
+		runs[i] = s.run
+	}
+	return runs
+}
+
 // userStatsRead is one bounded read of the window's run records.
 type userStatsRead struct {
 	// runs are the records the window held, mapped to the aggregation's own
 	// view of a run.
-	runs []userstats.Run
+	runs []userStatsRecorded
 	// unlaunched counts the runs of the window that were neither launched
 	// nor recorded: they never started and no figure counts them.
 	unlaunched int
@@ -390,7 +420,8 @@ func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since
 	return read, nil
 }
 
-// userStatsRun is the aggregation's view of one run's two objects.
+// userStatsRun is the aggregation's view of one run's two objects, and the
+// launcher text the run recorded beside it.
 //
 // The identity is read from launch.json alone: a run whose task names a
 // requester but whose launch recorded nobody is 'unknown', because the rule
@@ -401,11 +432,12 @@ func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since
 // model figure, and it cannot say whether that figure counted toward a cap or
 // was a subscription's notional one, which is exactly the difference this
 // command publishes. It is counted among the runs and in no money column.
-func userStatsRun(l *runstore.Launch, rec *runstore.Record) userstats.Run {
-	r := userstats.Run{User: userstats.IdentityOf(launcherRecorded(l))}
+func userStatsRun(l *runstore.Launch, rec *runstore.Record) userStatsRecorded {
+	recorded := launcherRecorded(l)
+	r := userstats.Run{User: userstats.IdentityOf(recorded)}
 	if rec == nil {
 		r.NoRecord = true
-		return r
+		return userStatsRecorded{run: r, recorded: recorded}
 	}
 	r.Status = string(rec.Status)
 	if rec.Cost != nil {
@@ -416,7 +448,7 @@ func userStatsRun(l *runstore.Launch, rec *runstore.Record) userstats.Run {
 			r.CountedUSD, r.CountedCost = rec.Cost.ModelUSD, true
 		}
 	}
-	return r
+	return userStatsRecorded{run: r, recorded: recorded}
 }
 
 // launcherRecorded is what a run's launch.json says about who started it, ""

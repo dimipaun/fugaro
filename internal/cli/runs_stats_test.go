@@ -446,6 +446,41 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 		}
 	})
 
+	t.Run("a key two people share is not a person's own", func(t *testing.T) {
+		f := newCloudFixture(t)
+		// Two launchers whose identities differ by one character the
+		// sanitising drops, so the table keys them alike: this is the
+		// collision the cap is documented for, reached the other way. The
+		// caller's private view is the runs their own identity recorded --
+		// what runs ls --mine means by "your own" -- so the other person's
+		// run is not in it, however the row they share is keyed.
+		userStatsPlace(t, f, "alice@example.com", []string{"user:alice@example.com"}, nil)
+		twin := "ali​ce@example.com"
+		seedUserRun(t, f, userStatsID(day, 0), "alice@example.com", userRec(runstore.StatusSucceeded, 1.00, runstore.BasisAPIList))
+		seedUserRun(t, f, userStatsID(day, 1), twin, userRec(runstore.StatusSucceeded, 2.00, runstore.BasisAPIList))
+
+		own := runsStats(t)
+		if own.View != "own" {
+			t.Fatalf("view = %q, want the private one", own.View)
+		}
+		if len(own.Rows) != 1 || own.Rows[0].User != "alice@example.com" {
+			t.Fatalf("the caller's own view = %+v, want the one key the two share", own.Rows)
+		}
+		if got := own.Rows[0]; got.Runs != 1 || got.CountedUSD != 1.00 {
+			t.Errorf("the caller's own row = %+v, want their own run alone: %q sanitises to the "+
+				"same key as %q, and a key is not a person", got, safetext.Field(twin), "alice@example.com")
+		}
+		if own.You != own.Rows[0].User {
+			t.Errorf("you = %q, the row key = %q", own.You, own.Rows[0].User)
+		}
+		// The full table still shows the merged row, under the key the two
+		// sanitise to -- a collision the table cannot split, and says so about.
+		all := runsStats(t, "--all-users")
+		if len(all.Rows) != 1 || all.Rows[0].Runs != 2 || all.Rows[0].CountedUSD != 3.00 {
+			t.Errorf("--all-users rows = %+v, want both runs under the one key", all.Rows)
+		}
+	})
+
 	t.Run("an identity that is no key of its own is shown no row", func(t *testing.T) {
 		// The unattributed row is keyed by the word 'unknown', and a caller
 		// whose own identity sanitises to that same word is not that row's

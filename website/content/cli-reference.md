@@ -2249,9 +2249,14 @@ person's -- so it is not shown as the caller's own either, and the table says
 which of the two it is.
 
 The launcher text is what a launcher wrote and is read for nothing else: it is
-sanitised and size-capped before it is printed, and nothing is authorised,
-admitted or filtered by it. Two identities that differ only past the cap are one
-row.
+sanitised and size-capped before it is printed, and it authorises and admits
+nothing. Two identities that differ only in what the sanitising drops -- an
+invisible character a paste left in one of them, say -- or only past the cap are
+one key and one row: the row is the key, not the person. A private view is not
+read off that key. It holds the runs whose launch recorded your identity itself,
+compared as runs ls --mine compares it, so someone whose identity merely
+sanitises to the same text is never counted in it and your own row can be
+smaller than that key's row in the full table.
 
 A window can hold every run of every repository in the bucket, so the read is
 bounded: at most --max-runs records are read per call, newest first, and a window

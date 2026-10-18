@@ -552,7 +552,7 @@ console parses the human line, pinned by a test against the real output
 
 **Command:** `internal/cli/runs_stats.go` `newRunsStatsCmd` / `runRunsStats`.
 **Document:** `userStatsDoc` (`runs_stats.go:69`), indented (`writeUserStats`,
-`runs_stats.go:433`). This is the one command in this document the console
+`runs_stats.go:465`). This is the one command in this document the console
 **does not spawn yet**: it is the data behind the Spend screen's by-person
 view (CLI 0.9.0), and the section is here so the screen that follows has a
 shape read off the code rather than assumed from a design. It is read-only —
@@ -576,13 +576,22 @@ there is no write path behind it and no counter a screen has to reconcile.
 | `unlaunched` | int | no | runs in the window with neither a launch nor a record (never launched, cancelled before launch, or a stale claim). They never started: they are in no row and no total. It is the window's count, over everyone's runs, so it is **not** the caller's own in the `"own"` view any more than `truncated` is |
 | `notes` | `[]string` | no | the lines the human table prints before and after its own: whose numbers these are, what the money counts, and what the read left out. The document and the table say the same things |
 
-**The `"own"` view filters a read that is not its own.** `truncated` and
-`unlaunched` are the read's, computed over everyone's runs in the window
-before the caller's row is picked out of it — they are counts of runs, and a
-run that never launched has no launcher to attribute. So in `"own"` a screen
-reads them as facts about the window, not about the person: a truncated
-private view may cover fewer of the caller's runs than `max_runs`, and
-`unlaunched` is not a count of runs they started. `"own"` with `rows: []` is
+**The `"own"` view filters a read that is not its own.** It holds the runs
+whose `launch.json` recorded the caller's own identity — the recorded text
+itself, compared the way `runs ls --mine` compares it — rather than every run
+under the key `you` names. The two differ when a key is shared: identities
+that sanitise to the same text are one row, and the other person's runs are
+not the caller's own, so a row in `"own"` can be smaller than the same key's
+row with `--all-users`. The row a private view does show is keyed by `you`,
+since every run in it recorded the caller's identity and that identity's key
+is `you`.
+
+`truncated` and `unlaunched` are the read's, computed over everyone's runs in
+the window before the caller's row is picked out of it — they are counts of
+runs, and a run that never launched has no launcher to attribute. So in
+`"own"` a screen reads them as facts about the window, not about the person: a
+truncated private view may cover fewer of the caller's runs than `max_runs`,
+and `unlaunched` is not a count of runs they started. `"own"` with `rows: []` is
 likewise a state of its own, not an error: a window the caller started nothing
 in, or a caller whose identity has no key of its own — nothing printable in
 it, or a text that reads as `"unknown"` itself. The unattributed row is every
@@ -590,15 +599,15 @@ run of the window that recorded no launcher, so it is never shown as a
 person's own; the human output says so in a note, and `--all-users` still
 shows it with everyone else's.
 
-`userstats.Row` (`internal/userstats/userstats.go:135`) is the group shape
+`userstats.Row` (`internal/userstats/userstats.go:140`) is the group shape
 behind **both** `rows` and `totals`; the counts are an embedded `Counts`
-(`userstats.go:116`), so they are flattened into the same object on the wire.
+(`userstats.go:121`), so they are flattened into the same object on the wire.
 **The counts add up**, which is how a screen reads the shape:
 `runs == succeeded + failed + halted + infra_error + other + no_record`.
 
 | Field | Type | omitempty | Note |
 |---|---|---|---|
-| `user` | string | no | the launcher the run's own `launch.json` recorded, sanitised to one printable line and capped at 128 runes; `"unknown"` (report's `budget.UnknownPerson` spelling) when the run recorded none — never guessed from the task, the record or the account it ran under. **Untrusted display text**: a service account or a CI identity is a row like a person's, and nothing is authorised by this string |
+| `user` | string | no | the launcher the run's own `launch.json` recorded, sanitised to one printable line and capped at 128 runes; `"unknown"` (report's `budget.UnknownPerson` spelling) when the run recorded none — never guessed from the task, the record or the account it ran under. **Untrusted display text**: a service account or a CI identity is a row like a person's, and nothing is authorised by this string. **Two identities that sanitise to the same text share a row**: the 128-rune cap is one way to the collision and characters the sanitising drops (`alice` and `alice` + U+200B) the other, so a row is a key rather than a person. The `"own"` view does not follow the key — see the note below |
 | `currency` | string | no | the unit the money columns are in; `"USD"` today (`CurrencyUSD`) |
 | `runs` | int | no | every run of the group in the window, averaged or not |
 | `succeeded`, `failed`, `halted`, `infra_error` | int | no | the four settled statuses, spelled as `result.json` spells them |
@@ -609,7 +618,7 @@ behind **both** `rows` and `totals`; the counts are an embedded `Counts`
 | `counted_runs` | int | no | the sample `avg_counted_usd` is over: the runs whose record settled a real-dollar cost. Published because an average without its sample is a figure a reader cannot weigh |
 | `avg_counted_usd` | float64 | no | `counted_usd / counted_runs`, rounded to the cent; `0` with `counted_runs` `0`, which is *unavailable* ("no run to average"), not `$0.00 a run` |
 
-**Flags** (`runs_stats.go:174`): `--by`, `--repo`, `--all`, `--since`,
+**Flags** (`runs_stats.go:179`): `--by`, `--repo`, `--all`, `--since`,
 `--max-runs`, `--all-users`, `--json`, plus the cloud flags.
 
 ## 7. The seven CLI gaps, settled against the code

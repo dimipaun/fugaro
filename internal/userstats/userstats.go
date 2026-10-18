@@ -15,7 +15,12 @@
 //   - The key is untrusted text a launcher wrote, so it is sanitised
 //     (safetext.Field) and capped (MaxIdentityRunes) before it can reach a
 //     row. It is display text and nothing else: nothing here authorises or
-//     admits anything by it.
+//     admits anything by it. Two identities that differ only in what the
+//     sanitising drops, or only past the cap, are one key and one row: the
+//     collision belongs to the key, and this package cannot split it, the text
+//     being all it is given. A caller's own view is the runs whose launch
+//     recorded the caller -- the raw text, matched where the records are read --
+//     and never the key's whole row.
 //   - Dollars are never added across currencies: a row and a total are one
 //     (user, currency) pair, and a run recorded in another currency is a row
 //     of its own rather than a figure in these totals.
