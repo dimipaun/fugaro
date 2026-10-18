@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -134,6 +135,132 @@ func TestWorkflowFiles(t *testing.T) {
 	}
 	if want := []string{".github/workflows/a.yaml", ".github/workflows/b.yml"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("WorkflowFiles = %v, want %v", got, want)
+	}
+}
+
+// A change is a difference in content, mode or existence against the base:
+// editing, deleting and adding are all this run's, and so is a file moved
+// into the directory (git reports no rename here, only the add).
+func TestWorkflowFilesSeesEveryKindOfChange(t *testing.T) {
+	cases := []struct {
+		name  string
+		apply func(t *testing.T, repo *Repo)
+		want  []string
+	}{
+		{"edited", func(t *testing.T, repo *Repo) {
+			testutil.WriteFiles(t, repo.Dir, map[string]string{".github/workflows/ci.yml": "on: pull_request\n"})
+			if _, err := repo.CommitAll(ctx, "edit"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/ci.yml"}},
+		{"deleted", func(t *testing.T, repo *Repo) {
+			if err := os.Remove(filepath.Join(repo.Dir, ".github", "workflows", "ci.yml")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.CommitAll(ctx, "delete"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/ci.yml"}},
+		{"added", func(t *testing.T, repo *Repo) {
+			testutil.WriteFiles(t, repo.Dir, map[string]string{".github/workflows/new.yml": "on: push\n"})
+			if _, err := repo.CommitAll(ctx, "add"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/new.yml"}},
+		{"renamed in", func(t *testing.T, repo *Repo) {
+			testutil.Git(t, repo.Dir, "mv", "pipeline.yml", ".github/workflows/pipeline.yml")
+			if _, err := repo.CommitAll(ctx, "move it in"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/pipeline.yml"}},
+		{"a file swapped for a symlink", func(t *testing.T, repo *Repo) {
+			if err := os.Remove(filepath.Join(repo.Dir, ".github", "workflows", "ci.yml")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("../evil.yml", filepath.Join(repo.Dir, ".github", "workflows", "ci.yml")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.CommitAll(ctx, "swap"); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{".github/workflows/ci.yml"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo, _ := setup(t)
+			if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+				t.Fatal(err)
+			}
+			testutil.WriteFiles(t, repo.Dir, map[string]string{"pipeline.yml": "steps:\n", ".github/workflows/ci.yml": "on: push\n"})
+			if _, err := repo.CommitAll(ctx, "a person's CI"); err != nil {
+				t.Fatal(err)
+			}
+			base, err := repo.HeadSHA(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := repo.WorkflowFiles(ctx, base); err != nil || len(got) != 0 {
+				t.Fatalf("before the change: %v, %v", got, err)
+			}
+			c.apply(t, repo)
+			got, err := repo.WorkflowFiles(ctx, base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Fatalf("WorkflowFiles = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// The directory itself, swapped for a symlink or for a submodule (a
+// gitlink), is a change too: it takes .github/workflows/ and everything
+// under it out of the tree the push would land. A pathspec with a trailing
+// slash hides a symlink entirely, and a name-prefix filter drops the path.
+func TestWorkflowFilesSeesTheDirectoryItself(t *testing.T) {
+	cases := []struct {
+		name    string
+		replace func(t *testing.T, repo *Repo)
+	}{
+		{"symlink", func(t *testing.T, repo *Repo) {
+			if err := os.MkdirAll(filepath.Join(repo.Dir, ".github"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("../evil", filepath.Join(repo.Dir, ".github", "workflows")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.CommitAll(ctx, "symlink it"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"gitlink", func(t *testing.T, repo *Repo) {
+			// A submodule standing where the directory was, staged by
+			// hand: git add would demand a .gitmodules entry for it.
+			testutil.Git(t, repo.Dir, "update-index", "--add", "--cacheinfo",
+				"160000,1111111111111111111111111111111111111111,.github/workflows")
+			testutil.Git(t, repo.Dir, "commit", "--quiet", "-m", "a gitlink")
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo, _ := setup(t)
+			if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+				t.Fatal(err)
+			}
+			base, err := repo.HeadSHA(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.replace(t, repo)
+			got, err := repo.WorkflowFiles(ctx, base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Contains(got, workflowRoot) {
+				t.Fatalf("WorkflowFiles = %v, want it to name %s", got, workflowRoot)
+			}
+		})
 	}
 }
 

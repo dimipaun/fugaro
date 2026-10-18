@@ -117,6 +117,15 @@ func classified(err error) error {
 // guards exactly this directory at the repository root.
 const WorkflowDir = ".github/workflows/"
 
+// workflowRoot is WorkflowDir as a path, for the pathspec and the filter
+// that name it: no trailing slash, so a change *at* the directory — a
+// symlink or a submodule (a gitlink) standing where it was, which takes
+// the directory and everything under it out of the tree — is reported too.
+// A trailing-slash pathspec leaves a symlink out (git resolves it as a
+// directory only in the revision it is asked about), and the name filter
+// below, which wants the slash, would drop the path anyway.
+const workflowRoot = ".github/workflows"
+
 // The check is the net diff since the merge base, which has two blind
 // spots, both left to GitHub's own refusal: a follow-up that rebases
 // commits from before its start can attribute a person's workflow commit
@@ -145,13 +154,13 @@ func (r *Repo) WorkflowFilesIn(ctx context.Context, since, until string) ([]stri
 }
 
 func (r *Repo) workflowFilesIn(ctx context.Context, since, until string) ([]string, error) {
-	out, err := r.gitRaw(ctx, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--end-of-options", since+"..."+until, "--", WorkflowDir)
+	out, err := r.gitRaw(ctx, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--end-of-options", since+"..."+until, "--", workflowRoot)
 	if err != nil {
 		return nil, err
 	}
 	var files []string
 	for _, f := range strings.Split(string(out), "\x00") {
-		if strings.HasPrefix(f, WorkflowDir) {
+		if f == workflowRoot || strings.HasPrefix(f, WorkflowDir) {
 			files = append(files, f)
 		}
 	}
