@@ -246,12 +246,16 @@ interface Screen {
 /** screen reads the mounted screen out of the page. */
 function screen(page: Page): Promise<Screen> {
   return page.evaluate(() => {
+    // The window's own entry draws the real dashboard into the same document
+    // (Task 3.4c), beside this spec's mount: every reading is taken inside the
+    // mount, so the entry's drawing can neither satisfy nor fail an assertion.
+    const scope: ParentNode = document.getElementById('run-mount') ?? document.createDocumentFragment()
     const all = (selector: string, within?: Element): HTMLElement[] =>
-      Array.from((within ?? document).querySelectorAll<HTMLElement>(selector))
+      Array.from((within ?? scope).querySelectorAll<HTMLElement>(selector))
     const text = (selector: string): string => all(selector)[0]?.textContent ?? ''
     const texts = (selector: string): string[] => all(selector).map((one) => one.textContent ?? '')
     return {
-      theme: document.querySelector('.run')?.getAttribute('data-theme') ?? null,
+      theme: scope.querySelector('.run')?.getAttribute('data-theme') ?? null,
       runId: text('.run-id'),
       status: text('.run-status'),
       flags: text('.run-flags'),

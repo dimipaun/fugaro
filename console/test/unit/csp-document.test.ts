@@ -84,6 +84,13 @@ function metaPolicy(document: string): string | null {
   return match?.[1] ?? null
 }
 
+/** bodyMarkup is a document's `<body>` contents -- comments removed, like every
+ * other structural claim here -- or `null` when it has no body element. */
+function bodyMarkup(document: string): string | null {
+  const match = /<body[^>]*>([\s\S]*)<\/body>/i.exec(markup(document))
+  return match === null ? null : (match[1] ?? '').trim()
+}
+
 /** scriptElements is every `<script ...>` opening tag of a document's markup. */
 function scriptElements(document: string): readonly string[] {
   return [...markup(document).matchAll(/<script\b[^>]*>/gi)].map((match) => match[0])
@@ -167,6 +174,20 @@ describe('the served documents', () => {
     // and its own surface, and the dashboard's screens are not on it.
     expect(markup(served('installations.html'))).not.toContain('console.js')
     expect(builtListing('bundle')).toContain('installations.js')
+  })
+
+  it('leave the dashboard document nothing of its own to draw', () => {
+    // The entry draws the whole window (Task 3.4c): the installation header, the
+    // navigation and the panel are appended to the document's body by the one
+    // script it loads. Task 1.1's placeholder -- "The console's window is up. It
+    // has no data yet." -- was true of the empty frame and became false the day
+    // the entry mounted Live, so a document that kept it would print a second
+    // `<h1>` and a false sentence above the figures on every run.
+    expect(bodyMarkup(served('index.html'))).toBe('')
+    // The non-vacuity guard, and the boundary of the claim: the refusal document
+    // *is* a drawing -- it is the whole of what a refused console shows -- so a
+    // helper that read no body at all would have to fail here.
+    expect(bodyMarkup(served('refusal.html'))).not.toBe('')
   })
 
   it('give the refusal document no script at all', () => {

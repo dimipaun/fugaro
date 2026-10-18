@@ -242,19 +242,23 @@ interface Drawn {
 /** drawn reads the mounted screen out of the page. */
 function drawn(page: Page): Promise<Drawn> {
   return page.evaluate(() => {
+    // The window's own entry draws the real dashboard into the same document
+    // (Task 3.4c), beside this spec's mount: every reading is taken inside the
+    // mount, so the entry's drawing can neither satisfy nor fail an assertion.
+    const scope: ParentNode = document.getElementById('console-mount') ?? document.createDocumentFragment()
     const all = (selector: string): HTMLElement[] =>
-      Array.from(document.querySelectorAll<HTMLElement>(selector))
-    const root = document.querySelector('#console-mount > section')
+      Array.from(scope.querySelectorAll<HTMLElement>(selector))
+    const root = scope.querySelector('#console-mount > section')
     return {
       mode: root?.getAttribute('data-mode') ?? null,
       skew: root?.getAttribute('data-skew') ?? null,
       theme: root?.getAttribute('data-theme') ?? null,
-      headline: document.querySelector('.skew-headline')?.textContent ?? null,
-      sentence: document.querySelector('.skew-sentence')?.textContent ?? null,
-      consoleVersion: document.querySelector('.skew-console-version')?.textContent ?? null,
-      cliVersion: document.querySelector('.skew-cli-version')?.textContent ?? null,
-      consoleLabel: document.querySelector('.skew-console-label')?.textContent ?? null,
-      cliLabel: document.querySelector('.skew-cli-label')?.textContent ?? null,
+      headline: scope.querySelector('.skew-headline')?.textContent ?? null,
+      sentence: scope.querySelector('.skew-sentence')?.textContent ?? null,
+      consoleVersion: scope.querySelector('.skew-console-version')?.textContent ?? null,
+      cliVersion: scope.querySelector('.skew-cli-version')?.textContent ?? null,
+      consoleLabel: scope.querySelector('.skew-console-label')?.textContent ?? null,
+      cliLabel: scope.querySelector('.skew-cli-label')?.textContent ?? null,
       hidden: all('.skew-hidden').map((one) => one.getAttribute('data-hidden')),
       hiddenWords: all('.skew-hidden').map((one) => one.textContent ?? ''),
       sections: all('#console-mount > section').length,

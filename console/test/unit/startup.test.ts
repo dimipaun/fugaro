@@ -864,6 +864,42 @@ describe('the entry point is wired to the handshake', () => {
     expect(indexSource).not.toMatch(/let startup\b/)
   })
 
+  it('stops the child the console started before the process quits', () => {
+    // The one long-lived child this app has is the Live screen's `fugaro watch`,
+    // started through the source bound to the active installation. Nothing else
+    // stops it: the menu's Quit is Electron's own `role: 'quit'` and
+    // `window-all-closed` only calls `app.quit()`, so without a `before-quit`
+    // that closes the bound source the child outlives the app that started it --
+    // which is the opposite of what `forget` protects (an installation the
+    // console no longer shows leaves nothing running) and of why every spawn is
+    // written to the spawn log. `CliSource.close()` is bounded (SIGTERM, then
+    // SIGKILL after the shutdown grace), so the quit can wait for it.
+    const quit = /app\.on\('before-quit'[\s\S]*?\n\}\)/.exec(indexSource)?.[0] ?? ''
+    expect(quit, 'the entry point registers no before-quit handler').not.toBe('')
+    // The order is the claim: hold the quit back, close what the console
+    // started, then let it through. A handler that quit first would leave the
+    // close racing the process exit.
+    expect(quit).toContain('event.preventDefault()')
+    expect(quit).toContain('app.quit()')
+    // The call however it is laid out -- the close is chained onto its own
+    // lines -- and in that order: held back, closed, then through.
+    const closedAt = quit.search(/boundSource\s*\.\s*close\(\)/)
+    expect(closedAt, 'the handler does not close the bound source').toBeGreaterThan(-1)
+    expect(quit.indexOf('preventDefault')).toBeLessThan(closedAt)
+    expect(closedAt).toBeLessThan(quit.indexOf('app.quit()'))
+    // And it holds the quit back exactly once: the `app.quit()` above comes back
+    // through this handler, so one that prevented every `before-quit` would quit
+    // nothing at all.
+    expect(quit).toMatch(/if \(closing\) return/)
+
+    // The fatal path is the other way out of this process, and `app.exit` fires
+    // no `before-quit`: a failed switch or `activate` would leave the same child
+    // running. It closes the source too, and the exit code is unchanged.
+    const fatal = bodyOf('function reportAndQuit(')
+    expect(fatal).toMatch(/boundSource\s*\.\s*close\(\)/)
+    expect(fatal).toContain('app.exit(1)')
+  })
+
   it('runs the startup from main, after the bundle is served exactly once', () => {
     const main = /async function main\(\)[\s\S]*?\n}/.exec(indexSource)?.[0] ?? ''
     expect(main).toContain('serveBundle()')
@@ -979,14 +1015,20 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     expect(indexSource).not.toContain('src/renderer')
   })
 
-  it('drives nothing: every read of the CLI refuses, and no spawn is reachable', () => {
-    // Step 3's subject -- the installation picker -- is Task 3.4b's, so this
-    // console has no installation and every operation that would read one
-    // answers `NO_ACTIVE_INSTALLATION`. The assertions are the source's own: the
-    // constant is used, the sentence is composed from it, and nothing in the
-    // file could start a child.
-    expect(indexSource).toContain('NO_ACTIVE_INSTALLATION')
-    expect(indexSource).toContain('noInstallation(')
+  it('binds the surface to the active installation, and starts no child of its own', () => {
+    // Task 3.4c's subject. Until it landed this file held a source that refused
+    // every read; now the surface is `createBoundSource`, whose reads resolve
+    // the installation the picker made active and build the one `CliSource` for
+    // it. What is still true, and is what this test is for: **the entry point
+    // starts no child itself**. It names no spawn, and the one binary it
+    // resolves is the handshake's -- everything else goes through the source,
+    // where `src/source/cli.ts` is the only place a process is created.
+    expect(indexSource).toContain('createBoundSource(')
+    // The installation is read at message time, from the picker, and the
+    // binding is what turns it into the source's target: a file that read the
+    // picker once and cached the answer would keep driving an installation the
+    // operator has since replaced.
+    expect(indexSource).toContain('installation: activeBinding')
     expect(indexSource).not.toContain('child_process')
     expect(indexSource).not.toContain('spawn(')
     // The one resolution in the file is the handshake's, and it is the only
@@ -997,6 +1039,14 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     // The kill switch has no operation of its own (C10), so nothing here names
     // one: the field travels inside `live.watch`.
     expect(indexSource).not.toContain('budget.kill')
+    // And no code is injected into the window. The screens are drawn by the one
+    // bundle the document loads (design section 5.1 rule 1: `script-src 'self'`,
+    // no inline script), and `executeJavaScript` is the other way a main process
+    // draws -- one that would put the console's own text into the page outside
+    // the document's policy and outside the preload's frozen surface. The e2e
+    // reads the window for the same claim from the other side (one `<script>`,
+    // and the Live screen's rows drawn by it).
+    expect(indexSource).not.toContain('executeJavaScript')
   })
 
   // The two Task 3.4b cases that stood here were greps of this file's text

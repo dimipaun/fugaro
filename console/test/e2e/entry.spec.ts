@@ -31,9 +31,17 @@
 //   - **a reduced console loads the dashboard, draws the banner, and refuses a
 //     withheld read** with the console's own sentence -- over real IPC, through
 //     the real preload, in a real window.
-//   - **the spawn log holds `version` reads and nothing else.** The log is the
-//     one place a spawn that should not have happened is visible, and this task
-//     makes the console drive no CLI at all, so the log is the evidence for it.
+//   - **the spawn log holds the handshake and the live watch, and no other
+//     read.** The log is the one place a spawn that should not have happened is
+//     visible, and since Task 3.4c the console makes exactly two: the
+//     handshake's own `version` probe, and the Live screen's `watch --json`,
+//     planned with the chosen installation's binary and `--project`. A refused
+//     console mounts nothing, so its log is the probe alone.
+//   - **the Live screen draws the synthetic recording.** The whole chain in one
+//     window: the entry mounts Live, the poll asks `live.watch`, the main
+//     process spawns the installation's own `fugaro watch --json`, and the
+//     fixture's repository and runs appear in the page -- drawn by the one
+//     script the document loaded, with no code injected into the window.
 //
 // **The premise (Task 3.4b; review S3).** Every launch here runs against a
 // scratch `--user-data-dir` seeded with one **active installation naming the
@@ -44,9 +52,13 @@
 // asserts nothing that depends on which `fugaro` the machine resolves.
 //
 // Nothing here reaches the network and nothing here starts a child that the
-// console's own read would not have started: the stub answers `version` and
-// refuses every other argv, so a console that asked it for anything else fails
-// here rather than passing on an answer it should not have been able to get.
+// console's own read would not have started: the stub answers `version`, and
+// answers `watch`/`doctor` **only** for the seeded project -- any other argv
+// exits 2 -- so a console that asked it for something else, or asked for the
+// right thing about the wrong project, fails here rather than passing on an
+// answer it should not have been able to get. `watch` prints
+// `test/fixtures/synthetic.ndjson`, so what the Live screen draws is a committed
+// recording rather than a shape invented in the spec.
 
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -173,6 +185,8 @@ function pageShape(page: Page): Promise<{
   mode: string | null
   bannerHeadline: string | null
   hiddenViews: readonly string[]
+  bodyChildren: readonly string[]
+  bodyText: string
 }> {
   return page.evaluate(() => {
     const bridge = (window as unknown as { fugaro?: Record<string, unknown> }).fugaro
@@ -197,6 +211,13 @@ function pageShape(page: Page): Promise<{
       hiddenViews: [...document.querySelectorAll('li.skew-hidden')].map(
         (element) => element.getAttribute('data-hidden') ?? '',
       ),
+      // What the document's body holds, which is the entry's own drawing and
+      // nothing else: the placeholder Task 1.1's document carried would be a
+      // child here that no screen of this console draws.
+      bodyChildren: [...document.body.children].map(
+        (element) => element.getAttribute('class') ?? element.tagName.toLowerCase(),
+      ),
+      bodyText: document.body.textContent ?? '',
     }
   })
 }
@@ -376,8 +397,12 @@ test.describe('the renderer entry, in the real window', () => {
       expect(shape.scripts).toEqual([])
       expect(shape.bridgeKeys).toEqual([])
       expect(shape.globals['require']).toBe('undefined')
-      // And no record of a read of the surface: see the next test for the log
-      // itself, which is asserted once for every mode at the end.
+      // **And the log holds no read.** A refused console drives nothing: the
+      // handshake's own `version` probe is the one spawn, and no screen's read
+      // follows it (Task 3.4c -- a console that mounted a screen here would
+      // have to read through a source it never built).
+      const records = launched.records()
+      expect(records.map((record) => record.argv.slice(1))).toEqual([['version']])
     } finally {
       await close(launched)
     }
@@ -409,23 +434,12 @@ test.describe('the renderer entry, in the real window', () => {
       })) as { readonly ok: boolean; readonly reason?: string }
       expect(spend).toEqual({ ok: false, reason: REDUCED_REFUSAL })
       // The live feed is *not* withheld (design C10): the kill-switch fields
-      // arrive inside it, so its refusal is the no-installation one and not the
-      // reduced one. `live.watch` never returns for this console -- there is no
-      // installation until 3.4b -- so the call is made and its answer read, which
-      // is exactly the point: the operation is *reachable* in a reduced mode, and
-      // what refused it is the source (`activeSource` in `src/main/index.ts`),
-      // named here so a gate that had swallowed it would fail this rather than
-      // pass on a different refusal.
-      //
-      // **The string pinned is the whole sentence, both halves of it.**
-      // `noInstallation` throws `` `${NO_ACTIVE_INSTALLATION}: ${operation} has
-      // nothing to read` ``, and `dispatch`/`replyReason` pass that message
-      // through verbatim, so the reply is the constant *plus* the source's own
-      // suffix naming the operation it refused. `toContain(NO_ACTIVE_INSTALLATION)`
-      // alone would also pass for an answer that merely quoted the constant --
-      // the suffix is what says this refusal came from the read that was asked
-      // for -- so the suffix is written out, and a reworded suffix fails here
-      // rather than quietly weakening the claim.
+      // arrive inside it, so a reduced console still reads it. Since Task 3.4c
+      // the main process binds a real source to the active installation, so the
+      // read reaches the stub's own `watch` and answers with a document -- and
+      // that is the claim: the operation is *reachable* in a reduced mode, and
+      // what answered it was the installation's `fugaro` and not a gate that had
+      // swallowed the read.
       const live = (await launched.page.evaluate(async () => {
         const api = (
           window as unknown as {
@@ -433,11 +447,33 @@ test.describe('the renderer entry, in the real window', () => {
           }
         ).fugaro
         return await api.subscribeLive({})
-      })) as { readonly ok: boolean; readonly reason?: string }
-      expect(live.ok).toBe(false)
-      expect(live.reason, 'live.watch must not be withheld by the reduced mode').toBe(
-        `${NO_ACTIVE_INSTALLATION}: live.watch has nothing to read`,
+      })) as { readonly ok: boolean; readonly reason?: string; readonly data?: unknown }
+      expect(live.ok, `live.watch was refused in a reduced mode: ${String(live.reason)}`).toBe(true)
+      expect(live.reason, 'live.watch must not be withheld by the reduced mode').toBeUndefined()
+      const snapshot = live.data as {
+        readonly document?: { readonly repos?: readonly { readonly repo: string }[] }
+        readonly receivedAt?: unknown
+      }
+      // The committed synthetic frame, which is what the stub's `watch` prints.
+      expect(snapshot.document?.repos?.[0]?.repo, 'the live snapshot carries no document').toBe(
+        'r-4c25cf20/r-f1aa9214',
       )
+      expect(typeof snapshot.receivedAt, 'the snapshot carries no arrival stamp').toBe('string')
+
+      // And the navigation offers Live alone: Spend is the withheld view, and
+      // Projects is the `caps` view, which this mode withholds with it. A Spend
+      // entry here would be a door to a screen whose read the gate refuses.
+      const nav = await launched.page.evaluate(() =>
+        [...document.querySelectorAll('nav.console-views button.console-view')].map((button) =>
+          button.getAttribute('data-view'),
+        ),
+      )
+      expect(nav).toEqual(['live'])
+      // And nothing behind the withheld views was read: the spawn log holds the
+      // handshake's `version` and the live `watch`, and no `report`.
+      const reducedLog = launched.records()
+      expect(reducedLog.filter((record) => record.argv.includes('report'))).toEqual([])
+      expect(reducedLog.filter((record) => record.argv.includes('budget'))).toEqual([])
       // The header's read says reduced too, with the version the startup
       // handshake read -- never a default `ok` (review S1) -- and the dashboard
       // draws it.
@@ -477,12 +513,14 @@ test.describe('the renderer entry, in the real window', () => {
     }
   })
 
-  test('the spawn log holds the version read and nothing else, in every mode', async () => {
-    // Task 3.4a drives no CLI at all (D13's picker is 3.4b), so the only spawn
-    // this console makes is the handshake's own `version` read. The log is the
-    // evidence: one line per child, and every line's argv is a bare `version`.
-    // A console that reached for a `report` or a `watch` -- or one that let a
-    // screen's read through -- writes it here, where this test sees it.
+  test('the spawn log holds the handshake and the live watch, and no other read, in every mode', async () => {
+    // The log is the evidence for what this console drives, and it is read in
+    // all three modes. Since Task 3.4c there are exactly two spawns a healthy
+    // console makes: the handshake's own `version` probe, and the Live screen's
+    // `watch --json` -- which the bound source plans with the installation's
+    // `--project` and the installation's binary. A `report`, a `budget`, a
+    // `runs` or a `diagnose` here is a read some screen made that it should not
+    // have, and this is where it is seen.
     for (const [version, mode] of [
       [CLI_VERSION_BUILT_AGAINST, 'ok'],
       ['0.9.0', 'reduced'],
@@ -502,6 +540,27 @@ test.describe('the renderer entry, in the real window', () => {
           mode === 'refused' ? REFUSAL_ENTRY_URL : APP_ENTRY_URL,
         )
         expect(shape.mode, `the ${mode} case`).toBe(mode === 'reduced' ? 'reduced' : null)
+        // A console that refused mounts nothing, so its `watch` is not merely
+        // absent from this list -- the list is one line long.
+        const expected: readonly string[][] =
+          mode === 'refused'
+            ? [['version']]
+            : [
+                ['version'],
+                ['watch', '--json', '--project', 'e2e'],
+              ]
+        // The watch is written by the entry's *first poll*, which is a message
+        // round and a spawn behind the window's `domcontentloaded` -- so a mode
+        // that mounts waits for it rather than racing it. A mode that mounts
+        // nothing never writes one, and for that mode the wait is the loop
+        // below: one record, the probe.
+        if (mode !== 'refused') {
+          await expect
+            .poll(() => launched.records().some((record) => record.argv[1] === 'watch'), {
+              message: `${mode}: the live read never reached the spawn log`,
+            })
+            .toBe(true)
+        }
         const records = launched.records()
         expect(records.length, `${mode}: the handshake read is not in the log`).toBeGreaterThan(0)
         for (const record of records) {
@@ -511,25 +570,80 @@ test.describe('the renderer entry, in the real window', () => {
             'project',
             'ts',
           ])
-          // The argv as spawned: the binary, then `version` and nothing else.
-          // The probe fixes exactly these two (see `planFor('cli.version', ...)`
-          // in `src/main/spawn.ts`), so a third element is a channel that should
-          // not have been reachable in this task.
-          expect(record.argv, `${mode}: a spawn that is not the version read`).toHaveLength(2)
-          expect(record.argv[1], `${mode}: a spawn that is not the version read`).toBe('version')
-          // The active installation's binary and project (Task 3.4b, step 3):
-          // the bare `version` spawn records which installation it was for.
-          expect(record.argv[0], `${mode}: the handshake read another binary`).toBe(join(stub.dir, 'fugaro'))
+          // The active installation's binary (Task 3.4b, step 3) is the argv's
+          // first element in every record: the handshake's probe and the source's
+          // reads both resolve through the installation the operator chose.
+          expect(record.argv[0], `${mode}: a spawn used another binary`).toBe(join(stub.dir, 'fugaro'))
           expect(record.project, `${mode}: the spawn log lost the installation's project`).toBe('e2e')
-          for (const forbidden of ['report', 'watch', 'budget', 'kill', 'runs', 'diagnose']) {
-            expect(record.argv.join(' '), `${mode}: the console ran ${forbidden}`).not.toContain(
-              forbidden,
-            )
-          }
+          // The argv after the binary is one of the two this console plans --
+          // compared whole, so a flag added to either is a failure here rather
+          // than a substring nobody looked at.
+          expect(expected, `${mode}: the console ran ${record.argv.join(' ')}`).toContainEqual(
+            record.argv.slice(1),
+          )
         }
       } finally {
         await close(launched)
       }
+    }
+  })
+
+  test('the Live screen draws the synthetic frame, and the console injects no code to do it', async () => {
+    // The whole chain in one window: the entry mounts Live, the poll asks
+    // `live.watch`, the main process spawns the installation's own `fugaro`
+    // `watch --json`, and the stub prints the committed synthetic recording --
+    // so what the page shows is the fixture's repository and its runs, drawn by
+    // the bundle the document loaded and by nothing else.
+    stub.setVersion(CLI_VERSION_BUILT_AGAINST)
+    const launched = await launch(stub.env)
+    try {
+      const shape = await pageShape(launched.page)
+      expect(shape.url).toBe(APP_ENTRY_URL)
+      // The drawing is the document's own script's. One script element, resolved
+      // to the bundle, and no inline code: a screen that appeared because the
+      // main process had injected it would show up here as a second element or
+      // as an inline one (`src/main/index.ts` names no `executeJavaScript`, and
+      // `test/unit/startup.test.ts` holds it to that).
+      expect(shape.scripts).toHaveLength(1)
+      expect(shape.scriptUrls).toEqual([`${APP_ORIGIN}/console.js`])
+      // And the window holds the entry's drawing and nothing the document
+      // shipped: the header, the navigation and the panel, in that order. Task
+      // 1.1's placeholder -- "The console's window is up. It has no data yet." --
+      // would be a fourth child here, a second `<h1>` and a sentence this task
+      // made false, printed above the figures.
+      expect(shape.bodyChildren).toEqual(['console-installation', 'console-views', 'console-panel'])
+      expect(shape.bodyText).not.toContain('It has no data yet')
+
+      const panel = launched.page.locator('div.console-panel')
+      await expect(panel.locator('li.live-repo')).toHaveCount(1)
+      await expect(panel.locator('span.live-repo-name')).toHaveText('r-4c25cf20/r-f1aa9214')
+      // The last frame of the recording carries both runs.
+      await expect(panel.locator('li.live-run')).toHaveCount(2)
+      await expect(panel.locator('li.live-run span.live-run-id')).toHaveText([
+        '20261015-120000-aa01',
+        '20261015-120400-aa03',
+      ])
+      // The navigation, and Live as the view on screen.
+      await expect(launched.page.locator('nav.console-views button.console-view')).toHaveText([
+        'Live',
+        'Spend',
+        'Projects',
+      ])
+      await expect(
+        launched.page.locator('nav.console-views button.console-view[aria-current="true"]'),
+      ).toHaveText('Live')
+      // And the read behind that drawing is the installation's own binary and
+      // project, in the log -- not merely inferred from the screen.
+      const watch = launched
+        .records()
+        .filter((record) => record.argv[1] === 'watch')
+        .map((record) => record.argv)
+      expect(watch.length, 'the live read is not in the spawn log').toBeGreaterThan(0)
+      for (const argv of watch) {
+        expect(argv).toEqual([join(stub.dir, 'fugaro'), 'watch', '--json', '--project', 'e2e'])
+      }
+    } finally {
+      await close(launched)
     }
   })
   test('a stored binary that is gone is a refusal, never another fugaro, and the picker is still reachable (review B1)', async () => {

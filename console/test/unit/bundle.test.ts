@@ -36,7 +36,6 @@ import { createContext, runInContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 
 import { SERVED_FILES } from '../../src/main/protocol'
-import { CLI_HARD_FLOOR_VERSION, CLI_VERSION_BUILT_AGAINST, SUPPORTED_CLI_MINORS } from '../../src/shared/version'
 import {
   BundleRefusal,
   bundleRenderer,
@@ -50,6 +49,15 @@ import {
   resolveSpecifier,
 } from '../../tools/bundle-renderer/index'
 import { CONSOLE_ROOT, builtFile, builtListing, builtPath } from '../support/built'
+import {
+  FakeDocument,
+  FakeNode,
+  aReducedCompatibility,
+  anOkCompatibility,
+  everyNode,
+  recordingTimers,
+  textOf,
+} from '../support/fakeDom'
 
 /** ENTRY is the compiled entry the build walks, and OUT the file it writes. */
 const PATHS = consoleBundlePaths(CONSOLE_ROOT)
@@ -211,126 +219,10 @@ describe('the bundle', () => {
 // ---------------------------------------------------------------------------
 // The bundle, run the way the document runs it.
 // ---------------------------------------------------------------------------
-
-/**
- * FakeNode is one element of the fake document the bundle is run against, and it
- * is hostile in the two places a drawing must not reach:
- *
- *   - **the markup-parsing slots** (`innerHTML`, `outerHTML`,
- *     `insertAdjacentHTML`) throw, so a bundle that built an element from a
- *     string fails here rather than in a window (design section 5.1 rule 7);
- *   - **the navigating, styling and event attributes** throw in
- *     `setAttribute`, so a drawing cannot set `href`, an inline style or an
- *     `on*` handler even by accident. `style` is in that set because rule 3's
- *     `style-src 'self'` allows no inline style, and the theme is drawn as
- *     `data-theme` rather than as one.
- */
-class FakeNode {
-  readonly tagName: string
-  readonly children: FakeNode[] = []
-  readonly attributes = new Map<string, string>()
-  private text: string | null = null
-
-  constructor(tagName: string) {
-    this.tagName = tagName.toUpperCase()
-  }
-
-  get textContent(): string | null {
-    return this.text
-  }
-
-  set textContent(value: string | null) {
-    this.text = value
-  }
-
-  get innerHTML(): never {
-    throw new Error('the bundle read innerHTML')
-  }
-
-  set innerHTML(_value: string) {
-    throw new Error('the bundle assigned innerHTML')
-  }
-
-  get outerHTML(): never {
-    throw new Error('the bundle read outerHTML')
-  }
-
-  insertAdjacentHTML(): never {
-    throw new Error('the bundle called insertAdjacentHTML')
-  }
-
-  getAttribute(name: string): string | null {
-    return this.attributes.get(name) ?? null
-  }
-
-  setAttribute(name: string, value: string): void {
-    if (name === 'href' || name === 'src' || name === 'srcdoc' || name === 'style' || name.startsWith('on')) {
-      throw new Error(`the bundle set the ${name} attribute`)
-    }
-    this.attributes.set(name, value)
-  }
-
-  removeAttribute(name: string): void {
-    this.attributes.delete(name)
-  }
-
-  appendChild(child: FakeNode): FakeNode {
-    this.children.push(child)
-    return child
-  }
-}
-
-/** FakeDocument is the whole document the entry is given: a body to mount into
- * and a factory. Nothing else of the DOM is offered, so a bundle that reached
- * for something else fails here. */
-class FakeDocument {
-  readonly body = new FakeNode('body')
-
-  createElement(tag: string): FakeNode {
-    return new FakeNode(tag)
-  }
-}
-
-/** everyNode is the tree under a node, depth first. */
-function everyNode(node: FakeNode): readonly FakeNode[] {
-  return [node, ...node.children.flatMap((child) => everyNode(child))]
-}
-
-/** textOf is all the text drawn under a node. */
-function textOf(node: FakeNode): string {
-  return everyNode(node)
-    .map((each) => each.textContent ?? '')
-    .join('\n')
-}
-
-/** anOkCompatibility is a handshake answer in range, built from the console's
- * own constants rather than from literals a drift could leave behind. */
-function anOkCompatibility(): Record<string, unknown> {
-  return {
-    mode: 'ok',
-    skew: 'supported',
-    cliVersion: '1.2.3',
-    consoleVersion: CLI_VERSION_BUILT_AGAINST,
-    supported: [...SUPPORTED_CLI_MINORS],
-    floor: CLI_HARD_FLOOR_VERSION,
-    hidden: [],
-  }
-}
-
-/** aReducedCompatibility is the answer for a CLI newer than this console reads:
- * reduced, with all three views withheld (`hidesView` is `hidden.includes`, and
- * `compatibilityFrom` refuses a mode whose hidden list disagrees with it). */
-function aReducedCompatibility(): Record<string, unknown> {
-  return {
-    mode: 'reduced',
-    skew: 'newer',
-    cliVersion: '9.9.9',
-    consoleVersion: CLI_VERSION_BUILT_AGAINST,
-    supported: [...SUPPORTED_CLI_MINORS],
-    floor: CLI_HARD_FLOOR_VERSION,
-    hidden: ['spend', 'caps', 'kill'],
-  }
-}
+//
+// The document and the clock are `test/support/fakeDom.ts`'s, shared with
+// `entry-wiring.test.ts` so both suites drive the entry against one surface --
+// this one through the built bundle, that one through the sources.
 
 /**
  * runBundle runs the built bundle in a fresh realm, against a fresh document,
@@ -356,9 +248,10 @@ function aReducedCompatibility(): Record<string, unknown> {
 async function runBundle(
   reply: Readonly<Record<string, unknown>> | undefined,
   installation: Readonly<Record<string, unknown>> = { ok: true, data: { chosen: false, sentence: 'no installation has been chosen' } },
-): Promise<{ document: FakeDocument; asked: () => number }> {
+): Promise<{ document: FakeDocument; asked: () => number; timers: ReturnType<typeof recordingTimers> }> {
   const document = new FakeDocument()
-  const sandbox: Record<string, unknown> = { document, TextEncoder, TextDecoder, atob, btoa }
+  const timers = recordingTimers()
+  const sandbox: Record<string, unknown> = { document, TextEncoder, TextDecoder, atob, btoa, ...timers.globals }
   const context = createContext(sandbox)
   if (reply !== undefined) {
     sandbox['REPLY'] = JSON.stringify(reply)
@@ -374,23 +267,44 @@ async function runBundle(
   // The entry's first call is asynchronous (`startConsole` awaits the bridge),
   // so the drawing lands a microtask later. A macrotask is well past it.
   await new Promise((resolve) => setTimeout(resolve, 20))
-  return { document, asked: () => (sandbox['asked'] as number | undefined) ?? 0 }
+  return { document, asked: () => (sandbox['asked'] as number | undefined) ?? 0, timers }
 }
 
 describe('the bundle in a document', () => {
-  it('draws no figure for an in-range fugaro -- only the installation state -- and asks before it decides', async () => {
-    const { document, asked } = await runBundle({ ok: true, data: anOkCompatibility() })
+  it('draws no figure for an in-range fugaro -- the installation state, the navigation and a refused read -- and asks before it decides', async () => {
+    const { document, asked, timers } = await runBundle({ ok: true, data: anOkCompatibility() })
     // The non-vacuity guard: "drew no figure" is only an answer if the entry ran.
     // A bundle that threw on load, or one whose guard skipped it, draws nothing
     // too -- and this says which happened.
     expect(asked(), 'the entry never asked the bridge: nothing here was drawn or refused').toBe(1)
-    // One drawing: D13's no-installation state (Task 3.4b, step 4), naming no
-    // figure.
-    expect(document.body.children).toHaveLength(1)
+    // The three drawings of a console whose handshake is in range: D13's
+    // no-installation state (Task 3.4b, step 4), the navigation, and the panel
+    // the screens are drawn into (Task 3.4c).
+    expect(document.body.children).toHaveLength(3)
     const root = document.body.children[0] as FakeNode
     expect(root.attributes.get('class')).toBe('console-installation')
     expect(root.attributes.get('data-installation')).toBe('none')
     expect(textOf(root)).toContain('no installation has been chosen')
+    const nav = document.body.children[1] as FakeNode
+    expect(nav.attributes.get('class')).toBe('console-views')
+    expect(nav.children.map((button) => button.attributes.get('data-view'))).toEqual([
+      'live',
+      'spend',
+      'projects',
+    ])
+    // And the panel holds the Live screen's own refusal rather than a dashboard
+    // of zeros: this bridge carries the two handshake methods and **no read at
+    // all**, so the read the screen opens with is one the console could not
+    // make. `renderUnavailable` draws no figure, which is the whole point of
+    // answering a read like this with a refusal.
+    const panel = document.body.children[2] as FakeNode
+    expect(panel.attributes.get('class')).toBe('console-panel')
+    const drawn = panel.children[0] as FakeNode
+    expect(drawn.attributes.get('data-kind')).toBe('refused')
+    expect(drawn.attributes.get('class')).toBe('console-unavailable')
+    // The poll is running: a live screen that never asked again would be a
+    // screenshot, and the interval is what makes it a screen.
+    expect(timers.live()).toBe(1)
   })
 
   it('names the file and why, when the store refused it (review S5)', async () => {

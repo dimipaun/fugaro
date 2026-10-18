@@ -28,7 +28,7 @@
       everything it requires, written by `tools/bundle-renderer/index.ts`, and it
       is the only script the served root holds (`SERVED_FILES` in
       `src/main/protocol.ts`). `defer` means it runs after the document is
-      parsed, so the entry has a `<main>` to draw into; the entry's first call is
+      parsed, so the entry has a body to draw into; the entry's first call is
       `startConsole`, which asks the main process for the handshake's answer and
       draws nothing before it has one. `test/unit/csp-document.test.ts` pins this
       element as the document's only script, so a second one -- or an inline
@@ -38,18 +38,24 @@
   </head>
   <body>
     <!--
-      The document of Task 1.1 draws nothing but this. It is deliberately
-      script-free and style-free: the CSP of rule 3 allows neither inline
-      scripts nor inline styles, so both will arrive as files served from this
-      same bundle and from nowhere else. It exists so that every rule the window
-      enforces has something real to enforce it against, a document loaded over
-      `app://console`, with an origin, a title and no capabilities. The console's
-      data arrives over IPC from the main process in Task 1.2, and nothing here
-      reaches for it.
+      The body is empty on purpose, and it is the entry that fills it (Task
+      3.4c): `domSurface`'s mount appends the installation header, the navigation
+      and the panel to `document.body`, and every figure in the window comes from
+      a read over IPC.
+
+      Task 1.1's placeholder -- a `<h1>` and "The console's window is up. It has
+      no data yet." -- was true of a frame with no entry in it and became false
+      the day this document gained one: it would have printed a second `<h1>`
+      and a false sentence directly above the dashboard. `test/unit/
+      csp-document.test.ts` holds the body empty so it cannot come back, and
+      `test/e2e/entry.spec.ts` holds the window to the entry's own drawing.
+
+      The document is deliberately script-free and style-free apart from the one
+      script below: the CSP of rule 3 allows neither inline scripts nor inline
+      styles, so both arrive as files served from this same bundle and from
+      nowhere else. It exists so that every rule the window enforces has
+      something real to enforce it against, a document loaded over
+      `app://console`, with an origin, a title and no capabilities.
     -->
-    <main>
-      <h1>Fugaro console</h1>
-      <p>The console's window is up. It has no data yet.</p>
-    </main>
   </body>
 </html>

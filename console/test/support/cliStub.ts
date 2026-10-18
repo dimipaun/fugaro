@@ -20,6 +20,16 @@
 //     nothing else, and `HOME` is a scratch home whose `~/.local/bin` holds the
 //     same stub, because `~/.local/bin` is one of the well-known prefixes and
 //     the operator's real one would otherwise be searched first;
+// Since Task 3.4c the stub is also the CLI a *dashboard* reads: it answers
+// `watch --json --project P` with the committed synthetic recording and
+// `doctor --json` with a minimal document, and refuses anything else -- and any
+// read that does not carry the seeded project -- with exit 2. That is why this
+// module writes three files beside the stub and not one: `version.txt` (the
+// handshake), `project.txt` (the project every read must name, rewritten by
+// `seedInstallations`), and `frames.ndjson` (the recording `watch` prints,
+// rendered from `test/fixtures/synthetic.ndjson` through `loadFixture`, so the
+// stub can only replay a fixture this build vouches for).
+//
 //   - offers `resolveConsoleBinary(env)`, which runs the console's own
 //     `resolveBinary` with **exactly the arguments `src/main/index.ts` uses**, so
 //     a spec can ask the same question the app is about to ask and find out
@@ -36,18 +46,50 @@
 // their machine, and `resolveConsoleBinary` below is what lets a spec say so
 // instead of failing on a missing element.
 
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { INSTALLATIONS_FILE_NAME, INSTALLATION_FILE_VERSION, serializeInstallationFile } from '../../src/main/installations'
 import { privateWorkingDirectory, resolveBinary } from '../../src/main/spawn'
 import type { BinaryResolution, SpawnTarget } from '../../src/main/spawn'
+import { loadFixture } from '../../src/source/fixture'
 import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
 
-/** CLI_STUB is the fixture this module installs: a one-line POSIX script that
- * prints the `version.txt` beside it and refuses any argv but `version`. */
+/** CLI_STUB is the fixture this module installs: a POSIX script that prints the
+ * `version.txt` beside it, answers `doctor --json` and `watch --json` for the
+ * seeded project, and refuses everything else with exit 2. */
 const CLI_STUB = join(__dirname, '..', 'fixtures', 'bin', 'fugaro')
+
+/** SYNTHETIC_FIXTURE is the committed recording the stub's `watch` replays
+ * (Task 3.4c, step 3). It is the same file `live.spec.ts` and `degraded.spec.ts`
+ * read, so the Live screen the e2e sees is the one the unit suite's fixture
+ * source feeds. */
+const SYNTHETIC_FIXTURE = join(__dirname, '..', 'fixtures', 'synthetic.ndjson')
+
+/** DEFAULT_PROJECT is the project a stub answers for until a spec seeds one. */
+const DEFAULT_PROJECT = 'e2e'
+
+/**
+ * syntheticFrames renders the committed fixture as `watch --json` writes it: one
+ * compact document per line, and a notice as its own line of text (which is what
+ * the CLI's degraded mode writes to the same stream, and what
+ * `src/main/spawn.ts`'s `decodeFeedLine` reads as a notice rather than a parse
+ * error). The fixture's own header line and the records' arrival stamps are the
+ * *recording's* wrapper, not the stream's shape, so neither reaches the stub.
+ *
+ * It is loaded through `loadFixture` rather than `JSON.parse`d here: the loader
+ * is what verifies the digest, the redactor and the audit, so a fixture the
+ * console would refuse cannot be replayed by the stub as if it were fine.
+ */
+function syntheticFrames(): string {
+  const text = readFileSync(SYNTHETIC_FIXTURE, 'utf8')
+  const { records } = loadFixture(text, 'test/fixtures/synthetic.ndjson')
+  const lines = records.map((record) =>
+    'document' in record ? JSON.stringify(record.document) : record.notice,
+  )
+  return `${lines.join('\n')}\n`
+}
 
 /** HANDSHAKE_TARGET is the target the startup read runs with, copied from
  * `src/main/index.ts`: no project, no configured path, so the resolution is the
@@ -83,17 +125,20 @@ export interface CliStub {
    * active one, so the handshake's configured path is the stub (rule 4 puts it
    * first, so it wins even over a machine's own `fugaro`) and the picker does
    * not open. It is for the specs whose subject is the dashboard, not the first
-   * run. */
+   * run. The stub's `project.txt` is rewritten with it, so the reads the
+   * dashboard makes carry the project the console was pointed at. */
   seedActiveInstallation(project?: string, binaryPath?: string): void
   /** seedInstallations writes `installations.json` with these entries and
-   * `active` (Task 3.4b), for a spec that needs more than one installation. */
+   * `active` (Task 3.4b), for a spec that needs more than one installation. The
+   * active entry's project becomes the one the stub answers for. */
   seedInstallations(
     entries: readonly { readonly id: string; readonly project: string; readonly binaryPath: string }[],
     active: string | null,
   ): void
   /** extraStub installs one more stub, printing `line`, in its own directory
    * under this scratch tree -- **not** on the app's `PATH` -- and answers its
-   * path. It is a second CLI an installation can name. */
+   * path. It is a second CLI an installation can name. It carries the same
+   * `project.txt` and frames as the installed one. */
   extraStub(name: string, line: string): string
   /** setVersion rewrites the line the stub prints (`'0.8.1\n'`, `'banana\n'`, a
    * hostile line), in both places the stub was installed. */
@@ -114,6 +159,19 @@ export function installCliStub(line: string): CliStub {
   const userData = join(scratch, 'user-data')
   mkdirSync(userData, { recursive: true, mode: 0o700 })
   const wellKnown = join(home, '.local', 'bin')
+  // The project the stub answers for, and the two files beside it that make that
+  // answer possible: `project.txt` (what `--project` must say, Task 3.4c's
+  // refusal) and `frames.ndjson` (the committed synthetic recording `watch`
+  // prints). Both live beside every copy of the stub, because either copy can be
+  // the one the resolution picks.
+  let project = DEFAULT_PROJECT
+  const frames = syntheticFrames()
+  const writeSupport = (): void => {
+    for (const where of [dir, wellKnown]) {
+      writeFileSync(join(where, 'project.txt'), `${project}\n`)
+      writeFileSync(join(where, 'frames.ndjson'), frames)
+    }
+  }
   for (const where of [dir, wellKnown]) {
     mkdirSync(where, { recursive: true })
     copyFileSync(CLI_STUB, join(where, 'fugaro'))
@@ -122,6 +180,7 @@ export function installCliStub(line: string): CliStub {
     // is what decides whether the resolution will look at it at all.
     chmodSync(join(where, 'fugaro'), 0o755)
   }
+  writeSupport()
   // The app's own environment, with the two keys that decide the resolution
   // replaced and the keys that are not set left out -- `DISPLAY` and the rest
   // are kept, so a Linux run under `xvfb-run` still has a display.
@@ -146,11 +205,19 @@ export function installCliStub(line: string): CliStub {
       }
       return [consoleDir, `--user-data-dir=${profile}`]
     },
-    seedActiveInstallation(project = 'e2e', binaryPath = join(dir, 'fugaro')): void {
+    seedActiveInstallation(nextProject = DEFAULT_PROJECT, binaryPath = join(dir, 'fugaro')): void {
       const id = '0123456789abcdef'
-      stub.seedInstallations([{ id, project, binaryPath }], id)
+      stub.seedInstallations([{ id, project: nextProject, binaryPath }], id)
     },
     seedInstallations(entries, active): void {
+      // The stub answers for the **active** installation's project (Task 3.4c,
+      // step 3): every read carries `--project P`, and a `P` that is not the one
+      // the console was pointed at is refused with exit 2 rather than answered
+      // with another project's document. With nothing active there is no read to
+      // make, so the first entry's project -- or the default -- is written.
+      const chosen = entries.find((entry) => entry.id === active) ?? entries[0]
+      project = chosen === undefined ? DEFAULT_PROJECT : chosen.project
+      writeSupport()
       writeFileSync(
         join(userData, INSTALLATIONS_FILE_NAME),
         serializeInstallationFile({
@@ -167,6 +234,10 @@ export function installCliStub(line: string): CliStub {
       copyFileSync(CLI_STUB, join(where, 'fugaro'))
       chmodSync(join(where, 'fugaro'), 0o755)
       writeFileSync(join(where, 'version.txt'), `${next}\n`)
+      // The same support files the installed stub has, so a spec that makes this
+      // one active gets the same answers rather than a `cat` of a missing file.
+      writeFileSync(join(where, 'project.txt'), `${project}\n`)
+      writeFileSync(join(where, 'frames.ndjson'), frames)
       return join(where, 'fugaro')
     },
     setVersion(next: string): void {
