@@ -75,3 +75,32 @@ The owner accepted every recommendation of D180 to D192, as written in `reconcil
 - **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog).
 - **D187** the fold is checked by the word ceiling plus one owner-run live check (70b).
 - **D189** long-page summaries are rendered from files; **D190** the design lives in the owner's tool, the repository keeps `design.md`, screenshots are regenerated and never committed; **D191** the redesign goes first; **D192** the byte budgets are re-derived in the commit that ships the script.
+
+## The `fugaro watch` screenshot (owner spec of 2026-10-18, item 5)
+
+`website/public/images/fugaro-watch.png` (2400 x 1002 px, shown at 1200 logical) is a picture of the
+screen `fugaro watch` draws while jobs run. `website/public/images/fugaro-watch.txt` holds the exact
+plain text the renderer produced, for alt text and as a text fallback. **Every name, run ID, title,
+amount and age in it is invented** (repositories `acme/api` and `acme/web`, project `acme-demo`);
+nothing comes from a real run, installation, account or e-mail address.
+
+How it was made (the harness is not committed; this is its logic, so it can be redone):
+
+1. A throwaway Go test inside `internal/watch` (deleted afterwards) built a `watch.View` by hand: two
+   repository blocks with live runs in the coding, review and verify stages, then `MergeQueued` for two
+   queued runs and `MergeFinished` for one failed and two succeeded runs with invented PR links. Repository
+   slugs went through `budget.Key`, as in production, so queued and finished rows land in the right block.
+2. It called the real `watch.Render` at width 150 with `Color: true`, `Ready: ReadyRowsOf(v)` and the
+   first repository selected, and wrote the frame with its ANSI colour codes, and again without colour
+   (the `.txt` file). Nothing in the picture is typed by hand except the fixture's data.
+3. The ANSI text was turned into HTML (one `<pre>`, the renderer's SGR codes mapped to the site's palette:
+   ground `#0A0E16`, surface `#121A26`, text `#E6EEF5`, muted `#9FB2C4`, accent `#17A8E6`, green and red for
+   the renderer's green and red) under a plain title bar with three dots, and screenshotted with
+   Playwright 1.49.1 (Chromium headless shell) at `deviceScaleFactor` 2.
+4. The PNG was reduced to a 128-colour palette without dithering (Pillow), from 303 KB to 107 KB; the
+   text stays sharp and the failed row is still red.
+
+Size: 107 KB, inside the enforced byte budgets (`website/test/budget.mjs` has no per-image figure; its
+per-page and whole-site ceilings are far above this). It is not yet placed on any page. D190 says
+screenshots are regenerated and never committed; this one is committed on the owner's explicit
+instruction, as a site asset that is not a capture of the product's live state.

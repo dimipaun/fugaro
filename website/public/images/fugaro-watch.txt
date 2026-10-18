@@ -1,0 +1,20 @@
+fugaro watch · acme-demo · enforce · 2026-10-18
+live
+TOTAL  ▓▓▓▓▓▓░░░░░░░░░░ counted $23.00 of $60.00 (38%) · burn $0.15/min · spent $23.00
+       7 runs · 1.4 run-hours
+  RUN      TITLE                                         STAGE     R   AGE     SPENT           FLAGS                          VERIFY    MODELS
+▸ acme/api                 ▓▓▓▓▓▓▓░░░░░░░░░ $14.00 of $30.00 (47%) · burn $0.09/min · spent $14.00
+  r-4t8w1x Fix the flaky retry test in billing           review    r2  41m00s  $5.90                                          unit      opus / sonnet
+  r-7k2m9q Add cursor pagination to the orders endpoint  coding    r1  18m10s  $3.40                                          unit      opus / sonnet
+  r-8s1v4y Document the webhook signature check          queued    -   25s     -               QUEUED                         -         -
+  r-5p7j3a Upgrade the HTTP router to the current major ready for review https://github.com/acme/api/pull/412 · 9m14s ago
+  acme/web                 ▓▓▓▓▓░░░░░░░░░░░ $9.00 of $30.00 (30%) · burn $0.06/min · spent $9.00
+  r-9d3c5e Move settings to the new form kit             verify    r1  26m00s  $2.70                                          unit      opus / sonnet
+  r-2h6n0b Replace the deprecated date picker            queued    -   1m10s   -               QUEUED                         -         -
+  r-1c9z6d Split the dashboard bundle by route FAILED · 22m41s ago
+  r-3f0q8m Fix the focus trap in the modal dialog ready for review https://github.com/acme/web/pull/187 · 35m05s ago
+
+Ready for your review (2)
+  acme/api           #412   https://github.com/acme/api/pull/412  Upgrade the HTTP router to the current major
+  acme/web           #187   https://github.com/acme/web/pull/187  Fix the focus trap in the modal dialog
+showing active + recent · a: all · ↑↓ select · space fold/expand · x ack · PgUp/PgDn scroll · k/K kill repo/project · r/R resume · ? help · q quit
