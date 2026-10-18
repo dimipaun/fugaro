@@ -2106,6 +2106,10 @@ func (r *run) logTail(ready bool, records []verify.Record) *LogTail {
 
 func (r *run) finalize(ctx context.Context) error {
 	r.rec.Stage = "finalize"
+	// The paths this run changed, recorded before anything else saves the
+	// record, so every run that reaches finalize carries them — the ones
+	// that end without a pull request included (design D27, V2.1.2).
+	r.recordChangedFiles(ctx)
 	r.save(ctx)
 	if r.skipPR {
 		// The check gate already ended the run (gate.go: endWithoutPR or
@@ -2150,6 +2154,11 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading head sha: %w", err)
 	}
+	// Read once more now that the run's own commits are final: work the
+	// agent left uncommitted was just committed above, and those paths are
+	// this run's too. A failed read keeps the set read at the top of
+	// finalize, which is still this run's work.
+	r.recordChangedFiles(ctx)
 	records, err := verify.Records(r.d.StateDir)
 	if err != nil {
 		return fmt.Errorf("reading verify records: %w", err)

@@ -619,3 +619,33 @@ func TestJoinArtifactBytesCountsNoNegativeSize(t *testing.T) {
 		t.Errorf("artifact bytes = %d, want 10 (a negative count is not a size)", row.ArtifactBytes)
 	}
 }
+
+// TestJoinCarriesTheRunsChangedFiles: the row carries the run's own record of
+// the paths it changed (console v2 design D27), and a run that recorded none
+// carries none — an absent field, never an empty set.
+func TestJoinCarriesTheRunsChangedFiles(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	r.ChangedFiles = runstore.NewChangedFiles([]string{"a.go", "b/c.go"})
+	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
+	if row.ChangedFiles == nil || len(row.ChangedFiles.Paths) != 2 || row.ChangedFiles.Paths[1] != "b/c.go" {
+		t.Fatalf("row.ChangedFiles = %+v", row.ChangedFiles)
+	}
+	b, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"changed_files"`) {
+		t.Fatalf("the row does not carry the set:\n%s", b)
+	}
+	plain := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil)}, prices, now)
+	if plain.ChangedFiles != nil {
+		t.Fatalf("a run that recorded none: %+v", plain.ChangedFiles)
+	}
+	b, err = json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "changed_files") {
+		t.Fatalf("a run that recorded none names the field:\n%s", b)
+	}
+}
