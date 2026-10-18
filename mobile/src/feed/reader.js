@@ -30,6 +30,7 @@
 // silence. The reasons are static sentences: an error message from the database
 // is not something this app puts on a screen.
 
+import { isAccountId } from '../accounts/account.js';
 import { validateDocument } from './document.js';
 import { BurnSampler, recompute } from './recompute.js';
 import { readCaps, readCounters, readKill } from './nodes.js';
@@ -184,6 +185,11 @@ export class FeedReader {
    */
   plan(nowMs) {
     if (!isNow(nowMs)) return refuse(READER_CODES.BAD_NOW, 'nowMs');
+    // The account is judged first: its `authUid` is what names the mailbox, and
+    // a reader without one would compose `mailbox/undefined/…` -- a path the
+    // gate would refuse for the wrong reason, after a uid this app made up had
+    // been written into a string.
+    if (!isAccountId(this.accountId)) return refuse(READER_CODES.BAD_ACCOUNT, 'accountId');
     const repositories = checkRepositories(this.#repositories);
     if (!repositories.ok) return refuse(READER_CODES.BAD_REPOSITORIES, 'repositories');
     const uid = this.#account?.authUid;
@@ -212,9 +218,11 @@ export class FeedReader {
    */
   start(nowMs) {
     if (this.#started) return refuse(READER_CODES.ALREADY_STARTED, 'start');
-    // The port and the account are judged **before** the first subscription:
-    // a reader that subscribed and then discovered it could not register the
-    // handle would have opened a socket nothing will ever close.
+    // The account, the port and the open account are judged **before** the
+    // first subscription: a reader that subscribed and then discovered it could
+    // not register the handle would have opened a socket nothing will ever
+    // close.
+    if (!isAccountId(this.accountId)) return refuse(READER_CODES.BAD_ACCOUNT, 'accountId');
     if (!isPort(this.#port)) return refuse(READER_CODES.BAD_PORT, 'port');
     if (this.#registry !== undefined && this.#registry !== null && !this.#openAccount()) {
       return refuse(READER_CODES.NOT_OPEN, 'accountId');

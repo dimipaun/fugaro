@@ -138,6 +138,14 @@ test('the plan is the granted shapes, and a bad repository list is refused befor
   // A clock that is not an instant is refused rather than defaulted.
   assert.equal(reader().reader.plan('now').code, READER_CODES.BAD_NOW);
   assert.equal(reader().reader.plan(undefined).code, READER_CODES.BAD_NOW);
+
+  // An account without a usable uid is refused before a path is composed: the
+  // uid is what names the mailbox, and `mailbox/undefined/outbox` is a path
+  // this app made up rather than one the grant names.
+  const { reader: noAccount, port: accountPort } = reader({ account: { id: 'not an id' }, open: false });
+  assert.equal(noAccount.plan(T0).code, READER_CODES.BAD_ACCOUNT);
+  assert.equal(noAccount.start(T0).code, READER_CODES.BAD_ACCOUNT);
+  assert.deepEqual(accountPort.requests, []);
 });
 
 test('a value for a path the reader never asked for is refused and not stored', () => {
