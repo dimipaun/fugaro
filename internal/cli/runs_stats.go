@@ -207,11 +207,9 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 	// trustworthy than a launcher's -- and a consumer can match `you` against
 	// rows[].user only if both are in the key's own domain. It stays "" when
 	// the CLI cannot tell who the caller is, which is "unavailable", not a
-	// person named "unknown".
-	you := ""
-	if me != "" {
-		you = userstats.IdentityOf(me)
-	}
+	// person named "unknown" -- including when the identity it did resolve is
+	// nothing but invisible characters (userstats.CallerKey).
+	you := userstats.CallerKey(me)
 	operator := operatorOf(env.lc, me)
 	view := userStatsViewOwn
 	if operator || o.allUsers {
@@ -241,7 +239,18 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 		// function -- `you` itself. For an ordinary address the two are the
 		// same value; for one a paste left an invisible character in, only this
 		// comparison finds the caller's own row rather than none.
-		read.runs = slices.DeleteFunc(read.runs, func(r userstats.Run) bool { return r.User != you })
+		//
+		// Only a key of the caller's own is a match. `you` is "" when their
+		// identity has nothing printable in it, and the unattributed row's key
+		// is not theirs to claim: it holds every run of the window that
+		// recorded no launcher, so showing it under "your own runs only" would
+		// credit the caller with other people's runs. Either way the own view
+		// is empty -- nobody's figures, rather than somebody else's.
+		own := you
+		if own == userstats.UnknownUser {
+			own = ""
+		}
+		read.runs = slices.DeleteFunc(read.runs, func(r userstats.Run) bool { return own == "" || r.User != own })
 	}
 	res := userstats.Aggregate(read.runs)
 	return writeUserStats(cmd.OutOrStdout(), userStatsDoc{
@@ -521,6 +530,14 @@ func userStatsNotes(doc userStatsDoc) []string {
 		notes = append(notes, fmt.Sprintf("view:    every user of this installation (%s; %s): the table below is everyone's numbers, each row named", who, why))
 	} else {
 		notes = append(notes, fmt.Sprintf("view:    your own runs only (%s, and this installation's operators list does not name you): --all-users shows every user's rows", who))
+	}
+	if doc.View == userStatsViewOwn && doc.You == userstats.UnknownUser {
+		// The one identity that is a key and still not a person's: this
+		// caller's own text reads as the word the unattributed runs are
+		// grouped by, so no row is shown as theirs. Said, because a table with
+		// no rows under "your own runs only" otherwise reads as a window this
+		// caller started nothing in.
+		notes = append(notes, fmt.Sprintf("you:     your identity reads as %q, the key a run that recorded no launcher is grouped under: no row below is shown as yours, because a row under that key is not only yours", userstats.UnknownUser))
 	}
 	notes = append(notes, "money:   model dollars, as the budget screens count them: COUNTED counts toward the caps, NOTIONAL (agent.auth oauth) toward none. They are never summed, and compute is attributed to no person")
 	if doc.Truncated {

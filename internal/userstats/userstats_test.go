@@ -53,6 +53,41 @@ func TestAggregateIsPerUser(t *testing.T) {
 	}
 }
 
+// TestUnknownUserSortsUnderEveryName is the ordering rule on its own: the
+// unattributed row is last whatever the names around it are, including one
+// that sorts after the word "unknown" on its own (the package's own key is a
+// word, so a launcher called zed would otherwise sort under it).
+func TestUnknownUserSortsUnderEveryName(t *testing.T) {
+	res := Aggregate([]Run{
+		{User: "zed@example.com", Status: string(runstore.StatusSucceeded)},
+		{User: UnknownUser, Status: string(runstore.StatusSucceeded)},
+		{User: "dana@example.com", Status: string(runstore.StatusSucceeded)},
+	})
+	var order []string
+	for _, row := range res.Rows {
+		order = append(order, row.User)
+	}
+	want := []string{"dana@example.com", "zed@example.com", UnknownUser}
+	if len(order) != len(want) {
+		t.Fatalf("rows = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("rows = %v, want %v: %q is a name like any other and %q is not a name at all",
+				order, want, want[1], UnknownUser)
+		}
+	}
+	// The same rule under a currency that is not USD, since the ordering is
+	// per currency and the currencies are ordered first.
+	eur := Aggregate([]Run{
+		{User: "zed@example.com", Currency: "EUR", Status: string(runstore.StatusSucceeded)},
+		{User: UnknownUser, Currency: "EUR", Status: string(runstore.StatusSucceeded)},
+	})
+	if len(eur.Rows) != 2 || eur.Rows[1].User != UnknownUser {
+		t.Errorf("rows = %+v, want %s last within EUR too", eur.Rows, UnknownUser)
+	}
+}
+
 // TestCountsAddUp holds the invariant the table's numbers are read with: the
 // four named outcomes, Other and NoRecord are a partition of Runs.
 func TestCountsAddUp(t *testing.T) {
@@ -212,6 +247,34 @@ func TestIdentityIsSanitisedAndCapped(t *testing.T) {
 		if got := IdentityOf(empty); got != UnknownUser {
 			t.Errorf("IdentityOf(%q) = %q, want %q", empty, got, UnknownUser)
 		}
+	}
+}
+
+// TestCallerKeyIsTheKeyOrNothing is the difference between the caller's own
+// key and a launcher's: an identity with nothing printable in it has no key of
+// its own, and is not the key the unattributed runs are grouped under.
+func TestCallerKeyIsTheKeyOrNothing(t *testing.T) {
+	if got := CallerKey("dana@example.com"); got != "dana@example.com" {
+		t.Errorf("CallerKey = %q", got)
+	}
+	// Sanitised and capped exactly as a launcher's identity is, so `you` can be
+	// matched against a row key.
+	raw := "dana@example.com​" + strings.Repeat("z", 500)
+	if got, want := CallerKey(raw), IdentityOf(raw); got != want {
+		t.Errorf("CallerKey(%q) = %q, IdentityOf = %q: the two are one text for an "+
+			"identity that has a key", raw, got, want)
+	}
+	// Nothing printable is no key at all -- and specifically not UnknownUser,
+	// which is a group of runs rather than a person.
+	for _, me := range []string{"", "   ", "\t\n", "\x1b\x07", "​", "​​\n"} {
+		if got := CallerKey(me); got != "" {
+			t.Errorf("CallerKey(%q) = %q, want the empty key: an identity with no printable "+
+				"text in it is not the %q group", me, got, UnknownUser)
+		}
+	}
+	// The word itself is a key: it is a caller's own text, whatever it says.
+	if got := CallerKey(UnknownUser); got != UnknownUser {
+		t.Errorf("CallerKey(%q) = %q, want the identity it is", UnknownUser, got)
 	}
 }
 

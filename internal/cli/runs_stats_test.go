@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -90,16 +91,25 @@ func seedUserRun(t *testing.T, f *cloudFixture, id, launchedBy string, rec *runs
 }
 
 // userRec is a settled result.json: a status, model dollars on one basis, and
-// the cost breakdown that says which basis.
+// the cost breakdown that says which basis, built by the writer the runner
+// itself uses so the fixture's TotalUSD means what a record's means.
 func userRec(status runstore.Status, modelUSD float64, basis string) *runstore.Record {
+	return userRecCost(status, modelUSD, 0, basis)
+}
+
+// userRecCost is userRec for a run whose compute was estimated too: the
+// breakdown then carries ModelUSD and ComputeUSD, and TotalUSD is what the run
+// cost altogether -- model plus compute on a key, compute alone on a
+// subscription, whose notional model figure is nobody's bill (runstore.NewCost).
+func userRecCost(status runstore.Status, modelUSD, computeUSD float64, basis string) *runstore.Record {
 	at := time.Now().UTC().Add(-time.Hour)
 	done := at.Add(time.Minute)
+	cost := runstore.NewCost(modelUSD, computeUSD, basis)
 	return &runstore.Record{
 		Version: 1, Repo: "acme/app", Workflow: "web", Status: status,
 		StartedAt: at, FinishedAt: &done,
 		CostUSD: modelUSD,
-		Cost: &runstore.Cost{ModelUSD: modelUSD, TotalUSD: modelUSD, ModelBasis: basis,
-			ComputeEstimated: true, Estimate: true},
+		Cost:    &cost,
 	}
 }
 
@@ -228,6 +238,53 @@ func TestRunsStatsByUserAttributesEachRun(t *testing.T) {
 	}
 	if strings.Contains(human, "\x1b") {
 		t.Errorf("the table carries an escape:\n%q", human)
+	}
+}
+
+// TestRunsStatsSpendIsModelDollarsNotCompute is the other half of the money
+// rule: the columns are model spend, and a run's compute estimate is in
+// neither of them. result.json's TotalUSD is what the run cost altogether, so
+// a column read off it would publish a figure no budget screen counts and
+// attribute Google's compute to a person, who is not charged for it.
+func TestRunsStatsSpendIsModelDollarsNotCompute(t *testing.T) {
+	f := newCloudFixture(t)
+	userStatsPlace(t, f, "someone@example.com", nil, []string{"user:someone@example.com"})
+	day := time.Now().UTC()
+	// $1.50 of model on a key, and $0.20 of compute for the VM underneath it:
+	// the record's total is $1.70, and only the model half is dana's spend.
+	seedUserRun(t, f, userStatsID(day, 0), "dana@example.com",
+		userRecCost(runstore.StatusSucceeded, 1.50, 0.20, runstore.BasisAPIList))
+	// The same split on a subscription, where TotalUSD is the compute alone:
+	// a notional model figure is left out of the bill.
+	seedUserRun(t, f, userStatsID(day, 1), "fugaro-ci@app.iam.gserviceaccount.com",
+		userRecCost(runstore.StatusSucceeded, 2.00, 0.30, runstore.BasisSubscription))
+
+	doc := runsStats(t)
+	dana := userStatsRow(t, doc, "dana@example.com")
+	if dana.CountedUSD != 1.50 {
+		t.Errorf("dana's counted spend = $%v, want $1.50: the run's $1.70 total is $1.50 of model "+
+			"and $0.20 of compute, and compute is attributed to no person", dana.CountedUSD)
+	}
+	if dana.CountedRuns != 1 || dana.AvgCountedUSD != 1.50 {
+		t.Errorf("dana's row = %+v, want one counted run averaged at $1.50", dana)
+	}
+	ci := userStatsRow(t, doc, "fugaro-ci@app.iam.gserviceaccount.com")
+	if ci.NotionalUSD != 2.00 || ci.CountedUSD != 0 {
+		t.Errorf("the service account's row = %+v, want $2.00 notional: a subscription's TotalUSD is "+
+			"its compute, not the model spend the run recorded", ci)
+	}
+	if tot := doc.Totals[0]; tot.CountedUSD != 1.50 || tot.NotionalUSD != 2.00 {
+		t.Errorf("total = %+v, want $1.50 counted and $2.00 notional: no compute in either column", tot)
+	}
+
+	// The table's money columns are the same two figures, so a reader adding
+	// them cannot pick the compute up from beside them.
+	human, _, err := execute(t, "runs", "stats")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(human, "$1.50") || strings.Contains(human, "$1.70") {
+		t.Errorf("the table should carry the model dollars alone, and never the run's $1.70 total:\n%s", human)
 	}
 }
 
@@ -386,6 +443,65 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 		}
 		if strings.Contains(human, "​") {
 			t.Errorf("the table carries the invisible character:\n%q", human)
+		}
+	})
+
+	t.Run("an identity that is no key of its own is shown no row", func(t *testing.T) {
+		// The unattributed row is keyed by the word 'unknown', and a caller
+		// whose own identity sanitises to that same word is not that row's
+		// owner: the row is everybody's runs that recorded no launcher, and
+		// showing it as the caller's own would credit them with other people's
+		// runs. Their own view is empty instead -- and their identity is
+		// nothing the CLI can tell, so `you` says so rather than naming them.
+		for _, identity := range []string{"​", userstats.UnknownUser} {
+			t.Run(strconv.Quote(identity), func(t *testing.T) {
+				f := newCloudFixture(t)
+				userStatsPlace(t, f, identity, nil, nil)
+				seed(t, f)
+				// One run nobody recorded a launcher for: without the guard
+				// this is the row the caller's own view would show them.
+				seedUserRun(t, f, userStatsID(day, 2), "", userRec(runstore.StatusSucceeded, 3.00, runstore.BasisAPIList))
+
+				own := runsStats(t)
+				if own.View != "own" {
+					t.Fatalf("view = %q, want the private one", own.View)
+				}
+				if len(own.Rows) != 0 || len(own.Totals) != 0 {
+					t.Fatalf("the caller's own view = %+v / %+v, want nothing: a row keyed %q is "+
+						"everyone's runs that recorded no launcher, not this caller's own",
+						own.Rows, own.Totals, userstats.UnknownUser)
+				}
+				wantYou := ""
+				if identity == userstats.UnknownUser {
+					wantYou = userstats.UnknownUser
+				}
+				if own.You != wantYou {
+					t.Errorf("you = %q, want %q", own.You, wantYou)
+				}
+				if own.Rows == nil {
+					t.Errorf("document = %+v, want an empty row list, not null", own)
+				}
+				human, _, err := execute(t, "runs", "stats")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(human, "no run in this window was started by you") {
+					t.Errorf("the empty private table = %q, want it said plainly", human)
+				}
+				if identity == userstats.UnknownUser && !strings.Contains(human, "unknown") {
+					t.Errorf("the table = %q, want the caller told their identity is the unattributed "+
+						"row's own word", human)
+				}
+				// The opt-in still shows everyone, the unattributed row included:
+				// the guard is on whose row the own view claims, not on the table.
+				all := runsStats(t, "--all-users")
+				if len(all.Rows) != 3 {
+					t.Fatalf("--all-users rows = %+v, want every user's, the unattributed one included", all.Rows)
+				}
+				if got := userStatsRow(t, all, userstats.UnknownUser).CountedUSD; got != 3.00 {
+					t.Errorf("the unattributed row = %v, want the unrecorded launch's own money", got)
+				}
+			})
 		}
 	})
 

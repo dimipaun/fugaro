@@ -60,6 +60,26 @@ func IdentityOf(by string) string {
 	return UnknownUser
 }
 
+// CallerKey is the key the CLI itself resolved for the caller -- the local
+// config's user:, else git config user.email -- or "" when that identity has
+// no key of its own: an empty identity, or one a paste left nothing of but
+// invisible characters.
+//
+// It differs from IdentityOf in exactly that case, and the difference matters
+// because of what IdentityOf does with it: an identity with nothing printable
+// in it is filed under UnknownUser, the key the runs that recorded no launcher
+// are grouped by. Publishing that as `you` would read as a claim that the
+// caller is that group -- and matching the caller's own row by it would show
+// them everybody's unattributed runs as their own. "" says what is true, that
+// the CLI cannot tell who the caller is, which is the answer the own view
+// already refuses on.
+func CallerKey(me string) string {
+	if safetext.Field(me) == "" {
+		return ""
+	}
+	return IdentityOf(me)
+}
+
 // Run is one run as the aggregation sees it. It is narrower than
 // runstore.Record on purpose -- the caller maps the record into it -- so a
 // field this package never receives is a field it can never publish.
