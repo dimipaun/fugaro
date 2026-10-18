@@ -21,7 +21,27 @@ import (
 // CLI that published the policy. The bump makes that runner refuse the node
 // (RunnerSkew) instead of running past a gate it does not know. The shape is
 // version 1's; only what a runner must enforce changed.
-const Version = 2
+//
+// Version 3 (project-named-oauth-tokens, plan task 1) is the node that names
+// Claude accounts: profiles.<p>.claude_accounts (the accounts a profile
+// serves, one job per (profile, provider, account)) and the accounts block it
+// is gated by (accounts.<name>.allow_repos, the repositories that account's
+// token may be used by). What a version-3 runner enforces and a version-2 one
+// does not is that second list, and the pair of rules that hold a profile to
+// it: the profile writes exact allow_repos, every account it lists covers
+// every repository on that list, and no Anthropic API key is mounted beside
+// them. A version-2 reader knows nothing of either — its Profile carrier has
+// no claude_accounts member, and the accounts block is a top-level key it
+// would file under UnknownKeys and drop (P8) — so a node whose profile names
+// accounts would reach it as a profile whose own allow_repos is the only gate,
+// on a job that was chosen for an account: the run would be admitted by a list
+// that is not the account's. The bump is what refuses that node instead
+// (RunnerSkew on the job side, CLISkew on the operator's), and the rules
+// themselves ship in the same release as this constant: an account job's
+// enforcement is plan task 3, and until it lands no OAuth launch reaches such
+// a job at all (checkProjectJobOAuth). The shape is version 2's; only what a
+// runner must enforce changed.
+const Version = 3
 
 // PolicyRulesVersion is the generation of the Realtime Database security rules
 // that introduced the config/policy nodes of §5 and their per-child read

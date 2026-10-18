@@ -19,24 +19,37 @@ func TestSkewMessagesShareTheSentence(t *testing.T) {
 			t.Errorf("%s does not start with Skew: %q", name, msg)
 		}
 	}
-	if Version != 2 {
+	if Version != 3 {
 		t.Errorf("Version = %d: a version bump needs the plan's skew handling, this test and the CLI's", Version)
 	}
 }
 
-// TestProfileGateIsVersionTwo: version 2 is the first version whose runner
-// enforces a profile's allow_repos (plan task 3.3). A runner of version 1
-// decodes the profiles block and ignores it, so a launcher that points a run
+// TestTheProfileGateIsVersioned: a profile's own allow_repos is enforced by a
+// version-2 runner and its accounts by a version-3 one, and the bump is what
+// makes a reader that lacks either refuse the node rather than run past it
+// (plan task 3.3, and project-named-oauth-tokens task 1). A runner of version
+// 1 decodes the profiles block and ignores it, so a launcher that points a run
 // of a profile's job at another repository of the project's allow_repos would
-// get the profile's secrets from it. The bump is what makes such a runner
-// refuse the node instead: a version-1 reader meets version 2 and halts
-// (RunnerSkew), and this code refuses a version-1 node the same way rather
-// than reading it as one whose profiles were never enforced.
-func TestProfileGateIsVersionTwo(t *testing.T) {
+// get the profile's secrets from it — and the same asymmetry is what version 3
+// closes for the accounts block: a version-2 reader would hold the run to the
+// profile's list alone, which the profile must keep covered by its accounts
+// but which is not the account's own.
+//
+// What this pins is the mechanism, not the number: a node below the version
+// this binary understands is refused as a skew (VersionError, with both
+// versions in it) rather than read as one whose profiles and accounts were
+// never enforced.
+func TestTheProfileGateIsVersioned(t *testing.T) {
 	_, _, err := Decode([]byte(`{"version":1,"allow_repos":["github/acme/*"],"profiles":{"standard":{"allow_repos":["github/acme/app"]}}}`))
 	var ve *VersionError
-	if !errors.As(err, &ve) || ve.Found != 1 || ve.Understood != 2 {
-		t.Fatalf("a version-1 node with profiles: err = %v, want a VersionError found 1, understood 2", err)
+	if !errors.As(err, &ve) || ve.Found != 1 || ve.Understood != Version {
+		t.Fatalf("a version-1 node with profiles: err = %v, want a VersionError found 1, understood %d", err, Version)
+	}
+	// And the version one below this one, which is the one that enforces a
+	// profile's allow_repos but not its accounts.
+	_, _, err = Decode([]byte(`{"version":2,"accounts":{"ops":{"allow_repos":["github/acme/infra"]}},"profiles":{"standard":{"allow_repos":["github/acme/infra"],"claude_accounts":["ops"]}}}`))
+	if !errors.As(err, &ve) || ve.Found != 2 || ve.Understood != Version {
+		t.Fatalf("a version-2 node with accounts: err = %v, want a VersionError found 2, understood %d", err, Version)
 	}
 }
 

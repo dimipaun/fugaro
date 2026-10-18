@@ -46,7 +46,7 @@ type projectJobFixture struct {
 // serving github, and every repository of the fixture's owner admitted to it.
 // The profile mounts no secret, so its job runs as no Claude account and the
 // job's account segment is empty (config.ClaudeAccountOfSecrets).
-const projectJobPolicy = `{"version":2,"allow_repos":["github/acme/*"],` +
+const projectJobPolicy = `{"version":3,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
 
 // projectJobTimeout is the profile's task timeout: what a project job's
@@ -516,7 +516,7 @@ func TestLaunchRefusesAnAccountTheProfileDoesNotMount(t *testing.T) {
 // the claim, minted the budget token and reached Cloud Run on a job that does
 // not exist, and every run of the profile halted with cannotPlaceJob, which
 // blames a stale module version instead of the profile.
-const projectJobReservedTokenPolicy = `{"version":2,"allow_repos":["github/acme/*"],` +
+const projectJobReservedTokenPolicy = `{"version":3,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"secrets":["claude-oauth-token"]}}}`
 
