@@ -2491,6 +2491,14 @@ func (r *run) uploadVerifyRecords(ctx context.Context, records []verify.Record) 
 // rawPRText returns the PR title and body the agent wrote to pr.md, or
 // defaults built from the task. The agent's text is redacted before it is
 // published.
+//
+// Without a pr.md the title is the run's own, from the ONE place the text
+// comes from (task.Spec.TitleLine): the title its launcher stored (fugaro
+// run --title), else the task prompt's first line. A run launched with a
+// title also carries it as the body's first heading, so a brief whose first
+// line is a shared preamble is told apart in the pull request itself and not
+// only in its title; a run without one keeps the body it always had, byte
+// for byte.
 func (r *run) rawPRText() (string, string) {
 	if data, err := os.ReadFile(filepath.Join(r.d.StateDir, prFile)); err == nil {
 		title, body, _ := strings.Cut(strings.TrimSpace(agent.Redact(string(data), r.secretList())), "\n")
@@ -2499,11 +2507,15 @@ func (r *run) rawPRText() (string, string) {
 			return title, strings.TrimSpace(body)
 		}
 	}
-	first, _, _ := strings.Cut(strings.TrimSpace(r.spec.Task), "\n")
+	first := r.spec.TitleLine()
 	if runes := []rune(first); len(runes) > 72 {
 		first = string(runes[:71]) + "…"
 	}
-	return first, fmt.Sprintf("Opened by Fugaro run `%s`.\n\n## Task\n\n%s", r.rec.RunID, r.spec.Task)
+	body := fmt.Sprintf("Opened by Fugaro run `%s`.\n\n## Task\n\n%s", r.rec.RunID, r.spec.Task)
+	if r.spec.Title != "" {
+		body = fmt.Sprintf("Opened by Fugaro run `%s`.\n\n# %s\n\n## Task\n\n%s", r.rec.RunID, first, r.spec.Task)
+	}
+	return first, body
 }
 
 // Pull request text bounds. They keep well under GitHub's limits (titles
