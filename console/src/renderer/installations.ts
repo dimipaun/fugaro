@@ -25,8 +25,13 @@
 // process at all -- `list` answers rows, and a row's `binary` is the main
 // process's account of a path it already holds, which is why `rowText` can draw
 // it and a pick cannot.
+//
+// Every string drawn here goes through `drawn`, the display layer's one door
+// (design section 5.1 rule 7): this document shows the CLI's own refusals, and
+// stderr is a channel the console does not own.
 
 import type { InstallationReply } from '../preload/installations'
+import { sanitizeRefusal } from '../shared/sanitize'
 
 /** InstallationListRow is one row as `fugaro:installations/list` answers it. */
 export interface InstallationListRow {
@@ -76,15 +81,43 @@ export function viewOf(reply: InstallationReply): InstallationView {
   return { status, rows: answer.rows, canAdd: true }
 }
 
+/** UNDRAWABLE is what this view draws where the sanitizer refuses a string. It
+ * is the console's own sentence about the *class* -- a value this console will
+ * not draw is not a value with an explanation -- and it is never the string
+ * that was refused. */
+export const UNDRAWABLE = 'a line the console will not draw'
+
+/**
+ * drawn is the one door every string this view puts in the document goes
+ * through, which is design section 5.1 rule 7: *"the console re-applies
+ * `watch`'s sanitization at the display layer rather than trusting the transport
+ * to have done it"*. The transport here is the main process, and behind it a CLI
+ * whose stderr the picker draws -- `doctor`'s pairing refusal, verbatim.
+ *
+ * The pass is `sanitizeRefusal` and not `sanitizeText`, for the reason that
+ * function's own doc gives: the `sentence` and `path` classes **replace** a path
+ * with `<path>`, and a row exists so the operator can recognise the installation
+ * they chose. `sanitizeRefusal` keeps a path, a project and a role as they were
+ * written while redacting a credential-shaped run, dropping the invisible
+ * characters a value can be made to misspell with, and folding the whole to one
+ * bounded line. The operator's own paths are exactly the strings this window is
+ * for, and a token-shaped run inside one is exactly what must not be drawn.
+ */
+function drawn(raw: string, field: string): string {
+  const result = sanitizeRefusal(raw, field)
+  return result.ok ? result.text : UNDRAWABLE
+}
+
 /** rowText is one row's line: the project, the binary and the state. It carries
  * no id and no `--config`: the id is the main process's handle for a row, and
  * the config path is a path, which the document draws only because the operator
- * chose it and must be able to recognise it. */
+ * chose it and must be able to recognise it -- through `drawn`, like every other
+ * string here. */
 export function rowText(row: InstallationListRow): string {
-  const parts = [`${row.project} — ${row.binary}`]
-  if (row.config !== undefined) parts.push(`config ${row.config}`)
-  if (row.checkout !== undefined) parts.push(`checkout ${row.checkout}`)
-  if (row.mode !== 'ok') parts.push(`(${row.mode})`)
+  const parts = [`${drawn(row.project, 'the row’s project')} — ${drawn(row.binary, 'the row’s binary')}`]
+  if (row.config !== undefined) parts.push(`config ${drawn(row.config, 'the row’s config')}`)
+  if (row.checkout !== undefined) parts.push(`checkout ${drawn(row.checkout, 'the row’s checkout')}`)
+  if (row.mode !== 'ok') parts.push(`(${drawn(row.mode, 'the row’s mode')})`)
   if (row.active) parts.push('active')
   return parts.join(' · ')
 }
@@ -194,7 +227,10 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
   const tokens: Record<PickKind, string | undefined> = { binary: undefined, config: undefined, checkout: undefined }
 
   const say = (sentence: string): void => {
-    if (status !== null) status.textContent = sentence
+    // Every sentence here is the main process's, and it is drawn through the
+    // sanitizer like every other string this view writes: a refusal from the CLI
+    // is stderr, and stderr is a channel the console does not own.
+    if (status !== null) status.textContent = drawn(sentence, 'the picker’s answer')
   }
 
   const controls = (): readonly (PickerElement | null)[] => [submit, pickers.binary.button, pickers.config.button, pickers.checkout.button]

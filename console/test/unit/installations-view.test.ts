@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { mountPicker, rowText, viewOf } from '../../src/renderer/installations'
+import { UNDRAWABLE, mountPicker, rowText, viewOf } from '../../src/renderer/installations'
 import type {
   InstallationListRow,
   InstallationView,
@@ -45,6 +45,10 @@ import type {
   PickKind,
 } from '../../src/renderer/installations'
 import type { InstallationReply } from '../../src/preload/installations'
+import { TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
+// The shape is assembled at run time, never written down: no line of this
+// repository carries a secret-shaped string, including this one (Task 2.0).
+import { inert } from '../support/fakeSecrets'
 
 // ---------------------------------------------------------------------------
 // A document, faked from the real one
@@ -349,6 +353,30 @@ describe('the picker’s document and its view', () => {
     await item.button('Choose').fire('click')
     expect(refusedChoose.element('picker-status').textContent).toBe('this console cannot drive the CLI at /usr/local/bin/fugaro')
     expect(refusedChoose.recording.calls).toEqual(['list', 'choose', 'list'])
+  })
+
+  it('re-applies the display sanitizer to every string it draws', async () => {
+    // Design section 5.1 rule 7: the console re-applies the sanitization at the
+    // display layer rather than trusting the transport. The transport here is
+    // the main process, and behind it a CLI whose stderr the picker draws -- so
+    // a token-shaped run in a refusal must not reach the document, and neither
+    // must the invisible characters a value can be made to misspell with.
+    const invisible = '‮'
+    const refused = await mount({
+      answer: { list: { ok: false, reason: `could not read the binary at ${inert('gh', 'p_')}${'a'.repeat(36)}` } },
+    })
+    expect(refused.element('picker-status').textContent).toBe(`could not read the binary at ${TOKEN_PLACEHOLDER}`)
+
+    const listed = await mount({ rows: [row({ binary: `/usr/local/bin/${invisible}fugaro` })] })
+    const item = listed.element('picker-list').children[0] as FakeElement
+    expect(item.textContent).toBe('fugaro — /usr/local/bin/fugaro')
+    expect(item.textContent ?? '').not.toContain(invisible)
+
+    // ...and a string the sanitizer refuses is drawn as the console's own
+    // sentence about the class, never as the string itself. An over-long
+    // refusal is the simplest string it refuses.
+    const undrawable = await mount({ answer: { list: { ok: false, reason: 'x'.repeat(70_000) } } })
+    expect(undrawable.element('picker-status').textContent).toBe(UNDRAWABLE)
   })
 
   it('answers a pick that was cancelled or reshaped without inventing a token', async () => {
