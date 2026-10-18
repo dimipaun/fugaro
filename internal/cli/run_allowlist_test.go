@@ -426,6 +426,15 @@ func TestPolicySkewRefusalNamesTheReleaseThatIntroducedTheVersion(t *testing.T) 
 			notWant: []string{policySince, "policy model", "arrived in fugaro"},
 		},
 		{
+			// A node behind its reader where the table's row for the node's
+			// version is not the model's release: the model's release is what
+			// this direction quotes, never the table's.
+			name:    "the other direction, a version-2 node behind a version-3 reader",
+			ve:      &projectpolicy.VersionError{Found: 2, Understood: 3},
+			want:    []string{"version 2", "policy model is fugaro " + policySince, "publish --delete"},
+			notWant: []string{"upgrade Fugaro", "arrived in fugaro", projectpolicy.VersionSince[2]},
+		},
+		{
 			name:    "the other direction, a node behind this binary",
 			ve:      &projectpolicy.VersionError{Found: version1, Understood: projectpolicy.Version},
 			want:    []string{fmt.Sprintf("version %d", version1), "policy model is fugaro " + policySince, "publish --delete"},

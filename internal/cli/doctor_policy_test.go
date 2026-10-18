@@ -353,6 +353,9 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Fix, "newer Fugaro") {
 			t.Errorf("the fix does not warn that the rules may be a newer release's, which this template would replace: %+v", c)
 		}
+		if !strings.Contains(c.Fix, "fugaro >= "+policySince+" ") {
+			t.Errorf("the fix does not quote the release the policy model ships in (%s), a model-level fact: %+v", policySince, c)
+		}
 	})
 
 	t.Run("the deployed rules differ only in formatting", func(t *testing.T) {
@@ -601,6 +604,12 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 		if !strings.Contains(c.Fix, "fugaro init --firebase") {
 			t.Errorf("the check does not name the fix that writes the marker: %+v", c)
+		}
+		// A model-level fix: the rules and the marker are the model's, so the
+		// release it quotes is policySince and never a row of the per-version
+		// table (projectpolicy.VersionSince), which answers a different question.
+		if !strings.Contains(c.Fix, "fugaro >= "+policySince+" ") {
+			t.Errorf("the fix does not quote the release the policy model ships in (%s): %+v", policySince, c)
 		}
 	})
 }
