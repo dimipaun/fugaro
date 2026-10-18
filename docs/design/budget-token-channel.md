@@ -71,10 +71,19 @@ The grants moved with the object (§7.2, §7.5): the job account's `tokens/<slug
 `roles/storage.objectViewer` (`google_storage_bucket_iam_member.job_tokens`, in the workflow
 module), and the launchers' conditioned write is widened to `runs/ || tokens/` under the new title
 `fugaro-launchers-runs-tokens`, in Terraform, its precondition and tftest lines, and the four Go
-files that write and re-check it. **The project module of Task 3.2 does not exist on the base this
-was built on**, so the read-only grant is in the per-repository workflow module (`tokens/<slug>/`);
-Task 3.2's shared job must carry the same read-only grant on its own prefix condition, and must not
-add `tokens` to the job's objectUser prefixes.
+files that write and re-check it. **The project module of Task 3.2 does not exist on the base Slice
+B was built on**, so the read-only grant is in the per-repository workflow module
+(`tokens/<slug>/`); Task 3.2's shared job must carry the same read-only grant on its own prefix
+condition, and must not add `tokens` to the job's objectUser prefixes. **Both landed when the seal
+was merged into the phase-3 tree** (`integration-0.9.0`, 2026-10-18): the shared job's grant is
+`google_storage_bucket_iam_member.job_tokens` in `deploy/terraform/gcp/modules/project/sa.tf`, one
+unconditioned clause over this bucket's whole `tokens/` prefix
+(`gcp.ProjectTokenBucketCondition`, title `fugaro-project-tokens-<account>`), beside the widened
+`runs/`+`cache/`+`locks/` objectUser grant and never inside it. It is read-only and covers the whole
+prefix because the job serves every repository admitted to its profile, so a per-repository
+`tokens/<slug>/` grant would leave every other repository's runs unable to read their own token;
+`fugaro doctor`'s `job-token-grant` check knows both shapes, and the cover, the module's
+`precondition` and the installation root's variable type hold the expression to the one clause.
 
 **The Batch backend refuses a sealed launch (decided in Slice B; an open owner question).** Once
 the launcher seals, the key it hands the execution would, on Batch, become a plain variable of the
