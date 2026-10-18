@@ -1,0 +1,25 @@
+# mobile/.gitignore — what the app's toolchain writes and the repository does not keep.
+#
+# Same rule as website/.gitignore, and the same reason: the install is
+# reproducible from what IS committed. package.json pins the versions and
+# package-lock.json pins the tree `npm ci` installs, so neither that tree nor
+# the build output is a source file.
+#
+# There is nothing to ignore yet -- the manifest declares no runtime dependency
+# (a test in src/skeleton/index.test.js keeps it that way until the Expo
+# toolchain is pinned) -- but the entries are here before the first install, not
+# after it.
+
+# The dependency tree `npm ci` writes.
+node_modules/
+
+# The Expo/Metro cache and the local development state.
+.expo/
+.metro-health-check*
+
+# The build output.
+dist/
+web-build/
+
+# The app's own logs, if a run ever leaves one.
+*.log

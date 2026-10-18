@@ -1,0 +1,283 @@
+// The stub `fugaro` an end-to-end spec hands the real console (desktop-console
+// plan Task 3.3).
+//
+// Task 3.3 wires the version handshake into startup, so **the console's first
+// act is to resolve and read a `fugaro`** (design section 3.4 rule 4, D7). That
+// makes every e2e spec that launches the app depend on which CLI the machine
+// has: with none installed the app now opens the refusal document, and a spec
+// that mounts a screen into the dashboard document has nothing to mount into.
+//
+// There is no `FUGARO_BIN`, and this task does not add one -- an environment
+// variable that chooses the binary the console runs is its own SECURITY-SENSITIVE
+// change. So a spec chooses the CLI the only way the resolution allows: it puts
+// a binary where the resolution looks. `src/main/spawn.ts`'s `binDirectories`
+// walks the configured path (nothing here -- no config file is read at startup),
+// then `WELL_KNOWN_BINARY_PREFIXES`, then every absolute entry of the app's own
+// `PATH`. This module therefore does two things:
+//
+//   - copies `test/fixtures/bin/fugaro` into a scratch directory and returns the
+//     environment that makes it the winner -- `PATH` is that directory and
+//     nothing else, and `HOME` is a scratch home whose `~/.local/bin` holds the
+//     same stub, because `~/.local/bin` is one of the well-known prefixes and
+//     the operator's real one would otherwise be searched first;
+// Since Task 3.4c the stub is also the CLI a *dashboard* reads: it answers
+// `watch --json --project P` with the committed synthetic recording and
+// `doctor --json` with a minimal document, and refuses anything else -- and any
+// read that does not carry the seeded project -- with exit 2. That is why this
+// module writes three files beside the stub and not one: `version.txt` (the
+// handshake), `project.txt` (the project every read must name, rewritten by
+// `seedInstallations`), and `frames.ndjson` (the recording `watch` prints,
+// rendered from `test/fixtures/synthetic.ndjson` through `loadFixture`, so the
+// stub can only replay a fixture this build vouches for).
+//
+//   - offers `resolveConsoleBinary(env)`, which runs the console's own
+//     `resolveBinary` with **exactly the arguments `src/main/index.ts` uses**, so
+//     a spec can ask the same question the app is about to ask and find out
+//     which binary will actually answer. That is what makes the specs honest on
+//     a machine with a real `fugaro` in `/usr/local/bin`: that one wins over any
+//     `PATH` entry, and a spec that assumed otherwise would be asserting a fact
+//     about the machine rather than about the console.
+//
+// **What this cannot fix, stated plainly.** On a machine whose `/usr/local/bin`
+// or `/opt/homebrew/bin` holds a real `fugaro` outside the supported range, the
+// app will refuse it and the specs that need a dashboard document will fail --
+// because the app is doing exactly what D7 says. CI has no such binary, so the
+// stub wins there; a developer who hits this is being told something true about
+// their machine, and `resolveConsoleBinary` below is what lets a spec say so
+// instead of failing on a missing element.
+
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { INSTALLATIONS_FILE_NAME, INSTALLATION_FILE_VERSION, serializeInstallationFile } from '../../src/main/installations'
+import { privateWorkingDirectory, resolveBinary } from '../../src/main/spawn'
+import type { BinaryResolution, SpawnTarget } from '../../src/main/spawn'
+import { loadFixture } from '../../src/source/fixture'
+import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
+
+/** CLI_STUB is the fixture this module installs: a POSIX script that prints the
+ * `version.txt` beside it, answers `doctor --json` and `watch --json` for the
+ * seeded project, and refuses everything else with exit 2. */
+const CLI_STUB = join(__dirname, '..', 'fixtures', 'bin', 'fugaro')
+
+/** SYNTHETIC_FIXTURE is the committed recording the stub's `watch` replays
+ * (Task 3.4c, step 3). It is the same file `live.spec.ts` and `degraded.spec.ts`
+ * read, so the Live screen the e2e sees is the one the unit suite's fixture
+ * source feeds. */
+const SYNTHETIC_FIXTURE = join(__dirname, '..', 'fixtures', 'synthetic.ndjson')
+
+/** DEFAULT_PROJECT is the project a stub answers for until a spec seeds one. */
+const DEFAULT_PROJECT = 'e2e'
+
+/**
+ * syntheticFrames renders the committed fixture as `watch --json` writes it: one
+ * compact document per line, and a notice as its own line of text (which is what
+ * the CLI's degraded mode writes to the same stream, and what
+ * `src/main/spawn.ts`'s `decodeFeedLine` reads as a notice rather than a parse
+ * error). The fixture's own header line and the records' arrival stamps are the
+ * *recording's* wrapper, not the stream's shape, so neither reaches the stub.
+ *
+ * It is loaded through `loadFixture` rather than `JSON.parse`d here: the loader
+ * is what verifies the digest, the redactor and the audit, so a fixture the
+ * console would refuse cannot be replayed by the stub as if it were fine.
+ */
+function syntheticFrames(): string {
+  const text = readFileSync(SYNTHETIC_FIXTURE, 'utf8')
+  const { records } = loadFixture(text, 'test/fixtures/synthetic.ndjson')
+  const lines = records.map((record) =>
+    'document' in record ? JSON.stringify(record.document) : record.notice,
+  )
+  return `${lines.join('\n')}\n`
+}
+
+/** HANDSHAKE_TARGET is the target the startup read runs with, copied from
+ * `src/main/index.ts`: no project, no configured path, so the resolution is the
+ * well-known prefixes and the app's `PATH` and nothing else. */
+const HANDSHAKE_TARGET: SpawnTarget = Object.freeze({ project: '' })
+
+/** CliStub is an installed stub, and the environment that makes the console
+ * find it. */
+export interface CliStub {
+  /** the directory the stub lives in, which is the whole of the app's `PATH`. */
+  readonly dir: string
+  /** the scratch home: the app's `HOME`, with `~/.local/bin` holding the stub. */
+  readonly home: string
+  /** `process.env` with `PATH` and `HOME` replaced, for `electron.launch`.
+   * Every value is a string: an environment key the process does not have is
+   * absent rather than `undefined`, which is both what a child process actually
+   * receives and what Playwright's `env` option takes. */
+  readonly env: Record<string, string>
+  /** userData is the seed for every launch's scratch `--user-data-dir` (Task
+   * 3.4b): `seedInstallations` writes `installations.json` here and
+   * `launchArgs` copies it into a fresh profile, so no spec reads or writes the
+   * machine's own console profile. Unseeded, it is D13's first run: no
+   * installation, and the picker opens. */
+  readonly userData: string
+  /** launchArgs is `electron.launch`'s `args`: the app directory, and a
+   * **fresh** scratch `--user-data-dir` per launch, holding a copy of the seeded
+   * `installations.json` (if any). Fresh, because Chromium locks a profile to
+   * one process: a launch that reused the profile of an app still shutting down
+   * would hand itself to that process and exit, and the spec would wait for a
+   * window that never comes. */
+  launchArgs(consoleDir: string): string[]
+  /** seedActiveInstallation writes one installation naming this stub as the
+   * active one, so the handshake's configured path is the stub (rule 4 puts it
+   * first, so it wins even over a machine's own `fugaro`) and the picker does
+   * not open. It is for the specs whose subject is the dashboard, not the first
+   * run. The stub's `project.txt` is rewritten with it, so the reads the
+   * dashboard makes carry the project the console was pointed at. */
+  seedActiveInstallation(project?: string, binaryPath?: string): void
+  /** seedInstallations writes `installations.json` with these entries and
+   * `active` (Task 3.4b), for a spec that needs more than one installation. The
+   * active entry's project becomes the one the stub answers for. */
+  seedInstallations(
+    entries: readonly { readonly id: string; readonly project: string; readonly binaryPath: string }[],
+    active: string | null,
+  ): void
+  /** extraStub installs one more stub, printing `line`, in its own directory
+   * under this scratch tree -- **not** on the app's `PATH` -- and answers its
+   * path. It is a second CLI an installation can name. It carries the same
+   * `project.txt` and frames as the installed one. */
+  extraStub(name: string, line: string): string
+  /** setVersion rewrites the line the stub prints (`'0.8.1\n'`, `'banana\n'`, a
+   * hostile line), in both places the stub was installed. */
+  setVersion(line: string): void
+  /** remove deletes the scratch tree the stub lives in. */
+  remove(): void
+}
+
+/**
+ * installCliStub puts the stub in a fresh scratch directory, printing `line`
+ * (newline appended), and answers with it and the environment to launch the app
+ * with.
+ */
+export function installCliStub(line: string): CliStub {
+  const scratch = mkdtempSync(join(tmpdir(), 'fugaro-cli-stub-'))
+  const dir = join(scratch, 'bin')
+  const home = join(scratch, 'home')
+  const userData = join(scratch, 'user-data')
+  mkdirSync(userData, { recursive: true, mode: 0o700 })
+  const wellKnown = join(home, '.local', 'bin')
+  // The project the stub answers for, and the two files beside it that make that
+  // answer possible: `project.txt` (what `--project` must say, Task 3.4c's
+  // refusal) and `frames.ndjson` (the committed synthetic recording `watch`
+  // prints). Both live beside every copy of the stub, because either copy can be
+  // the one the resolution picks.
+  let project = DEFAULT_PROJECT
+  const frames = syntheticFrames()
+  const writeSupport = (): void => {
+    for (const where of [dir, wellKnown]) {
+      writeFileSync(join(where, 'project.txt'), `${project}\n`)
+      writeFileSync(join(where, 'frames.ndjson'), frames)
+    }
+  }
+  for (const where of [dir, wellKnown]) {
+    mkdirSync(where, { recursive: true })
+    copyFileSync(CLI_STUB, join(where, 'fugaro'))
+    // The fixture is committed executable; this is for a checkout that lost the
+    // bit (a zip download, a Windows-authored copy), because `isExecutableFile`
+    // is what decides whether the resolution will look at it at all.
+    chmodSync(join(where, 'fugaro'), 0o755)
+  }
+  writeSupport()
+  // The app's own environment, with the two keys that decide the resolution
+  // replaced and the keys that are not set left out -- `DISPLAY` and the rest
+  // are kept, so a Linux run under `xvfb-run` still has a display.
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === 'string') env[key] = value
+  }
+  env['PATH'] = dir
+  env['HOME'] = home
+  const stub: CliStub = {
+    dir,
+    home,
+    userData,
+    env,
+    launchArgs(consoleDir: string): string[] {
+      const profile = mkdtempSync(join(scratch, 'profile-'))
+      chmodSync(profile, 0o700)
+      const seededFile = join(userData, INSTALLATIONS_FILE_NAME)
+      if (existsSync(seededFile)) {
+        copyFileSync(seededFile, join(profile, INSTALLATIONS_FILE_NAME))
+        chmodSync(join(profile, INSTALLATIONS_FILE_NAME), 0o600)
+      }
+      return [consoleDir, `--user-data-dir=${profile}`]
+    },
+    seedActiveInstallation(nextProject = DEFAULT_PROJECT, binaryPath = join(dir, 'fugaro')): void {
+      const id = '0123456789abcdef'
+      stub.seedInstallations([{ id, project: nextProject, binaryPath }], id)
+    },
+    seedInstallations(entries, active): void {
+      // The stub answers for the **active** installation's project (Task 3.4c,
+      // step 3): every read carries `--project P`, and a `P` that is not the one
+      // the console was pointed at is refused with exit 2 rather than answered
+      // with another project's document. With nothing active there is no read to
+      // make, so the first entry's project -- or the default -- is written.
+      const chosen = entries.find((entry) => entry.id === active) ?? entries[0]
+      project = chosen === undefined ? DEFAULT_PROJECT : chosen.project
+      writeSupport()
+      writeFileSync(
+        join(userData, INSTALLATIONS_FILE_NAME),
+        serializeInstallationFile({
+          version: INSTALLATION_FILE_VERSION as 1,
+          active,
+          installations: entries.map((entry) => ({ id: entry.id, project: entry.project, binaryPath: entry.binaryPath })),
+        }),
+        { mode: 0o600 },
+      )
+    },
+    extraStub(name: string, next: string): string {
+      const where = join(scratch, name)
+      mkdirSync(where, { recursive: true })
+      copyFileSync(CLI_STUB, join(where, 'fugaro'))
+      chmodSync(join(where, 'fugaro'), 0o755)
+      writeFileSync(join(where, 'version.txt'), `${next}\n`)
+      // The same support files the installed stub has, so a spec that makes this
+      // one active gets the same answers rather than a `cat` of a missing file.
+      writeFileSync(join(where, 'project.txt'), `${project}\n`)
+      writeFileSync(join(where, 'frames.ndjson'), frames)
+      return join(where, 'fugaro')
+    },
+    setVersion(next: string): void {
+      for (const where of [dir, wellKnown]) {
+        writeFileSync(join(where, 'version.txt'), `${next}\n`)
+      }
+    },
+    remove(): void {
+      rmSync(scratch, { recursive: true, force: true })
+    },
+  }
+  stub.setVersion(line)
+  return stub
+}
+
+/**
+ * inRangeCliStub is the stub the specs that mount a screen install: a `fugaro`
+ * printing a version the console supports, so the handshake reaches `ok` and the
+ * window the app opens is the **dashboard document**. Every spec that draws into
+ * that document needs this and only this -- with nothing resolvable, or with a
+ * version outside the range, the app opens the refusal document instead and
+ * there is no dashboard to mount into, which is the whole point of the wiring
+ * this stub exists to satisfy.
+ */
+export function inRangeCliStub(): CliStub {
+  return installCliStub(CLI_VERSION_BUILT_AGAINST)
+}
+
+/**
+ * resolveConsoleBinary asks the question the console is about to ask, with the
+ * console's own resolver and the console's own arguments: which `fugaro` will
+ * answer this launch, and with what version line. A spec calls it with the
+ * environment it passes to `electron.launch` and gets the binary the app will
+ * actually find -- the stub when nothing well-known is installed, and the
+ * machine's own binary when there is one.
+ */
+export async function resolveConsoleBinary(env: NodeJS.ProcessEnv): Promise<BinaryResolution> {
+  return resolveBinary({
+    appEnv: env,
+    directory: privateWorkingDirectory(),
+    target: HANDSHAKE_TARGET,
+  })
+}

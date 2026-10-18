@@ -358,11 +358,11 @@ func (r *run) committedDaily() budget.Micros {
 	return m
 }
 
-// registryEntry is what the run says about itself at bootstrap. The task's
-// first line is untrusted text: redacted and clipped by the session.
+// registryEntry is what the run says about itself at bootstrap. The title
+// (task.Spec.TitleLine: the launcher's own --title, else the task's first
+// line) is untrusted text: redacted and clipped by the session.
 func (r *run) registryEntry() budget.AgentEntry {
-	title, _, _ := strings.Cut(strings.TrimSpace(r.spec.Task), "\n")
-	title = r.redact(title)
+	title := r.redact(r.spec.TitleLine())
 	if runes := []rune(title); len(runes) > 80 {
 		title = string(runes[:80])
 	}
