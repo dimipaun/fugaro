@@ -96,9 +96,17 @@ const TURNS = [
  * likely to type is `fugaro watch`"), and the skill's own line about what it shows. The
  * snippet is the hero's only command block besides the install paths, and it carries its own
  * copy control like every other block on the site (P6).
+ *
+ * The note is the skill's sentence in the two parts the page renders — the command as a code
+ * span, the rest of it after that — rather than as one string carrying the markdown's
+ * backticks, which a reader would see as backticks. Each part is a piece of the skill's line on
+ * its own, and `WATCH_NOTE` is the two joined the way the skill writes them: that is the string
+ * the build holds to the file below, so neither part can drift from the skill without stopping
+ * the build here.
  */
 const WATCH = 'fugaro watch'
-const WATCH_NOTE = '`fugaro watch` is the live screen of spend, repositories and running agents.'
+const WATCH_TAIL = 'is the live screen of spend, repositories and running agents.'
+const WATCH_NOTE = `\`${WATCH}\` ${WATCH_TAIL}`
 
 // Hold every line to the document it cites, in that document's order, here, so a paraphrase —
 // or a line the skills stopped saying — stops the build naming the file rather than reaching
@@ -182,7 +190,9 @@ if (!source('README.md').includes(WATCH)) {
     <pre class="chat-watch-command"><code>{WATCH}</code></pre>
   </div>
 
-  <p class="chat-watch-note">{WATCH_NOTE}</p>
+  {/* The skill's own line about the screen, with the command in the site's code style rather
+      than in markdown backticks (the line `WATCH_NOTE` above is held to the skill). */}
+  <p class="chat-watch-note"><code>{WATCH}</code> {WATCH_TAIL}</p>
 
   {/* The caption is the figure's last child and its name: the chat is an illustration of the
       workflow drawn from the documents, not a recording of a session (D184's rule for the
