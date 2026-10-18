@@ -641,3 +641,53 @@ func TestLaunchKeepsAnotherProvidersRepositoryOnItsOwnJob(t *testing.T) {
 		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s, never the github profile's %s", len(calls), calls, perRepo, f.job)
 	}
 }
+
+// TestLaunchRefusesABitbucketProfile: a profile whose provider is bitbucket
+// passes projectpolicy and is published copy by copy from the local config,
+// but `fugaro init` refuses to deploy one (a Bitbucket credential cannot be
+// scoped to one project's repositories -- the owner's ruling of 2026-10-15,
+// design §4.1, D5 as amended, internal/infra's ProjectJobs). The launcher used
+// to compute the shared job's name from such a profile all the same: a
+// Bitbucket repository selecting it matches the profile's provider, so the
+// comparison beside this check sees no mismatch, and the launch went to a
+// Cloud Run job nothing deployed -- after the claim and the budget token --
+// where the 404's message blames `fugaro init` for a refusal it made on
+// purpose. The launch is refused here instead, naming the profile and the real
+// reason, and the per-repository fallback is not an option: it would run the
+// workflow while silently dropping the profile it selected.
+//
+// Mutation (run, restore): drop the checkProjectJobProvider call in
+// launchProjectJobFor -- the launch makes a jobs.run call for the profile's
+// undeployed job.
+func TestLaunchRefusesABitbucketProfile(t *testing.T) {
+	f := newProjectJobFixture(t)
+	const bbRepo = "acme/bb"
+	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
+	// The policy carries both profiles, as a publish from a local config that
+	// declares a bitbucket one leaves it, and admits the repository.
+	publishPolicy(t, f.launchBudgetFixture, `{"version":2,"allow_repos":["github/acme/*","bitbucket/acme/*"],`+
+		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},`+
+		`"bb":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`)
+
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@bitbucket.org:acme/bb.git")
+	yaml := strings.Replace(projectJobRepoYAML, "provider: github", "provider: bitbucket", 1)
+	yaml = strings.Replace(yaml, "    checkout: clone\n", "    checkout: clone\n    job_profile: bb\n", 1)
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
+	t.Chdir(dir)
+
+	_, _, err := execute(t, "run", "--repo", bbRepo, "--run-id", "20261017-100000-bbbb", "Add a feature")
+	if err == nil {
+		t.Fatal("a launch on a bitbucket profile was accepted")
+	}
+	for _, want := range []string{"profile \"bb\"", "bitbucket", "per-repository jobs"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the launch reached Cloud Run anyway: %+v", calls)
+	}
+}
