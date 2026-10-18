@@ -464,6 +464,43 @@ run "a refusal is frozen" \
   "  return Object.freeze({ ok: false, code, field });" \
   "  return { ok: false, code, field };"
 
+# An accessor has its own code. Sharing `unknown-field` would tell the caller to
+# fix a key rather than a property's shape -- and would make this module's
+# vocabulary disagree with P1.1's for the same fact.
+run "an accessor property has its own code, not the unknown-field one" \
+  "      return refuse(REFUSAL.ACCESSOR_PROPERTY, key);" \
+  "      return refuse(REFUSAL.UNKNOWN_FIELD, key);"
+
+# The answer's own age is judged against the window its kind takes, and the
+# refusal is the code P1.1 answers for that kind: `expired` for a prompt-window
+# delivery, `replay` for a command. One code for both would have the app and the
+# mailbox report one delivery two different ways.
+run "an over-age answer takes its kind's code, not always replay" \
+  "    return refuse(kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY, 'answer.at');" \
+  "    return refuse(REFUSAL.REPLAY, 'answer.at');"
+
+# A duplicate is answered from the queue it is already in: a redelivery cannot
+# clear an announcement the user has already heard.
+run "a redelivery cannot clear an announcement" \
+  "      return Object.freeze({ ok: true, outcome: OUTCOME.DUPLICATE, id: prompt.id, queue: current });" \
+  "      return Object.freeze({ ok: true, outcome: OUTCOME.DUPLICATE, id: prompt.id, queue: freezeQueue({ ...current, prompts: current.prompts.map((held) => Object.freeze({ ...held, announcedAt: null })) }) });"
+
+# Answering settles the prompt and drops its entry, so what is outstanding is
+# what is held and nothing else. Keeping the answered entry would leave a
+# settled question pending, and would make the next delivery of the same id a
+# duplicate rather than the fresh question this module's README says it is.
+run "an answered prompt leaves the queue" \
+  "  const prompts = current.prompts.filter((_, position) => position !== index);" \
+  "  const prompts = current.prompts;"
+
+# The module reads no clock of its own: every entry point takes its `now`. This
+# mutation is semantically inert -- `void globalThis` decides nothing -- and is
+# here to prove that the source scan in index.test.js is what catches a reach
+# for a global, a clock or a builtin, not a change in behaviour.
+run "the module reaches for no global, no clock and no builtin" \
+  "  const waited = now - at;" \
+  "  const waited = now - at; void globalThis;"
+
 git checkout -- "$F"
 echo "--- control killed; $guards guards: $killed killed, $survivors survived, $unapplied not applied"
 [ "$survivors" -eq 0 ] && [ "$unapplied" -eq 0 ] && [ "$guards" -eq "$killed" ]

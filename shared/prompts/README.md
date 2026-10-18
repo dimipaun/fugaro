@@ -52,9 +52,15 @@ announcedAt }`:
   `canonicalBytes` covers, and it cannot reach the database. D127's reasoning — per-device state
   stays on the device — is the same argument;
 - `announcedAt` is the phone's own record of when the user last **heard** the question, `null`
-  until they have. It is local for the same reason, and it is what makes a redelivery harmless: a
-  duplicate leaves the announcement standing, so the agent cannot re-arm a question the user
-  already answered out loud.
+  until they have. It is local for the same reason, and it is what makes a redelivery of a *held*
+  prompt harmless: a duplicate is answered from the queue it is already in, so the announcement
+  stands and the agent cannot make the phone read the same outstanding question out twice. It is
+  **not** a memory of answered questions: answering settles a prompt and drops its entry, so if
+  the same id is delivered again afterwards it is a fresh question, queued unannounced and spoken
+  at the next pause. Remembering that an id has been answered is **P6.7's ledger** — the same
+  division of labour P1.1's dedupe ledger draws for delivery — and this module holds what is
+  outstanding and nothing else. `index.test.js` pins both halves, because the difference is the
+  kind of thing a reader would otherwise assume away.
 
 The prompts are held in a **canonical order** (`at`, then the message id), so two consumers that
 received the same prompts in different orders hold the same queue, exactly as P1.1's ledger is
@@ -96,11 +102,18 @@ and takes the command window, because a confirmation must be fresh. Two conseque
   confirmed seven hours after the tap is not.
 - This module does not re-implement either window: `acceptanceKind(destructive)` returns P1.1's own
   kind (`prompt` for a queued prompt, `command` for a confirmation) and the same kind is what
-  P6.7's consumer passes to P1.1's `deliver`, so the two ends cannot pick different windows.
+  P6.7's consumer passes to P1.1's `deliver`, so the two ends cannot pick different windows. The
+  **refusal** follows the same mapping, and for the same reason: an answer older than the window
+  its kind is judged by is refused with the code P1.1 answers for that kind — `expired` for a
+  queued prompt's answer, `replay` for a confirmation — so this module never tells the caller a
+  delivery is a replay that P1.1 will call expired, or the other way round.
 
 An answer to a prompt that has already expired is refused `expired`, **with its expiry attached**:
 the user's late answer is not what is handed over. An answer to an expired question is an answer to
-a changed world, and D168's default is the non-destructive option.
+a changed world, and D168's default is the non-destructive option. The other way to reach that
+code is the answer's own age: one written before the prompt was, and so older than the TTL, while
+the prompt is alive — refused `expired` too, with **no** expiry, because nothing has died. The two
+are told apart by `field` (`prompt.at` against `answer.at`) and by the expiry's presence.
 
 ## Reminder escalation, and the pending cap (§3.4)
 
@@ -164,6 +177,7 @@ prompt is re-validated by that validator and the two must not disagree about wha
 |---|---|
 | `input-not-an-object` | a queue, an event or the policy's input is not a plain object |
 | `unknown-field` | a value carries a field this module does not read — a value is never a bag |
+| `accessor-property` | a field this module does read is an accessor, so it is refused without ever being called (P1.1's code, spelled the same) |
 | `invalid-now` | `now` is not a positive safe integer |
 | `now-went-backwards` | `now` is earlier than the queue's own, so expiry would run in reverse |
 | `invalid-account` | the installation id is not 1..64 characters |
@@ -181,7 +195,7 @@ prompt is re-validated by that validator and the two must not disagree about wha
 | `safe-not-an-option` | the safe answer is not one of the prompt's own options, so the user could never have chosen it |
 | `zero-timestamp` / `negative-zero` | the schema accepts `at: 0` and `at: -0`; both are the shape of an unset or negated counter, not a time |
 | `future-timestamp` | the message is from beyond the future tolerance |
-| `expired` | (answer) the prompt died before the answer arrived — carries the expiry it is owed |
+| `expired` | (answer) the answer is past the window its kind is judged by — a dead prompt (`field: prompt.at`, with the expiry it is owed) or an answer older than the TTL while the prompt lives (`field: answer.at`, with none) |
 | `replay` | (answer) a confirmation older than the command window |
 | `id-conflict` | a held id under a different sender or `at` |
 | `queue-full` | the cap — carries `QUEUE_FULL_REPLY` for the orchestrator |
@@ -209,15 +223,20 @@ order, the total tie-break by id, the classification held beside the message), t
 across accounts and the two-question sentence, "what's pending" grouped per installation, the
 expiry at D118's TTL with the answer it yields — asserted against P1.1's own `step` at the boundary
 — the sweeper-independence of expiry, both windows of D173 (including a delivery P1.1 reads as a
-replay and accepts as a prompt), the reminder schedule and a pause's three behaviours (speak, stay
-quiet, escalate), the cap at its boundary, and the interrupt table exhaustively.
+replay and accepts as a prompt), the refusal code an over-age answer takes following P1.1's kind
+mapping, the reminder schedule and a pause's three behaviours (speak, stay quiet, escalate), a
+redelivery that cannot clear an announcement beside the answer that leaves the queue (the two
+halves of one honest limit), the cap at its boundary, and the interrupt table exhaustively. One
+test is not about values at all: it scans `index.js` and refuses a clock, a file, a network, a
+process handle, a global, a `node:` builtin or an import that resolves outside `shared/`, because
+the module's header claims all of that and a claim nothing checks is a comment.
 
 **The red step** is P6.5's own: "an unanswered prompt expires at D118's mailbox TTL, as a pure
 function of the prompt's `at`, the TTL and the consumer's clock", written against a stub consumer
 that never expires anything and failing on it. It is `mutation-proof.sh`'s first guard, so it stays
 re-runnable rather than living only in a pull-request transcript.
 
-`mutation-proof.sh` plants 49 one-line bugs in `index.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 54 one-line bugs in `index.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. It

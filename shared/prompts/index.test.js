@@ -18,6 +18,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   initialState,
@@ -173,6 +174,14 @@ test('a queue is not a bag: an accessor is refused without being called', () => 
   const result = initialQueue(options);
   assert.equal(result.ok, false);
   assert.equal(called, 0, 'the getter must not be called: a value read twice is not a value');
+  // The code is its OWN, and not `unknown-field`: `maxPending` is a field this
+  // module names and knows, and refusing it as an unknown key would tell the
+  // caller to fix the wrong thing. P1.1 draws the same line for the same reason
+  // (`shared/mailbox/index.js`'s ACCESSOR_PROPERTY), and the codes are spelled
+  // the same so a caller can branch on either module's answer.
+  assert.equal(result.code, REFUSAL.ACCESSOR_PROPERTY);
+  assert.equal(result.field, 'maxPending');
+  assert.equal(REFUSAL.ACCESSOR_PROPERTY, 'accessor-property');
 });
 
 // ---------------------------------------------------------------------------
@@ -516,12 +525,80 @@ test('an answer to a destructive prompt is a confirmation and takes the command 
   assert.equal(again.ok, true, 'a fresh confirmation is still accepted');
 });
 
-test('the window an answer is judged by is P1.1\'s own kind mapping', () => {
+test("the window an answer is judged by is P1.1's own kind mapping", () => {
   assert.equal(acceptanceKind(false), MAILBOX_KIND.PROMPT);
   assert.equal(acceptanceKind(true), MAILBOX_KIND.COMMAND);
   // The kinds are P1.1's vocabulary and not a second one written here.
   assert.equal(MAILBOX_KIND.PROMPT, 'prompt');
   assert.equal(MAILBOX_KIND.COMMAND, 'command');
+});
+
+test("an answer older than its window is refused with P1.1's code for that window", () => {
+  // The window is P1.1's own mapping (`acceptanceKind`), so the refusal has to
+  // be too. P1.1 answers `expired` to a delivery past the prompt window and
+  // `replay` to a command past the six-hour one (mailbox/index.js's deliver),
+  // and P6.7 passes `acceptanceKind`'s kind to exactly that call: a code this
+  // module picked differently would have the app tell the user one thing and
+  // the mailbox do another.
+  const queue = enqueueOne(makeQueue()).queue;
+  const stale = T0 - 80 * HOUR; // older than the whole 72-hour TTL
+  assert.ok(T0 + HOUR - stale > PROMPT_TTL_MS, 'the fixture must be past the TTL');
+
+  const refused = answer(queue, { now: T0 + HOUR, answer: answerMessage({ at: stale }) });
+  assert.equal(refused.ok, false, JSON.stringify(refused));
+  assert.equal(refused.code, REFUSAL.EXPIRED);
+  assert.equal(refused.field, 'answer.at');
+  // Nothing is owed: the PROMPT is alive, so this refusal carries no expiry --
+  // unlike the dead-prompt one, whose `expiry` is the safe answer the
+  // orchestrator must still be handed. Same code, two facts, told apart by
+  // `field` and by that field's presence.
+  assert.equal(refused.expiry, undefined);
+
+  const mailbox = initialState({ now: T0, promptTtlMs: PROMPT_TTL_MS });
+  assert.equal(mailbox.ok, true);
+  const asPrompt = step(mailbox.state, {
+    type: 'deliver',
+    now: T0 + HOUR,
+    kind: MAILBOX_KIND.PROMPT,
+    message: answerMessage({ at: stale }),
+  });
+  assert.equal(asPrompt.ok, false);
+  assert.equal(asPrompt.code, 'expired', 'P1.1 calls a prompt-window delivery of that age expired');
+
+  // And the confirmation's own age is still a `replay`, which the destructive
+  // test above pins: the mapping decides the code, not the operation.
+  const confirmation = enqueueOne(makeQueue(), {}, { destructive: true }).queue;
+  const old = answer(confirmation, {
+    now: T0 + 7 * HOUR,
+    answer: answerMessage({ at: T0 }),
+  });
+  assert.equal(old.ok, false);
+  assert.equal(old.code, REFUSAL.REPLAY);
+});
+
+test('a redelivery cannot clear an announcement, and an answered id is the ledger\'s', () => {
+  // What `announcedAt` buys, told straight: a duplicate is answered from the
+  // queue it is already in, so the announcement stands and the agent cannot
+  // make the phone say a held question a second time by sending it again.
+  const held = announce(enqueueOne(makeQueue()).queue, { now: T0 + HOUR }).queue;
+  assert.equal(held.prompts[0].announcedAt, T0 + HOUR);
+  const twice = enqueue(held, { now: T0 + HOUR, prompt: promptMessage() });
+  assert.equal(twice.outcome, OUTCOME.DUPLICATE);
+  assert.equal(twice.queue.prompts[0].announcedAt, T0 + HOUR, 'the announcement stands');
+
+  // And the limit that is NOT this module's: answering settles the prompt and
+  // drops the entry, so the same message delivered again is a fresh question --
+  // queued, unannounced, and read out at the next pause. Remembering that an id
+  // was ANSWERED is P6.7's outbox ledger, the same division of labour P1.1's
+  // dedupe ledger draws for delivery; this module holds what is outstanding and
+  // nothing else.
+  const settled = answer(held, { now: T0 + HOUR, answer: answerMessage({ at: T0 + HOUR }) }).queue;
+  assert.equal(settled.prompts.length, 0, 'an answered prompt is gone from the queue');
+  const redelivered = enqueue(settled, { now: T0 + HOUR, prompt: promptMessage() });
+  assert.equal(redelivered.outcome, OUTCOME.QUEUED);
+  assert.equal(redelivered.queue.prompts[0].announcedAt, null);
+  const spoke = announce(redelivered.queue, { now: T0 + HOUR });
+  assert.equal(spoke.spoken.length, 1, 'it is spoken again: the queue does not remember answers');
 });
 
 test('an answer to a dead prompt is refused, with the expiry it is owed', () => {
@@ -954,6 +1031,54 @@ test('the queue module holds no clock: an unchanged input is unchanged output', 
   assert.ok(Object.isFrozen(enqueue(queue, { now: T0, prompt: promptMessage({ text: '' }) })));
   assert.ok(Object.isFrozen(policy({})));
   assert.ok(Object.isFrozen(isExpired(T0, T0, HOUR)));
+});
+
+test('the module is a pure function: no clock, no file, no network, no node: builtin', () => {
+  // The module header and the README both claim this, and a claim nothing
+  // checks is a comment. What it claims is D126's rule and this package's
+  // contract: nothing here reads a clock, a file, a database, a network or a
+  // random source -- every entry point takes its `now` -- and the module imports
+  // nothing outside `shared/` and no `node:` builtin, because the phone is one
+  // of the two consumers and React Native's bundler resolves none of them
+  // (P0.2's entry point is guarded the same way, for the same reason).
+  const source = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
+
+  const specifiers = [...source.matchAll(/^\s*import\s[^;]*?from\s*['"]([^'"]+)['"]/gm)].map(
+    (match) => match[1],
+  );
+  assert.ok(specifiers.length > 0, 'the scan must actually find this module\'s imports');
+  for (const specifier of specifiers) {
+    assert.match(
+      specifier,
+      /^\.\.?\//,
+      `shared/prompts/index.js imports ${specifier}, which is not a relative path`,
+    );
+    // Resolved, not merely read: `../../../etc/passwd` is relative and is not
+    // inside this package.
+    const resolved = new URL(specifier, import.meta.url).pathname;
+    assert.ok(
+      resolved.includes('/shared/'),
+      `shared/prompts/index.js imports ${specifier}, which resolves outside shared/`,
+    );
+  }
+
+  const forbidden = [
+    [/\brequire\s*\(/, 'require()'],
+    [/new\s+Date\b/, 'a clock of its own'],
+    [/Date\s*\.\s*now/, 'a clock of its own'],
+    [/Math\s*\.\s*random/, 'a random source'],
+    [/\bperformance\s*\./, 'a clock of its own'],
+    [/\bfetch\s*\(/, 'a network client'],
+    [/\bsetTimeout\s*\(/, 'a timer'],
+    [/\bsetInterval\s*\(/, 'a timer'],
+    [/\bprocess\s*\./, 'a process handle'],
+    [/\bglobalThis\b/, 'a global handle'],
+    [/node:/, 'a node: builtin'],
+    [/\bBuffer\b/, 'a Node buffer type'],
+  ];
+  for (const [pattern, what] of forbidden) {
+    assert.equal(pattern.test(source), false, `shared/prompts/index.js must not reach for ${what}`);
+  }
 });
 
 test('a queue handed back mutated is refused, not trusted', () => {

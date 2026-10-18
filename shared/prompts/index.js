@@ -224,6 +224,7 @@ export const OUTCOME = Object.freeze({
 export const REFUSAL = Object.freeze({
   INPUT_NOT_AN_OBJECT: 'input-not-an-object',
   UNKNOWN_FIELD: 'unknown-field',
+  ACCESSOR_PROPERTY: 'accessor-property',
 
   INVALID_NOW: 'invalid-now',
   NOW_WENT_BACKWARDS: 'now-went-backwards',
@@ -332,7 +333,11 @@ function refuse(code, field) {
  * and an accessor property is refused (`accessor-property`) without ever being
  * called: a getter can answer differently each time it is read, and this
  * module's whole claim is that its answer is a function of the value it was
- * handed. This is P1.1's reader, at P6.5's size.
+ * handed. The accessor has its OWN code rather than sharing `unknown-field`,
+ * because the field is one this module names and knows -- the caller's mistake
+ * is the property's shape, not its key -- and it is spelled exactly as P1.1
+ * spells it, so one caller can branch on either module's answer. This is P1.1's
+ * reader, at P6.5's size.
  */
 function readFields(value, names, where) {
   if (!isPlainObject(value)) return refuse(REFUSAL.INPUT_NOT_AN_OBJECT, where);
@@ -342,7 +347,7 @@ function readFields(value, names, where) {
     if (!names.includes(key)) return refuse(REFUSAL.UNKNOWN_FIELD, where);
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (descriptor === undefined || !Object.hasOwn(descriptor, 'value')) {
-      return refuse(REFUSAL.UNKNOWN_FIELD, key);
+      return refuse(REFUSAL.ACCESSOR_PROPERTY, key);
     }
     values[key] = descriptor.value;
   }
@@ -871,6 +876,10 @@ export function expire(queue, event = {}) {
  *
  * A prompt that is already dead is refused `expired` with its expiry attached:
  * the caller must deliver the safe answer, not the answer the user gave late.
+ * An answer whose own `at` is older than the window its kind is judged by is
+ * refused with the code P1.1 uses for that window -- `expired` for a queued
+ * prompt's answer, `replay` for a confirmation -- and carries no expiry, because
+ * nothing has died.
  *
  * @returns `{ ok: true, outcome: 'answered', queue, ... }` or a refusal
  */
@@ -921,10 +930,25 @@ export function answer(queue, event = {}) {
   const kind = acceptanceKind(entry.destructive);
   const windowMs = windowFor(current, kind);
   if (values.now - reply.at > windowMs) {
-    // Only a destructive prompt can reach this: a non-destructive answer is
-    // judged by the prompt's life above, and its own age is irrelevant while
-    // the prompt lives.
-    return refuse(REFUSAL.REPLAY, 'answer.at');
+    // The answer's own age is past the window its kind is judged by, and the
+    // code is the one P1.1 answers for that kind: `expired` for a delivery
+    // handed to the prompt window, `replay` for a command. P6.7 passes this
+    // very kind to P1.1's `deliver`, so a code chosen differently here would
+    // have this module and the mailbox tell the caller two different stories
+    // about one delivery. Two ways to reach it, one per kind:
+    //
+    //   a confirmation (a destructive prompt's answer) older than the command
+    //   window -- the prompt itself may still be alive by days;
+    //   an answer older than the TTL while its prompt is alive, which is only
+    //   possible for an `at` written before the prompt was (a phone's clock is
+    //   not this module's problem, but an answer to the prompt's own `at` or
+    //   later is always inside the TTL that keeps the prompt alive).
+    //
+    // Neither carries an `expiry`: the prompt has not died, so there is nothing
+    // owed. The dead-prompt refusal above returns the same `expired` code with
+    // `field: 'prompt.at'` AND its expiry; the `field`, and that field's
+    // presence, are what tell the two apart.
+    return refuse(kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY, 'answer.at');
   }
 
   const prompts = current.prompts.filter((_, position) => position !== index);
