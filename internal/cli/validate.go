@@ -1513,13 +1513,18 @@ func usesProfiles(c *config.Config) bool {
 }
 
 // cloneWorkflowWarnings warns, one per workflow, that checkout: clone is
-// valid config but runs nothing yet: cloneSince's launch gate
-// (recipes_skew.go) refuses every checkout: clone launch until fugaro
-// cloneSince ships, since plan Task 17's runner side (the runner's own
-// FUGARO_CHECKOUT support) is in no tagged release yet. The config stays
-// valid — this is for later, once it ships — so it is a warning, not a
-// Problem from Check.
+// valid config but runs nothing yet — while cloneShipped is false
+// (recipes_skew.go): cloneSince's launch gate refuses every checkout: clone
+// launch then, since the runner side (generic-tool plan Task 17) is in no
+// tagged release yet. The config stays valid either way, so it is a
+// warning, not a Problem from Check. cloneShipped is true since 0.9.0, so
+// this reports nothing today; it stays for the flip-back the constant's
+// comment describes, and the check below is what makes that flip-back warn
+// again.
 func cloneWorkflowWarnings(c *config.Config) []config.Problem {
+	if cloneShipped {
+		return nil
+	}
 	var ps []config.Problem
 	for _, name := range slices.Sorted(maps.Keys(c.Workflows)) {
 		if c.Workflows[name].Checkout != config.CheckoutClone {

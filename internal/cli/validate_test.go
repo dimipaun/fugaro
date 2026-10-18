@@ -149,13 +149,20 @@ func TestValidateSkipsNoLanguageRuntimeWarning(t *testing.T) {
 	}
 }
 
-// TestValidateWarnsCheckoutClone (0.7.0 safety fix, review finding): a
-// checkout: clone workflow is valid config — the config shape does not
-// change whether fugaro can actually run it — but a launch of it is
-// refused until fugaro cloneSince, since plan Task 17 (the runner's own
-// FUGARO_CHECKOUT support) has not shipped yet. fugaro validate must warn
-// about that, not error, and name checkout: baked as what runs today.
-func TestValidateWarnsCheckoutClone(t *testing.T) {
+// TestValidateDoesNotWarnCheckoutClone (0.7.0 safety fix, review finding,
+// inverted by the cloneShipped flip): a checkout: clone workflow is valid
+// config, and since 0.9.0 it is config that runs too — a clone job can be
+// deployed and a clone launch passes the launch gate on a current base
+// image. `fugaro validate` must therefore say nothing about it: the warning
+// it used to print ("clone runs are refused at launch until fugaro 0.7.5;
+// checkout: baked runs today") would send a reader away from an option that
+// works.
+//
+// Mutation (run, restore): set cloneShipped back to false in
+// recipes_skew.go — cloneWorkflowWarnings reports the workflow again, the
+// errOut assertions fail, and the JSON's warnings carry
+// workflows.app.checkout.
+func TestValidateDoesNotWarnCheckoutClone(t *testing.T) {
 	path := writeConfig(t, strings.Replace(cliMinimalYAML, "{ commands:", "{ checkout: clone, commands:", 1))
 	out, errOut, err := execute(t, "validate", path)
 	if err != nil {
@@ -164,9 +171,10 @@ func TestValidateWarnsCheckoutClone(t *testing.T) {
 	if !strings.Contains(out, "is valid") {
 		t.Fatalf("out = %q, want valid", out)
 	}
-	if !strings.Contains(errOut, "warning: workflows.app.checkout: clone runs are refused at launch until fugaro "+cloneSince) ||
-		!strings.Contains(errOut, "generic-tool plan Task 17") || !strings.Contains(errOut, "checkout: baked runs today") {
-		t.Fatalf("errOut = %q", errOut)
+	for _, not := range []string{"workflows.app.checkout", "has not shipped yet", "checkout: baked runs today"} {
+		if strings.Contains(errOut, not) {
+			t.Errorf("a shipped checkout: clone is still warned about with %q: %q", not, errOut)
+		}
 	}
 	out, _, err = execute(t, "validate", "--json", path)
 	if err != nil {
@@ -176,7 +184,7 @@ func TestValidateWarnsCheckoutClone(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("invalid JSON %q: %v", out, err)
 	}
-	if !got.Valid || !slices.ContainsFunc(got.Warnings, func(p config.Problem) bool { return p.Path == "workflows.app.checkout" }) {
+	if !got.Valid || slices.ContainsFunc(got.Warnings, func(p config.Problem) bool { return p.Path == "workflows.app.checkout" }) {
 		t.Fatalf("got %+v", got)
 	}
 }
