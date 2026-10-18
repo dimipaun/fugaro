@@ -841,10 +841,12 @@ func TestLsPRColumn(t *testing.T) {
 			lines[fields[0]] = l
 		}
 	}
-	if l := lines[appSlug+"/"+r.fu1]; !strings.HasSuffix(l, "#7 https://github.com/acme/app/pull/7 (draft)") {
+	// The BY cell follows the PR column, and none of these runs recorded a
+	// launcher (seedSpec's launch.json carries none): a dash.
+	if l := lines[appSlug+"/"+r.fu1]; !strings.Contains(l, "#7 https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("finished follow-up line = %q\n%s", l, human)
 	}
-	if l := lines[appSlug+"/"+waiting]; !strings.HasSuffix(l, "#7") {
+	if l := lines[appSlug+"/"+waiting]; !strings.Contains(l, "#7") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("unlaunched follow-up line = %q\n%s", l, human)
 	}
 	if l := lines[appSlug+"/"+r.plain]; l != "" {
@@ -896,7 +898,9 @@ func TestLsShowsDraftInProgress(t *testing.T) {
 	for _, line := range strings.Split(human, "\n") {
 		switch {
 		case strings.Contains(line, run):
-			if !strings.HasSuffix(strings.TrimSpace(line), "https://github.com/acme/app/pull/7 (draft)") {
+			// The BY cell (a dash: seedRun's launch.json records no launcher)
+			// follows the PR column.
+			if !strings.Contains(line, "https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(line), "-") {
 				t.Errorf("running line: %q", line)
 			}
 		case strings.Contains(line, done):
