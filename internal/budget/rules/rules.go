@@ -36,6 +36,15 @@
 // serves. Nothing else in the tree reads mu or mc, and a signed-in user who
 // carries neither is admitted nowhere.
 //
+// A third identity is the pairing session (mobile D165, plan task P6.6): pu, a
+// claim naming the one-shot pairing uid whose request node (the phone's public
+// key) its holder may write once and whose delivery node (token and MAC key,
+// encrypted to that key) it may read. It is read and never minted here, like
+// the other two, and it is the identity that exists before a device does: a
+// paired phone's token carries mu and needs the device node below, and a
+// pairing session carries pu and reaches the two pairing nodes and nothing
+// else.
+//
 // Writes. Every numeric field of a ledger or counter has its own .write rule
 // and no ancestor has one, so a write must name the field (a multi-path
 // update with keys like runs/<slug>/<run>/reserved). Writing a whole ledger,
@@ -101,6 +110,48 @@ const (
 	// the direction that matters — the database refusing a message the schema
 	// passed (the review finding on P2.1).
 	MaxTimestamp int64 = 1<<53 - 1
+
+	// MaxMacLength is the length of a message's or a heartbeat's MAC, in hex
+	// characters: 32 bytes of HMAC-SHA-256 (§3.5, D169, D171, O7). The rules
+	// check the length and nothing else — this language cannot test a string's
+	// characters, so "lowercase hex" is the shared schema's half and
+	// TestMailboxRulesAgreeWithTheSharedSchema is what holds the two numbers
+	// together. It is shared/mailbox-schema's MAC_MAX.
+	MaxMacLength = 64
+	// MaxAgentLength bounds an agent id: the value that travels in a message's
+	// `agent` field and that the consumer advertises in its heartbeat, so that
+	// "talk to <agent>" can match one against the other (D161, D163). It is the
+	// schema's AGENT_MAX.
+	MaxAgentLength = 64
+	// MaxAgentNameLength bounds an advertised agent's display name. It is the
+	// schema's AGENT_NAME_MAX.
+	MaxAgentNameLength = 64
+	// MaxAgents bounds the advertised agent list of one heartbeat: a list nobody
+	// can hold is not one a voice interface can read out. It is the schema's
+	// AGENTS_MAX.
+	MaxAgents = 32
+	// MaxOptions bounds a prompt's choice list, and MaxOptionLength one choice:
+	// the app reads the list aloud and the answer names a choice by position
+	// ("option two"), so both are bounded (the schema's OPTIONS_MAX and
+	// OPTION_MAX).
+	MaxOptions      = 8
+	MaxOptionLength = 200
+	// MaxTargetLength bounds an action target's run id or repository slug. It is
+	// the schema's TARGET_MAX; the schema's pattern for each is one of the
+	// character checks this language cannot make.
+	MaxTargetLength = 200
+	// MinShaLength and MaxShaLength are the two accepted lengths of a merge's
+	// head SHA: Git's SHA-1 object name, and a SHA-256 repository (the schema's
+	// SHA_MIN and SHA_MAX). The rules accept exactly those two lengths, as the
+	// schema does, so neither side accepts a SHA the other refuses.
+	MinShaLength = 40
+	MaxShaLength = 64
+	// MaxPublicKey bounds the public key a pairing request carries (the encoded
+	// X25519 public key is ~44 characters; 4096 is generous and still a bound).
+	// It is this package's own number: P6.3's schema does not model the pairing
+	// nodes, which are the rules' half of D165 — the node a phone writes before
+	// it holds anything else.
+	MaxPublicKey = 4096
 )
 
 // Generate returns the rules JSON, indented and deterministic.
@@ -111,10 +162,21 @@ func Generate() ([]byte, error) {
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, map[string]any{
-		"MaxTokensPerWrite": MaxTokensPerWrite,
-		"MaxCallsPerWrite":  MaxCallsPerWrite,
-		"MaxKeyLength":      MaxKeyLength,
-		"MaxTextLength":     MaxText,
+		"MaxTokensPerWrite":  MaxTokensPerWrite,
+		"MaxCallsPerWrite":   MaxCallsPerWrite,
+		"MaxKeyLength":       MaxKeyLength,
+		"MaxTextLength":      MaxText,
+		"MaxTimestamp":       MaxTimestamp,
+		"MaxMacLength":       MaxMacLength,
+		"MaxAgentLength":     MaxAgentLength,
+		"MaxAgentNameLength": MaxAgentNameLength,
+		"MaxAgents":          MaxAgents,
+		"MaxOptions":         MaxOptions,
+		"MaxOptionLength":    MaxOptionLength,
+		"MaxTargetLength":    MaxTargetLength,
+		"MinShaLength":       MinShaLength,
+		"MaxShaLength":       MaxShaLength,
+		"MaxPublicKey":       MaxPublicKey,
 	}); err != nil {
 		return nil, fmt.Errorf("rules: template: %w", err)
 	}
@@ -321,10 +383,43 @@ func runDelta(slug, run string, depth int) (string, error) {
 	return "(" + r + " - " + l + ")", nil
 }
 
+// PathDevices is the device allowlist of D166 (mobile plan task P6.4): the
+// parent of one child per paired device, keyed by that device's Firebase Auth
+// uid, so the child `config/admin/devices/<uid>` existing IS "this account is
+// paired to a phone that has not been revoked". The rules read it in USER
+// (userClaim); the node is written and deleted over IAM by `fugaro pair` and
+// `fugaro pair revoke` (plan task P6.6, which reads this constant rather than
+// spelling the path again), so no client token holds a grant on it — the
+// template carries the two locations under config/admin/devices with
+// `.read: false` and `.write: false` to say so in the deployed document.
+//
+// It is deliberately not a claim. A claim is minted by whoever signs the
+// custom token and cannot be taken back before the ID token expires (G14),
+// while deleting this node revokes at once: the next read or write of every
+// family USER reaches fails its existence test. Deleting an Auth user does not
+// revoke on its own — an issued ID token keeps passing until it expires — which
+// is the whole reason D166 chose a node.
+const PathDevices = "config/admin/devices"
+
 // userClaim is the mobile app's user claim (D112, D113): a custom claim mu
-// that names the mailbox its holder owns, and that must agree with auth.uid.
-// It is read, never minted: nothing here writes a claim, and setting mu on an
-// Auth user is the owner's own step when an account is added by hand (D114).
+// that names the mailbox its holder owns, that must agree with auth.uid, and
+// that the device allowlist of D166 still holds. It is read, never minted:
+// nothing here writes a claim, and setting mu on an Auth user is the owner's
+// own step when an account is added by hand (D114).
+//
+// The device conjunct (D166, plan task P6.4) is the one part of this predicate
+// an operator can take away in one write: `fugaro pair revoke` deletes the
+// child, and every family USER reaches — the caps, the day counters, the kill
+// switches, the mailbox and its ack — is refused from the next request on,
+// without waiting for an ID token to expire. It is also the half that makes a
+// *minted* token insufficient on its own: a launcher can mint uid == mu ==
+// another account's mailbox (see the residual below), but it may not write
+// config/admin/devices/ (that needs roles/firebasedatabase.admin, which
+// iam.tf grants to admins and budget admins only, mobile reconciliation G13).
+// What it does NOT close is the MAC's half of the boundary — the rules cannot
+// verify an HMAC — and it does not close a principal who holds database admin:
+// such a principal can write the device node as well as the token, and is
+// exactly the IAM reader that bypasses the rules in any case.
 //
 // What the agreement binds, exactly. A client cannot choose its uid or its
 // claims: both come from the custom token it signed in with. But phones sign
@@ -344,14 +439,18 @@ func runDelta(slug, run string, depth int) (string, error) {
 // the outbox and heartbeat is not protected by these rules (launchers also
 // hold roles/firebasedatabase.viewer, an IAM read that bypasses the rules,
 // mobile reconciliation G13), and neither is the integrity of the heartbeat
-// (CONSUMER's mc is minted the same way) nor of the ack. Phase 6 would close
-// what can be closed, if the owner approves it (the plan's Phase 6 is
-// "PROPOSED ... NOT APPROVED"): a device node under config/admin/devices/$uid
-// that USER will require (D166, plan P6.4), a per-pairing MAC on every inbox
-// message and action that fugaro mailbox verifies before acting (D169, D171,
-// P6.3, P6.7), so a minted inbox write cannot make the consumer act. Until
-// then this is an accepted residual, pinned by
-// TestMailboxResidualMintedTokenPassesUntilPhase6.
+// (CONSUMER's mc is minted the same way) nor of the ack. Two of the three
+// things phase 6 adds are now in this file: the device node USER requires
+// (D166, plan task P6.4, PathDevices) narrows a minted token to an account a
+// device node names, and a `mac` is required on every message of every kind
+// and on the heartbeat (D169, D171, O7, P6.3's schema), so an inbox write a
+// minter invented is one `fugaro mailbox` will refuse for want of a valid tag
+// (P6.7 verifies it; the rules can only require the field). What remains is
+// the part no rule can close, because a launcher-level principal holds
+// roles/firebasedatabase.admin beside the signer — it can write the device
+// node as well as the token — and because a launcher reads every mailbox
+// through the IAM read whatever the rules say. The narrower residual is
+// pinned by TestMailboxResidualMintedTokenNeedsTheDeviceNode.
 //
 // No claim the rules could add closes it: any claim they read (an fp, an
 // expiry) is one the minter writes too, and Firebase already ties a token to
@@ -359,7 +458,30 @@ func runDelta(slug, run string, depth int) (string, error) {
 //
 // A signed-in user who carries no mu is admitted nowhere, which is F11's
 // property kept: no grant admits a signed-in user on its own.
-const userClaim = "(auth != null && auth.token.mu != null && auth.token.mu == auth.uid)"
+const userClaim = "(auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())"
+
+// pairingClaim is the pairing session's claim (D165, plan task P6.6): a
+// custom claim pu that names the one-shot pairing uid whose two nodes its
+// holder may use. It is read, never minted, like mu and mc, and it is the
+// identity that exists *before* a device does.
+//
+// It is a claim rather than a test on the shape of auth.uid for the reason the
+// whole mailbox design reads claims: a client chooses neither its uid nor its
+// claims, and the rules cannot look at a string's characters (design §6.4), so
+// "the uid begins with p~" is not a predicate this language can write. The
+// `p~<random>` prefix is P6.6's naming convention for the uid it mints, and
+// nothing in the rules depends on it.
+//
+// What a minted pu reaches, stated: a launcher can mint pu == auth.uid == a
+// uid of its choosing, so it can write that uid's own request node — a public
+// key, into a node the real phone would then find already written, because the
+// write is once — and read that uid's delivery node, which is the payload
+// encrypted to a key the launcher does not hold. Neither is a way in: D165's
+// binding is the operator-typed fingerprint of the key in the request, and a
+// launcher that cannot open the ciphertext learns nothing from it. The
+// one-shot property the same claim must not break is the write-once rule on
+// the request node below.
+const pairingClaim = "(auth != null && auth.token.pu != null && auth.token.pu == auth.uid)"
 
 // wordMacro expands a macro word that takes no path.
 func wordMacro(m string, depth int) (string, error) {
@@ -380,6 +502,12 @@ func wordMacro(m string, depth int) (string, error) {
 		// $mb is in scope at the config and spend nodes it is used at — and
 		// it names no mailbox, so it cannot be used to reach one.
 		return userClaim, nil
+	case "PAIRING":
+		// The pairing session (D165): the pu claim, plus $uid naming the same
+		// uid. Both halves are needed for MAILBOX's reason — the first says the
+		// token carries pu at all, the second that the location is that
+		// session's own pairing node and not another's.
+		return "(" + pairingClaim + " && $uid == auth.uid)", nil
 	case "MAILBOX":
 		// The owner of the mailbox $mb: the user claim, plus $mb naming the
 		// same account. Both halves are needed: the first says the token
@@ -416,6 +544,42 @@ func wordMacro(m string, depth int) (string, error) {
 		return "(root.child('config/kill/global/on').val() != true && root.child('config/kill/repos').child($slug).child('on').val() != true)", nil
 	case "REPODAILY":
 		return fallback("dailyMicros", "repoDailyMicros"), nil
+	case "KINDREQ":
+		// The per-kind *required* half of a message's shape (P6.3's
+		// KIND_REQUIRED): an `answer` must name the prompt it answers, and an
+		// `action` must carry its action record. The other half — the fields a
+		// kind may not carry — is on the field's own node (see PARENTKIND),
+		// where it cannot be reached by a kind the message does not have.
+		k := kindOf("newData")
+		return "((" + k + " == 'answer' ? newData.child('reply_to').exists() : true) && (" + k + " == 'action' ? newData.child('action').exists() : true))", nil
+	case "PARENTKIND":
+		// A field's own kind test: the kind of the message this field is on,
+		// read through parent() because the rules give a validating node no
+		// other way to see its parent's data. Used to refuse a field on the
+		// wrong kind (`options` outside a prompt, `action` outside an action),
+		// which P6.3 refuses as field-not-allowed rather than as an unknown
+		// field: two agents disagreeing about whether a message is an action is
+		// the ambiguity the (kind, field) table exists to remove.
+		return kindOf("newData.parent()"), nil
+	case "TARGETOK":
+		// D169's verb/target agreement, as the schema resolves it: `merge`
+		// resolves to a repository and a pull request, `cancel` to a run,
+		// `confirm` to either. A target that carries both shapes, or neither,
+		// is refused on both sides.
+		v := "newData.parent().child('verb').val()"
+		return "(" + v + " == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (" +
+			v + " == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : " +
+			"(newData.hasChildren(['run']) || newData.hasChildren(['repo', 'pr']))))", nil
+	case "SHAOK":
+		// A merge's head SHA: present only on a merge (the record has no field
+		// for it on any other verb), and one of Git's two object-name lengths.
+		return fmt.Sprintf("(newData.parent().child('verb').val() == 'merge' && newData.isString() && (newData.val().length == %d || newData.val().length == %d))", MinShaLength, MaxShaLength), nil
+	case "MACOK":
+		// A tag's shape: a string of exactly MAC_MAX characters. Not the
+		// characters themselves — see MaxMacLength — and never the value:
+		// verifying a tag needs the key, which is D171's, and the rules have
+		// none (P6.7 verifies; the rules can only require the field).
+		return fmt.Sprintf("(newData.isString() && newData.val().length == %d)", MaxMacLength), nil
 	case "PERRUNOK":
 		return perRunOK(depth)
 	case "GLOBALDAILY":
@@ -441,6 +605,18 @@ func wordMacro(m string, depth int) (string, error) {
 		return "(" + rc + " == " + d + " && " + gc + " == " + d + ")", nil
 	}
 	return "", fmt.Errorf("unknown macro %s", m)
+}
+
+// kindOf is the kind of the message at the snapshot, as the rules read it: the
+// `kind` field when the message carries one, else 'message'. A message written
+// without a `kind` IS the ordinary message (shared/mailbox-schema's
+// DEFAULT_KIND), so every per-kind clause has to read an absent field as
+// 'message' rather than as "no kind at all" — which is also why the reading is
+// a ternary on exists() and not a comparison against a null that no string
+// equals.
+func kindOf(snap string) string {
+	c := snap + ".child('kind')"
+	return "(" + c + ".exists() ? " + c + ".val() : 'message')"
 }
 
 // fallback is the repository's own cap, else the default, else null (which

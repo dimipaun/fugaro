@@ -781,24 +781,24 @@ func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required []st
 // (at held to MaxAmount, an id to something the schema allows longer) fails
 // here.
 //
-// P6.3 grew the schema — `mac` is now required on every message, and `agent`,
-// `kind`, `options`, `reply_to` and the action record are optional fields — and
-// the template has NOT grown with it: the mailbox subtree still gates P2.1's
-// field set, and P6.4 (a task of its own, level 3, after P2.2) is what adds the
-// new fields to the rules. So the two lists below are pinned in the direction
-// that must hold NOW: the schema's field set is exactly this (a change to it
-// is a deliberate change to this test), and every field the rules DO gate is a
-// field the schema names, never one it does not. The fields the rules do not
-// gate yet are named in the comment above the per-node loop, so that "fewer
-// fields than the schema" is a known, listed state rather than an oversight —
-// and so that P6.4 has a failing test to make pass, not a silent gap to close.
+// P6.3 grew the schema and P6.4 (this change) grew the template with it: `mac`
+// is required on every message and on the heartbeat, `agent`, `kind`,
+// `options`, `reply_to` and the action record are the fields a message may
+// carry beside it, and the (kind, field) table is what says which kind may
+// carry which. So the two lists below are the schema's own, and the per-node
+// loop asserts the rules gate exactly them — a field the rules gate that the
+// schema does not name fails there too, because the rules may gate fewer
+// fields than the schema, never one it does not have.
 //
 // What this test cannot pin is the rest of the schema's judgement, and §6.4
 // says where the rules are looser rather than claiming they are the same: the
 // rules cannot inspect characters, so the id's key rule (no `%`, no control
 // character, no lone surrogate — all of which the schema refuses) is the
-// schema's alone, and `text`'s control characters with it. The emulator cases
-// (emulator_mailbox_test.go) prove what the rules do refuse.
+// schema's alone, `text`'s control characters with it, and so are the hex
+// character sets of a `mac` and of a head SHA (the rules check those two
+// lengths, and the two SHA lengths exactly). The emulator cases
+// (emulator_mailbox_test.go, emulator_pairing_test.go) prove what the rules do
+// refuse.
 func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	consts, fields, required := schemaCatalog(t)
 	if got, want := MaxKeyLength, consts["ID_MAX"]; int64(got) != want {
@@ -812,6 +812,29 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	}
 	if got, want := MaxTimestamp, consts["AT_MAX"]; got != want {
 		t.Errorf("MaxTimestamp = %d, the schema's AT_MAX = %d", got, want)
+	}
+	// The bounds P6.4 adds, each one a number the schema owns: a rules bound
+	// tighter than the schema's would refuse a message the phone accepted, and
+	// the two artifacts are separate files with nothing but this test holding
+	// them together.
+	for _, c := range []struct {
+		what string
+		got  int
+		want int64
+	}{
+		{"MaxMacLength", MaxMacLength, consts["MAC_MAX"]},
+		{"MaxAgentLength", MaxAgentLength, consts["AGENT_MAX"]},
+		{"MaxAgentNameLength", MaxAgentNameLength, consts["AGENT_NAME_MAX"]},
+		{"MaxAgents", MaxAgents, consts["AGENTS_MAX"]},
+		{"MaxOptions", MaxOptions, consts["OPTIONS_MAX"]},
+		{"MaxOptionLength", MaxOptionLength, consts["OPTION_MAX"]},
+		{"MaxTargetLength", MaxTargetLength, consts["TARGET_MAX"]},
+		{"MinShaLength", MinShaLength, consts["SHA_MIN"]},
+		{"MaxShaLength", MaxShaLength, consts["SHA_MAX"]},
+	} {
+		if int64(c.got) != c.want {
+			t.Errorf("%s = %d, the schema's own bound = %d", c.what, c.got, c.want)
+		}
 	}
 	if want := []string{"id", "sender", "text", "at", "mac"}; !slices.Equal(required, want) {
 		t.Errorf("the schema's REQUIRED_FIELDS = %v, want %v", required, want)
@@ -834,10 +857,20 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		{`mailbox/$mb/inbox/$msg/sender`, `newData.val().length <= ` + strconv.Itoa(MaxString)},
 		{`mailbox/$mb/inbox/$msg/text`, `newData.val().length <= ` + strconv.Itoa(MaxText)},
 		{`mailbox/$mb/inbox/$msg/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
+		{`mailbox/$mb/inbox/$msg/mac`, `newData.val().length == ` + strconv.Itoa(MaxMacLength)},
+		{`mailbox/$mb/inbox/$msg/agent`, `newData.val().length <= ` + strconv.Itoa(MaxAgentLength)},
+		{`mailbox/$mb/inbox/$msg/options/$i`, `newData.val().length <= ` + strconv.Itoa(MaxOptionLength)},
+		{`mailbox/$mb/inbox/$msg/options`, `newData.numChildren() <= ` + strconv.Itoa(MaxOptions)},
+		{`mailbox/$mb/inbox/$msg/action/target/run`, `newData.val().length <= ` + strconv.Itoa(MaxTargetLength)},
 		{`mailbox/$mb/outbox/$msg`, `$msg.length <= ` + strconv.Itoa(MaxKeyLength)},
 		{`mailbox/$mb/outbox/$msg/text`, `newData.val().length <= ` + strconv.Itoa(MaxText)},
 		{`mailbox/$mb/outbox/$msg/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
+		{`mailbox/$mb/outbox/$msg/mac`, `newData.val().length == ` + strconv.Itoa(MaxMacLength)},
 		{`mailbox/$mb/heartbeat/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
+		{`mailbox/$mb/heartbeat/mac`, `newData.val().length == ` + strconv.Itoa(MaxMacLength)},
+		{`mailbox/$mb/heartbeat/agents`, `newData.numChildren() <= ` + strconv.Itoa(MaxAgents)},
+		{`mailbox/$mb/heartbeat/agents/$i/id`, `newData.val().length <= ` + strconv.Itoa(MaxAgentLength)},
+		{`mailbox/$mb/heartbeat/agents/$i/name`, `newData.val().length <= ` + strconv.Itoa(MaxAgentNameLength)},
 	} {
 		attrs, ok := paths[c.path]
 		if !ok {
@@ -850,25 +883,16 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		}
 	}
 
-	// The fields, per node: exactly what P2.1's template gates today, and every
-	// one of them a field the schema names. An inbox message has the four
-	// required P0.2 fields — `acked` is the phone's ack of a message it spoke,
-	// which lives on an outbox message — and an outbox message has all five.
-	//
-	// P6.3's `mac` is NOT among them yet, and that is the gap P6.4 closes: the
-	// schema now requires a tag on every message and the rules would refuse the
-	// write that carries one. It is listed here, as a want that deliberately
-	// lacks it, so the gap is visible in the test rather than only in a plan;
-	// P6.4 adds "mac" to both lists and the same loop then asserts it. Until
-	// then the second assertion below is what keeps the difference one-way: the
-	// rules may gate FEWER fields than the schema, never a field it does not
-	// name.
+	// The fields, per node: the schema's own set, and every one of them a field
+	// the schema names. An inbox message has the required P6.3 fields plus the
+	// optional ones (`acked` is the phone's ack of a message it spoke, which
+	// lives on an outbox message), and an outbox message has all of them.
 	for _, c := range []struct {
 		path string
 		want []string
 	}{
-		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at"}},
-		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "acked"}},
+		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at", "mac", "agent", "kind", "options", "reply_to", "action"}},
+		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "mac", "acked", "agent", "kind", "options", "reply_to", "action"}},
 	} {
 		if _, ok := paths[c.path]; !ok {
 			t.Errorf("the template does not generate /%s", c.path)
@@ -886,7 +910,7 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		want := slices.Clone(c.want)
 		slices.Sort(want)
 		if !slices.Equal(got, want) {
-			t.Errorf("/%s holds %v, P2.1's field set for it is %v", c.path, got, want)
+			t.Errorf("/%s holds %v, the shared schema's field set for it is %v", c.path, got, want)
 		}
 		for _, field := range got {
 			if !slices.Contains(fields, field) {
