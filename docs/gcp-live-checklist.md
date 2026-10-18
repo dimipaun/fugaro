@@ -308,6 +308,20 @@ work holds 80–89 carved out of that range** (`docs/mobile/README.md`, owner
 allocation of 2026-10-16): neither is derived from a grep of the free numbers,
 and a reserved number is never reused or renumbered.
 
+**The mobile work's checks 81, 82 and 89 are written by Task P4.2a (2026-10-18), and their
+sections are at the end of this file.** Check **81** (the deployed rules' fence: the signed-in
+user's two writes and its read grant, against the document actually deployed), check **82** (the
+rules deploy and the `config/limits/policyRules` marker reading back this release's
+`projectpolicy.RulesVersion`) and check **89** (a signed EAS build, and the store's internal
+track) each have a row in the table below and a `## Check N` section below it, with their guard
+blocks, their per-step `FACT` lines and their restores. The numbers are the owner's allocation of
+2026-10-16 ([docs/mobile/README.md](mobile/README.md), which records 80–89 as this work's and
+that the pull request that wrote it wrote no row or section — this one does, for these three
+only): **80 and 83–88 are still unwritten and belong to Task P4.2**, and nothing here is
+renumbered for them. **All ten are owner-run and none has been run**: 81 and 82 at P2.3, 89 at
+P4.4. Until they are run, every live claim of the mobile app is unverified and each of the three
+rows stays **NOT RUN**.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -468,6 +482,9 @@ probe account carries predefined grants only).
 | 58 | Artifact runs (design `artifact-runs.md` §3–§9 and §11; plan `2026-10-15-artifact-runs.md`): a `mode: artifact` recipe rendered on a real image (ffmpeg through `image.apt`, one Cloud Build), three attached PNGs in and a video out, the `render` record and the model-against-compute counters, **no branch pushed and no pull request opened**, the probe's verdict through `commands.probe` beside an independent local `ffprobe`, the recorded content type against the object's own (U5), retrieval with a sha256 match and the upload's wall clock inside `finalize_reserve` — at the set's own size, and in 6b for two files written at exactly `outputs.max_bytes` (U6) — and the failure direction in three halves — a probe that demands an impossible duration and must fail the run with nothing uploaded, a set over `outputs.max_total_bytes` that must refuse with the cap named and the container alive, and a render driven past the job's memory, whose FACT is what was seen (U3) | See "Check 58" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs one hard-coded project guard (`P` hard-coded and never read from `gcloud`, `${VAR:?}` on every argument, the three hard stops, the workflow name checked against the checkout), every launch is guarded per step and records its run id, its commit and the image and base HEAD step 1 found in a per-attempt record file (`/tmp/chk58-records/<batch>.env`), and the Restore reverts only the commits that record holds and that are not already reverted — it refuses to guess at one it does not. | One Cloud Build (the image that carries ffmpeg) and five tiny sandbox runs — two of them carrying the same three attached PNGs (step 2 and 7a; 7b may too), one render-only and therefore at model $0, and one driven past its memory limit. **USER-RUN, NOT RUN.** |
 | 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no console download link (`features.console_downloads` is false) and no video player (`features.video` is false) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; and the greps for a download link, a player and an unshipped platform printing nothing. **USER-RUN, NOT RUN.** |
 | 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Firebase Analytics behind the consent banner, so `analytics.enabled` is false until W3.2 and today's pass is that no analytics request appears at all) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
+| 81 | The deployed rules' fence (design `m9-budget-and-dashboard.md` §6.2 and §6.4; mobile plan Task P4.2a writes it, and P2.3 and P4.2 **run** it): the live half of P2.2's denial cases for the **signed-in user** — a token whose `mu` claim is its own uid makes **exactly two writes** (one message into its own `inbox/$msg`; the `acked: true` once, on a message already in its own `outbox/$msg`) and reads **nothing beyond** the families D112's user-claim read grant names (`config/caps/**`, `spend/$day/**`, `config/kill/**`, plus its own `outbox` and `heartbeat`); everything else is refused — another account's mailbox, a read of its own inbox, the outbox message and the heartbeat (the consumer's writes, **check 80's** half), a second, `false` or parent-less ack, the parents of the granted nodes, and every family the grant does not name (`config/limits/policyRules`, `config/mode`, `config/policy/**`, `agents/**`, `outcomes/**`, `runs/**`, `fugaro/**`) — and a token whose `mu` names another uid is admitted nowhere | See "Check 81" below; **you** run it, on installation `fugaro` (never `belong`), in project `fugaro-dev`, with two accounts you add by hand (D114) and custom tokens you mint yourself; every step re-runs the one guarded setup block, which reads the backend out of the project's own config and never prints it, and two nodes are seeded with your own IAM credentials (which bypass the rules and prove nothing about them). **No agent runs any step of it** | Two minted custom tokens exchanged for ID tokens, two seeded nodes, and a set of reads and writes each of which must answer a permission denial; the tokens and the web API key are credentials and never appear in a `FACT` line or a pull request. **USER-RUN, NOT RUN.** |
+| 82 | The rules deploy and the marker (design `m9-budget-and-dashboard.md` §6.2 and §6.4; mobile plan Task P4.2a writes it, and P2.3 **runs** it): `fugaro init --firebase` puts this release's generated rules document on the database and records the generation P2.2's denial cases and P2.1's read grants are written against — the act line `rules: deploys the security rules (<N> bytes, generated)` when the deployed document differs, and always the marker line `config/limits/policyRules: records the rules generation (config/limits/policyRules = 2)`, followed by a second run that writes nothing (`The database already has the rules, mark, project name and mode.`), and by the marker node itself read back holding this release's `projectpolicy.RulesVersion` (2) over a document at `rules.Generate()`'s own 42687 bytes that carries the `mailbox` subtree; an installation still on generation 1 is moved to generation 2 by exactly this run, with `fugaro doctor`'s `policy-rules-skew` line as the before-state | See "Check 82" below; **you** run it, on installation `fugaro` (never `belong`), `fugaro-dev`, at your own terminal, and **you** type the confirmation (a coding agent's session cannot). **No agent applies rules** | One rules deploy of about 42 KB and at most the marker write beside it, under the database step's own confirmation; the marker-above-this-binary refusal is **read, not provoked** (no hand-written marker on the dogfood installation). **USER-RUN, NOT RUN.** |
+| 89 | A signed EAS build, and the store's **internal** track (mobile plan Task P4.2a writes it, and P4.4 **runs** it; D120, C8): a build of the app at `mobile/` — its own artifact, outside the Go module (C2), at the commit whose tag it is versioned from (C6) — signed with **your** distribution credentials (EAS-managed or your own distribution certificate and upload key), and reaching the stores' internal testing tracks only; no public release is implied or made, and the check's own guard stops on any profile whose submit track is not `internal`. No agent runs `eas build` or `eas submit`, none touches a signing key, an App Store Connect API key or a Play service-account key, and no store credential enters an agent's environment | See "Check 89" below; **you** run it, at your own terminal, with your own Apple and Google accounts, your own signing keys and your own EAS project, from a clean checkout of the tagged commit; **no agent runs any step of it** (D120, Global Constraint 9). Its guard hard-stops today: there is no `mobile/app.json` until P3.1 | One build per platform and one submission per platform, on the internal tracks; the signing keys, the App Store Connect API key and the Play service-account key are yours, are never read by this check and are never pasted into a `FACT` line. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -4045,3 +4062,385 @@ C=$(sed -n 's/^canonical_url: *//p' website/data/site.yaml)
 **Fails when:** any request or any markup URL names a host that is not on the list, or an analytics request appears before consent (or after the banner is declined). What failing looks like: a font or a script someone added from a CDN for one page; a `preconnect` left in a layout; an analytics loader that runs on load instead of after consent — the last is W1.12's rule as well as this check's, so it is a bug in the loader's tests too. **The fix is never "add the host to `allowed_hosts`"**: that list is what the site's build refuses links to, and the CSP in `firebase.json` (`default-src 'self'`, `script-src 'self'`) is what the browser enforces, so a new origin is a decision about the site's privacy page taken by the task that wants it.
 
 **Paste back:** the panel's host list per page; the origins of any request that is not the canonical one; the analytics requests with the banner's state at each of the four points above; the markup's absolute URLs; and the browser and its version (the panel groups requests differently between them). **Never paste a cookie value, or any header that is not an origin.** Until this check runs, the site's runtime behaviour is **UNVERIFIED** — the build's origin lint is not the browser — and the row above stays **NOT RUN**.
+
+## Check 81: the deployed rules' fence — the signed-in user's two writes and its read grant (`fugaro-dev` only, never `belong`; run by you; NOT RUN)
+
+The emulator (P2.2, build tag `firebase`, `go test -tags firebase ./internal/budget/rules/...`) proves the mailbox rules against a local RTDB emulator. This check is the half no emulator can prove: that **the document actually deployed in `fugaro-dev`** — the one P2.1's template generates, whose generation check 82 reads back — answers the same way to real Firebase ID tokens minted by the project's own signer, over the real Identity Toolkit and the real Realtime Database. Its subject is the plan's row 81: a signed-in **user** may write **only** its own inbox messages and the ack on a message it has spoken (D113's two writes), and may read **nothing** beyond the families D112's user-claim read grant names. Its cases are P2.2's `TestMailboxPhoneWritesItsOwnInbox`, `TestMailboxMessageShape`, `TestMailboxHeartbeatDeleteIsDenied` (from the user's side), `TestMailboxPhoneAcksWhatItSpoke`, `TestMailboxClaimMismatchIsAdmittedNowhere` and `TestMailboxReadsAreTheGrantedSet`, plus — recorded, not failed — `TestMailboxResidualMintedTokenPassesUntilPhase6`.
+
+**What the deployed rules are.** The subtree is `mailbox/$mb/{inbox/$msg, outbox/$msg(.acked), heartbeat}` (`internal/budget/rules/rules.json.tmpl`, the `mailbox` node). Three predicates decide everything (`internal/budget/rules/rules.go`): `USER` (`auth != null && auth.token.mu != null && auth.token.mu == auth.uid`), `MAILBOX` (`USER && $mb == auth.uid`), `CONSUMER` (`auth != null && auth.token.mc != null && auth.token.mc == $mb`). A **user** — the account whose own uid is its `mu` claim — may **write** one message into its own `inbox/$msg` (write-once: `MAILBOX && newData.exists() && !data.exists()`; shape `{id, sender, text, at}` with `id == $msg` and `sender == $mb`, `at` a `TIMESTAMP`) and may write `acked: true` once onto a message already in its own `outbox/$msg` (`MAILBOX && newData.exists() && !data.exists()`, with `data.parent().exists()`; the parent must already exist — that write is the **consumer's**, see below). Nothing else in the subtree is a user's: `$other: {".validate": false}` everywhere, the outbox message and the heartbeat are `CONSUMER`'s, the inbox has **no read grant at all**, and the only reads are `outbox` and `heartbeat` under `MAILBOX`. Outside the mailbox, what a `mu` token may read is exactly **three families plus its own mailbox's two nodes**: `config/caps/**` and `config/kill/**` and `spend/$day/**` (`TOKEN || USER`, `rules.json.tmpl` lines 11–13, 22–23, 65) plus its own `outbox` and `heartbeat`. `config/limits/**`, `config/mode`, `config/policy/**`, `config/admin`, `fugaro/**`, `runs/**`, `agents/**` and `outcomes/**` are `TOKEN` (the run token) or `false`, and a `mu` token is neither.
+
+**What this check does not cover.** The **consumer's** own half of the fence — that a token whose `mc` names a mailbox writes that mailbox's outbox message and heartbeat and is admitted nowhere else (P2.2's `TestMailboxConsumerWritesOnlyItsMailbox`) — is **check 80's**, the mailbox end to end, written by P4.2. This check needs an outbox message to ack, so the two nodes step 4 reads and step 5 acks are **seeded with the operator's IAM credentials**, which bypass the rules entirely: `FACT:` lines record them, and they prove **nothing about the rules** — what step 4 proves is that the *user* may read them and step 5 that the *user* may ack one.
+
+**What changes in the project, and its cost.** Two Firebase Auth accounts (`chk81-alice`, the user, and `chk81-bob`, a second user to prove the binding) that **you** add by hand (D114: an account is an installation's own step; no `fugaro mailbox` command exists and `mobile/` is not built yet, so nothing here is automated). Their names are deliberately not `r~<slug>~<run>`, the only shape the sweeper deletes (`internal/budget/sweep.go`, `DefaultUserMaxAge` 48h), so the sweep leaves them and the Restore removes them. Two nodes under Alice's mailbox are seeded with IAM; everything else is reads and writes over REST with minted ID tokens. **No Cloud Run, no VM, no build, nothing billable**: RTDB reads/writes and Identity Toolkit sign-ins are free at this volume.
+
+**No secret is present or printed.** `$KEY` is the project's restricted web API key and every ID token below is a credential: they live in `/tmp/chk81` for the length of the run, are never printed, never pasted into a `FACT` line and never appear in a pull request.
+
+**Guard block — re-run this before every step.** It hard-stops unless the installation is the `fugaro` one on GCP project `fugaro-dev` (never `belong`), reads the three backend values out of the project's own config rather than from memory, and refuses to start without any of them. **Paste it into a file and `source` it, not into an interactive zsh**: the `${VAR:?}` forms below are bash's.
+
+```bash
+# === Check 81: setup + guard. RE-RUN THIS BLOCK BEFORE EVERY STEP. ===
+P=fugaro-dev                    # hard-coded; the guard below refuses anything else
+C=$HOME/.config/fugaro/projects/fugaro.yaml
+set -u
+[ "$P" = fugaro-dev ] || { echo "Check 81 stopped: this check runs on fugaro-dev only (never belong)" >&2; exit 1; }
+command -v fugaro >/dev/null || { echo "Check 81 stopped: no fugaro on PATH" >&2; exit 1; }
+fugaro doctor --project fugaro 2>/dev/null | grep -q '^project: .*(GCP fugaro-dev,' || {
+  echo "Check 81 stopped: installation 'fugaro' is not the fugaro-dev installation on this machine" >&2; exit 1; }
+[ -r "$C" ] || { echo "Check 81 stopped: no project config at $C (read the project line of 'fugaro doctor --project fugaro')" >&2; exit 1; }
+DB=$(sed -n 's|^ *rtdb_url: *||p' "$C" | tr -d "\"'" | sed -e 's|^https://||' -e 's|/*$||' | head -1)
+KEY=$(sed -n 's|^ *firebase_api_key: *||p' "$C" | tr -d "\"'" | head -1)
+SA=$(sed -n 's|^ *token_signer: *||p' "$C" | tr -d "\"'" | head -1)
+for v in DB KEY SA; do [ -n "${!v}" ] || { echo "Check 81 stopped: $v is not set in $C (its budget: section; see docs/gcp-setup.md)" >&2; exit 1; }; done
+W=/tmp/chk81; mkdir -p "$W"
+# The two uids this check uses, added by hand before step 1 (D114):
+#   ALICE  the user        BOB  a second user (the binding's control)
+ALICE=chk81-alice; BOB=chk81-bob
+AUD=https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit
+# The epoch day the counters live under: the plain decimal epoch day, budget.DayKey.
+DAY=$(python3 -c 'import time; print(int(time.time()//86400))')
+# NODE is the slug the granted-family reads use: config/caps/repos/$slug is granted
+# to USER for ANY slug, existing or not, so no repository's slug is needed.
+NODE=chk81-probe
+echo "Check 81 ready: P=$P day=$DAY node=$NODE — DB, KEY and SA are read and never printed"
+```
+
+**The two helpers every minting step uses.** `mint <uid> <claims-json>` signs a custom token with the project's own signer through `iam.serviceAccounts.signJwt` — the path `internal/budget/token`'s `Mint` takes (`IAMSigner.SignJWT`, audience `token.Audience`) and the path check 26's step 7 used; `signin <uid> <claims-json>` exchanges it at `accounts:signInWithCustomToken` for an ID token (`internal/budget/token/exchange.go`), which is what `?auth=` takes below. **`sign-jwt` requires your own credentials to hold `fugaroTokenMinter` on the signer** (`iam.serviceAccounts.signJwt` and nothing else, docs/gcp-setup.md "Who can sign run tokens"): a refusal here is a permission finding, not a fault of this check.
+
+```bash
+# === Check 81: the helpers (after the guard block). ===
+mint() { # mint <uid> <claims-json-object> -> the custom token on stdout
+  local uid=$1 claims=$2 now exp
+  now=$(date +%s); exp=$(( now + 3600 ))
+  printf '{"iss":"%s","sub":"%s","aud":"%s","iat":%s,"exp":%s,"uid":"%s","claims":%s}' \
+    "$SA" "$SA" "$AUD" "$now" "$exp" "$uid" "$claims" > "$W/payload-$uid.json"
+  gcloud iam service-accounts sign-jwt "$W/payload-$uid.json" "$W/jwt-$uid.txt" \
+    --iam-account="$SA" --project="$P" >/dev/null || return 1
+  cat "$W/jwt-$uid.txt"
+}
+signin() { # signin <uid> <claims-json-object> -> the ID token on stdout
+  local uid=$1 claims=$2 jwt
+  jwt=$(mint "$uid" "$claims") || return 1
+  curl -sS -X POST "https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=$KEY" \
+    -H 'Content-Type: application/json' \
+    -d "{\"token\":\"$jwt\",\"returnSecureToken\":true}" |
+    python3 -c 'import json,sys
+d = json.load(sys.stdin)
+if "idToken" not in d:
+    sys.exit("sign-in refused: " + json.dumps(d))
+print(d["idToken"])'
+}
+jwtclaim() { # jwtclaim <jwt> -> the payload, decoded and printed (never the signature)
+  python3 - "$1" <<'PY'
+import base64, json, sys
+p = sys.argv[1].split('.')[1]
+p += '=' * (-len(p) % 4)
+print(json.dumps(json.loads(base64.urlsafe_b64decode(p)), indent=2, sort_keys=True))
+PY
+}
+TOK() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }   # the status alone
+```
+
+1. **The two accounts exist, and the tokens carry the claims the rules read.** *(Guard block, then the helpers.)* Add `chk81-alice` and `chk81-bob` as Firebase Auth users by hand — Authentication → Users → Add user in the console, or the Admin SDK; **a `uid` you choose**, not an email you sign in as, since the only sign-in path this project permits is a custom token (`fugaro init --firebase` refuses any public sign-up path). Then mint and decode each token **before** exchanging anything:
+
+   ```bash
+   jwtclaim "$(mint "$ALICE" "{\"mu\":\"$ALICE\"}")"   # the user: mu == uid
+   jwtclaim "$(mint "$BOB"   "{\"mu\":\"$BOB\"}")"     # the second user
+   ```
+   **FACT:** for each, the values of `aud`, `uid`, `mu` and `exp`, and the signer (`iss`) — **the claims only, never the token**. The audience must be `https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit` (`token.Audience`), or the exchange in the next line refuses. Then `AL=$(signin "$ALICE" "{\"mu\":\"$ALICE\"}")` and `BO=$(signin "$BOB" "{\"mu\":\"$BOB\"}")`; **FACT:** the exchange returned an `idToken` for each — the sign-in works with **no sign-in provider enabled** (the property check 21's free identity probe records) — and the ID tokens are in the shell only, never in a file that outlives the run.
+
+2. **The fence's positive half — the user's own inbox write, once, in the one shape.** *(Guard block, helpers, tokens from step 1.)* The message id is minted fresh because the write is once-only:
+
+   ```bash
+   MSG=$(printf 'chk81-%s' "$(date +%s)")
+   curl -sS -X PUT "$DB/mailbox/$ALICE/inbox/$MSG.json?auth=$AL" -H 'Content-Type: application/json' \
+     -d "{\"id\":\"$MSG\",\"sender\":\"$ALICE\",\"text\":\"check 81 step 2\",\"at\":$(date +%s000)}"
+   ```
+   **FACT:** the response body (`{"id":...,"sender":...,"text":...,"at":...}`) and the status, 200. A write the rules refuse answers `Permission denied` with 401 (`internal/rtdb`'s `ErrPermission` is the 401 **or** 403 answer). The **same** PUT again must be refused (write-once, `!data.exists()`). And each wrong shape must be refused too, each with a fresh id (a refused write leaves nothing): `sender` naming another uid; `text` empty; `id` not equal to `$msg`; `at` a string. **FACT:** the second PUT's status, each shape refusal's status, and that a read of `mailbox/$ALICE/inbox.json` with the **operator's** credentials (IAM, step 4) still holds exactly the one message.
+
+3. **The fence's negative half — what the user may not write.** *(Guard block, helpers, tokens.)* Each line must answer a permission denial; a 200 on any of them is a **failure** of this check, not a question:
+
+   ```bash
+   ID2=$(printf 'chk81-%s' "$(date +%s)")
+   TOK -X PUT "$DB/mailbox/$BOB/inbox/$ID2.json?auth=$AL" -H 'Content-Type: application/json' \
+     -d "{\"id\":\"$ID2\",\"sender\":\"$BOB\",\"text\":\"x\",\"at\":$(date +%s000)}"        # another mailbox: MAILBOX fails ($mb != auth.uid)
+   TOK -X PUT "$DB/mailbox/$ALICE/outbox/$ID2.json?auth=$AL" -H 'Content-Type: application/json' \
+     -d "{\"id\":\"$ID2\",\"sender\":\"$ALICE\",\"text\":\"x\",\"at\":$(date +%s000)}"      # the outbox message is CONSUMER's (check 80's half)
+   TOK -X PUT "$DB/mailbox/$ALICE/heartbeat.json?auth=$AL" -H 'Content-Type: application/json' \
+     -d "{\"at\":$(date +%s000),\"boot\":\"chk81\"}"                                        # the heartbeat is CONSUMER's
+   TOK -X PUT "$DB/mailbox/$ALICE/inbox/$ID2/secret.json?auth=$AL" -H 'Content-Type: application/json' -d '"x"'   # $other: {".validate": false}
+   TOK -X PUT "$DB/agents/$NODE/chk81-run.json?auth=$AL" -H 'Content-Type: application/json' -d '{"repo":"x","requestedBy":"x"}'
+   TOK -X PUT "$DB/outcomes/$DAY/$NODE/chk81-run.json?auth=$AL" -H 'Content-Type: application/json' -d '{"status":"failed","requestedBy":"x"}'
+   TOK -X PUT "$DB/runs/$NODE/chk81-run/exp.json?auth=$AL" -H 'Content-Type: application/json' -d '0'
+   TOK -X PUT "$DB/config/mode.json?auth=$AL" -H 'Content-Type: application/json' -d '"enforce"'
+   TOK -X PUT "$DB/config/limits/maxReserveMicros.json?auth=$AL" -H 'Content-Type: application/json' -d '1'
+   TOK -X PUT "$DB/fugaro/mark.json?auth=$AL" -H 'Content-Type: application/json' -d '{}'
+   ```
+   **FACT:** each status with its refused body (`Permission denied`), and — read back with the operator's credentials, since `config/mode` is `TOKEN`-only and a `mu` token cannot even read it — that `config/mode`, `config/limits/maxReserveMicros` and `fugaro/mark` are unchanged.
+
+4. **The user reads its own outbox and heartbeat — and reads its own inbox no way at all.** *(Guard block, helpers, tokens, operator credentials for the seeding.)* The outbox and the heartbeat carry `".read": "MAILBOX"`; the inbox carries **no** read grant, and neither does `mailbox/$mb` itself. **The two nodes are seeded here by IAM**, which bypasses the rules — the consumer's own write of them is check 80's, and this seeding proves nothing about the rules:
+
+   ```bash
+   AT=$(gcloud auth print-access-token)   # never printed, never pasted
+   OUT=$(printf 'chk81-out-%s' "$(date +%s)")
+   curl -sS -X PUT "$DB/mailbox/$ALICE/outbox/$OUT.json?access_token=$AT" -H 'Content-Type: application/json' \
+     -d "{\"id\":\"$OUT\",\"sender\":\"$ALICE\",\"text\":\"seeded by IAM for check 81\",\"at\":$(date +%s000)}"
+   curl -sS -X PUT "$DB/mailbox/$ALICE/heartbeat.json?access_token=$AT" -H 'Content-Type: application/json' \
+     -d "{\"at\":$(date +%s000),\"boot\":\"chk81\"}"
+   TOK "$DB/mailbox/$ALICE/outbox.json?auth=$AL"      # 200: the grant
+   TOK "$DB/mailbox/$ALICE/heartbeat.json?auth=$AL"   # 200
+   TOK "$DB/mailbox/$ALICE/inbox.json?auth=$AL"       # 401: the inbox has no client read grant
+   TOK "$DB/mailbox/$ALICE/inbox/$MSG.json?auth=$AL"  # 401: nor the message the user just wrote
+   TOK "$DB/mailbox/$ALICE.json?auth=$AL"             # 401: nor the mailbox's parent
+   TOK "$DB/mailbox/$BOB/outbox.json?auth=$AL"        # 401: another mailbox's outbox
+   ```
+   **FACT:** the six statuses, and — for the two 200s — the bodies, which must hold the seeded message and heartbeat and nothing else. **A user that can read the message it wrote is the failure this step exists to catch**: it would mean the deployed document is not this one. (The 200 with an **empty** body is not this: the grant is on the family, and an absent node answers `null` — the seeding here is what makes the two 200s hold content.)
+
+5. **The user's second write — the ack, once, on a message that already exists.** *(Guard block, helpers, tokens, `$OUT` from step 4.)* `acked` is `MAILBOX && newData.exists() && !data.exists()` with `data.parent().exists()`:
+
+   ```bash
+   TOK -X PUT "$DB/mailbox/$ALICE/outbox/$OUT/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'true'   # 200: the one ack
+   TOK -X PUT "$DB/mailbox/$ALICE/outbox/$OUT/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'true'   # 401: once only
+   TOK -X PUT "$DB/mailbox/$ALICE/outbox/$OUT/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'false'  # 401: newData.val() == true
+   TOK -X PUT "$DB/mailbox/$ALICE/outbox/chk81-absent/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'true'   # 401: data.parent().exists()
+   TOK -X PUT "$DB/mailbox/$BOB/outbox/chk81-absent/acked.json?auth=$AL" -H 'Content-Type: application/json' -d 'true'     # 401: another mailbox
+   ```
+   **FACT:** the five statuses and the refused bodies. The fourth line is the guard against an ack that would create its own parent: the message must already exist, which is why the seeding in step 4 is on the path. Read the message back with the operator's credentials and record that it now carries `acked: true` and its `text` is unchanged (an ack that replaced the message would be a different failure).
+
+6. **The granted read families, and everything the grant does not name.** *(Guard block, helpers, tokens.)* This is `TestMailboxReadsAreTheGrantedSet` in the emulator: the grant is a **family**, not a node, so a read of a slug that does not exist is a 200 with `null` while a family that is not granted is a 401:
+
+   ```bash
+   for p in "config/caps/global" "config/caps/defaults" "config/caps/repos/$NODE" \
+            "config/kill/global" "config/kill/repos/$NODE" "spend/$DAY" \
+            "spend/$DAY/global/counted" "spend/$DAY/runs/$NODE/chk81-run/spent"; do
+     printf '%-48s %s\n' "$p" "$(TOK "$DB/$p.json?auth=$AL")"
+   done
+   for p in "config/limits" "config/limits/policyRules" "config/mode" "config/policy/shared" \
+            "config/admin" "fugaro" "fugaro/project" "runs/$NODE" "agents/$NODE" "outcomes/$DAY"; do
+     printf '%-48s %s\n' "$p" "$(TOK "$DB/$p.json?auth=$AL")"
+   done
+   ```
+   **FACT:** the two columns. The first eight are **200** (`spend/$DAY`'s read grant covers the whole day), the second ten are **401** with `Permission denied`. The **second user** closes the binding with three more: `$DB/config/caps/global.json?auth=$BO` is **200** (the family is granted to any `mu` token), while `$DB/mailbox/$ALICE/outbox.json?auth=$BO` and `$DB/mailbox/$ALICE/heartbeat.json?auth=$BO` are **401** (BOB's `mu` is BOB). **FACT:** those three. `config/limits/policyRules` is deliberately in the denied column: the runner reads the marker as a `TOKEN`, and a user that could read it would be reading a node D112's grant does not name.
+
+7. **A token whose `mu` is not its own uid is admitted nowhere — and the residual P2.2 accepted.** *(Guard block, helpers.)* Two tokens, minted and exchanged only here:
+
+   ```bash
+   MI=$(signin "$BOB" "{\"mu\":\"$ALICE\"}")   # uid=BOB wearing ALICE's mu
+   TOK -X PUT "$DB/mailbox/$ALICE/inbox/chk81-mismatch.json?auth=$MI" -H 'Content-Type: application/json' \
+     -d "{\"id\":\"chk81-mismatch\",\"sender\":\"$ALICE\",\"text\":\"x\",\"at\":$(date +%s000)}"   # 401: mu != auth.uid
+   TOK "$DB/mailbox/$ALICE/outbox.json?auth=$MI"        # 401: USER fails, so MAILBOX does too
+   TOK "$DB/mailbox/$ALICE/heartbeat.json?auth=$MI"     # 401
+   TOK "$DB/config/caps/global.json?auth=$MI"           # 401: the granted families are USER's too
+   TOK "$DB/mailbox/$BOB/inbox/chk81-mismatch.json?auth=$MI" -H 'Content-Type: application/json' \
+     -d "{\"id\":\"chk81-mismatch\",\"sender\":\"$BOB\",\"text\":\"x\",\"at\":$(date +%s000)}"     # 401: BO's own mailbox is not MI's either
+   ```
+   **FACT:** the five 401s and their bodies: a `mu` that disagrees with the token's own `uid` buys **nothing**, not even the granted read families. **Then the residual, recorded and not failed** (P2.2's `TestMailboxResidualMintedTokenPassesUntilPhase6`): whoever can sign a custom token for the project can mint one whose `uid` **is** Alice and whose `mu` **is** Alice, and Firebase cannot tell it from Alice's own device. Mint exactly that — `signin "$ALICE" "{\"mu\":\"$ALICE\"}"` with a signer identity other than the one step 1 used, if you hold a second — and record that **step 2's write succeeds**. This is the accepted residual the rules' own comments name (`internal/budget/rules/rules.go`, G13) and its boundary is `iam.serviceAccounts.signJwt` over the whole project, which `fugaro doctor`'s `token-signers` check reports. **FACT:** which signer minted it and whether the write succeeded. **Phase 6, which would close it (the device node and the per-pairing MAC), is PROPOSED, NOT APPROVED**: a write that succeeds here is today's expected result and **not** a failure of this check.
+
+8. **The fence is the deployed document's, not one this checkout generates.** *(Guard block, operator credentials.)* Everything above only means something if the document answering it is P2.1's. Read it as the operator (IAM bypasses the rules) and compare it with what this binary would deploy:
+
+   ```bash
+   AT=$(gcloud auth print-access-token)   # never printed, never pasted
+   curl -fsS -H "Authorization: Bearer $AT" "https://$DB/.settings/rules.json" > "$W/deployed.json"
+   test -s "$W/deployed.json" || { echo "the read returned nothing: check \$DB and the token, do not read on"; exit 1; }
+   wc -c < "$W/deployed.json"                # the deployed document's size
+   grep -o '"mailbox"' "$W/deployed.json" | wc -l          # 1: the subtree is deployed
+   grep -o '"mu != null"' "$W/deployed.json" | wc -l       # the USER predicate is deployed
+   grep -o '"\.validate": false' "$W/deployed.json" | wc -l  # $other's guard is deployed
+   ```
+   **FACT:** the byte count (about **42687**, `rules.Generate()`'s own output — the size `testdata/rules.golden.json` carries and check 82's step 3 prints), and the three counts, each at least 1. A deployed document **without** `mailbox` is the failure this step exists to catch, and it is the one that makes the rest unreadable in the other direction: **step 3's and step 6's refused columns would pass on a document that grants nothing at all**, which is why the two are read together. If it is `mailbox`-less, stop and run **check 82** (the deploy) before reading any other result of this check.
+
+**Passes when:** step 2's write and step 5's first ack answer 200; every refused line in steps 3, 4, 5, 6 and 7 answers 401 `Permission denied`; step 6's first eight reads answer 200 and its second ten 401; the user cannot read its own inbox or the message it wrote; and step 8 finds the deployed document carrying `mailbox`, the `USER` predicate and `$other`'s guard, at about 42687 bytes. Step 7's residual succeeding is expected today and does not fail the check.
+
+**Fails when:** any refusal answers 200 — another user's inbox accepted; the outbox message or the heartbeat accepted from a user; a second, `false`, consumer-less or parent-less ack accepted; any non-granted read answering 200 (especially `config/mode`, `config/limits/policyRules` or `fugaro/**`); a user reading its own inbox; or a `mu` that disagrees with the token's own `uid` admitted anywhere. **What failing looks like:** a deployed document older than P2.1 (no `mailbox`); a hand-edited document in the Firebase console that a later deploy overwrote; a `$mb` guard written `auth.token.mu == $mb` instead of `USER && $mb == auth.uid`, which is what makes a mismatch token work. **The fix is the deploy, never a hand-edit in the console** — a document edited there is one this release's template does not generate, and check 82's second run would report the difference as a deploy rather than as "already has the rules". Stop and run check 82.
+
+**Paste back:** every `FACT` line above — the decoded claims (never a token), each status with its refused body, the two read columns and the second user's three, the residual's outcome and which signer minted it, the deployed document's size and its three counts. **Never paste a minted token, an ID token, a refresh token, the web API key, or the signer's token**: a `FACT` line names `$KEY`/`$SA` as variables or not at all. Until this check runs, the mailbox fence is **UNVERIFIED** live — the emulator's cases are the only evidence — and the row above stays **NOT RUN**.
+
+**Restore.** Delete what this check wrote and the two accounts it used, with the operator's credentials (IAM bypasses the rules, so it can remove what the fence itself refused) and in this order:
+
+```bash
+# === Check 81: Restore (operator credentials; re-run the guard block first). ===
+AT=$(gcloud auth print-access-token)
+for p in "mailbox/$ALICE" "mailbox/$BOB"; do
+  curl -sS -X DELETE "$DB/$p.json?access_token=$AT" -o /dev/null -w "$p %{http_code}\n"
+done
+for u in "$ALICE" "$BOB"; do
+  curl -sS -X POST "https://identitytoolkit.googleapis.com/v1/projects/$P/accounts:delete?key=$KEY" \
+    -H 'Content-Type: application/json' -d "{\"localId\":\"$u\"}" -o /dev/null -w "$u %{http_code}\n"
+done
+rm -f "$W"/payload-*.json "$W"/jwt-*.txt "$W"/deployed.json
+ls "$W"    # empty (or only the guard's own files): no token survives
+```
+
+**FACT:** the four statuses (200 each, or an account's own `USER_NOT_FOUND` if it was already gone) and that `/tmp/chk81` holds no token afterwards. Both mailboxes go: nothing else in the project references either, and the two names sit outside the sweeper's `r~<slug>~<run>` shape, so nothing removes them for you. **If a step failed, restore anyway** and record which step's leftovers could not be removed.
+
+## Check 82: the rules deploy and the marker — `config/limits/policyRules` reads back this release's `RulesVersion` (`fugaro-dev` only, never `belong`; run by you; NOT RUN)
+
+The rules are a **generated artifact** of the CLI, not a file anyone edits: `internal/budget/rules`'s `Generate()` renders `rules.json.tmpl` with `rules.go`'s macros, `testdata/rules.golden.json` (42687 bytes) pins the output, and `TestRulesParity`/`TestRulesGolden`/`TestGeneratedRulesParse` keep the three from drifting. The only path that puts that document on a database is **`fugaro init --firebase`**, as the last write of its database step (`internal/infra`'s `DB.Plan` and `Apply`; docs/gcp-setup.md, "Deploying the rules is an owner step, and it comes after the CLI"). This check is that deploy and the generation it records: `internal/projectpolicy`'s `RulesVersion` (**2** on this release — generation 1 is the policy nodes, generation 2 adds the mailbox), recorded at `projectpolicy.PathRulesMarker()` = `config/limits/policyRules`, which is the generation **check 81's denial cases and P2.2's emulator cases are written against**. A binary whose `RulesVersion` is not 2 would deploy a different document; `internal/cli`'s test for this section ties the number written here to that constant, so a bump breaks the test and the check is rewritten with it.
+
+**No agent applies rules.** The database step asks for the project's name typed at a real terminal and a coding-agent session cannot confirm it (`internal/cli`'s `askOrdinary`: an agent session raises `initflow.AgentError`), so this step is yours alone; nothing here is a CI job and no agent's session is one.
+
+**What changes in the project, and its cost.** One `fugaro init --firebase` run: **one rules deploy** of about 42 KB and, at most, the marker write beside it. The database step lists every write before it makes any, and
+- on an installation whose rules already match this binary's document, it plans **no** rules write and reports `No changes` for the step — but it **still writes the marker** when the node is absent or holds another generation (`DB.Plan`: the marker write is planned whenever `!markerFound || markerGen != projectpolicy.RulesVersion`, because a database whose rules were deployed before this code existed still has to record which generation it runs), and
+- the rest of the database step (the Fugaro mark, `fugaro/project`, `config/mode`, `config/limits/maxReserveMicros`) is planned only for the fields that are absent or different, so on a settled installation the run is the marker alone under one confirmation.
+
+Nothing is billable: the RTDB REST API, the rules deploy and the marker write cost nothing. **No secret is present**: nothing in this check reads, prints or writes one, and the operator's access token stays in a variable.
+
+**Guard block — re-run this before every step.** It hard-stops unless the installation is the `fugaro` one on GCP project `fugaro-dev` (never `belong`) and reads the backend's address out of the project's own config rather than from memory.
+
+```bash
+# === Check 82: setup + guard. RE-RUN THIS BLOCK BEFORE EVERY STEP. ===
+P=fugaro-dev                    # hard-coded; the guard below refuses anything else
+C=$HOME/.config/fugaro/projects/fugaro.yaml
+set -u
+[ "$P" = fugaro-dev ] || { echo "Check 82 stopped: this check runs on fugaro-dev only (never belong)" >&2; exit 1; }
+command -v fugaro >/dev/null || { echo "Check 82 stopped: no fugaro on PATH" >&2; exit 1; }
+fugaro doctor --project fugaro 2>/dev/null | grep -q '^project: .*(GCP fugaro-dev,' || {
+  echo "Check 82 stopped: installation 'fugaro' is not the fugaro-dev installation on this machine" >&2; exit 1; }
+[ -r "$C" ] || { echo "Check 82 stopped: no project config at $C (read the project line of 'fugaro doctor --project fugaro')" >&2; exit 1; }
+DB=$(sed -n 's|^ *rtdb_url: *||p' "$C" | tr -d "\"'" | sed -e 's|^https://||' -e 's|/*$||' | head -1)
+FP=$(sed -n 's|^ *firebase_project: *||p' "$C" | tr -d "\"'" | head -1)
+[ -n "$DB" ] || { echo "Check 82 stopped: $C has no budget.rtdb_url" >&2; exit 1; }
+[ -n "$FP" ] || { echo "Check 82 stopped: $C has no budget.firebase_project" >&2; exit 1; }
+W=/tmp/chk82; mkdir -p "$W"
+echo "Check 82 ready: P=$P firebase=$FP — the operator's token is read and never printed"
+```
+
+**What this binary deploys, before anything is run.** *(Guard block.)* The version and the generated document's size, both read-only, so step 3's act lines can be checked against a number rather than remembered:
+
+```bash
+fugaro version
+fugaro init --firebase "$FP" --print-vars    # read-only: the variables it resolved, nothing written
+wc -c < testdata/rules.golden.json 2>/dev/null || true    # only if you are in a checkout of this release
+```
+
+1. **The before-state, read-only.** *(Guard block.)* What the database is now, so the deploy's effect is a difference and not an impression:
+
+   ```bash
+   AT=$(gcloud auth print-access-token)   # never printed, never pasted
+   echo "marker:  $(curl -fsS -H "Authorization: Bearer $AT" "https://$DB/config/limits/policyRules.json")"
+   curl -fsS -H "Authorization: Bearer $AT" "https://$DB/.settings/rules.json" > "$W/before.json"
+   test -s "$W/before.json" || { echo "the read returned nothing: check \$DB and the token, do not read on"; exit 1; }
+   echo "bytes:   $(wc -c < "$W/before.json")"
+   echo "mailbox: $(grep -o '"mailbox"' "$W/before.json" | wc -l)"
+   fugaro doctor --project fugaro | sed -n '/policy-rules-skew/,+3p'
+   ```
+   **FACT:** the marker's raw body (`2`, or `1`, or `null` for an absent node), the deployed document's byte count and its `mailbox` count, and **doctor's `policy-rules-skew` line verbatim** — on an installation still on generation 1 that line is `rulesMarkerOlderText`'s sentence (`internal/cli/project_cmd.go`): *"the policy marker config/limits/policyRules records generation 1, below the generation 2 this Fugaro deploys: these rules do carry the policy nodes of generation 1, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4); re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation 2 or newer, which writes that document and records its generation in the marker"*. A `policy-rules-skew` line that is a **warning** and not that sentence is the other state (a document that matches no generation this Fugaro knows, or a marker above this binary's): record it verbatim and **stop** — the deploy would go over rules a newer Fugaro wrote, and `DB.Plan` refuses exactly that (step 6).
+
+2. **`--print-vars` and nothing else.** *(Guard block.)* The read-only pre-flight of docs/gcp-setup.md's order: it resolves and prints the variables — including the Firebase project id every write below will be made in — and writes nothing. **FACT:** the resolved `firebase_project` and the region, that the command exits 0, and that `$DB/config/limits/policyRules` and the deployed document are still what step 1 read (a read-only run changes nothing).
+
+3. **⚠ CONFIRM — the deploy.** *(Guard block.)* **`fugaro init --firebase "$FP"`** in your own terminal, and read the plan **before** typing anything. The database step prints, in this order, only what it would write:
+
+   ```
+   config/limits/policyRules: records the rules generation (config/limits/policyRules = 2)
+   rules: deploys the security rules (42687 bytes, generated)
+   ```
+   (the two act lines are `internal/infra/firebasedb.go`'s, and the second appears only when `SameJSON` says the deployed document differs from the generated one — the first appears whenever the marker is absent or holds another generation; the other lines, `writes the Fugaro mark (fugaro/mark)`, `writes the project's name (fugaro/project = fugaro), which every run token's fp claim must equal`, `seeds the mode: observe`, `seeds the largest lease (max reserve) at $5`, appear only for the fields that are absent). The confirmation sentence names what it does — `writes the database as listed, as you (project owner, editor or budget admin), and then the local config` — and **is not `--yes`**: type the project's name. **FACT:** every act line verbatim, in the order printed; the sentence you confirmed; the byte count in the rules line (it must equal the count of step 5's read-back document and `rules.Generate()`'s 42687); and that the **marker line names 2** — which is how this binary states its own `projectpolicy.RulesVersion`, and the value `internal/projectpolicy` exports. **A rules line whose byte count is not the generated document's is a stop:** it means the plan is not this release's `Generate()` output, and nothing may be confirmed. The rules are the step's **last** write (`DB.Plan` orders the PutRules action before the marker's `PutIfMatch`), so a deploy that fails leaves no marker and the runner fails closed instead of reading a generation that is not deployed.
+
+4. **The second run writes nothing.** *(Guard block.)* `fugaro init --firebase "$FP"` again, and **do not confirm**: a database already in the wanted state plans no action and asks for no confirmation (`deployDatabase`: `len(acts) == 0 && !idp.missing && !fs.Pending()`), printing exactly
+
+   ```
+   The database already has the rules, mark, project name and mode.
+   ```
+
+   (`internal/cli/init_firebase.go`). **FACT:** that line verbatim, that **no confirmation was asked** (no `⚠ CONFIRM`, no typed name, exit 0), and — if the line is *not* what appeared — the act lines that did appear instead, which are what a settled installation's second run would have to explain: a `config/limits/policyRules` line here means the marker write did not land in step 3, and the run that would write it is this one. `Identity Platform: already initialized, left as it is` is a normal line of the same step and is not the refusal: the "already has" sentence is printed only when nothing at all is pending, so a run that prints the Identity Platform line instead has a pending write to read.
+
+5. **The marker reads back the generation, and the document is the generated one.** *(Guard block.)* Read both, read-only, with the operator's credentials (IAM bypasses the rules; `config/limits` is `TOKEN`-only read, so a user token could not read this node at all — check 81 step 6 records that denial):
+
+   ```bash
+   AT=$(gcloud auth print-access-token)   # never printed, never pasted
+   curl -fsS -H "Authorization: Bearer $AT" "https://$DB/config/limits/policyRules.json"; echo
+   curl -fsS -H "Authorization: Bearer $AT" "https://$DB/.settings/rules.json" > "$W/after.json"
+   echo "bytes:   $(wc -c < "$W/after.json")"
+   echo "mailbox: $(grep -o '"mailbox"' "$W/after.json" | wc -l)"
+   cmp -s "$W/before.json" "$W/after.json" && echo "the document is unchanged" || echo "the document changed (step 3's deploy)"
+   ```
+   **FACT:** the marker's raw body — **`2`**, `internal/projectpolicy`'s `RulesVersion` for this release — the document's byte count (**42687** when this release's document is deployed, the same number `testdata/rules.golden.json` holds), its `mailbox` count (**1**: the mailbox subtree this generation adds, which check 81 step 8 requires), and whether the document changed in step 3. The marker and the document have to agree: a marker of 2 over a document without `mailbox` is the state this check exists to catch, and it is a **failure** — the runner would read the marker, believe the mailbox grant exists, and the app's writes would be refused (or, on a marker below this binary's, the app would be met with a document that has no mailbox at all).
+
+6. **The generation-1 → 2 transition, if step 1 found generation 1.** *(Guard block.)* Only when step 1's marker read `1` (or `null`): the before-state was `rulesMarkerOlderText`'s sentence, and after the deploy the same command must say nothing about a skew:
+
+   ```bash
+   fugaro doctor --project fugaro | grep -c policy-rules-skew   # 0
+   fugaro doctor --strict >/dev/null; echo "doctor --strict exit: $?"
+   ```
+   **FACT:** the line (nothing) and `doctor --strict`'s exit code; when it is not 0, the failing check ids, because a `policy-rules-skew` **warning** here is a deploy that did not land and any **other** warning is a separate finding (`token-signers`, a caps gap) that this check records and does not own. If step 1's marker was already `2`, this step is **not run**: record "the installation was already on generation 2; the transition was not observed" — an installation that has been on 2 since P2.3 is the normal case, and pretending to have watched a transition that did not happen is worse than recording that it was not needed.
+
+7. **The marker above this binary's generation is a refusal — read, not provoked.** *(Guard block, read-only.)* `DB.Plan` reads the marker **first** and refuses the whole plan when it is above this binary's `RulesVersion`, before anything is planned: *"the deployed security rules are generation %d (config/limits/policyRules = %d) and this Fugaro's are generation %d: the rules this database runs under came from a newer Fugaro, and 'fugaro init --firebase' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade') and re-run init with the newer binary; 'fugaro doctor' reports this as policy-rules-skew"* (`internal/infra/firebasedb.go`). **This check does not test that live, on purpose**: provoking it means hand-writing a marker above this binary's generation, and while that value stands every runner that reads the marker fails closed — a hand-edited marker the CLI has no reason to write, on the installation that runs the dogfood. The boundary is covered offline, where it can be driven without a window: `internal/infra`'s plan test for the refusal (`DB.Plan` returns it before `d.acts` is cleared) and `internal/cli`'s `doctorRulesSkew` tests for the reporting. **FACT:** the sentence above, quoted from the source, and the two test names — and record explicitly that **check 82 did not write a marker by hand**. A live proof of the refusal belongs to a scratch project with no runs in it, not to `fugaro-dev`.
+
+**Passes when:** step 3's act lines hold the marker line naming **2** and (when the document differed) the rules line naming the generated document's byte count, and the confirmation was typed; step 4's second run prints `The database already has the rules, mark, project name and mode.` and asks for no confirmation; step 5's read-back marker is `2` and its document is 42687 bytes with `mailbox` present; step 6's doctor prints no `policy-rules-skew` line (or the step is recorded as not run because the installation was already on generation 2); and step 7 records the refusal's sentence and the offline tests without provoking it.
+
+**Fails when:** the marker line does not name 2 (an older CLI deployed an older document — the fix is `fugaro upgrade` and this check again, never a hand-edit); the rules line's byte count is not the generated document's; the second run plans a write (the first run's marker write did not land); the read-back marker is not `2`, or is `2` over a document with no `mailbox` (the two disagree, and it is the state that makes every one of check 81's refusals meaningless); or `doctor` still reports `policy-rules-skew` as a warning after the deploy. **What failing looks like:** a rules deploy refused for size or syntax (the RTDB rules endpoint has a size limit — at 42687 bytes this document is well inside it, and a refusal is worth recording verbatim); a project where Identity Platform is not initialized, which fails the database step **before** the rules; a CLI older than the release whose document is being deployed, which quietly writes the older generation. **The order is the operator's CLI, then this deploy, then the runner images and any repository image** (docs/gcp-setup.md): a runner built from the new CLI asks the backend for leases the old rules refuse, and the gateway reads a refused write with no cap reason as the backend being unavailable, so the run waits and then halts on the grace period.
+
+**Paste back:** the `fugaro version` and `--print-vars` output (the project and region only — no token); the marker's raw body before and after; the deployed document's byte count and `mailbox` count before and after; **every act line of step 3 verbatim and the confirmation sentence**; step 4's "already has" line verbatim; `doctor`'s `policy-rules-skew` line before and after (or the note that the installation was already on generation 2); step 7's refusal sentence and the note that nothing was hand-written. **Never paste an access token, a refresh token or the web API key.** Until this check runs, the deployed document's generation is **UNVERIFIED** on a live installation and the row above stays **NOT RUN**.
+
+**Restore.** Nothing: this check's whole point is the write it makes, and there is nothing to undo. The rules and the marker it deployed **stay** — that is the state every later check reads. Two cases that are not a rollback:
+
+- **A step failed before the deploy.** The installation is exactly as step 1 found it, because the database step writes nothing until it is confirmed and stops at its first failed write, leaving no marker (`DB.Plan` orders the marker after the deploy; `Apply` stops there). Re-run the check from step 1.
+- **The deploy has to be undone.** Rolling back is the same command from a checkout of the older release (`docs/gcp-setup.md`: "rolling back is the same command from a checkout of the older version"), run by you, in your terminal, against this installation — and record it as a **generation downgrade**, because the marker goes back with it and the app's mailbox grant goes away. Never `terraform destroy` the Firebase root for it.
+
+## Check 89: a signed EAS build, and the store's internal track (owner-run, at your own terminal, with your own accounts; NOT RUN)
+
+The app is **its own artifact at `mobile/`, outside the Go module** (plan C2), versioned with the CLI's tag but released on the stores' cadence (C6). This check is the plan's row 89 and P4.4's verification: a build of the app **signed with your distribution credentials**, reaching **the store's internal track and nothing else** (C8 — a public release is not reversible and the spec does not ask for one). **No agent runs `eas build` or `eas submit`, and none touches a signing key or a store credential** (D120, Global Constraint 9): every step below is yours, at your own terminal, with your own Apple and Google accounts, your own signing keys and your own EAS project. A coding agent's session must not be given an Expo token, an App Store Connect API key or a Play service-account key for it, and nothing in this repository holds one.
+
+**This check is written before the app exists.** `mobile/` is P3.1's, so the guard block below **hard-stops** on a checkout without `mobile/app.json` — that is the honest answer today, not a failure: the check is in the register (P4.2a) and P4.4 runs it. **Until then the row stays NOT RUN and the app's live behaviour is unverified** (the plan's open item 5).
+
+**Guard block — re-run this before every step.** It refuses to start unless there is an app to build, the checkout is the commit a tag names, and the working tree is clean — a store build records the commit it was made from, and a build from a dirty tree is not the artifact this release is.
+
+```bash
+# === Check 89: setup + guard. RE-RUN THIS BLOCK BEFORE EVERY STEP. ===
+set -u
+command -v eas >/dev/null || { echo "Check 89 stopped: no eas on PATH (npm i -g eas-cli, then 'eas login' as yourself)" >&2; exit 1; }
+[ -f mobile/app.json ] || { echo "Check 89 stopped: there is no mobile/app.json in this checkout, so there is no app to build yet (P3.1 creates it, and P4.4 runs this check)" >&2; exit 1; }
+[ -f mobile/eas.json ] || { echo "Check 89 stopped: there is no mobile/eas.json, so there is no build profile to read (P4.4 makes it; this check reads it, it does not create it)" >&2; exit 1; }
+cd mobile
+TAG=$(git describe --tags --exact-match 2>/dev/null || true)
+[ -n "$TAG" ] || { echo "Check 89 stopped: HEAD is not a tag; the app is versioned from the release's tag (C6)" >&2; exit 1; }
+SHA=$(git rev-parse HEAD)
+git status --porcelain | grep -q . && { echo "Check 89 stopped: the working tree is dirty; a store build must be made from the tagged commit" >&2; exit 1; }
+APP=$(python3 -c 'import json; d=json.load(open("app.json"))["expo"]; print(d["version"], d["ios"]["bundleIdentifier"], d["android"]["package"])')
+W=/tmp/chk89; mkdir -p "$W"
+echo "Check 89 ready: $TAG at $SHA — $APP"
+```
+
+**No secret is read, printed or pasted by any step.** Every path below names a credential file at most (`serviceAccountKeyPath`, a provisioning profile); its **contents** are never read by this check and never appear in a `FACT` line — no signing key, no `.p12`/`.mobileprovision`, no App Store Connect API key, no Play service-account JSON, no password, no Expo token.
+
+1. **The EAS project and the profile the build uses.** *(Guard block, run by you.)* `eas whoami` and `eas project:info` (or `eas project:init` if P4.4 has not made the project yet) — the project is yours, under your Expo account, and nothing here is a secret (the project id and slug are public identifiers that reach the built app). Then read the profile **before** using it, and let the guard decide whether the profile is the internal one:
+
+   ```bash
+   jq '.build.internal' eas.json                       # the profile this check builds with
+   jq -r '.build.internal.distribution' eas.json       # must be "store"
+   jq -r '.submit.internal.android.track' eas.json     # must be "internal"  (C8's guard)
+   jq -r '.submit.internal.ios.ascAppId // "unset"' eas.json
+   ```
+   **FACT:** the Expo account and the project's slug/id; the `internal` build profile's `distribution` (**`store`** — `internal` would be an ad-hoc build with no store submission at all, and it would make every later step meaningless); the submit profile's `android.track` (**`internal`**, never `production`, never `beta`: C8's whole content is this one value) and that an `ios` submit entry exists. **A profile whose submit section names a public track is a stop** — edit it and re-run, rather than submitting and trying to halt a release afterwards. Record the **names** of any credential files the profiles name (`serviceAccountKeyPath`); never their contents.
+
+2. **The signed build.** *(Guard block, run by you.)* `eas build --platform all --profile internal --non-interactive` (drop `--non-interactive` if EAS has to ask you about a credential the project does not hold yet — the first build after P4.4 usually does). **FACT:** the build ids for both platforms, the profile, the platform list, EAS's recorded **`gitCommitHash`** (it must be `$SHA`, the tagged commit the guard read) and the **credentials source** EAS reports — `EAS-managed` (EAS holds a distribution certificate and provisioning profile for iOS and an upload keystore for Android) or the owner's own — because "signed" is exactly this answer and not the build's success. Then read the artifacts back:
+
+   ```bash
+   eas build:list --platform all --profile internal --limit 2 --json |
+     jq -r '.[] | [.platform, .status, .gitCommitHash, (.artifacts.buildUrl // "none")] | @tsv'
+   ```
+   **FACT:** each build's `platform`, `status` (**`finished`**), `gitCommitHash`, and its artifact URL; and, for iOS, that the build is a **distribution-signed** archive (`eas credentials` shows which certificate and profile were used — record that they exist and which account owns them, **never a key or a profile's contents**), and for Android that it is an **AAB signed with the upload key** (the Play app-signing path, which is how a store build is signed). A build with no credentials, or one whose `gitCommitHash` is not `$SHA`, is a **failure** of this check.
+
+3. **The internal track, and no public release.** *(Guard block, run by you.)* `eas submit --platform ios --profile internal --latest` and `eas submit --platform android --profile internal --latest`. **FACT:** each submission's id and platform; on the App Store Connect side the build's state (Processing → Ready to test) and that it was added to an **internal testing** group only, with **no** external group and **no** App Store submission; on the Google Play side the release is on the **internal testing** track with no staged or production release created and no review started. Then the deliberate negative, which is C8's own assertion: **`eas submit` was not run without a profile** (that default is the production track or the console's prompt) and **no build was submitted to a public track at any point**. **FACT:** the two submission ids, the two track names as the stores show them, and the explicit statement that nothing was submitted publicly. **If a submission lands on a public track, stop and halt it from the console** — record what was published and for how long before it was halted; it is not reversible in the way the internal track is.
+
+4. **The build installs, and it is the release's version.** *(Guard block, run by you, on a device.)* Install from the internal track (TestFlight for internal testers, or the Play internal-testing link) on a device, and record that it launches and that the version the app reports equals the guard's `$TAG` (C6: the app is versioned with the CLI's tag). **FACT:** the device and its OS, the installed version as the store and the app report it, and the build's id as the store shows it. This is as far as check 89 goes: the device's **behaviour** — the microphone ask, the wake word, the hands-free audio, multi-account switching — belongs to checks 85, 86 and 87, which need hardware this step does not.
+
+5. **No store credential is anywhere it should not be.** *(Guard block, run by you, read-only.)* The credentials belong to the EAS project (server-side, under your account) or to your own machine — never to this repository and never to CI:
+
+   ```bash
+   git -C .. ls-files mobile | grep -E '\.(p12|mobileprovision|keystore|jks|json)$' || echo "no credential-shaped file is tracked under mobile/"
+   git -C .. log --oneline -1 -- mobile/eas.json
+   gh secret list --repo dimipaun/fugaro 2>/dev/null || echo "no gh, or no access: skip this line and say so"
+   ```
+   **FACT:** the file list (nothing credential-shaped, e.g. no `google-play-service-account.json`, no `*.p12`, no `*.jks`, no `credentials.json` holding a key), and the secret names in CI — **the names only, never a value**. EAS needs no credential in this repository's CI for this check (nothing here builds the app in CI: P4.3's job is the shared package's tests, and it holds no store credential); if a secret whose name suggests a store or signing key exists, record it and its purpose — a store credential in CI is the finding this step exists to produce. **An agent never reads that secret's value**: this step lists names and stops there.
+
+**Passes when:** step 1 finds the `internal` profile with `distribution: store` and `submit.internal.android.track` **`internal`**; step 2's builds finish, both signed with your distribution credentials, each recording the tagged commit `$SHA`; step 3's two submissions land on the internal testing tracks with no public release and no external group; step 4's install reports the release's version; and step 5 finds no credential-shaped file under `mobile/` and no store credential in CI.
+
+**Fails when:** a profile that builds or submits to a public track (a `production`/`beta` track, an App Store submission, a release rolled out); a build with no distribution certificate or no upload key (an `internal`-distribution or simulator profile masquerading as a store build); a build whose `gitCommitHash` is not the tagged commit; a signing key, an App Store Connect API key or a Play service-account key committed, tracked or present in CI; or an Expo token handed to a coding agent's session so it could run these steps — the plan's Global Constraint 9 makes that a finding in itself. **What failing looks like:** an `eas.json` whose submit profile was copied from another project and still names `production`; a build made from a dirty tree or from `main` rather than the tag; a key file added to `mobile/` "for CI" and committed. **The fix is the owner's accounts and profiles (P4.4), never a repository change** — the guard stops on the profile before it builds, which is why step 1 reads it first.
+
+**Paste back:** the Expo account and project id/slug; the `internal` profile's `distribution`, its submit track and the **names** of any credential files it references; both builds' ids, statuses, credentials source and `gitCommitHash`; both submissions' ids and the tracks as the stores show them; the install's device, OS and reported version; the file list and secret **names** from step 5. **Never paste a signing key, a provisioning profile's contents, an App Store Connect API key, a Play service-account JSON, a password, an Expo token, or any credential value.** Until this check runs, the app has no signed artifact and no store presence at all and the row above stays **NOT RUN**.
+
+**Restore.** Nothing in this repository changes: this check makes no commit, no file and no configuration change, and nothing to undo exists here. On the stores' side, what it left is the internal releases themselves, and they are meant to stay:
+
+- The builds are on your Expo account (and inside the internal tracks). TestFlight builds expire on Apple's own schedule; a Play internal-testing release can be halted or its rollout stopped from the console if you want the internal link dead.
+- **Nothing public was created, so there is no public release to withdraw** — that is C8's point, and if step 3's negative ever fails, the restore is the halt named there, recorded with what was exposed and for how long.
+- The signing credentials are yours and stay where they were (EAS's servers or your machine). No step here creates, rotates, exports or deletes one, and none is ever pasted.
