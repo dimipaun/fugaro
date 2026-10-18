@@ -89,16 +89,73 @@ const cloneShipped = false
 
 // policySince is the first fugaro release whose launcher and runner read the
 // project's policy (the release phase 1 of the project-centric model ships
-// in, R4), and the release named by the launch gate launchPolicyGates
-// (run_allowlist.go), which refuses a policy newer than this binary: a
-// policy whose version is above what this binary understands is a policy
-// written by a newer Fugaro, and this release is what the message quotes
-// beside it. Like cloneSince and unlike the policy's own integer `version`
-// or the rules marker's RulesVersion, it is a *release*, and it is bumped by
-// the release that ships the model and by nothing else: docs/release.md's
-// ("Before you tag") checklist verifies it equals that release, the same way
-// it does for recipesSince, layeredSince and namedTokensSince.
+// in, R4). Like cloneSince and unlike the policy's own integer `version` or
+// the rules marker's RulesVersion, it is a *release*, and it is bumped by the
+// release that ships the model and by nothing else: docs/release.md's ("Before
+// you tag") checklist verifies it equals that release, the same way it does for
+// recipesSince, layeredSince and namedTokensSince.
+//
+// The launch gate (launchPolicyGates, run_allowlist.go) and doctor's checks
+// quote it where the subject is the model: the rules a policy is read under,
+// the marker that records them, and the release a node *behind* this binary was
+// written by. They never quote it where the subject is a policy version above
+// what this binary understands — that answer is the row policyVersionSince
+// holds for that version (see the table below), which stopped being this
+// constant the moment the version was bumped past 1.
 const policySince = "0.8.0"
+
+// policyVersionSince names, for each policy version, the fugaro release that
+// introduced it: 1 is the model itself, which 0.8.0 ships, and 2 is the
+// release whose runner enforces a job profile's allow_repos (plan task 3.3),
+// 0.8.5. Every message that names a release for a policy version above what
+// the reader understands answers from this table — the launch gate's refusal
+// (run_allowlist.go) and doctor's policy-newer-than-binary fix — so the
+// release named moves with the version on the node.
+//
+// It is deliberately not policySince. That constant names the release the
+// *model* ships in, and a message that quoted it beside a policy version above
+// the binary told the operator to upgrade to a release they already run: a
+// policy published by 0.8.5 is version 2, an 0.8.1 binary refuses it as newer
+// than it understands, and "upgrade to >= 0.8.0" — which is what quoting
+// policySince printed — is an upgrade an 0.8.1 installation has already made.
+// The release that answers that refusal is the one that introduced version 2,
+// and it is this table's row.
+//
+// Two rules keep the table honest, and TestPolicyVersionSinceNamesEveryVersion
+// is what enforces them. Every version this binary understands has a row: the
+// release that bumps projectpolicy.Version adds its own, so a bump that forgot
+// one cannot merge (projectpolicy.Version 3, the 0.9.0 branch's phase-3-to-6
+// stack, fails that test until it has its row), because a version above the
+// table's rows is answered with the remedy alone and a version *in* them is
+// answered with the release the operator has to reach. And the rows go up with
+// the version, which is what makes "above every row" mean "a release newer
+// than this binary has heard of".
+//
+// A row may name a release that does not exist yet, and a version above
+// projectpolicy.Version may have one: the table is the record of which release
+// introduced which version, which a binary reading an *older* line needs for a
+// node a newer release published (an 0.8.1 patch release, which understands
+// version 1, names 0.8.5 for the version-2 node it refuses). What it may not
+// be is short of a row below this binary's own version.
+var policyVersionSince = map[int]string{
+	1: "0.8.0",
+	2: "0.8.5",
+}
+
+// policyTooNewFix is doctor's fix line for a policy node ahead of this binary:
+// the upgrade, naming the release that introduced the version on the node when
+// policyVersionSince knows it, and the plain upgrade when it does not — the
+// same table, and the same rule, as the launch gate's refusal
+// (policySkewRefusal in run_allowlist.go). A version no row names came from a
+// release newer than any this binary has heard of, and borrowing a row's
+// release for it would name one that is already installed, which is the fault
+// the table exists to fix.
+func policyTooNewFix(version int) string {
+	if rel, ok := policyVersionSince[version]; ok {
+		return fmt.Sprintf("upgrade Fugaro to fugaro %s or later, the release that introduced policy version %d", rel, version)
+	}
+	return fmt.Sprintf("upgrade Fugaro to a release that understands version %d", version)
+}
 
 // catalogSince names the release whose runner reads a route's require_zdr
 // and price_policy (price-catalog plan Task 4, design D11): a runner before

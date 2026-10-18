@@ -1569,7 +1569,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		if ve.Found > ve.Understood {
 			checks = append(checks, doctorCheck{ID: "policy-newer-than-binary", Severity: "warning",
 				Problem: fmt.Sprintf("%s: %s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood), shared),
-				Fix:     fmt.Sprintf("upgrade Fugaro to a release that understands version %d", ve.Found)})
+				Fix:     policyTooNewFix(ve.Found)})
 			return append(checks, doctorRoutingChecks(lc, nil,
 				fmt.Sprintf("the node at %s is a policy of version %d, which this Fugaro cannot decode, so its switch is not read", shared, ve.Found), layer)...)
 		}

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -464,5 +466,82 @@ func TestGateCatalogSwitches(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Errorf("--print-vars: stdout = %q, want empty", out.String())
+	}
+}
+
+// TestPolicyVersionSinceNamesEveryVersion is the table's own check, and the one
+// a version bump has to satisfy. policyVersionSince answers "which fugaro
+// introduced policy version N" for every message that names a release for a
+// version above what the reader understands (the launch gate's refusal in
+// run_allowlist.go, doctor's policy-newer-than-binary fix), and the two facts
+// it must keep are its completeness and its ordering.
+//
+// Completeness: every version this binary understands has the release that
+// introduced it. That is the row a bump adds, and the test is what stops the
+// bump from merging without it — projectpolicy.Version 3 (the 0.9.0 branch's
+// phase-3-to-6 stack) fails here until it has its own row, and a table that is
+// short a row is a refusal that names no release where it must name one.
+//
+// Ordering: releases go up with versions, which is what lets a version above
+// every row be read as "a release newer than this binary has heard of" at all.
+// A row out of order would make that reading false.
+func TestPolicyVersionSinceNamesEveryVersion(t *testing.T) {
+	for v := 1; v <= projectpolicy.Version; v++ {
+		rel, ok := policyVersionSince[v]
+		if !ok {
+			t.Fatalf("policy version %d has no row in policyVersionSince: the release that bumps projectpolicy.Version to %d adds one (1 is the model, 0.8.0; 2 is the profile gate, 0.8.5), because a refusal for a node above it must name the release that introduced that version rather than a release the operator already runs", v, v)
+		}
+		parts := strings.Split(rel, ".")
+		if len(parts) != 3 {
+			t.Errorf("policyVersionSince[%d] = %q, want a release", v, rel)
+			continue
+		}
+		for _, p := range parts {
+			if _, err := strconv.Atoi(p); err != nil {
+				t.Errorf("policyVersionSince[%d] = %q, want a release", v, rel)
+			}
+		}
+		if prev, ok := policyVersionSince[v-1]; ok {
+			if !imagePredates(prev, rel) {
+				t.Errorf("policyVersionSince = %v: version %d's release (%s) does not follow version %d's (%s), and a version above every row is read as a release newer than all of them", policyVersionSince, v, rel, v-1, prev)
+			}
+		}
+	}
+	// Version 1 is the policy model itself, so its row is the release
+	// policySince names. The two are separate constants on purpose (that one is
+	// the model's release, this table is per version), and this is the one
+	// place they must agree.
+	if got := policyVersionSince[1]; got != policySince {
+		t.Errorf("policyVersionSince[1] = %q, want policySince (%q): version 1 is the model, and policySince is the release that ships it", got, policySince)
+	}
+}
+
+// TestPolicyTooNewFixNamesTheRelease is doctor's fix line for a node ahead of
+// this binary: the upgrade, naming the release that introduced the version on
+// the node when the table knows it. It is pinned directly because the branch
+// is not reachable through a launch on this release — this binary understands
+// version 2, so every too-new node it meets is version 3 or above, and the
+// table's rows end at 2 — while a release that reads an older line (an 0.8.1
+// patch carrying this fix) meets version 2 exactly, which is the case below.
+func TestPolicyTooNewFixNamesTheRelease(t *testing.T) {
+	fix := policyTooNewFix(2)
+	for _, want := range []string{"upgrade Fugaro", "fugaro 0.8.5", "version 2"} {
+		if !strings.Contains(fix, want) {
+			t.Errorf("policyTooNewFix(2) = %q, want %q", fix, want)
+		}
+	}
+	if strings.Contains(fix, policySince) {
+		t.Errorf("policyTooNewFix(2) = %q: it names policySince, the release the model ships in, which the operator of a version-1 binary already runs", fix)
+	}
+	// A version no row names: the upgrade alone, and no release borrowed from
+	// the table's other rows.
+	fix = policyTooNewFix(99)
+	if !strings.Contains(fix, "upgrade Fugaro") || !strings.Contains(fix, "version 99") {
+		t.Errorf("policyTooNewFix(99) = %q, want the plain upgrade naming the version", fix)
+	}
+	for _, rel := range policyVersionSince {
+		if strings.Contains(fix, rel) {
+			t.Errorf("policyTooNewFix(99) = %q: it names %s, a release the table knows for another version", fix, rel)
+		}
 	}
 }
