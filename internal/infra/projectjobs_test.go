@@ -65,6 +65,20 @@ func projectJobSpec(t *testing.T) InstallationSpec {
 	return s
 }
 
+// projectAccountJobSpec is projectJobSpec with the account axis's config
+// (projectAccountAxisLC). It is the fixture of
+// internal/infra/testdata/installation-accounts.tfvars.json and of the golden
+// plan its script makes, the one plan that holds an account job: the token
+// mount it carries and the secret grant beside it.
+func projectAccountJobSpec(t *testing.T) InstallationSpec {
+	t.Helper()
+	s, err := Installation(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountAxisLC), InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 // threeReposLocalConfig is m4LocalConfig with three repositories instead of
 // one, for the claim that the job set does not move with them (design §13).
 var threeReposLocalConfig = func() string {
