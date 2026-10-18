@@ -36,9 +36,8 @@ const analyticsEnabled = site.facts.analytics.enabled
     <h1>Privacy</h1>
 
     <p class="privacy-lead">
-      What this website does with a visitor's browser, and what it does not. It describes the
-      site's own pages: the Fugaro program's posture is the <a href="/security/">security page</a>'s
-      subject, and this page does not restate it.
+      What this website does with a visitor's browser, and what it does not: the Fugaro
+      program's posture is the <a href="/security/">security page</a>'s subject.
     </p>
 
     <h2>What this site collects</h2>
@@ -62,9 +61,9 @@ const analyticsEnabled = site.facts.analytics.enabled
       </>
     ) : (
       <p>
-        <strong>This site collects nothing.</strong> It is a set of static pages built from the
-        files in the Fugaro repository: no account, no form, no comment box, and no code of the
-        site's own running on a server. Nothing counts your visit, and nothing about it is sent
+        <strong>This site collects nothing.</strong> It is a set of static pages built from this
+        repository's files: no account, no form, no comment box, and no code of the site's own
+        running on a server. Nothing counts your visit, and nothing about it is sent
         anywhere. Should measurement ever be switched on, this page changes at the same time,
         and the site asks you first.
       </p>
@@ -117,8 +116,8 @@ const analyticsEnabled = site.facts.analytics.enabled
         <h2>Analytics</h2>
         <p>
           This site has no analytics at all: nothing counts your visit, and no analytics script,
-          cookie or identifier is involved in the page you are reading. There is therefore no
-          consent to give here today, and nothing to withdraw.
+          cookie or identifier is involved in the page you are reading. There is no consent to
+          give here, and nothing to withdraw.
         </p>
       </>
     )}
@@ -134,7 +133,7 @@ const analyticsEnabled = site.facts.analytics.enabled
       <li>
         {analyticsEnabled
           ? "It loads nothing from another origin except Google's analytics script, and only after you accept. The typefaces are served from this site, and the build refuses a page that names another host."
-          : 'It loads nothing from another origin — no font, no stylesheet, no script, no image, no embedded player. The typefaces are served from this site, and the build refuses a page that names another host.'}
+          : 'It loads nothing from another origin — no font, no script, no image, no embedded player.'}
       </li>
       <li>
         {analyticsEnabled
@@ -145,9 +144,9 @@ const analyticsEnabled = site.facts.analytics.enabled
 
     <h2>What this page does not cover</h2>
     <p>
-      This page describes the site's own pages. It does not describe the host's own request
-      logs, which this repository does not control, or what the Fugaro program does on your
-      machine — that is the <a href="/security/">security page</a>'s subject.
+      This page describes the site's own pages, not the host's request logs, which this
+      repository does not control, or what the Fugaro program does on your machine — the
+      <a href="/security/">security page</a>'s subject.
     </p>
   </article>
 </Base>

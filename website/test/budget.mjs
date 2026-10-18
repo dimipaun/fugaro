@@ -43,7 +43,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DIST, SITE, builtPages, filesUnder, parse, servedFile, walk } from './lib/html.mjs'
+import { DIST, SITE, builtPages, filesUnder, find, parse, servedFile, walk } from './lib/html.mjs'
 
 // ---- the numbers, from the README ------------------------------------------------------
 
@@ -51,9 +51,11 @@ const BUDGET_LINES = {
   js: /^[ \t]*- \*\*JavaScript per page:\*\* ([\d,]+) bytes\b/m,
   page: /^[ \t]*- \*\*Page weight per page:\*\* ([\d,]+) bytes\b/m,
   site: /^[ \t]*- \*\*Whole site:\*\* ([\d,]+) bytes\b/m,
+  lead: /^[ \t]*- \*\*Words in a page's lead:\*\* ([\d,]+) words\b/m,
+  words: /^[ \t]*- \*\*Words per page:\*\* ([\d,]+) words\b/m,
 }
 
-/** The three budgets as website/README.md states them. */
+/** The budgets as website/README.md states them: bytes, and the word ceilings of D188. */
 export function readmeBudgets(readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')) {
   const out = {}
   for (const [key, re] of Object.entries(BUDGET_LINES)) {
@@ -121,11 +123,157 @@ export function budgetFailures(dist, budgets) {
   return out
 }
 
+// ---- the word ceilings, from the README (D188) -----------------------------------------
+//
+// D188's other half: a page's bytes are not the only thing a reader is asked to carry, and
+// "the gist above the fold, with very few words" is a promise a byte budget cannot keep.
+// The two ceilings below are the words a reader reads, counted over the built page's `main`
+// region — the page and not its chrome, so the navigation and the footer are not a page's
+// fault.
+//
+// What counts as a word is what a reader sees: every text run inside `main`, with the
+// script and style bodies (raw text, never rendered) and anything `hidden` left out, and an
+// image's `alt` standing in for the image, which is how `textOf` in `test/lib/html.mjs`
+// already reads a page. A command block is a command a reader copies, and it is counted
+// like any other visible text: the ceiling is a claim about the page, not about its prose.
+//
+// The three reference pages D188 exempts — `/docs/`, `/security/` and `/changelog/` — are
+// exempt from the **page** ceiling because each renders a document of this repository
+// rather than a page of the site; their leads are still held to the lead ceiling, since a
+// lead is a page's own and every page has one.
+const PAGE_EXEMPT = new Set(['/docs/', '/security/', '/changelog/'])
+
+/** The words of a piece of text, the way a reader counts them. */
+function words(text) {
+  return text.trim().split(/\s+/).filter(Boolean).length
+}
+
+/** The text a reader sees inside a node: no raw script or style body, nothing hidden. */
+function visibleText(node) {
+  if (node.text !== undefined) return node.text
+  if (node.name === 'img') return node.attrs.get('alt') ?? ''
+  if (node.raw !== undefined) return ''
+  if (node.attrs?.has('hidden')) return ''
+  return (node.children ?? []).map(visibleText).join(' ')
+}
+
+/**
+ * `main`'s descendants in document order, as a flat list: every element, and every text run
+ * and image where it stands. A hidden subtree is left out entirely, which is what keeps a
+ * `hidden` control from being counted as a word a reader reads.
+ */
+function flatten(node, out = []) {
+  for (const child of node.children ?? []) {
+    if (child.text !== undefined || child.name === 'img') {
+      out.push(child)
+      continue
+    }
+    if (child.name === undefined) continue
+    if (child.attrs?.has('hidden')) continue
+    out.push(child)
+    flatten(child, out)
+  }
+  return out
+}
+
+/** True when `node` is `ancestor` or sits inside it. */
+function within(node, ancestor) {
+  for (let n = node; n; n = n.parent) if (n === ancestor) return true
+  return false
+}
+
+/** The visible text of `main` between two of its elements, in document order. */
+function textBetween(main, from, to) {
+  const items = flatten(main)
+  const start = items.indexOf(from)
+  const end = items.indexOf(to)
+  assert.ok(start !== -1 && end > start, 'the lead reader could not find the headings it reads between: this is a defect in the reader, not in the page')
+  return items
+    .slice(start + 1, end)
+    .filter((item) => !within(item, from))
+    .map((item) => (item.text !== undefined ? item.text : item.name === 'img' ? item.attrs.get('alt') ?? '' : ''))
+    .join(' ')
+}
+
+/**
+ * The words of a built page: the whole of `main`, and its lead.
+ *
+ * The lead is the visible text between the page's `h1` and its first `h2` — the paragraph a
+ * page opens with before its first section, which is the text D188's 40-word ceiling is
+ * about. A page whose `main` carries no `h2` in the `h1`'s own container (the homepage: the
+ * hero's section holds the `h1`, and the first `h2` is a step of the flow under it) has no
+ * such region; its lead is the paragraphs that follow the `h1`, which is the
+ * same text read from the other end, rather than the hero's install block and terminal. The
+ * whitespace a template leaves between the `h1` and the paragraph under it is a text node and
+ * not a paragraph: it is skipped, because reading it as the end of the opening would measure
+ * the lead of every indented page — every built page — as zero words.
+ *
+ * A page with no `main` is not measured here: `a11y.mjs` is the gate that refuses a page
+ * without the landmark, and this one says nothing about a region it cannot find.
+ */
+export function pageWords(html) {
+  const main = find(parse(html), 'main')
+  if (main === null) return null
+  const h1 = find(main, 'h1')
+  if (h1 === null) return { words: words(visibleText(main)), lead: 0 }
+  const firstH2 = find(main, 'h2')
+  // The h1 -> first h2 region is the lead when the `h2` sits in the same container as the
+  // `h1`. When it does not — the homepage's hero holds its `h1` in a section of its own and
+  // the flow's step names, further down, are the first `h2`s — the region would be the hero's
+  // install block and terminal and everything after, so the lead is the paragraph run under
+  // the `h1`, as on a page with no `h2` at all.
+  if (firstH2 !== null && within(firstH2, h1.parent)) {
+    return { words: words(visibleText(main)), lead: words(textBetween(main, h1, firstH2)) }
+  }
+  const siblings = h1.parent.children
+  const opening = []
+  for (const sibling of siblings.slice(siblings.indexOf(h1) + 1)) {
+    // A style or script body is not text, a hidden subtree is not rendered, and a comment is
+    // not text either: none of them ends the opening paragraph run, which is what keeps the
+    // lead the same paragraph whatever the page puts around it.
+    if (sibling.name === 'style' || sibling.name === 'script' || sibling.attrs?.has('hidden')) continue
+    if (sibling.raw !== undefined) continue
+    // A template's newline is a text node between the `h1` and the paragraph under it, and a
+    // newline is not a paragraph: a run of whitespace is skipped rather than taken for the
+    // end of the opening, which is what keeps a page whose markup is indented — every built
+    // page — from measuring a lead of zero words. Text that is not whitespace is text a
+    // reader reads, so it is part of the lead and does not end the run.
+    if (sibling.text !== undefined) {
+      if (sibling.text.trim() !== '') opening.push(sibling.text)
+      continue
+    }
+    if (sibling.name !== 'p') break
+    opening.push(visibleText(sibling))
+  }
+  return { words: words(visibleText(main)), lead: words(opening.join(' ')) }
+}
+
+/** Every word-ceiling failure of a built artifact, against `budgets`. */
+export function wordFailures(dist, budgets) {
+  const out = []
+  for (const page of builtPages(dist)) {
+    const counts = pageWords(page.html)
+    if (counts === null) continue
+    if (counts.lead > budgets.lead) {
+      out.push(`${page.rel} opens with a ${counts.lead}-word lead; the ceiling is ${budgets.lead} words in a page's lead (website/README.md)`)
+    }
+    if (!PAGE_EXEMPT.has(page.url) && counts.words > budgets.words) {
+      out.push(`${page.rel} is ${counts.words} words; the ceiling is ${budgets.words} words per page (website/README.md), and the pages D188 exempts are ${[...PAGE_EXEMPT].join(', ')}`)
+    }
+  }
+  return out
+}
+
 // ---- the gate --------------------------------------------------------------------------
 
 test('every page, and the whole site, is within the byte budget the README states', () => {
   const failures = budgetFailures(DIST, readmeBudgets())
   assert.deepEqual(failures, [], `the built site is over its byte budget:\n  ${failures.join('\n  ')}`)
+})
+
+test('every page is within the word ceilings the README states', () => {
+  const failures = wordFailures(DIST, readmeBudgets())
+  assert.deepEqual(failures, [], `the built site is over its word ceilings:\n  ${failures.join('\n  ')}`)
 })
 
 // ---- the refusals, kept ----------------------------------------------------------------
@@ -191,8 +339,160 @@ test('the README numbers themselves still refuse: one byte over each fails', (t)
 
 test('the README budget lines are read strictly', () => {
   assert.deepEqual(
-    readmeBudgets('- **JavaScript per page:** 0 bytes.\n- **Page weight per page:** 1,234 bytes.\n- **Whole site:** 5,678 bytes.\n'),
-    { js: 0, page: 1234, site: 5678 },
+    readmeBudgets(
+      '- **JavaScript per page:** 0 bytes.\n- **Page weight per page:** 1,234 bytes.\n- **Whole site:** 5,678 bytes.\n' +
+        "- **Words in a page's lead:** 40 words.\n- **Words per page:** 250 words.\n",
+    ),
+    { js: 0, page: 1234, site: 5678, lead: 40, words: 250 },
   )
   assert.throws(() => readmeBudgets('- **JavaScript per page:** zero\n'), /does not state the js budget/)
+  assert.throws(
+    () =>
+      readmeBudgets(
+        '- **JavaScript per page:** 0 bytes.\n- **Page weight per page:** 1,234 bytes.\n- **Whole site:** 5,678 bytes.\n' +
+          "- **Words in a page's lead:** 40 words.\n- **Words per page:** a few\n",
+      ),
+    /does not state the words budget/,
+  )
 })
+
+// ---- the word ceilings' own refusals, kept ----------------------------------------------
+//
+// D188's two numbers are the whole of the gate above, so each of them needs a case that
+// proves it can fail: a page one word over the ceiling, and a lead one word over it. A
+// fixture page is written word by word (`n` words, one per space) so that "one over" is a
+// number this file chooses rather than a page somebody later edits.
+
+/** A fixture page whose `main` carries `leadWords` words in its lead and `pageWords` in all. */
+function fixture(leadWords, pageWords) {
+  // The two headings are one word each ("t" and "s") and a reader reads them, so they are part
+  // of `pageWords`: the fixture's total is exact, which is what makes "one word over" a number
+  // this file chose rather than one a later edit moves.
+  const rest = pageWords - leadWords - 2
+  assert.ok(rest >= 0, 'a fixture page cannot carry fewer words in its body than its headings and its lead')
+  return shell(
+    '',
+    `<main><h1>t</h1><p>${Array.from({ length: leadWords }, () => 'w').join(' ')}</p>` +
+      `<h2>s</h2><p>${Array.from({ length: rest }, () => 'w').join(' ')}</p></main>`,
+  )
+}
+
+test('a page one word over the page ceiling is refused, and one word under it is not', (t) => {
+  const budgets = { ...readmeBudgets(), lead: 1000 }
+  const dist = distOf(t, {
+    'over/index.html': fixture(0, budgets.words + 1),
+    'under/index.html': fixture(0, budgets.words),
+  })
+  const f = wordFailures(dist, budgets)
+  assert.equal(f.length, 1, f.join('\n'))
+  assert.match(f[0], new RegExp(`^over/index\\.html is ${budgets.words + 1} words; the ceiling is ${budgets.words} words per page`))
+})
+
+test('a lead one word over the lead ceiling is refused, and one word under it is not', (t) => {
+  const budgets = { ...readmeBudgets(), words: 100000 }
+  // The total carries the two headings as well as the lead, so a page whose lead is exactly
+  // at the ceiling is `lead + 2` words long and one whose lead is one over is `lead + 3`.
+  const dist = distOf(t, {
+    'over/index.html': fixture(budgets.lead + 1, budgets.lead + 3),
+    'under/index.html': fixture(budgets.lead, budgets.lead + 2),
+  })
+  const f = wordFailures(dist, budgets)
+  assert.equal(f.length, 1, f.join('\n'))
+  assert.match(f[0], new RegExp(`^over/index\\.html opens with a ${budgets.lead + 1}-word lead; the ceiling is ${budgets.lead} words`))
+})
+
+test('a page with no h2 measures the paragraph under its h1, through the newline between them', (t) => {
+  // The homepage's shape, and the one page whose lead is its whole gist: a hero with an `h1`
+  // and a paragraph under it, and no `h2` anywhere. Astro indents the template it compiles,
+  // so the `h1` and the paragraph are separated by a text node holding a newline and spaces —
+  // which is not a paragraph, and not the end of the opening run. A reader that stopped at it
+  // would measure the lead as zero words and the lead ceiling would pass on this page without
+  // reading it, so the newline is written into the fixture and the lead is measured through
+  // it: one word over the ceiling still fails, one word under it still does not.
+  const budgets = { ...readmeBudgets(), words: 100000 }
+  const page = (n) =>
+    shell('', `<main>\n  <h1>t</h1>\n  <p>${Array.from({ length: n }, () => 'w').join(' ')}</p>\n</main>`)
+  assert.deepEqual(pageWords(page(3)), { words: 4, lead: 3 })
+
+  const dist = distOf(t, {
+    'over/index.html': page(budgets.lead + 1),
+    'under/index.html': page(budgets.lead),
+  })
+  const f = wordFailures(dist, budgets)
+  assert.equal(f.length, 1, f.join('\n'))
+  assert.match(f[0], new RegExp(`^over/index\\.html opens with a ${budgets.lead + 1}-word lead`))
+})
+
+test('a hero whose section holds the h1 has the paragraph run under the h1 as its lead, and not the sections after it', (t) => {
+  // The homepage since the flow went under the hero: the flow's step names are `h2`s, so the
+  // first `h2` of `main` is no longer the end of the hero but the start of a figure that sits
+  // outside the hero's section. Reading h1 -> first h2 would measure the hero's install block
+  // and terminal as the lead (85 words on the built page). The hero's own paragraph run is
+  // the lead, and a lead one word over the ceiling still fails.
+  const budgets = { ...readmeBudgets(), words: 100000 }
+  const page = (n) =>
+    shell(
+      '',
+      `<main>\n <section class="hero">\n  <h1>t</h1>\n  <p>${Array.from({ length: n }, () => 'w').join(' ')}</p>\n` +
+        `  <div><p>${Array.from({ length: 200 }, () => 'x').join(' ')}</p></div>\n </section>\n` +
+        '<ol><li><h2>step</h2></li></ol>\n</main>',
+    )
+  assert.equal(pageWords(page(3)).lead, 3)
+  const dist = distOf(t, { 'over/index.html': page(budgets.lead + 1), 'under/index.html': page(budgets.lead) })
+  const f = wordFailures(dist, budgets)
+  assert.equal(f.length, 1, f.join('\n'))
+  assert.match(f[0], new RegExp(`^over/index\\.html opens with a ${budgets.lead + 1}-word lead`))
+})
+
+test('the three reference pages are exempt from the page ceiling, and their leads are not', (t) => {
+  const budgets = readmeBudgets()
+  const long = fixture(budgets.lead + 1, budgets.words + 1)
+  const dist = distOf(t, {
+    'docs/index.html': long,
+    'security/index.html': long,
+    'changelog/index.html': long,
+    'faq/index.html': long,
+  })
+  const f = wordFailures(dist, budgets)
+  // The four pages are over both ceilings, and the three D188 exempts only answer for the
+  // lead: five failures, not eight.
+  assert.equal(f.length, 5, f.join('\n'))
+  for (const route of ['docs', 'security', 'changelog']) {
+    assert.ok(
+      !f.some((line) => line.startsWith(`${route}/index.html is`)),
+      `${route}/index.html is D188's own exemption and the page ceiling was applied to it:\n${f.join('\n')}`,
+    )
+    assert.ok(
+      f.some((line) => line.startsWith(`${route}/index.html opens with a`)),
+      `${route}/index.html is not exempt from the lead ceiling, and it was not measured against it:\n${f.join('\n')}`,
+    )
+  }
+  assert.ok(f.some((line) => line.startsWith('faq/index.html is')), 'a page that is not exempt was not measured against the page ceiling')
+})
+
+test('the word reader counts what a reader reads, and nothing else', (t) => {
+  // The lead is the text between the `h1` and the first `h2`, and not the section under it:
+  // a lead that counted the whole page would make the two ceilings one ceiling. The headings
+  // are words too — the reader counts the `h1`'s and the `h2`'s own text, which is why the
+  // whole page here is seven words and not five.
+  const lead = pageWords(shell('', '<main><h1>t</h1><p>one two</p><h2>s</h2><p>three four five</p></main>'))
+  assert.deepEqual(lead, { words: 7, lead: 2 })
+
+  // A page with no `h2` has no lead region, and its lead is the paragraphs that follow its
+  // `h1` rather than everything the page carries after it.
+  assert.deepEqual(
+    pageWords(shell('', '<main><h1>t</h1><p>one two</p><div><p>three four five</p></div></main>')),
+    { words: 6, lead: 2 },
+  )
+
+  // A script or style body is not text a reader reads, a `hidden` subtree is not rendered,
+  // and an image's `alt` stands in for the image — the reader of `test/lib/html.mjs`.
+  assert.deepEqual(
+    pageWords(shell('', '<main><h1>t</h1><style>p{color:red}</style><script>let a=1</script><p hidden>not counted</p><p>one two</p><img src="/x.png" alt="three four"></main>')),
+    { words: 5, lead: 2 },
+  )
+
+  // A page with no `main` is not this gate's subject: `a11y.mjs` refuses the landmark.
+  assert.equal(pageWords(shell('', '<h1>t</h1>')), null)
+})
+
