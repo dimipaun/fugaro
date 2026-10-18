@@ -572,16 +572,19 @@ func TestPolicyNonIntegerMarkerHaltsTheRun(t *testing.T) {
 }
 
 // The single token take (finding 2): the policy read and the session share one
-// TakeObject, because the call deletes the object as it reads it. A second take
-// inside the run would find nothing and stop it, so a run that finishes — with
-// a policy published, so that both readers use the identity — is the assertion.
+// TakeObject, one custom token and one exchanged identity, so a run that
+// finishes — with a policy published, so that both readers use the identity —
+// is the assertion. The take is read-only since the seal (the job's grant on
+// tokens/ has no delete, D16), so a second take would find the object rather
+// than nothing: what holds the sharing is that the identity is built once, and
+// the exchange count below is what would move if it were not.
 // The exchange itself happens twice (once for the client the policy is read
 // with, once in budget.Open), with the same custom token and the same claims.
 func TestTokenIsTakenOnce(t *testing.T) {
 	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":2,"budget":{"mode":"enforce","per_run_usd":5}}`, capScript(1)...)
 	rec, err := b.run(t, calling(new([]int), implement("feature"), call{sonnet, 4000}), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
-		t.Fatalf("rec = %+v, err = %v: the run could not take the token twice", rec, err)
+		t.Fatalf("rec = %+v, err = %v: the run did not finish with both readers on one take", rec, err)
 	}
 	if s := sourceOf(t, rec, "mode"); s != "policy" {
 		t.Fatalf("mode source = %q: the policy was not read", s)
