@@ -635,6 +635,18 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 	if scan.customRoles < 5 {
 		t.Errorf("the scan read %d custom roles, want the modules'", scan.customRoles)
 	}
+	// Task 3.0's rule, and the count that keeps it from passing vacuously:
+	// every grant to a member that is not a set of people, whose role this
+	// scan could resolve, was read for the two permissions that set or remove
+	// the project's own label — and none of them holds one. Without the
+	// first count the second is an assertion about nothing, which is exactly
+	// what a scan of the bucket's grants alone would give.
+	if scan.labelChecked < 20 {
+		t.Errorf("the scan read %d grants for a path to the %s label, want every grant the modules make to a member that is not a set of people (the run, history and scheduler accounts)", scan.labelChecked, ProjectLabelKey)
+	}
+	if scan.labelGrants != 0 {
+		t.Errorf("the scan found %d of those grants reaching the %s label, want none: no run account may set or remove it (Task 3.0)", scan.labelGrants, ProjectLabelKey)
+	}
 	// The one project-level storage write this scan admits, and the reason it
 	// admits it: binding (2)'s fence, which the scan read out of the module
 	// and matched clause for clause. The runs bucket's own name is outside it
@@ -962,6 +974,27 @@ locals {
 				`    "storage.buckets.create",`, `    "storage.buckets.create",
     "storage.objects.create",`, 1)
 		},
+		// Task 3.0's rule, in the three spellings a grant of the label
+		// permission could come in: a predefined role that carries it, and a
+		// custom role holding each of the two permissions (setIamPolicy
+		// matters on its own — it is how a holder grants itself the update).
+		// Each is a project-level grant to the job account, the credential a
+		// run's agent holds: the one that must never be able to put a project
+		// into managed mode, or take it out. None of them touches the runs
+		// bucket, which is the point — the label is not in the bucket, so
+		// neither the bucket's conditions nor the deployer's prefix fence
+		// bounds this permission.
+		"roles/editor to the job account": func(f map[string]string) {
+			f["modules/workflow/sa.tf"] += projectGrantToJob("job_editor", `"roles/editor"`)
+		},
+		"a custom role holding resourcemanager.projects.update, to the job account": func(f map[string]string) {
+			f["modules/workflow/sa.tf"] += customRole("job_labeller", "jobLabeller", `"resourcemanager.projects.update"`) +
+				projectGrantToJob("job_label", `google_project_iam_custom_role.job_labeller.name`)
+		},
+		"a custom role holding resourcemanager.projects.setIamPolicy, to the job account": func(f map[string]string) {
+			f["modules/workflow/sa.tf"] += customRole("job_policy_labeller", "jobPolicyLabeller", `"resourcemanager.projects.setIamPolicy"`) +
+				projectGrantToJob("job_policy_label", `google_project_iam_custom_role.job_policy_labeller.name`)
+		},
 		"a grant inside a comment-looking string": func(f map[string]string) {
 			// A block comment opened inside a string does not hide what
 			// follows the string.
@@ -984,6 +1017,39 @@ locals {
 			}
 		})
 	}
+	// Task 3.0's rule fires by itself, and not only beside the allowlist.
+	// Every mutation above is also a new grant to a non-people member, which
+	// runAccountGrants refuses whatever it grants — so a mutation being
+	// caught says nothing yet about the label rule. What says something is
+	// the finding itself: each of these names the project's label, so the
+	// scan refused it for the permission it carries and not only for being
+	// new. That is the rule a future task needs when it adds an entry to the
+	// allowlist without reading it.
+	for name, role := range map[string]string{
+		"roles/editor":                          `"roles/editor"`,
+		"roles/owner":                           `"roles/owner"`,
+		"a custom role with projects.update":    `google_project_iam_custom_role.labeller.name`,
+		"a custom role with projects.setIamPol": `google_project_iam_custom_role.policy_labeller.name`,
+	} {
+		t.Run("the label rule refuses "+name, func(t *testing.T) {
+			files := moduleFiles(t)
+			files["modules/workflow/sa.tf"] += labelRoleFor(role) + projectGrantToJob("job_label_rule", role)
+			scan := scanModuleIAM(files)
+			if scan.labelGrants == 0 {
+				t.Errorf("the label rule counted no grant for %s: %v", role, scan.findings)
+			}
+			if !slices.ContainsFunc(scan.findings, func(f string) bool { return strings.Contains(f, ProjectLabelKey) }) {
+				t.Errorf("%s: no finding names the %s label, so it was refused for another reason:\n%s", role, ProjectLabelKey, strings.Join(scan.findings, "\n"))
+			}
+		})
+	}
+	// The other half: the label rule reads the modules' own grants and finds
+	// nothing there, which is only worth saying beside a count of what it
+	// read (TestRunAccountsHaveNoWritePathToTheMarker asserts that count).
+	if scan := scanModuleIAM(moduleFiles(t)); scan.labelGrants != 0 {
+		t.Errorf("the modules as they are: %d grant(s) reach the %s label", scan.labelGrants, ProjectLabelKey)
+	}
+
 	// The modules as they are are the other half of the fixture: the scan
 	// above must find nothing in them, or the mutations would be passing for
 	// a reason that has nothing to do with them.
@@ -1073,6 +1139,31 @@ func TestTheScanRefusesTheComputeModulesGrantsAsAKnownLimit(t *testing.T) {
 			t.Errorf("the compute module's %s grant is not refused: the known limit says it is", name)
 		}
 	}
+}
+
+// labelRoleFor is the custom role a grant of role needs before the grant can
+// be said to reach the project label, or nothing when role names one of
+// Google's own — which carries the permission in its title, not in the file.
+func labelRoleFor(role string) string {
+	switch role {
+	case `google_project_iam_custom_role.labeller.name`:
+		return customRole("labeller", "jobLabeller", `"resourcemanager.projects.update"`)
+	case `google_project_iam_custom_role.policy_labeller.name`:
+		return customRole("policy_labeller", "jobPolicyLabeller", `"resourcemanager.projects.setIamPolicy"`)
+	}
+	return ""
+}
+
+// customRole is a project-level custom role holding one permission.
+func customRole(name, roleID, perm string) string {
+	return `
+resource "google_project_iam_custom_role" "` + name + `" {
+  project     = var.project
+  role_id     = "` + roleID + `"
+  title       = "` + roleID + `"
+  permissions = [` + perm + `]
+}
+`
 }
 
 // projectGrantToJob is a project-level grant of role to the job account,
@@ -1165,7 +1256,15 @@ type iamScan struct {
 
 	// runAccountGrants is how many of runAccountGrants the scan matched.
 	runAccountGrants int
-	conditions       map[string]int
+
+	// labelChecked is every grant to a member that is not a set of people
+	// whose role this scan could resolve, and labelGrants the ones that give
+	// that member a way to set or remove the project's own label (Task 3.0):
+	// the first is what makes the second's zero an assertion rather than a
+	// vacuous pass.
+	labelChecked, labelGrants int
+
+	conditions map[string]int
 }
 
 func (s *iamScan) failf(format string, a ...any) {
@@ -1214,6 +1313,7 @@ func scanModuleIAM(files map[string]string) iamScan {
 			s.customRoles++
 		case iamGrantTypeRE.MatchString(r.typ):
 			s.checkRunAccountGrant(r, roles, locals[dir], seen)
+			s.checkLabelGrant(r, roles, locals[dir])
 			switch strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(r.typ, "_member"), "_binding"), "_policy") {
 			case "google_storage_bucket_iam":
 				s.checkBucketGrant(r, roles, locals[dir])
@@ -1365,6 +1465,99 @@ func (s *iamScan) checkRunAccountGrant(r tfResource, roles map[string][]string, 
 			seen[key] = true
 		}
 	}
+}
+
+// labelWritePerms are the permissions that set, change or remove the
+// project's own fugaro_managed label — the second half of the creation fact,
+// written by the owner-run command that creates the project and required by
+// the read (Task 3.0, design finding 14). Both are on the list because
+// either one is enough: resourcemanager.projects.update writes the label
+// directly, and resourcemanager.projects.setIamPolicy is how a holder grants
+// itself the first (Project IAM Admin does not carry update; Owner and Editor
+// carry both, which is why labelWriteRoles exists as well).
+//
+// A run's credential holding either is a finding however it is spelled, and
+// that is what makes this rule different from the storage rules above: the
+// label is not in the runs bucket, so no bucket condition and no prefix fence
+// can bound it. The permission is the whole of what it takes to put a project
+// into managed mode, or to take it out.
+var labelWritePerms = map[string]bool{
+	"resourcemanager.projects.update":       true,
+	"resourcemanager.projects.setIamPolicy": true,
+}
+
+// labelWriteRoles are the predefined roles this test knows carry the
+// permission above. It is a list rather than a permission check because a
+// test cannot ask Google what roles/xyzzy carries (Global Constraint 12: no
+// live IAM read), so a predefined role this test does not know is judged by
+// the allowlist instead — runAccountGrants pins every grant to a non-people
+// member whole, so a new predefined role reaching a run account is a finding
+// there before it can be one here. These two are named because they carry
+// every project permission, and because "roles/editor to the job account"
+// would otherwise be a grant this test had no opinion about.
+var labelWriteRoles = map[string]bool{"roles/owner": true, "roles/editor": true}
+
+// checkLabelGrant refuses a grant that would let a credential a run holds set
+// or remove the project's fugaro_managed label. It is the third rule over the
+// same grants checkRunAccountGrant and checkBucketGrant read, and it is the
+// plan's Open item 2 answered by meeting it rather than by falling back to
+// it: the fixture could be written, so the label is not refused for want of
+// one (docs/plans/2026-10-18-managed-projects-task-3.0-decisions.md §6).
+//
+// Members that are a set of people are skipped, exactly as they are above:
+// the operators' own accounts hold resourcemanager.projects.update by
+// construction — the owner-run command that writes the label runs on one —
+// and that is the documented limit rather than a hole (SECURITY.md).
+func (s *iamScan) checkLabelGrant(r tfResource, roles map[string][]string, locals map[string]string) {
+	members, ok := grantMembers(r)
+	if !ok {
+		return // checkRunAccountGrant reports a shape this test cannot read
+	}
+	forEach := field(r.body, "for_each")
+	for _, role := range grantRoles(r, roles) {
+		why, resolved := labelGrantWhy(role, roles)
+		if !resolved {
+			continue // not a role this test can resolve: checkRunAccountGrant's finding
+		}
+		for _, m := range members {
+			if isPersonSet(m, forEach, locals) {
+				continue
+			}
+			s.labelChecked++
+			if why == "" {
+				continue
+			}
+			s.labelGrants++
+			s.failf("%s: %s grants %s on %s to %s, and %s: no credential a run holds may set or remove the project's %s label, which is what puts a project into managed mode (Task 3.0; the label is written by the run that creates the project and by nothing else)",
+				r.path, r.name, role, grantTarget(r.body), m, why, ProjectLabelKey)
+		}
+	}
+}
+
+// labelGrantWhy says why a grant of role would let its holder set or remove
+// the project's label, and whether the role could be resolved at all: a
+// predefined role by the two names above, and a custom role by the
+// permissions this scan read for it (customRolePermissions). A predefined
+// role that carries the permission but is not named above is not resolved
+// here — runAccountGrants is where it would be caught.
+func labelGrantWhy(role string, roles map[string][]string) (why string, resolved bool) {
+	ref := unquote(strings.TrimSpace(role))
+	if labelWriteRoles[ref] {
+		return ref + " carries resourcemanager.projects.update", true
+	}
+	if strings.HasPrefix(ref, "roles/") {
+		return "", true
+	}
+	perms, ok := roles[customRoleRef(role)]
+	if !ok {
+		return "", false
+	}
+	for _, p := range perms {
+		if labelWritePerms[p] {
+			return fmt.Sprintf("the custom role %s holds %s", ref, p), true
+		}
+	}
+	return "", true
 }
 
 // grantTarget is the resource a grant is on: the first of the attributes
