@@ -3772,3 +3772,27 @@ func (h *gateHarness) run(t *testing.T, extra ...string) (bool, string) {
 	err := cmd.Run()
 	return err == nil, out.String()
 }
+
+// TestPlanRule9ListsEveryFlaggedHeading holds Global Constraints rule 9 to
+// its own sentence, "This list is the headings": every task whose heading
+// carries `SECURITY-SENSITIVE, independent opus review` is named in the rule.
+// The 0.8.5 merge of `console` into `main` (PR #611) had to fold main's Task
+// 2.4 into the console's rewritten rule by hand, and no test failed when it
+// was dropped; this one does, for 2.4 and for any later flagged task.
+func TestPlanRule9ListsEveryFlaggedHeading(t *testing.T) {
+	plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
+	rule := regexp.MustCompile(`(?m)^9\. \*\*Security-sensitive tasks.*$`).FindString(plan)
+	if rule == "" {
+		t.Fatal("the plan has no Global Constraints rule 9")
+	}
+	flagged := regexp.MustCompile(`(?m)^### Task (\d+\.\d+[a-z]?): .*SECURITY-SENSITIVE, independent opus review`).FindAllStringSubmatch(plan, -1)
+	if len(flagged) == 0 {
+		t.Fatal("the plan has no task heading flagged SECURITY-SENSITIVE: the pattern no longer matches the headings")
+	}
+	for _, m := range flagged {
+		id := m[1]
+		if !regexp.MustCompile(`(^|[^0-9.])` + regexp.QuoteMeta(id) + `([^0-9]|$)`).MatchString(rule) {
+			t.Errorf("Task %s's heading carries SECURITY-SENSITIVE but rule 9's list does not name it: the rule says the list is the headings", id)
+		}
+	}
+}
