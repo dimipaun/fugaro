@@ -2445,3 +2445,314 @@ func chkCitationMoved(lines []string, anchor, path string) string {
 	}
 	return fmt.Sprintf("; %s carries it at line(s) %s — cite %s with that symbol and no line number, which the next code move cannot break", path, strings.Join(at, ", "), path)
 }
+
+// TestChecklistHasCheck53: docs/gcp-live-checklist.md must carry phase 3's
+// shared project jobs — the one job per (profile, provider, account), the
+// launcher that places a run on it, the binding that refuses a mismatch, and
+// the evidence the design's §11 check asks for — as one owner-run, not-yet-run,
+// sandbox-only check numbered 53 (plan 2026-10-14-project-centric.md Task 3.7),
+// with its row in the check list and Check 43's guard block (the three hard
+// stops and the project pinning) inside its section, so a reader cannot mistake
+// it for something CI covers and no step of it can run against a project or a
+// repository other than the sandbox's.
+//
+// Two things this check must not lose, and both are asserted as negatives:
+// the design's §11 Bitbucket half is dead (the owner's ruling of 2026-10-15:
+// a Bitbucket credential cannot be scoped to one project's repositories, so no
+// shared job holds one and Bitbucket keeps its per-repository job), and the
+// check runs in the GITHUB checkout of the check's repository — the Bitbucket
+// sandbox carries the same owner and name, and a check that pinned only the
+// name would run green there while measuring the per-repository path and
+// nothing it is for. So the guard's origin stop names github.com, and the
+// section must not name bitbucket.org, a workspace token or a Bitbucket
+// scratch project at all.
+//
+// The assertions below are deliberately per-line: each is a fact the section
+// must state (a stop it can take, a flag a command must carry, a FACT it
+// records, a step of its Restore), and each of the hand mutations the review
+// named fails one of them — deleting a guard line, dropping a FACT, or
+// reintroducing the dead probe fails here rather than passing on the section's
+// heading alone.
+func TestChecklistHasCheck53(t *testing.T) {
+	const path = "../../docs/gcp-live-checklist.md"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	// The heading itself carries the four markers Task 3.7 fixes
+	// ("installation fugaro, sandbox only, never belong; run by you; NOT
+	// RUN"), so it is asserted as a whole rather than as four substrings that
+	// would also pass on the heading alone.
+	const heading = "## Check 53: a shared project job, end to end (installation fugaro, sandbox only, never belong; run by you; NOT RUN)"
+	section := docSection(t, path, doc, heading)
+	// The section's body, with the heading line stripped: the constraints must
+	// live in the sentences that carry them, not only in the title.
+	body := section
+	if i := strings.Index(body, "\n"); i != -1 {
+		body = body[i+1:]
+	}
+	chk53MustContain(t, body, "body", []string{
+		"you run every command",
+		"**Never `belong`**",
+		"no agent runs any step of it",
+		"no step of this check types, prints or records a secret value or a key value",
+		// The release the phase ships in: a binary older than 0.9.0 has no
+		// project job at all, and every step would measure nothing.
+		"0.9.0",
+		// Why the check runs from a GitHub checkout: the launcher reads the
+		// profile out of the working directory's fugaro.yaml, and elsewhere it
+		// silently keeps the per-repository job.
+		"`checkoutConfig`, `internal/cli/cloud.go:494`",
+		"keeps the per-repository job it has always had",
+		// The two repositories share an owner/name and are not the same
+		// repository: the Bitbucket sandbox is never this check's subject.
+		"`git: { provider: bitbucket, base_branch: master }`",
+		"a **different repository**",
+	})
+
+	// Its row in the check list (the summary table), not only the section.
+	var row string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| 53 |") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		// Not Fatal: the pins below must still run, so the first red run
+		// reports the table row and the unguarded section together — which is
+		// the state this task's red step is written against.
+		t.Error("the check list has no `| 53 |` row")
+	} else {
+		chk53MustContain(t, row, "row", []string{
+			"See \"Check 53\" below",
+			"**USER-RUN, NOT RUN.**",
+			"never `belong`",
+			// The model itself, in the row: one job shared by the repositories
+			// a profile admits.
+			"**one Cloud Run job per (profile, provider, account)**",
+			// The two halves of the check that are its own subject: a run that
+			// completes and opens its PR, and the launcher's silent fallback
+			// when it is not run from the repository's own checkout.
+			"opening its PR",
+			"silently keeps the per-repository job",
+			// Both refusals, at both layers (the D10 bypass is why the
+			// launcher's gate alone is not the answer).
+			"refused **at the launcher and again at the runner**",
+			// The ruling, and what it leaves the check: a record, not a step.
+			"a **record of the owner's 2026-10-15 ruling, not a step with commands**",
+			// The release, and the flag that carries phase 3's clone workflow.
+			"0.9.0",
+			"`cloneShipped`, `internal/cli/recipes_skew.go:68`",
+			// The blast radius: the second repository is the owner's to create
+			// and delete.
+			"**two GitHub repositories**",
+		})
+		for _, dead := range []string{"bitbucket.org", "workspace token", "access token"} {
+			if strings.Contains(row, dead) {
+				t.Errorf("the Check 53 row still describes a Bitbucket credential (%q): the ruling leaves Bitbucket on the per-repository path", dead)
+			}
+		}
+		// The row must name the two repositories the check needs, and must not
+		// promise a Bitbucket one it no longer has.
+		if strings.Contains(row, "one GitHub repository") {
+			t.Error("the Check 53 row names one repository: the check needs two (the profile's admission refusal is measured against a repository the profile does not admit)")
+		}
+	}
+
+	// Check 43's guard block inside the section — the three hard stops and the
+	// project pinning, not merely a ${P:?...}. The origin stop is this check's
+	// own: it names the GITHUB host as well as the repository, because the
+	// Bitbucket sandbox carries the same owner and name.
+	chk53MustContain(t, section, "section", []string{
+		"P=fugaro-dev",
+		`[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$A" ] && [ -n "$PROFILE" ] && [ -n "$BASE" ] && [ -n "$TASK53" ] && [ -n "$TASKNO53" ] && [ -n "$C" ] \`,
+		`|| { echo "Check 53 stopped: re-run the whole setup block`,
+		`fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,'`,
+		`|| { echo "Check 53 stopped: this is not the fugaro-dev installation" >&2; exit 1; }`,
+		`git remote get-url origin | grep -Eq "^(https://github\.com/|git@github\.com:)${A:?}(\.git)?$"`,
+		`|| { echo "Check 53 stopped: this checkout's origin is not github.com/$A (the Bitbucket sandbox of the same name is a different repository)" >&2; exit 1; }`,
+		`grep -Eq '^[[:space:]]*provider:[[:space:]]*github' fugaro.yaml`,
+		`|| { echo "Check 53 stopped: this checkout's fugaro.yaml provider is not github" >&2; exit 1; }`,
+		`git rev-parse --verify --quiet "origin/${BASE:?}" >/dev/null`,
+	})
+
+	// The steps that carry the check's own subject, each with the FACT that
+	// records it. A section that lost one of these still has a heading and a
+	// guard block, and would still pass a heading-only test.
+	chk53MustContain(t, section, "section", []string{
+		"### 1. Setup and guard — and the state the Restore puts back",
+		"### 2. The Bitbucket half is not run — the owner's ruling of 2026-10-15, recorded",
+		"### 3. The check's repositories, enrolled — and the profile that admits one of them",
+		"### 4. The installation root applies the shared job (OWNER-RUN Terraform)",
+		"### 5. A clone workflow runs on the shared job — end to end, and it opens its PR",
+		"### 6. The binding refuses a mismatch — the launcher's half, the runner's half, and the identity",
+		"### 7. The regression, measured — and `SECURITY.md`'s wording against it",
+		"### 8. `ls`, `logs` and `cancel` across two repositories on one job",
+		"### 9. Restore",
+		// Step 2 is the ruling, and it carries no command of its own.
+		"**OWNER RULING, 2026-10-15 — \"a Bitbucket credential cannot be scoped to one project's repositories\".**",
+		"Bitbucket stays on the per-repository path",
+		"this step is a **record, not a check**",
+		// Step 3: the second repository is the owner's, and the profile admits
+		// only the first.
+		"**If no GitHub repository is created, the check does not run**",
+		"READ it, never compute it",
+		"can only narrow it, never widen it",
+		"github/<A: the canonical form of $A>",
+		// Step 4: the root that deploys the job, and the per-repository root
+		// that must not be applied.
+		"`deploy/terraform/gcp/roots/installation/`",
+		"`for_each = var.project_jobs`",
+		"a shared job never serves bitbucket in phase 3",
+		"no per-repository root",
+		"carries **no `FUGARO_REMOTE`**",
+		// Step 5: the run, its PR, the job it was in, and the watch triple.
+		"fugaro run --project fugaro --repo \"${A:?}\" --ref \"${BASE:?}\" \"${TASK53:?}\"",
+		"the draft pull request the run opens",
+		"`launch.json`'s `job` field",
+		"**its PR**",
+		"fugaro watch --json --once --project fugaro",
+		"`account` **absent**",
+		// Step 6: both refusals, the identity, and the one recorded as
+		// unreachable with its unit test.
+		"does not admit %s: its allow_repos is %s, and a profile's own list can only narrow the project's enrollment, never widen it",
+		"The run stops before any lease exists",
+		"The run stops before any git credential is requested or any lease exists",
+		"\"The run stops before any lease exists\"** appended",
+		"--update-env-vars=\"FUGARO_RUN=${SLUGB:?}/${RUN:?}\"",
+		"--update-env-vars=\"CLOUD_RUN_JOB=${OTHER_JOB:?}\"",
+		"**If the override reaches the container, stop**",
+		"**not reachable at run time**",
+		"`TestProjectJobRefusesACheckoutItDidNotMake`",
+		// Step 7: the accepted regression, measured read-only.
+		"roles/storage.objectUser",
+		"roles/storage.objectViewer",
+		"--impersonate-service-account=\"${SA:?}\"",
+		"the owner ruled on **2026-10-17** that the installation-wide reach is **ACCEPTED**",
+		// Step 8: two repositories on one job, and the sideways launch.json.
+		"fugaro cancel <run B>",
+		"A run's objects may name only its own execution",
+		"`gcp.CheckRunExecution`, `internal/backend/gcp/run.go`",
+		// Step 9: the restore, and the second repository's deletion.
+		"cp \"$C.before-53\" \"$C\"",
+		"fugaro project repos rm \"github/${B:?}\" --project fugaro",
+		"the Bitbucket sandbox **is untouched**",
+		// The paste-back line, and the two things it may not carry.
+		"**Paste back:** every FACT line, never a token or key value.",
+		"**Run by you, never an agent; never `belong`; NOT RUN.**",
+	})
+
+	// The FACTs the plan's Task 3.7 names, each in the step that produces it:
+	// the plan's step 4 FACT is the resource counts, step 5's is the clone
+	// (an end-to-end run, its PR and the job it was in), step 6's is the
+	// refusal of a mismatch, step 7's is the measured regression, and step 8's
+	// is the three commands across two repositories.
+	chk53MustContain(t, section, "section", []string{
+		"**FACT:** the apply's own plan and result lines, and the resource counts it created",
+		"**FACT:** the run's `result.json`",
+		"**FACT:** the refusal verbatim",
+		"**FACT:** the account's two bindings as the bucket's policy spells them",
+		"**FACT:** that **both** runs were placed on `$JOB`",
+		"**FACT:** the restored diffs",
+	})
+
+	// The Bitbucket probe stays dead: no command creates or reads a Bitbucket
+	// credential, and no Bitbucket repository or project is named at all. Every
+	// one of these fails if the design's §11 B6 probe comes back.
+	for _, dead := range []string{
+		"bitbucket.org", "PROBE_WS", "PROBE_TOKEN", "GIT_ASKPASS", "credential.helper",
+		"workspace access token", "atlassian.com", "workspace token",
+	} {
+		if strings.Contains(section, dead) {
+			t.Errorf("the Check 53 section still carries the dead Bitbucket probe (%q): step 2 is a record of the ruling, with no commands", dead)
+		}
+	}
+	var bitbucketStep string
+	if i := strings.Index(section, "### 2. The Bitbucket half is not run"); i != -1 {
+		j := strings.Index(section[i:], "### 3. The check's repositories")
+		if j == -1 {
+			t.Fatal("the Check 53 section's step 2 is not followed by step 3")
+		}
+		bitbucketStep = section[i : i+j]
+	} else {
+		t.Fatal("the Check 53 section has no step 2")
+	}
+	for _, line := range commandLines(bitbucketStep, "gcloud ", "curl ", "git ", "fugaro ") {
+		t.Errorf("the Check 53 Bitbucket step runs a command (%q): it is a record of the owner's ruling, and creates and probes nothing", line)
+	}
+
+	// Every cloud command in the section pins the project with ${P:?}, so an
+	// empty $P can never fall back to the owner's ambient *-prod project, and
+	// no command interpolates a bare ${VAR} that a failed assignment would
+	// leave empty.
+	unguarded := regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}`)
+	for _, line := range sectionCommands(section) {
+		// The guard's own git reads are not cloud commands: they read the
+		// checkout, which the origin stop already pinned. Every gcloud and curl
+		// command acts on the project, and must name it.
+		if !strings.HasPrefix(line, "git ") && !strings.Contains(line, `--project="${P:?}"`) {
+			t.Errorf("a Check 53 command does not pin the project: %q", line)
+		}
+		if m := unguarded.FindString(line); m != "" {
+			t.Errorf("the Check 53 section has an unguarded %s in a command: %q", m, line)
+		}
+	}
+	// `fugaro doctor --project fugaro` is the guard's own cross-check; every
+	// other fugaro command acts on the installation and must name it too. The
+	// two that name no project are `fugaro version`, which reads the binary
+	// and no installation, and the comment-only mentions inside prose.
+	var sawDoctor bool
+	for _, line := range fugaroCommands(section) {
+		if strings.HasPrefix(line, "fugaro doctor --project fugaro") {
+			sawDoctor = true
+			continue
+		}
+		if strings.HasPrefix(line, "fugaro version") {
+			continue
+		}
+		if !strings.Contains(line, "--project fugaro") {
+			t.Errorf("the Check 53 section has a fugaro command that does not name the installation: %q", line)
+		}
+		if m := unguarded.FindString(line); m != "" {
+			t.Errorf("the Check 53 section has an unguarded %s in a fugaro command: %q", m, line)
+		}
+	}
+	if !sawDoctor {
+		t.Error("the Check 53 section has no `fugaro doctor --project fugaro`: the guard's project cross-check is one of its three hard stops")
+	}
+	// Every launch carries the block's task and the checkout's own base branch:
+	// a launch with no task is refused before the allow-list gate (so a bare
+	// `fugaro run` would never reach the refusals step 6 exists to produce),
+	// and `--ref` must be the branch step 1 read out of the checkout, not a
+	// literal that would halt on the runner's fetch.
+	var runs int
+	for _, line := range fugaroCommands(section) {
+		if !strings.HasPrefix(line, "fugaro run ") {
+			continue
+		}
+		runs++
+		if !strings.Contains(line, `"${TASK53:?}"`) && !strings.Contains(line, `"${TASKNO53:?}"`) {
+			t.Errorf("the Check 53 section has a `fugaro run` with no task: %q — the launcher refuses a taskless launch before any policy gate, so this step never reaches what it is there to produce", line)
+		}
+		if !strings.Contains(line, `--ref "${BASE:?}"`) {
+			t.Errorf("the Check 53 section has a `fugaro run` that does not pass the checkout's own base branch: %q — the runner's fetch of a branch the checkout does not have fails the run and takes the FACTs with it", line)
+		}
+	}
+	if runs < 5 {
+		t.Errorf("the Check 53 section has %d `fugaro run` lines, want at least 5 (step 5's run, step 6(a)'s refused launch, step 8's two runs and the Restore's no-change run)", runs)
+	}
+}
+
+// chk53MustContain fails the test for each want that is not in got, naming the
+// part of the section (its body, its table row, the whole section) that should
+// hold it.
+func chk53MustContain(t *testing.T, got, part string, want []string) {
+	t.Helper()
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("the Check 53 section's %s is missing %q", part, w)
+		}
+	}
+}

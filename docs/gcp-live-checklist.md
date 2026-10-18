@@ -464,6 +464,7 @@ probe account carries predefined grants only).
 | 49 | Policy as data, end to end (design `project-centric.md` §5; plan `2026-10-14-project-centric.md` Task 1.7): the rules deploy and the `config/limits/policyRules` marker, the **runner rollout and the two halves it actually needs** — finding 15: `fugaro upgrade` and `fugaro image refresh` carry no job **environment**, and the only path that writes one is `fugaro init --repo`, so a rollout that skips it leaves every run on the old ceiling — `policy publish` with its printed diff and its **canonical** seeded `allow_repos` (which still names the dogfood's own `github/dimipaun/fugaro`), the policy then governing a real run (`result.json`'s `policy.sources` naming **`"policy"`** for the keys the node sets, where the job environment's ceiling read `"ceiling"`), and the two refusals it fails closed with (the launcher's, and the run's own through a `<slug>/<run-id>` `FUGARO_RUN` override naming a run that does not exist, recording **which layer** refused — on a phase-1 job it is the bucket condition, not this phase's binding, whose live proof is Check 53 step 6) | See "Check 49" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs the one guarded setup block, which hard-stops unless the project is `fugaro-dev`, the checkout is the sandbox, and the block set the task every `fugaro run` below carries (a launch with no task is refused before the allow-list gate, so a bare `fugaro run` would never reach the refusals steps 6 and 7 exist to produce). Phase 1 ships in **0.8.0**; nothing in it depends on any phase 3 code (phases 3 to 6 ship in **0.9.0**, the owner's ruling of 2026-10-15). ⚠ Project `fugaro-dev` also runs the **live `dimipaun/fugaro` dogfood pipeline**, and a published `budget.per_run_usd` is the **whole project's** per-run ceiling, not the sandbox's: the check confirms nothing is in flight before it publishes, publishes **the number the job environment already carries**, and records that no other repository's run started while it was published. | Three `fugaro init` runs (one `--firebase`, two `init --repo` — step 3's and step 8's), one policy publish and one delete, one job image rollout (`fugaro image refresh`), and a handful of small sandbox runs. **USER-RUN, NOT RUN.** |
 | 50 | A Claude senior through a provider route, and whether its cache markers survive (design `project-centric.md` §6.2, §11; plan `2026-10-14-project-centric.md` Task 1b.4): the switch's two halves — the route entry's claim and the published `routing.claude` — neither routing on its own, an unclaimed `anthropic/<id>` pin still refused now that the switch exists, a repository's config still refused a `routing:` key, a missing Anthropic key still reported in a message that names the switch — Task 1b.3's, which **this binary prints** (the `agent.auth` note carries it, `claudeDirectKeyNote` in `internal/cli/validate.go`), so a message that stopped naming the switch is the wrong answer this check stops on, while a binary older than phase 1b's release answers with the older note, which names no switch, and the check records that as **Task 1b.3 not in this binary** and not as a failure — the same task run direct and routed with the reviewer's own `model call` lines side by side (**the number this check records is one figure**: the routed run's own `cache_read` — what the design's open question is answered with — with the direct run's counts and the two `cost.model_usd` figures as the supporting facts), `via: auto` with a key and without one, and the restore | See "Check 50" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs the one guarded setup block, which hard-stops unless the project is `fugaro-dev`, the checkout is the sandbox, and the block set the tasks every `fugaro run` below carries — the no-change `$TASK` for the refusal and restore runs, and the committing `$TASK50` for the two runs step 5 compares, because a run whose agent commits nothing is recorded not-ready (`--ref master`: a launch with no task is refused before the allow-list gate). Phase 1b ships in **0.8.0**, and whether the routed run reports cache reads at all is the number this check records; a step-5 finding that the markers do not survive changes docs and help text only, so it rides an **0.8.0.x** patch — the design's conclusion does not change. | Four or more small sandbox runs (two direct, two routed, one per `auto` case), one policy publish and the restore, one `fugaro init --repo`, the branches and draft pull requests the committing runs leave — declined and deleted, never merged — and provider credit plus Anthropic tokens. **USER-RUN, NOT RUN.** |
 | 52 | The UNVERIFIED questions phase 3 depends on, written and answered **before any phase 3 code** (design `project-centric.md` §13 and §4.5; plan `2026-10-14-project-centric.md` Task 3.0): **U2** whether a Cloud Run secret **reference** works inside a container env override (the API type has a `ValueSource`) and whether an execution's overrides are visible to the container; **U3** whether a Secret Manager IAM condition on a name prefix is honoured for `secretmanager.versions.access`; **U4** the sandbox project's service-account count against Google's default quota and the runs bucket's IAM policy binding count (the ceilings the design's §13 names); and **U1**, which is **no longer a probe** — the owner ruled on 2026-10-15 that a Bitbucket credential cannot be scoped to one project's repositories, so Bitbucket credentials stay per repository and phase 3's shared jobs are GitHub's, with D5 amended to record the ruling (plan Task 0.5) | See "Check 52" below; **you** run it, on installation `fugaro` (never `belong`) — every step acts only on the sandbox's **own** job, service account, bucket and secrets in project `fugaro-dev`, and **no Bitbucket credential, project or repository is created, read or written at all** (U1 is answered by ruling, not by a probe), never anything under `edgeappinc`. | A few `gcloud` reads, **three** override executions on the sandbox job (the secret-reference call in (a), the plain-literal comparison in (c), and the length-only run when the container's command is a shell — (b) is a template-level `--update-secrets` update, and the bare `gcloud run jobs execute` carries no override at all, so neither is one of the three), the check's own probe service account `fugaro-chk52-probe` and its two throwaway secrets (`fugaro-probe-in`, inside the condition's prefix, and `fugaro-other-probe`, outside it), and **nothing on the Bitbucket side**. **USER-RUN, NOT RUN.** |
+| 53 | Phase 3's shared project jobs, end to end (design `project-centric.md` §4.1, §4.4 and §11; plan `2026-10-14-project-centric.md` Task 3.7): **one Cloud Run job per (profile, provider, account)**, shared by every repository the profile admits — a `checkout: clone` run on that job completing end to end **and opening its PR**, the launcher placing a launch there only from the repository's own checkout (`checkoutConfig`, `internal/cli/cloud.go:494`; a launch from anywhere else silently keeps the per-repository job, with no refusal and no message), a repository the profile's `allow_repos` does not admit refused **at the launcher and again at the runner** (the D10 `run.jobs.runWithOverrides` bypass, whose advisory launcher gate is not the binding), a `FUGARO_RUN` override naming another slug refused by the binding before any git credential or lease, a `CLOUD_RUN_JOB` override the platform owns and a launcher cannot forge, `fugaro watch --json`'s (job, profile, provider, account) triple for a run whose job name does not spell it out, `fugaro doctor`'s `launcher-jobs` reach over the new job, and D4's accepted regression measured: the job's service account reading another repository's object | See "Check 53" below; **you** run it, on installation `fugaro` (never `belong`), in project `fugaro-dev` and from the **GitHub** checkout of the check's repository only — every step re-runs the one guarded setup block, which hard-stops unless the project is `fugaro-dev`, the checkout's origin is that GitHub repository and its `fugaro.yaml` says `provider: github` (the Bitbucket sandbox carries the same owner and name and is a **different** repository, on which the check would measure the per-repository path and nothing it is for). The design's §11 Bitbucket half is a **record of the owner's 2026-10-15 ruling, not a step with commands**: a Bitbucket credential cannot be scoped to one project's repositories, so no shared job holds one, Bitbucket keeps its per-repository job, and the GitHub-specific claims are what this check settles. Needs **0.9.0** (`cloneShipped`, `internal/cli/recipes_skew.go:68`). | One `fugaro init` of the installation root (the profile's project job, its service account and the bucket-condition bindings), two policy publishes, three hand-started executions on the shared job, two small sandbox runs that each open a draft pull request, and **two GitHub repositories** — the check's, which is kept, and a second scratch one the owner creates and deletes in the Restore. **USER-RUN, NOT RUN.** |
 | 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled — except its step 7 (the preload image *family*'s rebuild), which needs only the compute root:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, the fail-closed marker, and **the largest `computeResource` a task can ask for on `e2-standard-4` and still leave `QUEUED`** (the built shares are Check 57a's own 2000m/4096MiB submission, a floor known to work rather than a measured maximum — the built-in headroom for the OS, the Batch agent and the Docker daemon is what that step pins), and — step 1 and step 7 — the two UNVERIFIEDs the compute module ships with (whether a run's VM reports to the Batch agent under the module's deny-all ingress rule, and whether the family handover leaves the runs' boot reference serving while the delete of a superseded generation is refused or accepted). | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image (the check's own 57a-3b artefact, `${SA}-preload`; the compute module's preload **family** is the installation's and is never this check's to delete), the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **57a RUN 2026-10-15: see the RESULTS block above; 57b USER-RUN, NOT RUN.** |
 | 58 | Artifact runs (design `artifact-runs.md` §3–§9 and §11; plan `2026-10-15-artifact-runs.md`): a `mode: artifact` recipe rendered on a real image (ffmpeg through `image.apt`, one Cloud Build), three attached PNGs in and a video out, the `render` record and the model-against-compute counters, **no branch pushed and no pull request opened**, the probe's verdict through `commands.probe` beside an independent local `ffprobe`, the recorded content type against the object's own (U5), retrieval with a sha256 match and the upload's wall clock inside `finalize_reserve` — at the set's own size, and in 6b for two files written at exactly `outputs.max_bytes` (U6) — and the failure direction in three halves — a probe that demands an impossible duration and must fail the run with nothing uploaded, a set over `outputs.max_total_bytes` that must refuse with the cap named and the container alive, and a render driven past the job's memory, whose FACT is what was seen (U3) | See "Check 58" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs one hard-coded project guard (`P` hard-coded and never read from `gcloud`, `${VAR:?}` on every argument, the three hard stops, the workflow name checked against the checkout), every launch is guarded per step and records its run id, its commit and the image and base HEAD step 1 found in a per-attempt record file (`/tmp/chk58-records/<batch>.env`), and the Restore reverts only the commits that record holds and that are not already reverted — it refuses to guess at one it does not. | One Cloud Build (the image that carries ffmpeg) and five tiny sandbox runs — two of them carrying the same three attached PNGs (step 2 and 7a; 7b may too), one render-only and therefore at model $0, and one driven past its memory limit. **USER-RUN, NOT RUN.** |
 | 60 | The sealed budget token (design `budget-token-channel.md` §7 and "The check outline"): a sealed run works end to end; the `tokens/` object is ciphertext with no claim readable and nothing is left under `runs/`; where the key is and is not (the job's environment, the execution record — U2 as found — and the RunJob audit entry, recorded by length, never by value); a wrong key, a plaintext object and a sideways copy all refuse; a peer job account cannot delete a queued token; the launchers' widened `runs/`+`tokens/` condition and the job's read-only `tokens/<slug>/` grant read off the live policy | See "Check 60" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only, with Check 43's guard block re-run at every step; Restore puts back the two objects the check overwrote, removes its probe file and scratch dir, and diffs the bucket policy against step 8's. | Three or four tiny sandbox runs and executions. **USER-RUN, NOT RUN.** |
@@ -3375,6 +3376,338 @@ rm -rf "${CHK52_TMP:?}"   # the job JSONs (plain env values) and U2's run respon
 **Last, one ordinary sandbox task** confirming the sandbox still runs with the job back as step 1 recorded it.
 
 **Paste back:** every FACT line above, never a token, key or secret value. **Never run this against `belong`, never create a `edgeappinc` workspace token, and never point a probe at edgeserver or edgeweb** — this check names no repository at all and creates none: U1 is answered by ruling (§2), so the only thing a probe here touches is the sandbox's own job, service account, bucket and two throwaway secrets in `fugaro-dev`.
+
+## Check 53: a shared project job, end to end (installation fugaro, sandbox only, never belong; run by you; NOT RUN)
+
+Phase 3 of the project-centric design ([design/project-centric.md](design/project-centric.md) §4.1, §4.4 and §11) replaces one Cloud Run job per repository with **one job per (profile, provider, Claude account)**, shared by every repository the profile admits, and this is the check that runs that path against the live installation: the launcher's placement of a launch on the profile's shared job, the job the installation root deploys, the runner's binding of a run to it, the clone URL the runner **computes** (a launcher cannot point the run anywhere), the profile's admission, the triple `fugaro watch` shows, `fugaro doctor`'s launcher reach, and the runs-bucket reach the owner accepted. **The design's §11 live check is amended by the owner's ruling of 2026-10-15** (Task 3.0 step 2, D5 as amended: a Bitbucket credential cannot be scoped to one project's repositories): Bitbucket stays on the per-repository path, so **there is no shared Bitbucket job to check**, the check runs the GitHub path, and step 2 is a **record of that ruling, not a step with commands**.
+
+**Method.** All of it happens in the installation's own project (`fugaro-dev`, region `us-east5`) and on the **GitHub** sandbox repository, and **you run every command**: no agent runs any step of it, and no step of this check types, prints or records a secret value or a key value — what it reads is job names, a run's own `launch.json`/`result.json`, the *shape* of an IAM policy, and refusal text. **Never `belong`** (EdgeWeb's and EdgeServer's): nothing here creates, changes or deletes anything there, and no step of this check is run by an agent.
+
+⚠ **This check runs from a GitHub checkout, and the launcher is why.** `fugaro run --repo <r>` finds the profile a workflow selects — `workflows.<n>.job_profile`, default `standard` — in **the working directory's** `fugaro.yaml`, and only when that checkout's origin is the repository the launch names (`checkoutConfig`, `internal/cli/cloud.go:494`; `checkoutRoot`, the same file). A launch from a machine that does not hold the repository has no answer to give and **keeps the per-repository job it has always had** (`launchProjectJobFor`, `internal/cli/project_job.go`): no refusal, no message, just the old job. So every command below runs **in the check repository's own checkout**, and the guard's third stop asserts that. The Bitbucket sandbox `edgeappinc/fugarosandbox` (`deploy/sandbox/fugaro.yaml`: `git: { provider: bitbucket, base_branch: master }`) carries the **same owner and name** this check's GitHub repository does and is a **different repository**: no step of this check runs in it, and the guard stops on it, because a Bitbucket checkout selects no shared job at all and the check would silently measure the per-repository path.
+
+⚠ **Phase 3 ships in 0.9.0, and the installed binary has to be one of it.** Record `fugaro version` in step 1. `checkout: clone` is shipped (`cloneShipped` is `true` since 0.9.0, `internal/cli/recipes_skew.go:68`), and a base image older than the release whose runner knows the clone workflow is **refused at launch** (`… needs a job image whose runner knows …`, `checkCloneImageSince`, `internal/cli/recipes_skew.go`) — that refusal is the **image's** answer, not a phase-3 finding: record it, move the installation's base image (`fugaro init --base base`), and go on. A binary older than 0.9.0 has no project job at all, and every step below would measure nothing.
+
+⚠ **Every `gcloud` command carries `--project="${P:?}"` (and `--region="${L:?}"` wherever it applies) and every `fugaro` command carries `--project fugaro`** — the installation's *name*, where the GCP project is `fugaro-dev`. A `fugaro` command whose `--project` disagrees with the checkout's `project:` is **refused**, not silently resolved (`this checkout belongs to project <x>; --project says fugaro`, `internal/localcfg/select.go`), and `gcloud` with an empty `$P` falls back to the owner's ambient `core/project`, which is a `*-prod` project. This check writes.
+
+⚠ **Set these, and pass the hard stops, by running ONE block — and re-run that whole block at the start of every later step.** `P` is the installation's project, `L` its region, `A` the check's GitHub repository, `PROFILE` the profile its workflow selects, `JOB` the shared project job that profile deploys, `BASE` the check checkout's base branch, `C` the operator's project config, and `TASK53` and `TASKNO53` the two tasks the check's launches carry (a committing one and the Restore's no-change one). The block is self-contained and idempotent, and **every step below (1 to 9) begins with it**: the Restore runs in a later shell, where these variables are gone.
+
+```bash
+# === Check 53: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step (1 to 9). It is idempotent, and nothing below the hard stops runs
+# unless all of them pass. ===
+P=fugaro-dev                    # HARD-CODED, and never read from gcloud
+L=us-east5
+A=edgeappinc/fugarosandbox      # the check's GITHUB repository. The Bitbucket
+                                # sandbox has the same owner and name and is a
+                                # DIFFERENT repository: this check never runs
+                                # from it and never touches it.
+PROFILE=standard                # the job profile the check's workflow selects
+                                # (workflows.<n>.job_profile), default standard
+JOB=<the shared project job's name>  # the fugaro-p-... job `fugaro init`
+                                # deploys for $PROFILE: step 4's FACT records
+                                # it. READ IT, never derive it from the name's
+                                # shape (R2-5): the launcher computes it with
+                                # gcp.ProjectJobName and so does the runner.
+BASE=$(git show HEAD:fugaro.yaml | sed -n 's/^[[:space:]]*base_branch:[[:space:]]*//p' | head -1)
+[ -n "$BASE" ] || BASE=main     # the config's own default when the checkout names none
+C=$HOME/.config/fugaro/projects/fugaro.yaml
+# Step 3 creates the SECOND GitHub scratch repository and records its
+# owner/name in /tmp/chk53-B.txt; every later step re-reads it here. It is
+# EMPTY until step 3 has run, so the steps that use it carry their own stop
+# below — the Restore DELETES it, and a command with an empty $B would name a
+# repository that is not the check's.
+B=$(cat /tmp/chk53-B.txt 2>/dev/null || true)
+
+# The task step 5's run carries: it CHANGES a file and opens its PR, which is
+# half of what this check is for (the clone workflow end to end, and the run's
+# own pull request). A launch with NO task is refused before the allow-list
+# gate, so a bare `fugaro run` would never reach the refusals step 6 exists to
+# produce.
+TASK53='Create a file named CHECK53.txt at the repository root containing the single line "check 53: a shared project job". Commit it, push the branch and open a draft pull request. Change nothing else.'
+# The Restore's own run changes nothing and opens no pull request: a launch
+# with no task is refused before the allow-list gate, so even the last run
+# carries one, and it is its own variable rather than a literal nobody
+# re-checks.
+TASKNO53='Do not change any file and do not open a pull request. Reply with the single word ok.'
+
+# ${VAR:?} everywhere: an empty variable is a hard error, never an empty
+# argument that gcloud would resolve from its ambient configuration.
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$A" ] && [ -n "$PROFILE" ] && [ -n "$BASE" ] && [ -n "$TASK53" ] && [ -n "$TASKNO53" ] && [ -n "$C" ] \
+  || { echo "Check 53 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L, A=$A, PROFILE=$PROFILE, BASE=$BASE, TASK53, TASKNO53 and C=$C must not be empty)" >&2; exit 1; }
+# fugaro doctor's project: line is the local config's project (no cloud call). A
+# doctor that refused the checkout (--project disagreeing with the checkout's
+# project:) prints no project: line at all, so the grep fails either way.
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 53 stopped: this is not the fugaro-dev installation" >&2; exit 1; }
+# The checkout every command below runs in: the check's GITHUB repository, and
+# never the Bitbucket sandbox that carries the same owner and name. Both halves
+# are asserted — the host the origin names, and the repository it names.
+git remote get-url origin | grep -Eq "^(https://github\.com/|git@github\.com:)${A:?}(\.git)?$" \
+  || { echo "Check 53 stopped: this checkout's origin is not github.com/$A (the Bitbucket sandbox of the same name is a different repository)" >&2; exit 1; }
+# The provider half: a checkout whose fugaro.yaml is not github's selects no
+# shared job at all (phase 3's jobs are GitHub's, the ruling of 2026-10-15).
+grep -Eq '^[[:space:]]*provider:[[:space:]]*github' fugaro.yaml \
+  || { echo "Check 53 stopped: this checkout's fugaro.yaml provider is not github" >&2; exit 1; }
+git rev-parse --verify --quiet "origin/${BASE:?}" >/dev/null \
+  || { echo "Check 53 stopped: the base branch $BASE is not on this checkout's origin" >&2; exit 1; }
+```
+
+**Why the guard is one block, and why it is re-run.** The project alone is not enough. Steps 3 and 4 write — the policy publish writes `config/policy/shared`, and the installation root apply creates Cloud Run jobs, service accounts and bucket conditions — and steps 5 to 8 launch runs and edit the sandbox's own objects, so a `fugaro-dev` shell sitting in EdgeWeb's or EdgeServer's checkout would turn a sandbox-shaped check into a real change on `belong`. The stops are **assertions, not prints**: the first asserts that the **block itself** ran (`P` is exactly `fugaro-dev`, and `L`, `A`, `PROFILE`, `BASE`, `TASK53`, `TASKNO53` and `C` are non-empty); `fugaro doctor`'s `project:` line is the local config's project; the checkout's origin is the **GitHub** repository the launches run in, with the provider read off the file as a second half; and the base branch is asserted to exist on `origin`, because a run pointed at a branch the checkout does not have halts on its own fetch and takes the FACTs that depend on a run with it.
+
+**Why the guard pins the GitHub checkout and not just the name.** The two repositories share `edgeappinc/fugarosandbox`, and a check that pinned only the name would run green from the Bitbucket sandbox while measuring **nothing** it is for: the per-repository job, the provider derived from a slug rather than from a job's name, and the phase-1 clone URL read from the job's `FUGARO_REMOTE`. That is why the stop asserts the host and the provider as well as the name.
+
+**Paste the block into a file, not straight into an interactive zsh.** The block carries `#` comments, and an *interactive* zsh does not honour them unless `setopt interactive_comments` is set first. It fails safe — a whole-line comment errors with `command not found: #` and runs nothing, and `P=fugaro-dev  # HARD-CODED` leaves `P` unset, which the first hard stop catches — but run `setopt interactive_comments` once, or (better) save the block to a file and run `bash check53.sh`: a non-interactive shell of either kind honours comments, and `exit 1` then stops the script instead of closing your terminal.
+
+**Why `P` is not `gcloud config get-value project`.** The owner's `gcloud` default is a `*-prod` project, and this check writes. The sandbox installation's project is a constant, so the check names it, and `fugaro doctor`'s read-only `project:` line is the cross-check that the checkout you are in really is the `fugaro-dev` one.
+
+---
+
+### 1. Setup and guard — and the state the Restore puts back
+
+Re-run the block above, then record what step 9 has to restore. Six things: the **operator's project config** (step 3 adds the profile, its `allow_repos` and the App's ID; step 8 adds the second repository to the profile again, and step 9 takes both back), the **published policy** (its version and the jobs it defines), the **installation root's plan** (step 4's apply adds the project module's resources), the check checkout's own `fugaro.yaml` and its local config entry, the **two GitHub scratch repositories** (the first stays, the second is deleted), and the launcher grants and bucket conditions the check reads. And first of all, **confirm that nothing is in flight**: a `policy publish` is project-wide, and project `fugaro-dev` also runs the live `dimipaun/fugaro` dogfood pipeline ([dogfooding.md](dogfooding.md)).
+
+```bash
+# Nothing in flight, over the WHOLE project: no run may be launching or
+# running, and no run may be holding a lease.
+fugaro runs ls --all --project fugaro
+fugaro budget show --project fugaro
+fugaro version
+fugaro project show --json --project fugaro > /tmp/chk53-project-before.json
+fugaro budget show --json --project fugaro > /tmp/chk53-budget-before.json
+fugaro doctor --project fugaro | tee /tmp/chk53-doctor-before.txt
+# the jobs before: step 4 adds the profile's project job to this list
+gcloud run jobs list --project="${P:?}" --region="${L:?}" --format='value(name)' | sort > /tmp/chk53-jobs-before.txt
+# the operator's project config, verbatim: step 3 publishes what it says, and
+# step 9 puts this copy back.
+[ -e "$C.before-53" ] || cp "$C" "$C.before-53"
+# the check checkout's own file: the launch reads the workflow's job_profile
+# out of it.
+git show HEAD:fugaro.yaml > /tmp/chk53-checkout-yaml-before.txt
+```
+
+**FACT:** `fugaro version`, the date, and that the base image the installation runs is one whose runner knows the clone workflow (a `fugaro init --base base` refusal here is the **image's** answer, not a phase-3 finding). **FACT:** the `launcher-jobs` line of `fugaro doctor` before the apply — `launcher grants on Cloud Run jobs: <N> grant(s) over <M> job(s), and a launcher can start <K> of them`, with the jobs it names (`internal/cli/doctor_launcher.go`) — and which jobs step 4 adds to that count. **FACT:** the jobs listed before the apply, and `fugaro project show`'s policy version and `allow_repos`, verbatim. **FACT:** that nothing is in flight (the `runs ls --all` output, or the empty one).
+
+### 2. The Bitbucket half is not run — the owner's ruling of 2026-10-15, recorded
+
+**OWNER RULING, 2026-10-15 — "a Bitbucket credential cannot be scoped to one project's repositories".** The design's §11 check was written for a shared job holding a **project- or workspace-scoped** Bitbucket token, and its B6 step asked the owner to confirm, against Bitbucket's own UI, that the project holding `edgeappinc/fugarosandbox` holds **no production repository** — because such a token reaches every repository that project holds, `belong`'s `edgeappinc/edgeserver` and `edgeappinc/edgeweb` included. **That credential does not exist**: the owner ruled that a Bitbucket credential cannot be scoped (Task 3.0 step 2, design §4.1 and D5 as amended), so Bitbucket stays on the per-repository path — each repository keeps its own access token and its own job — and **no shared job holds a Bitbucket token at all**. The question B6 asked therefore has no object, and this step is a **record, not a check**: it carries **no command**, and nothing in this check creates, reads or writes a Bitbucket repository, a Bitbucket credential or a Bitbucket project. The Bitbucket sandbox keeps its own per-repository job and its own `bitbucket-token`, untouched.
+
+**FACT:** the ruling's date, that Bitbucket is not exercised by this check (the paragraph above says why), and **the GitHub half's own version of the sentence this step existed for** — the check repository step 3 names is one the App is installed on and that **no production workflow uses** — which is the half that still runs.
+
+### 3. The check's repositories, enrolled — and the profile that admits one of them
+
+The check needs **two** GitHub repositories: the one its runs happen on (**`$A`**, the brief's naming — the GitHub sandbox), and **one more scratch repository** (`$B`) that the owner creates for this check. Both are non-production, and neither is EdgeWeb's or EdgeServer's.
+
+1. **`$A`** must exist **on GitHub** under the owner's control with the Fugaro **App installed** on it — that is what makes a GitHub clone workflow possible at all: the App's ID rides in the shared job's environment and its key is a mounted secret (Task 3.5, `internal/infra/projectjobs.go`). If `edgeappinc/fugarosandbox` is not a GitHub repository the owner holds, the owner **creates** the GitHub sandbox repository for this check (design §4.4: *"a GitHub-specific check also needs a GitHub repository … one would have to be created"*), sets `A` to its owner/name in the block, and every step below is unchanged. **If no GitHub repository is created, the check does not run**: there is neither a shared job to exercise nor a Bitbucket half to fall back on, and the owner is told **before** phase 3 ships — the GitHub-specific claims (the App token minted for a repository, the profile's admission, the job's binding) would all stay open, which is the whole check.
+2. **`$B`** is a second GitHub scratch repository the owner creates for this check — a scratch repository the way Task 2.4 step 3's scope repository is: empty or trivial, no production content, **deleted in step 9**. Record it before anything uses it:
+   ```bash
+   # B's owner/name, for every later step. B IS WRITTEN HERE FIRST: the check
+   # must never name a repository it did not create.
+   printf '%s\n' '<the owner/name of the second scratch repository you created>' > /tmp/chk53-B.txt
+   B=$(cat /tmp/chk53-B.txt); [ -n "$B" ] || { echo "Check 53 stopped: /tmp/chk53-B.txt is empty" >&2; exit 1; }
+   ```
+3. **Both are enrolled in the project, and only `$A` is admitted by the profile.** The project's `allow_repos` is the *enrollment*; a profile's own `allow_repos` **can only narrow it, never widen it** (`projectpolicy.AdmissionRefusal`, `internal/projectpolicy/profiles.go`):
+   ```bash
+   # The project's enrollment: both repositories, in canonical form
+   # <provider>/<owner>/<name> (projectpolicy.Canonical, internal/projectpolicy/match.go).
+   fugaro project repos add "github/${A:?}" --project fugaro
+   fugaro project repos add "github/${B:?}" --project fugaro
+   fugaro project show --project fugaro
+   ```
+   and the **operator's config** (`$C`, `~/.config/fugaro/projects/fugaro.yaml`) gains the profile step 4 deploys, whose `allow_repos` names **`$A` only**:
+   ```yaml
+   profiles:
+     standard:
+       provider: github
+       cpu: "2"
+       memory: 4Gi
+       timeout_class: 30m
+       secrets: [<the secrets the profile mounts, as the installation already names them>]
+       allow_repos: ["github/<A: the canonical form of $A>"]
+   ```
+   The check's workflow then selects it, in **`$A`'s checkout**: a `checkout: clone` workflow whose `job_profile` is `standard` (`workflows.<n>.job_profile`; the key is optional and defaults to `standard`). **`$B`'s workflow selects the same profile and `$B` is deliberately not named by its `allow_repos`**: that is step 6's admission refusal, and step 8 admits it there.
+4. **Publish, and read the diff.** `fugaro project policy publish --project fugaro` prints what the write adds — one `+` line per key and one `allow_repos <entry> (<source>)` line per entry — and the profile's list must be the narrow one. **The published policy is what the runner matches `CLOUD_RUN_JOB` against**, never the local config's profiles (`projectJobCandidates`, `internal/runner/projectjob.go`), and the jobs step 4 deploys are computed from the policy in any case.
+
+**FACT:** which GitHub repository `$A` is (its owner/name, and whether the owner created it here or found it), and which repository `$B` is. **FACT:** the printed publish diff verbatim — the profile it adds, its `allow_repos` (the canonical `github/<A>` form, and **not** `$B`'s), and the project's `allow_repos` (both of them). **FACT:** that the App's ID is recorded for `$A` — `repos.<owner/name>.github_app_id` is set in the local config (`internal/localcfg`) — **by the fact that the entry exists, never its value**: the value is not a secret, but the check records only its presence. **FACT:** the workflow's name, its `checkout: clone` and its `job_profile`.
+
+### 4. The installation root applies the shared job (OWNER-RUN Terraform)
+
+The project module lives in the **installation root** (`deploy/terraform/gcp/roots/installation/`, `module "project"` with `for_each = var.project_jobs`), and `fugaro init` is what applies it: `fugaro init --firebase fugaro-dev --project fugaro` plans the installation root first and applies it if it needs it. Its `project_jobs` come from the **local config's profiles** (`infra.ProjectJobs(lc, bucket, vertex)`), one entry per (profile, provider, account) — so the profile step 3 wrote is what makes the job exist, and a profile whose provider is **bitbucket** deploys **nothing** at all (the module refuses it: *"a shared job never serves bitbucket in phase 3"*).
+
+```bash
+fugaro init --firebase fugaro-dev --project fugaro
+gcloud run jobs list --project="${P:?}" --region="${L:?}" --format='value(name)' | sort > /tmp/chk53-jobs-after.txt
+diff /tmp/chk53-jobs-before.txt /tmp/chk53-jobs-after.txt
+```
+
+**FACT:** the apply's own plan and result lines, and the resource counts it created — the `fugaro-p-…` job(s), one service account per job, and the bucket-condition bindings the module adds (`deploy/terraform/gcp/modules/project/{job,sa,iam}.tf`). **FACT:** that **no per-repository root** was planned or applied by this run: a per-repository root is its own root (`roots/repo`), applied by `fugaro init --repo`, and this run's plan is the installation root's own. **FACT:** the job **`$JOB`** read back — its name from the list above, and its template's `serviceAccountName` and environment from `gcloud run jobs describe "$JOB" --project="${P:?}" --region="${L:?}"` — that the environment carries the profile's own values, the App's **ID** (`FUGARO_GITHUB_APP_ID`, Task 3.5, non-secret) and the App's key as a `secret_key_ref` (**the ID is a name, never a key; the secret's value is never read**), and that it carries **no `FUGARO_REMOTE`** and no per-repository slug. **FACT:** `fugaro doctor --project fugaro`'s `launcher-jobs` line after the apply: the same launchers, **more jobs**, and the new job among the ones a launcher can start.
+
+### 5. A clone workflow runs on the shared job — end to end, and it opens its PR
+
+Run it **from the check repository's own checkout** (the guard says so, and the launcher needs it).
+
+```bash
+fugaro run --project fugaro --repo "${A:?}" --ref "${BASE:?}" "${TASK53:?}"
+```
+
+**FACT:** the launch's own output and the run's ref — the pair `fugaro runs ls` prints as `<slug>/<run-id>` — and **its PR**: the draft pull request the run opens, **on `$A`**, with the branch it pushed and the commit it made. (A clone of anything else could not produce a PR on `$A`, and that is half of where the clone came from.) **FACT:** the run's `result.json` (`gcloud storage cat --project="${P:?}" "gs://fugaro-runs-fugaro-dev/runs/${SLUG:?}/${RUN:?}/result.json"`, where `$SLUG` is **read from `fugaro runs ls`** and never assumed: `task.Slug` hashes the **provider** with the repository, so the GitHub `$A`'s slug is **not** the Bitbucket sandbox's, which shares its owner and name) — its `slug`, its `repo`, its workflow and its outcome. **FACT:** the job the run was in, from `launch.json`'s `job` field (`internal/runstore/launch.go`) — that it is `$JOB`, the shared project job, and **not** a `fugaro-<slug>-…` per-repository job. **FACT:** `fugaro watch --json --once --project fugaro`'s row for this run: its `job`, and beside it the triple the job's name does not spell out — `profile` and `provider` (`github`), and `account` **absent** (an api-key job's account segment is empty in phase 3; `internal/watch/json.go`; `internal/cli`'s `projectJobIndex` computes the triple by matching the name against the published policy, never by parsing it). **FACT:** that `fugaro logs <run>` shows the run's stages, its clone and its PR — and that the **clone URL itself is printed nowhere**, which is why step 6(c) is what settles where the clone came from: a git command's stderr is captured into a buffer and dropped (`internal/gitops/gitops.go:231`, the same finding Check 38 step 5 records), so a successful clone logs no URL.
+
+### 6. The binding refuses a mismatch — the launcher's half, the runner's half, and the identity
+
+A launcher can start a Cloud Run job directly with `run.jobs.runWithOverrides` — the D10 bypass the design accepts — so the launcher's own gates are **advisory** and the runner's admission check is the one that counts (`SECURITY.md`'s D10 paragraph, `docs/project-layer.md`). Both halves are exercised here, and **the runner's halves need a stored task to read under an overridden slug**: a slug exists in the bucket only once a run's task is under it. So (a) creates that slug, by launching `$B` **while the profile does not admit it** — which is the launcher's refusal and the check's second half at once.
+
+**(a) The launcher's advisory refusal — a repository the profile's `allow_repos` does not admit.**
+
+```bash
+cd <$B's checkout>
+fugaro run --project fugaro --repo "${B:?}" --ref "${BASE:?}" "${TASK53:?}"
+```
+
+**FACT:** the refusal verbatim — *"the job profile %q does not admit %s: its allow_repos is %s, and a profile's own list can only narrow the project's enrollment, never widen it. The project's owner adds the repository to the profile's list, or removes the profile's list so the project's applies, and publishes the policy again"* (`projectpolicy.AdmissionRefusal`'s profile branch, printed by `internal/cli/run_allowlist.go`'s `profileAdmissionRefusal`) — and that **no Cloud Run call was made**: `gcloud run jobs executions list --project="${P:?}" --region="${L:?}" --job="${JOB:?}"` shows no execution for it. **FACT:** that the refusal still left `runs/<$B's slug>/<run id>/task.json` behind — the profile's admission is decided in the job placement, after the task is written (`internal/cli/run.go`: `createTask` at `:537`, `launchRun` at `:550`, and `launchProjectJobFor` inside it) — and record whether you think the launcher should remove it. **This check only records it; step 9 removes it.**
+
+```bash
+# $B's slug, READ and never computed: the refused launch above stored $B's task
+# under it. task.Slug hashes the provider with the repository, so it cannot be
+# derived from the name.
+gcloud storage ls --project="${P:?}" "gs://fugaro-runs-fugaro-dev/runs/" \
+  | sed -n 's|.*/runs/\([^/]*\)/$|\1|p' | sort | tee /tmp/chk53-slugs.txt
+SLUGB=<the prefix whose task.json names $B>   # READ it, never compute it
+RUNB=<the run id under that prefix>
+gcloud storage cat --project="${P:?}" "gs://fugaro-runs-fugaro-dev/runs/${SLUGB:?}/${RUNB:?}/task.json" | head -20
+```
+
+**(b) The runner's own admission — the same repository, reached past the launcher.** Execute `$JOB` by hand with `FUGARO_RUN` naming **`$B`'s own stored task**: the slug binding passes (both halves name `$B`) and the profile's admission is what refuses.
+
+```bash
+gcloud run jobs execute "${JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
+  --update-env-vars="FUGARO_RUN=${SLUGB:?}/${RUNB:?}"
+fugaro logs "${SLUGB:?}/${RUNB:?}" --project fugaro
+```
+
+**FACT:** the refusal verbatim — `AdmissionRefusal`'s profile branch again, with **"The run stops before any lease exists"** appended (`internal/runner/project.go`'s `admissionCheck`) — and that **no token was minted and no lease exists**: the absence of the credential and reserve lines in the run's own record and log. **FACT:** that the refusal came from the **runner**, not the launcher (the launcher never ran), which is the whole reason the bypass is exercised.
+
+**(c) The runner's own slug binding — a `FUGARO_RUN` override naming another slug.** Copy `$A`'s stored task under **`$B`'s** slug with **`$A`'s run id**, and execute: the runner then reads a task that names `$A` under the slug `$B`, and the binding refuses before any git credential exists.
+
+```bash
+gcloud storage cp --project="${P:?}" \
+  "gs://fugaro-runs-fugaro-dev/runs/${SLUG:?}/${RUN:?}/task.json" \
+  "gs://fugaro-runs-fugaro-dev/runs/${SLUGB:?}/${RUN:?}/task.json"
+gcloud run jobs execute "${JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
+  --update-env-vars="FUGARO_RUN=${SLUGB:?}/${RUN:?}"
+```
+
+**FACT:** the refusal verbatim — *"the run was launched for the slug %s, and this run is in the project job %s, whose provider is %s: the slug must be the slug task.Slug(%s, %s) the task's repository computes (%s), because it keys the bucket paths, the locks, the cache and the budget session of this run. The run stops before any git credential is requested or any lease exists"* (`internal/runner/project.go`, `admissionCheck`) — naming **both** slugs and the job. **FACT:** that the copied object is removed in step 9. **FACT:** that the override is what a launcher's `run.jobs.runWithOverrides` can set and that the runner read it as a **claim about a slug**, never as a source of identity: the job's own name is what pins the provider.
+
+**(d) The job refusing a checkout it did not make.** `checkProjectCheckoutOrigin` (`internal/runner/projectjob.go`, review C5) refuses a project job's run whose work directory **already holds a checkout**, whatever that checkout's origin is: a project job computes its clone URL and reads no origin, so a checkout of another repository — a baked image built for one, or a directory something left behind — would otherwise be fetched with the profile's credential and worked on under this run's slug. **No live step can produce it, and this check does not pretend otherwise:** the project job runs the installation's base image, which **bakes no checkout**, and every Cloud Run execution starts from that image; a launcher's override surface (`run.jobs.runWithOverrides`) sets environment variables and secret references, and there is no way to hand the container a populated work directory. **FACT:** that the refusal is therefore recorded as **not reachable at run time**, with the reason above and the unit test that proves the code path: `TestProjectJobRefusesACheckoutItDidNotMake` (`internal/runner/projectjob_test.go`). **If a live step ever does produce it, that is a finding, not a pass**, and it is pasted back.
+
+**(e) The identity the binding rests on: `CLOUD_RUN_JOB` is the platform's.** A project job's run takes its profile, provider and account from `CLOUD_RUN_JOB` — `jobIdentity` computes every name the published policy defines and **matches** it, never parsing the name (R2-5) — and Cloud Run is what sets it, which is the whole reason a launcher cannot forge an identity. Verify it as the launcher does, with the same `run.jobs.runWithOverrides` call `fugaro run` makes: execute `$JOB` with a container override setting `CLOUD_RUN_JOB` to **another job's name** — a per-repository job's from step 1's list is the strongest choice, another profile's project job the next — and read the **execution's own environment** back.
+
+```bash
+OTHER_JOB=<a per-repository job from /tmp/chk53-jobs-before.txt, or another profile's project job>
+gcloud run jobs execute "${JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
+  --update-env-vars="CLOUD_RUN_JOB=${OTHER_JOB:?}"
+gcloud run jobs executions describe <that execution> --project="${P:?}" --region="${L:?}" \
+  --format='value(spec.template.spec.containers[0].env)'
+```
+
+**FACT:** the API's answer verbatim — either the override refused, or the execution's own environment still reporting **its own** job. **If the override reaches the container, stop**: the binding's identity is writable by a launcher, and the owner is told **before** anything of phase 3 ships. **FACT:** that the executions (b), (c) and (e) start carry no run the runner can execute and are expected to end **failed** — a failed execution there is **not** the answer: what these steps read is the refusal text and the API's own answer about the override.
+
+### 7. The regression, measured — and `SECURITY.md`'s wording against it
+
+D4 accepted it, and the owner ruled on **2026-10-17** that the installation-wide reach is **ACCEPTED**: a project job's service account holds `roles/storage.objectUser` on the whole of `runs/`, `cache/` and `locks/` — one clause per prefix, **no slug and no profile** — and `roles/storage.objectViewer` (read-only) on the whole of `tokens/`, the same conditions for every profile's account, because a condition can name neither a slug nor a profile (`gcp.ProjectBucketCondition`; `SECURITY.md`'s D4/D13 paragraph; [design/bucket-iam.md](design/bucket-iam.md) §3 and §10). This step is deliberately written as a **test of the documented regression** rather than a test that it does not happen.
+
+```bash
+SA=$(gcloud run jobs describe "${JOB:?}" --project="${P:?}" --region="${L:?}" \
+      --format='value(spec.template.spec.serviceAccountName)')
+gcloud storage buckets get-iam-policy "gs://fugaro-runs-fugaro-dev" --project="${P:?}" \
+  --format=json > /tmp/chk53-bucket-iam.json
+# the account, as the bucket's own policy spells it
+jq -r --arg sa "${SA:?}" '.bindings[] | select(.members[]? == ("serviceAccount:" + $sa)) | "\(.role)  \(.condition.expression)"' \
+  /tmp/chk53-bucket-iam.json
+# ANOTHER repository's object, read AS THE JOB'S ACCOUNT. Read-only: nothing is
+# written, nothing is deleted, and the object is not this check's.
+gcloud storage ls --project="${P:?}" --recursive --impersonate-service-account="${SA:?}" \
+  "gs://fugaro-runs-fugaro-dev/runs/${OTHER_SLUG:?}/" | head -3
+gcloud storage cat --project="${P:?}" --impersonate-service-account="${SA:?}" \
+  "gs://fugaro-runs-fugaro-dev/runs/${OTHER_SLUG:?}/<a run id>/task.json" >/dev/null \
+  && echo "read: another slug's object, as the job's account"
+```
+
+`$OTHER_SLUG` is **another repository's** slug, read from `fugaro runs ls --all` — the Bitbucket sandbox's is the strongest choice (a repository that still runs its **own** per-repository job, which is exactly what D4's table says the reach now crosses), and any other repository's is a valid substitute. A `cache/` or `locks/` object is equally valid; if that repository has none, `runs/<slug>/<run>/task.json` is what every run of it leaves.
+
+**FACT:** the account's two bindings as the bucket's policy spells them — `roles/storage.objectUser` with the **whole-of-prefix** condition (`runs/`, `cache/`, `locks/`, no slug) and `roles/storage.objectViewer` on `tokens/`. **FACT:** the object read (its path) and that the read succeeded **as the job's account, not as you**: this is the property D4 accepted and the 2026-10-17 ruling accepted in full. **FACT:** one sentence confirming that `SECURITY.md`'s D4/D13 paragraph matches what was measured — and if it does not, the sentence says where it differs, because that document is the record of the accepted exposure and not a claim to be tidied.
+
+### 8. `ls`, `logs` and `cancel` across two repositories on one job
+
+**Run this after step 6, never before it, and say so in the FACT:** step 6's admission refusal needs `$B` **outside** the profile's list, and this step needs it **inside**. So first add `$B` to the profile's `allow_repos` in `$C` and publish again (the same two commands as step 3):
+
+```bash
+# $C now names BOTH repositories in the profile's allow_repos
+fugaro project policy publish --project fugaro
+```
+
+Then put a run of each repository on the **same** job, and drive the three commands across them:
+
+```bash
+cd <$A's checkout>          # A's repository: the one the profile admits
+fugaro run --project fugaro --repo "${A:?}" --ref "${BASE:?}" "${TASK53:?}"   # run A
+cd <$B's checkout>          # the scratch repository, now admitted too
+fugaro run --project fugaro --repo "${B:?}" --ref "${BASE:?}" "${TASK53:?}"   # run B
+fugaro runs ls --all --project fugaro
+fugaro logs <run B> --project fugaro
+fugaro cancel <run B> --project fugaro
+```
+
+**FACT:** that **both** runs were placed on `$JOB` — one job for two repositories, which is the property this whole phase exists for — read off each run's own `launch.json`/watch row, and recorded with each run's own slug (the two slugs differ: `task.Slug` hashes the repository). **FACT:** `fugaro runs ls`'s selection: both runs, each under its own repository, neither hiding the other. **FACT:** `fugaro logs <run B>` prints **B's** log and nothing of A's. **FACT:** `fugaro cancel <run B>` acts on **B's own execution** — the execution it names is the one B's `launch.json` records — and **A's run is untouched**; record the cancel's own output line. **FACT:** that a run's objects may name **only its own execution**: copy `$A`'s `launch.json` aside, write a `launch.json` for A whose `execution` names **B's** execution (a sideways copy, the way Check 60's own steps make one), and ask:
+```bash
+fugaro logs <run A> --project fugaro
+```
+**FACT:** the refusal verbatim — *"execution %s reports another run's FUGARO_RUN (or none), not %q: it is not the execution of run %s/%s. A run's objects may name only its own execution, and on a shared job they are the only thing that names one"* (`gcp.CheckRunExecution`, `internal/backend/gcp/run.go`) — and then put A's own `launch.json` back from the copy; step 9 confirms it.
+
+### 9. Restore
+
+Re-run the block. Put the installation back to what step 1 recorded, and **delete only what this check created**.
+
+```bash
+# the operator's project config first: the profile's list, the profile itself
+# and the App's ID all go back with this file.
+cp "$C.before-53" "$C"
+# the published policy: publish the restored config, then take the check's
+# enrollment back out of the node — the printed diff is the FACT.
+fugaro project policy publish --project fugaro
+fugaro project repos rm "github/${A:?}" --project fugaro   # ONLY if $A was not enrolled before step 3
+fugaro project repos rm "github/${B:?}" --project fugaro
+fugaro project show --project fugaro
+# the installation root: the profile is gone from the config, so the project
+# job and its service account are planned for destruction (OWNER-RUN). Read the
+# plan before applying it, and confirm it destroys only this check's job,
+# account and bindings.
+fugaro init --firebase fugaro-dev --project fugaro
+gcloud run jobs list --project="${P:?}" --region="${L:?}" --format='value(name)' | sort > /tmp/chk53-jobs-restored.txt
+diff /tmp/chk53-jobs-before.txt /tmp/chk53-jobs-restored.txt
+# this check's own bucket objects: B's stored task (step 6(a) left it), the
+# copied task under B's slug (step 6(c)), and the sideways launch.json if
+# step 8's copy was not put back by hand.
+gcloud storage rm --project="${P:?}" "gs://fugaro-runs-fugaro-dev/runs/${SLUGB:?}/${RUNB:?}/task.json"
+gcloud storage rm --project="${P:?}" "gs://fugaro-runs-fugaro-dev/runs/${SLUGB:?}/${RUN:?}/task.json"
+# the runs the check left: decline each draft pull request and delete its
+# branch — Check 24's clean-up commands, with each run's own slug — and remove
+# the runs' stored objects under each run's own slug.
+gcloud storage rm --recursive --project="${P:?}" "gs://fugaro-runs-fugaro-dev/runs/${SLUG:?}/"
+gcloud storage rm --recursive --project="${P:?}" "gs://fugaro-runs-fugaro-dev/runs/${SLUGB:?}/"
+# the SECOND scratch repository: delete it (the first, $A, is kept — the plan's
+# later checks use it). Deleting a repository is your own GitHub action, and
+# the App's installation on it goes with it.
+# the last word: a run of the check repository with a task that changes
+# nothing, on whatever job the restored config leaves it (the per-repository
+# job, once the profile is gone), and the installation back to step 1's state.
+fugaro run --project fugaro --repo "${A:?}" --ref "${BASE:?}" "${TASKNO53:?}"
+fugaro doctor --project fugaro
+```
+
+**FACT:** that the Bitbucket sandbox **is untouched** — it was never on a shared job, its own per-repository root is still applied, and its job and its `bitbucket-token` are exactly as step 1 found them. **FACT:** the restored diffs — the jobs list against step 1's, `fugaro project show`'s policy version and `allow_repos`, and `fugaro doctor`'s `launcher-jobs` line — each empty or explained by a line that says exactly what it removed. **FACT:** the last run's own outcome, and that no `fugaro-p-…` job, no project job service account and no runs-bucket condition this check created is left behind; and if anything is, it is named here and left to the owner, never silently kept.
+
+**Paste back:** every FACT line, never a token or key value. **Run by you, never an agent; never `belong`; NOT RUN.**
+
 ## Check 58: artifact runs — a file out of a cloud run, and the three ways that can fail (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Its blocks have been through several review rounds; read the guard and the Restore once more before running it, and run it after 0.8.0 is tagged.
