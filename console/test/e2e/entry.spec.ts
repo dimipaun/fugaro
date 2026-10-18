@@ -56,7 +56,7 @@ import { join } from 'node:path'
 import { _electron as electron, expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
-import { REDUCED_REFUSAL } from '../../src/main/ipc'
+import { NO_ACTIVE_INSTALLATION, REDUCED_REFUSAL } from '../../src/main/ipc'
 import { APP_ENTRY_URL, APP_ORIGIN, REFUSAL_ENTRY_URL, SERVED_FILES } from '../../src/main/protocol'
 import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
 import type { SpawnLogEntry } from '../../src/main/spawnlog'
@@ -386,9 +386,12 @@ test.describe('the renderer entry, in the real window', () => {
       expect(spend).toEqual({ ok: false, reason: REDUCED_REFUSAL })
       // The live feed is *not* withheld (design C10): the kill-switch fields
       // arrive inside it, so its refusal is the no-installation one and not the
-      // reduced one. `live.watch` never returns for this console, so the call is
-      // made and its answer read -- which is exactly the point: the operation is
-      // reachable in a reduced mode.
+      // reduced one. `live.watch` never returns for this console -- there is no
+      // installation until 3.4b -- so the call is made and its answer read, which
+      // is exactly the point: the operation is *reachable* in a reduced mode, and
+      // what refused it is the source (`activeSource` in `src/main/index.ts`),
+      // named here so a gate that had swallowed it would fail this rather than
+      // pass on a different refusal.
       const live = (await launched.page.evaluate(async () => {
         const api = (
           window as unknown as {
@@ -398,8 +401,8 @@ test.describe('the renderer entry, in the real window', () => {
         return await api.subscribeLive({})
       })) as { readonly ok: boolean; readonly reason?: string }
       expect(live.ok).toBe(false)
-      expect(live.reason, 'live.watch must not be withheld by the reduced mode').not.toBe(
-        REDUCED_REFUSAL,
+      expect(live.reason, 'live.watch must not be withheld by the reduced mode').toBe(
+        NO_ACTIVE_INSTALLATION,
       )
     } finally {
       await close(launched)
