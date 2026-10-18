@@ -228,12 +228,6 @@ const entries = [...guides, referenceEntry]
 <Base title="Documentation" description="The guides this repository holds, and the generated CLI reference.">
   <h1>Documentation</h1>
 
-  <p class="lead">
-    Every guide below is a document of this repository, where it changes with the code that
-    makes it true; this page says what each one answers, points at it, and renders the one
-    document that is generated rather than written.
-  </p>
-
   <section id="guides">
     <h2>Guides</h2>
 
@@ -257,10 +251,6 @@ const entries = [...guides, referenceEntry]
     <Fragment set:html={referenceHTML} />
   </section>
 
-  <p class="generated">
-    The reference above is rendered as it is generated, by <code>{reference.generator}</code>;
-    the site's own README is where its build and its generated files are documented.
-  </p>
 </Base>
 
 <style is:global>
@@ -270,11 +260,6 @@ const entries = [...guides, referenceEntry]
      here is anchored on a class this file writes, which is the scoping a rendered document
      needs. Only the design tokens are named (W1.2's `tokens.css`); no colour, spacing or
      type size is written as a literal, so a palette change is that file's business. */
-  .lead {
-    max-width: var(--measure);
-    color: var(--text-muted);
-  }
-
   .guides {
     list-style: none;
     margin: 0;
@@ -296,8 +281,7 @@ const entries = [...guides, referenceEntry]
     font-weight: var(--weight-medium);
   }
 
-  .guide .path,
-  .generated code {
+  .guide .path {
     display: block;
     color: var(--text-muted);
     font-family: var(--font-mono);
@@ -306,16 +290,6 @@ const entries = [...guides, referenceEntry]
 
   .answers {
     margin: var(--space-2xs) 0 0;
-  }
-
-  .generated {
-    max-width: var(--measure);
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
-
-  .generated code {
-    display: inline;
   }
 
   /* The rendered reference: a long generated document, given the typography a reader
