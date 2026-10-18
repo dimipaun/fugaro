@@ -371,6 +371,19 @@ run "the listing puts the escalated prompt first" \
 
 # The count is across accounts (D168's "Two questions waiting", one sentence for
 # the phone), and nothing waiting is an announcement of nothing.
+run "the cross-account view is not a bag: an unknown field is refused" \
+  "  const time = readFields(event, TIME_ONLY_FIELDS, 'event');
+  if (!time.ok) return time;
+  const now = time.values.now;
+  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+
+  const accounts = [];" \
+  "  const time = { ok: true, values: { now: event === null || typeof event !== 'object' ? undefined : event.now } };
+  const now = time.values.now;
+  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+
+  const accounts = [];"
+
 run "the announcement counts every account's prompts" \
   "    count += queue.prompts.length;" \
   "    count = queue.prompts.length;"

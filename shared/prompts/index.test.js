@@ -579,9 +579,13 @@ test('a pause speaks what is due, then the count alone, then escalates', () => {
   assert.equal(first.ok, true);
   assert.equal(first.spoken.length, 2);
   assert.deepEqual(first.spoken.map((entry) => entry.prompt.id), ['p1', 'p2']);
-  assert.equal(first.spoken[0].due, true);
   assert.equal(first.spoken[0].stage, 0);
   assert.equal(first.queue.prompts[0].announcedAt, T0 + 2 * MINUTE);
+  // What is spoken is the entry as the queue now holds it: a caller that
+  // persists the spoken list cannot persist an announcement time the queue has
+  // already moved past.
+  assert.equal(first.spoken[0].announcedAt, T0 + 2 * MINUTE);
+  assert.equal(Object.hasOwn(first.spoken[0], 'due'), false);
 
   // The next pause a minute later: nothing is due -- the user has just heard
   // these -- and the announcement is empty rather than repeating.
@@ -714,6 +718,10 @@ test('the cross-account view refuses two queues for one installation', () => {
   assert.equal(announcement('nope', { now: T0 }).code, REFUSAL.INVALID_QUEUES);
   assert.equal(announcement(queues, { now: T0 - 1 }).code, REFUSAL.NOW_WENT_BACKWARDS);
   assert.equal(announcement(queues, {}).code, REFUSAL.INVALID_NOW);
+  // The cross-account view is not a bag either: an event with a field it does
+  // not read is refused rather than read with the field dropped.
+  assert.equal(announcement(queues, { now: T0, at: T0 }).code, REFUSAL.UNKNOWN_FIELD);
+  assert.equal(pendingAcross(queues, { now: T0, at: T0 }).code, REFUSAL.UNKNOWN_FIELD);
   assert.equal(announcement([], { now: T0 }).text, null, 'no installations is no questions');
 });
 

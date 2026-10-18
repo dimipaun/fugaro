@@ -966,6 +966,23 @@ function listing(entry, now) {
 }
 
 /**
+ * A prompt as `announce` reports it: the same fields as a listing entry, minus
+ * `due` -- it has just been read out, so "is it due" has already been answered
+ * by the fact that it is here, and a flag that says `false` beside the thing
+ * being spoken would be worse than no flag at all. `stage` is the reminder the
+ * pause is reading, so a late announcement reports the stage it was late for.
+ */
+function spokenItem(entry, now) {
+  return Object.freeze({
+    prompt: entry.prompt,
+    destructive: entry.destructive,
+    safe: entry.safe,
+    announcedAt: entry.announcedAt,
+    stage: reminderStage(entry.prompt.at, now),
+  });
+}
+
+/**
  * The listing order: the most escalated first -- a re-announced prompt is
  * "listed first in what's pending" (§3.4) -- then the oldest, then the id,
  * which makes the order total and independent of arrival.
@@ -1028,15 +1045,23 @@ export function announce(queue, event = {}) {
     .filter((entry) => isDue(entry, values.now))
     .sort((left, right) => compareForListing(left, values.now, right, values.now));
 
-  const announced = new Set(due.map((entry) => entry.prompt.id));
-  const prompts = current.prompts.map((entry) =>
-    announced.has(entry.prompt.id) ? Object.freeze({ ...entry, announcedAt: values.now }) : entry,
-  );
+  // The entries are marked first and the `spoken` list is read from the marked
+  // ones, so what the caller is handed is what the queue now holds: the
+  // announcement time of a prompt just read out is the pause it was read at,
+  // and a caller that persists the list cannot persist a value the queue has
+  // already moved past.
+  const marked = new Map();
+  const prompts = current.prompts.map((entry) => {
+    if (!isDue(entry, values.now)) return entry;
+    const heard = Object.freeze({ ...entry, announcedAt: values.now });
+    marked.set(entry.prompt.id, heard);
+    return heard;
+  });
 
   return Object.freeze({
     ok: true,
     queue: freezeQueue({ ...current, now: values.now, prompts }),
-    spoken: Object.freeze(due.map((entry) => listing(entry, values.now))),
+    spoken: Object.freeze(due.map((entry) => spokenItem(marked.get(entry.prompt.id), values.now))),
   });
 }
 
@@ -1110,7 +1135,9 @@ function readQueues(queues, where) {
 export function pendingAcross(queues, event = {}) {
   const read = readQueues(queues, 'queues');
   if (!read.ok) return read;
-  const now = event === null || typeof event !== 'object' ? undefined : event.now;
+  const time = readFields(event, TIME_ONLY_FIELDS, 'event');
+  if (!time.ok) return time;
+  const now = time.values.now;
   if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
 
   const accounts = [];
@@ -1144,7 +1171,9 @@ export function pendingAcross(queues, event = {}) {
 export function announcement(queues, event = {}) {
   const read = readQueues(queues, 'queues');
   if (!read.ok) return read;
-  const now = event === null || typeof event !== 'object' ? undefined : event.now;
+  const time = readFields(event, TIME_ONLY_FIELDS, 'event');
+  if (!time.ok) return time;
+  const now = time.values.now;
   if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
 
   let count = 0;
