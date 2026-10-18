@@ -1,0 +1,452 @@
+// The dashboard's wiring (desktop-console plan Task 3.4c, step 2).
+//
+// `bundle.test.ts` runs the built bundle and proves the entry reaches the
+// bridge; `test/e2e/entry.spec.ts` drives the real window. This suite is the
+// middle one, and it is the only place the *wiring* is driven directly: the
+// gate's verdict decides what is offered, every read goes through the bridge the
+// way the preload would answer it, and the poll is a clock the test owns.
+//
+// Five claims are held here, and each of them is a claim about a decision the
+// entry makes rather than about a drawing a screen makes:
+//
+//   1. **A refused handshake mounts no screen and makes no read at all.** D7's
+//      refusal is the whole document; the entry returns before the header, the
+//      navigation and every read.
+//   2. **A withheld view is not offered, and its read is never made.** In a
+//      reduced mode the navigation lists Live and nothing else, and `runReport`
+//      and `showBudget` are not called -- not on a click, not on a poll.
+//   3. **A reply the console cannot read draws the unavailable state.** An
+//      undecodable `live.watch` document is a refusal screen with the schema's
+//      own sentence in it, and no figure anywhere.
+//   4. **The Live screen is the frame, and a run row is a door.** The committed
+//      synthetic recording's repository and runs are drawn, and clicking a run
+//      row asks for that run's diagnosis and logs.
+//   5. **At most one `live.watch` is in flight, and polling stops when nobody is
+//      looking.** The interval is not a second read while one is outstanding,
+//      and a hidden window or a view other than Live stops it.
+//
+// And one grep: **the fixture source is not reachable from the shipped code.**
+// `src/source/fixture.ts` is the unit tests' source, reached only through the
+// `sourceFor` they inject; nothing under `src/` imports it.
+
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { loadFixture } from '../../src/source/fixture'
+import {
+  LIVE_POLL_MS,
+  VIEW_BUTTON_CLASS,
+  VIEW_NAV_CLASS,
+  VIEW_PANEL_CLASS,
+  bootDashboard,
+} from '../../src/renderer/entry'
+import { decodeSnapshot } from '../../src/shared/schema'
+import {
+  FakeDocument,
+  FakeNode,
+  aReducedCompatibility,
+  aRefusedCompatibility,
+  anOkCompatibility,
+  everyNode,
+  textOf,
+} from '../support/fakeDom'
+
+/** CONSOLE_ROOT is the package root, which is where the sources, the fixtures
+ * and the built tree are read from. */
+const CONSOLE_ROOT = join(__dirname, '..', '..')
+
+/** READ_METHODS is the seven reads `entry.ts` may reach for, by the name the
+ * preload exposes. Every one of them is on the fake bridge below, and every one
+ * records its call -- so "this read was never made" is a claim this suite can
+ * make about any of them. */
+const READ_METHODS = [
+  'subscribeLive',
+  'showBudget',
+  'runReport',
+  'listRuns',
+  'diagnoseRun',
+  'readRunLogs',
+  'runLogLink',
+] as const
+
+/** A_REPLY is a bridge method's answer. */
+type AReply = (args: unknown) => unknown
+
+/** FakeBridge is the preload seam, recorded: the handshake, the installation,
+ * and the seven reads, each answering what the case told it to and appending its
+ * own call to `calls`. */
+interface FakeBridge {
+  readonly bridge: Record<string, unknown>
+  readonly calls: readonly { readonly name: string; readonly args: unknown }[]
+}
+
+function fakeBridge(options: {
+  readonly compatibility?: Record<string, unknown>
+  readonly installation?: unknown
+  readonly replies?: Readonly<Record<string, AReply>>
+}): FakeBridge {
+  const calls: { name: string; args: unknown }[] = []
+  const bridge: Record<string, unknown> = {
+    getCompatibility: (): unknown => ({ ok: true, data: options.compatibility ?? anOkCompatibility() }),
+    getInstallation: (): unknown =>
+      options.installation ?? {
+        ok: true,
+        data: { chosen: true, id: '0123456789abcdef', project: 'acme', binary: '/opt/fugaro/bin/fugaro', cliVersion: '1.2.3', mode: 'ok' },
+      },
+  }
+  for (const name of READ_METHODS) {
+    bridge[name] = (args: unknown): unknown => {
+      calls.push({ name, args })
+      const reply = options.replies?.[name]
+      return reply === undefined ? { ok: false, reason: `the console did not read ${name} in this case` } : reply(args)
+    }
+  }
+  return { bridge, calls }
+}
+
+/** syntheticDocuments is the committed recording's documents, verified by the
+ * console's own loader -- the same frames the stub CLI prints for the e2e. */
+function syntheticDocuments(): readonly Readonly<Record<string, unknown>>[] {
+  const text = readFileSync(join(CONSOLE_ROOT, 'test', 'fixtures', 'synthetic.ndjson'), 'utf8')
+  return loadFixture(text, 'test/fixtures/synthetic.ndjson').records
+    .filter((record) => 'document' in record)
+    .map((record) => ('document' in record ? record.document : {}))
+}
+
+/** snapshotReply is one `live.watch` answer: the envelope `CliBackedHandlers`
+ * builds (`src/source/source.ts`), with the document inside it. */
+function snapshotReply(
+  document: Readonly<Record<string, unknown>>,
+  receivedAt = '2026-10-15T12:00:00Z',
+): Record<string, unknown> {
+  return {
+    ok: true,
+    data: { document, receivedAt, sequence: 1, day: '2026-10-15', rolled: false, notices: [] },
+  }
+}
+
+/** boot runs the entry against a fake document and answers it, once the first
+ * Live read has been drawn. */
+async function boot(bridge: Record<string, unknown>, document: FakeDocument): Promise<FakeDocument> {
+  await bootDashboard({ fugaro: bridge, document: document as unknown as Document })
+  return document
+}
+
+/** panelOf is the panel the screens are drawn into. */
+function panelOf(document: FakeDocument): FakeNode {
+  const panel = everyNode(document.body).find(
+    (node) => node.attributes.get('class') === VIEW_PANEL_CLASS,
+  )
+  if (panel === undefined) throw new Error('the entry drew no panel')
+  return panel
+}
+
+/** navButtons is the navigation's buttons, by the view each offers. */
+function navButtons(document: FakeDocument): readonly FakeNode[] {
+  const nav = everyNode(document.body).find((node) => node.attributes.get('class') === VIEW_NAV_CLASS)
+  if (nav === undefined) throw new Error('the entry drew no navigation')
+  return nav.children
+}
+
+/** buttonFor is one navigation button. */
+function buttonFor(document: FakeDocument, view: string): FakeNode {
+  const button = navButtons(document).find((node) => node.attributes.get('data-view') === view)
+  if (button === undefined) throw new Error(`the navigation offers no ${view} view`)
+  return button
+}
+
+/** classed finds the drawn elements carrying one class. */
+function classed(root: FakeNode, className: string): readonly FakeNode[] {
+  return everyNode(root).filter((node) =>
+    (node.attributes.get('class') ?? '').split(/\s+/).includes(className),
+  )
+}
+
+/** flush lets the entry's own microtasks run: every read is answered through a
+ * promise, and a drawing lands a turn after the call that asked for it. */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 8; i += 1) await Promise.resolve()
+}
+
+describe('the dashboard the entry mounts', () => {
+  it('mounts no screen and makes no read at all when the handshake refused', async () => {
+    const { bridge, calls } = fakeBridge({ compatibility: aRefusedCompatibility() })
+    const document = await boot(bridge, new FakeDocument())
+    // The non-vacuity guard: the entry *ran*, and what it drew is the refusal
+    // and nothing else. A bundle that threw on load draws nothing too, and this
+    // is what tells the two apart.
+    expect(document.body.children.map((child) => child.attributes.get('data-mode'))).toEqual([
+      'refused',
+    ])
+    // Not one read: not the header's, not the Live screen's, not the
+    // navigation's -- there is no navigation to make one from.
+    expect(calls).toEqual([])
+    expect(
+      everyNode(document.body).some((node) => node.attributes.get('class') === VIEW_NAV_CLASS),
+    ).toBe(false)
+  })
+
+  it('offers only the views the gate would draw, and never asks for a withheld one', async () => {
+    const { bridge, calls } = fakeBridge({ compatibility: aReducedCompatibility() })
+    const document = await boot(bridge, new FakeDocument())
+    // The banner is drawn, and the navigation offers Live alone: `spend` is
+    // withheld and `projects` is the `caps` view, which a reduced mode withholds
+    // with it. A Spend entry here would be a door to a screen that cannot read.
+    expect(document.body.children[0]?.attributes.get('data-mode')).toBe('reduced')
+    expect(navButtons(document).map((button) => button.attributes.get('data-view'))).toEqual(['live'])
+    expect(navButtons(document).map((button) => button.attributes.get('class'))).toEqual([
+      VIEW_BUTTON_CLASS,
+    ])
+    // And the two reads behind the withheld views are not made -- not on the
+    // first drawing, and not on a poll.
+    expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+    await flush()
+    expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+    expect(calls.some((call) => call.name === 'runReport')).toBe(false)
+    expect(calls.some((call) => call.name === 'showBudget')).toBe(false)
+  })
+
+  it('draws the unavailable state, and no figure, for a live.watch reply it cannot decode', async () => {
+    // A document the schema refuses: it carries a key this console does not
+    // read. The console's answer is the refusal screen with the schema's own
+    // sentence -- never a dashboard of zeros, which is what a screen handed an
+    // unread document would draw.
+    const unknown = { ...(syntheticDocuments()[0] as Record<string, unknown>), mystery: 1 }
+    const decoded = decodeSnapshot(unknown, 'live.watch')
+    expect(decoded.ok, 'the planted document must be one the schema refuses').toBe(false)
+    const because = decoded.ok ? '' : decoded.skew.because
+
+    const { bridge } = fakeBridge({
+      replies: { subscribeLive: () => snapshotReply(unknown) },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    const drawn = panel.children[0] as FakeNode
+    expect(drawn.attributes.get('class')).toBe('console-unavailable')
+    expect(drawn.attributes.get('data-kind')).toBe('refused')
+    expect(textOf(drawn)).toContain(because)
+    // No figure at all: nothing of the Live screen was drawn, so there is no
+    // repository row, no run and no reading to mistake for a measurement.
+    expect(classed(panel, 'live-repo-name')).toEqual([])
+    expect(classed(panel, 'live-run')).toEqual([])
+  })
+
+  it('draws the synthetic frame’s repository and runs, and opens Run detail from a run row', async () => {
+    const documents = syntheticDocuments()
+    const frame = documents[documents.length - 1] as Readonly<Record<string, unknown>>
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(frame),
+        // The two reads the Run screen is drawn from answer empty documents:
+        // this case is about the wiring -- which run the row asked about -- and
+        // the screen reads its own inputs tolerantly.
+        diagnoseRun: () => ({ ok: true, data: { document: {} } }),
+        readRunLogs: () => ({ ok: true, data: { document: { entries: [], total: 0, refused: 0 } } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    // The frame's own repository and both of its runs, drawn from the
+    // committed recording (the last frame carries `20261015-120400-aa03`
+    // alongside `20261015-120000-aa01`).
+    expect(classed(panel, 'live-repo-name').map((node) => node.textContent)).toEqual([
+      'r-4c25cf20/r-f1aa9214',
+    ])
+    const rows = classed(panel, 'live-run')
+    expect(rows.map((row) => classed(row, 'live-run-id')[0]?.textContent)).toEqual([
+      '20261015-120000-aa01',
+      '20261015-120400-aa03',
+    ])
+
+    // The row is a door: clicking it asks for that run, and only that run.
+    const first = rows[0] as FakeNode
+    first.click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'diagnoseRun').map((call) => call.args)).toEqual([
+      { run: '20261015-120000-aa01' },
+    ])
+    expect(calls.filter((call) => call.name === 'readRunLogs').map((call) => call.args)).toEqual([
+      { run: '20261015-120000-aa01' },
+    ])
+    // And the Run screen is what the panel holds now, in place of the Live one.
+    expect((panel.children[0] as FakeNode).attributes.get('class')).toBe('run')
+    expect(classed(panel, 'live-repo-name')).toEqual([])
+  })
+
+  it('draws the refusal, not an empty run, when a run’s own record refuses', async () => {
+    // `diagnose` and `logs` are the run's own record: a refused read of either
+    // is a run this console cannot draw, and handing the screen `null` would
+    // draw an empty log window and a ledger of `n/a` -- which reads as "this run
+    // logged nothing and spent nothing" when the console could not ask.
+    const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(frame),
+        // The diagnosis arrives, so the refusal this case is about is the log
+        // read's and not the first read's.
+        diagnoseRun: () => ({ ok: true, data: { document: {} } }),
+        // The sentence as it arrives from the main process: `cliSentence`
+        // stripped the CLI's own `fugaro: ` prefix before the reply was built.
+        readRunLogs: () => ({ ok: false, reason: 'no such run 20261015-120000-aa01' }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    const row = classed(panel, 'live-run')[0] as FakeNode
+    row.click()
+    await flush()
+    const drawn = panel.children[0] as FakeNode
+    expect(drawn.attributes.get('class')).toBe('console-unavailable')
+    expect(drawn.attributes.get('data-kind')).toBe('refused')
+    // The CLI's own sentence, and the operation it came from.
+    expect(textOf(drawn)).toContain('no such run 20261015-120000-aa01')
+    expect(classed(panel, 'unavailable-operation')[0]?.textContent).toBe('run.logs')
+    // And nothing of the run was drawn: no log window that would read as an
+    // empty one.
+    expect(classed(panel, 'run-log-line')).toEqual([])
+  })
+
+  describe('the Live poll', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('keeps at most one live.watch in flight, however many ticks go by', async () => {
+      const held: (() => void)[] = []
+      const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+      const { bridge, calls } = fakeBridge({
+        replies: {
+          subscribeLive: () =>
+            new Promise((resolve) => {
+              held.push(() => {
+                resolve(snapshotReply(frame))
+              })
+            }),
+        },
+      })
+      const document = new FakeDocument()
+      const booting = bootDashboard({ fugaro: bridge, document: document as unknown as Document })
+      // The first read is made, and it is still outstanding.
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+      expect(held).toHaveLength(1)
+
+      // Three ticks of the interval, one outstanding read: no second call. This
+      // is the claim the flag exists for -- a slow read cannot be overtaken by
+      // the next tick, so the console never has two watches of one installation
+      // in flight at once.
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS * 3)
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+
+      // Once it answers, the next tick is a new read.
+      held[0]?.()
+      await booting
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'subscribeLive'])
+    })
+
+    it('stops polling while the window is not visible, and starts again when it is', async () => {
+      const { bridge, calls } = fakeBridge({
+        replies: {
+          subscribeLive: () => snapshotReply(syntheticDocuments()[0] as Readonly<Record<string, unknown>>),
+        },
+      })
+      const document = await boot(bridge, new FakeDocument())
+      expect(document.listeners.get('visibilitychange'), 'the entry listened for nothing').toHaveLength(1)
+
+      // Hidden: the interval is cleared, and the reads stop -- no poll keeps
+      // spawning watches for a window nobody can see.
+      document.setVisibility('hidden')
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS * 3)
+      expect(calls.filter((call) => call.name === 'subscribeLive')).toHaveLength(1)
+
+      // Visible again: the entry puts the interval back, and the next tick is a
+      // read. Both halves are asserted, because a `syncPolling` that only ever
+      // cleared the interval would pass the first half alone.
+      document.setVisibility('visible')
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+      expect(calls.filter((call) => call.name === 'subscribeLive')).toHaveLength(2)
+    })
+
+    it('stops polling when the operator leaves Live, and starts again on the way back', async () => {
+      const { bridge, calls } = fakeBridge({
+        replies: {
+          subscribeLive: () => snapshotReply(syntheticDocuments()[0] as Readonly<Record<string, unknown>>),
+        },
+      })
+      const document = await boot(bridge, new FakeDocument())
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+
+      // Spend is offered in an `ok` console, and leaving Live for it stops the
+      // interval; the read behind the view is made once, on entry.
+      buttonFor(document, 'spend').click()
+      await flush()
+      expect(calls.filter((call) => call.name === 'showBudget')).toHaveLength(1)
+      const afterSpend = calls.length
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS * 3)
+      expect(calls.length, 'the Live poll kept running while Spend was on screen').toBe(afterSpend)
+
+      // Back to Live: the screen the last poll drew is put back, and the poll
+      // resumes.
+      buttonFor(document, 'live').click()
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+      expect(calls.filter((call) => call.name === 'subscribeLive')).toHaveLength(2)
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The fixture source is not reachable from the shipped code.
+// ---------------------------------------------------------------------------
+
+/**
+ * importsOf is every module specifier a source file names in an `import` or a
+ * `require`, which is what "imports nothing from" is a claim about. A mention in
+ * prose is not an import -- several of these files name `src/source/fixture.ts`
+ * in a comment, on purpose -- so this reads the specifiers and not the text.
+ */
+function importsOf(source: string): readonly string[] {
+  const found: string[] = []
+  for (const match of source.matchAll(/from\s+'([^']+)'|require\('([^']+)'\)/g)) {
+    found.push((match[1] ?? match[2]) as string)
+  }
+  return found
+}
+
+/** everySource is every `.ts` file under a directory. */
+function everySource(directory: string): readonly string[] {
+  const found: string[] = []
+  for (const entry of readdirSync(directory)) {
+    const path = join(directory, entry)
+    if (statSync(path).isDirectory()) found.push(...everySource(path))
+    else if (entry.endsWith('.ts')) found.push(path)
+  }
+  return found
+}
+
+describe('the fixture source', () => {
+  it('is imported by nothing under src/ but itself', () => {
+    // The probe: this scan is only about imports if it finds them.
+    expect(importsOf(`import { a } from '../source/fixture'\nrequire('./x')\n`)).toEqual([
+      '../source/fixture',
+      './x',
+    ])
+    const files = everySource(join(CONSOLE_ROOT, 'src'))
+    expect(files.length, 'the scan found no sources: it would pass by finding nothing').toBeGreaterThan(20)
+    const importers = files
+      .filter((file) => !file.endsWith(join('source', 'fixture.ts')))
+      .filter((file) => importsOf(readFileSync(file, 'utf8')).some((specifier) => /(^|\/)fixture$/.test(specifier)))
+    expect(importers, 'the fixture source is reachable from the shipped code').toEqual([])
+  })
+
+  it('leaves the main process the one source the shipped app can construct', () => {
+    const index = readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'index.ts'), 'utf8')
+    expect(index).toContain('createBoundSource(')
+    expect(importsOf(index).filter((specifier) => /fixture/.test(specifier))).toEqual([])
+  })
+})

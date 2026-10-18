@@ -915,10 +915,24 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
   // ---- Run detail -------------------------------------------------------
 
-  /** showRun reads one run's diagnosis, its log window and its Cloud console
-   * link. The link is a text read (`run.logLink`), so it is drawn as the string
-   * it is, or as nothing when the read refused -- `buildRunModel` draws the
-   * reason in that case rather than an empty anchor. */
+  /**
+   * showRun reads one run's diagnosis, its log window and its Cloud console
+   * link.
+   *
+   * **The two document reads decide whether there is a screen at all.** Both are
+   * the run's own record -- `diagnose` is what the run did, `logs` is what it
+   * said -- and a refused read of either is a run this console cannot draw:
+   * handing `null` to the screen instead would draw an empty log window and a
+   * ledger of `n/a`, which reads as "this run logged nothing and spent nothing"
+   * when what happened is that the console could not ask (Global Constraint 5).
+   * So the refusal is drawn, with the CLI's own sentence and the operation it
+   * came from, and the first one that refused is the one named.
+   *
+   * The **link is not one of them**: `logs RUN --url` refuses for a run whose
+   * transcript is not linked, which is a fact about the link and not a reason to
+   * hide a run that read perfectly well -- `buildRunModel` draws its own
+   * sentence for a link that did not arrive.
+   */
   const showRun = async (run: string): Promise<void> => {
     const sentences: Record<string, string> = {}
     const read = async (operation: string, go: () => Promise<unknown>): Promise<unknown> => {
@@ -928,6 +942,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
     const diagnosis = await read('run.diagnose', () => bridge.diagnoseRun({ run }))
     const logs = await read('run.logs', () => bridge.readRunLogs({ run }))
+    const refused = (['run.diagnose', 'run.logs'] as const)
+      .map((operation) => ({ operation, sentence: sentences[operation] }))
+      .find((each) => each.sentence !== undefined)
+    if (refused !== undefined) {
+      refuse(refused.operation, refused.sentence ?? READ_UNREADABLE)
+      return
+    }
+
     let logLink: string | null = null
     const link = replyData(await bridge.runLogLink({ run }))
     if (link.ok && typeof link.data === 'string') logLink = link.data
