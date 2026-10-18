@@ -18,6 +18,7 @@ committed alone in this branch's first commit.
 | file | what it is |
 | --- | --- |
 | [spec.md](spec.md) | **The brief, as given to this line of work.** Nothing in this directory edits it: it is the thing the rest answers. It is a one-paragraph condensation of the owner's longer text of 2026-10-18, with the same six items, process and "Done when" list; where the longer text says more (item 2: the current colour "looks good but does not match the logo"; item 4: the page "is currently blocks of text that do not explain much"), nothing here contradicts it |
+| [changes-spec-2026-10-18.md](changes-spec-2026-10-18.md) | **The second brief, agreed 2026-10-18.** Where [spec.md](spec.md) asked for the site to be rebuilt short and visual, this one changes four of the things that rebuild decided: the headline and the copy's vocabulary (item 2), the homepage's example (item 3, an agent chat rather than a terminal the user types into) and the diagram (item 4, one bold four-step flow, no duplicated "how it works" text). **It is later, and where the two disagree it wins.** Items 2, 3 and 4 are the part this line of work implements — one pull request — and item 5's `fugaro watch` screenshot is made separately (see the rulings below); the document is committed as it was agreed, and no part of it is implemented by being written down |
 | [reconciliation.md](reconciliation.md) | What the brief asks for, set against what the built site does — findings `RF1`–`RF26`, each **Wrong**, **Exists**, **Gap**, **Rule** or **Open**; the conflicts with the first line of work's decisions (`D90`–`D109`, notably D104's palette and D105's budget) and Global Constraints 6 and 12, with the CSP and the origins gate, and with the content pipeline's generated-file banner (RF8); the logo's sampled hue, the derived palette and its WCAG contrast over every asserted pair; the measurements of the current site; and decisions `D180`–`D192` |
 | [implementation-plan.md](implementation-plan.md) | Nine ordered, independently mergeable parts (`P1`–`P9`), each with a runnable verification and the **named** test change wherever a budget, a gate or a pinned number moves; plus the live checks (`70a`–`70c`) the brief's "Done when" lines need |
 | [current/](current/) | The **"before"** set's README: every route at 1280 and 390, with the measurements. **The images are not committed** (they are 7.8 MiB and regenerable); see below |
@@ -75,3 +76,39 @@ The owner accepted every recommendation of D180 to D192, as written in `reconcil
 - **D186** a build gate refuses the listed provenance phrases; **D188** the lead is at most 40 words on every page and the whole page at most 250 words (not Docs, Security, Changelog).
 - **D187** the fold is checked by the word ceiling plus one owner-run live check (70b).
 - **D189** long-page summaries are rendered from files; **D190** the design lives in the owner's tool, the repository keeps `design.md`, screenshots are regenerated and never committed; **D191** the redesign goes first; **D192** the byte budgets are re-derived in the commit that ships the script.
+
+## Owner rulings (2026-10-18), the changes spec
+
+Four rulings the owner made on [`changes-spec-2026-10-18.md`](changes-spec-2026-10-18.md)
+(items 2, 3 and 4 of which this line of work implements). They are rulings about that
+spec, not new decisions with numbers of their own; the numbered blocks in
+[`../mobile/README.md`](../mobile/README.md) are the owner's to allocate, and none is taken
+here.
+
+- **Dark only, for now.** There is no light theme in this run. What the spec's "dark only
+  (see the ruling above) but built from theme tokens" asks for is the other half: the
+  diagram — and everything the changes touch — is built from the palette's tokens rather
+  than from literal colours, so a light palette is one change (a palette file and the
+  `PALETTE_IN_FORCE` line P2 established) and not a rewrite of the components. The spec's
+  "light and dark" is **deferred**, not dropped.
+- **The `fugaro watch` screenshot is made separately** (item 5). It comes from a recorded
+  fixture rendered through the real renderer, in its own task; this run leaves the slot for
+  it in the markup and commits **no image at all** — no `<img>`, no PNG, no JPEG. The rule
+  that no screenshot is ever committed (D190) is unchanged.
+- **The tagline change reaches the CLI, and the two plugin skills, only in 0.9.0.** What
+  changes in this run is the website and `README.md` (item 2's own words: "website and
+  README only in this run"). The wording stays, untouched, where it is generated from or
+  pinned to the CLI: `internal/cli`'s root command help (`Fleeting cloud workers for coding
+  agents`), the generated `website/content/cli-reference.md` that renders it, and the two
+  plugin skills that carry it (`plugin/skills/routing`, `plugin/skills/working`). The two
+  release surfaces that carry it as well — `.goreleaser.yaml`'s cask description and
+  `.claude-plugin/marketplace.json`'s plugin description — are likewise not this run's:
+  they are the CLI's release metadata, not the site's, and the same 0.9.0 change moves
+  them. The acceptance grep therefore still matches `website/content/cli-reference.md`, and
+  that one match is the ruling, not an oversight: the file is generated by
+  `go run ./internal/clidoc` from the CLI's own help, and editing it by hand is the
+  forbidden change (the generated-file rule).
+- **The spec's `fugaro update` means `fugaro upgrade`.** There is no `update` command; the
+  command that pins the plugin and moves the job images onto a release's base image is
+  `fugaro upgrade` (`README.md` `## Upgrading`). Where the spec writes `update`, this work
+  writes `upgrade`.
