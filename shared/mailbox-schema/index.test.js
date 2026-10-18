@@ -668,7 +668,13 @@ test('a mac is required on every message, and it is a SHA-256 tag in lowercase h
   // both would let one message verify in two encodings and would make the
   // consumer's comparison depend on which end wrote it.
   refusal(good({ mac: FAKE_MAC.toUpperCase() }), REFUSALS.BAD_MAC, 'mac');
-  // The heartbeat's tag is required in the same way (O7).
+  // The heartbeat's tag is required in the same way (O7), and an absent one is
+  // a MISSING field rather than a malformed one: a heartbeat with no tag at all
+  // is the shape an unsigned impostor heartbeat has, and the phone has to be
+  // able to tell it from one whose tag is merely wrong.
+  const unsigned = aHeartbeat();
+  delete unsigned.mac;
+  heartbeatRefusal(unsigned, REFUSALS.MISSING_FIELD, 'mac');
   heartbeatRefusal(aHeartbeat({ mac: '' }), REFUSALS.EMPTY_STRING, 'mac');
   heartbeatRefusal(aHeartbeat({ mac: 'nope' }), REFUSALS.BAD_MAC, 'mac');
 });
@@ -836,6 +842,13 @@ test('a heartbeat is a different record: its own fields, and a tag over all of t
   heartbeatRefusal(aHeartbeat({ agents: ['orchestrator'] }), REFUSALS.NOT_AN_OBJECT, 'agents[0]');
   heartbeatRefusal(aHeartbeat({ agents: [{ id: 'a/b', name: 'One' }] }), REFUSALS.BAD_CHARACTER, 'agents[0].id');
   heartbeatRefusal(aHeartbeat({ agents: [{ id: 'a', name: '' }] }), REFUSALS.EMPTY_STRING, 'agents[0].name');
+  // An advertised agent is exactly its id and its spoken name: a field the
+  // phone would silently ignore is one an impostor could hide a claim in.
+  heartbeatRefusal(
+    aHeartbeat({ agents: [{ id: 'a', name: 'One', role: 'root' }] }),
+    REFUSALS.UNKNOWN_FIELD,
+    'agents[0].role',
+  );
   heartbeatRefusal(
     aHeartbeat({ agents: [{ id: 'a', name: 'n'.repeat(AGENT_NAME_MAX + 1) }] }),
     REFUSALS.TOO_LONG,

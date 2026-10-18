@@ -1,5 +1,6 @@
 #!/bin/bash
-# Mutation-proves the mailbox-schema guards (mobile plan, Task P0.2).
+# Mutation-proves the mailbox-schema guards (mobile plan, Task P0.2; extended
+# by P6.3).
 #
 # Each mutation below disables exactly ONE guard in index.js, and every one of
 # them must make `npm test` fail. A guard whose mutation survives is a guard no
@@ -27,6 +28,12 @@
 # Expected output: one "killed" line per guard, no "SURVIVED", no "APPLY-FAILED"
 # (a pattern that no longer matches means this script is stale, not that the
 # guard is proved), and exit 0.
+#
+# P6.3's guards are the second half: the four kinds and their (kind, field)
+# table, the agent/option/action shapes, the argv-shaped targets, the required
+# tag, and the canonical serialisation the tag covers. They are the ones a
+# reviewer should read twice, because they are the ones an impostor holding a
+# minted token (G13) but not the per-pairing key (D171) would attack.
 set -u
 
 root=$(cd "$(dirname "$0")/../.." && pwd) || exit 1
@@ -159,54 +166,211 @@ fi
 # The control's own kill is its evidence; the tallies below are the guards'.
 killed=0
 
-# 3. The value itself: not an object, an unknown field, a missing field.
+# ---------------------------------------------------------------------------
+# 3. P0.2's guards: the value itself, the id, the strings, the time, the ack,
+#    and the two properties of the accepted object.
+# ---------------------------------------------------------------------------
+
+# The value itself: not an object, an unknown field, a missing field.
 run "not-an-object guard (null/array/primitive)" \
-  "if (typeof value !== 'object' || value === null || Array.isArray(value)) {" "if (false) {"
+  "export function validateMessage(value) {
+  if (!isPlainObject(value)) {" "export function validateMessage(value) {
+  if (false) {"
 run "unknown-field guard" \
   "    if (!FIELDS.includes(key)) {" "    if (false) {"
 run "missing-field guard" \
-  "    if (!Object.hasOwn(value, key)) {" "    if (false) {"
+  "  for (const key of REQUIRED_FIELDS) {
+    if (!Object.hasOwn(value, key)) {" "  for (const key of REQUIRED_FIELDS) {
+    if (false) {"
 
 # The id: its type, its emptiness, its length, the database-key rule, and the
 # surrogate rule that keeps it encodable.
 run "id: type guard" \
-  "  if (typeof value !== 'string') return { bad: refuse(REFUSALS.WRONG_TYPE, 'id') };" ""
+  "function keyField(value, field) {
+  if (typeof value !== 'string')" "function keyField(value, field) {
+  if (false)"
 run "id: empty guard" \
-  "  if (value === '') return { bad: refuse(REFUSALS.EMPTY_STRING, 'id') };" ""
+  "  if (value === '') return { bad: refuse(REFUSALS.EMPTY_STRING, field) };
+  if (value.length > ID_MAX)" "  if (value.length > ID_MAX)"
 run "id: length bound" \
-  "  if (value.length > ID_MAX) return { bad: refuse(REFUSALS.TOO_LONG, 'id') };" ""
+  "  if (value.length > ID_MAX) return { bad: refuse(REFUSALS.TOO_LONG, field) };" ""
 run "id: database-key character guard" \
-  "    if (FORBIDDEN_KEY_CHARS.has(value[i]) || code < 0x20 || code === 0x7f) {" "    if (false) {"
+  "    if (FORBIDDEN_KEY_CHARS.has(value[i]) || code < 0x20 || code === 0x7f || isSeparator(value, i)) {" "    if (false) {"
 run "id: lone-surrogate guard" \
-  "  if (hasLoneSurrogate(value)) return { bad: refuse(REFUSALS.BAD_KEY, 'id') };" ""
+  "  if (hasLoneSurrogate(value)) return { bad: refuse(REFUSALS.BAD_KEY, field) };" ""
 
 # The bounded strings: type, emptiness, bound, control characters, surrogates.
 run "string: type guard" \
-  "  if (typeof value !== 'string') return { bad: refuse(REFUSALS.WRONG_TYPE, field) };" ""
+  "function stringField(value, field, max, lineBreaks) {
+  if (typeof value !== 'string')" "function stringField(value, field, max, lineBreaks) {
+  if (false)"
 run "string: empty guard" \
-  "  if (value === '') return { bad: refuse(REFUSALS.EMPTY_STRING, field) };" ""
+  "  if (value === '') return { bad: refuse(REFUSALS.EMPTY_STRING, field) };
+  if (value.length > max)" "  if (value.length > max)"
 run "string: length bound" \
   "  if (value.length > max) return { bad: refuse(REFUSALS.TOO_LONG, field) };" ""
 run "string: control-character guard" \
-  "    if ((code < 0x20 && !line) || code === 0x7f) {" "    if (false) {"
+  "    if ((code < 0x20 && !line) || code === 0x7f || isSeparator(value, i)) {" "    if (false) {"
 run "string: lone-surrogate guard" \
   "  if (hasLoneSurrogate(value)) return { bad: refuse(REFUSALS.BAD_CHARACTER, field) };" ""
 
 # The time, the ack, and the two properties of the accepted object: frozen, and
 # a copy with the caller's values verbatim.
 run "timestamp: type guard" \
-  "  if (typeof value !== 'number') return { bad: refuse(REFUSALS.WRONG_TYPE, 'at') };" ""
+  "  if (typeof value !== 'number') return { bad: refuse(REFUSALS.WRONG_TYPE, field) };" ""
 run "timestamp: safe-integer/range guard" \
-  "  if (!Number.isSafeInteger(value) || value < 0) return { bad: refuse(REFUSALS.BAD_TIMESTAMP, 'at') };" ""
+  "  if (!Number.isSafeInteger(value) || value < 0) return { bad: refuse(REFUSALS.BAD_TIMESTAMP, field) };" ""
 run "acked: boolean guard" \
   "    if (typeof acked !== 'boolean') {" "    if (false) {"
 run "the message is frozen" \
-  "  return { ok: true, message: Object.freeze(message) };" "  return { ok: true, message };"
+  "  return { ok: true, message: deepFreeze(message) };" "  return { ok: true, message };"
+run "the copy is DEEP: a nested record is frozen too (P6.3)" \
+  "function deepFreeze(value) {
+  if (value === null || typeof value !== 'object') return value;
+  for (const key of Object.keys(value)) {
+    deepFreeze(value[key]);
+  }
+  return Object.freeze(value);
+}" "function deepFreeze(value) {
+  return Object.freeze(value);
+}"
 run "the message is a copy, not the caller's object" \
-  "  const message = { id: id.value, sender: sender.value, text: text.value, at: at.value };" "  const message = value;"
+  "  const message = {
+    id: id.value," "  const message = value;
+  const ignored = {
+    id: id.value,"
 run "the id is not trimmed (no coercion)" \
-  "  const message = { id: id.value, sender: sender.value, text: text.value, at: at.value };" \
-  "  const message = { id: id.value.trim(), sender: sender.value, text: text.value, at: at.value };"
+  "  const message = {
+    id: id.value,
+    sender: sender.value," "  const message = {
+    id: id.value.trim(),
+    sender: sender.value,"
+
+# ---------------------------------------------------------------------------
+# 4. P6.3's guards: the kinds and their (kind, field) table.
+# ---------------------------------------------------------------------------
+
+run "kind: the vocabulary is closed" \
+  "  if (!KINDS.includes(value)) return { bad: refuse(REFUSALS.UNKNOWN_KIND, 'kind') };" ""
+run "kind: the type is checked, not coerced" \
+  "function kindField(value) {
+  if (typeof value !== 'string') return { bad: refuse(REFUSALS.WRONG_TYPE, 'kind') };" "function kindField(value) {
+  if (false) return { bad: refuse(REFUSALS.WRONG_TYPE, 'kind') };"
+run "kind: a field on the wrong kind is refused, not ignored" \
+  "    if (Object.hasOwn(value, field) && !KIND_OPTIONAL[kind].includes(field)) {" "    if (false) {"
+run "kind: a field the kind requires is required" \
+  "  for (const field of KIND_REQUIRED[kind]) {
+    if (!Object.hasOwn(value, field)) {" "  for (const field of KIND_REQUIRED[kind]) {
+    if (false) {"
+run "kind: the defaults are the table's, not a fallthrough" \
+  "  message: Object.freeze([]),
+  prompt: Object.freeze(['options']),
+  answer: Object.freeze(['reply_to']),
+  action: Object.freeze(['action', 'reply_to'])," "  message: Object.freeze(['options']),
+  prompt: Object.freeze(['options']),
+  answer: Object.freeze(['reply_to']),
+  action: Object.freeze(['action', 'reply_to']),"
+
+# The agent and the strings that are named aloud.
+run "agent: the id shape is the heartbeat's own" \
+  "  if (!IDENTITY_PATTERN.test(text.value)) return { bad: refuse(REFUSALS.BAD_CHARACTER, field) };" ""
+
+# A prompt's options: a present list is non-empty, bounded and unambiguous.
+run "options: a present list is not empty" \
+  "  if (value.length === 0) return { bad: refuse(REFUSALS.TOO_FEW, 'options') };" ""
+run "options: the count bound" \
+  "  if (value.length > OPTIONS_MAX) return { bad: refuse(REFUSALS.TOO_MANY, 'options') };" ""
+run "options: two options that read alike are refused" \
+  "    if (seen.has(option.value)) {" "    if (false) {"
+
+# A heartbeat's advertised agents: non-empty, bounded, distinct.
+run "agents: a present list is not empty" \
+  "  if (value.length === 0) return { bad: refuse(REFUSALS.TOO_FEW, 'agents') };" ""
+run "agents: the count bound" \
+  "  if (value.length > AGENTS_MAX) return { bad: refuse(REFUSALS.TOO_MANY, 'agents') };" ""
+run "agents: two agents under one id are refused" \
+  "    if (seen.has(id.value)) {" "    if (false) {"
+run "agents: only id and name, nothing else" \
+  "      if (!AGENT_FIELDS.includes(key)) return { bad: refuse(REFUSALS.UNKNOWN_FIELD, \`agents[\${i}].\${key}\`) };" "      if (false) {"
+run "heartbeat: the tag is required (O7)" \
+  "const HEARTBEAT_REQUIRED = Object.freeze(['at', 'boot', 'mac']);" \
+  "const HEARTBEAT_REQUIRED = Object.freeze(['at', 'boot']);"
+
+# An action record: complete, or refused.
+run "action: the unknown-field guard" \
+  "    if (!ACTION_FIELDS.includes(key)) {" "    if (false) {"
+run "action: every part is required" \
+  "  for (const key of ACTION_REQUIRED) {
+    if (!Object.hasOwn(value, key)) {" "  for (const key of ACTION_REQUIRED) {
+    if (false) {"
+run "action: the verb vocabulary is the ruling's three" \
+  "  if (!ACTIONS.includes(value.verb)) return { bad: refuse(REFUSALS.UNKNOWN_VERB, 'action.verb') };" ""
+run "action: a verb and its target agree (both shapes at once)" \
+  "  if (isRun && isRepo) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target') };" ""
+run "action: a verb and its target agree (neither shape)" \
+  "  if (!isRun && !isRepo) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target') };" ""
+run "action: a run id is not a command-line flag" \
+  "    if (!RUN_PATTERN.test(run)) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target.run') };" ""
+run "action: a run id's characters are checked" \
+  "    if (!RUN_CHARS.test(run)) return { bad: refuse(REFUSALS.BAD_CHARACTER, 'action.target.run') };" ""
+run "action: a repository is owner/name or it is not a repository" \
+  "  if (!REPO_PATTERN.test(repo)) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target.repo') };" ""
+run "action: a repository's characters are checked" \
+  "  if (!REPO_CHARS.test(repo)) return { bad: refuse(REFUSALS.BAD_CHARACTER, 'action.target.repo') };" ""
+run "action: a cancel does not resolve to a repository" \
+  "  if (verb === 'cancel') return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target') };" ""
+run "action: a merge does not resolve to a run" \
+  "    if (verb === 'merge') return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target') };" ""
+run "action: a repository target needs a pull request number" \
+  "  for (const key of REPO_TARGET_FIELDS) {
+    if (!Object.hasOwn(value, key))" "  for (const key of REPO_TARGET_FIELDS) {
+    if (false)"
+run "action: the pull request number is a positive integer" \
+  "  if (!Number.isSafeInteger(pr) || pr < 1) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target.pr') };" ""
+run "action: a merge carries the head it was confirmed against" \
+  "  if (verb === 'merge' && !Object.hasOwn(value, 'head_sha')) {" "  if (false) {"
+run "action: only a merge carries a head SHA" \
+  "    if (verb !== 'merge') return { bad: refuse(REFUSALS.FIELD_NOT_ALLOWED, 'action.head_sha') };" ""
+run "action: the head SHA is one of the two object-name lengths" \
+  "  if (value.length !== SHA_MIN && value.length !== SHA_MAX) {" "  if (false) {"
+run "action: the head SHA is hex" \
+  "  if (!HEX_PATTERN.test(value)) return { bad: refuse(REFUSALS.BAD_SHA, 'action.head_sha') };" ""
+
+# The tag itself: required, and 32 bytes of lowercase hex.
+run "mac: required on every message" \
+  "export const REQUIRED_FIELDS = Object.freeze(['id', 'sender', 'text', 'at', 'mac']);" \
+  "export const REQUIRED_FIELDS = Object.freeze(['id', 'sender', 'text', 'at']);"
+run "mac: 64 hex characters, or it is not a tag" \
+  "  if (value.length !== MAC_MAX || !HEX_PATTERN.test(value)) {" "  if (false) {"
+run "mac: lowercase only (one tag, one spelling)" \
+  "const HEX_PATTERN = /^[0-9a-f]+\$/;" "const HEX_PATTERN = /^[0-9a-fA-F]+\$/;"
+
+# ---------------------------------------------------------------------------
+# 5. P6.3's canonical serialisation: the bytes the tag covers.
+#
+# These are the mutations a reviewer should be most suspicious of, because a
+# canonical form that differs between the two ends is a tag that verifies on
+# one and not the other -- and the two ends are JavaScript and Go.
+# ---------------------------------------------------------------------------
+
+run "the two encoders' separators are refused (Go escapes them, JavaScript does not)" \
+  "  const code = s.charCodeAt(i);
+  return code === 0x2028 || code === 0x2029;" "  return false;"
+run "canonicalBytes: the tag itself is not covered" \
+  "    if (key === 'mac' || key === 'acked') continue;" "    if (key === 'acked') continue;"
+run "canonicalBytes: the ack is outside the bytes" \
+  "    if (key === 'mac' || key === 'acked') continue;" "    if (key === 'mac') continue;"
+run "canonicalBytes: keys are sorted by code point" \
+  "    for (const key of Object.keys(value).sort()) {" "    for (const key of Object.keys(value)) {"
+run "canonicalBytes: a null or undefined is refused, never dropped" \
+  "  if (value === undefined || value === null) {" "  if (false) {"
+run "canonicalBytes: a number is an integer, because two languages spell floats differently" \
+  "    if (!Number.isFinite(value) || !Number.isInteger(value)) {" "    if (!Number.isFinite(value)) {"
+run "canonicalBytes: the bytes are the canonical ones (macOf uses them)" \
+  "  const bytes = Buffer.from(canonicalBytes(record), 'utf8');" \
+  "  const bytes = Buffer.from(JSON.stringify(record), 'utf8');"
+run "verifyMac: a wrong length is a false, not a throw" \
+  "  if (got.length !== want.length) return false;" "  if (false) return false;"
 
 git checkout -- "$F"
 echo "--- control killed; $guards guards: $killed killed, $survivors survived, $unapplied not applied"
