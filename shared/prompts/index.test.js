@@ -297,6 +297,12 @@ test('enqueue refuses what it cannot read, with the schema\'s own codes', () => 
     enqueue(queue, { now, prompt: promptMessage({ at: 0 }) }).code,
     REFUSAL.ZERO_TIMESTAMP,
   );
+  // A negated zero is the residue of a computation, not a time: the schema
+  // accepts it (it is numerically zero) and this module does not carry it.
+  assert.equal(
+    enqueue(queue, { now, prompt: promptMessage({ at: -0 }) }).code,
+    REFUSAL.NEGATIVE_ZERO,
+  );
   assert.equal(
     enqueue(queue, { now, prompt: promptMessage({ at: T0 + 10 * DAY }) }).code,
     REFUSAL.FUTURE_TIMESTAMP,
@@ -532,6 +538,7 @@ test('answer refuses an unreadable answer and an unknown prompt', () => {
   assert.equal(answer(queue, { now: T0, answer: answerMessage({ reply_to: 'nope' }) }).code, REFUSAL.UNKNOWN_PROMPT);
   assert.equal(answer(queue, { now: T0, answer: answerMessage({ text: '' }) }).code, 'empty-string');
   assert.equal(answer(queue, { now: T0, answer: answerMessage({ at: 0 }) }).code, REFUSAL.ZERO_TIMESTAMP);
+  assert.equal(answer(queue, { now: T0, answer: answerMessage({ at: -0 }) }).code, REFUSAL.NEGATIVE_ZERO);
   assert.equal(
     answer(queue, { now: T0, answer: answerMessage({ at: T0 + 30 * DAY }) }).code,
     REFUSAL.FUTURE_TIMESTAMP,

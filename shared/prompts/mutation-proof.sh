@@ -296,6 +296,14 @@ run "a zero timestamp is refused, not carried" \
   "  if (prompt.at < 1) return refuse(REFUSAL.ZERO_TIMESTAMP, 'prompt.at');" \
   "  if (false) return refuse(REFUSAL.ZERO_TIMESTAMP, 'prompt.at');"
 
+run "a negated zero is refused, not carried as a time" \
+  "  if (Object.is(prompt.at, -0)) return refuse(REFUSAL.NEGATIVE_ZERO, 'prompt.at');" \
+  "  if (false) return refuse(REFUSAL.NEGATIVE_ZERO, 'prompt.at');"
+
+run "a negated zero on an answer is refused too" \
+  "  if (Object.is(reply.at, -0)) return refuse(REFUSAL.NEGATIVE_ZERO, 'answer.at');" \
+  "  if (false) return refuse(REFUSAL.NEGATIVE_ZERO, 'answer.at');"
+
 run "a prompt from the future beyond the tolerance is refused" \
   "  if (prompt.at - values.now > current.futureToleranceMs) {" \
   "  if (false) {"
