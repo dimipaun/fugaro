@@ -103,7 +103,15 @@ function consolePreloadPath(): string {
 
 function reportAndQuit(error: unknown): void {
   console.error('[console] the window could not be created:', error)
-  app.exit(1)
+  // The other way out of this process, and `app.exit` fires no `before-quit`:
+  // the handler below is not reached on this path, so a switch or an `activate`
+  // that failed would leave the console's child running exactly as a plain quit
+  // would have. The close is bounded (`SIGTERM`, then `SIGKILL`), so a fatal
+  // error still exits, and the exit code is the one this path has always used.
+  void boundSource
+    .close()
+    .catch(() => undefined)
+    .finally(() => app.exit(1))
 }
 
 /**
@@ -447,6 +455,34 @@ app.whenReady().then(main).catch(reportAndQuit)
 // back.
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+/**
+ * **The console stops what it started before it exits.** The Live screen's poll
+ * runs `fugaro watch` through the source bound to the active installation, and
+ * that child lives as long as the source does: nothing else would stop it. The
+ * menu's Quit is Electron's own `role: 'quit'` with an empty callback and
+ * `window-all-closed` only calls `app.quit()`, so without this the child
+ * outlives the app that started it -- the opposite of what `forget` protects (an
+ * installation the console no longer shows leaves nothing running), and the
+ * reason every spawn is written to the spawn log: a child nobody stopped is a
+ * child somebody has to find.
+ *
+ * `CliSource.close()` is bounded -- `SIGTERM`, then `SIGKILL` after
+ * `SHUTDOWN_GRACE_MS`, and a drain backstop for a grandchild holding the pipe --
+ * so the quit can wait for it. The first `before-quit` is held back for exactly
+ * that; the `app.quit()` below comes back through this handler, and that second
+ * one falls through, or the quit would hold itself back forever.
+ */
+let closing = false
+app.on('before-quit', (event) => {
+  if (closing) return
+  closing = true
+  event.preventDefault()
+  void boundSource
+    .close()
+    .catch(() => undefined)
+    .finally(() => app.quit())
 })
 
 // Note which of the two halves this calls. `serveBundle` here would re-register
