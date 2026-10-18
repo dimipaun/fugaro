@@ -348,8 +348,13 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
           `display: none` and the ones that hide them with `::details-content` need different
           overrides, and getting it wrong on a wide viewport would hide the whole menu. As
           siblings, `base.css` reads the toggle's `open` attribute and shows the panel with a
-          sibling combinator: no override, in any engine, and the wide layout shows the same
-          panel without opening anything. */}
+          sibling combinator: no override, in any engine, below the breakpoint. Up here the
+          panel is not behind the drawer at all — `base.css`'s 48rem block displays it and
+          takes the drawer away in the same breath, so there is no `open` attribute to read
+          and none is wanted: the wide layout shows the same panel without opening anything,
+          because the wide rule says `display: block`. Dropping that one declaration hides
+          the whole menu at every width at or above 48rem, which is the failure
+          `base-styles.mjs` keeps a case for. */}
       <nav class="site-nav" aria-label="Sections">
         <details class="site-nav-drawer">
           <summary class="site-nav-toggle">Menu</summary>

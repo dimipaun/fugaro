@@ -215,7 +215,14 @@ a.skip-link:focus {
     display: none;
   }
 
+  /* `display: block` is not decoration here, it is the whole of the wide layout. The base
+   * rule above hides the panel, and the only thing that shows it again is the drawer's own
+   * `open` attribute — which cannot arrive up here, because this block is where the drawer
+   * itself is taken away. Without this declaration the menu is `display: none` on every
+   * viewport at or above the breakpoint: the wordmark, and no way to reach a section.
+   * `base-styles.mjs` asserts it, and keeps the fixture that fails when it is dropped. */
   .site-nav-panel {
+    display: block;
     position: static;
     padding: 0;
     border-bottom: 0;
@@ -224,6 +231,32 @@ a.skip-link:focus {
   .site-nav-groups {
     display: flex;
     gap: var(--space-3xs) var(--space-2xs);
+  }
+
+  /* A group's own dropdown, out of the header's flow for the same reason the drawer's panel
+   * is: the header is one row (`flex-wrap: nowrap`) and opening *Product* must not grow that
+   * row's cross size and push the page down under the reader. The group is the box the list
+   * hangs from, and the list is what makes the group a dropdown rather than a label.
+   *
+   * It hangs from the group's **right** edge rather than its left, because the menu sits at
+   * the right of the header: between this breakpoint and the page's maximum width the
+   * header's own padding is still narrow, so a list opening rightwards from the last group
+   * would run past the viewport and give the page a sideways scroll. Anchored right, no
+   * group's list can reach that edge — and the wordmark at the other end leaves far more room
+   * than a three-item list needs at any width from 48rem up. */
+  .site-nav-group {
+    position: relative;
+  }
+
+  .site-nav-group ul {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    min-width: max-content;
+    padding: var(--space-2xs);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--ground);
   }
 }
 

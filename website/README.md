@@ -81,19 +81,20 @@ with fixtures that keep its refusals running, and none of them needs the network
   palette in force.
 - `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes). **They are
   deliberately loose, by the owner's ruling of 2026-10-17: size is not a concern yet, so
-  each is three times what the build of 2026-10-18 needs, and a later optimisation pass
-  tightens them.** The gate itself is not loose: a page or a site over the number fails, and
-  the test keeps a case that proves it. The derivation (that build plus 25 %, D192) is in the
-  test's header, and a task that needs more raises the number here, in the commit that needs
-  it:
+  each is three times what the build of 2026-10-18 needs — the build that ships the site's one
+  script and its menu (P6, P3) and the homepage's run animation (P7) — and a later
+  optimisation pass tightens them.** The gate itself is not loose: a page or a site over the
+  number fails, and the test keeps a case that proves it. The derivation (that build plus
+  25 %, D192) is in the test's header, and a task that moves the bytes re-derives the numbers
+  here, in the commit that moves them:
   - **JavaScript per page:** 20,391 bytes. Three times 6,797: the one script the site ships,
     `public/scripts/site.js` (5,437 bytes — the copy control of P6 and D183, and the menu's
     Escape/outside-click close of P3), plus 25 %. Every page loads it once, so it is the whole
     of a page's JavaScript, and the test keeps a case that says so over the built artifact.
-  - **Page weight per page:** 792,981 bytes. Three times 264,327: the heaviest page, the
-    docs hub, at 211,461 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 793,926 bytes. Three times 264,642: the heaviest page, the
+    docs hub, at 211,713 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 2,759,307 bytes. Three times 919,769 (every file in `dist/`, 735,815
+  - **Whole site:** 2,775,630 bytes. Three times 925,210 (every file in `dist/`, 740,168
     bytes across 21 files, plus 25 %).
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,

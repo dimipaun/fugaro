@@ -80,33 +80,150 @@ function mediaBlocks(css) {
   return out
 }
 
-test('the header cannot become two rows, and the drawer hangs from it rather than joining it', () => {
-  // RF3 measured the old header at 177 px — three nav rows — on a 390 px first screen. The
-  // structural half of the answer is here: the header does not wrap, the panel is out of its
-  // flow, and the toggle is the only part of the menu a narrow header shows. Whether the
-  // remaining row *fits* 390 px is a rendered measurement no hermetic test can take; that is
-  // the owner's live check 70a (P3).
-  for (const { rel, html } of builtPages()) {
-    const css = pageCss(html)
-    assert.match(css, /\.site-header\{[^}]*flex-wrap:nowrap/, `${rel}: the header wraps, so the menu can become a second row`)
-    assert.match(css, /\.site-header\{[^}]*position:relative/, `${rel}: the header is not the box the drawer is positioned against`)
-    assert.match(css, /\.site-nav-panel\{[^}]*position:absolute/, `${rel}: the drawer is in the header's flow, so opening it makes the header taller`)
-    assert.match(css, /\.site-nav-drawer\[open\]\s*~\s*\.site-nav-panel\{[^}]*display:block/, `${rel}: the drawer's open state does not show the panel`)
+// The layout the header and the menu are held to, as a function over one built page's CSS, so
+// that each part of it is proved by the fixture below rather than only observed on today's
+// stylesheet. It states three things, and each of them is a defect rather than a preference:
+//
+//   - the header is one row that cannot wrap, with the drawer positioned against it (RF3
+//     measured 177 px of three wrapped nav rows on a 390 px first screen);
+//   - **the wide viewport is where the menu is.** The base rule hides the panel and the
+//     drawer's `open` attribute is the one thing that shows it again — and that block is
+//     exactly where the drawer itself is taken away, so no `open` attribute can arrive up
+//     there. A 48rem block that moves the panel (`position: static`) without displaying it
+//     therefore leaves the menu `display: none` at every viewport at or above the breakpoint:
+//     the wordmark, and no way to reach a section. Each of the three wide rules is asserted,
+//     because the layout is the three of them together;
+//   - **opening anything must not move the page.** The drawer's panel is an overlay rather
+//     than a block in the header's row, and a group's own dropdown is out of that row's flow
+//     for the same reason: opening *Product* at 1280 px must not grow the header and push the
+//     page down under the reader.
+//
+// Whether the row *fits* 390 px, and whether a real browser's `<details>` behaves as the
+// markup says, are rendered measurements no hermetic test can take; they are the owner's live
+// check 70a (P3), which asks for exactly these things in a browser.
+export function navLayoutFailures(css, rel = '') {
+  const out = []
+  const fail = (why) => out.push(rel ? `${rel}: ${why}` : why)
 
-    const wide = mediaBlocks(css).filter((block) => /48rem/.test(block.query))
-    assert.ok(wide.length > 0, `${rel}: the stylesheet has no 48rem breakpoint, so the menu has one layout at every width`)
-    assert.ok(
-      wide.some((block) => /\.site-nav-groups\{[^}]*display:flex/.test(block.body)),
-      `${rel}: the wide viewport does not lay the three groups out in one row`,
+  if (!/\.site-header\{[^}]*flex-wrap:nowrap/.test(css)) fail('the header wraps, so the menu can become a second row')
+  if (!/\.site-header\{[^}]*position:relative/.test(css)) fail('the header is not the box the drawer is positioned against')
+  if (!/\.site-nav-panel\{[^}]*position:absolute/.test(css)) fail("the drawer is in the header's flow, so opening it makes the header taller")
+  if (!/\.site-nav-drawer\[open\]\s*~\s*\.site-nav-panel\{[^}]*display:block/.test(css)) fail("the drawer's open state does not show the panel")
+
+  const wide = mediaBlocks(css).filter((block) => /48rem/.test(block.query))
+  if (wide.length === 0) {
+    fail('the stylesheet has no 48rem breakpoint, so the menu has one layout at every width')
+    return out
+  }
+  // The wide block's rules, read as declarations rather than as text: a rule is matched by its
+  // selector and a declaration by `property:value`, so a case below can take one declaration
+  // out of a real stylesheet and leave the rest of it standing.
+  const rule = (name) => wide.map((block) => new RegExp(`\\${name}\\{([^}]*)\\}`).exec(block.body)).find(Boolean)?.[1]
+  const has = (name, declaration) => (rule(name) ?? '').split(';').filter(Boolean).some((d) => declaration.test(d))
+
+  // The one the menu dies of: the wide block has to display the panel, not only reposition it.
+  if (!has('.site-nav-panel', /^display:(?!none)/)) {
+    fail(
+      "the 48rem block hides the drawer and never displays the panel — the base rule's display:none still stands there, and the drawer whose open attribute would undo it is the element that block takes away, so the menu is invisible at every viewport at or above 48rem (P3, D182)",
     )
-    assert.ok(
-      wide.some((block) => /\.site-nav-drawer\{[^}]*display:none/.test(block.body)),
-      `${rel}: the drawer's toggle is still shown on a wide viewport, where nothing needs opening`,
-    )
-    assert.ok(
-      wide.some((block) => /\.site-nav-panel\{[^}]*position:static/.test(block.body)),
-      `${rel}: the wide panel is still an overlay, hanging over the page below the header`,
-    )
+  }
+  if (!has('.site-nav-drawer', /^display:none$/)) fail("the drawer's toggle is still shown on a wide viewport, where nothing needs opening")
+  if (!has('.site-nav-panel', /^position:static$/)) fail('the wide panel is still an overlay, hanging over the page below the header')
+  if (!has('.site-nav-groups', /^display:flex$/)) fail('the wide viewport does not lay the three groups out in one row')
+  if (!has('.site-nav-group ul', /^position:absolute$/)) {
+    fail("a group's dropdown is in the header's flow, so opening one at a wide viewport grows the header's row and pushes the page down (the drawer's panel is out of flow for the same reason)")
+  }
+  // And out of flow *rightwards of nothing*: the menu sits at the right of the header, so a
+  // list opening to the right of the last group runs past the viewport between the breakpoint
+  // and the page's maximum width, where the header's padding is still narrow — a sideways
+  // scroll on a laptop for opening a menu.
+  if (!has('.site-nav-group ul', /^right:0$/)) {
+    fail("a group's dropdown opens from its group's left edge, so the last group's list runs past the viewport between the breakpoint and the page's maximum width and gives the page a sideways scroll")
+  }
+  return out
+}
+
+test('the header cannot become two rows, and the wide row is where the menu is', () => {
+  const failures = []
+  for (const { rel, html } of builtPages()) failures.push(...navLayoutFailures(pageCss(html), rel))
+  assert.deepEqual(failures, [], `the built stylesheet breaks the layout P3 states:\n  ${failures.join('\n  ')}`)
+})
+
+// ---- the layout refusals, kept -----------------------------------------------------------
+
+// Today's stylesheet, as the fixture that passes: every plant below is one edit to it, so a
+// case is the real rule with the one thing it names taken out, rather than a smaller
+// stylesheet the rule happens to accept. `plant` refuses to build a fixture it cannot make —
+// a `replace` that matches nothing would otherwise leave a passing stylesheet behind and the
+// case would fail for the wrong reason (or worse, pass).
+const TODAY = () => pageCss(readFileSync(path.join(DIST, 'index.html'), 'utf8'))
+
+function plant(from, to) {
+  const css = TODAY()
+  assert.ok(css.includes(from), `this fixture is built by removing ${JSON.stringify(from)} from the built stylesheet, and the stylesheet no longer carries it`)
+  return css.replace(from, to)
+}
+
+test('the layout rule passes on the built stylesheet, so each refusal below is the one edit it names', () => {
+  assert.deepEqual(navLayoutFailures(TODAY()), [])
+})
+
+test('every layout refusal fires on the defect it names', () => {
+  const cases = [
+    [
+      'a wide block that repositions the panel but never displays it',
+      plant('display:block;position:static', 'position:static'),
+      /never displays the panel/,
+    ],
+    [
+      'no 48rem breakpoint at all',
+      TODAY().replaceAll('(width>=48rem)', '(width>=99rem)'),
+      /no 48rem breakpoint/,
+    ],
+    [
+      'the wide row still shows the drawer toggle',
+      plant('.site-nav-drawer{display:none}', '.site-nav-drawer{display:block}'),
+      /toggle is still shown on a wide viewport/,
+    ],
+    [
+      'a wide panel that is still an overlay',
+      plant('display:block;position:static', 'display:block'),
+      /still an overlay/,
+    ],
+    [
+      'the wide groups not laid out in one row',
+      plant('gap:var(--space-3xs) var(--space-2xs);display:flex}', 'gap:var(--space-3xs) var(--space-2xs)}'),
+      /out in one row/,
+    ],
+    [
+      "a group's dropdown left in the header's flow",
+      plant('background:var(--ground);position:absolute;top:100%;right:0}', 'background:var(--ground);top:100%;right:0}'),
+      /dropdown is in the header's flow/,
+    ],
+    [
+      "a group's dropdown opening rightwards off the viewport",
+      plant('position:absolute;top:100%;right:0}', 'position:absolute;top:100%;left:0}'),
+      /sideways scroll/,
+    ],
+    [
+      'a header that can wrap',
+      plant('flex-wrap:nowrap;display:flex;position:relative}', 'display:flex;position:relative}'),
+      /header wraps/,
+    ],
+    [
+      'a drawer panel that is not an overlay',
+      plant('display:none;position:absolute;top:100%', 'display:none;top:100%'),
+      /drawer is in the header's flow/,
+    ],
+    [
+      'a panel the drawer cannot show',
+      plant('.site-nav-drawer[open]~.site-nav-panel{display:block}', '.site-nav-drawer[open]~.site-nav-panel{border-color:red}'),
+      /open state does not show the panel/,
+    ],
+  ]
+  for (const [what, css, expected] of cases) {
+    const failures = navLayoutFailures(css)
+    assert.ok(failures.some((f) => expected.test(f)), `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`)
   }
 })
 

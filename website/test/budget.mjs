@@ -11,20 +11,21 @@
 // The README's numbers are DELIBERATELY LOOSE (owner's ruling, 2026-10-17: "ignore them for
 // now and optimize later"): each is three times the tight derivation below, until a later
 // optimisation pass tightens them back towards these figures. The tight derivation is the
-// build of 2026-10-18 — the one that ships the site's script (P6) and its menu behaviour (P3)
-// — plus 25 %, which is D192's rule and the rule the README's loose figures are three times:
+// build of 2026-10-18 — the one that ships the site's script (P6), its menu behaviour (P3) and
+// the homepage's run animation (P7) — plus 25 %, which is D192's rule and the rule the
+// README's loose figures are three times:
 //
 //   - JavaScript per page: 6,797 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183), is 5,437 bytes; × 1.25, rounded up. Every page
 //     loads it exactly once, so the file's own size IS the whole of a page's JavaScript —
 //     which is why the case below reads the artifact rather than trusting this line.
-//   - Page weight per page: 264,327 bytes. The heaviest page on 2026-10-18, `docs/index.html`,
-//     weighed 211,461 bytes: its HTML 183,545 bytes (the whole generated CLI reference, inline
+//   - Page weight per page: 264,642 bytes. The heaviest page on 2026-10-18, `docs/index.html`,
+//     weighed 211,713 bytes: its HTML 183,797 bytes (the whole generated CLI reference, inline
 //     CSS included) plus the 27,916 bytes of first-party files it fetches — the script above
 //     and the logo and icons the layout links; × 1.25, rounded up. One ceiling for every page
 //     rather than one per page, so a page that grows with the product (the changelog, the
 //     reference) is held to the same line as the rest instead of to its own history.
-//   - Whole site: 919,769 bytes. Every file in `dist/` on that build summed to 735,815
+//   - Whole site: 925,210 bytes. Every file in `dist/` on that build summed to 740,168
 //     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
 //     × 1.25, rounded up.
 //
