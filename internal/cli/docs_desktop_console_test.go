@@ -40,7 +40,9 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/report"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/watch"
@@ -344,6 +346,13 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(showKill{}),
 		reflect.TypeOf(doctorOutput{}),
 		reflect.TypeOf(doctorCheck{}),
+		reflect.TypeOf(configListDoc{}),
+		reflect.TypeOf(configListInstallation{}),
+		reflect.TypeOf(plan.Document{}),
+		reflect.TypeOf(plan.Node{}),
+		reflect.TypeOf(plan.Edge{}),
+		reflect.TypeOf(plan.Footprint{}),
+		reflect.TypeOf(runstore.ChangedFiles{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
@@ -381,6 +390,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(doctorOutput{}), reflect.TypeOf(doctorCheck{}),
 		reflect.TypeOf(report.JSONDoc{}), reflect.TypeOf(report.JSONLine{}),
 		reflect.TypeOf(report.JSONTokens{}), reflect.TypeOf(Diagnosis{}),
+		reflect.TypeOf(configListDoc{}), reflect.TypeOf(configListInstallation{}),
+		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
+		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
+		reflect.TypeOf(runstore.ChangedFiles{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		real[name] = true
@@ -567,6 +580,8 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"accounts ls": newAccountsLsCmd,
 	"doctor":      newDoctorCmd,
 	"version":     newVersionCmd,
+	"config list": newConfigListCmd,
+	"plan graph":  newPlanGraphCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document

@@ -83,15 +83,8 @@ function assertNoReader(deps: ConsoleWindowDeps): void {
  * own title, the permission handlers) because *it* asserts the hardening; this
  * file asserts the order and the document, so it records exactly those two
  * things and nothing else.
- *
- * `closed` is the shared set of windows the test has closed: a window's
- * `isDestroyed` reads it, which is how `activate` (finding 1) tells a console
- * window that is gone from one that is still up. It is a parameter because
- * `closableWindows` below needs a window to report itself destroyed when the
- * test closes it, and a window `recordingWindows` built with no set is never
- * destroyed.
  */
-function recordingWindows(closed: Set<unknown> = new Set()): {
+function recordingWindows(): {
   BrowserWindow: new (options: BrowserWindowConstructorOptions) => BrowserWindow
   loaded: string[]
   built: unknown[]
@@ -112,7 +105,6 @@ function recordingWindows(closed: Set<unknown> = new Set()): {
       on() {},
       once() {},
       show() {},
-      isDestroyed: () => closed.has(window),
       async loadURL(url: string) {
         loaded.push(url)
       },
@@ -320,16 +312,14 @@ const HANDSHAKE_LINE_AS_FAILURE = HOSTILE_LINE
 // source match)
 // ---------------------------------------------------------------------------
 
-/** closableWindows is `recordingWindows` with a shared `closed` set -- so a
- * window it built reports itself destroyed once the test closes it -- and a
- * count of the windows that are still open, which is the count the old
- * `activate` asked for. */
+/** closableWindows is `recordingWindows` with a `close()` and a count of the
+ * windows that are still open, which is what `activate` asks. */
 function closableWindows(): ReturnType<typeof recordingWindows> & {
   open(): number
   closeAll(): void
 } {
+  const windows = recordingWindows()
   const closed = new Set<unknown>()
-  const windows = recordingWindows(closed)
   return {
     ...windows,
     open: () => windows.built.filter((window) => !closed.has(window)).length,
@@ -358,6 +348,7 @@ describe('the lifecycle', () => {
         reads += 1
         return { ok: true, stdout: '0.5.0\n' }
       },
+      openWindowCount: windows.open,
     })
     expect((await lifecycle.start()).mode).toBe('refused')
     expect(windows.loaded).toEqual([REFUSAL_ENTRY_URL])
@@ -382,39 +373,6 @@ describe('the lifecycle', () => {
     expect(windows.loaded).not.toContain(APP_ENTRY_URL)
   })
 
-  it('restores a dashboard when only the picker’s window is open (finding 1)', async () => {
-    // The picker is an ordinary unparented top-level window, so Electron's
-    // `BrowserWindow.getAllWindows().length` counted it. The old `activate`
-    // asked `deps.openWindowCount` -- wired to exactly that count -- whether
-    // *any* window was open, so with the console window closed and only the
-    // picker up it answered "yes", restored nothing, and left a macOS dock-icon
-    // click unable to bring the console back (finding 1). The lifecycle now
-    // decides on the window *it* opened, so a window it does not own cannot
-    // stand in for the dashboard.
-    const windows = closableWindows()
-    const lifecycle = createConsoleLifecycle({
-      windowDeps: () => ({ BrowserWindow: windows.BrowserWindow, session: aSession, preloadPath: PRELOAD_PATH }),
-      readVersion: readsVersion(`${CLI_VERSION_BUILT_AGAINST}\n`),
-    })
-    await lifecycle.start()
-    expect(windows.loaded).toEqual([APP_ENTRY_URL])
-
-    // The console window is closed by the operator, and the picker is opened
-    // from the menu: a top-level window exists -- `built` holds it and it is not
-    // in `closed`, which is exactly what the raw count would have counted -- and
-    // it is not the console's.
-    windows.closeAll()
-    void new windows.BrowserWindow({})
-    expect(windows.open()).toBe(1)
-
-    await lifecycle.activate()
-    // The console window is back, beside the picker that was already there. A
-    // regression to a raw window count fails here: the picker alone answers the
-    // count, so no dashboard window would be built and `open()` would stay 1.
-    expect(windows.open()).toBe(2)
-    expect(windows.loaded).toEqual([APP_ENTRY_URL, APP_ENTRY_URL])
-  })
-
   it('is single-flight: `activate` during the handshake waits for it, and opens no second window', async () => {
     const windows = closableWindows()
     const answer = deferred<VersionRead>()
@@ -425,6 +383,7 @@ describe('the lifecycle', () => {
         reads += 1
         return answer.promise
       },
+      openWindowCount: windows.open,
     })
     const starting = lifecycle.start()
     // The handshake is running and no window exists: the click that comes now
@@ -450,6 +409,7 @@ describe('the lifecycle', () => {
         reads += 1
         return { ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` }
       },
+      openWindowCount: windows.open,
     })
     await lifecycle.activate()
     expect(reads).toBe(0)
@@ -470,6 +430,7 @@ describe('the lifecycle', () => {
     const lifecycle = createConsoleLifecycle({
       windowDeps: () => ({ BrowserWindow: windows.BrowserWindow, session: aSession, preloadPath: PRELOAD_PATH }),
       readVersion: async () => ({ ok: true, stdout: '0.6.9\n' }),
+      openWindowCount: windows.open,
       onDecided: (compatibility) => {
         decided.push(compatibility)
         // The ordering, from inside the callback: nothing has been loaded yet,
@@ -514,6 +475,7 @@ describe('a choose in the picker (Task 3.4b, step 5)', () => {
         reads += 1
         return { ok: true, stdout: '0.5.0\n' }
       },
+      openWindowCount: () => windows.built.filter((window) => !closed.has(window)).length,
       onDecided: (compatibility) => {
         decided.push(compatibility.mode)
       },
@@ -556,6 +518,7 @@ describe('a choose in the picker (Task 3.4b, step 5)', () => {
     const lifecycle = createConsoleLifecycle({
       windowDeps: () => ({ BrowserWindow: Closable, session: aSession, preloadPath: PRELOAD_PATH }),
       readVersion: readsVersion(`${CLI_VERSION_BUILT_AGAINST}\n`),
+      openWindowCount: () => windows.built.filter((window) => !closed.has(window)).length,
     })
     await lifecycle.start()
     // Two chooses in the same turn: each reads the window it replaces, so run
@@ -901,18 +864,40 @@ describe('the entry point is wired to the handshake', () => {
     expect(indexSource).not.toMatch(/let startup\b/)
   })
 
-  it('hands the picker the removal seam, so the dashboard stops naming a removed installation (finding 2)', () => {
-    // `picker.ts` fires `onRemoved` only when a removal took the **active**
-    // installation away, and `bootDashboard` reads `installation.current` once
-    // at load and never again. If the production call site does not pass the
-    // seam, the header names the removed installation for the rest of the
-    // session (finding 2). The behaviour of the seam -- reopening the dashboard
-    // so the renderer re-reads the store, through `lifecycle.choose` -- is the
-    // lifecycle's, tested above; what this holds is that the one production call
-    // site wires it at all.
-    expect(indexSource).toContain('installInstallationPicker(')
-    expect(indexSource).toContain('onRemoved:')
-    expect(indexSource).toContain('lifecycle.choose(current)')
+  it('stops the child the console started before the process quits', () => {
+    // The one long-lived child this app has is the Live screen's `fugaro watch`,
+    // started through the source bound to the active installation. Nothing else
+    // stops it: the menu's Quit is Electron's own `role: 'quit'` and
+    // `window-all-closed` only calls `app.quit()`, so without a `before-quit`
+    // that closes the bound source the child outlives the app that started it --
+    // which is the opposite of what `forget` protects (an installation the
+    // console no longer shows leaves nothing running) and of why every spawn is
+    // written to the spawn log. `CliSource.close()` is bounded (SIGTERM, then
+    // SIGKILL after the shutdown grace), so the quit can wait for it.
+    const quit = /app\.on\('before-quit'[\s\S]*?\n\}\)/.exec(indexSource)?.[0] ?? ''
+    expect(quit, 'the entry point registers no before-quit handler').not.toBe('')
+    // The order is the claim: hold the quit back, close what the console
+    // started, then let it through. A handler that quit first would leave the
+    // close racing the process exit.
+    expect(quit).toContain('event.preventDefault()')
+    expect(quit).toContain('app.quit()')
+    // The call however it is laid out -- the close is chained onto its own
+    // lines -- and in that order: held back, closed, then through.
+    const closedAt = quit.search(/boundSource\s*\.\s*close\(\)/)
+    expect(closedAt, 'the handler does not close the bound source').toBeGreaterThan(-1)
+    expect(quit.indexOf('preventDefault')).toBeLessThan(closedAt)
+    expect(closedAt).toBeLessThan(quit.indexOf('app.quit()'))
+    // And it holds the quit back exactly once: the `app.quit()` above comes back
+    // through this handler, so one that prevented every `before-quit` would quit
+    // nothing at all.
+    expect(quit).toMatch(/if \(closing\) return/)
+
+    // The fatal path is the other way out of this process, and `app.exit` fires
+    // no `before-quit`: a failed switch or `activate` would leave the same child
+    // running. It closes the source too, and the exit code is unchanged.
+    const fatal = bodyOf('function reportAndQuit(')
+    expect(fatal).toMatch(/boundSource\s*\.\s*close\(\)/)
+    expect(fatal).toContain('app.exit(1)')
   })
 
   it('runs the startup from main, after the bundle is served exactly once', () => {
@@ -1030,14 +1015,20 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     expect(indexSource).not.toContain('src/renderer')
   })
 
-  it('drives nothing: every read of the CLI refuses, and no spawn is reachable', () => {
-    // Step 3's subject -- the installation picker -- is Task 3.4b's, so this
-    // console has no installation and every operation that would read one
-    // answers `NO_ACTIVE_INSTALLATION`. The assertions are the source's own: the
-    // constant is used, the sentence is composed from it, and nothing in the
-    // file could start a child.
-    expect(indexSource).toContain('NO_ACTIVE_INSTALLATION')
-    expect(indexSource).toContain('noInstallation(')
+  it('binds the surface to the active installation, and starts no child of its own', () => {
+    // Task 3.4c's subject. Until it landed this file held a source that refused
+    // every read; now the surface is `createBoundSource`, whose reads resolve
+    // the installation the picker made active and build the one `CliSource` for
+    // it. What is still true, and is what this test is for: **the entry point
+    // starts no child itself**. It names no spawn, and the one binary it
+    // resolves is the handshake's -- everything else goes through the source,
+    // where `src/source/cli.ts` is the only place a process is created.
+    expect(indexSource).toContain('createBoundSource(')
+    // The installation is read at message time, from the picker, and the
+    // binding is what turns it into the source's target: a file that read the
+    // picker once and cached the answer would keep driving an installation the
+    // operator has since replaced.
+    expect(indexSource).toContain('installation: activeBinding')
     expect(indexSource).not.toContain('child_process')
     expect(indexSource).not.toContain('spawn(')
     // The one resolution in the file is the handshake's, and it is the only
@@ -1048,6 +1039,14 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     // The kill switch has no operation of its own (C10), so nothing here names
     // one: the field travels inside `live.watch`.
     expect(indexSource).not.toContain('budget.kill')
+    // And no code is injected into the window. The screens are drawn by the one
+    // bundle the document loads (design section 5.1 rule 1: `script-src 'self'`,
+    // no inline script), and `executeJavaScript` is the other way a main process
+    // draws -- one that would put the console's own text into the page outside
+    // the document's policy and outside the preload's frozen surface. The e2e
+    // reads the window for the same claim from the other side (one `<script>`,
+    // and the Live screen's rows drawn by it).
+    expect(indexSource).not.toContain('executeJavaScript')
   })
 
   // The two Task 3.4b cases that stood here were greps of this file's text

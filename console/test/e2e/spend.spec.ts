@@ -254,13 +254,17 @@ interface Screen {
 /** screen reads the mounted screen out of the page. */
 function screen(page: Page): Promise<Screen> {
   return page.evaluate(() => {
+    // The window's own entry draws the real dashboard into the same document
+    // (Task 3.4c), beside this spec's mount: every reading is taken inside the
+    // mount, so the entry's drawing can neither satisfy nor fail an assertion.
+    const scope: ParentNode = document.getElementById('spend-mount') ?? document.createDocumentFragment()
     const all = (selector: string, within?: Element): HTMLElement[] =>
-      Array.from((within ?? document).querySelectorAll<HTMLElement>(selector))
+      Array.from((within ?? scope).querySelectorAll<HTMLElement>(selector))
     const texts = (selector: string): string[] => all(selector).map((one) => one.textContent ?? '')
     const attributes = (selector: string, name: string): (string | null)[] =>
       all(selector).map((one) => one.getAttribute(name))
     return {
-      theme: document.querySelector('.spend')?.getAttribute('data-theme') ?? null,
+      theme: scope.querySelector('.spend')?.getAttribute('data-theme') ?? null,
       accounts: attributes('.spend-account', 'data-account'),
       titles: texts('.spend-account-title'),
       peaks: texts('.spend-peak'),
@@ -290,8 +294,8 @@ function screen(page: Page): Promise<Screen> {
       currentWindows: all('.spend-window')
         .filter((window) => window.getAttribute('data-current') === 'true')
         .map((window) => window.textContent ?? ''),
-      personsEnabled: document.querySelector('.spend-persons')?.getAttribute('data-enabled') ?? null,
-      personState: document.querySelector('.spend-persons-state')?.textContent ?? null,
+      personsEnabled: scope.querySelector('.spend-persons')?.getAttribute('data-enabled') ?? null,
+      personState: scope.querySelector('.spend-persons-state')?.textContent ?? null,
       points: all('.spend-account')
         .find((block) => block.getAttribute('data-account') === 'model')
         ?.querySelectorAll('.spend-point').length ?? 0,

@@ -47,6 +47,7 @@ import { _electron as electron, expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import { APP_ENTRY_URL, APP_ORIGIN } from '../../src/main/protocol'
+import { PROJECT_MARKER } from '../../src/source/redact'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 
@@ -59,7 +60,18 @@ const PROBE_ORIGIN = 'https://example.invalid'
 // declares no `"type"`), so `__dirname` is the spec's directory on disk.
 const consoleDir = join(__dirname, '..', '..')
 
-/** ConsoleDocument is the console's own document, as the frame reports it. */
+/** ConsoleDocument is the console's own document, as the frame reports it.
+ *
+ * `heading` is the window's first `<h1>`, and since Task 3.4c that is **not** a
+ * heading the document carries: the dashboard document's body is empty and the
+ * entry fills it, so the window's first `<h1>` is the Live screen's project
+ * cell, drawn from the feed it reads over IPC. It is still the witness this file
+ * wants -- a navigation that committed replaces the document, and a refused
+ * same-origin navigation to `other.html` commits a 404 with no `<h1>` at all --
+ * and what it holds for this spec's stub is the project the replayed fixture
+ * names, which is the recorder's `PROJECT_MARKER` (`test/fixtures/
+ * synthetic.ndjson`'s own header says so). Hence the expected value below is
+ * that constant rather than a project name. */
 interface ConsoleDocument {
   href: string
   title: string
@@ -282,7 +294,12 @@ test.describe('the hardened window', () => {
     expect(await consoleDocument(page)).toEqual({
       href: APP_ENTRY_URL,
       title: 'Fugaro console',
-      heading: 'Fugaro console',
+      // The Live screen's own heading, which is the first `<h1>` in the window
+      // since Task 3.4c emptied the dashboard document's body: the entry draws
+      // it from the watch document, and the fixture this spec's stub replays
+      // names its project `PROJECT_MARKER`. A navigation that committed would
+      // have replaced the document and taken this heading with it.
+      heading: PROJECT_MARKER,
     })
 
     // The remote attempt, which is what rule 2 is actually about. Whether an
@@ -297,7 +314,7 @@ test.describe('the hardened window', () => {
     expect(await consoleDocument(page)).toEqual({
       href: APP_ENTRY_URL,
       title: 'Fugaro console',
-      heading: 'Fugaro console',
+      heading: PROJECT_MARKER,
     })
     expect(remoteRequests).toEqual([])
   })

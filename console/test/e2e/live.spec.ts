@@ -201,17 +201,21 @@ interface Screen {
 /** screen reads the mounted screen out of the page. */
 function screen(page: Page): Promise<Screen> {
   return page.evaluate(() => {
+    // The window's own entry draws the real dashboard into the same document
+    // (Task 3.4c), beside this spec's mount: every reading is taken inside the
+    // mount, so the entry's drawing can neither satisfy nor fail an assertion.
+    const scope: ParentNode = document.getElementById('live-mount') ?? document.createDocumentFragment()
     const all = (selector: string): HTMLElement[] =>
-      Array.from(document.querySelectorAll<HTMLElement>(selector))
+      Array.from(scope.querySelectorAll<HTMLElement>(selector))
     const texts = (selector: string): string[] => all(selector).map((one) => one.textContent ?? '')
     const attributes = (selector: string, name: string): (string | null)[] =>
       all(selector).map((one) => one.getAttribute(name))
     return {
-      theme: document.querySelector('.live')?.getAttribute('data-theme') ?? null,
-      project: document.querySelector('.live-project')?.textContent ?? null,
-      mode: document.querySelector('.live-mode')?.textContent ?? null,
-      day: document.querySelector('.live-day')?.textContent ?? null,
-      connection: document.querySelector('.live-connection')?.textContent ?? null,
+      theme: scope.querySelector('.live')?.getAttribute('data-theme') ?? null,
+      project: scope.querySelector('.live-project')?.textContent ?? null,
+      mode: scope.querySelector('.live-mode')?.textContent ?? null,
+      day: scope.querySelector('.live-day')?.textContent ?? null,
+      connection: scope.querySelector('.live-connection')?.textContent ?? null,
       repos: texts('.live-repo-name'),
       counts: texts('.live-repo-counted'),
       bars: attributes('.live-bar', 'data-fill'),
@@ -219,7 +223,7 @@ function screen(page: Page): Promise<Screen> {
       stages: texts('.live-run-stage'),
       queued: attributes('.live-run', 'data-queued'),
       killed: attributes('.live-repo', 'data-killed'),
-      killText: document.querySelector('.live-kill')?.textContent ?? null,
+      killText: scope.querySelector('.live-kill')?.textContent ?? null,
       flags: texts('.live-run-flag'),
       sparkBars: all('.live-burn-bar').length,
       anchors: all('a').length,

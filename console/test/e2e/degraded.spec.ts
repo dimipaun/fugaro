@@ -279,12 +279,16 @@ interface Drawn {
 /** drawn reads the mounted screen out of the page. */
 function drawn(page: Page): Promise<Drawn> {
   return page.evaluate(() => {
+    // The window's own entry draws the real dashboard into the same document
+    // (Task 3.4c), beside this spec's mount: every reading is taken inside the
+    // mount, so the entry's drawing can neither satisfy nor fail an assertion.
+    const scope: ParentNode = document.getElementById('console-mount') ?? document.createDocumentFragment()
     const all = (selector: string): HTMLElement[] =>
-      Array.from(document.querySelectorAll<HTMLElement>(selector))
+      Array.from(scope.querySelectorAll<HTMLElement>(selector))
     const texts = (selector: string): string[] => all(selector).map((one) => one.textContent ?? '')
     const attributes = (selector: string, name: string): (string | null)[] =>
       all(selector).map((one) => one.getAttribute(name))
-    const root = document.querySelector('#console-mount > section')
+    const root = scope.querySelector('#console-mount > section')
     return {
       kind: root?.getAttribute('data-kind') ?? null,
       theme: root?.getAttribute('data-theme') ?? null,
@@ -292,31 +296,31 @@ function drawn(page: Page): Promise<Drawn> {
       sections: all('#console-mount > section').length,
       liveRoots: all('.live').length,
       degradedRoots: all('.degraded').length,
-      headline: document.querySelector('.unavailable-headline')?.textContent ?? null,
-      project: document.querySelector('.degraded-project')?.textContent ?? null,
-      mode: document.querySelector('.degraded-mode')?.textContent ?? null,
-      modeState: document.querySelector('.degraded-mode')?.getAttribute('data-state') ?? null,
-      notice: document.querySelector('.degraded-notice')?.textContent ?? null,
+      headline: scope.querySelector('.unavailable-headline')?.textContent ?? null,
+      project: scope.querySelector('.degraded-project')?.textContent ?? null,
+      mode: scope.querySelector('.degraded-mode')?.textContent ?? null,
+      modeState: scope.querySelector('.degraded-mode')?.getAttribute('data-state') ?? null,
+      notice: scope.querySelector('.degraded-notice')?.textContent ?? null,
       warnings: texts('.degraded-warning'),
-      caps: document.querySelector('.degraded-cap')?.textContent ?? null,
-      capsState: document.querySelector('.degraded-cap')?.getAttribute('data-state') ?? null,
-      killCapable: document.querySelector('.degraded-caps')?.getAttribute('data-kill-capable') ?? null,
+      caps: scope.querySelector('.degraded-cap')?.textContent ?? null,
+      capsState: scope.querySelector('.degraded-cap')?.getAttribute('data-state') ?? null,
+      killCapable: scope.querySelector('.degraded-caps')?.getAttribute('data-kill-capable') ?? null,
       killable: all('[data-killed], .degraded-kill').length,
       runIds: texts('.degraded-run-id'),
       runComputes: texts('.degraded-run-compute'),
       notionalRows: all('.degraded-run[data-notional-model="true"]').length,
-      refusal: document.querySelector('.unavailable-sentence')?.textContent ?? null,
-      operation: document.querySelector('.unavailable-operation')?.textContent ?? null,
-      installCommand: document.querySelector('.unavailable-install-command')?.textContent ?? null,
-      picker: document.querySelector('.unavailable-picker')?.getAttribute('data-picker') ?? null,
-      searched: document.querySelector('.unavailable-searched-count')?.textContent ?? null,
-      stale: document.querySelector('.live-stale')?.getAttribute('data-stale') ?? null,
-      staleSilence: document.querySelector('.live-stale')?.getAttribute('data-silence') ?? null,
-      staleThreshold: document.querySelector('.live-stale-threshold')?.textContent ?? null,
-      staleAt: document.querySelector('.live-stale-at')?.textContent ?? null,
-      sinceAt: document.querySelector('.live-since-at')?.textContent ?? null,
-      counted: document.querySelector('.live-counted')?.textContent ?? null,
-      segments: document.querySelector('.live-burn')?.getAttribute('data-segments') ?? null,
+      refusal: scope.querySelector('.unavailable-sentence')?.textContent ?? null,
+      operation: scope.querySelector('.unavailable-operation')?.textContent ?? null,
+      installCommand: scope.querySelector('.unavailable-install-command')?.textContent ?? null,
+      picker: scope.querySelector('.unavailable-picker')?.getAttribute('data-picker') ?? null,
+      searched: scope.querySelector('.unavailable-searched-count')?.textContent ?? null,
+      stale: scope.querySelector('.live-stale')?.getAttribute('data-stale') ?? null,
+      staleSilence: scope.querySelector('.live-stale')?.getAttribute('data-silence') ?? null,
+      staleThreshold: scope.querySelector('.live-stale-threshold')?.textContent ?? null,
+      staleAt: scope.querySelector('.live-stale-at')?.textContent ?? null,
+      sinceAt: scope.querySelector('.live-since-at')?.textContent ?? null,
+      counted: scope.querySelector('.live-counted')?.textContent ?? null,
+      segments: scope.querySelector('.live-burn')?.getAttribute('data-segments') ?? null,
       bars: attributes('.live-burn-bar', 'data-state'),
       gaps: all('.live-burn-bar[data-state="gap"]').length,
       anchors: all('a').length,

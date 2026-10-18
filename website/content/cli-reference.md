@@ -35,6 +35,7 @@ Subcommands:
 - `fugaro image` -- Build and inspect a workflow's derived container image
 - `fugaro init` -- Stand up or adopt the installation's, or a repository's, cloud resources through Terraform
 - `fugaro logs` -- Print a run's logs from Cloud Logging
+- `fugaro plan` -- Read a plan's graph artifact
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
 - `fugaro recipes` -- List, show, validate and publish recipes, the task loop a run follows after implement
 - `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model or person
@@ -674,6 +675,7 @@ Subcommands:
 - `fugaro config example` -- Print an annotated fugaro.yaml template
 - `fugaro config init` -- Write the minimal fugaro.yaml of a repository whose project publishes a project layer
 - `fugaro config layer` -- Print the project layer published for this checkout's project
+- `fugaro config list` -- List the Fugaro installations this machine has
 - `fugaro config publish` -- Publish the project layer: defaults and profiles for every repository of the project (fugaro/project-layer.yaml in the runs bucket)
 - `fugaro config show` -- Print the checkout's fugaro.yaml resolved over the project layer, with where each value comes from
 
@@ -733,6 +735,30 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for layer |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro config list`
+
+List the Fugaro installations this machine has
+
+List the project configs under $XDG_CONFIG_HOME/fugaro/projects (else
+~/.config/fugaro/projects), with the GCP project and region of each and what
+is known about its published shared config.
+
+This is a local read: it opens no bucket and needs no project selected, so it
+works outside a checkout and with no config at all (an empty list).
+
+Usage: `fugaro config list`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for list |
 | `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:
@@ -1394,6 +1420,50 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--url` | bool | `false` | no | print the execution's Cloud console link instead of the logs |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro plan`
+
+Read a plan's graph artifact
+
+Usage: `fugaro plan`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for plan |
+
+Subcommands:
+
+- `fugaro plan graph` -- Print a plan's graph: its tasks, their dependencies and their footprints
+
+## `fugaro plan graph`
+
+Print a plan's graph: its tasks, their dependencies and their footprints
+
+Print the graph artifact written beside a plan.
+
+The artifact is `<plan>.graph.json` — for docs/plans/foo.md it is
+docs/plans/foo.graph.json. With no --plan, the one graph artifact under
+docs/plans/ is read; more than one is refused rather than guessed at.
+
+A graph this build does not understand is refused rather than rendered: a
+future schema version, a malformed document, an edge to a node that is not
+there, or a cycle. This is a local read and it writes nothing.
+
+Usage: `fugaro plan graph`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for graph |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--plan` | string | "" | no | the plan document the graph sits beside (default: the one graph artifact under docs/plans) |
 
 Subcommands:
 
