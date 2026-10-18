@@ -3,11 +3,15 @@
 The machine that stands between a spoken destructive command and it actually happening
 (mobile plan, Task **P6.2**; decisions **D169**, **D162**, and the owner's **D128 amendment of
 2026-10-17**). It is pure logic: no clock, no network, no randomness, no filesystem, no
-`Date`, and no dependency of any kind. `now` is a number the caller passes in, so every
+`Date`, and no dependency outside this package: it imports `lease/`'s timestamp bound,
+`command/`'s confirmation recogniser (P6.1) and `mailbox-schema/`'s target bound (P6.3), each
+of which imports nothing itself. `now` is a number the caller passes in, so every
 timeout below is reproducible in a test and none of it can pass by accident at 3 a.m.
 
 The shape is: a destructive command is **read back** first, and only a separate, later
-utterance carrying the fixed phrase **confirm** turns that read-back into an action.
+utterance carrying the fixed phrase — P6.1's `confirm` app command, **"Fugaro, confirm"** —
+turns that read-back into an action, and the action it authorises is **P6.3's action record**,
+field for field.
 
 ```js
 import { initialState, step, pending, readBack } from './index.js';
@@ -19,20 +23,23 @@ const asked = step(machine.state, {
   target: { kind: 'run', runId: 'run_8f21' },
 });
 // asked.ok, asked.outcome === 'read-back',
-// asked.readBack === 'Cancel run run_8f21. Say "confirm" to confirm.'
+// asked.readBack === 'Cancel run run_8f21. Say "Fugaro, confirm" to confirm.'
 
 const done = step(asked.state, {
-  type: 'confirm', now: 1_700_000_005_000, utteranceId: 'utt_2', text: 'confirm',
+  type: 'confirm', now: 1_700_000_005_000, utteranceId: 'utt_2', text: 'Fugaro, confirm',
   actionId: 'act_1', confirmationId: 'cnf_1',
   target: { kind: 'run', runId: 'run_8f21' },
 });
-// done.ok, done.outcome === 'confirmed', done.record.authorises one action
+// done.ok, done.outcome === 'confirmed', and done.record is P6.3's `message.action`:
+// { id: 'act_1', verb: 'cancel', target: { run: 'run_8f21' },
+//   confirmation: { id: 'cnf_1', at: 1_700_000_005_000 } }
 ```
 
 ## The rule, in one paragraph
 
-A **destructive** command (`cancel`, `merge`, `confirm-action` — the closed set
-`DESTRUCTIVE_VERBS`) enters `pending` **only with a resolved target**. An ambiguous or
+A **destructive** command (`cancel`, `merge`, `confirm` — the closed set
+`DESTRUCTIVE_VERBS`, spelled exactly as P6.3's `ACTIONS`; a cancel takes a run, a merge a
+repository, PR and head, a confirm a run or a repository and PR) enters `pending` **only with a resolved target**. An ambiguous or
 unresolved target is refused, cannot be read back, and therefore **cannot be confirmed**. The
 read-back is built **from the resolved target**, never from the transcript: a run the speaker
 *called* "the docs refactor" is read back as `Cancel run run_8f21.` — the exact run id, because
@@ -122,7 +129,7 @@ the ledger's room, so a caller hears the real reason rather than "no space".
 | `internal-error` | the input threw while being read (a revoked or throwing `Proxy`); what was thrown is never echoed |
 | `wrong-type` | a field holds the wrong type |
 | `empty-string` | a required string is empty |
-| `too-long` | a string past its bound (`ID_MAX` 100, `TEXT_MAX` 4096, `REPO_MAX` 201) |
+| `too-long` | a string past its bound (`ID_MAX` 100, `TEXT_MAX` 4096, `REPO_MAX` 200 — P6.3's `TARGET_MAX`) |
 | `bad-key` | an id with a character a database key may not contain (`% . $ # [ ] /`), a control character, or a lone surrogate |
 | `bad-character` | a text with a control character or a lone surrogate |
 | `invalid-now` | a `now` that is not an epoch-millisecond integer in `1 .. MAX_TIMESTAMP` |
@@ -186,12 +193,18 @@ where the plan requires the timeout to be named.
 - **Not a router.** It never decides *which* run "the docs refactor" means. The router
   resolves against the configured lists and hands in a target, or hands in nothing — and
   nothing is `unresolved-target`, which cannot be confirmed.
-- **Not a recogniser.** It does not do speech-to-text and does not repair one. Case and runs
-  of whitespace are normalised and nothing else: `confirm.`, `conform`, `confirmed it`, `yes`,
-  `sure`, `yes, merge it` (G10) are **not** the phrase, and stripping punctuation or accepting
-  a substring would let a misrecognition satisfy the confirmation.
-- **Not the executor.** A `confirmed` answer carries a typed record
-  (`verb`, `actionId`, `confirmationId`, `confirmedAt`, `target`) and nothing else; re-validating
+- **Not a recogniser.** It does not do speech-to-text and does not repair one, and it has no
+  grammar of its own: an utterance is the phrase exactly when `shared/command`'s router (P6.1,
+  default wake-word aliases) routes it as the `confirm` app command. So "Fugaro, confirm" and
+  "Figaro, confirm." are the phrase, while a bare `confirm` (agent text under D164), `conform`,
+  `confirmed it`, `yes`, `sure`, `yes, merge it` (G10), "Fugaro, confirm it" and anything with
+  an invisible format character are **not**. A caller that configures its own wake-word aliases
+  in P6.1 must keep this module on the same set (today: the default).
+- **Not the executor.** A `confirmed` answer carries P6.3's action record —
+  `{ id, verb, target: {run} | {repo, pr}, head_sha (merge only), confirmation: { id, at } }`,
+  built from the target that was **read back**, never from the one the confirmation asserted —
+  and nothing else (a test wraps every record in a message and runs P6.3's `validateMessage`
+  on it); re-validating
   and executing it — and the MAC that makes it unforgeable — is P6.7's, in Go
   (D169: a merge carries the PR's head SHA, so a merge confirmed against a moved head is
   refused here before it can be executed there).
@@ -202,8 +215,8 @@ where the plan requires the timeout to be named.
 ## Evidence, and how to reproduce it
 
 ```sh
-cd shared && npm test                  # 326 tests, 326 pass, 0 fail
-shared/confirm/mutation-proof.sh       # 59 guards: 59 killed, 0 survived, 0 not applied
+cd shared && npm test                  # 421 tests, 421 pass, 0 fail (Node 26; on Node 22.14 shared/url's one known failure)
+shared/confirm/mutation-proof.sh       # 70 guards: 70 killed, 0 survived, 0 not applied
 ```
 
 The suite includes the task's own list, each as its own test: a **misrecognised "confirm"**
@@ -241,7 +254,7 @@ drift without a test failing.
 ## Honest limits
 
 - **The phrase is broad on purpose.** `command-and-confirm` refuses any command utterance that
-  *contains* the token `confirm`. That means the `confirm-action` verb phrased as "confirm the
+  *contains* the word `confirm`, split on whitespace and punctuation. That means the `confirm` verb phrased as "confirm the
   deploy" is refused, and the speaker has to say "approve the deploy" (which the tests and the
   vectors use). The alternative — deciding which occurrence of the word is "the command" —
   is exactly the misrecognition this module exists to refuse.
