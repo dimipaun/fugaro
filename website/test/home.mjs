@@ -20,9 +20,14 @@
 //   4. **The flow carries D185's four steps, in order, with the two annotations on the job
 //      step**, and every caption on it — a step's and an annotation's — is a line of
 //      README.md or of `docs/design/v1.md`; the names the README does not use are asserted
-//      to be labels rather than quotations. The four steps and the two annotations are read
-//      out of the ruling's own row in `docs/website/redesign/reconciliation.md`, so the page
-//      is held to the decision rather than to a copy of it (W1.4 step 3, P8, RF12/D185).
+//      to be labels rather than quotations. The four steps, the caption the ruling gives each
+//      of them and the two annotations are all read out of the ruling's own row in
+//      `docs/website/redesign/reconciliation.md`, so the page is held to the decision rather
+//      than to a copy of it — including which caption belongs to which step, since all four
+//      are lines of the README and could otherwise be shuffled. The names a reader reads —
+//      each step's heading, each annotation's label — are held to the names the check reads,
+//      so a page whose visible flow says something else fails on what it shows rather than
+//      passing on its attributes (W1.4 step 3, P8, RF12/D185).
 //   5. **Neither page names a claim the product cannot back**: no console download, no
 //      Windows/WSL support, no "~2 h", no ballpark ranges (F50, D102, W1.4 step 4). The
 //      video slot is checked against `site.yaml`'s own flag rather than against today's
@@ -181,10 +186,57 @@ function internalLinks(page) {
 }
 
 /**
- * D185's four steps and its two annotations, read out of the ruling itself. The row is the
- * decision the flow renders, so it is the row this check holds the page to: a page that
- * changed its steps and a ruling that changed its mind cannot drift apart silently, and a
- * reworded row stops this check with the row in the message rather than passing quietly.
+ * Split a list the ruling writes on one line into its items, on the commas that are the
+ * list's own: a comma inside a quotation or inside parentheses is part of an item
+ * ("Claude Code implements, writes tests, runs the build and tests" is one caption).
+ */
+function splitTopLevel(text) {
+  const items = []
+  let current = ''
+  let depth = 0
+  let quoted = false
+  for (const character of text) {
+    if (character === '"') quoted = !quoted
+    else if (!quoted && character === '(') depth += 1
+    else if (!quoted && character === ')') depth -= 1
+    if (character === ',' && !quoted && depth === 0) {
+      items.push(current)
+      current = ''
+      continue
+    }
+    current += character
+  }
+  items.push(current)
+  return items.map((item) => item.trim()).filter(Boolean)
+}
+
+/**
+ * The literal caption an item of D185's caption list names: a quotation, or — for the first
+ * step, which the row names by its invocation rather than by quoting it — the code span.
+ */
+function captionLiteral(item) {
+  const quoted = /"([^"]+)"/.exec(item)
+  if (quoted) return quoted[1]
+  const code = /`([^`]+)`/.exec(item)
+  assert.ok(
+    code,
+    `D185 names a caption this check cannot read (${JSON.stringify(item)}): each item is a quotation, or the invocation in a code span`,
+  )
+  return code[1]
+}
+
+/**
+ * D185's four steps, its two annotations and the caption it gives each step, read out of the
+ * ruling itself. The row is the decision the flow renders, so it is the row this check holds
+ * the page to: a page that changed its steps and a ruling that changed its mind cannot drift
+ * apart silently, and a reworded row stops this check with the row in the message rather
+ * than passing quietly.
+ *
+ * The captions are read too, and not only their sources: every one of the four is a line of
+ * the README, so held to the documents alone the four can be shuffled among the steps and
+ * each is still a quotation — while the page then says the pull request is where the agent
+ * runs. D185 names them in step order, so the pairing is in the ruling rather than in this
+ * file.
  */
 function d185() {
   const line = repoFile('docs/website/redesign/reconciliation.md')
@@ -198,12 +250,14 @@ function d185() {
   // not take, and the four steps are the ones between the em dashes of the decision.
   const steps = /The brief's four steps — (.+?) —/.exec(line)
   const annotations = /`([^`]+)` and `([^`]+)` stay as two annotations on the job step/.exec(line)
+  const captions = /quoted\*\* line: (.+?); `/.exec(line)
   assert.ok(
-    steps && annotations,
-    `the D185 row no longer reads the way this check reads it (the four steps between two em dashes, then the two annotations on the job step): ${JSON.stringify(line.slice(0, 160))}`,
+    steps && annotations && captions,
+    `the D185 row no longer reads the way this check reads it (the four steps between two em dashes, the caption list, then the two annotations on the job step): ${JSON.stringify(line.slice(0, 160))}`,
   )
   return {
     steps: steps[1].split(',').map((name) => name.trim()),
+    captions: splitTopLevel(captions[1]).map(captionLiteral),
     annotations: [annotations[1], annotations[2]],
   }
 }
@@ -226,16 +280,27 @@ function flowOf(html) {
     for (const el of walk(flow)) {
       if (el.name === 'svg' && classes(el).includes('step-arrow')) out.arrows += 1
       if (el.name !== 'li' || !classes(el).includes('flow-step')) continue
-      const caption = [...walk(el)].find((child) => classes(child).includes('step-caption'))
+      const inner = (selector) => {
+        const node = [...walk(el)].find((child) => classes(child).includes(selector))
+        return node ? textOf(node).replace(/\s+/g, ' ').trim() : ''
+      }
       out.steps.push({
         name: el.attrs.get('data-step') ?? '',
         source: el.attrs.get('data-source') ?? '',
-        caption: caption ? textOf(caption).replace(/\s+/g, ' ').trim() : '',
+        // The heading and the caption are the step as a reader sees it; `data-step` is this
+        // check's own hook, and the two are held together below rather than one trusted for
+        // the other.
+        heading: inner('step-name'),
+        caption: inner('step-caption'),
         annotations: [...walk(el)]
           .filter((child) => child.name === 'li' && classes(child).includes('annotation'))
           .map((child) => ({
             name: child.attrs.get('data-annotation') ?? '',
             source: child.attrs.get('data-source') ?? '',
+            shown: (() => {
+              const label = [...walk(child)].find((x) => classes(x).includes('annotation-name'))
+              return label ? textOf(label).replace(/\s+/g, ' ').trim() : ''
+            })(),
             caption: (() => {
               const text = [...walk(child)].find((x) => classes(x).includes('annotation-caption'))
               return text ? textOf(text).replace(/\s+/g, ' ').trim() : ''
@@ -245,6 +310,23 @@ function flowOf(html) {
     }
   }
   return out
+}
+
+/** A step's name as a heading: the brief writes the four lowercase, a heading does not. */
+function capitalize(name) {
+  return name ? name[0].toUpperCase() + name.slice(1) : ''
+}
+
+/**
+ * Whether a caption is about the thing its label names: `cache` with a line about the
+ * caches, `security boundary` with a line about the boundary. Without this the two
+ * annotation captions can be swapped — each is still a substring of the document it cites —
+ * and the page then reads "cache — The trust boundary is the container, not the process.",
+ * which is a claim about the caches that is not one.
+ */
+function mentions(caption, label) {
+  const words = new Set(caption.toLowerCase().split(/[^a-z]+/).filter(Boolean).map((word) => word.replace(/s$/, '')))
+  return label.toLowerCase().split(/\s+/).some((word) => words.has(word))
 }
 
 /**
@@ -264,13 +346,26 @@ function flowFailures(html, ruling, sources) {
     )
   }
 
-  for (const step of flow.steps) {
+  for (const [index, step] of flow.steps.entries()) {
     if (!(step.source in sources)) {
       out.push(`the ${JSON.stringify(step.name)} step attributes its caption to ${JSON.stringify(step.source)}, and a caption is held to README.md or to docs/design/v1.md (P8)`)
     } else if (!normalize(sources[step.source]).includes(normalize(step.caption))) {
       out.push(`the ${JSON.stringify(step.name)} caption ${JSON.stringify(step.caption)} does not appear in ${step.source}: every caption is the repository's own words rather than the page's (P8, D185)`)
     }
     if (!step.caption) out.push(`the ${JSON.stringify(step.name)} step carries no caption, and every step has one short line saying what happens there (P8, D185)`)
+    // The caption is the one D185 gives *this* step, not merely one of the four: all four are
+    // lines of the README, so held to their sources alone they can be shuffled among the
+    // steps and every one of them is still a quotation.
+    const named = ruling.captions?.[index]
+    if (named && !normalize(step.caption).includes(normalize(named))) {
+      out.push(`the ${JSON.stringify(step.name)} step's caption ${JSON.stringify(step.caption)} is not the one D185 gives that step (${JSON.stringify(named)}): the captions say what each step does, and one that moved describes the wrong step (P8, D185)`)
+    }
+    // And the name a reader sees, which is the heading: `data-step` is this check's own hook,
+    // and a heading that stopped matching it would leave the visible flow saying one thing
+    // while every check here read another.
+    if (step.heading !== capitalize(step.name)) {
+      out.push(`the ${JSON.stringify(step.name)} step's heading reads ${JSON.stringify(step.heading)}, and the step it renders is ${JSON.stringify(capitalize(step.name))}: the heading is the name a reader sees (P8, D185)`)
+    }
   }
 
   const annotated = flow.steps.filter((step) => step.annotations.length > 0)
@@ -287,6 +382,16 @@ function flowFailures(html, ruling, sources) {
     } else if (!normalize(sources[annotation.source]).includes(normalize(annotation.caption))) {
       out.push(`the ${JSON.stringify(annotation.name)} caption ${JSON.stringify(annotation.caption)} does not appear in ${annotation.source}: an annotation is a label with a quoted line, and the line is the repository's (P8, D185)`)
     }
+    // The label and the line have to be about the same thing, or the two quoted lines can be
+    // swapped: each is still a substring of the document it cites, and the page then puts the
+    // trust boundary on the cache.
+    if (annotation.caption && !mentions(annotation.caption, annotation.name)) {
+      out.push(`the ${JSON.stringify(annotation.name)} annotation's caption ${JSON.stringify(annotation.caption)} is not about the name it carries: an annotation is a label on a line the repository writes about that label's subject (P8, D185)`)
+    }
+    // And the label as a reader sees it, held to the name this check reads, as the heading is.
+    if (annotation.shown !== annotation.name) {
+      out.push(`the annotation D185 names ${JSON.stringify(annotation.name)} is labelled ${JSON.stringify(annotation.shown)} on the page: the label is the name a reader sees, and a label that drifted from the name is a different annotation (P8, D185)`)
+    }
   }
   const annotationNames = annotated.flatMap((step) => step.annotations.map((annotation) => annotation.name))
   if (annotationNames.join(' | ') !== ruling.annotations.join(' | ')) {
@@ -301,21 +406,26 @@ function flowFailures(html, ruling, sources) {
   return out
 }
 
-/** A page carrying nothing but a flow, for the refusals below. */
+/**
+ * A page carrying nothing but a flow, for the refusals below. The heading is the step's name
+ * as the component writes it, so the fixture page passes the same checks the built pages do;
+ * `heading` and an annotation's `label` are the overrides the two "a reader sees something
+ * else" cases break.
+ */
 function flowPage(steps) {
   const body = steps
     .map((step, index) => {
       const annotations = (step.annotations ?? [])
         .map(
           (annotation) =>
-            `<li class="annotation" data-annotation="${annotation.name}" data-source="${annotation.source}"><span class="annotation-name">${annotation.name}</span><span class="annotation-caption">${annotation.caption}</span></li>`,
+            `<li class="annotation" data-annotation="${annotation.name}" data-source="${annotation.source}"><span class="annotation-name">${annotation.label ?? annotation.name}</span><span class="annotation-caption">${annotation.caption}</span></li>`,
         )
         .join('')
       const arrow =
         index < steps.length - 1 && step.arrow !== false
           ? '<svg class="step-arrow" aria-hidden="true" focusable="false"><path class="arrow-line" d="M12 1 V 25"></path></svg>'
           : ''
-      return `<li class="flow-step" data-step="${step.name}" data-source="${step.source}"><div class="step-card"><div class="step-head"><span class="step-number" aria-hidden="true">${index + 1}</span><h2 class="step-name">${step.name}</h2></div><p class="step-caption">${step.caption}</p><ul class="step-annotations">${annotations}</ul></div>${arrow}</li>`
+      return `<li class="flow-step" data-step="${step.name}" data-source="${step.source}"><div class="step-card"><div class="step-head"><span class="step-number" aria-hidden="true">${index + 1}</span><h2 class="step-name">${step.heading ?? capitalize(step.name)}</h2></div><p class="step-caption">${step.caption}</p><ul class="step-annotations">${annotations}</ul></div>${arrow}</li>`
     })
     .join('')
   return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1><figure class="flow"><ol class="flow-steps">${body}</ol></figure></main></body></html>`
@@ -449,13 +559,25 @@ test("the flow carries D185's four steps, in order, with the two annotations on 
 
   // The homepage's flow sits under the hero, which is where D185 puts it: the picture of a
   // run above the tagline would be the first thing a reader meets, before anything has said
-  // what Fugaro is.
-  const home = builtPage('')
-  const hero = home.indexOf('<section class="hero"')
-  const flow = home.indexOf('<figure class="flow"')
+  // what Fugaro is. Held as "outside the hero and after it" rather than as an offset in the
+  // page's text: a flow rendered inside the hero — under the terminal, say — starts after the
+  // hero's opening tag too, and is the same defect.
+  const home = parse(builtPage(''))
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
+  const hero = findAll(home, (el) => el.name === 'section' && classes(el).includes('hero'))[0]
+  const figure = findAll(home, (el) => el.name === 'figure' && classes(el).includes('flow'))[0]
+  assert.ok(hero, 'the homepage has no hero section, and the flow is placed below it (P8, D185)')
+  assert.ok(figure, 'the homepage renders no <figure class="flow">, and the flow is the picture the brief asks for (P8, D185)')
+  let insideHero = false
+  for (let parent = figure.parent; parent; parent = parent.parent) if (parent === hero) insideHero = true
   assert.ok(
-    hero !== -1 && flow > hero,
-    `the homepage renders its flow ${flow === -1 ? 'nowhere' : 'above the hero'}: D185 places the picture of the run below the hero (P8)`,
+    !insideHero,
+    'the homepage renders its flow inside the hero section: D185 places the picture of the run below the hero, not within it (P8)',
+  )
+  const order = [...walk(home)]
+  assert.ok(
+    order.indexOf(hero) < order.indexOf(figure),
+    'the homepage renders its flow above the hero: D185 places the picture of the run below the hero (P8)',
   )
 
   // Both pages, because the same flow is placed on the homepage as the brief's item 5 "good
@@ -501,12 +623,32 @@ test('the flow refusals fire on the defect each one names', () => {
     'a caption written for the page passes the check: every caption is a line of the document it cites (Global Constraint 6, RF11)',
   )
 
+  // The four captions are all lines of the README, so a check that held each one to its
+  // document and no further would let them be shuffled among the steps.
+  const swapped = fixtureSteps().map((step, i) =>
+    i === 0 ? { ...step, caption: fixtureSteps()[3].caption } : i === 3 ? { ...step, caption: fixtureSteps()[0].caption } : step,
+  )
+  assert.ok(
+    failing(swapped).some((line) => /is not the one D185 gives that step/.test(line)),
+    'the first step\'s caption moved to the last step (and the last\'s to the first) passes the check: each is still a line of the README, and the page then says the pull request is where the task is submitted',
+  )
+
   const misquoted = fixtureSteps().map((step, i) =>
     i === 1 ? { ...step, annotations: [{ ...step.annotations[0], source: 'docs/design/v1.md' }] } : step,
   )
   assert.ok(
     failing(misquoted).some((line) => /"cache" caption .* does not appear in docs\/design\/v1.md/.test(line)),
     'an annotation whose caption is not in the document it cites passes the check: the annotation\'s line is quoted like every other caption',
+  )
+
+  // Both annotation captions are quotations from documents the page may cite, so the pair can
+  // be swapped and both still pass a check that reads only their sources.
+  const swappedLines = fixtureSteps().map((step, i) =>
+    i === 1 ? { ...step, annotations: [{ ...step.annotations[0], caption: step.annotations[1].caption, source: 'docs/design/v1.md' }, { ...step.annotations[1], caption: step.annotations[0].caption, source: 'README.md' }] } : step,
+  )
+  assert.ok(
+    failing(swappedLines).some((line) => /is not about the name it carries/.test(line)),
+    'the two annotation captions swapped (with their sources) pass the check: the page then reads "cache — The trust boundary is the container, not the process.", which is not a fact about the caches',
   )
 
   const moved = fixtureSteps().map((step, i) =>
@@ -521,6 +663,22 @@ test('the flow refusals fire on the defect each one names', () => {
   assert.ok(
     failing(renamed).some((line) => /annotations are .*and D185 names/.test(line)),
     'an annotation renamed passes the check: the two names are the ruling\'s, not the page\'s',
+  )
+
+  // The heading a reader sees, which is not the `data-step` this check reads: a page whose
+  // headings said something else entirely would otherwise pass on its attributes alone.
+  const retitled = fixtureSteps().map((step, i) => (i === 2 ? { ...step, heading: 'A container does the work' } : step))
+  assert.ok(
+    failing(retitled).some((line) => /heading reads .*and the step it renders is/.test(line)),
+    'a step heading replaced with a sentence of the page\'s own passes the check: the heading is the name a reader reads',
+  )
+
+  const relabelled = fixtureSteps().map((step, i) =>
+    i === 1 ? { ...step, annotations: [{ ...step.annotations[0], label: 'dependency store' }, step.annotations[1]] } : step,
+  )
+  assert.ok(
+    failing(relabelled).some((line) => /is labelled .*on the page/.test(line)),
+    'an annotation whose visible label drifted from its name passes the check: the label is the name a reader reads',
   )
 
   const arrowless = fixtureSteps().map((step, i) => (i === 1 ? { ...step, arrow: false } : step))
