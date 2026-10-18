@@ -21,14 +21,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { ResourceRegistry } from '../accounts/resources.js';
+import { FIXTURE_SLUG, FIXTURE_UID, recordedNodes, recordedPaths } from './fixtures/nodes.js';
 import { MICROS_PER_USD, UNREADABLE_KILL } from './nodes.js';
 import { FeedReader, MAX_PATHS, READER_CODES } from './reader.js';
 import { dayDate, dayKey } from './paths.js';
 import { BURN_WARMUP_MS } from './recompute.js';
 import { LOST_AFTER_MS, STALE_AFTER_MS } from './view.js';
 
-const UID = 'AbC123def456';
-const SLUG = 'example-one-0123456789abcdef';
+const UID = FIXTURE_UID;
+const SLUG = FIXTURE_SLUG;
 const T0 = Date.parse('2025-11-09T12:00:00Z');
 const DAY = dayKey(T0);
 const ACCOUNT = Object.freeze({
@@ -87,16 +88,11 @@ function reader({ port = new FakePort(), registry = new ResourceRegistry(), open
   return { reader: new FeedReader({ port, account, repositories, registry, now }), port, registry };
 }
 
-/** The nodes a healthy account has: caps, a day counter, and no kill switch. */
-function healthy(path) {
-  if (path === 'config/caps/global') return { dailyMicros: 50 * MICROS_PER_USD };
-  if (path === 'config/caps/defaults') return { repoDailyMicros: 10 * MICROS_PER_USD };
-  if (path === `config/caps/repos/${SLUG}`) return { dailyMicros: 5 * MICROS_PER_USD };
-  if (path === `spend/${DAY}/global`) return { counted: 12_500_000, spent: 12_000_000, notional: 40 * MICROS_PER_USD };
-  if (path === `spend/${DAY}/repos/${SLUG}`) return { counted: 3_000_000 };
-  if (path === `mailbox/${UID}/heartbeat`) return { at: T0, boot: 'b1' };
-  return null; // an absent node, which the database answers with null
-}
+/** The recorded nodes a healthy account has: caps, a day counter, and no kill
+ * switch (`fixtures/nodes.js`). A path the recording does not cover is the
+ * database's own `null` -- a node that is not there. */
+const RECORDED = recordedNodes({ day: DAY, atMs: T0 });
+const healthy = (path) => RECORDED[path] ?? null;
 
 test('no request is ever made for a denied family, and the port proves it', () => {
   const { reader: feed, port } = reader();
@@ -119,17 +115,7 @@ test('no request is ever made for a denied family, and the port proves it', () =
     );
   }
   // The exact plan: the caps, the kill switches, the day's spend, the mailbox.
-  assert.deepEqual(port.requests, [
-    'config/caps/global',
-    'config/caps/defaults',
-    `config/caps/repos/${SLUG}`,
-    'config/kill/global',
-    `config/kill/repos/${SLUG}`,
-    `spend/${DAY}/global`,
-    `spend/${DAY}/repos/${SLUG}`,
-    `mailbox/${UID}/outbox`,
-    `mailbox/${UID}/heartbeat`,
-  ]);
+  assert.deepEqual(port.requests, [...recordedPaths({ day: DAY })]);
   // Asking what would be requested asks the port nothing.
   const before = port.requests.length;
   assert.equal(feed.plan(T0).ok, true);
