@@ -1,11 +1,11 @@
 # Pending workflow changes
 
-**Three files are pending**: `website-preview.yml`, `website-promote.yml` (both new — the website's manual deploy workflows, below) and `images.yml` (a change to an existing workflow). (`ci.yml` was copied in on 2026-10-17, #504, and its staged copy removed in #508; an earlier `images.yml` was copied in at the 0.7.0 cut, `838e0b0`.) A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+**Two files are pending**: `website-preview.yml` and `website-promote.yml`, both new — the website's manual deploy workflows, below. Nothing else is waiting to be copied in: `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508), and `images.yml` was copied in and its staged copy removed in `6b57ba9` (`## images.yml` below is the record of that change, not a pending request). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
 - **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
-- **`images.yml`** — the signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`. It was staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Copy it in before the release's version-bump merge commit is created** (the timing is load-bearing: see `## images.yml` below), then `git rm` the pending file, as the procedure below describes.
+- **`images.yml` — applied, not pending.** The signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`, was staged here by a Fugaro run that cannot push a `.github/workflows/**` change, then copied into `.github/workflows/images.yml` and `git rm`'d from here in `6b57ba9`. `## images.yml` below is the record of that change and of the timing it had to meet, not something still to copy.
 
-The most recent copy that *was* applied (`images.yml` for the 0.7.0 hard cut, commit `838e0b0`) is the reason the file below has no legacy per-kind `base` job; that section's older text was replaced by this one when the file became pending again.
+The two `images.yml` copies that *were* applied — the 0.7.0 hard cut (`838e0b0`, which is why the file below has no legacy per-kind `base` job) and the signing change (`6b57ba9`) — are why that file is not pending today. Each time it was staged again, that section's older text was replaced by the newer one.
 
 Fugaro refuses to push a commit that touches `.github/workflows/**`
 (GitHub rejects the push). When a Fugaro run needs to change a workflow
@@ -20,13 +20,9 @@ cp docs/pending-workflows/website-promote.yml .github/workflows/website-promote.
 git add .github/workflows/website-preview.yml .github/workflows/website-promote.yml
 git rm docs/pending-workflows/website-preview.yml docs/pending-workflows/website-promote.yml
 git commit -m "..."
-
-# and, separately, for the images change (its own timing, below):
-cp docs/pending-workflows/images.yml .github/workflows/images.yml
-git add .github/workflows/images.yml
-git rm docs/pending-workflows/images.yml
-git commit -m "..."
 ```
+
+There is nothing else to copy in: the `images.yml` commands that used to follow this block were run in `6b57ba9`, and its staged file is gone.
 
 **The website pair's own copy-in steps, in order.** (1) Do the one-time setup
 in `docs/website/preview-promote.md` first — the workflows refuse to run
@@ -34,14 +30,16 @@ without the three repository variables, and the promote job needs the
 `website-live` environment to exist before GitHub can hold it for approval.
 (2) Copy both files in with the two commands above, in **one** commit: they
 are a pair (a preview that cannot be promoted is not the feature), and the
-`git rm` is load-bearing for the same reason it is for `images.yml` — while a
+`git rm` is load-bearing for the same reason it was for `images.yml` — while a
 staged copy exists, `internal/cli/docs_website_deploy_test.go` reads *it*, so
 leaving one in place would freeze those checks on a file nobody deploys from.
 (3) Start `website-preview` by hand for a ref and a channel, open the URL it
 prints in the run summary, and only then start `website-promote`.
 
-The `git rm` is not cleanup, it's load-bearing: the static Go tests that pin
-these workflows' shape (`images/base_workflow_test.go`'s `readWorkflow`,
+The `git rm` is not cleanup, it's load-bearing, and `images.yml` is where that
+has already been paid: its staged copy is gone (`6b57ba9`), so the static Go
+tests that pin that workflow's shape (`images/base_workflow_test.go`'s
+`readWorkflow`,
 used by `TestImagesWorkflowPublishesAMultiArchBase`,
 `TestOnlyPublishJobsHoldPackagesWrite`,
 `TestVerifyPublicRunsEvenWhenPublishBaseIsSkipped`,
@@ -50,9 +48,9 @@ used by `TestImagesWorkflowPublishesAMultiArchBase`,
 `TestSigningProblemsFindEveryMutation` — the two that pin the base image's
 signing chain — plus
 `images/verify_public_test.go`'s `TestImagesWorkflowPublishesAndVerifiesEveryImage`)
-read the pending file
-**while it exists** and only fall back to the real
-`.github/workflows/images.yml` once it is gone. If the pending file were
+read the real `.github/workflows/images.yml` on its own today, as they read the
+pending file
+**while it existed** and only fell back to the real file once it was gone. If the pending file were
 left in place after the copy, those tests would keep reading its frozen
 content forever and would never notice a later edit — including an
 accidental deletion — to the real file's `fugaro-base`/`publish-base`
@@ -67,6 +65,10 @@ copy exists it is what the root loop is checked against, and once it is gone
 the real `ci.yml` must name every root under `deploy/terraform/gcp/roots/`
 on its own, so a copy that dropped `compute` (or a later deletion of it)
 fails that test rather than leaving the root untested.
+`internal/cli/docs_website_deploy_test.go`, the checker for the two website
+files below, is written the same way: it reads a staged copy **while it
+exists**, falls back to the real `.github/workflows/website-*.yml` once it is
+gone, and fails if both copies exist at once.
 
 ## `website-preview.yml` and `website-promote.yml`
 
@@ -154,17 +156,25 @@ permission error naming another API points at the two add-on roles
 `docs/website/preview-promote.md` lists. The copy-in is the owner's, and the
 first real run is what settles those.
 
-## `images.yml`
+## `images.yml` — applied in `6b57ba9`; what follows is the record
 
-Replaces `.github/workflows/images.yml` with the same file plus Task 1 of
-`docs/plans/2026-10-13-retire-image-mirror.md`: `publish-base` now also
-publishes a nightly-immune `<version>-pinned` tag and **signs the pushed
+**Not pending: this change landed.** It was copied into
+`.github/workflows/images.yml` and the staged file removed in `6b57ba9`
+("Update workflow rules", #385), so what this section describes is what the
+repository runs today, and the Go tests named below read the real file on its
+own. The section is kept as the record of *what* that change was and *why*, in
+the tense it was staged in; a future change to `images.yml` would replace it
+with a new one, the way it replaced the sections before it.
+
+It replaced `.github/workflows/images.yml` with the same file plus Task 1 of
+`docs/plans/2026-10-13-retire-image-mirror.md`: `publish-base` also began to
+publish a nightly-immune `<version>-pinned` tag and to **sign the pushed
 base image by its OCI digest with cosign (keyless)**. The committed file
-already carries the real `fugaro-base`/`publish-base` jobs (commit
+already carried the real `fugaro-base`/`publish-base` jobs (commit
 `356f7b1`) and the 0.7.0 cut that deleted the legacy per-kind `base` job
-(commit `838e0b0`), so this diff is small and touches `publish-base` alone.
+(commit `838e0b0`), so that diff was small and touched `publish-base` alone.
 Everything else in the file — the triggers, `version`, `history`,
-`fugaro-base`, `publish`, `verify-public`, `docker-tests` — is carried over
+`fugaro-base`, `publish`, `verify-public`, `docker-tests` — was carried over
 verbatim, comments included. Diff summary against the committed file:
 
 - **`publish-base`'s `permissions` gain `id-token: write`,** alongside the
@@ -263,12 +273,12 @@ produce some problem, so no check can rot unnoticed — and
 `TestImagesWorkflowPublishesAndVerifiesEveryImage` keep passing unmodified
 against this file (`readImagesWorkflow` reads this pending copy first).
 
-### Why this is pending here, and the timing that matters
+### Why it was staged here, and the timing it had to meet
 
 Fugaro cannot push a change under `.github/workflows/` from an agent run
-(GitHub rejects it), so this diff is staged here for a human to copy in by
-hand. **The copy must land on `main` before that release's version-bump
-PR's merge commit is created and tagged**, and this is the whole of the
+(GitHub rejects it), so this diff was staged here for a human to copy in by
+hand. **The copy had to land on `main` before that release's version-bump
+PR's merge commit was created and tagged**, and this is the whole of the
 authority for that requirement (design `docs/design/retire-image-mirror.md`
 §5, §8; plan Task 1's rollout precondition): GitHub Actions runs a tag
 push's workflow *exactly as that file exists in the tagged commit*, and
@@ -278,9 +288,12 @@ Once the copy is in, that release's own tag push runs the updated
 very same push — there is no earlier, separate tag push to wait for, and a
 signed image from some *other* release could never help, because the
 copy-time resolve (`basepin.Resolve`) only ever reads the **installed CLI's
-own version's** tag. The release process cannot enforce this by itself.
+own version's** tag. The release process cannot enforce this by itself. The
+same constraint applies to any future change to `images.yml`, staged here
+again: it must be copied in before that release's version-bump merge commit
+is tagged.
 
-The owner steps, exactly:
+The steps the copy used, exactly (run in `6b57ba9`):
 
 ```sh
 # 1. Review this file, then copy it in BEFORE the version-bump merge commit
@@ -328,17 +341,19 @@ the release-day bytes or a re-signed equivalent — never an unsigned digest.
 The nightly never touches it: that is the property the tag exists for, and
 what Check 39e verifies.
 
-### Not verified
+### Not verified *at the time it was staged*
 
-This file has never run in GitHub Actions, and neither has cosign under it:
-no Docker daemon, no network access and no live action of any kind were
-available or permitted in this run. Nothing about a real `publish-base` run
+This is the staged run's own note, kept as part of the record. The file has
+since been copied in, so the signing chain it describes is CI's to show on a
+tag push from now on — but **none of it was exercised by the run that wrote
+it**: in that run there was no Docker daemon, no network access and no live
+action of any kind
+available or permitted. Nothing about a real `publish-base` run
 (the `-pinned` tag actually appearing in ghcr.io, the signature being
 attached, an anonymous `docker pull` of `-pinned`, or the nightly genuinely
-leaving it alone) was exercised. What is verified is the YAML shape through
-the Go tests named above, read from this pending copy; the real workflow run
-is CI's, once this file is copied into `.github/workflows/images.yml`
-(removing it from here) and a tag push or a PR touching `images/**` runs it.
+leaving it alone) was exercised. What that run verified is the YAML shape
+through the Go tests named above, read from the pending copy then; the real
+workflow run is CI's, and that copy has since landed.
 
 Two honest limits of this diff, both deliberate:
 
@@ -359,4 +374,4 @@ Copied in on 2026-10-17 (#504): `.github/workflows/ci.yml`'s `terraform` job now
 
 ## Before you copy: check the action pins
 
-Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so the pins in `images.yml` here can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` here to be a full commit SHA; once the pending file is gone it also requires the real file's pins to agree with the other workflows. Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/*.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.
+Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so a staged file's pins can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` **here** to be a full commit SHA; once a staged file is copied in and gone from here, the same test also requires its pins to agree with the other workflows' — `images.yml` is that test's subject, so that comparison is live for it. Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/*.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.

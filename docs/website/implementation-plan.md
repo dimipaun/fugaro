@@ -64,12 +64,12 @@ This is a plan for a second artifact that does not exist yet, in a repository wh
 
 ## 5. File structure
 
-**What exists today:** nothing under `website/`; nothing under `docs/website/` except the four documents this plan's PR adds; no CLI reference; no generator of any kind; `internal/cli/docs_*.go` as the only document-pinning tests.
+**What exists today:** nothing under `website/`; nothing under `docs/website/` except the four documents this plan's PR adds and the W2.1 amendment's fifth, `preview-promote.md` (below); no CLI reference; no generator of any kind; `internal/cli/docs_*.go` as the only document-pinning tests.
 
 **What this plan creates:**
 
 ```
-docs/website/                     # this PR — the four documents, and nothing else
+docs/website/                     # the plan's PR — the four documents; W2.1's amendment of 2026-10-18 adds a fifth, preview-promote.md (the owner-only one-time setup the two staged workflows need)
 docs/pending-workflows/
   website-preview.yml             # W2.1 — staged, for the owner to copy; the manual preview deploy (amendment of 2026-10-18)
   website-promote.yml             # W2.1 — staged, for the owner to copy; the owner-only promote to live (amendment of 2026-10-18)

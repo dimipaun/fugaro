@@ -229,15 +229,37 @@ this page; that is the setup above being incomplete, not a bug in the workflow.
 
 ## What this authorises, and the accepted limits
 
-- **Anyone with write access to the repository can deploy a preview channel**,
-  and cannot touch the live channel. That is a real capability: a preview build
-  is public, and a write-access holder can also dispatch a *branch's* copy of
-  the workflow file. The WIF provider is conditioned on the repository and the
-  event, not on the ref or the actor, so the federation exchange would succeed
-  for such a run. The owner accepted the preview half of this on 2026-10-18
-  (previews are manual and public, and the write-access set is the collaborators
-  who can already merge to `main`).
-- **A tighter provider is available if that changes.** Adding
+- **Anyone with write access to the repository can reach the live channel, not
+  only the previews.** The preview/live split is *not* a boundary in the
+  credential: it is held by the two files' own contents, and the file that runs
+  is the one the dispatched **ref** has. Three concrete paths, in increasing
+  order of what the actor has to do:
+  - **A preview dispatch.** `gh workflow run website-preview --ref <any branch>
+    -f channel=…` works for a write-access holder against *any* branch of this
+    repository, not only `main`, and the deploy's output is a **public** URL.
+    `channel=live` is refused, but that refusal is about the channel *name*: it
+    says nothing about what the credential behind the run may write.
+  - **A branch's own copy of a workflow file.** GitHub runs a
+    `workflow_dispatch` workflow as the dispatched ref has it, not as `main` has
+    it. A branch copy of `website-promote.yml` with its `if:` and its
+    `environment:` removed is a promotion that never requests an approval and
+    never consults `github.actor`.
+  - **The credential is not scoped to previews either.** The WIF provider is
+    conditioned on the repository and on `workflow_dispatch` — not on the ref,
+    the actor or the environment — and the deployer service account holds
+    `roles/firebasehosting.admin` on the project, which is exactly the role that
+    writes the live channel. Any of the runs above is issued a token that can
+    write live.
+  The owner accepted the preview half of this on 2026-10-18 (previews are manual
+  and public, and the write-access set is the collaborators who can already merge
+  to `main`), and accepted the live half knowingly, with the next bullet as the
+  way to close it. **What the environment and the actor guard stop is an
+  accidental promotion by someone who is not the owner, and a promotion the
+  owner did not review; they are not a boundary against a write-access holder
+  who means it, because the provider hands out the same credential whatever the
+  workflow file says.**
+- **A tighter provider is available, and is the first thing to change if that
+  exposure is to be closed rather than accepted.** Adding
   `assertion.ref == 'refs/heads/main'` to the provider's condition restricts the
   *run's* ref; and because the promote job carries an environment, GitHub's OIDC
   token includes an `environment` claim, so a second provider conditioned on
@@ -298,6 +320,6 @@ Specifically unexercised, and each is named so the first real run settles it:
 - [`docs/pending-workflows/README.md`](../pending-workflows/README.md) — why these files are staged, and the copy-in steps
 - [`scripts/deploy-website.sh`](../../scripts/deploy-website.sh) — the same build, gate and deploy for a human at a terminal, and the channel pattern both workflows use
 - [`firebase.json`](../../firebase.json) — the hosting configuration the deploy reads (one site, no project id, no redirects)
-- [`website/data/site.yaml`](../data/site.yaml) — the canonical URL the live site is served on
+- [`website/data/site.yaml`](../../website/data/site.yaml) — the canonical URL the live site is served on
 - [`docs/website/implementation-plan.md`](implementation-plan.md) — Task W2.1, whose credential rule (F14) and D91/D109 constraints this pair implements
 - [`docs/gcp-live-checklist.md`](../gcp-live-checklist.md) — checks 69a and 69b, the owner-run live checks
