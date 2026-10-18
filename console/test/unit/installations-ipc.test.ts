@@ -72,9 +72,10 @@ function fakeIpcMain(): IpcMainLike & { readonly listeners: Map<string, (event: 
 }
 
 /** fakeWindow is the slice of Electron's BrowserWindow the picker uses. */
-function fakeWindow(options: Record<string, unknown> = {}) {
+function fakeWindow(options: Record<string, unknown> = {}, loadFails?: 'closed' | 'error') {
   const handlers = new Map<string, (...args: unknown[]) => void>()
   let openHandlerSet = false
+  let destroyed = false
   const contents = {
     on: (name: string, handler: (...args: unknown[]) => void) => {
       handlers.set(name, handler)
@@ -100,8 +101,15 @@ function fakeWindow(options: Record<string, unknown> = {}) {
       // has loaded; the fake records the URL and resolves, which is what the
       // picker's `open()` awaits.
       window.loaded.push(url)
+      // The operator closes the window while the document loads: Electron
+      // destroys it and rejects the load with ERR_ABORTED.
+      if (loadFails === 'closed') {
+        destroyed = true
+        throw new Error('ERR_ABORTED (-3) loading app://console/installations.html')
+      }
+      if (loadFails === 'error') throw new Error('ERR_FAILED (-2) loading app://console/installations.html')
     },
-    isDestroyed: () => false,
+    isDestroyed: () => destroyed,
     focus: () => undefined,
     show: () => undefined,
     fire(name: string, ...args: unknown[]): void {
@@ -113,11 +121,12 @@ function fakeWindow(options: Record<string, unknown> = {}) {
 
 /** pickerOver builds a picker over fakes, with one userData directory of its
  * own. It returns the picker and the listeners it registered. */
-function pickerOver(options: { readonly userData?: string } = {}) {
+function pickerOver(options: { readonly userData?: string; readonly loadFails?: 'closed' | 'error' } = {}) {
   const ipcMain = fakeIpcMain()
+  const loadFails = options.loadFails
   const windows: ReturnType<typeof fakeWindow>[] = []
   const BrowserWindow = function BrowserWindow(this: unknown, options: Record<string, unknown>) {
-    const window = fakeWindow(options)
+    const window = fakeWindow(options, loadFails)
     windows.push(window)
     return window
   } as unknown as new (options: unknown) => never
@@ -403,6 +412,17 @@ describe('the picker’s add', () => {
       ...consoleWebPreferences(),
       preload: '/work/repo/console/dist/preload/installations.js',
     })
+  })
+
+  it('treats a picker closed while it loads as dismissed, not as a failure', async () => {
+    // The first run awaits `openOnFirstRun()` inside `main`, whose catch quits
+    // the console: a load aborted because the operator closed the picker must
+    // not reach it. Any other load failure still does.
+    const dismissed = pickerOver({ loadFails: 'closed' })
+    await expect(dismissed.picker.openOnFirstRun()).resolves.toBeUndefined()
+    expect(dismissed.windows).toHaveLength(1)
+    const broken = pickerOver({ loadFails: 'error' })
+    await expect(broken.picker.open()).rejects.toThrow(/ERR_FAILED/)
   })
 
   it('is opened from the menu item and from nowhere else', async () => {

@@ -279,24 +279,36 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
     // (`buildHardenedWindow` in `src/main/window.ts`): the three denials, every
     // permission denied, the title kept, shown when ready, one load. Only the
     // options differ, and they are `consoleWebPreferences()` plus this preload.
-    await buildHardenedWindow(
-      { BrowserWindow: deps.BrowserWindow, session: deps.session },
-      pickerOptions(pickerPreloadPath(deps.appPath)),
-      PICKER_ENTRY_URL,
-      (built) => {
-        built.on('closed', () => {
-          // The tokens are dropped with the window: a token is a capability to
-          // name one path, and a window that is gone has no use for one. This is
-          // also what makes "at most eight outstanding" a bound on a *session*
-          // rather than on a process.
-          tokens.dropAll()
-          window = null
-        })
-        // Held before the load, so a second `open()` while this one loads
-        // focuses this window rather than building another.
-        window = built
-      },
-    )
+    let opening: BrowserWindow | null = null
+    try {
+      await buildHardenedWindow(
+        { BrowserWindow: deps.BrowserWindow, session: deps.session },
+        pickerOptions(pickerPreloadPath(deps.appPath)),
+        PICKER_ENTRY_URL,
+        (built) => {
+          opening = built
+          built.on('closed', () => {
+            // The tokens are dropped with the window: a token is a capability to
+            // name one path, and a window that is gone has no use for one. This is
+            // also what makes "at most eight outstanding" a bound on a *session*
+            // rather than on a process.
+            tokens.dropAll()
+            window = null
+          })
+          // Held before the load, so a second `open()` while this one loads
+          // focuses this window rather than building another.
+          window = built
+        },
+      )
+    } catch (error) {
+      // A picker the operator closed while its document was still loading
+      // rejects that load (`ERR_ABORTED`). That is a dismissal, not a failure:
+      // rethrowing it would reach `main`'s `reportAndQuit` on the first run and
+      // quit the whole console. Any other failure is still thrown.
+      const built = opening as BrowserWindow | null
+      if (built !== null && built.isDestroyed()) return
+      throw error
+    }
   }
 
   const rows = (): readonly InstallationRow[] => registry.rows()
@@ -420,7 +432,9 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
           installationsMenuTemplate({
             appName: 'Fugaro console',
             onOpen: () => {
-              void open()
+              open().catch((error: unknown) => {
+                console.error('[console] the installation picker could not be opened:', error)
+              })
             },
             onQuit: () => {
               // The real quit is Electron's `role: 'quit'`; the callback exists
