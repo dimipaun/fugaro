@@ -1640,11 +1640,14 @@ run "project_job_grants" {
       cpu            = "2"
       memory         = "8Gi"
       task_timeout_s = 21720
+      # FUGARO_GITHUB_APP_ID: a github shared job's precondition (job.tf,
+      # owner ruling 2026-10-17) refuses the plan without it.
       env = {
-        FUGARO_BUCKET      = "gs://fugaro-runs-proj-1234"
-        FUGARO_GCP_PROJECT = "proj-1234"
-        FUGARO_PROJECT     = "aurora"
-        FUGARO_REGION      = "us-east5"
+        FUGARO_BUCKET        = "gs://fugaro-runs-proj-1234"
+        FUGARO_GCP_PROJECT   = "proj-1234"
+        FUGARO_GITHUB_APP_ID = "123456789"
+        FUGARO_PROJECT       = "aurora"
+        FUGARO_REGION        = "us-east5"
       }
       secret_env = {}
       bucket_condition = {

@@ -53,16 +53,28 @@ func TestDocsManagedHardStopDesignIsWritten(t *testing.T) {
 		// The decisions, and the convention that they are unanswered.
 		"empty until the owner answers it",
 		"D79",
-		"D85",
+		"D86",
 		// How it is proven, and the one live step.
 		"internal/gcpfake",
-		"Check 70",
+		"Check 71",
 		"one writer owns each",
 		// The constraints that bind it.
 		"never `belong`",
 		"no secret is handled",
 		"SECURITY-SENSITIVE",
 		"## 8. UNVERIFIED",
+		// Review of 2026-10-18: Google's native spend cap is priced as an
+		// option, the unlink's data risk is stated in Google's words rather than
+		// as "data left in place", and the design says why an agent can neither
+		// fire the stop nor disarm it — the endpoint's caller check and the
+		// managed project's setIamPolicy are the two holes it closes.
+		"spendCap",
+		"might be removed and become non-recoverable",
+		"### 3.5 Why an agent can neither fire the stop nor disarm it",
+		"the subscription's own push identity",
+		"resourcemanager.projects.setIamPolicy",
+		"costAmount",
+		"forecastThresholdExceeded",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s lacks %q", path, want)
@@ -89,7 +101,7 @@ func TestDocsManagedHardStopDecisionsAreNumberedAndUnanswered(t *testing.T) {
 	// line, so its cells are what "|" separates and the answer is the last of
 	// them: the design's §5 table is written with five columns and the fifth is
 	// the owner's.
-	for _, d := range []string{"D79", "D80", "D81", "D82", "D83", "D84", "D85"} {
+	for _, d := range []string{"D79", "D80", "D81", "D82", "D83", "D84", "D85", "D86"} {
 		if got := strings.Count(doc, "**"+d+"**"); got != 1 {
 			t.Errorf("%s names %s %d times in the decision block's own form; want exactly 1", path, d, got)
 			continue
@@ -107,8 +119,8 @@ func TestDocsManagedHardStopDecisionsAreNumberedAndUnanswered(t *testing.T) {
 			t.Errorf("%s: %s's owner's-answer cell holds %q; the column is empty until the owner answers it, and a design that answers its own decision claims an approval it does not have", path, d, answer)
 		}
 	}
-	if strings.Contains(doc, "D86") {
-		t.Errorf("%s names D86: the block is D79 to D85, and a decision added later takes the next number", path)
+	if strings.Contains(doc, "D87") {
+		t.Errorf("%s names D87: the block is D79 to D86, and a decision added later takes the next number", path)
 	}
 	// The next free number is claimed from the design that states it, not
 	// re-derived here: this assertion is what fails if managed-projects.md's
@@ -206,6 +218,12 @@ func TestDocsManagedHardStopCitationsExist(t *testing.T) {
 		// other sentence.
 		"shares the container and its user with the runner",
 	})
+	// And the invariant §3.4 rests the project-scoped binding on: the
+	// deployer holds no resourcemanager.projects.* permission, so no identity
+	// a managed run can reach may remove the stop's binding.
+	assertLineCitations(t, path, doc, "deploy/terraform/gcp/modules/installation/deployer.tf", []string{
+		"no resourcemanager.projects.* at all",
+	})
 }
 
 // assertLineCitations resolves every "path:N" and "path:N-M" citation in doc
@@ -259,10 +277,10 @@ func TestDocsManagedHardStopClaimsNothingWasDone(t *testing.T) {
 		"Owner answered",
 		"the owner answered D79",
 		// No row or section of the register: that is the implementation task's.
-		"## Check 70",
-		"| 70 |",
+		"## Check 71",
+		"| 71 |",
 		// No hand-off that names a number the register does not hold.
-		"Check 70, RUN",
+		"Check 71, RUN",
 	} {
 		if strings.Contains(doc, banned) {
 			t.Errorf("%s contains %q: the design states the mechanism and the open decisions, and writes no answer, no check row and no check section of its own", path, banned)
