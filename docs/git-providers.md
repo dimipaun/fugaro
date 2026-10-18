@@ -61,7 +61,7 @@ These four are all of it: never add **Workflows** (below). Then **install the Ap
 
 **On a shared project job, both halves arrive differently.** A repository on a project profile runs on a job several repositories share (design §4.1), and that job carries the credential in two pieces, one of each kind:
 
-- the App's **ID** in the job's environment, as the plain variable `FUGARO_GITHUB_APP_ID` (the same name the per-repository path sets, `internal/infra/spec.go`) — it is a number on the App's settings page and is not a secret, so it goes in the job's env like any other value;
+- the App's **ID** in the job's environment, as the plain variable `FUGARO_GITHUB_APP_ID` (`providers.EnvGitHubAppID`, `internal/gitprov/providers/providers.go:24`; the same name `internal/infra/spec.go` sets for the per-repository path) — it is a number on the App's settings page and is not a secret, so it goes in the job's env like any other value;
 - the App's **private key** as a mounted secret (`github-app-key`), never as an environment variable: the env is readable by anything running in the container, and a job that serves several repositories reads this one secret for all of them.
 
 If you set a shared job up by hand, set both: the runner mints its installation token from the pair, and a job with the key but no ID, or the ID but no key, fails at bootstrap. Nothing else of the App changes — the runner still mints its token **per repository**, from the repository the run names, so a shared job's reach is bounded by what the App is installed on, not by the job. That reach is the case §4.1 accepted on the record: a compromise in one repository's run can mint tokens for the repositories the profile admits.
