@@ -281,7 +281,8 @@ run "options: a present list is not empty" \
 run "options: the count bound" \
   "  if (value.length > OPTIONS_MAX) return { bad: refuse(REFUSALS.TOO_MANY, 'options') };" ""
 run "options: two options that read alike are refused" \
-  "    if (seen.has(option.value)) {" "    if (false) {"
+  "    if (seen.has(option.value)) return { bad: refuse(REFUSALS.DUPLICATE_ENTRY," \
+  "    if (false) return { bad: refuse(REFUSALS.DUPLICATE_ENTRY,"
 
 # A heartbeat's advertised agents: non-empty, bounded, distinct.
 run "agents: a present list is not empty" \
@@ -289,7 +290,8 @@ run "agents: a present list is not empty" \
 run "agents: the count bound" \
   "  if (value.length > AGENTS_MAX) return { bad: refuse(REFUSALS.TOO_MANY, 'agents') };" ""
 run "agents: two agents under one id are refused" \
-  "    if (seen.has(id.value)) {" "    if (false) {"
+  "    if (seen.has(id.value)) return { bad: refuse(REFUSALS.DUPLICATE_ENTRY," \
+  "    if (false) return { bad: refuse(REFUSALS.DUPLICATE_ENTRY,"
 run "agents: only id and name, nothing else" \
   "      if (!AGENT_FIELDS.includes(key)) return { bad: refuse(REFUSALS.UNKNOWN_FIELD, \`agents[\${i}].\${key}\`) };" "      if (false) {"
 run "heartbeat: the tag is required (O7)" \
@@ -298,11 +300,12 @@ run "heartbeat: the tag is required (O7)" \
 
 # An action record: complete, or refused.
 run "action: the unknown-field guard" \
-  "    if (!ACTION_FIELDS.includes(key)) {" "    if (false) {"
+  "    if (!ACTION_FIELDS.includes(key)) return { bad: refuse(REFUSALS.UNKNOWN_FIELD," \
+  "    if (false) return { bad: refuse(REFUSALS.UNKNOWN_FIELD,"
 run "action: every part is required" \
   "  for (const key of ACTION_REQUIRED) {
-    if (!Object.hasOwn(value, key)) {" "  for (const key of ACTION_REQUIRED) {
-    if (false) {"
+    if (!Object.hasOwn(value, key)) return" "  for (const key of ACTION_REQUIRED) {
+    if (false) return"
 run "action: the verb vocabulary is the ruling's three" \
   "  if (!ACTIONS.includes(value.verb)) return { bad: refuse(REFUSALS.UNKNOWN_VERB, 'action.verb') };" ""
 run "action: a verb and its target agree (both shapes at once)" \
