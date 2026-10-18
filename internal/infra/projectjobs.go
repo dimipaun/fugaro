@@ -128,36 +128,67 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 		if err != nil {
 			return nil, err
 		}
-		// The account axis: empty until phase 5, because no profile may
-		// mount a Claude OAuth token yet — projectpolicy.validProfiles
-		// refuses such a profile above, which is the one rule publish, this
-		// deployer and both readers of the node share.
-		const account = ""
-		saID := gcp.ProjectServiceAccountID(name, pr.Provider, account)
-		out[gcp.ProjectJobName(name, pr.Provider, account)] = ProjectJob{
-			Profile:        name,
-			Provider:       pr.Provider,
-			Account:        account,
-			Job:            gcp.ProjectJobName(name, pr.Provider, account),
-			ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.ProjectSADisplayName(name, pr.Provider, account)},
-			Image:          lc.BaseImage(config.BaseKind),
-			CPU:            strconv.Itoa(pr.CPU),
-			Memory:         pr.Memory,
-			TaskTimeoutS:   int((timeout + backend.TaskTimeoutSlack) / time.Second),
-			Env:            env,
-			SecretEnv:      secretEnv,
-			BucketCondition: Condition{
-				Title:      gcp.BucketConditionTitle(saID),
-				Expression: gcp.ProjectBucketCondition(bucket, gcp.JobBucketPrefixes),
-			},
-			TokenCondition: Condition{
-				Title:      gcp.ProjectTokenBucketConditionTitle(saID),
-				Expression: gcp.ProjectTokenBucketCondition(bucket),
-			},
-			Vertex: vertex,
+		// One job per account the profile serves (config.ProjectJobAccounts,
+		// the one function the deployer, the launcher and the runner compute
+		// the axis with): the profile's no-account job, whose name, service
+		// account and mounts are byte for byte what this deployer built before
+		// accounts existed (D9), plus one per account the profile lists.
+		//
+		// Each account's job gets its own copy of the profile's mounts — the
+		// token of one account must never ride on another's job — and its own
+		// service account, which is the only thing that may read that account's
+		// token (D2).
+		for _, account := range config.ProjectJobAccounts(pr) {
+			jobSecrets := maps.Clone(secretEnv)
+			if err := projectAccountMount(lc, name, pr, account, jobSecrets, env); err != nil {
+				return nil, err
+			}
+			saID := gcp.ProjectServiceAccountID(name, pr.Provider, account)
+			if err := addProjectJob(out, ProjectJob{
+				Profile:        name,
+				Provider:       pr.Provider,
+				Account:        account,
+				Job:            gcp.ProjectJobName(name, pr.Provider, account),
+				ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.ProjectSADisplayName(name, pr.Provider, account)},
+				Image:          lc.BaseImage(config.BaseKind),
+				CPU:            strconv.Itoa(pr.CPU),
+				Memory:         pr.Memory,
+				TaskTimeoutS:   int((timeout + backend.TaskTimeoutSlack) / time.Second),
+				Env:            env,
+				SecretEnv:      jobSecrets,
+				BucketCondition: Condition{
+					Title:      gcp.BucketConditionTitle(saID),
+					Expression: gcp.ProjectBucketCondition(bucket, gcp.JobBucketPrefixes),
+				},
+				TokenCondition: Condition{
+					Title:      gcp.ProjectTokenBucketConditionTitle(saID),
+					Expression: gcp.ProjectTokenBucketCondition(bucket),
+				},
+				Vertex: vertex,
+			}); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return out, nil
+}
+
+// addProjectJob adds j to the job set, refusing a job whose name or service
+// account another (profile, provider, account) already holds. Both are derived
+// with a short hash (gcp.ProjectJobName, gcp.ProjectServiceAccountID), so a
+// collision is improbable rather than impossible, and a silent replacement in
+// this map would deploy one account's job in another's place, or give two
+// jobs one service account that may read both accounts' tokens.
+func addProjectJob(out map[string]ProjectJob, j ProjectJob) error {
+	for _, o := range out {
+		if o.Job == j.Job || o.ServiceAccount.AccountID == j.ServiceAccount.AccountID {
+			return userErr("profiles.%s: the shared job of (%s, %s, account %q) derives the job name %s and the service account %s, and the job of (%s, %s, account %q) already holds %s and %s: two jobs must never share either. Rename one profile or account and run fugaro init again",
+				j.Profile, j.Profile, j.Provider, j.Account, j.Job, j.ServiceAccount.AccountID,
+				o.Profile, o.Provider, o.Account, o.Job, o.ServiceAccount.AccountID)
+		}
+	}
+	out[j.Job] = j
+	return nil
 }
 
 // githubProvider is the provider kind a shared job serves in phase 3
@@ -284,17 +315,16 @@ func projectJobEnv(lc *localcfg.Config, bucket string, vertex bool) map[string]s
 // Two rules refuse a secret, and they are held at two different places on
 // purpose. A Claude OAuth token — the default account's claude-oauth-token and
 // a named account's alike — is refused by the profile's own rule, before any
-// job is built: a Claude account is person-owned (design D2 and §7: D2 sweeps
-// API keys and the git credential into project scope, never
-// claude-oauth-token) and its allow_data_to is a per-repository list a shared
-// job cannot honour, since every repository the profile admits runs on the
-// same job. ProjectJobs runs projectpolicy.CheckProfiles first, so that rule
-// is the one this function's callers hit — the same rule `fugaro project
-// policy publish` holds a profile to, which is the point of it being there
-// rather than here (an earlier revision repeated the refusal below, where it
-// could never be reached). Phase 5 decides how an account reaches a shared
-// job; until then the account axis of the job's name is always empty, and the
-// field stays so that phase does not rename every job.
+// job is built: a Claude token is never something an operator lists among a
+// profile's mounts (design project-named-oauth-tokens §4.1, D4), and that rule
+// stays in force now that a profile can serve accounts. The permission is the
+// profile's claude_accounts field, and the token reaches an account job
+// through projectAccountMount alone, never through this function.
+// ProjectJobs runs projectpolicy.CheckProfiles first, so that rule is the one
+// this function's callers hit — the same rule `fugaro project policy publish`
+// holds a profile to, which is the point of it being there rather than here
+// (an earlier revision repeated the refusal below, where it could never be
+// reached).
 //
 // The Bitbucket token is the one this function refuses itself, because
 // Bitbucket stays per-repository in phase 3 (see ProjectJobs) and that is not
@@ -330,6 +360,72 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 		}
 	}
 	return secretEnv, nil
+}
+
+// projectAccountMount adds the one secret_env entry that delivers an account
+// job's Claude OAuth token: CLAUDE_CODE_OAUTH_TOKEN → the account's own
+// logical secret (config.ClaudeAccountSecret). It is the carrier the
+// per-repository path already uses (internal/infra's SecretMounts, `case
+// "oauth"`), so the project level has no second delivery path to maintain
+// (design project-named-oauth-tokens §4.3, D1).
+//
+// It is deliberately ONE function, and it is the seam the security service
+// replaces (§4.6). When the credentials proxy lands, this function stops
+// adding the entry and nothing else moves: not the job's name (a function of
+// the (profile, provider, account) triple, gcp.ProjectJobName, and of no
+// mount), not its profile, not the policy's accounts block, and not the grant
+// — modules/project/sa.tf's google_secret_manager_secret_iam_member.job
+// iterates the job's own secret_env, so the account job's secretAccessor
+// member on its own account's secret goes with this entry and with nothing
+// else. A second place that mounted the token would be a second thing to
+// remove, and a second thing to get wrong in the meantime.
+//
+// account is one entry of config.ProjectJobAccounts, so the empty one is the
+// profile's no-account job: it carries the default account's token exactly
+// when the profile lists "default" (D5), which is the same rule that function
+// states — a profile that lists no account mounts no Claude token anywhere.
+//
+// The mount is refused, rather than granted, when the installation creates no
+// container for it: a job whose secret_env names a container the root does not
+// create plans nothing, and the job then fails at run time, in the credential.
+// The configs that reach here are already refused earlier — publish and init
+// derive the accounts block through projectpolicy.DeriveAccounts, which
+// requires the account's own list (claude_accounts.<name>.allow_data_to, or
+// project_secrets.<claude-oauth-token>.allow_data_to for the default account)
+// to name at least one repository, and a non-empty list there is exactly what
+// projectSecretContainers turns into a container — so this is the backstop
+// that keeps the two rules from drifting apart, and the one that fires if
+// either stops holding.
+func projectAccountMount(lc *localcfg.Config, profile string, pr config.JobProfile, account string, secretEnv, env map[string]string) error {
+	if account == "" && !slices.Contains(pr.ClaudeAccounts, config.DefaultClaudeAccount) {
+		return nil
+	}
+	logical := config.ClaudeAccountSecret(account)
+	if _, ok := projectSecretContainers(lc)[logical]; !ok {
+		// The block the operator edits differs by account: the default
+		// account is not definable in claude_accounts (its name is reserved
+		// there), so its list — and so its container — comes from the
+		// project_secrets entry that already decides whether a project-wide
+		// copy of claude-oauth-token exists at all (design §4.2, D6).
+		source, shown := "claude_accounts."+account+".allow_data_to", account
+		if account == "" {
+			source, shown = "project_secrets."+logical+".allow_data_to", config.DefaultClaudeAccount
+		}
+		return userErr("profiles.%s.claude_accounts: the account %q has no project-wide copy in this installation, so no shared job can mount its token: a job's secret_env names a container of the installation's project-wide secrets, and this installation creates none for %s. Give the account a non-empty list — %s, whose repositories are also what the account's policy list is derived from — and run fugaro init again",
+			profile, shown, logical, source)
+	}
+	v := config.ReservedSecrets[config.ClaudeOAuthToken]
+	if _, dup := env[v]; dup {
+		return userErr("profiles.%s: the secret variable %s collides with a variable the platform sets", profile, v)
+	}
+	// Never over another mount of the same variable: the profile rules refuse
+	// a Claude token among a profile's secrets, and a silent overwrite here
+	// would swap one credential for another if that rule ever moved.
+	if prev, dup := secretEnv[v]; dup {
+		return userErr("profiles.%s: the secret variable %s is already mounted from %s, so the account's token cannot be mounted as it", profile, v, prev)
+	}
+	secretEnv[v] = logical
+	return nil
 }
 
 // projectSecretEnv is the variable a project-wide secret is mounted as: the
