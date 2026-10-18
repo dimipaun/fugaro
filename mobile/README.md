@@ -230,8 +230,10 @@ Each was planted, the run went red, the bug was removed:
 | the recording ignores the day it is asked for | the door's end-to-end test and `the granted nodes add up to a document…` |
 | the door re-exports a path composer | `the door carries no port and no path composer` |
 
-The eight below are the ones a **code review** of this task found (see "The
-review" under them):
+The ones below are the **code review** of this task: its eight findings, plus
+the mutations that followed from reading the CLI's own code to fix them (the
+backwards counter, and the connection's age in the two error states) — see "The
+review" under the table:
 
 | Mutation | Went red |
 | --- | --- |
