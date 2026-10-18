@@ -930,11 +930,16 @@ function plantedCookies({ domain = null } = {}) {
     `_gid=GA1.2.444${suffix}`,
     `_gat=1${suffix}`,
     `${GA_THROTTLE}=1${suffix}`,
+    `_gate=1${suffix}`,
     `theme=dark${suffix}`,
   ]
 }
 
-/** The names a case expects a withdrawal to remove, and the one it must leave alone. */
+// The site's own cookies, which a withdrawal must leave exactly where they are: one whose name
+// merely begins with the throttle cookie's letters, and one with nothing to do with Google.
+const KEPT_NAMES = ['_gate', 'theme']
+
+/** The names a case expects a withdrawal to remove, and the ones it must leave alone. */
 const GA_NAMES = [GA_CLIENT, GA_CONTAINER, '_gid', '_gat', GA_THROTTLE]
 
 function assertForgotten(page, where) {
@@ -942,7 +947,9 @@ function assertForgotten(page, where) {
   for (const name of GA_NAMES) {
     assert.ok(!left.includes(name), `${where}: ${name} survived the withdrawal, so the identifiers the accepted script left are still in the browser (owner's ruling, 2026-10-18)`)
   }
-  assert.ok(left.includes('theme'), `${where}: the withdrawal deleted theme, which is not a cookie Google set`)
+  for (const name of KEPT_NAMES) {
+    assert.ok(left.includes(name), `${where}: the withdrawal deleted ${name}, which is not a cookie Google set`)
+  }
 }
 
 test('the site sets no cookie of its own, before consent or after it', () => {

@@ -303,9 +303,10 @@
       return names
     }
 
-    // The registrable parent domain the tag may have written a cookie to instead of the host:
-    // the host without its leftmost label, and only where there is a label to spare. An apex
-    // host has none — what is left of it is a public suffix and not a domain — and nothing
+    // The parent domain the tag may have written a cookie to instead of the host: the host
+    // without its leftmost label — the registrable domain of a `www.` host, which is the case
+    // the tag's own `auto` setting picks — and only where there is a label to spare. An apex
+    // host has none (what is left of it is a public suffix and not a domain), and nothing
     // below the parent is tried: no wildcard, no guessed suffix.
     function parentDomain(host) {
       var labels = String(host || '').split('.')
@@ -327,13 +328,15 @@
     }
 
     // Forget what the tag stored, and nothing else: the cookies this property wrote, plus the
-    // throttling ones the browser is actually holding. Anything the page did not find in the
-    // jar is not written to at all.
+    // throttling ones the browser is actually holding — `_gat` and the names under it, which
+    // is as far as the match goes: `_gate` or `_gather` are somebody else's cookie and are
+    // left alone. Anything the page did not find in the jar is not written to at all.
     function forget() {
       var held = heldNames()
       var names = cookieNames()
       for (var i = 0; i < held.length; i++) {
-        if (held[i].indexOf('_gat') === 0 && names.indexOf(held[i]) === -1) names.push(held[i])
+        var throttle = held[i] === '_gat' || held[i].indexOf('_gat_') === 0
+        if (throttle && names.indexOf(held[i]) === -1) names.push(held[i])
       }
       var host = (window.location && window.location.hostname) || ''
       for (var j = 0; j < names.length; j++) {
