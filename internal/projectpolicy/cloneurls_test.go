@@ -103,6 +103,8 @@ func TestDecodeRefusesBadCloneURLs(t *testing.T) {
 		{"a key with no owner", `{"github/app":"https://github.com/acme/app.git"}`, "canonical repository name"},
 		{"a key with an unknown provider", `{"gitlab/acme/app":"https://gitlab.com/acme/app.git"}`, "not on gitlab's host"},
 		{"a key with a truncated escape", `{"github%2":"https://github.com/acme/app.git"}`, "truncated escape"},
+		{"the same key twice", `{"github/acme/app":"https://github.com/acme/app.git","github/acme/app":"https://github.com/acme/other.git"}`, "twice"},
+		{"two keys for one repository", `{"github/acme/app":"https://github.com/acme/app.git","github%2Facme%2Fapp":"https://github.com/acme/other.git"}`, "both the repository"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p, found, err := Decode([]byte(`{"version":2,"clone_urls":` + tc.block + `}`))

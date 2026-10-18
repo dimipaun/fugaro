@@ -163,6 +163,64 @@ func TestSharedJobRefusalWhenTheCredentialCannotBeResolved(t *testing.T) {
 	}
 }
 
+// TestSharedJobRefusalIgnoresALayerThatDoesNotApply is the other side of the
+// same rule, and the reason the resolution is the runner's rather than a copy
+// of it: a carried layer whose `gcp_project` is not the file's own does not
+// apply to that file (runner.ResolveConfig computes Applied; config.Resolve's
+// anchor check is what it feeds), so the run resolves the fugaro.yaml alone and
+// its agent.auth comes from there. The launcher must judge that resolution —
+// the layer is valid, it is simply another GCP project's — and must not refuse
+// it as an unreadable one. A checkout whose `gcp_project:` changed after the
+// task was stored is exactly this state, and it is a run that starts perfectly
+// well.
+//
+// Mutation (run, restore): anchor the layer on the file's own project and
+// gcp_project and resolve it with config.Resolve (what this function did
+// before it called runner.ResolveConfig) — the layer no longer matches the
+// anchor, so this launch is refused with "the project layer its task carries is
+// invalid" and the run below never starts.
+func TestSharedJobRefusalIgnoresALayerThatDoesNotApply(t *testing.T) {
+	f := newProjectJobFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f.cloudFixture, projectJobOAuthLayer)
+	projectJobCheckoutYAML(t, projectJobAnchoredRepoYAML)
+
+	const run = "20261018-150000-dddd"
+	// The first attempt stores task.json and stops at the OAuth refusal, which
+	// is the stored task the rewrite below needs.
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "phase 5") {
+		t.Fatalf("the first attempt: %v", err)
+	}
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	s := runstore.Open(b, appSlug, run)
+	spec, err := s.ReadTask(ctx)
+	if err != nil {
+		t.Fatalf("task.json of the first attempt: %v", err)
+	}
+	// A layer of the same project and another GCP project: it parses, it is
+	// complete, and it does not apply to this checkout's file.
+	const other = "version: 1\nproject: aurora\ngcp_project: another-project\ndefaults:\n  agent: { auth: oauth }\n"
+	spec.ProjectLayer = &task.ProjectLayer{SHA256: config.LayerSum([]byte(other)), YAML: other}
+	if err := s.WriteTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); err != nil {
+		t.Fatalf("a repeat whose carried layer belongs to another GCP project: %v, want the launch to proceed (the layer does not apply, so the run resolves the file alone)", err)
+	}
+	if n := len(f.run.RunRequests()); n != 1 {
+		t.Errorf("the launch made %d jobs.run calls, want 1: the resolution it was judged on is the file's own", n)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Errorf("%d executions, want 1", n)
+	}
+}
+
 // TestSharedJobRefusalWhenTheCarriedLayerIsInvalid is the stored layer that no
 // longer parses: the bytes in task.json are the run's own, whatever wrote them
 // (an older binary's spelling of a key today's decoder rejects, an operator's
@@ -170,11 +228,11 @@ func TestSharedJobRefusalWhenTheCredentialCannotBeResolved(t *testing.T) {
 // instead of resolving against today's layer, which is not what the run
 // carries — the run would read the stored one.
 //
-// Mutation (run, restore): fall through with a nil layer instead of refusing on
-// the parse's problems (projectJobAgentAuth) — the launch then resolves the
-// checkout alone, whose own agent block is unset, so the auth reads "" and
-// checkProjectJobOAuth finds no oauth in it: the run launches on the shared
-// project job carrying the OAuth layer the stored task dictates, which is the
+// Mutation (run, restore): drop the LayerErr refusal (projectJobAgentAuth) and
+// resolve past the invalid layer — the launch then resolves the checkout alone,
+// whose own agent block is unset, so the auth reads "" and checkProjectJobOAuth
+// finds no oauth in it: the run launches on the shared project job carrying the
+// OAuth layer the stored task dictates, which is the
 // launch task 3.4a exists to refuse. This test (and the one above) then fail on
 // the first attempt already, since the stored layer is never consulted.
 func TestSharedJobRefusalWhenTheCarriedLayerIsInvalid(t *testing.T) {
@@ -215,8 +273,14 @@ func TestSharedJobRefusalWhenTheCarriedLayerIsInvalid(t *testing.T) {
 	}
 
 	_, _, err = execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cannot tell which Claude credential") || !strings.Contains(err.Error(), "the project layer its task carries is invalid") {
-		t.Fatalf("a repeat whose stored layer no longer parses: %v, want the carried layer named", err)
+	// The words are the runner's own (runner.ResolveConfig's LayerErr), because
+	// that is the resolution the launch is judged on: the run fails bootstrap on
+	// the same document, so a launcher that refused in different words would be
+	// describing a second rule. It names the layer by the sum the task carries,
+	// which is what makes the fix (republish, or launch the run again) findable.
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cannot tell which Claude credential") ||
+		!strings.Contains(err.Error(), "the task's project layer (sha256 ") || !strings.Contains(err.Error(), "is invalid") {
+		t.Fatalf("a repeat whose stored layer no longer parses: %v, want the carried layer named by its sum", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Errorf("%d executions, want none", n)

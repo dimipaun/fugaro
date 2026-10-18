@@ -935,11 +935,18 @@ func TestRestoreApplyCloudDropsTheOldProjectID(t *testing.T) {
 // confirm — and nothing is written when one of them fires.
 func TestRestorePlansTheConfigBeforeItAsks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "aurora.yaml")
-	const doc = "version: 1\nname: " + initProjectName + "\ngcp_project: " + initProject + "\nruns_bucket: somewhere-else\n"
+	const doc = "version: 1\nname: " + initProjectName + "\ngcp_project: " + initProject + "\nregion: us-east5\nruns_bucket: somewhere-else\n"
 	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	lc := &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, RunsBucket: "somewhere-else"}
+	// The selection is the file, parsed: planConfig parses rr.old with the same
+	// function selectProject's own load uses (localcfg.Load is Parse plus the
+	// read), so a fixture that writes one document and hand-builds the other
+	// tests a state no invocation reaches.
+	lc, err := localcfg.Parse([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
 	rr := &restoreRun{lc: lc, newID: restoreNewProj, path: path, old: mustRead(t, path)}
 	if err := rr.planConfig(); err == nil {
 		t.Fatal("a config whose runs bucket cannot move was planned")
