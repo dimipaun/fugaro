@@ -475,6 +475,61 @@ test('a consumer that takes the lease over does not act on what was already acte
   assert.equal(acted.length, keys.size, `a takeover re-acted a message\n${failure(report)}`);
 });
 
+test('a lease stamped ahead by more than the skew tolerance is treated as expired; behind it is held until its TTL', () => {
+  // The lease's skew rule, exercised through the harness rather than restated:
+  // consumer-1 takes the lease with its clock skewed by `skew`, and consumer-2
+  // (no skew) tries to take it at the same simulated instant. A lease stamped
+  // ahead of the reader by at most MAX_CLOCK_SKEW is fresh; one ahead by more
+  // is treated as expired, so no clock can hold the lease for ever; and one
+  // stamped *behind* the reader is fresh until its TTL, whatever the skew —
+  // so the direction of the comparison is pinned as well as its bound.
+  const takeoverAt = (skew) => {
+    const run = simulator({ schedule: { ...emptySchedule({ seed: 6 }), clocks: { 'consumer-1': skew } } });
+    const first = run.consumer('consumer-1');
+    const second = run.consumer('consumer-2');
+    first.pass();
+    assert.equal(run.store.lease.claim.holder, 'consumer-1');
+    second.pass();
+    const report = run.report();
+    return {
+      holder: run.store.lease.claim.holder,
+      second: report.lease.find((entry) => entry.consumer === 'consumer-2'),
+    };
+  };
+
+  const inside = takeoverAt(MAX_CLOCK_SKEW);
+  assert.equal(inside.holder, 'consumer-1');
+  assert.equal(inside.second.held, false);
+  assert.equal(inside.second.code, 'already-claimed');
+
+  const beyond = takeoverAt(MAX_CLOCK_SKEW + 1);
+  assert.equal(beyond.holder, 'consumer-2', 'a lease stamped beyond the tolerance held the lease');
+  assert.equal(beyond.second.held, true);
+
+  const behind = takeoverAt(-(MAX_CLOCK_SKEW + 1));
+  assert.equal(behind.holder, 'consumer-1', 'a lease stamped behind the reader was taken before its TTL');
+  assert.equal(behind.second.code, 'already-claimed');
+});
+
+test('the ledger acks each record at most once, and only once the store shows it acked', () => {
+  for (let seed = 0; seed < 120; seed += 1) {
+    const report = sweep(seeded(seed));
+    const acked = new Map();
+    for (const ack of report.acks) {
+      assert.equal(ack.outcome, 'acked', `a ledger ack answered ${ack.outcome}\n${failure(report)}`);
+      acked.set(ack.id, (acked.get(ack.id) ?? 0) + 1);
+    }
+    for (const [id, count] of acked) {
+      assert.equal(count, 1, `the ledger acked ${id} ${count} times\n${failure(report)}`);
+      assert.equal(
+        report.store.inbox.find((message) => message.id === id)?.acked,
+        true,
+        `the ledger acked ${id}, which the store does not show acked\n${failure(report)}`,
+      );
+    }
+  }
+});
+
 test('an expired prompt takes the safe path, and the harness invents no expiry rule of its own', () => {
   // Delivered after its TTL: refused, and never delivered at all.
   const late = simulator();

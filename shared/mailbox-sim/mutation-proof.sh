@@ -352,6 +352,28 @@ run "a write names only the fields the harness knows" \
   "        const readMessage = readOptional(input, ['id', 'text', 'kind'], 'message');" \
   "        const readMessage = readOptional(input, ['id', 'text', 'kind', 'nope'], 'message');"
 
+# The independent review's planted bugs, kept so they stay planted: each is a
+# way the harness could quietly stop exercising a rule it composes.
+run "a skew is added to the writer's clock, not subtracted from it" \
+  "    return clock.now() + (schedule.clocks[actor] === undefined ? 0 : schedule.clocks[actor]);" \
+  "    return clock.now() - (schedule.clocks[actor] === undefined ? 0 : schedule.clocks[actor]);"
+run "a delivery's state transition is carried into the plan" \
+  "          state = result.state;
+          delivered.push(" \
+  "          delivered.push("
+run "the ledger's ack is taken only for a record it holds as acted, never one already acked" \
+  "        const acted = state.seen.find((entry) => entry.status === STATUS.ACTED);" \
+  "        const acted = state.seen.find((entry) => entry.status === STATUS.ACTED || entry.status === STATUS.ACKED);"
+run "a delivery is judged at the consumer's now, so the replay window applies" \
+  "step(state, { type: EVENT.DELIVER, now: clock.now(), message, kind })" \
+  "step(state, { type: EVENT.DELIVER, now: message.at, message, kind })"
+
+# The lease's skew direction and the mailbox's ack-twice refusal live in
+# ../lease/ and ../mailbox/, whose own mutation proofs cover them; this suite
+# also kills the lease's skew-direction mutation (the 'treat as expired' test),
+# while a mailbox that re-acks an acked record is unreachable from here, because
+# the harness only asks for an ack when the ledger holds an acted record.
+
 # There is deliberately no mutation for `replyId`. The link between a reply and
 # the message it answers is the harness's own convention (the schema has no
 # `reply_to`: P6.3 proposes one, and P6.3 is NOT APPROVED), and the tests build

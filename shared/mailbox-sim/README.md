@@ -102,7 +102,7 @@ frame's fault has one source, or a run would have two answers to what happened t
 | fault | what it does |
 | --- | --- |
 | `duplicate` | the frame is delivered twice |
-| `reorder` | the frame arrives after the frame beside it |
+| `reorder` | the frame arrives after the frame beside it (in the same drain; a frame with no unreordered neighbour due with it arrives in place, and the fault is still recorded) |
 | `drop` | the frame never arrives |
 | `delay` | the frame arrives later, its `at` unchanged |
 
@@ -133,7 +133,8 @@ text and asserts the two reports are equal.
   reads (speaks) every reply it can see. It writes no other path.
 - **A consumer** takes the lease; if it does not hold it, it writes nothing and acts on
   nothing. If it holds it, it writes the heartbeat, delivers every unacked inbox message to
-  the ledger, acts on the oldest un-acted delivery, and then writes what it owes: a reply for
+  the ledger, acts on every un-acted delivery, oldest first (the ledger's own order), and
+  then writes what it owes: a reply for
   every record it **performed** on, and the ack for every record the ledger holds as `acted`.
   The ledger's transition is committed **before** the action is performed, so a lost race
   performs nothing.
@@ -176,6 +177,12 @@ Over 120 seeded schedules, each with three messages, two consumers and twelve pa
   winner acts; no pass has two consumers acting in it. Under a hand-written schedule whose
   skews make a takeover available every pass, the property still holds — a takeover does not
   re-act a message, because the ledger is the mailbox's and not the consumer's.
+- **At most one ledger ack per record**, and only for a record the store shows acked: every
+  ack the ledger gives answers `acked`, never twice for one id.
+- **The lease's skew rule, through the harness**: a lease stamped ahead of the reader by at
+  most `MAX_CLOCK_SKEW` is held; one millisecond more and it is treated as expired and taken
+  over; a lease stamped *behind* the reader by the same amount is held until its TTL, which
+  pins the direction of the comparison as well as its bound.
 - **The safe path for an expired prompt**: delivered after its TTL it is refused `expired`
   and never delivered at all; delivered in time and acted on too late the ledger consumes it
   exactly once and answers `stale-pending`, and the harness performs **nothing** with it — no

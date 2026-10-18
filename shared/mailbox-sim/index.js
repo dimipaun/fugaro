@@ -59,8 +59,8 @@
 //     no other path.
 //   * a **consumer** takes the lease, and if it does not hold it, writes
 //     nothing and acts on nothing. If it holds it, it writes the heartbeat,
-//     delivers every unacked inbox message to the ledger, acts on the oldest
-//     un-acted delivery, and then writes what it owes: a reply for every record
+//     delivers every unacked inbox message to the ledger, acts on every
+//     un-acted delivery, oldest first, and then writes what it owes: a reply for every record
 //     it **performed** on, and the ack for every record the ledger holds as
 //     `acted`. The two are not the same set — a stale record is `acted` and was
 //     not performed — and the ledger can only speak for the second, which is
