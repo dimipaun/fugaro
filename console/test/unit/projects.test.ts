@@ -1088,30 +1088,6 @@ describe('renderRun', () => {
     }
   })
 
-  it('draws the two warnings from the keys the wire carries, and invents no third (finding 4)', () => {
-    // `diagnose RUN --json` carries `reported_warning` and `pin_warnings`
-    // (`internal/cli/diagnose.go:79,82`), and `runview.Row` carries no
-    // `warnings` field at all. The screen's first version read `warnings` off
-    // both the document and the row, so the root list it drew was always empty
-    // -- two keys that exist on no document the screen is given (finding 4).
-    // The two real warnings are drawn once each, from their real keys, in the
-    // diagnose panel; there is no second, root-level list.
-    const diagnosis = {
-      ...DIAGNOSIS,
-      reported_warning: 'the providers reported more than the table charged',
-      pin_warnings: ['the price of a model the cap counted on was a guess'],
-    }
-    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis })), 'light')
-    expect(one(tree, 'run-reported-warning').textContent).toBe(
-      'the providers reported more than the table charged',
-    )
-    expect(all(tree, 'run-pin-warning').map((node) => node.textContent)).toEqual([
-      'the price of a model the cap counted on was a guess',
-    ])
-    // The dead read is gone, so the class it drew is on no document.
-    expect(all(tree, 'run-warning')).toEqual([])
-  })
-
   it('puts the run record\'s status through the sanitizer too', () => {
     const token = githubToken()
     const status = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, status: token } }

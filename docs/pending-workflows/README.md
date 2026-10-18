@@ -59,19 +59,17 @@ fails that test rather than leaving the root untested.
 
 The desktop console's own tests in CI, staged by Task 1.4 of
 `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5.
-One job keyed `console`, on `macos-latest` and on `ubuntu-latest` with
+One job named exactly `console`, on `macos-latest` and on `ubuntu-latest` with
 the end-to-end pass under `xvfb-run`: `actions/setup-node` with the version read
 from `console/package.json`'s `engines.node`, `npm ci --ignore-scripts
 --no-audit --no-fund`, `npm run test:unit` and `npm run test:e2e` (which builds
 the app first and passes on a tree with no spec). **It holds no secret at all**,
 and its triggers are `pull_request` and `push` to `main` **with no `paths:`
 filter and no job-level `if:`** — and that is a correctness requirement rather
-than taste. **Task 4.6 is what adds this job's two check runs to
-`scripts/release-gate.sh`'s `names` array** — `console (ubuntu-latest)` and
-`console (macos-latest)`, because GitHub appends a matrix job's values to its
-check-run name, so the bare job key `console` names no check run and requiring it
-would refuse every tag in the repository. From that edit on the gate requires
-both on a tag's commit and, in its `identical_tree_checks` fallback, the
+than taste. **Task 4.6 is what adds `console` to `scripts/release-gate.sh`'s
+`names` list** (that line reads `names="test terraform rules"` today, so this
+check is not yet required), and from that edit on the gate requires a check named
+`console` on a tag's commit and, in its `identical_tree_checks` fallback, the
 same names on the pull request head whose tree matches. **A check a filter
 skipped is not a success**, so a `console` job filtered to `console/**` would
 then refuse **every** release tag in this repository, including the releases that

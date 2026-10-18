@@ -27,25 +27,23 @@
       The picker's whole capability is one preload script and one bundle file,
       both served from this same origin and from nowhere else. The script is
       `installations.js`, and it is the **second entry** of the renderer
-      bundler (`console/tools/bundle-renderer`, Task 3.4a): it walks the
-      compiled CommonJS closure of an entry and writes one file per document, and
-      this document's entry is `src/renderer/installations.ts`. The tool is on
-      this branch and is what builds the file: `console/package.json`'s `build`
-      runs it, and its output is `dist/bundle/installations.js` in the served
-      root -- which is why `./installations.js` below is a file that exists
-      rather than the 404 the header here used to claim (finding 5). The
-      document, the script's name and its `defer` are held together by
-      `console/test/unit/csp-document.test.ts`, which asserts the picker's script
-      tag and that the built bundle contains `installations.js`.
+      bundler that Task 3.4a writes (`console/tools/bundle-renderer`): it walks
+      the compiled CommonJS closure of an entry and writes one file per
+      document, and this document's entry is `src/renderer/installations.ts`.
+      That tool is **not on this branch** -- Task 3.4a owns it, and
+      `console/README.md` says so -- so `./installations.js` is a file this
+      document names and nothing yet produces. The tag is written here rather
+      than left to that task because the document is this task's file; until
+      3.4a lands, the request 404s and the page below is what is drawn.
 
       It is `defer` and it is a file, exactly as `index.html`'s script is: the
       CSP of rule 3 has no `'unsafe-inline'`, so an inline script would not run
       even if one were written, and `console/test/unit/installations-ipc.test.ts`
       asserts the tag's shape so that neither half can drift.
 
-      Without the script the page still draws its frame -- a heading, the status
-      line, the empty list and the add form -- and nothing else: the frame is
-      what the script fills once it arrives.
+      Without the bundle the page still draws, and it draws nothing else: a
+      heading, the status line, the empty list and the add form, which do
+      nothing until the script arrives.
     -->
     <main>
       <h1>Installations</h1>

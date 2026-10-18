@@ -490,21 +490,6 @@ export function skewSentence(compatibility: CliCompatibility): string {
       )
     case 'unreadable':
       return `the console could not read which fugaro it is driving, so it will not draw a dashboard it cannot vouch for: ${RANGE_PHRASE}`
-    // **A total function over a value that arrived on the wire.** `skew` is
-    // checked for type and length on both sides of the seam (ipc.ts
-    // `readStoredCompatibility`, renderer/app.ts `compatibilityFrom`) and not
-    // against the closed list, because the list lives in a type (`CliSkewName`)
-    // rather than in a value, so a short string this console does not know
-    // reaches here. Without this arm the `switch` returns `undefined` and
-    // `renderVersionSkew` assigns it to `textContent`, drawing the literal word
-    // "undefined" where a sentence belongs. An unknown state is drawn as its own
-    // safe sentence and is never concatenated with anything a binary chose
-    // (review finding, version.ts:463).
-    default:
-      return (
-        `the fugaro this console is driving reports a version state this console does not know, so it will not ` +
-        `draw a figure it cannot vouch for: ${RANGE_PHRASE}`
-      )
   }
 }
 

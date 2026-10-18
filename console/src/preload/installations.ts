@@ -130,18 +130,11 @@ export async function invokeOperation(
       ? await renderer.invoke(INSTALLATION_BRIDGE_PREFIX + operation)
       : await renderer.invoke(INSTALLATION_BRIDGE_PREFIX + operation, args)
     return isInstallationReply(raw) ? raw : { ok: false, reason: 'the picker answered something that is not a reply' }
-  } catch {
-    // **A constant, never the error's own message.** The dashboard's preload
-    // answers a fixed sentence for the same case, and `main/ipc.ts`'s
-    // `boundReason` exists so that no path, invisible character or oversized
-    // string ever crosses a reply. Interpolating `error.message` here put a raw
-    // main-process sentence -- whose source is `src/main/picker.ts` returning
-    // `error.message` verbatim -- in front of a screen, unbounded and
-    // unsanitised, which is exactly what `boundReason` is for (review finding,
-    // installations.ts:133). The wording is kept from the old sentence so a
-    // screen -- and `installations-ipc.test.ts` -- still reads why, but the
-    // error's own message no longer rides along.
-    return { ok: false, reason: 'the picker could not be reached' }
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `the picker could not be reached (${error instanceof Error ? error.message : 'unknown'})`,
+    }
   }
 }
 

@@ -25,34 +25,21 @@
 // dashboard window only if the console will draw one -- and, since Task 3.3,
 // `src/main/index.ts` calls `openStartupWindow`, which is that handshake
 // **before any window exists** and then the one window the compatibility allows:
-// the dashboard document, or `REFUSAL_ENTRY_URL`.
+// the dashboard document, or `REFUSAL_ENTRY_URL`. (What the renderer *draws* in
+// either document is still the screen-mounting work of a later task: this tree
+// has no bundling step, so no document loads a script yet.)
 //
-// What the renderer *draws* in either document is now real (findings 3): the
-// bundler (`tools/bundle-renderer`, Task 3.4a) walks the compiled renderer entry
-// and writes one script per document into `dist/bundle/`, `src/renderer/index.html`
-// loads `./console.js`, and the protocol handler serves that built root
-// (`rendererRoot` in `src/main/index.ts`). The paragraph that used to stand here
-// -- "this tree has no bundling step, so no document loads a script yet" --
-// described the Task 1.1 tree and was left in a security-sensitive file three
-// tasks after it stopped being true, so it is corrected rather than kept.
+// Two notes on what is deliberately NOT here, because both are later tasks and
+// a reviewer should not have to guess:
 //
-// The two notes that used to say "not here yet" are the same correction. What is
-// true *now*, and what each Task 1.1 statement became:
-//
-//   - **The dashboard window has a preload and an IPC surface** (Task 1.2,
-//     wired in Task 3.4a). `dashboardWebPreferences` below adds the compiled
-//     `dist/preload/index.js`, and `src/main/ipc.ts` is the closed allow-list
-//     behind every channel it can reach -- the renderer names a method, never a
-//     channel, a path or a module. The refusal window deliberately has **no**
-//     preload: `buildConsoleWindow` gives it the plain hardened set, so a window
-//     that must draw nothing has no bridge to ask through.
-//   - **The Electron fuses (Task 4.1) are applied.** `package.json`'s
-//     `build.afterPack` runs the compiled `dist/main/fuses.js`, which flips the
-//     three process-level fuses (`RunAsNode`,
-//     `EnableNodeOptionsEnvironmentVariable`, `EnableNodeCliInspectArguments`)
-//     and reads the wire back to prove the flips took. That is the OS-level half
-//     shipped with the app; it does not replace anything in this file, and the
-//     flags below do not depend on it.
+//   - There is no preload and no IPC. The renderer of Task 1.1 draws a static
+//     document; the `contextBridge` surface with the one narrow data path
+//     arrives in Task 1.2, and it lands in a window that already has all of the
+//     above switched off.
+//   - The Electron fuses (Task 4.1) are not flipped yet, so this is the
+//     JavaScript-level hardening plus the OS-level plan still to come. What is
+//     here does not depend on the fuses being flipped, and the fuses do not
+//     replace anything here.
 
 import type {
   BrowserWindow,
@@ -703,22 +690,13 @@ export async function openStartupWindow(
 /**
  * ConsoleLifecycleDeps is what the console's lifecycle needs from the entry
  * point: the window surface (a function, because Electron's `session` does not
- * exist until the app is ready) and the version reader.
- *
- * It deliberately carries **no** `openWindowCount` (finding 1). The first
- * version took one -- the entry point wired it to
- * `BrowserWindow.getAllWindows().length` -- and `activate` read it as "is a
- * console window already open". That count includes the installation picker:
- * the picker is an ordinary unparented top-level window (design ruling C9), so
- * with the dashboard closed and only the picker up, a macOS dock-icon click
- * found `count > 0`, restored nothing, and left the operator with no dashboard
- * to come back to. `activate` now decides on the window *it* opened -- the
- * lifecycle's own `shown` -- so the shared count has no reader and is gone
- * rather than narrowed in one place and widened in another.
+ * exist until the app is ready), the version reader, and how many windows are
+ * open right now.
  */
 export interface ConsoleLifecycleDeps {
   readonly windowDeps: () => ConsoleWindowDeps
   readonly readVersion: () => Promise<VersionRead>
+  readonly openWindowCount: () => number
   /**
    * `onDecided` is handed to the startup and runs the moment the handshake has an
    * answer, before any window is built (Task 3.4a). `activate` does **not** call
@@ -737,8 +715,7 @@ export interface ConsoleLifecycle {
    * every later call answers the same promise. */
   start(): Promise<CliCompatibility>
   /** activate is macOS's dock-icon click: a window for the stored answer when
-   * the console window this lifecycle opened is gone, and nothing otherwise --
-   * the picker's window is not this lifecycle's and does not count (finding 1). */
+   * none is open, and nothing otherwise. */
   activate(): Promise<void>
   /**
    * choose is a new answer for a newly chosen installation (Task 3.4b, step 5):
@@ -769,8 +746,8 @@ export interface ConsoleLifecycle {
  *     "nothing decided" and ran `startConsole` again;
  *   - **`activate` opens the window the stored answer allows**, through
  *     `openWindowFor` and never through a dashboard door of its own, so a
- *     refused console comes back as the refusal screen, and only when the
- *     console window this lifecycle opened is gone.
+ *     refused console comes back as the refusal screen, and only when no
+ *     window is open.
  */
 export function createConsoleLifecycle(deps: ConsoleLifecycleDeps): ConsoleLifecycle {
   let startup: Promise<CliCompatibility> | null = null
@@ -778,12 +755,6 @@ export function createConsoleLifecycle(deps: ConsoleLifecycleDeps): ConsoleLifec
   // shown is the console window this lifecycle opened last (the dashboard or the
   // refusal screen, never the picker's), so `choose` closes the one it replaces.
   let shown: BrowserWindow | null = null
-  // opening is true from the moment `activate` starts building a window to the
-  // moment `shown` names it. It is the guard the old raw window count used to
-  // be: `openWindowFor` constructs its window synchronously (before its first
-  // `await`), but `shown` is not assigned until the document loads, so a second
-  // click in the same turn must look at this flag and not at `shown` alone.
-  let opening = false
 
   const start = (): Promise<CliCompatibility> => {
     if (startup === null) {
@@ -815,26 +786,10 @@ export function createConsoleLifecycle(deps: ConsoleLifecycleDeps): ConsoleLifec
       await startup
       return
     }
-    // The console window this lifecycle opened is still up: the click asked for
-    // it and there is nothing to restore. The test is on `shown` -- the window
-    // *this* lifecycle owns -- and not on a count of Electron's windows. That
-    // count included the installation picker, an ordinary unparented top-level
-    // window, so a dock-icon click with only the picker open used to find "a
-    // window is open", open nothing, and leave the console with no dashboard
-    // (finding 1). `isDestroyed` is Electron's own answer for a window that is
-    // gone, and it is how the close of the dashboard or the refusal screen is
-    // read here rather than assumed.
-    if (shown !== null && !shown.isDestroyed()) return
-    // One is being built right now: `shown` is not assigned until its load
-    // resolves, so two clicks in the same turn each see a destroyed `shown` and
-    // this flag is what keeps them from building two windows.
-    if (opening) return
-    opening = true
-    try {
-      shown = await openWindowFor(deps.windowDeps(), decided)
-    } finally {
-      opening = false
-    }
+    // A window is constructed synchronously inside `openWindowFor` (before its
+    // first `await`), so a second click in the same turn already sees it here.
+    if (deps.openWindowCount() > 0) return
+    shown = await openWindowFor(deps.windowDeps(), decided)
   }
 
   // choosing is the chain every `choose` runs on (review S6). Each one reads
