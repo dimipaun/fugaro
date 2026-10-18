@@ -170,6 +170,55 @@ test('forget removes both items of ONE account and touches no other', async () =
   assert.equal((await store.get('phone', 'idToken')).secret.reveal(), 'synthetic-other-token');
 });
 
+test('forget deletes items it cannot READ: a locked phone must not orphan them', async () => {
+  // The device state this is about is the one the port's own accessibility
+  // creates: `WHEN_UNLOCKED_THIS_DEVICE_ONLY` means a read fails while the
+  // phone is locked. A delete needs no unlock and no read, so gating the
+  // delete on one -- which an earlier version did -- left the ID token and the
+  // MAC key in the Keychain under an account the caller was about to delete,
+  // where `secret`, `items` and `setSecret` could never reach them again.
+  const inner = new MemorySecureStore();
+  const locked = {
+    async getItem() { throw new Error('keychain is locked'); },
+    async setItem(key, value) { return inner.setItem(key, value); },
+    async deleteItem(key) { return inner.deleteItem(key); },
+    async keys() { return inner.keys(); },
+  };
+  const store = new SecretStore(locked);
+  // Written while unlocked, through the port itself.
+  await inner.setItem(keyOf('laptop', 'idToken'), ID_TOKEN);
+  await inner.setItem(keyOf('laptop', 'macKey'), MAC_KEY);
+
+  const forgotten = await store.forget('laptop');
+  assert.equal(forgotten.ok, true);
+  assert.deepEqual(inner.keys(), [], 'both keys are gone, locked or not');
+  // `removed` under-reports what was deleted (the reads all failed) and says
+  // nothing false: it is the safe direction, and the only one available.
+  assert.deepEqual([...forgotten.removed], []);
+
+  // ... and a delete that fails is a refusal, which is what makes
+  // `AccountStore.remove` keep the tuple instead of orphaning anything.
+  const refusing = new SecretStore({
+    async getItem() { throw new Error('keychain is locked'); },
+    async setItem() {},
+    async deleteItem() { throw new Error('keychain is locked'); },
+    async keys() { return []; },
+  });
+  assert.equal((await refusing.forget('laptop')).code, SECURE_STORE_CODES.STORE_FAILED);
+});
+
+test('forget deletes a value it cannot re-validate, and says it was there', async () => {
+  const { port, store } = makeStore();
+  // A stored value this module could not have written is still an item under
+  // this account's key, and it is exactly the thing most worth deleting.
+  await port.setItem(keyOf('laptop', 'idToken'), 'not a value this module wrote');
+  await store.put('laptop', 'macKey', secret('macKey', MAC_KEY).secret);
+  const forgotten = await store.forget('laptop');
+  assert.equal(forgotten.ok, true);
+  assert.deepEqual([...forgotten.removed], ['idToken', 'macKey'], 'unreadable counts as present');
+  assert.deepEqual(port.keys(), []);
+});
+
 test('there is no shared token store: every key belongs to exactly one account', async () => {
   const { port, store } = makeStore();
   await store.put('laptop', 'idToken', secret('idToken', ID_TOKEN).secret);

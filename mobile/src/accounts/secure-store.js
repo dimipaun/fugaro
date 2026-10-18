@@ -179,23 +179,49 @@ export class SecretStore {
   }
 
   /**
-   * Forget everything this account holds: both items, whether or not they are
-   * there. Called when an account is removed from the app (D114's switcher),
-   * and the only way one account's credential is deleted -- an account's items
-   * are reached by its own id or by nothing.
+   * Forget everything this account holds: every item `SECRET_ITEMS` declares,
+   * whether or not it is there. Called when an account is removed from the app
+   * (D114's switcher), and the only way one account's credential is deleted --
+   * an account's items are reached by its own id or by nothing.
+   *
+   * **The delete is NEVER gated on a successful read, and that is the security
+   * property of this method.** An earlier version skipped any item whose read
+   * failed, which sounds cautious and is the opposite: a read of a Keychain
+   * item fails exactly when the device is locked -- the state the port's own
+   * `WHEN_UNLOCKED_THIS_DEVICE_ONLY` accessibility creates -- and a read can
+   * also fail to re-validate a value this module did not write. Skipping then
+   * let `AccountStore.remove` delete the tuple and return `ok`, leaving the ID
+   * token and the per-pairing MAC key in the Keychain with **no code path that
+   * can reach them**: `get`, `items` and `setSecret` all require an account
+   * that no longer exists. A credential with no owner is the one outcome this
+   * module must never produce, so:
+   *
+   *   * deletion is attempted unconditionally. A Keychain delete needs no read
+   *     and no unlock, and it is idempotent -- deleting an item that is not
+   *     there is a no-op, which is why this is safe on every device state;
+   *   * a delete that FAILS is a `store-failed` refusal, and `AccountStore.remove`
+   *     keeps the tuple when it sees one, so the account stays reachable and the
+   *     removal can be run again once the phone is unlocked.
+   *
+   * The read that still happens is for the REPORT ONLY -- it is how `removed`
+   * can say which items were there -- and it never decides whether to delete.
+   * On a locked phone `removed` may therefore under-report what was deleted,
+   * which is the safe direction: an under-reported deletion is invisible, an
+   * orphaned credential is not.
    */
   async forget(accountId) {
     if (!isAccountId(accountId)) return refuse(SECURE_STORE_CODES.BAD_ACCOUNT, 'accountId');
     const removed = [];
     for (const item of SECRET_ITEMS) {
       const read = await this.get(accountId, item);
-      if (!read.ok) continue;
       try {
         await this.#port.deleteItem(secretKey(accountId, item));
       } catch {
         return refuse(SECURE_STORE_CODES.STORE_FAILED, 'item');
       }
-      removed.push(item);
+      // `unreadable` counts as present: something IS stored under this key,
+      // and it is now gone. Only an `absent` answer means there was nothing.
+      if (read.ok || read.code === SECURE_STORE_CODES.UNREADABLE) removed.push(item);
     }
     return Object.freeze({ ok: true, removed: Object.freeze(removed) });
   }

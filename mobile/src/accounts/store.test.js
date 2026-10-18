@@ -309,6 +309,35 @@ test('a removal whose secret round fails removes nothing at all', async () => {
   assert.equal(registry.isOpen('laptop'), false);
 });
 
+test('a removal while the keychain is locked leaves no credential behind', async () => {
+  // The reviewer's repro, as a test: a locked phone cannot READ its items
+  // (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`), and an earlier `forget` skipped every
+  // item whose read failed -- so the removal returned ok, the tuple went, and
+  // both items stayed in the Keychain with no account able to reach them.
+  const inner = new MemorySecureStore();
+  const locked = {
+    async getItem() { throw new Error('keychain is locked'); },
+    async setItem(key, value) { return inner.setItem(key, value); },
+    async deleteItem(key) { return inner.deleteItem(key); },
+    async keys() { return inner.keys(); },
+  };
+  const settingsPort = new MemorySettingsStore();
+  const store = new AccountStore({
+    secrets: new SecretStore(locked),
+    settings: new SettingsStore(settingsPort),
+    registry: new ResourceRegistry(),
+  });
+  await store.add(LAPTOP);
+  await inner.setItem(`${SECRET_KEY_PREFIX}laptop.idToken`, LAPTOP_TOKEN);
+  await inner.setItem(`${SECRET_KEY_PREFIX}laptop.macKey`, LAPTOP_MAC);
+
+  const removed = await store.remove('laptop');
+  assert.equal(removed.ok, true);
+  assert.deepEqual(inner.keys(), [], 'no credential outlives the account that owned it');
+  assert.deepEqual((await store.list()).accounts, []);
+  assert.equal(store.current(), null);
+});
+
 test('removing an account the app does not hold is refused', async () => {
   const { store } = makeStore();
   assert.equal((await store.remove('phone')).code, STORE_CODES.UNKNOWN_ACCOUNT);
