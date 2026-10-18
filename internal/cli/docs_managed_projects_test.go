@@ -294,7 +294,7 @@ func TestChecklistHasCheck67a(t *testing.T) {
 	// whose label is missing is a step the owner has to guess about.
 	for _, tag := range []string{
 		"**(1) The throwaway managed project and its installation** — **once per installation.**",
-		"**(2) The managed installation's own checkout** — **once per repo checkout",
+		"**(2) The managed installation's own checkout, and the root every later step applies** — **once per repo checkout",
 		"**(3) An apply the gate admits, with no confirmation** — **once per repo checkout",
 		"**(4) A marker that names another project reads as not managed** — **once per repo checkout.**",
 		"**(5) A project that is not managed still asks** — **once per repo checkout",
@@ -455,6 +455,111 @@ func TestChecklistHasCheck67a(t *testing.T) {
 		t.Error("Check 67a's step 5 no longer says which refusal it is not")
 	}
 
+	// 9. The three fixes of this round, each pinned where it can regress.
+	//
+	// (a) Step 1 runs where its own guard holds. The guard's stops need a
+	// sandbox checkout (its second stop asks `fugaro doctor --project fugaro`,
+	// which a checkout naming another project refuses; its third asks
+	// `git remote get-url origin`), and the sandbox checkout is exactly where
+	// the creation CANNOT run: `--name fugaro-managed` there is refused with
+	// "this checkout belongs to project fugaro; --name says fugaro-managed",
+	// because a checkout is authoritative. So the step clones a working tree of
+	// the sandbox and moves that checkout's fugaro.yaml aside, and the guard's
+	// own second and third stops are re-made in the clone — which is what makes
+	// the step reachable at all.
+	for _, want := range []string{
+		"**Which directory each step runs from, and why that is a rule and not a convenience.**",
+		"this checkout belongs to project fugaro; --name says fugaro-managed",
+		"mv fugaro.yaml /tmp/chk67-fugaroyaml.orig",
+		"the third stop holds HERE",
+		"mv /tmp/chk67-fugaroyaml.orig fugaro.yaml",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 67a's step 1 does not carry %q", want)
+		}
+	}
+	// The creation must come AFTER the clone and the move: run before them it
+	// is the dead end this round fixed — the command the sandbox checkout
+	// refuses, from the only directory the guard admits.
+	clone := strings.Index(section, "git clone \"$(git remote get-url origin)\" /tmp/chk67-managed")
+	moved := strings.Index(section, "mv fugaro.yaml /tmp/chk67-fugaroyaml.orig")
+	create := strings.Index(section, "fugaro init --create-project --managed --name \"${F:?}\"")
+	switch {
+	case clone < 0 || moved < 0 || create < 0:
+		t.Error("Check 67a's step 1 no longer clones, moves the checkout's fugaro.yaml aside and creates the installation")
+	case !(clone < moved && moved < create):
+		t.Error("Check 67a's step 1 creates the managed installation before the clone that moves the checkout's fugaro.yaml aside")
+	}
+
+	// (b) The root the whole check applies is authored, with its contents in
+	// full, and BEFORE the first apply of it. `fugaro managed apply` writes no
+	// root, and no root in this repository is one the gate admits.
+	for _, want := range []string{
+		"cat > ./managed-root/main.tf <<EOF",
+		"cat > ./managed-root/account.tf <<EOF",
+		"resource \"google_service_account\" \"fmgd_root\"",
+		`account_id   = "fmgd-chk67-root"`,
+		`version = ">= 8.4.0, < 9.0.0"`,
+		`provider "google" {`,
+		"managedProviderProject`: the provider block",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 67a does not author the root it applies (%q)", want)
+		}
+	}
+	mkroot := strings.Index(section, "mkdir -p ./managed-root")
+	firstApply := strings.Index(section, "fugaro managed apply ./managed-root --project \"${F:?}\"")
+	if mkroot < 0 {
+		t.Error("no step of Check 67a writes ./managed-root, so every managed step applies a root that does not exist")
+	} else if firstApply < 0 {
+		t.Error("Check 67a no longer applies ./managed-root")
+	} else if mkroot > firstApply {
+		t.Error("Check 67a applies ./managed-root before any step authors it")
+	}
+	// And the delete both delete steps expect is produced, in the section that
+	// expects it: a resource is removed from the root, not wished away.
+	if !strings.Contains(section, "mv ./managed-root/account.tf /tmp/chk67-root-account.tf") {
+		t.Error("Check 67a's step 7 expects a plan with a delete without any step removing a resource from the root")
+	}
+
+	// (c) Step 3's impersonation reads are commands the owner runs, not output
+	// a successful apply prints: a managed apply prints "applied" and its
+	// summary, and nothing about IAM.
+	for _, want := range []string{
+		`gcloud iam service-accounts get-iam-policy "fugaro-deployer@${M:?}.iam.gserviceaccount.com"`,
+		`gcloud projects get-iam-policy "${M:?}" --project="${M:?}"`,
+		"apply prints \"applied\" and its own summary",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 67a's step 3 does not give the impersonation reads as commands (%q)", want)
+		}
+	}
+	if strings.Contains(section, "the command printed the two reads that show the impersonation grant is in place") {
+		t.Error("Check 67a's step 3 claims the apply prints reads it does not print")
+	}
+	// ... and the same false claim must not survive anywhere else in the check:
+	// the Method's own precondition used to say the apply prints them, and the
+	// apply prints "applied" and nothing else.
+	for _, bad := range []string{
+		"the two reads that show it are printed by `fugaro managed apply` itself",
+	} {
+		if strings.Contains(section, bad) {
+			t.Errorf("Check 67a still claims the apply prints the impersonation reads (%q)", bad)
+		}
+	}
+	// Every step that acts inside the clone says so; the ones that need no
+	// directory of their own say they are back in the sandbox checkout, because
+	// the guard block cannot be re-run anywhere else once the clone's
+	// fugaro.yaml names the managed installation.
+	for _, want := range []string{
+		"cd /tmp/chk67-managed                                        # the managed checkout: the guard block above was re-run in the sandbox checkout",
+		"cd -                                                                   # back in the sandbox checkout",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 67a's step does not name the directory it runs from (%q)", want)
+		}
+	}
+
 	// 8. The commands. Every gcloud command names its project with
 	// `--project=`; every fugaro command names its installation with
 	// `--project`, with exactly one exception this check spells out (the
@@ -575,6 +680,27 @@ func TestChecklistHasCheck67b(t *testing.T) {
 	if !strings.Contains(section, `fugaro allow-delete ${TERRAFORM_ADDRESS:?} --project "${F:?}"   # ⚠ CONFIRM`) {
 		t.Error("Check 67b's step 4 writes the owner's delete list without its ⚠ CONFIRM")
 	}
+	// Every step names the directory it runs from, and the guard block's own
+	// stops are only re-runnable in the sandbox checkout — so a step that acts
+	// on ./managed-root has to cd there, and the pointer to 67a's clone has to
+	// say so, or 67b inherits 67a step 1's dead end.
+	for _, want := range []string{
+		"**Which directory each step runs from**",
+		"both are re-run in the sandbox checkout",
+		"cd /tmp/chk67-managed    # the managed checkout",
+		"cd /tmp/chk67-managed    # the managed checkout, again",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 67b does not say %q, so a step runs where its own guard cannot", want)
+		}
+	}
+	// Step 4's delete plan: the same absent-then-written sequence 67a's step 7
+	// uses, so it too must remove the one resource from the root and put it
+	// back — a section that expects a delete it never authors cannot run.
+	if !strings.Contains(section, "mv ./managed-root/account.tf /tmp/chk67-root-account.tf") ||
+		!strings.Contains(section, "mv /tmp/chk67-root-account.tf ./managed-root/account.tf") {
+		t.Error("Check 67b's step 4 expects a plan with a delete without any step removing a resource from the root")
+	}
 	// No step of this check may name the sandbox installation's project in a
 	// creating command: the only IDs a restore is ever pointed at here are the
 	// two throwaway ones.
@@ -683,7 +809,7 @@ func TestChecklistHasCheck68(t *testing.T) {
 		// `gcloud iam service-accounts get-access-token` is not a gcloud
 		// subcommand at all (SDK 588.0.0 answers `Invalid choice:`) and a
 		// command that fails that way measures nothing about actAs.
-		`gcloud auth print-access-token --impersonate-service-account="${D:?}"`,
+		`gcloud auth print-access-token --impersonate-service-account="${D:?},${NUM}-compute@developer.gserviceaccount.com"`,
 		// The positive half of the same sentence: the one bucket it CAN write.
 		"fugaro-managed-tfstate-",
 	} {
@@ -699,6 +825,37 @@ func TestChecklistHasCheck68(t *testing.T) {
 	// account" negative would be recorded as a pass for the wrong reason.
 	if strings.Contains(section, "iam service-accounts get-access-token") {
 		t.Error("Check 68 mints a token with a gcloud subcommand that does not exist: the negative would fail for the wrong reason")
+	}
+	// The chain is ONE comma-separated flag, not two flags: gcloud keeps only
+	// the last REPEATED `--impersonate-service-account` (SDK 588.0.0 warns about
+	// it), so the two-flag form builds no chain at all and the negative would be
+	// run as the compute account directly — refused for the wrong reason and
+	// proving nothing about the deployer's actAs. The section must carry the
+	// comma form, the paragraph that says which account needs which grant for
+	// each hop, and no repeated flag anywhere.
+	if !strings.Contains(section, "--impersonate-service-account=\"${D:?},${NUM}-compute@developer.gserviceaccount.com\"") {
+		// pinned above as a whole command; this is the comma form on its own, so
+		// a rewrite of the command that drops the chain is named as a chain bug
+		// rather than as a missing command.
+		t.Error("Check 68's 4b no longer builds its chain as ONE comma-separated value")
+	}
+	for _, want := range []string{
+		"**The chain in 4b, and which account needs which grant for it to mean what it says.**",
+		"the operator needs `roles/iam.serviceAccountTokenCreator` on the deployer account",
+		"the deployer needs `roles/iam.serviceAccountTokenCreator` (or write-level `iam.serviceAccounts.actAs`) on `${NUM}-compute@developer.gserviceaccount.com`",
+		"which is why the chain is one comma-separated flag and not two flags",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 68 does not say %q, so the chain's failing hop is not the one the step is about", want)
+		}
+	}
+	if strings.Contains(section, "--impersonate-service-account=\"${D:?}\" --impersonate-service-account=") {
+		t.Error("Check 68 builds its delegation chain with a REPEATED --impersonate-service-account flag: gcloud keeps only the last one, so no chain is built")
+	}
+	// The apply prints no IAM read, so nothing anywhere in the three sections may
+	// say it does (the claim step 3 of 67a used to make).
+	if strings.Contains(section, "Record whether the apply in 67a printed the two reads") {
+		t.Error("Check 68 asks the owner to record reads the apply does not print")
 	}
 	// The permissions the roles are known to LACK, each measured as its own
 	// PERMISSION_DENIED before anything is added — and never added without the
@@ -725,6 +882,50 @@ func TestChecklistHasCheck68(t *testing.T) {
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 68 does not record D75's limit (%q)", want)
+		}
+	}
+	// Step 5's root is written out in full before it is applied: one file per
+	// row of the table, every name carrying the prefix the gate requires
+	// (ManagedPrefix) and every type one the allowlist admits, so a row can be
+	// put aside with one `mv` and measured alone. `fugaro managed apply` writes
+	// no root for the reader.
+	for _, want := range []string{
+		"cat > ./managed-root-perm/main.tf <<EOF",
+		`version = ">= 8.4.0, < 9.0.0"`,
+		`provider "google" {`,
+		"cat > ./managed-root-perm/sa.tf <<EOF",
+		`account_id   = "fmgd-chk67-perm"`,
+		"cat > ./managed-root-perm/bucket.tf <<EOF",
+		`name     = "fmgd-chk67-perm-data-${M:?}"`,
+		"cat > ./managed-root-perm/bucket-grant.tf <<EOF",
+		"cat > ./managed-root-perm/job.tf <<EOF",
+		"cat > ./managed-root-perm/service.tf <<EOF",
+		"cat > ./managed-root-perm/key.tf <<EOF",
+		"cat > ./managed-root-perm/repo.tf <<EOF",
+		`mode          = "STANDARD_REPOSITORY"`,
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 68's step 5 does not author the root it applies (%q)", want)
+		}
+	}
+	mkperm := strings.Index(section, "mkdir -p ./managed-root-perm")
+	firstPermApply := strings.Index(section, "fugaro managed apply ./managed-root-perm --project \"${F:?}\"")
+	switch {
+	case mkperm < 0:
+		t.Error("no step of Check 68 writes ./managed-root-perm, so its permission rows apply a root that does not exist")
+	case firstPermApply < 0:
+		t.Error("Check 68 no longer applies ./managed-root-perm")
+	case mkperm > firstPermApply:
+		t.Error("Check 68 applies ./managed-root-perm before any step authors it")
+	}
+	// And every step names the directory it runs from, as 67a's do: the guard
+	// block's stops hold in the sandbox checkout, not in the clone.
+	for _, want := range []string{
+		"cd /tmp/chk67-managed     # 67a's clone again",
+		"cd -                                                                                                 # back in the sandbox checkout",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 68's step does not name the directory it runs from (%q)", want)
 		}
 	}
 	if !strings.Contains(section, "must read `0`") {
