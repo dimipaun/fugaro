@@ -86,14 +86,14 @@ with fixtures that keep its refusals running, and none of them needs the network
   the test keeps a case that proves it. The derivation (that build plus 25 %, D192) is in the
   test's header, and a task that needs more raises the number here, in the commit that needs
   it:
-  - **JavaScript per page:** 14,727 bytes. Three times 4,909: the one script the site ships,
-    `public/scripts/site.js` (3,927 bytes — the copy control of P6 and D183), plus 25 %.
-    Every page loads it once, so it is the whole of a page's JavaScript, and the test keeps a
-    case that says so over the built artifact.
-  - **Page weight per page:** 780,837 bytes. Three times 260,279: the heaviest page, the
-    docs hub, at 208,223 bytes (its HTML — the whole generated CLI reference — plus the
+  - **JavaScript per page:** 20,391 bytes. Three times 6,797: the one script the site ships,
+    `public/scripts/site.js` (5,437 bytes — the copy control of P6 and D183, and the menu's
+    Escape/outside-click close of P3), plus 25 %. Every page loads it once, so it is the whole
+    of a page's JavaScript, and the test keeps a case that says so over the built artifact.
+  - **Page weight per page:** 792,981 bytes. Three times 264,327: the heaviest page, the
+    docs hub, at 211,461 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 2,682,462 bytes. Three times 894,154 (every file in `dist/`, 715,323
+  - **Whole site:** 2,759,307 bytes. Three times 919,769 (every file in `dist/`, 735,815
     bytes across 21 files, plus 25 %).
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,

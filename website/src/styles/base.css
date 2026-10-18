@@ -88,8 +88,12 @@ a.skip-link:focus {
 }
 
 .site-header {
+  /* One row, always: the menu does not wrap under the wordmark, and the drawer hangs from
+   * this box's bottom edge (`position: relative` is what it hangs from) instead of adding a
+   * row to it (P3, RF3). */
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2xs) var(--space-lg);
@@ -114,15 +118,113 @@ a.skip-link:focus {
   color: var(--accent-on-dark);
 }
 
-/* The section nav: a horizontal bar that wraps onto as many lines as the viewport needs. It
- * needs no script and no hidden menu: at 360px the ten sections are three short lines. */
-.site-nav ul {
+/* The section nav (P3, D182): three groups of three, each a dropdown in the header's one row
+ * on a wide viewport, and the whole menu behind one toggle on a narrow one. Both levels are
+ * `<details>` — the markup is in `layouts/Base.astro`, with the note on why the panel is the
+ * toggle's sibling rather than its child — so the menu opens and closes with JavaScript off.
+ * `public/scripts/site.js` adds only what `<details>` does not do by itself: Escape and a
+ * click outside close what is open.
+ *
+ * The header keeps one row at every width: it does not wrap, and the drawer hangs from its
+ * bottom edge rather than becoming a second row inside it (the complaint RF3 measured: 177 px
+ * of header, three nav rows, on a 390 px first screen). */
+.site-nav {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3xs) var(--space-2xs);
+  align-items: center;
+}
+
+/* The drawer's toggle, and the only part of the menu a narrow header shows until it is
+ * opened. `display: inline-block` is what removes the disclosure triangle — the marker is
+ * drawn by `display: list-item`, the summary's default — and the button is the affordance. */
+.site-nav-toggle {
+  display: inline-block;
+  padding: var(--space-3xs) var(--space-2xs);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.site-nav-toggle:hover,
+.site-nav-toggle:focus-visible,
+.site-nav-drawer[open] > .site-nav-toggle {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* The panel: hidden until the toggle is open, and then an overlay under the header rather
+ * than a block inside it, so opening the menu does not change the header's height. The switch
+ * is the toggle's `open` attribute and the wire is the sibling combinator (P3). */
+.site-nav-panel {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  padding: var(--space-sm);
+  border-bottom: var(--border-width) solid var(--border);
+  background: var(--ground);
+}
+
+.site-nav-drawer[open] ~ .site-nav-panel {
+  display: block;
+}
+
+/* Both levels are lists of links, so both lose the bullet and the indent. */
+.site-nav-groups,
+.site-nav-group ul {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* A group's label is its `<summary>` — the second level's control — styled as what it behaves
+ * like, a link. */
+.site-nav-group > details > summary {
+  display: inline-block;
+  padding: var(--space-3xs) var(--space-2xs);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.site-nav-group > details > summary:hover,
+.site-nav-group > details > summary:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}
+
+/* The group holding the page being read says so, because on a wide viewport the dropdown is
+ * closed and the marked link inside it is not visible. The mark is not `aria-current`: the
+ * page carries exactly one of those, on the link itself. */
+.site-nav-group > details[data-current] > summary {
+  color: var(--accent-on-dark);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.35em;
+}
+
+/* The wide viewport: the same panel, in the header's row, as three dropdowns. The drawer's
+ * toggle goes away — nothing needs opening — and the panel stops being an overlay. */
+@media (min-width: 48rem) {
+  .site-nav-drawer {
+    display: none;
+  }
+
+  .site-nav-panel {
+    position: static;
+    padding: 0;
+    border-bottom: 0;
+  }
+
+  .site-nav-groups {
+    display: flex;
+    gap: var(--space-3xs) var(--space-2xs);
+  }
 }
 
 .site-nav a {

@@ -1,4 +1,5 @@
-/* website/public/scripts/site.js — the site's one script (decision D183, redesign part P6).
+/* website/public/scripts/site.js — the site's one script (decision D183, redesign parts P3
+ * and P6).
  *
  * The site ships exactly one first-party script file and this is it: one request, one line
  * in the byte budget, one file to read. `website/test/budget.mjs` counts these bytes as
@@ -12,9 +13,15 @@
  *     with its control already in it and `hidden`, and this reveals the control and drives
  *     it. A browser that runs no script therefore shows the command and no button, rather
  *     than a button that copies nothing.
+ *   - **Escape and a click outside close an open menu (part P3).** The menu's two levels are
+ *     `<details>` and open and close by themselves; what a `<details>` does not do is close
+ *     when the reader presses Escape or clicks somewhere else, which is what a menu owes a
+ *     keyboard. Closing is all this adds: with no script the menu still opens, still closes
+ *     and still reaches every link.
  *
  * Nothing here is load-bearing: the commands are in the markup in full, and every one of
- * them is readable, selectable and copyable by hand without this file ever arriving.
+ * them is readable, selectable and copyable by hand without this file ever arriving; the
+ * menu is a `<details>` at both levels and needs none of this to work.
  *
  * It is loaded with `defer` from the base layout, so it runs once the document has been
  * parsed and every block it looks for is in the tree. It writes no storage and sets no
@@ -26,6 +33,9 @@
   // How long the confirmation stays before it clears itself. A state that never clears is
   // one a reader cannot tell from a fresh one.
   var CLEARS_AFTER_MS = 4000
+
+  // The menu, and everything that is open in it (P3).
+  var OPEN_MENUS = '.site-nav details[open]'
 
   // Whether this browser has a clipboard to write to at all. A control that cannot do the
   // one thing it offers is worse than no control, so a browser without one keeps the
@@ -69,7 +79,32 @@
     )
   }
 
+  // Close every open menu. A menu closed under the reader's focus would leave that focus on
+  // an element that is no longer rendered, so the control that opened it takes the focus
+  // back — which is where a keyboard reader expects to be after dismissing a menu.
+  function closeMenus() {
+    var open = document.querySelectorAll(OPEN_MENUS)
+    for (var i = 0; i < open.length; i++) {
+      var details = open[i]
+      var held = details.contains(document.activeElement)
+      details.open = false
+      if (held) details.querySelector('summary').focus()
+    }
+  }
+
+  function menu() {
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') closeMenus()
+    })
+    document.addEventListener('click', function (event) {
+      var target = event.target
+      if (target && target.closest && target.closest('.site-nav')) return
+      closeMenus()
+    })
+  }
+
   function start() {
+    menu()
     var blocks = document.querySelectorAll('[data-copy]')
     if (blocks.length === 0) return
     if (!canCopy()) return
