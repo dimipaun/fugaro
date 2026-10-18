@@ -28,7 +28,10 @@ resource "google_service_account_iam_member" "operator" {
 # 2026-10-15) and another run's launch.json/result.json (task 3.4). Every
 # project job gets this same condition whatever its profile, so a profile
 # separates secrets, not bucket objects: the mitigation D4 named (separate
-# profiles) does not hold for the bucket and is open for the owner to re-rule.
+# profiles) does not hold for the bucket, and the owner ruled the question on
+# 2026-10-17 — the installation-wide reach is ACCEPTED, on the terms
+# SECURITY.md states. A profile segment in the object layout is a later
+# breaking change, not phase 3's.
 #
 # The condition is the input byte for byte: one that differs is a different
 # binding, and the review screen (internal/infra/tf) accepts it only for an
