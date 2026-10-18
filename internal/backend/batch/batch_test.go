@@ -663,6 +663,22 @@ func TestLaunchNeedsARun(t *testing.T) {
 	}
 }
 
+// TestLaunchRefusesAProjectJob: a spec that names a shared project job
+// (LaunchSpec.Job, phase 3) is refused before anything is created. This
+// backend has no project jobs, and launching the repository's own job in its
+// place would run the workflow under an identity the project's policy did not
+// pick (the merge of main into next-0.8.5 surfaced the gap).
+func TestLaunchRefusesAProjectJob(t *testing.T) {
+	b, bf, _, _ := newTestBackend(t, nil)
+	_, err := b.Launch(context.Background(), backend.LaunchSpec{Repo: backend.RepoRef{Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd", Job: "fugaro-p-standard-github"})
+	if err == nil || !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch of a project job = %v, want ErrRejected", err)
+	}
+	if got := bf.Creates(); len(got) != 0 {
+		t.Fatalf("a job was created for a project-job launch: %v", got)
+	}
+}
+
 // TestLaunchRefusalIsRejected: a 4xx other than 408, 429 and 499 created
 // nothing and says so, so the launcher may undo its own bookkeeping. A
 // conflict is the same run id launched twice: a Batch job is created per run

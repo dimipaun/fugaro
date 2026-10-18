@@ -46,6 +46,11 @@ type prChain struct {
 	// §3 T6 and §6b).
 	OAuthToken string
 	Recipe     *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
+	// Title is the previous run's own job title (task.Spec.Title, "") when
+	// it has none: a follow-up keeps its run's title, so a chain of
+	// follow-ups stays one job in fugaro watch instead of being listed
+	// under each follow-up's own instructions. --title overrides it.
+	Title string
 	// Chosen is the recipe the runner chose for the previous run (its record's),
 	// when that run's task named none; nil when unknown, absent or default.
 	Chosen *runstore.RecipeRecord
@@ -136,6 +141,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	c.Ref, c.Workflow = c.Previous.BaseBranch, prev.Workflow
 	c.OAuthToken = prev.OAuthToken
 	c.Recipe = prev.Recipe
+	c.Title = prev.Title
 	if c.Recipe == nil {
 		// The runner chose this run's recipe (agent.recipe at the ref); a
 		// follow-up keeps it, as the runner ignores agent.recipe on follow-ups.
@@ -400,7 +406,12 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	if have.Recipe != nil {
 		haveRecipe = have.Recipe.Name
 	}
-	if have.PR != o.pr[0] || have.Task != text || have.Batch != o.batch || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
+	// An explicit --title must be the stored one: otherwise a repeated
+	// --run-id would report a launch whose title is not the one asked for.
+	// No --title is no claim about it: the stored title (the follow-up's
+	// own, or the one it inherited from its run) is kept as it is, which is
+	// what makes the repeat idempotent.
+	if have.PR != o.pr[0] || have.Task != text || have.Batch != o.batch || (o.title != "" && have.Title != o.title) || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
 		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
 	}
@@ -529,7 +540,13 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 			return nil, err
 		}
 	}
+	// The follow-up's title: the flag's when it is given, else the previous
+	// run's own (c.Title), so a chain of follow-ups keeps naming itself by
+	// the job it is. A chain whose first run carried no title has none to
+	// inherit, and writes no title at all — the follow-up is then listed by
+	// its own instructions' first line, exactly as before the flag existed.
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, Workflow: workflow, Task: text,
+		Title:  cmp.Or(o.title, c.Title),
 		Branch: c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()

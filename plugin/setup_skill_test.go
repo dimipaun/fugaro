@@ -784,3 +784,20 @@ func decisionsTopic(t *testing.T, dec, name string) string {
 	}
 	return rest
 }
+
+// TestSetupSkillSecretsStepReadsMissingFromSecretsLs pins step 8's sentence
+// about the MISSING signal: it comes from `fugaro secrets ls --repo --json` run in
+// the checkout (only the checkout's fugaro.yaml says what is required), not
+// from doctor, and it is the names this repository's jobs need — so "store
+// each" never sends the user after a name no job of it reads.
+func TestSetupSkillSecretsStepReadsMissingFromSecretsLs(t *testing.T) {
+	const want = "From the checkout, run `fugaro secrets ls --repo --json` (not doctor, which lists only stored names): " +
+		"each entry with `missing` set is a name this repository's jobs need that has no value, so store each of those."
+	text := setupFiles(t)["skills/setup/SKILL.md"]
+	if !strings.Contains(text, want) {
+		t.Errorf("SKILL.md step 8 does not say where the missing names come from:\nwant %q", want)
+	}
+	if strings.Contains(text, "It flags every required name") {
+		t.Error("SKILL.md still has the sentence whose pronoun binds to doctor")
+	}
+}

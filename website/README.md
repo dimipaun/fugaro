@@ -393,4 +393,7 @@ workflow under `docs/pending-workflows/` for the owner to copy in, and the owner
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
 change `.github/workflows/`. `docs/pending-workflows/` now holds no pending workflow: the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
-owner, and no deploy workflow is staged.
+owner, and no deploy workflow is staged. The only workflow files left there are the desktop
+console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:
+their staged copies stay by design, because the console's docs tests assert each one is
+byte-identical to its copy under `.github/workflows/`, so neither is pending.

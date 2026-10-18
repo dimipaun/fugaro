@@ -48,12 +48,18 @@ resource "google_project_iam_custom_role" "history" {
   depends_on = [google_project_service.this]
 }
 
+# The role is a literal path, for the reason iam.tf's launcher grant gives: a
+# computed project role cannot be told from one of the deployer's at plan time.
+# The member stays computed — an account this module creates is already bounded
+# (cover.go's checkGrant).
 resource "google_project_iam_member" "history_launcher" {
   count = var.enable_budget ? 1 : 0
 
   project = var.project
-  role    = google_project_iam_custom_role.history[0].name
+  role    = "projects/${var.project}/roles/fugaroHistory"
   member  = google_service_account.history[0].member
+
+  depends_on = [google_project_iam_custom_role.history]
 }
 
 # Nobody is granted actAs on this account, operators included: it holds

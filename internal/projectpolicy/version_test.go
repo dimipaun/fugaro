@@ -1,6 +1,7 @@
 package projectpolicy
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -18,8 +19,24 @@ func TestSkewMessagesShareTheSentence(t *testing.T) {
 			t.Errorf("%s does not start with Skew: %q", name, msg)
 		}
 	}
-	if Version != 1 {
+	if Version != 2 {
 		t.Errorf("Version = %d: a version bump needs the plan's skew handling, this test and the CLI's", Version)
+	}
+}
+
+// TestProfileGateIsVersionTwo: version 2 is the first version whose runner
+// enforces a profile's allow_repos (plan task 3.3). A runner of version 1
+// decodes the profiles block and ignores it, so a launcher that points a run
+// of a profile's job at another repository of the project's allow_repos would
+// get the profile's secrets from it. The bump is what makes such a runner
+// refuse the node instead: a version-1 reader meets version 2 and halts
+// (RunnerSkew), and this code refuses a version-1 node the same way rather
+// than reading it as one whose profiles were never enforced.
+func TestProfileGateIsVersionTwo(t *testing.T) {
+	_, _, err := Decode([]byte(`{"version":1,"allow_repos":["github/acme/*"],"profiles":{"standard":{"allow_repos":["github/acme/app"]}}}`))
+	var ve *VersionError
+	if !errors.As(err, &ve) || ve.Found != 1 || ve.Understood != 2 {
+		t.Fatalf("a version-1 node with profiles: err = %v, want a VersionError found 1, understood 2", err)
 	}
 }
 
@@ -83,6 +100,7 @@ func TestTheCLISkewRemediesStayApart(t *testing.T) {
 func TestSkewSentencePicksByDirectionAndReader(t *testing.T) {
 	olderNode := &VersionError{Found: 0, Understood: Version}
 	newerNode := &VersionError{Found: Version + 1, Understood: Version}
+	understood, ahead := fmt.Sprintf("version %d", Version), fmt.Sprintf("version %d", Version+1)
 	for _, tc := range []struct {
 		name    string
 		ve      *VersionError
@@ -94,25 +112,25 @@ func TestSkewSentencePicksByDirectionAndReader(t *testing.T) {
 			// The node is behind this binary: nothing is upgraded, and the node
 			// is removed and published again.
 			name: "an older node, the CLI", ve: olderNode, reader: ReaderCLI,
-			want:    []string{"version 0", "version 1", "fugaro project policy publish --delete", "publish it again"},
+			want:    []string{"version 0", understood, "fugaro project policy publish --delete", "publish it again"},
 			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase", "runner image"},
 		},
 		{
 			// The same node read by an image: the remedy is the operator's and
 			// the run cannot carry it out.
 			name: "an older node, the runner", ve: olderNode, reader: ReaderRunner,
-			want:    []string{"version 0", "version 1", "fugaro project policy publish --delete", "publishes one this image understands", "cannot do either mid-run"},
+			want:    []string{"version 0", understood, "fugaro project policy publish --delete", "publishes one this image understands", "cannot do either mid-run"},
 			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase", "refresh the runner image"},
 		},
 		{
 			// The node is ahead of this binary: the upgrade is missing here.
 			name: "a newer node, the CLI", ve: newerNode, reader: ReaderCLI,
-			want:    []string{"version 2", "version 1", "upgrade Fugaro"},
+			want:    []string{ahead, understood, "upgrade Fugaro"},
 			notWant: []string{"publish --delete", "init --firebase", "runner image"},
 		},
 		{
 			name: "a newer node, the runner", ve: newerNode, reader: ReaderRunner,
-			want:    []string{"version 2", "version 1", "refresh the runner image", "fugaro upgrade"},
+			want:    []string{ahead, understood, "refresh the runner image", "fugaro upgrade"},
 			notWant: []string{"publish --delete", "init --firebase", "upgrade Fugaro ("},
 		},
 	} {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -247,6 +248,28 @@ type Workflow struct {
 	// the workflow's own keys override it field by field. "" is none.
 	// Binaries before 0.6.0 refuse the key.
 	Profile string `yaml:"profile,omitempty"`
+	// JobProfile names the project policy's job profile
+	// (projectpolicy.Profile, design project-centric §4.1) this workflow
+	// runs on: the Cloud Run job's shape — its provider, cpu, memory, task
+	// timeout, secret mounts and admission list — selected by name from the
+	// published policy. "" is the default, DefaultJobProfile.
+	//
+	// It is job_profile and NOT profile: profile: has named the project
+	// layer's workflow template since 0.6.0 (internal/config/layer.go's
+	// Profiles), and one key cannot carry both meanings — a layered
+	// repository's `profile: server` would then also have to be a policy
+	// profile called server, and `fugaro project policy publish` would
+	// refuse every installation that uses a layer profile. The design's
+	// §4.1 writes the selection as `workflows.<name>.profile`; this release
+	// spells it job_profile, and the design needs the same one-word
+	// correction (flagged for the plan's task 3.1 review).
+	//
+	// The json tag is what Config.SHA256 hashes: a field without one changes
+	// every configuration hash in the installation — the goldens of
+	// TestNoPolicyIsM9aBehaviour and TestCeilingOnlyPolicyGolden among them —
+	// for a key most files do not set. It is omitempty, like every other
+	// optional key here (the Agent.OAuthToken precedent).
+	JobProfile string `yaml:"job_profile,omitempty" json:"job_profile,omitempty"`
 	// Base is removed in 0.7.0: kept so Validate can refuse it with the
 	// migration (MigrationDoc). Read the workflow's base kind through
 	// BaseKind, which always returns BaseKind now.
@@ -289,6 +312,33 @@ const (
 // base. A non-empty w.Base is a removed legacy value, refused by Validate.
 func (w Workflow) BaseKind() string {
 	return BaseKind
+}
+
+// DefaultJobProfile is the project policy profile a workflow that names none
+// runs on (design project-centric §4.1). It is the one profile a published
+// policy must define: internal/projectpolicy refuses a policy that carries a
+// profiles block without it.
+const DefaultJobProfile = "standard"
+
+// JobProfileOrDefault is the policy profile w runs on: w.JobProfile, or
+// DefaultJobProfile when it names none. One accessor, so the default cannot
+// differ between the readers of the selection.
+//
+// A workflow that names no profile has nothing for the policy to refuse:
+// internal/runner's checkJobProfile refuses an explicit name the published
+// policy does not define (a policy that carries a profiles block must define
+// the default, so the default is always defined where profiles exist, and a
+// policy with no profiles block is one this release applies nothing from), and
+// it reads the *default* through this accessor to compare it with the profile
+// of the Cloud Run job the run is in. The readers that do need the default —
+// that comparison, and the job layout Task 3.2 builds, which makes one Cloud
+// Run job and one job service account per (profile, provider, account) — read
+// it here, so the default is spelled in one place.
+func (w Workflow) JobProfileOrDefault() string {
+	if w.JobProfile == "" {
+		return DefaultJobProfile
+	}
+	return w.JobProfile
 }
 
 // Rebuild says when the daily image check rebuilds the workflow's image
@@ -441,6 +491,105 @@ type Resources struct {
 	Memory string `yaml:"memory"`
 }
 
+// JobProfile is the shape of one project job (design project-centric §4.1):
+// what Cloud Run fixes per job and one workflow's selection picks by name.
+// It is declared once, here, and carried in two documents — the operator's
+// config file (localcfg.Config.Profiles) and the project policy
+// (projectpolicy.Profile, which embeds this type) — so the two cannot drift.
+//
+// CPU and Memory are the same two fields Resources carries, and Cloud Run's
+// own limits are checked against them (internal/backend/gcp.CheckResources):
+// a profile naming a job the API would refuse must be refused here, where the
+// operator can see it. TimeoutClass is the task timeout, a duration in Go
+// syntax ("90m", "6h") through the same spelling timeouts.total uses; it
+// becomes the job's task timeout — plus backend.TaskTimeoutSlack, the same
+// sum internal/infra deploys the job with — so Cloud Run's 168h ceiling
+// applies to the sum, which is what projectpolicy.validTimeoutClass bounds.
+// Secrets are logical secret NAMES the job mounts, never values — the policy
+// node is readable by every run token. AllowRepos is the profile's admission
+// list (design §4.1): the key absent means the project's allow_repos applies,
+// and a key written with no repository under it is refused (localcfg, from
+// allowReposWritten) rather than read as the same statement — a blank list
+// would widen the profile to the project's enrollment, and admission is the one
+// thing a profile's list must never widen.
+//
+// The provider is not optional (finding 4): one job serves one provider,
+// because the provider is part of the slug, the job's identity and the git
+// credential the job holds.
+type JobProfile struct {
+	Provider     string   `yaml:"provider" json:"provider"`
+	CPU          int      `yaml:"cpu" json:"cpu"`
+	Memory       string   `yaml:"memory" json:"memory"`
+	TimeoutClass string   `yaml:"timeout_class" json:"timeout_class"`
+	Secrets      []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	AllowRepos   []string `yaml:"allow_repos,omitempty" json:"allow_repos,omitempty"`
+	// allowReposWritten records that the document gave allow_repos at all. It
+	// exists because a key written with nothing under it (`allow_repos:`, or
+	// `~`, with every entry commented out) decodes to the same nil slice as an
+	// absent key, and the two mean opposite things here: absent is "the
+	// project's allow_repos applies", written is a list the operator wrote and
+	// left empty. Only the mapping node can tell them apart (UnmarshalYAML),
+	// the way ModelProvider.allowDataToWritten does for allow_data_to.
+	allowReposWritten bool
+}
+
+// jobProfileType is JobProfile's own type name, for the unknown-field refusal
+// below: UnmarshalYAML has to build the message yaml.v3's strict mode would
+// have built, and that mode names the type it was decoding into.
+var jobProfileType = reflect.TypeOf(JobProfile{})
+
+// jobProfileKeys are the yaml keys a profiles entry accepts, read from the
+// struct's own tags so a new field is picked up without a second list (the
+// same thing providerKeys does for a providers entry).
+var jobProfileKeys = func() map[string]bool {
+	out := map[string]bool{}
+	t := reflect.TypeOf(JobProfile{})
+	for i := range t.NumField() {
+		if tag, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ","); tag != "" && tag != "-" {
+			out[tag] = true
+		}
+	}
+	return out
+}()
+
+// UnmarshalYAML decodes one profiles entry, and refuses a key it does not know.
+// That second job is normally the decoder's own (Decoder.KnownFields), but
+// known fields are a property of a Decoder while decoding through a Node — the
+// only way to see a key that was written with nothing under it — is always
+// lenient, so the check is repeated here, with the same message.
+func (p *JobProfile) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: a profile must be a mapping of field to value", node.Line)}}
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if k := node.Content[i]; !jobProfileKeys[k.Value] {
+			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: field %s not found in type %s", k.Line, k.Value, jobProfileType)}}
+		}
+	}
+	type plain JobProfile // no methods: decodes the fields without recursing into this one
+	var v plain
+	if err := node.Decode(&v); err != nil {
+		return err
+	}
+	*p = JobProfile(v)
+	// A null value is short-circuited by yaml.v3 before any unmarshaler sees
+	// it, so the key's presence is read off the node itself: written with
+	// nothing under it is not the same state as absent.
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "allow_repos" {
+			p.allowReposWritten = true
+			break
+		}
+	}
+	return nil
+}
+
+// AllowReposWritten reports whether the document gave allow_repos at all, so a
+// reader can refuse a written list with nothing in it instead of reading it as
+// the absent key (localcfg, and projectpolicy's node-side check for the same
+// value written as JSON).
+func (p JobProfile) AllowReposWritten() bool { return p.allowReposWritten }
+
 // Timeouts bound a run (design §4.5).
 type Timeouts struct {
 	Total  Duration `yaml:"total"`
@@ -517,15 +666,21 @@ type Duration struct {
 
 var daysRE = regexp.MustCompile(`^([0-9]+)d(.*)$`)
 
-// UnmarshalYAML parses a Go duration string, with an optional day count.
-func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
+// ParseDuration parses a duration the way fugaro.yaml writes one: Go syntax
+// such as "90m" or "1h30m", optionally led by whole days, as in "14d" or
+// "1d12h". It is the one parser for that spelling, so a duration accepted in
+// one document is accepted in every document: the project policy's
+// profile timeout_class is held to it too (projectpolicy.validTimeoutClass),
+// where bare time.ParseDuration would refuse a "14d" the same installation
+// accepts for timeouts.total.
+func ParseDuration(s string) (time.Duration, error) {
 	var days time.Duration
-	rest, hasDays := n.Value, false
+	rest, hasDays := s, false
 	if m := daysRE.FindStringSubmatch(rest); m != nil {
 		count, err := strconv.Atoi(m[1])
 		// The rest must be unsigned: 1d-5h is not 19h.
 		if err != nil || count > 36500 || strings.HasPrefix(m[2], "-") || strings.HasPrefix(m[2], "+") {
-			return fmt.Errorf("line %d: invalid duration %q (days lead an unsigned duration, as in 14d or 1d12h)", n.Line, n.Value)
+			return 0, fmt.Errorf("invalid duration %q (days lead an unsigned duration, as in 14d or 1d12h)", s)
 		}
 		days, rest, hasDays = time.Duration(count)*24*time.Hour, m[2], true
 	}
@@ -533,10 +688,19 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	if rest != "" || !hasDays {
 		var err error
 		if v, err = time.ParseDuration(rest); err != nil {
-			return fmt.Errorf("line %d: invalid duration %q (use Go syntax such as 90m or 1h30m, or days such as 14d)", n.Line, n.Value)
+			return 0, fmt.Errorf("invalid duration %q (use Go syntax such as 90m or 1h30m, or days such as 14d)", s)
 		}
 	}
-	d.Duration, d.Set = days+v, true
+	return days + v, nil
+}
+
+// UnmarshalYAML parses a Go duration string, with an optional day count.
+func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
+	v, err := ParseDuration(n.Value)
+	if err != nil {
+		return fmt.Errorf("line %d: %w", n.Line, err)
+	}
+	d.Duration, d.Set = v, true
 	return nil
 }
 

@@ -2,6 +2,7 @@ package runview
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -617,5 +618,53 @@ func TestJoinArtifactBytesCountsNoNegativeSize(t *testing.T) {
 	}
 	if row.ArtifactBytes != 10 {
 		t.Errorf("artifact bytes = %d, want 10 (a negative count is not a size)", row.ArtifactBytes)
+	}
+}
+
+// TestJoinCarriesTheRunsChangedFiles: the row carries the run's own record of
+// the paths it changed (console v2 design D27), and a run that recorded none
+// carries none — an absent field, never an empty set.
+func TestJoinCarriesTheRunsChangedFiles(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	r.ChangedFiles = runstore.NewChangedFiles([]string{"a.go", "b/c.go"})
+	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
+	if row.ChangedFiles == nil || len(row.ChangedFiles.Paths) != 2 || row.ChangedFiles.Paths[1] != "b/c.go" {
+		t.Fatalf("row.ChangedFiles = %+v", row.ChangedFiles)
+	}
+	b, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"changed_files"`) {
+		t.Fatalf("the row does not carry the set:\n%s", b)
+	}
+	plain := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil)}, prices, now)
+	if plain.ChangedFiles != nil {
+		t.Fatalf("a run that recorded none: %+v", plain.ChangedFiles)
+	}
+	b, err = json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "changed_files") {
+		t.Fatalf("a run that recorded none names the field:\n%s", b)
+	}
+}
+
+// TestJoinReboundsTheRecordedChangedFiles: the row does not pass a record's
+// set through as written — a record carrying more than the bound is cut on
+// read and flagged truncated, so `runs ls --json` never hands the console an
+// unbounded list or a cut one dressed as whole.
+func TestJoinReboundsTheRecordedChangedFiles(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	big := make([]string, 0, 3*runstore.MaxChangedFiles)
+	for i := range 3 * runstore.MaxChangedFiles {
+		big = append(big, fmt.Sprintf("f%04d", i))
+	}
+	r.ChangedFiles = &runstore.ChangedFiles{Paths: big, Total: len(big)}
+	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
+	if row.ChangedFiles == nil || len(row.ChangedFiles.Paths) != runstore.MaxChangedFiles || !row.ChangedFiles.Truncated {
+		t.Fatalf("an oversized record reached the row as %d paths, truncated %v",
+			len(row.ChangedFiles.Paths), row.ChangedFiles.Truncated)
 	}
 }

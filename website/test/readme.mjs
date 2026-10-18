@@ -553,8 +553,22 @@ test('the README claims about docs/pending-workflows/, firebase.json and the dep
   // The owner copied the website's two manual workflows (#566) into .github/workflows/ and removed
   // the staged copies, so the directory holds no pending workflow and the real files exist.
   assert.ok(/now holds no pending workflow/.test(text.replace(/\s+/g, ' ')), 'the README no longer says what docs/pending-workflows/ holds today')
-  const pending = existsSync(staged) ? readdirSync(staged).filter((n) => /\.ya?ml$/i.test(n)).sort() : []
+  // The console's two workflows are the one exception, and it is not a pending one: the owner copied
+  // both into .github/workflows/ and their staged copies are kept on purpose (the Go docs tests assert
+  // byte-identity), so each staged file must be exactly the one that runs.
+  const keptStaged = ['console-release.yml', 'console-tests.yml']
+  const yamls = existsSync(staged) ? readdirSync(staged).filter((n) => /\.ya?ml$/i.test(n)).sort() : []
+  const pending = yamls.filter((n) => !keptStaged.includes(n))
   assert.deepEqual(pending, [], 'a workflow is staged under docs/pending-workflows/ but the README says none is pending, so update the README')
+  for (const name of yamls.filter((n) => keptStaged.includes(n))) {
+    const real = path.join(REPO_ROOT, '.github', 'workflows', name)
+    assert.ok(existsSync(real), `docs/pending-workflows/${name} is staged but .github/workflows/${name} is missing, so it is pending and the README says none is`)
+    assert.ok(
+      readFileSync(real).equals(readFileSync(path.join(staged, name))),
+      `docs/pending-workflows/${name} differs from .github/workflows/${name}: a staged copy that is not the running file is a pending change, and the README says none is`,
+    )
+  }
+  assert.ok(/console-tests\.yml/.test(text) && /console-release\.yml/.test(text), 'the README does not say why the console\'s two workflows are still under docs/pending-workflows/')
   for (const name of ['website-preview.yml', 'website-promote.yml']) {
     assert.ok(existsSync(path.join(REPO_ROOT, '.github', 'workflows', name)), `.github/workflows/${name} is missing: the README says the owner copied it in`)
   }

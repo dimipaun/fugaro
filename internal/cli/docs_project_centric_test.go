@@ -2183,7 +2183,7 @@ var chk49Citations = []chkCitation{
 	// carries exactly once.
 	{"internal/cli/init.go", "--plan-only: nothing applied; the plan is"},
 	{"internal/cli/init_firebase.go", "r.installRoot(ctx, c, t, wd, lc, spec)"},
-	{"internal/cli/init_firebase.go", "r.applyRoot(ctx, ft, fwd, \"firebase\""},
+	{"internal/cli/init_firebase.go", "r.applyRoot(ctx, c, ft, fwd, \"firebase\""},
 	{"internal/cli/init_firebase.go", "already has the rules"},
 	{"internal/cli/init_firebase.go", "\"The Firebase project %s:\\n\""},
 	// The FACT for this citation names the two `deployDatabase` act lines

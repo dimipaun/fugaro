@@ -369,6 +369,7 @@ reads:
 | `run`, `run_id`, `repo` | string | no | |
 | `slug` | — | — | **not a field**: `Row` has no `slug`; the slug is the row's own bucket key |
 | `workflow` | string | **yes** | |
+| `title` | string | **yes** | the run's own job title (`task.Spec.TitleLine`: the title flag of `fugaro run`, else the task's first line) — the field `fugaro watch` names a run by, absent when the task has neither; **task-derived, not sanitized** (the task-text fallback is raw) — the display layer sanitizes it (design §5.1 rule 7) |
 | `oauth_account` | string | **yes** | the named Claude account |
 | `recipe`, `config_sha256` | string | **yes** | |
 | `project_layer` | `*runstore.ProjectLayerRecord` | **yes** | absent before 0.6.0 |
@@ -392,6 +393,32 @@ reads:
 | `stale_draft` | bool | **yes** | the record is not final but its draft's status section is old, or the execution is gone: the run probably died |
 | `artifact_count` | int | **yes** | what an artifact run's record says it delivered; absent for every run that has none, and the count `runs ls`'s `ARTIFACTS` column shows — its total is `artifact_bytes` |
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
+| `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
+
+**`changed_files` is the run's own account, and it is bounded.** The runner
+reads the paths of the run's own commits (`origin/<base>...HEAD` for a first
+run, its start commit for a follow-up — `gitops.ChangedFiles`) and stores at
+most `runstore.MaxChangedFiles` = **200** of them, or
+`runstore.MaxChangedPathBytes` = **16 KiB** of path, whichever comes first:
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `paths` | `[]string` | no | sorted, as git listed them; **`[]` when the run changed no path — never null** |
+| `total` | int | no | **how many paths the run really changed**, so a truncated record still says how big the set it is part of was |
+| `truncated` | bool | **yes** | set **only** when `paths` is shorter than `total` — a console that renders a truncated set as the whole set is showing a number the record does not support |
+
+**Paths only.** No contents, no diff, no commit message, no line counts: a
+path can name a client, a person or a project, so the record holds the least
+that answers "did these two runs touch the same file". A rename is recorded as
+the delete and the add it is, because a path that moved is a path two runs can
+collide on.
+
+**The reader bounds it again.** The record is an object the job can write, so
+`runview.Join` does not pass the set through as written: `ChangedFiles.Bounded`
+drops empty paths, re-applies both caps, never lets `total` fall below the
+paths kept, and sets `truncated` when the record said so or when `paths` is
+short of `total`. A tampered record therefore reaches the console bounded and
+with its truncation flagged, never larger or dressed as whole.
 
 `runview.Totals` (`runview.go:436`): `runs` int, `model_usd` float64,
 `model_notional_usd` float64 (**notional** — kept apart from `model_usd` by
@@ -520,7 +547,7 @@ accounts"** (the type's own doc comment is the authority). Flags: `--repo`
 (`secrets.go:669`), not an object with a wrapper key. Each element is
 `secretEntry` (`secrets.go:486`): `name`° (the logical name, from the
 `fugaro_secret` label), `scope`° (`repo` / `project` / a project secret with a
-repo override), `allowed`° (`[]string`, `--project-wide` only), and the
+repo override), `allowed`° (`[]string`, `--project-wide` only), `missing`° (`true` on a name a job of the repository needs that has no enabled version — `--repo` only; such a row has an empty `id` and no `created`), and the
 embedded **`gcp.SecretInfo`** (`internal/backend/gcp/secrets.go:40`), whose own
 JSON keys are `id`, `created` (RFC 3339), `labels`°, `versions` (the count of
 versions not destroyed) and `latest`° (the newest enabled version, if any) —
@@ -541,11 +568,130 @@ root command sets no cobra `Version` field (`fugaro --version` fails). The
 console parses the human line, pinned by a test against the real output
 (design §4.3 gap 2).
 
-## 7. The seven CLI gaps, settled against the code
+### 6.8 `fugaro config list --json`
+
+**Command:** `internal/cli/config_list.go` `newConfigListCmd`, a subcommand of
+`fugaro config` (`internal/cli/configcmd.go`). **Flags:** `--json`. **It takes
+no cloud flags** — `--project`, `--config`, `--gcp-project` and `--region` are
+absent on purpose: this is a local read of the operator's own project configs,
+it opens no bucket and it needs no installation selected, so it works outside a
+checkout and with no config at all (an empty list).
+
+**What it closes:** v1 design §4.3 gap 5 — the read D13 itself names, and the
+one the installation picker waits on. It enumerates
+`internal/localcfg/localcfg.go`'s `Projects(getenv)` and reads each one with
+`LoadProject`, so the list is the CLI's own enumeration and the app still never
+opens `~/.config/fugaro` (§3.4 rule 7).
+
+The document:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `installations` | array | never | never | every project config, in the order `Projects` returns them; `[]` when there are none |
+| `warnings` | array | never | never | one line per installation that could not be read; `[]` when there are none |
+
+and one entry of `installations`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `name` | string | never | never | the project name, i.e. the config file's own name |
+| `gcp_project` | string | never | never | `""` when the config could not be read (the warning says why) |
+| `region` | string | never | never | `""` when the config could not be read |
+| `shared_merged` | bool | never | never | whether this machine holds the installation's published shared config |
+| `shared_checked_at` | string | never | **yes** | RFC 3339 UTC; null exactly when `shared_merged` is false |
+
+**An installation whose config cannot be read is still listed, by name, with a
+warning** — a picker that offered a name and then failed silently is worse than
+one that says what it could not read.
+
+**The document is a named set of fields and it is deliberately not a marshalled
+`localcfg.Config`.** That struct carries the operator's providers and their base
+URLs, the named Claude accounts, the reserved project secrets, the Terraform
+block and the whole repository list — none of which the picker needs, and all of
+which would join this document the day a field is added to the struct. A test
+fails if a field outside the five above reaches the output, and if either type
+ever becomes (or embeds) `localcfg.Config`.
+
+**Version skew.** The command is new, so an older CLI does not have it at all:
+the spawn fails and the console shows its "this CLI cannot list installations"
+state, which is the form D13 accepted for v1. The handshake (§6.7) is what tells
+the console which case it is in.
+
+### 6.9 `fugaro plan graph --json`
+
+**Command:** `internal/cli/plan.go` `newPlanGraphCmd`, the only subcommand of
+`fugaro plan`. **Flags:** `--plan <path>` (the plan document the graph sits
+beside; with none, the one graph artifact under `docs/plans` is read, and more
+than one is refused and listed rather than picked), `--json`. **It takes no
+cloud flags**, for the same reason as §6.8: it reads a file in the checkout.
+
+**What it reads:** the plan-side graph artifact (v2 design D25 and F6/F33),
+`<plan>.graph.json` beside `<plan>.md`, parsed and validated by
+`internal/plan/`. The console never opens the file — it spawns this command and
+reads the document, like every other figure (D1, §3.4 rule 7).
+
+The document:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `schema_version` | number | never | never | `1` today; a document carrying another number is **refused**, not rendered |
+| `plan` | string | never | never | the plan the artifact came from, as the artifact names it |
+| `nodes` | array | never | never | the tasks; `[]` is a plan with no tasks yet |
+| `edges` | array | never | never | the dependencies; `[]` is a plan with no dependencies yet |
+
+one entry of `nodes`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | never | never | the planner's own name for the task; unique in the document |
+| `title` | string | never | never | what a person reads |
+| `run` | string | never | **yes** | the run this task belongs to; null when it belongs to none |
+| `version` | string | never | **yes** | the target version; null when the plan does not say |
+| `footprint` | object | never | never | the expected paths, below |
+
+one entry of `edges`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `task` | string | never | never | the node that depends |
+| `needs` | string | never | never | the node it depends on |
+| `reason` | string | never | never | why; a document with an edge and no reason is refused |
+
+and the `footprint` object:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `prediction` | bool | never | never | **always `true`** — a footprint is a prediction, and the label travels with the data (D28) |
+| `paths` | array | never | never | glob patterns matched with doublestar; `[]` is a task that predicts it touches nothing |
+
+**Four refusals, and they are refusals rather than partial renders:** a document
+from a schema version this build does not read (the message names both
+versions), a malformed one, one whose edges name a node that is not there or
+whose ids repeat, and **one with a cycle** — every "ready" and "blocked" answer
+is a function of the graph, so a cyclic graph has none to give. A refused graph
+is no document at all: the command exits non-zero and prints nothing to stdout,
+so a renderer never has half a graph to draw.
+
+**The footprint is advisory and it is a prediction; the measured set is a
+different document.** What a task *expected* to touch is this field; what a run
+*did* touch is the run's own record (D27), written after the fact. The console
+labels the first as a prediction wherever it shows it, and the label is in the
+document rather than in the renderer.
+
+**Version skew.** Both the command and the document's `schema_version` answer
+this, and they answer different halves: an older CLI has no `plan graph` at all,
+and a newer *planner* can write a `schema_version` the CLI refuses. The console
+shows the CLI's refusal sentence rather than a graph.
+
+## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
 (design §4.3, D19). Each is a fact of this tree, with the symbol that proves
-it.
+it. **The list was seven and it is now six: gap 5 is closed** by
+`fugaro config list --json` (§6.8, console v2 plan V2.1.1). Its row is kept
+below as the state the console was written against rather than deleted, so a
+reader who finds the old count in the v1 design's §4.3 and in its plan finds
+the closing here.
 
 | # | The gap | Proved by | What the console does meanwhile |
 |---|---|---|---|
@@ -553,7 +699,7 @@ it.
 | 2 | `version` has **no `--json`** and no flags at all | `newVersionCmd`, `internal/cli/root.go` — `cobra.NoArgs`, no `Flags()` | Parse the human line, pinned by a test |
 | 3 | **`project show --json` does not exist on this tree** — there is no `fugaro project` command at all | no `newProjectCmd` in `internal/cli`; `docs/plans/2026-10-14-project-centric.md` phase 1 (PR #390) ships `project show`, `project policy publish` and `project repos add` — and only that one verb of the `repos` group comes with phase 1: the plan's phase 4 (Enrollment and migration, Task 4.1) is where `project repos ls`, `rm` and `sync` ship — **and no `project ls`** | The Projects screen renders the caps, kill state and repositories it can see, and says the policy object is not readable yet |
 | 4 | **No schema version in the `watch --json` document** | `JSONDoc`, `internal/watch/json.go:97` — no version field | Infer from the CLI version and from which shape arrived (the `degraded` key) |
-| 5 | **Nothing enumerates installations** | `fugaro config` is `example\|show\|layer\|init\|publish` (`internal/cli/configcmd.go`); no `fugaro project` command exists; that phase's commands describe the *selected* project's policy and repositories, not the machine's installations | The operator adds each installation by hand (D13): binary picker, typed project name, optional checkout directory |
+| 5 | **Nothing enumerates installations** | `fugaro config` is `example\|show\|layer\|init\|publish` (`internal/cli/configcmd.go`); no `fugaro project` command exists; that phase's commands describe the *selected* project's policy and repositories, not the machine's installations | The operator adds each installation by hand (D13): binary picker, typed project name, optional checkout directory. **Closed 2026-10-18: `fugaro config list --json` exists (§6.8), so the typed name becomes a pick from the list of names the CLI prints — the field stays for an installation the operator adds before the CLI is updated** |
 | 6 | **No PR field on a run that has not finished** | `JSONRun` (`json.go:54`) carries `repo` and no `pr_url`/`pr_number`; they exist only on `JSONFinished` (`json.go:91-92`); `runview.Row` (`runview.go:57`) spells the pair `pr_url` + `pr` (`runview.go:109`) | A live row shows no link; the detail screen takes it from `diagnose RUN --json`'s `row` |
 | 7 | **No provider on any shape** | `JSONRun`, `JSONFinished` and `runview.Row` each carry `repo` and no provider or origin host; `doctor --json`'s `doctorOutput` reports none; the kinds are `github`/`bitbucket`/`fake` (`internal/task/task.go`'s `Slug`, which hashes provider and repository together **one way**, so a slug cannot be inverted) | **No PR link at all** (design §5.1 rule 2): repository, number and `pr_url` shown as text, never handed to `openExternal`. A GitHub-shaped guess is wrong for `edgeappinc/fugarosandbox`, which is Bitbucket |
 
@@ -584,6 +730,8 @@ and **not** off this document or the design:
 | `accounts ls` | yes (`internal/cli/accounts.go:43`) |
 | `doctor` | yes (`internal/cli/doctor.go:195`) |
 | **`version`** | **no — it takes no flags at all** (`internal/cli/root.go`) |
+| **`config list`** | **no — it reads the operator's local project configs, not a cloud** (`internal/cli/config_list.go`, §6.8) |
+| **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |
 
 So the console passes `--project <name>` (and `--config <path>` when the
 installation is not the ambient one) on **every spawn except the handshake**,

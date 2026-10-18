@@ -23,6 +23,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -189,7 +190,16 @@ type run struct {
 	// projPolicy and ident memoize the run's read of the project's policy and
 	// the Firebase identity it is read with, so the node is read once, decoded
 	// once and its token taken once (projectpolicy.go).
-	projPolicy   policyRead
+	projPolicy policyRead
+	// job is the identity this run adopted from the Cloud Run job it is in,
+	// computed and matched in admissionCheck (projectjob.go, plan task 3.3):
+	// the (profile, provider, account) the job's own name was computed from.
+	// A zero value means the run is in a per-repository job — or is not on
+	// Cloud Run at all — and r.job.Profile == "" is how every reader tells
+	// them apart (projectJob). It is written once, before any git credential
+	// exists, and never from the environment: the provider, the admission and
+	// the clone URL of a project job all come from it.
+	job          jobTriple
 	ident        budgetIdentity
 	defFile      defaultBranchData
 	instructions string
@@ -865,18 +875,24 @@ const bashTimeoutSlack = 2 * time.Minute
 // read before the checkout exists. It costs nothing — bootstrap's FetchBase
 // brings origin/<base> up to date before anything reads it — and the task's
 // own ref is fetched separately either way (CheckoutNewBranch).
-func (r *run) openCheckout(ctx context.Context, cloneVars map[string]string) (*gitops.Repo, error) {
+//
+// remote is where the clone comes from. It is r.cloneURL's answer for this run
+// — computed from task.json, the job's provider and the policy on a project
+// job, the job's environment's remote on a per-repository one (projectjob.go) —
+// and never r.d.Remote read again here: the two must be the same string the
+// admission check and the credential URL were built from.
+func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[string]string) (*gitops.Repo, error) {
 	env := gitops.WithVars(gitops.IdentityEnv(), cloneVars)
 	// A checkout already here (baked into the image, or left by an earlier
 	// run on the same container), or a baked job with none to open, is
 	// OpenOrClone's case: there is no clone to choose the shape of.
 	if _, err := gitops.Open(r.d.WorkDir, nil); err == nil || !r.cloneJob() {
-		return gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, env, modelCredentialVars...)
+		return gitops.OpenOrClone(ctx, r.d.WorkDir, remote, env, modelCredentialVars...)
 	}
-	if r.d.Remote == "" {
+	if remote == "" {
 		return nil, fmt.Errorf("%s is empty and this job has no repository to clone (FUGARO_CHECKOUT=%s with no remote)", r.d.WorkDir, config.CheckoutClone)
 	}
-	return gitops.CloneBlobless(ctx, r.d.WorkDir, r.d.Remote, "", env, modelCredentialVars...)
+	return gitops.CloneBlobless(ctx, r.d.WorkDir, remote, "", env, modelCredentialVars...)
 }
 
 func (r *run) bootstrap(ctx context.Context) error {
@@ -952,30 +968,53 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return err
 	}
 
+	// Where this run clones from (design §4.1(1), plan task 3.3 step 3). On a
+	// project job the answer is computed from task.json's repository, the
+	// job's own provider and the policy's clone URL for it, so FUGARO_REMOTE
+	// is not read at all and a launcher who overrode it cannot point the run
+	// at another repository; on a per-repository job it is the phase-1 answer
+	// (a checkout's origin, else the job's remote), unchanged.
+	remote, err := r.cloneURL(ctx)
+	if err != nil {
+		return err
+	}
+	if err := r.checkProjectCheckoutOrigin(ctx, remote); err != nil {
+		return err
+	}
+	r.credURL = gitops.CredentialURL(remote)
 	// The clone and fetch below may already need credentials, so the
 	// provider is opened now if anything but fugaro.yaml names it.
-	origin := r.originURL(ctx)
-	r.credURL = gitops.CredentialURL(origin)
-	if kind, from := r.d.ProviderKind, "the --provider flag"; kind != "" {
-		if err := r.openProvider(ctx, kind, from); err != nil {
+	switch job, project := r.projectJob(); {
+	case project:
+		// On a project job the provider is the one the job's own name pins,
+		// which admissionCheck matched (projectjob.go). FUGARO_GIT_PROVIDER is
+		// not consulted here even as a default: a run that got this far has
+		// already refused if the variable disagreed (admissionCheck).
+		if err := r.openProvider(ctx, job.Provider, "the project job "+gcp.ProjectJobName(job.Profile, job.Provider, job.Account)); err != nil {
 			return err
 		}
-	} else if kind := gitprov.KindForURL(origin); kind != "" {
-		// origin may carry embedded userinfo (a token in the remote
-		// URL); the message never quotes more than scheme://host.
-		display := origin
-		if r.credURL != "" {
-			display = r.credURL
-		}
-		if err := r.openProvider(ctx, kind, "the origin URL "+display); err != nil {
+	case r.d.ProviderKind != "":
+		if err := r.openProvider(ctx, r.d.ProviderKind, "the --provider flag"); err != nil {
 			return err
+		}
+	default:
+		if kind := gitprov.KindForURL(remote); kind != "" {
+			// remote may carry embedded userinfo (a token in the remote
+			// URL); the message never quotes more than scheme://host.
+			display := remote
+			if r.credURL != "" {
+				display = r.credURL
+			}
+			if err := r.openProvider(ctx, kind, "the origin URL "+display); err != nil {
+				return err
+			}
 		}
 	}
 	cloneVars, err := r.authVars()
 	if err != nil {
 		return fmt.Errorf("building git credentials: %w", err)
 	}
-	repo, err := r.openCheckout(ctx, cloneVars)
+	repo, err := r.openCheckout(ctx, remote, cloneVars)
 	if err != nil {
 		return fmt.Errorf("opening checkout %s: %w", r.d.WorkDir, err)
 	}
@@ -1044,6 +1083,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	if err := spec.Apply(cfg, &wf); err != nil {
 		return fmt.Errorf("applying task overrides: %w", err)
+	}
+	// The workflow's job profile, once the config is resolved and the
+	// overrides are applied: the selection is a name the published policy must
+	// define (plan task 3.1 step 1, the fail-closed half).
+	if err := r.checkJobProfile(ctx, name, wf); err != nil {
+		return err
 	}
 	rcp, rrec, err := r.resolveRecipe(ctx, cfg)
 	if err != nil {
@@ -2111,6 +2156,10 @@ func (r *run) logTail(ready bool, records []verify.Record) *LogTail {
 
 func (r *run) finalize(ctx context.Context) error {
 	r.rec.Stage = "finalize"
+	// The paths this run changed, recorded before anything else saves the
+	// record, so every run that reaches finalize carries them — the ones
+	// that end without a pull request included (design D27, V2.1.2).
+	r.recordChangedFiles(ctx)
 	r.save(ctx)
 	if r.skipPR {
 		// The check gate already ended the run (gate.go: endWithoutPR or
@@ -2159,6 +2208,11 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading head sha: %w", err)
 	}
+	// Read once more now that the run's own commits are final: work the
+	// agent left uncommitted was just committed above, and those paths are
+	// this run's too. A failed read keeps the set read at the top of
+	// finalize, which is still this run's work.
+	r.recordChangedFiles(ctx)
 	records, err := verify.Records(r.d.StateDir)
 	if err != nil {
 		return fmt.Errorf("reading verify records: %w", err)
@@ -2455,6 +2509,14 @@ func (r *run) uploadVerifyRecords(ctx context.Context, records []verify.Record) 
 // rawPRText returns the PR title and body the agent wrote to pr.md, or
 // defaults built from the task. The agent's text is redacted before it is
 // published.
+//
+// Without a pr.md the title is the run's own, from the ONE place the text
+// comes from (task.Spec.TitleLine): the title its launcher stored (fugaro
+// run --title), else the task prompt's first line. A run launched with a
+// title also carries it as the body's first heading, so a brief whose first
+// line is a shared preamble is told apart in the pull request itself and not
+// only in its title; a run without one keeps the body it always had, byte
+// for byte.
 func (r *run) rawPRText() (string, string) {
 	if data, err := os.ReadFile(filepath.Join(r.d.StateDir, prFile)); err == nil {
 		title, body, _ := strings.Cut(strings.TrimSpace(agent.Redact(string(data), r.secretList())), "\n")
@@ -2463,11 +2525,15 @@ func (r *run) rawPRText() (string, string) {
 			return title, strings.TrimSpace(body)
 		}
 	}
-	first, _, _ := strings.Cut(strings.TrimSpace(r.spec.Task), "\n")
+	first := r.spec.TitleLine()
 	if runes := []rune(first); len(runes) > 72 {
 		first = string(runes[:71]) + "…"
 	}
-	return first, fmt.Sprintf("Opened by Fugaro run `%s`.\n\n## Task\n\n%s", r.rec.RunID, r.spec.Task)
+	body := fmt.Sprintf("Opened by Fugaro run `%s`.\n\n## Task\n\n%s", r.rec.RunID, r.spec.Task)
+	if r.spec.Title != "" {
+		body = fmt.Sprintf("Opened by Fugaro run `%s`.\n\n# %s\n\n## Task\n\n%s", r.rec.RunID, first, r.spec.Task)
+	}
+	return first, body
 }
 
 // Pull request text bounds. They keep well under GitHub's limits (titles

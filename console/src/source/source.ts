@@ -1,0 +1,307 @@
+// FugaroSource -- the whole data plane (desktop-console plan Task 1.3).
+//
+// Every screen in this console talks to one interface and to nothing else. It
+// **yields `JSONDoc`-shaped snapshots and emits change events, and it knows
+// nothing about how they were produced**: v1 produces them by spawning the
+// installed `fugaro` (`src/source/cli.ts`, design D1's Option A), the tests
+// produce them by replaying a recording (Task 1.4's `fixture.ts`), and the
+// designed next step produces them by speaking HTTP to a loopback port (Option
+// C). None of those three implementations is visible from here, and that is the
+// point: **this one interface is why the auth decision (design section 3) is
+// cheap to revisit**, and why a screen never learns whether a document came from
+// a child process, a file or a socket.
+//
+// Two shapes leave a source, and there are no others:
+//
+//   - **`Snapshot`** -- a document, plus the console's own stamp: when it
+//     arrived, which one it is in the series, which day it belongs to and
+//     whether that day just changed. The document is `JSONDoc`: *the CLI's
+//     document as it arrived*, undecoded. Decoding it into the console's typed
+//     shapes is Task 2.0's `shared/schema.ts`, and this file deliberately does
+//     not know a single field of it -- a field read here would be a field that
+//     had to be kept in step with `console/docs/json-contract.md` by hand.
+//   - **`TextSnapshot`** -- the two reads that are a sentence rather than a
+//     document: `fugaro version` (one human line, section 6.7) and
+//     `logs --url` (the one link, and the reason it is its own operation is that
+//     the CLI refuses `--url` together with `--json`).
+//
+// Three things this interface deliberately does not have:
+//
+//   - **no path, no URL, no command in a snapshot.** A snapshot holds the CLI's
+//     document and nothing the renderer could build a request from. The one link
+//     is a *text* snapshot, and the surface that opens it validates it against
+//     `ALLOWED_EXTERNAL_HOSTS` in the main process (`src/main/window.ts`) rather
+//     than trusting it because it came from a `--url` read.
+//   - **no mutation.** There is no `write`, no `run`, no `cancel`: the console is
+//     read-only in v1 by decision (design section 2), and the way to make that
+//     true is to give the screens no method that could do otherwise.
+//   - **no credential, and no parameter that could hold one.** A source is
+//     constructed with an installation the operator chose (D13) and never with a
+//     token: the child authenticates as the operator does in a terminal, using
+//     the operator's own home directory, which the console passes through the
+//     environment and never reads (design section 3.1).
+//
+// The last section of the file is `handlersFor`, which is the join between this
+// interface and Task 1.2's IPC allow-list: it answers the whole surface with one
+// handler per operation, each one receiving *validated* arguments and returning
+// something already rendered. A refusal is an exception whose message is the
+// CLI's own sentence, because `registerConsoleHandlers` passes a thrown message
+// through verbatim (design section 6.3: a refused read shows the CLI's sentence,
+// not a generic apology).
+
+import type { ConsoleHandlers, ValidatedArguments } from '../main/ipc'
+import { NO_ACTIVE_INSTALLATION } from '../main/installations'
+import type { Notice } from '../main/spawn'
+
+/**
+ * JSONDoc is the CLI's document as it arrived: a JSON object, undecoded. It is
+ * the type the whole console passes around, and the reason it is not a union of
+ * the eleven shapes is that a source is not allowed to decide which shape a
+ * document is -- that is Task 2.0's job, in one place, against the contract.
+ */
+export type JSONDoc = Readonly<Record<string, unknown>>
+
+/**
+ * InstallationRef is the resolved installation the header draws: the absolute
+ * path of the binary, the version it reported, the project name and where the
+ * resolution found it. The header shows the first two (design section 3.4 rule
+ * 4), and `source` is here so the environment view can say *how* the binary was
+ * chosen -- a version and a path with no provenance is what makes "why is this
+ * the wrong fugaro?" unanswerable.
+ */
+export interface InstallationRef {
+  readonly binaryPath: string
+  readonly version: string
+  readonly project: string
+  readonly source: 'configured' | 'well-known'
+  /** `checkout` is the installation's directory when it has one, which is also
+   * the child's working directory (rule 5). */
+  readonly checkout?: string | undefined
+}
+
+/**
+ * Snapshot is one document, with the console's own stamp. `notices` are the
+ * stdout lines that were not JSON objects (Task 0.2's reader rule): the degraded
+ * mode writes a plain sentence on the same stream as the documents, so a snapshot
+ * carries them next to the document rather than pretending the stream was clean.
+ */
+export interface Snapshot {
+  readonly document: JSONDoc
+  /** the console's clock, RFC 3339 UTC -- never the child's. */
+  readonly receivedAt: string
+  /** counts the documents this feed has delivered, from 1. */
+  readonly sequence: number
+  /** the document's `day`, when it carries a string one. */
+  readonly day: string | null
+  /** true when the day differs from the previous document's: a UTC-midnight
+   * rollover, which is a **gap** in the series rather than a zero. */
+  readonly rolled: boolean
+  readonly notices: readonly Notice[]
+}
+
+/** TextSnapshot is a read that answers with a sentence rather than a document. */
+export interface TextSnapshot {
+  readonly text: string
+  readonly receivedAt: string
+}
+
+/** FeedEndReason says why a live feed stopped. */
+export type FeedEndReason =
+  /** the console stopped it */
+  | 'stopped'
+  /** the CLI refused: exit 1 and the operator's sentence (section 10.5) */
+  | 'refused'
+  /** the child could not be started at all */
+  | 'unstartable'
+
+/** FeedEnd is the last event a feed emits, and the one a screen draws as the
+ * reason the number stopped moving. */
+export interface FeedEnd {
+  readonly reason: FeedEndReason
+  /** the CLI's own sentence, verbatim, when it printed one. */
+  readonly sentence: string | null
+  readonly snapshots: number
+}
+
+/** Listener is what `on...` returns: the way to stop listening. */
+export type Unsubscribe = () => void
+
+/**
+ * LiveFeed is the streaming read. Its four members are the four things a screen
+ * needs and nothing more: the snapshot it already has, the two ways to be told
+ * about a new one, and the way to stop.
+ *
+ * `current()` is what makes a feed usable as a request/response operation: the
+ * IPC surface has no server-pushed channel (Task 1.2 is `invoke` only), so
+ * `live.watch` answers with the frame the console has, and a later task that
+ * adds a pushed channel reuses these listeners rather than a second reader.
+ */
+export interface LiveFeed {
+  readonly latest: Snapshot | null
+  onChange(listener: (snapshot: Snapshot) => void): Unsubscribe
+  onNotice(listener: (notice: Notice) => void): Unsubscribe
+  onEnded(listener: (end: FeedEnd) => void): Unsubscribe
+  current(): Promise<Snapshot>
+  stop(): Promise<void>
+}
+
+/**
+ * FugaroSource is the interface every screen talks to. The eleven reads are the
+ * eleven documents of design section 2.1 (`docs/json-contract.md` section 2),
+ * one method each, named after the thing on screen rather than after the CLI verb
+ * -- so a screen that says `listRuns` does not change when the verb behind it
+ * does.
+ *
+ * The arguments are the *validated* arguments of Task 1.2's schema, not a
+ * renderer payload: a source is downstream of the validation, and an
+ * implementation is entitled to assume that a value it is handed is one the
+ * schema allows.
+ */
+export interface FugaroSource {
+  /** `installation` is the resolved header: path, version, project, provenance. */
+  readonly installation: InstallationRef
+  version(): Promise<TextSnapshot>
+  /**
+   * subscribeLive starts the streaming read, and **a call with the same
+   * arguments while a feed for them is live returns that same feed** rather
+   * than a second one. The contract is here, on the interface, because it is
+   * not an optimisation: Task 1.2's surface is `invoke`-only, so a screen
+   * reaches `live.watch` once per poll, and an implementation that started a
+   * stream per call would leave one child process per poll -- each of them
+   * running `fugaro watch` against the operator's project. A feed that has
+   * ended is not live: the next call is entitled to start a fresh one, which is
+   * how a screen retries after a refusal.
+   *
+   * `close()` stops every feed this source started, live or not.
+   */
+  subscribeLive(args: ValidatedArguments): LiveFeed
+  showBudget(args: ValidatedArguments): Promise<Snapshot>
+  runReport(args: ValidatedArguments): Promise<Snapshot>
+  listRuns(args: ValidatedArguments): Promise<Snapshot>
+  diagnoseRun(args: ValidatedArguments): Promise<Snapshot>
+  readRunLogs(args: ValidatedArguments): Promise<Snapshot>
+  runLogLink(args: ValidatedArguments): Promise<TextSnapshot>
+  listSecrets(args: ValidatedArguments): Promise<Snapshot>
+  listAccounts(args: ValidatedArguments): Promise<Snapshot>
+  environmentReport(args: ValidatedArguments): Promise<Snapshot>
+  /** close stops every feed and every child this source started. */
+  close(): Promise<void>
+}
+
+/**
+ * SourceRefusal is how a source says no, and its whole design is its message:
+ * **the CLI's own sentence, verbatim**. The CLI is the only thing in the system
+ * that knows why a read failed -- a wrong project, an expired token, no checkout
+ * -- and design section 6.3 says the screen shows that sentence rather than a
+ * generic apology this console would have invented. Task 1.2's
+ * `registerConsoleHandlers` passes a thrown message through untouched, so the
+ * sentence a source throws here is the sentence on screen.
+ */
+export class SourceRefusal extends Error {
+  /** `sentence` is the raw text, before any trimming the message does. */
+  readonly sentence: string
+
+  constructor(sentence: string) {
+    super(sentence)
+    this.name = 'SourceRefusal'
+    this.sentence = sentence
+  }
+}
+
+/**
+ * refusalFrom turns a child's stderr into a `SourceRefusal`. The CLI prints
+ * `fugaro: <sentence>` (`cmd/fugaro/main.go`), and the prefix is dropped so the
+ * screen shows the sentence itself; a child that said nothing produces a message
+ * that names the read, because "the operation failed" is what a console says when
+ * it has nothing to say and the operator is owed better than that.
+ */
+export function refusalFrom(operation: string, sentence: string | null): SourceRefusal {
+  const text = sentence === null || sentence.trim() === '' ? `${operation} failed` : sentence.trim()
+  return new SourceRefusal(text)
+}
+
+/**
+ * handlersFor answers the whole IPC surface from one source. It is a function
+ * rather than a class because the surface is a table: one handler per operation,
+ * each a one-line call.
+ *
+ * `openExternal` is the twelfth operation and the only one that is not a read of
+ * the CLI: it takes the URL the *console* would open anyway and hands it to
+ * `openExternalValidated` (`src/main/window.ts`) -- the same function the
+ * allow-list's own test uses, imported rather than re-implemented, so the host
+ * list cannot drift between the surface and the window.
+ *
+ * `live.watch` answers with the frame the feed already has: Task 1.2's surface is
+ * `invoke`-only, so a live update reaches a screen through the feed's listeners
+ * that a later task wires to a push channel. The handler calls `subscribeLive`
+ * on every invocation -- one per poll -- so **the idempotency that keeps that
+ * from being a child process per poll is the source's**, stated on
+ * `FugaroSource.subscribeLive` and implemented in `src/source/cli.ts`, not
+ * something this mapping can add by caching: a mapping-level cache would have to
+ * key on the arguments it was handed, which is a second copy of the source's own
+ * idea of what "the same subscription" is.
+ */
+export function handlersFor(
+  source: FugaroSource,
+  deps: {
+    readonly openExternal: (raw: unknown) => Promise<void>
+    /** `installation` is the active installation as the store has it (Task
+     * 3.4b). It is a *read* of the console's own state, so it is handed in the
+     * same way `startup.compatibility` is -- and it is optional, because a
+     * console built without a store (a unit test's, a `refused` console's)
+     * answers D13's no-installation state rather than failing to register. */
+    readonly installation?: () => unknown
+  },
+): CliBackedHandlers {
+  // `satisfies` rather than a cast: the mapped type makes a missing handler a
+  // compile error, which is the whole reason `ConsoleHandlers` is mapped. A cast
+  // here would turn "one operation answers nothing" back into a runtime state.
+  return {
+    'cli.version': async () => (await source.version()).text,
+    'live.watch': async (args) => {
+      const feed = source.subscribeLive(args)
+      const snapshot = await feed.current()
+      return snapshot
+    },
+    'budget.show': (args) => source.showBudget(args),
+    'spend.report': (args) => source.runReport(args),
+    'runs.list': (args) => source.listRuns(args),
+    'run.diagnose': (args) => source.diagnoseRun(args),
+    'run.logs': (args) => source.readRunLogs(args),
+    'run.logLink': async (args) => (await source.runLogLink(args)).text,
+    'secrets.inventory': (args) => source.listSecrets(args),
+    'accounts.inventory': (args) => source.listAccounts(args),
+    'environment.report': (args) => source.environmentReport(args),
+    'link.openExternal': async (args) => {
+      await deps.openExternal(args['url'])
+      return null
+    },
+    // The fourteenth operation is not a read of the CLI either: it is the
+    // installation the operator chose, as the store holds it. With no store --
+    // and with no installation chosen -- it answers D13's no-installation
+    // state, which is a state and not a guess.
+    'installation.current': () => deps.installation?.() ?? { chosen: false, sentence: NO_ACTIVE_INSTALLATION },
+  } satisfies CliBackedHandlers
+}
+
+/**
+ * CliBackedHandlers is the whole surface **minus the one operation that is not
+ * a read of the CLI**: `startup.compatibility` (desktop-console plan Task 3.3),
+ * whose answer is the handshake `src/main/index.ts` ran before it built any
+ * window. It is not a read this module can make -- the source spawns, and the
+ * compatibility is the console's own state -- so `handlersFor` leaves that key
+ * out on purpose, and the renderer-entry task (Task 3.4a) is what joins it in at
+ * the entry point, as
+ * `{ ...handlersFor(source, deps), 'startup.compatibility': startupCompatibility(read) }`
+ * with `startupCompatibility` from `src/main/ipc.ts`. **Nothing registers the
+ * handlers until that task lands**: today `main()` serves the bundle and starts
+ * the lifecycle, and no window has a preload to reach a channel with.
+ *
+ * The `Omit` is still a *closed* type: a key typed here that is not an operation
+ * is an excess property, and an operation deleted from `CONSOLE_OPERATIONS`
+ * takes its required key with it -- so the exhaustiveness `satisfies` gives the
+ * other twelve rows is unchanged. `registerConsoleHandlers` still demands the
+ * whole surface, so a console that forgets the join fails to register rather
+ * than answering one operation with nothing.
+ */
+export type CliBackedHandlers = Omit<ConsoleHandlers, 'startup.compatibility'>

@@ -366,3 +366,46 @@ func TestMergeSharedNeverCarriesProjectSecrets(t *testing.T) {
 		t.Error("MergeShared cleared the local project_secrets")
 	}
 }
+
+// TestMergeSharedNeverCarriesProfiles: profiles are the owner's policy — the
+// job shapes, secret mounts and admission lists of the project's shared jobs —
+// and they travel through the policy node, which the runner reads and fails
+// closed on (`fugaro project policy publish`). The shared config is a file any
+// launcher with objectAdmin on the runs bucket can write, so a profiles block
+// in it would let a launcher redefine the jobs every repository runs on. The
+// receiver keeps its own; the published and merged copies have none, and the
+// marshalled bytes carry no key at all.
+//
+// Mutation (verified, run and restored): drop `s.Profiles = nil` from Shared:
+// this test fails on the first output carrying profiles:, and no other test
+// does.
+func TestMergeSharedNeverCarriesProfiles(t *testing.T) {
+	block := "profiles:\n" +
+		"  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h }\n" +
+		"  wide: { provider: github, cpu: 4, memory: 8Gi, timeout_class: 12h, allow_repos: [\"github/acme/*\"] }\n"
+	existing := sharedBase(t, block)
+	local := sharedBase(t, strings.ReplaceAll(block, "wide", "wider"))
+	if len(existing.Profiles) != 2 || len(local.Profiles) != 2 {
+		t.Fatalf("fixtures: %v %v", existing.Profiles, local.Profiles)
+	}
+	for name, got := range map[string]*Config{
+		"shared":         local.Shared(),
+		"merged":         MergeShared(existing, local),
+		"nil published":  MergeShared(nil, local),
+		"published only": MergeShared(existing, sharedBase(t, "")),
+	} {
+		if got.Profiles != nil {
+			t.Errorf("%s: profiles = %v", name, got.Profiles)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "profiles:") {
+			t.Errorf("%s: output carries profiles:\n%s", name, out)
+		}
+	}
+	if len(local.Profiles) != 2 {
+		t.Error("Shared/MergeShared cleared the local profiles")
+	}
+}
