@@ -321,7 +321,9 @@ fails, C2 needs a new launcher permission and a revoke step that no phase curren
   bucket-wide grant there is the **operators'** `roles/storage.objectAdmin`, an object-level role
   (`deploy/terraform/gcp/modules/installation/iam.tf`, `google_storage_bucket_iam_member.runs`), and
   the launchers hold `runs_reader` (`objectViewer`, no condition, the whole bucket) and the
-  conditioned `runs_launcher` (`objectUser` on `runs/` only, §7.2) — neither carries
+  conditioned `runs_launcher` (`objectUser`, conditioned to `runs/` alone as this alternative was
+  priced — §7.2 records where the seal's own merge widened it to `runs/ || tokens/`, which only
+  makes a launcher's account wider here, not narrower) — neither carries
   `storage.buckets.setIamPolicy`.
   Project-level roles bypass bucket IAM whatever this design does — SECURITY.md already says so —
   and this adds one more thing to that set for a launcher's own account.

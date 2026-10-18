@@ -182,6 +182,41 @@ func TestDocsBudgetTokenChannelSection72IsTheMergedTree(t *testing.T) {
 	}
 }
 
+// TestDocsBudgetTokenChannelC3PricesThePreSealGrant: the rejected alternative C3
+// quotes the launchers' condition as it stood when the alternative was priced —
+// `runs/` alone. §7.2 is now the merged tree's account of that grant (widened to
+// `runs/ || tokens/`, under a new title), so citing §7.2 for the runs/-only shape
+// contradicts the section this branch corrected; the 2026-10-18 review found the
+// C3 bullet still doing exactly that. The two assertions hold the corrected
+// sentence: the pre-seal shape is named as pre-seal, and the pointer to §7.2
+// names the widening rather than the old expression.
+func TestDocsBudgetTokenChannelC3PricesThePreSealGrant(t *testing.T) {
+	const path = "docs/design/budget-token-channel.md"
+	doc := readDoc(t, path)
+	i := strings.Index(doc, "### C3. ")
+	if i < 0 {
+		t.Fatalf("%s has no C3 alternative: the section this branch corrected its cross-reference in is gone", path)
+	}
+	sec := doc[i:]
+	if j := strings.Index(sec, "### C4. "); j > 0 {
+		sec = sec[:j]
+	}
+	// The document is wrapped, so a phrase can straddle a line break: the
+	// assertions below are on prose, not on layout.
+	flowed := strings.Join(strings.Fields(sec), " ")
+	for _, want := range []string{
+		"conditioned to `runs/` alone as this alternative was priced",
+		"widened it to `runs/ || tokens/`",
+	} {
+		if !strings.Contains(flowed, want) {
+			t.Errorf("%s's C3 does not say %q: it prices the launchers' grant, which the merge has since widened, so the shape it prices has to be marked as the one it was priced at", path, want)
+		}
+	}
+	if strings.Contains(sec, "`objectUser` on `runs/` only, §7.2") {
+		t.Errorf("%s's C3 cites §7.2 for a runs/-only launcher condition, which is not what §7.2 says any more: the section is the merged tree's widened member", path)
+	}
+}
+
 // TestDocsSecurityMdPointsAtTheTokenChannelDesign: the trust model's reader can
 // find the design that sealed the token's delivery channel, from the D13
 // paragraph that the seal narrows, and the paragraph says what the seal is —
