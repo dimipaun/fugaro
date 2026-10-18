@@ -388,6 +388,18 @@ func TestTheVerdictsRefusalListingIsCappedAndSaysWhatItLeftOut(t *testing.T) {
 			t.Errorf("a refusal of %d is %d lines, want a head and %d refusals:\n%s", n, len(lines), n, at)
 		}
 	}
+	// One past the cap is the boundary an off-by-one hides behind: twenty
+	// listed, one counted, and the twenty-first address nowhere.
+	one := (&RefusedError{Verdict: Verdict{Refusals: refusalsOf(safetext.FieldListMax + 1)}}).Error()
+	if note := "(" + safetext.FieldListNote(1) + ")"; !strings.Contains(one, note) {
+		t.Errorf("a refusal one past the cap does not say it left one out (%q):\n%s", note, one)
+	}
+	if lines := strings.Split(one, "\n"); len(lines) != safetext.FieldListMax+2 {
+		t.Errorf("a refusal one past the cap is %d lines, want a head, %d refusals and the note:\n%s", len(lines), safetext.FieldListMax, one)
+	}
+	if past := fmt.Sprintf("google_storage_bucket.a%02d", safetext.FieldListMax); strings.Contains(one, past) {
+		t.Errorf("a refusal one past the cap carries %s:\n%s", past, one)
+	}
 	if empty := (&RefusedError{}).Error(); !strings.Contains(empty, "listed nothing, which is a refusal all the same") {
 		t.Errorf("an empty verdict lost its own sentence: %q", empty)
 	}
