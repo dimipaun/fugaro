@@ -50,10 +50,12 @@ func aRequest() map[string]any {
 // TestDeviceNodeGatesEverythingUserReaches is D166: the allowlist node is the
 // second half of the user identity, and deleting it revokes at once.
 //
-// The three states of one account are walked in order — never written, written,
-// deleted — because the property that matters most is the third: revocation
+// The states of one account are walked in order — never written, written,
+// deleted — because the property that matters most is the deletion: revocation
 // that waits for an ID token to expire is not revocation (G14), which is why
-// the owner chose a node over a claim.
+// the owner chose a node over a claim. The account is then paired once more so
+// the client-write refusals at the end have a node to fail against and the
+// reads beside them are controls rather than refusals of an empty tree.
 func TestDeviceNodeGatesEverythingUserReaches(t *testing.T) {
 	h := newHarness(t)
 	w := leased(2 * usd)
@@ -117,6 +119,18 @@ func TestDeviceNodeGatesEverythingUserReaches(t *testing.T) {
 	h.mustDeny(alice, "an inbox message after the device was revoked",
 		put(inbox(mbAlice, "m2"), aMessage("m2", mbAlice)))
 
+	// The operator pairs the account again. This is not decoration: after the
+	// delete above the node is gone, and the refusals below are only refusals of
+	// *this write* if there is a node for the write to fail against — otherwise
+	// they would pass on an empty tree and prove nothing about the client's
+	// rights. So alice gets a node back here, and this read fails first if the
+	// pairing itself did not take — which leaves the read at the end of the
+	// block, after the client's write and delete were both refused, as the
+	// control that says neither of them changed the node.
+	h.pairDevice(mbAlice)
+	alice = h.unpaired(mbAlice)
+	h.mustRead(alice, beat(mbAlice))
+
 	// 4. No client token may touch the allowlist, in any state: writable by
 	// IAM only (deploy/terraform/gcp/modules/firebase/iam.tf grants
 	// roles/firebasedatabase.admin to admins and budget admins, G13). A phone
@@ -131,9 +145,10 @@ func TestDeviceNodeGatesEverythingUserReaches(t *testing.T) {
 	h.mustDeny(h.unpaired(mbBob), "an account writing its own device node",
 		put(PathDevices+"/"+mbBob, map[string]any{"pairedAt": msgAt}))
 	h.mustDeny(alice, "an account deleting its own device node", map[string]any{PathDevices + "/" + mbAlice: nil})
-	// And the deletion really is the operator's alone: the row before the last
-	// one shows the node still there, because the denied delete changed nothing.
-	alice = h.unpaired(mbAlice)
+	// And the deletion really is the operator's alone: the node is still there,
+	// because the denied delete changed nothing. A phone that could delete its
+	// own node would hold the two halves of its identity, and `fugaro pair
+	// revoke` would be advice rather than a revocation.
 	h.mustRead(alice, beat(mbAlice))
 }
 
