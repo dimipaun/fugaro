@@ -548,7 +548,7 @@ field this task reads out of a document is `day`, which the rollover needs.
 | 10 — the spawn log (D20) | `src/main/spawnlog.ts`, documented below |
 | Task 0.2's four settled behaviours | restart with the CLI's own backoff (1 s doubling to 30 s) except after a refusal, a signal read as the ordinary end of a feed, the UTC-midnight rollover marked as a **gap** rather than a zero, and the reader rule that a stdout line which is not a JSON object is **skipped** and surfaced as a notice — the degraded mode writes a plain sentence on the same stream as the documents (`runWatchDegraded`, `internal/cli/watch.go`) |
 
-### The spawn log, and the only thing the app writes
+### The spawn log, and what the app writes
 
 **The console writes nothing by default.** Set `FUGARO_CONSOLE_SPAWN_LOG` to a
 path and the main process appends one JSON object per line there, one line per
@@ -574,15 +574,25 @@ the last as scans over `console/src/`, so a screen, a source or an IPC handler
 that started reading it would fail a named test. It is what Check 59's
 assertion (4) reads and what Task 4.3's FACT commands read the key names from.
 
-**It is the only thing the app ever writes to disk.** The one other write in this
-task is a directory rather than a record: `privateWorkingDirectory()` creates an
-empty `0700` directory under the system temporary directory for an installation
-that has no checkout, so that `doctor --dir` is a directory and the child's `cwd`
-is not `/`. Section 5.1 rule 10 is about *records* — no history, no cached
-document, no crash dump, nothing that outlives the process — and this holds
-nothing at all. A later task that persists the installation list (the store here
-is in memory) would be a second thing the app writes and would have to be
-reconciled with rule 10 explicitly rather than growing by accident.
+**It is the only record the app writes today.** The one other write in this task
+is a directory rather than a record: `privateWorkingDirectory()` creates an empty
+`0700` directory under the system temporary directory for an installation that has
+no checkout, so that `doctor --dir` is a directory and the child's `cwd` is not
+`/`. Section 5.1 rule 10 is about *records* — no history, no cached document, no
+crash dump, nothing that outlives the process — and this holds nothing at all.
+
+**The second write rule 10 used to leave open is now ruled on, and named.** The
+store above is in memory, and a persisted installation list would be a second
+thing the app writes; rather than let that grow by accident, it was put to the
+owner. **C8 was answered yes on 2026-10-18**: the list is persisted, and §5.1 rule
+10 and §7.4 were amended to "the app writes the spawn log, when asked, and the
+installations file, and nothing else". **Task 3.4b builds that file** — one
+`installations.json` in Electron's `userData` directory, mode `0600`,
+schema-closed and bounded, holding **tuples only** (a project name, a config path,
+a binary path and an optional checkout directory), **never a credential**, and
+never read from the operator's own CLI config. Until 3.4b lands, "the only thing
+the app writes" still describes the shipped code exactly, because nothing writes
+that file yet.
 
 ### The spawn properties are tests, and each one fails under a mutation
 

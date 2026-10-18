@@ -8,7 +8,7 @@
   },
   "main": "dist/main/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.bundle-renderer.json && node .bundle-renderer/index.js",
     "test:unit": "vitest run --dir test/unit",
     "test:e2e": "npm run build && playwright test --pass-with-no-tests",
     "typecheck": "tsc --noEmit",
@@ -25,11 +25,13 @@
     "files": [
       "dist/main/**/*.js",
       "!dist/main/fuses.js",
-      "dist/preload/**/*.js",
+      "dist/preload/index.js",
       "dist/shared/**/*.js",
       "dist/source/**/*.js",
       "!dist/source/fixture.js",
-      "src/renderer/index.html"
+      "dist/bundle/console.js",
+      "dist/bundle/index.html",
+      "dist/bundle/refusal.html"
     ],
     "afterPack": "dist/main/fuses.js",
     "publish": null,

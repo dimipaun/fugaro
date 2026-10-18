@@ -2899,11 +2899,22 @@ func TestConsoleMVPRequiresTheStartupHandshake(t *testing.T) {
 // 2026-10-17): the console cannot draw a real dashboard until a task sets the
 // preload, registers the handlers after the handshake, loads a script into the
 // document and chooses an installation, and no other task owns that. The plan
-// must carry the task as SECURITY-SENSITIVE, depending on Task 3.3, marked not
-// approved until the owner's go, split into 3.4a/3.4b/3.4c, and named as an MVP
-// gate in "What ships with the MVP", in Task 4.6, in the phase summary and in
-// the cross-task dependencies, and Task 3.3 must name it as the wiring's owner.
-// Removing Task 3.4 from any of those places fails a named check here.
+// must carry the task as SECURITY-SENSITIVE, depending on Task 3.3, split into
+// 3.4a/3.4b/3.4c, and named as an MVP gate in "What ships with the MVP", in Task
+// 4.6, in the phase summary and in the cross-task dependencies, and Task 3.3
+// must name it as the wiring's owner. Removing Task 3.4 from any of those places
+// fails a named check here.
+//
+// The status line was "NOT APPROVED TO IMPLEMENT" until 2026-10-18, when the
+// owner gave the go ("go on task 3.4") and answered C8, C9 and C10, the three
+// decisions this task needed. The check below is on the *current* line, in the
+// same shape TestConsoleMVPRequiresTheStartupHandshake uses for Task 3.3's
+// 2026-10-17 go: a stale "not approved" line, or an answer that went missing from
+// the decisions table, is what fails. C8's answer also amends the design --
+// §5.1 rule 10 and §7.4 become "the spawn log, when asked, and the installations
+// file, and nothing else" -- and that amendment is asserted here too, because a
+// plan that promises it and a design that does not carry it is the failure mode
+// this pair of documents has to be protected from.
 func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
 	section := func(start, end string) string {
@@ -2927,7 +2938,10 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 
 	task := section("### Task 3.4:", "\n## Phase 4")
 	for _, want := range []string{
-		"NOT APPROVED TO IMPLEMENT — proposed 2026-10-17, awaiting the owner's go",
+		"**Status: approved by the owner 2026-10-18.**",
+		"**3.4a is implemented**",
+		"3.4b and 3.4c are approved and not yet written",
+		"C8, C9 and C10 are answered",
 		"**Depends on:** Task 3.3 (**hard**: #541 merged",
 		"#### 3.4a", "#### 3.4b", "#### 3.4c",
 		"registerConsoleHandlers",
@@ -2941,6 +2955,41 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 		if !strings.Contains(task, want) {
 			t.Errorf("Task 3.4 lost %q", want)
 		}
+	}
+	if strings.Contains(task, "NOT APPROVED TO IMPLEMENT") {
+		t.Error("Task 3.4 still carries a NOT APPROVED TO IMPLEMENT line: the owner gave the go on 2026-10-18")
+	}
+
+	// The three answers this task was waiting on, read out of the decisions table
+	// rather than out of the task text: C8 is the persist ruling (and the wording
+	// the design now carries), C9 is the separate picker window, C10 is that the
+	// kill fields inside `live.watch` stay visible in reduced mode.
+	answers := section("| **C8** |", "## Open items")
+	for _, want := range []string{
+		"Answered by the owner 2026-10-18: yes",
+		"one bounded, schema-checked `installations.json` in `userData`, mode `0600`",
+		"never read from the operator's own CLI config",
+		"a **separate small picker window** opened from the application menu",
+		"Answered by the owner 2026-10-18: no",
+		"**stay visible**",
+	} {
+		if !strings.Contains(answers, want) {
+			t.Errorf("the decisions table lost %q: C8, C9 and C10 were answered on 2026-10-18", want)
+		}
+	}
+
+	// The design amendment C8's answer requires, in the design and not only in
+	// the plan: rule 10 and section 7.4 now name the second write, in the same
+	// words the plan's answer column uses.
+	design := readDoc(t, "docs/design/desktop-console.md")
+	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, and the installations file, and nothing else.**") {
+		t.Error("design section 5.1 rule 10 was not amended to C8's wording")
+	}
+	if !strings.Contains(design, "**The app writes two things to disk and nothing else (§5.1 rule 10, amended 2026-10-18)") {
+		t.Error("design section 7.4 was not amended to C8's wording")
+	}
+	if !strings.Contains(design, "never a credential") {
+		t.Error("design section 5.1 rule 10's installations paragraph does not say the file holds no credential")
 	}
 
 	// Task 3.3's own section, bounded by Task 3.4's heading so the text of 3.4
@@ -2964,5 +3013,39 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	}
 	if deps := section("## Cross-task dependencies", "\n## "); !strings.Contains(deps, "Task 3.4 (the renderer entry") {
 		t.Error("the cross-task dependencies do not name Task 3.4")
+	}
+
+	// **The status is one fact in five places, and the scan above only holds one
+	// of them.** A review of the approval commit found the plan still calling
+	// Task 3.4 "proposed 2026-10-17, not approved" in the phase summary, in the
+	// cross-task dependencies and in the file tree's annotations for the three
+	// files 3.4a creates -- places the section-scoped scan above never reads, so
+	// the drift went undetected while the task itself was correct. These are the
+	// four strings that said so; each is asserted absent, and the three that
+	// carry a status (rather than a question's origin date) are asserted to carry
+	// the approval instead. Rewording any of them without updating the others
+	// fails here.
+	for _, stale := range []string{
+		"Task 3.4, proposed 2026-10-17, not approved",
+		"Task 3.4 (the renderer entry, proposed",
+		"Task 3.4a (proposed)",
+		"Task 3.4b (proposed)",
+	} {
+		if strings.Contains(plan, stale) {
+			t.Errorf("the plan still calls Task 3.4 %q: the owner approved it on 2026-10-18, and the status has to be one fact everywhere it is told", stale)
+		}
+	}
+	if row := section("| **3. When things are missing** |", "\n"); !strings.Contains(row, "Task 3.4, approved by the owner 2026-10-18") {
+		t.Error("the phase summary's phase-3 row does not carry Task 3.4's approval")
+	}
+	if bullet := section("- **Task 3.4 (the renderer entry", "\n"); !strings.Contains(bullet, "approved by the owner 2026-10-18") {
+		t.Error("the cross-task dependencies bullet does not carry Task 3.4's approval")
+	}
+	entry := regexp.MustCompile(`(?m)^  src/renderer/entry\.ts .*$`).FindString(plan)
+	if !strings.Contains(entry, "Task 3.4a (approved by the owner 2026-10-18") {
+		t.Errorf("the file tree's annotation for src/renderer/entry.ts does not carry 3.4a's approval: %q", entry)
+	}
+	if strings.Contains(entry, "proposed") {
+		t.Errorf("the file tree still calls src/renderer/entry.ts proposed: %q", entry)
 	}
 }

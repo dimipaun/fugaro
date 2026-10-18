@@ -830,14 +830,17 @@ export function childPath(binaryPath: string): string {
  * refused rather than spawned from.
  *
  * **On a fine point of section 5.1 rule 10, said out loud rather than left to be
- * noticed:** that rule calls the spawn log "the only thing the app ever writes
- * to disk", and this creates a directory. The reconciliation is that rule 10 is
- * about *records* -- no history, no cached document, no crash dump, nothing that
- * outlives the process -- and this holds nothing at all: it exists so that
- * `doctor`'s `--dir` is a directory rather than `/`, and an empty directory is
- * the smallest thing that can satisfy "never the app's own default of `/`". A
- * later task that persists the installation list would be a second thing the
- * app writes, and would have to be reconciled with rule 10 explicitly.
+ * noticed:** that rule is about *records* -- no history, no cached document, no
+ * crash dump, nothing that outlives the process -- and this creates a directory.
+ * The reconciliation is that a directory is not a record at all: it exists so
+ * that `doctor`'s `--dir` is a directory rather than `/`, and an empty directory
+ * is the smallest thing that can satisfy "never the app's own default of `/`".
+ * **The rule's wording changed on 2026-10-18** (the owner's C8 answer): it read
+ * "the spawn log is the only thing the app ever writes to disk" and now reads
+ * "the app writes the spawn log, when asked, and the installations file, and
+ * nothing else", so the persisted installation list Task 3.4b builds is the
+ * second write the earlier wording would have ruled out -- named by the rule
+ * rather than growing beside it. This directory is still neither.
  */
 export function privateWorkingDirectory(options: {
   readonly base?: string

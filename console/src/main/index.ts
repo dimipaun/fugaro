@@ -1,5 +1,5 @@
 // The console's Electron main process entry point (desktop-console plan Task
-// 1.1).
+// 1.1; the IPC wiring is Task 3.4a).
 //
 // The plan's Files column for Task 1.1 names `src/main/window.ts` and
 // `src/main/protocol.ts`; this file is here because those two are libraries and
@@ -11,21 +11,51 @@
 // decision it could get wrong is in `window.ts` or `protocol.ts`, where the
 // unit test can reach it under plain Node.
 //
-// Note where the document is read from. `tsc` emits JavaScript only, so the
-// bundle's files stay in the source tree and the handler's root is
-// `src/renderer` under the app's own path. Task 4.1's builder is the one that
-// gets to decide where a packaged console keeps its renderer files, and it will
-// have to pack them; until then there is no packaging step to disagree with.
+// **What Task 3.4a adds here, and why it is here rather than in a module the
+// unit suite can import.** Three things, all of them one-liners over functions
+// that *are* unit-tested: the served root is the built bundle (`rendererRoot`),
+// the dashboard's preload path is named once (`consolePreloadPath`), and the
+// handshake's answer is turned into a registered IPC surface (`onDecided`).
+// What is left in this file is the wiring between them, and the wiring is the
+// part that cannot be imported under `vitest`: this module imports the Electron
+// *runtime*, so `require('electron')` here is a process and not a path string.
+// `test/unit/startup.test.ts` reads this file as **text** and asserts the shapes
+// that matter (the order, the once-only registration, the refusal a console with
+// no installation answers), and `test/e2e/entry.spec.ts` drives the real thing.
+//
+// Note where the documents are read from. `tsc` emits JavaScript only, so the
+// bundle's files are written by `tools/bundle-renderer/index.ts` into
+// `dist/bundle/` -- the compiled entry's whole closure as one script, and the two
+// documents copied verbatim -- and the handler's root is that directory under the
+// app's own path. Task 4.1's builder is the one that gets to decide where a
+// packaged console keeps those files, and it will have to pack them; until then
+// there is no packaging step to disagree with.
 
 import { join } from 'node:path'
 
-import { app, BrowserWindow, protocol, session } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol, session, shell } from 'electron'
 
 import { handleAppRequests, registerAppScheme } from './protocol'
-import { createConsoleLifecycle, installWebContentsSecurity, versionReadFrom } from './window'
+import {
+  createConsoleLifecycle,
+  installWebContentsSecurity,
+  openExternalValidated,
+  versionReadFrom,
+} from './window'
 import type { ConsoleWindowDeps, VersionRead } from './window'
 import { privateWorkingDirectory, resolveBinary } from './spawn'
 import type { SpawnTarget } from './spawn'
+import { createSpawnLog } from './spawnlog'
+import {
+  NO_ACTIVE_INSTALLATION,
+  reducedModeHandlers,
+  registerConsoleHandlers,
+  startupCompatibility,
+} from './ipc'
+import type { ConsoleHandlers, ValidatedArguments } from './ipc'
+import { SourceRefusal, handlersFor } from '../source/source'
+import type { FugaroSource, InstallationRef, LiveFeed } from '../source/source'
+import type { CliCompatibility } from '../shared/version'
 
 // Before `whenReady` resolves, which is the only window Electron gives for it:
 // a scheme registered later is not a standard or secure one.
@@ -44,9 +74,32 @@ app.on('web-contents-created', (_event, contents) => {
 /**
  * rendererRoot is the directory the protocol handler serves, and the only
  * directory it will ever read a file from.
+ *
+ * It is the **build's** output and not the source tree (Task 3.4a, step 4):
+ * `npm run build` compiles the renderer's entry into `dist/renderer/`, bundles it
+ * and its whole closure into `dist/bundle/console.js`, and copies the two
+ * documents beside it. `SERVED_FILES` in `src/main/protocol.ts` is the list of
+ * what that directory holds, and `test/unit/bundle.test.ts` holds the two equal
+ * in both directions -- so this line is the one place the served root is named,
+ * and the directory it names is the one a test checks.
  */
 function rendererRoot(): string {
-  return join(app.getAppPath(), 'src', 'renderer')
+  return join(app.getAppPath(), 'dist', 'bundle')
+}
+
+/**
+ * consolePreloadPath is the compiled preload the dashboard window loads: the
+ * file `tsc` emits from `src/preload/index.ts`.
+ *
+ * It is inside the app's own path, like the served root, and it is named here
+ * because this is the module that knows where the app is. The rule that the
+ * renderer may not name a path is unaffected: the *renderer* never sees this
+ * one -- the window is built with it before any document loads, and what crosses
+ * into the renderer is the frozen object the preload puts on `window`
+ * (`src/preload/index.ts`).
+ */
+function consolePreloadPath(): string {
+  return join(app.getAppPath(), 'dist', 'preload', 'index.js')
 }
 
 function reportAndQuit(error: unknown): void {
@@ -95,21 +148,183 @@ const HANDSHAKE_TARGET: SpawnTarget = Object.freeze({ project: '' })
  * directory every spawn without a checkout uses (rule 5, `src/source/cli.ts`'s
  * `verifyCandidate`), so the probe is not run from wherever the app happened to
  * be launched.
+ *
+ * **The probe is a spawn, so it is logged like one** (Task 3.4a; design section
+ * 5.1 rule 10). The log is the operator's opt-in (`createSpawnLog` reads
+ * `FUGARO_CONSOLE_SPAWN_LOG` and nothing else), and it is opened for this one
+ * read and closed as soon as it is done: a console that recorded every read but
+ * its first would be a log that cannot answer which binary the console actually
+ * read. `test/e2e/entry.spec.ts` asserts what is in it -- the `version` spawns,
+ * and no read of the surface -- because the log is the one place a spawn that
+ * should not have happened is visible.
  */
 async function readCliVersion(): Promise<VersionRead> {
-  const resolution = await resolveBinary({
-    appEnv: process.env,
-    directory: privateWorkingDirectory(),
-    target: HANDSHAKE_TARGET,
-  })
-  return versionReadFrom(resolution)
+  const log = createSpawnLog(process.env)
+  try {
+    const resolution = await resolveBinary({
+      appEnv: process.env,
+      directory: privateWorkingDirectory(),
+      target: HANDSHAKE_TARGET,
+      log,
+    })
+    return versionReadFrom(resolution)
+  } finally {
+    log.close()
+  }
 }
 
 /** windowDeps is the Electron surface the windows are built with.
  * `session.defaultSession` is read here rather than at module scope because it
- * does not exist until the app is ready. */
+ * does not exist until the app is ready. `preloadPath` is the dashboard window's
+ * (Task 3.4a): `buildConsoleWindow` gives it to that window alone. */
 function windowDeps(): ConsoleWindowDeps {
-  return { BrowserWindow, session: session.defaultSession }
+  return { BrowserWindow, session: session.defaultSession, preloadPath: consolePreloadPath() }
+}
+
+// ---------------------------------------------------------------------------
+// The IPC surface (desktop-console plan Task 3.4a, steps 1 to 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * current is the handshake's answer, and the only thing this file stores.
+ *
+ * It is written once, by `onDecided` below, before any window exists -- so a
+ * handler can only ever read an answer the console has already drawn from -- and
+ * it is read through `storedCompatibility` rather than captured, which is what
+ * makes `startup.compatibility`'s answer the one the console decided on rather
+ * than a copy of it.
+ */
+let current: CliCompatibility | null = null
+
+/**
+ * storedCompatibility is the read the `startup.compatibility` handler answers
+ * from. It throws when there is no answer yet, and `dispatch` turns that throw
+ * into a reply: an operation called before the handshake finished is a console
+ * that does not exist yet, and it is answered as a refusal rather than as
+ * `null`, which no screen is written for.
+ */
+function storedCompatibility(): CliCompatibility {
+  if (current === null) throw new Error('the console has not read a fugaro yet')
+  return current
+}
+
+/**
+ * noInstallation is the console's answer for every read, until Task 3.4b gives
+ * it an installation to drive.
+ *
+ * D13's picker does not exist yet, and the alternative to this refusal would be
+ * a source built from whatever the machine happened to have -- the ambient
+ * `FUGARO_PROJECT` and the first `fugaro` on `PATH` -- which is a console
+ * driving something the operator never chose. So the surface exists, every
+ * operation on it answers `NO_ACTIVE_INSTALLATION`, and no child process is
+ * started by any of them. The sentence is `src/main/ipc.ts`'s, so the renderer's
+ * degraded screen draws a refusal it already knows how to draw.
+ */
+function noInstallation(operation: string): never {
+  throw new SourceRefusal(`${NO_ACTIVE_INSTALLATION}: ${operation} has nothing to read`)
+}
+
+/**
+ * activeSource is the `FugaroSource` the surface is built over: a source that
+ * refuses every read, including its own `installation`.
+ *
+ * It is written out method by method rather than derived, because the *point* of
+ * it is that there is no code path here that could reach a binary: every member
+ * is one call to `noInstallation`, so a reviewer reads eleven identical lines and
+ * knows there is nothing else in the object. `installation` is a getter for the
+ * same reason -- a value there would be a claim about a binary this console has
+ * not chosen -- and `subscribeLive` throws rather than answering an empty feed,
+ * because a feed that never delivers is a screen that waits forever.
+ */
+const activeSource: FugaroSource = {
+  get installation(): InstallationRef {
+    return noInstallation('the installation')
+  },
+  version: (): never => noInstallation('cli.version'),
+  subscribeLive: (_args: ValidatedArguments): LiveFeed => noInstallation('live.watch'),
+  showBudget: (_args: ValidatedArguments): never => noInstallation('budget.show'),
+  runReport: (_args: ValidatedArguments): never => noInstallation('spend.report'),
+  listRuns: (_args: ValidatedArguments): never => noInstallation('runs.list'),
+  diagnoseRun: (_args: ValidatedArguments): never => noInstallation('run.diagnose'),
+  readRunLogs: (_args: ValidatedArguments): never => noInstallation('run.logs'),
+  runLogLink: (_args: ValidatedArguments): never => noInstallation('run.logLink'),
+  listSecrets: (_args: ValidatedArguments): never => noInstallation('secrets.inventory'),
+  listAccounts: (_args: ValidatedArguments): never => noInstallation('accounts.inventory'),
+  environmentReport: (_args: ValidatedArguments): never => noInstallation('environment.report'),
+  close: async (): Promise<void> => undefined,
+}
+
+/**
+ * openExternalFromShell is the surface's one operation that is not a read of the
+ * CLI: it hands the URL to `openExternalValidated`, which is the console's one
+ * call to `shell.openExternal` and its own allow-list (`src/main/window.ts`). The
+ * argument is narrowed here and validated there; a value that is not a string
+ * cannot be a URL this console opens, so it is refused by the same function
+ * rather than by a second check written here.
+ */
+async function openExternalFromShell(raw: unknown): Promise<void> {
+  await openExternalValidated(shell, typeof raw === 'string' ? raw : '')
+}
+
+/**
+ * gated is the whole surface, and it is the join the two modules describe:
+ * `handlersFor` answers the twelve operations that read the CLI (here: all of
+ * them, with the refusal above), and `startup.compatibility` is joined in here
+ * because it is the one operation whose answer is the console's own state rather
+ * than a read (`CliBackedHandlers` in `src/source/source.ts` says so from the
+ * other side).
+ *
+ * `reducedModeHandlers` wraps the result in `registerHandlers` below rather than
+ * here, so that what this constant holds is the surface and what the wrapper
+ * holds is the gate over it.
+ */
+const gated: ConsoleHandlers = {
+  ...handlersFor(activeSource, { openExternal: openExternalFromShell }),
+  'startup.compatibility': startupCompatibility(storedCompatibility),
+}
+
+/** registered is whether this process has put the surface on `ipcMain`. */
+let registered = false
+
+/**
+ * registerHandlers puts the surface on `ipcMain`, **once per process**.
+ *
+ * The once-only rule is not tidiness: Electron's `ipcMain.handle` throws on a
+ * second listener for a channel it already has ("Attempted to register a second
+ * handler"), so a second registration would be a startup failure -- and the
+ * guard is what makes `onDecided` safe to call from a path that might run twice,
+ * which is exactly what `activate` is for the window.
+ *
+ * The wrapper is `reducedModeHandlers`: the handshake's answer decides which
+ * operations refuse before the source is reached, and it is read per call, so a
+ * handler registered here can never answer for a mode the console is not in.
+ */
+function registerHandlers(): void {
+  if (registered) return
+  registered = true
+  registerConsoleHandlers(ipcMain, reducedModeHandlers(gated, storedCompatibility))
+}
+
+/**
+ * onDecided is what the handshake's answer does to this process: it is stored,
+ * and -- unless the console refused -- the IPC surface is registered.
+ *
+ * **A refused console registers nothing, ever.** That is the plan's step 2 and
+ * design D7's strongest form: a refused console loads a document with no
+ * renderer entry in it, and there is no handler behind any channel for one to
+ * reach even if it did. The refusal is decided here, once, from the mode; a
+ * later `activate` reopens the refusal window and does not come back through
+ * this function at all.
+ *
+ * The ordering is the other half of it: `startupWindow` calls this after the
+ * version read and **before** the dashboard document is loaded, so a renderer
+ * that asks for `startup.compatibility` the moment it runs finds an answer
+ * rather than an unregistered channel.
+ */
+function onDecided(compatibility: CliCompatibility): void {
+  current = compatibility
+  if (compatibility.mode === 'refused') return
+  registerHandlers()
 }
 
 /**
@@ -125,6 +340,7 @@ const lifecycle = createConsoleLifecycle({
   windowDeps,
   readVersion: readCliVersion,
   openWindowCount: () => BrowserWindow.getAllWindows().length,
+  onDecided,
 })
 
 /**

@@ -35,15 +35,18 @@
 
       Like `index.html` it is script-free and style-free, and for the same
       reason: rule 3's CSP allows neither inline scripts nor inline styles, so
-      both arrive as files served from this bundle, and this tree has no
-      bundling step yet (`tsc` emits `dist/`, the handler serves `src/renderer`).
-      The refusal screen -- `renderVersionSkew`'s drawing in
-      `src/shared/version.ts`, the console's own headline and sentence about the
-      CLI it found -- is drawn into this document by the renderer entry point
-      (`src/renderer/app.ts`'s `startConsole`) once a step can load it. Until
-      then the sentence below is what an operator sees, and it is the console's
-      own: it names no version, quotes nothing the CLI printed, and offers no
-      figure.
+      both arrive as files served from this bundle.
+
+      **Script-free is the point of this document, and Task 3.4a kept it that
+      way.** `index.html` gained exactly one `<script src="./console.js" defer>`
+      in that task; this file gained none, and `test/unit/csp-document.test.ts`
+      asserts over both documents that `index.html`'s script elements are that
+      one element and that this file's are none. So a refused console runs no
+      renderer entry at all -- which is what a refused console is owed, since it
+      is also the mode in which the main process registers no IPC handler
+      (`registerConsoleHandlers` is never reached for it) -- and the sentence
+      below is the whole of what an operator sees. It is the console's own: it
+      names no version, quotes nothing the CLI printed, and offers no figure.
     -->
     <main>
       <h1>Fugaro console</h1>

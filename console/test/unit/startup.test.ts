@@ -110,6 +110,15 @@ function recordingWindows(): {
   return { BrowserWindow: WindowClass, loaded, built, titles }
 }
 
+/**
+ * PRELOAD_PATH is the compiled preload the dashboard window loads (Task 3.4a).
+ * It is a path under the app's own directory, spelled the way
+ * `src/main/index.ts` spells it, and every window dep below carries it: the
+ * refusal window is the one that ignores it, and that is
+ * `test/unit/window.test.ts`'s assertion.
+ */
+const PRELOAD_PATH = '/opt/fugaro-console/dist/preload/index.js'
+
 /** aSession is Electron's `session` as far as `denyEveryPermission` uses it. */
 const aSession = {
   setPermissionRequestHandler() {},
@@ -127,7 +136,7 @@ describe('the startup path', () => {
     const atRead: number[] = []
     await openStartupWindow({
       BrowserWindow: windows.BrowserWindow,
-      session: aSession,
+      session: aSession, preloadPath: PRELOAD_PATH,
       readVersion: async () => {
         atRead.push(windows.built.length)
         return { ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` }
@@ -145,7 +154,7 @@ describe('the startup path', () => {
     const windows = recordingWindows()
     const opened = await openStartupWindow({
       BrowserWindow: windows.BrowserWindow,
-      session: aSession,
+      session: aSession, preloadPath: PRELOAD_PATH,
       readVersion: readsVersion('0.5.0\n'),
     })
     expect(opened.compatibility.mode).toBe('refused')
@@ -163,7 +172,7 @@ describe('the startup path', () => {
     const windows = recordingWindows()
     const opened = await openStartupWindow({
       BrowserWindow: windows.BrowserWindow,
-      session: aSession,
+      session: aSession, preloadPath: PRELOAD_PATH,
       readVersion: readsVersion('0.9.0\n'),
     })
     expect(opened.compatibility.mode).toBe('reduced')
@@ -175,7 +184,7 @@ describe('the startup path', () => {
     const windows = recordingWindows()
     const opened = await openStartupWindow({
       BrowserWindow: windows.BrowserWindow,
-      session: aSession,
+      session: aSession, preloadPath: PRELOAD_PATH,
       readVersion: async () => {
         throw new Error('the spawn failed')
       },
@@ -190,7 +199,7 @@ describe('the startup path', () => {
       const windows = recordingWindows()
       const opened = await openStartupWindow({
         BrowserWindow: windows.BrowserWindow,
-        session: aSession,
+        session: aSession, preloadPath: PRELOAD_PATH,
         readVersion: readsVersion(stdout),
       })
       // "Cannot place the CLI" is not "probably fine": the console draws no
@@ -211,7 +220,7 @@ describe('the window the stored answer opens (the activate path)', () => {
     // no reader.
     const windows = recordingWindows()
     await openWindowFor(
-      { BrowserWindow: windows.BrowserWindow, session: aSession },
+      { BrowserWindow: windows.BrowserWindow, session: aSession, preloadPath: PRELOAD_PATH },
       classifyCliVersion(CLI_VERSION_BUILT_AGAINST),
     )
     expect(windows.loaded).toEqual([APP_ENTRY_URL])
@@ -221,7 +230,7 @@ describe('the window the stored answer opens (the activate path)', () => {
   it('opens the refusal document again for a stored refusal', async () => {
     const windows = recordingWindows()
     const stored = classifyCliVersion('0.5.0')
-    await openWindowFor({ BrowserWindow: windows.BrowserWindow, session: aSession }, stored)
+    await openWindowFor({ BrowserWindow: windows.BrowserWindow, session: aSession, preloadPath: PRELOAD_PATH }, stored)
     expect(windows.loaded).toEqual([REFUSAL_ENTRY_URL])
     expect(windows.loaded).not.toContain(APP_ENTRY_URL)
     expect(windows.titles[0]).toContain(SKEW_HEADLINES.refused)
@@ -329,7 +338,7 @@ describe('the lifecycle', () => {
     const windows = closableWindows()
     let reads = 0
     const lifecycle = createConsoleLifecycle({
-      windowDeps: () => ({ BrowserWindow: windows.BrowserWindow, session: aSession }),
+      windowDeps: () => ({ BrowserWindow: windows.BrowserWindow, session: aSession, preloadPath: PRELOAD_PATH }),
       readVersion: async () => {
         reads += 1
         return { ok: true, stdout: '0.5.0\n' }
@@ -364,7 +373,7 @@ describe('the lifecycle', () => {
     const answer = deferred<VersionRead>()
     let reads = 0
     const lifecycle = createConsoleLifecycle({
-      windowDeps: () => ({ BrowserWindow: windows.BrowserWindow, session: aSession }),
+      windowDeps: () => ({ BrowserWindow: windows.BrowserWindow, session: aSession, preloadPath: PRELOAD_PATH }),
       readVersion: () => {
         reads += 1
         return answer.promise
@@ -390,7 +399,7 @@ describe('the lifecycle', () => {
     const windows = closableWindows()
     let reads = 0
     const lifecycle = createConsoleLifecycle({
-      windowDeps: () => ({ BrowserWindow: windows.BrowserWindow, session: aSession }),
+      windowDeps: () => ({ BrowserWindow: windows.BrowserWindow, session: aSession, preloadPath: PRELOAD_PATH }),
       readVersion: async () => {
         reads += 1
         return { ok: true, stdout: `${CLI_VERSION_BUILT_AGAINST}\n` }
@@ -400,6 +409,44 @@ describe('the lifecycle', () => {
     await lifecycle.activate()
     expect(reads).toBe(0)
     expect(windows.built).toHaveLength(0)
+  })
+
+  it('decides once, before the first document loads, and never again', async () => {
+    // Task 3.4a, step 2, from the lifecycle's side: the callback is threaded
+    // through `openStartupWindow` to `startupWindow`, so it runs in the one
+    // moment the answer exists and no window does. The store the entry point
+    // writes is written **once** (`src/main/index.ts`'s `onDecided`), which is
+    // what makes the answer a decision rather than a per-window reading -- and
+    // `activate` after a close must not run it again, or a console that refused
+    // would get a second chance to register handlers on the way back.
+    const windows = closableWindows()
+    const decided: CliCompatibility[] = []
+    const loadedWhenDecided: number[] = []
+    const lifecycle = createConsoleLifecycle({
+      windowDeps: () => ({ BrowserWindow: windows.BrowserWindow, session: aSession, preloadPath: PRELOAD_PATH }),
+      readVersion: async () => ({ ok: true, stdout: '0.6.9\n' }),
+      openWindowCount: windows.open,
+      onDecided: (compatibility) => {
+        decided.push(compatibility)
+        // The ordering, from inside the callback: nothing has been loaded yet,
+        // so no renderer can have asked for a channel this registration has not
+        // put there.
+        loadedWhenDecided.push(windows.loaded.length)
+      },
+    })
+    expect((await lifecycle.start()).mode).toBe('reduced')
+    expect(decided.map((compatibility) => compatibility.mode)).toEqual(['reduced'])
+    expect(loadedWhenDecided).toEqual([0])
+    expect(windows.loaded).toEqual([APP_ENTRY_URL])
+
+    // A click while the window is open, and another after closing it: the
+    // handshake is not read again and the decision is not taken again.
+    await lifecycle.activate()
+    windows.closeAll()
+    await lifecycle.activate()
+    expect(windows.built).toHaveLength(2)
+    expect(decided).toHaveLength(1)
+    expect(loadedWhenDecided).toEqual([0])
   })
 })
 
@@ -650,5 +697,144 @@ describe('the entry point is wired to the handshake', () => {
     // pattern is anchored to a call on a line of its own, so the function's own
     // declaration is not counted as one.
     expect(indexSource.match(/^\s*serveBundle\(\)$/gm) ?? []).toHaveLength(1)
+  })
+})
+
+/** bodyOf is one function's body, read out of the entry point's own text: the
+ * assertions below are about what a function does, and a claim about the file as
+ * a whole would pass on the right line in the wrong function. */
+function bodyOf(declaration: string): string {
+  const start = indexSource.indexOf(declaration)
+  expect(start, `${declaration} is not in the entry point`).toBeGreaterThan(-1)
+  const rest = indexSource.slice(start)
+  const end = rest.indexOf('\n}')
+  return end === -1 ? rest : rest.slice(0, end)
+}
+
+describe('the entry point puts the surface on ipcMain, and only when it may', () => {
+  it('registers the whole allow-list, wrapped by the reduced-mode gate', () => {
+    // The surface and the gate, in one line a reviewer can read: `gated` is the
+    // thirteen operations, `reducedModeHandlers` is what refuses the withheld
+    // views' reads *before* the source is reached, and the second argument is
+    // the stored answer read per call rather than a copy of it.
+    expect(indexSource).toContain(
+      'registerConsoleHandlers(ipcMain, reducedModeHandlers(gated, storedCompatibility))',
+    )
+    // One registration site, because `ipcMain.handle` throws on a second
+    // listener for a channel it already has: a second call anywhere would be a
+    // startup failure rather than a no-op.
+    expect(indexSource.match(/registerConsoleHandlers\(/g) ?? []).toHaveLength(1)
+  })
+
+  it('registers once per process, guarded, because `activate` can run again', () => {
+    const register = bodyOf('function registerHandlers()')
+    // The guard is the first thing: the set happens after it, never before, so
+    // there is no path on which a second call reaches `ipcMain`.
+    expect(register).toMatch(/if \(registered\) return/)
+    expect(register.indexOf('if (registered) return')).toBeLessThan(
+      register.indexOf('registered = true'),
+    )
+    expect(register).toContain('registered = true')
+  })
+
+  it('registers for an `ok` or a `reduced` answer and for nothing else', () => {
+    // Step 2, in the one function that decides it. The refused console is the
+    // reason this is a *branch* rather than a call: a console below the floor
+    // has no renderer entry to talk to, so a handler behind a channel there
+    // would be a surface on a window that may draw nothing.
+    const onDecided = bodyOf('function onDecided(')
+    expect(onDecided).toContain('current = compatibility')
+    expect(onDecided).toMatch(/if \(compatibility\.mode === 'refused'\) return/)
+    expect(onDecided).toContain('registerHandlers()')
+    // The refusal returns *before* the registration, so no ordering change can
+    // register a refused console's surface by accident.
+    expect(onDecided.indexOf("'refused'")).toBeLessThan(onDecided.indexOf('registerHandlers()'))
+    // And `activate` does not come back through it: the decision was taken once,
+    // from the answer the lifecycle stored.
+    const activate = /app\.on\('activate'[\s\S]*?\n}\)/.exec(indexSource)?.[0] ?? ''
+    expect(activate).toContain('lifecycle.activate()')
+    expect(activate).not.toContain('onDecided')
+    expect(activate).not.toContain('registerHandlers')
+  })
+
+  it('joins in the one handler `source.ts` leaves out, which is the half it names', () => {
+    // `CliBackedHandlers` in `src/source/source.ts` is the surface *minus*
+    // `startup.compatibility`, and its comment says the entry point joins that
+    // key in -- which until this task was a promise about a file that did not do
+    // it yet. It does it now, and this is the assertion that keeps the comment
+    // true: `handlersFor(source, ...)` spread, and the handshake handler added by
+    // name beside it.
+    const gated = bodyOf('const gated: ConsoleHandlers = {')
+    expect(gated).toContain('...handlersFor(')
+    expect(gated).toContain("'startup.compatibility': startupCompatibility(")
+    // The join is what makes the surface complete, so there is exactly one of
+    // each half and they are in the same object.
+    expect(indexSource.match(/handlersFor\(/g) ?? []).toHaveLength(1)
+    expect(indexSource.match(/startupCompatibility\(/g) ?? []).toHaveLength(1)
+    // And the argument is the *function* that reads the store, not the store:
+    // the answer is asked for at message time (`startupCompatibility`'s `read`).
+    expect(gated).toContain('startupCompatibility(storedCompatibility)')
+  })
+
+  it('hands the decision to the lifecycle, which is what runs it at the right moment', () => {
+    // `createConsoleLifecycle` is what threads the callback into `startupWindow`
+    // (tested above in 'the lifecycle'), so this is the entry point's half of
+    // that: the callback is the named function, and it is passed as a dep.
+    const lifecycle = bodyOf('const lifecycle = createConsoleLifecycle(')
+    expect(lifecycle).toContain('onDecided,')
+    expect(lifecycle).toContain('readVersion: readCliVersion')
+    expect(lifecycle).toContain('windowDeps,')
+  })
+
+  it('serves the build, not the sources: one root, and the preload under the app path', () => {
+    // The served root and the preload path are the two places this file names a
+    // directory, and both are the *build's* output (Task 3.4a, step 4): the
+    // documents and the bundled entry are copied or emitted into `dist/bundle/`,
+    // and the preload `tsc` emits is `dist/preload/index.js`. Both are joined to
+    // `app.getAppPath()`, so a packaged console reads its own files and not the
+    // working directory's.
+    const root = bodyOf('function rendererRoot()')
+    expect(root).toContain("join(app.getAppPath(), 'dist', 'bundle')")
+    const preload = bodyOf('function consolePreloadPath()')
+    expect(preload).toContain("join(app.getAppPath(), 'dist', 'preload', 'index.js')")
+    // And the sources are never named: a root pointing at `src/renderer` would
+    // serve files that only exist in a checkout.
+    expect(indexSource).not.toContain("'src'")
+    expect(indexSource).not.toContain('src/renderer')
+  })
+
+  it('drives nothing: every read of the CLI refuses, and no spawn is reachable', () => {
+    // Step 3's subject -- the installation picker -- is Task 3.4b's, so this
+    // console has no installation and every operation that would read one
+    // answers `NO_ACTIVE_INSTALLATION`. The assertions are the source's own: the
+    // constant is used, the sentence is composed from it, and nothing in the
+    // file could start a child.
+    expect(indexSource).toContain('NO_ACTIVE_INSTALLATION')
+    expect(indexSource).toContain('noInstallation(')
+    expect(indexSource).not.toContain('child_process')
+    expect(indexSource).not.toContain('spawn(')
+    // The one resolution in the file is the handshake's, and it is the only
+    // `resolveBinary` call: an operation that resolved a binary for itself would
+    // be a second answer to "which fugaro is this console driving".
+    expect(indexSource.match(/resolveBinary\(/g) ?? []).toHaveLength(1)
+    expect(indexSource).not.toContain('FUGARO_BIN')
+    // The kill switch has no operation of its own (C10), so nothing here names
+    // one: the field travels inside `live.watch`.
+    expect(indexSource).not.toContain('budget.kill')
+  })
+
+  it('logs the handshake probe, and only the handshake probe', () => {
+    // Design section 5.1 rule 10: the console writes the spawn log, when asked.
+    // The probe is a spawn like any other, and it is logged with the same
+    // mechanism the CLI source uses -- opened for this read and closed as soon
+    // as it is done, so the log answers "which binary did the console read"
+    // rather than accumulating every read for the process's lifetime.
+    const read = bodyOf('async function readCliVersion()')
+    expect(read).toContain('createSpawnLog(process.env)')
+    expect(read).toMatch(/finally \{[\s\S]*log\.close\(\)/)
+    expect(read).toContain('log,')
+    // The log is the operator's opt-in and nothing else: no key this file
+    // invents, and no mode that skips the read.
+    expect(indexSource).not.toContain('FUGARO_CONSOLE_SPAWN_LOG')
   })
 })

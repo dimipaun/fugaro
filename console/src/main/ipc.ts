@@ -1532,7 +1532,8 @@ export function readStoredCompatibility(value: unknown): CliCompatibility {
  * exception.
  *
  * `read` is a function rather than the value because the answer is asked for at
- * message time: the store is written once at startup (`src/main/index.ts`) and a
+ * message time: the store is written once, when the handshake answers
+ * (`src/main/index.ts`, which registers these handlers in the same breath), and a
  * handler built over a snapshot would keep answering whatever the snapshot was,
  * which is exactly the kind of stale answer the handshake exists to prevent. It
  * throws for a store that has not answered yet -- an operation called before
@@ -1878,4 +1879,125 @@ async function dispatch(
   } catch (error) {
     return { ok: false, reason: replyReason(error) }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Reduced mode, at the handler (desktop-console plan Task 3.4a, step 3; design
+// section 5.1 rule 4, C10).
+// ---------------------------------------------------------------------------
+
+/**
+ * NO_ACTIVE_INSTALLATION is the console's own sentence for the one state the
+ * dashboard can be in with nothing behind it: **no installation is active**, so
+ * there is no CLI for the console to read and no source to read it from (design
+ * D13, the installation picker of Task 3.4b).
+ *
+ * It is a constant of this file, and not a sentence the entry point invents,
+ * because the renderer's `degraded` screen draws a refusal's *category* and the
+ * console's own sentences are the ones it knows how to draw. Task 3.4b replaces
+ * the refusal with a chosen installation; until then every read of the CLI is
+ * answered with this, which is the truth rather than a stub: this console really
+ * is driving nothing.
+ */
+export const NO_ACTIVE_INSTALLATION = 'this console has no installation to drive yet'
+
+/**
+ * REDUCED_VIEW_OPERATIONS is the closed mapping from a withheld view to the
+ * operations that read it (plan step 3).
+ *
+ * It is the main process's half of design section 5.1 rule 4: the renderer
+ * refuses to *draw* a withheld view (`hidesView`, `src/renderer/app.ts`), and
+ * this is what refuses to *fetch* one. Neither half is the other's substitute --
+ * a renderer bug cannot get a figure the main process will not send, and a main
+ * process bug cannot put one on a screen the renderer will not draw -- and both
+ * are decided from the same value, the compatibility the handshake produced.
+ *
+ * The mapping is derived from the operation table rather than from the screens:
+ * a screen is written in the renderer and names no channel, so the only thing
+ * that can say which operation reads spend is this table. Two consequences a
+ * reviewer should check:
+ *
+ *   - **`kill` is empty, and that is the answer rather than a gap.** There is no
+ *     kill-switch operation in the surface: the controls live in the live feed's
+ *     own fields (design C10, and `src/shared/version.ts`'s `HIDDEN_VIEW_WORDS`
+ *     says so on the screen), so withholding `kill` withholds nothing *here*.
+ *     `live.watch` is deliberately not in any of the three lists: a reduced
+ *     console still draws its live view, with the kill-switch fields the feed
+ *     carries. `test/unit/ipc.test.ts` asserts both by name, so a later task that
+ *     adds a kill operation has to come here and say so;
+ *   - **every operation not named here is reachable in reduced mode**, which is
+ *     the direction that keeps this a list of three views and not a second,
+ *     quieter refusal: a reduced console is a console, and what it withholds is
+ *     exactly what the handshake said it could not vouch for.
+ */
+export const REDUCED_VIEW_OPERATIONS: Readonly<Record<ReducedView, readonly OperationName[]>> =
+  Object.freeze({
+    spend: Object.freeze(['spend.report'] as const),
+    caps: Object.freeze(['budget.show'] as const),
+    kill: Object.freeze([] as const),
+  })
+
+/**
+ * REDUCED_REFUSAL is what a withheld view's operation answers: one fixed
+ * sentence of the console's own, with nothing from the CLI in it.
+ *
+ * It is deliberately **not** the CLI's refusal. A source's refusal is the CLI's
+ * sentence about a read that failed, and this is not a failed read: the console
+ * did not ask, because the version it is driving is one whose spend figures it
+ * cannot vouch for. A sentence that looked like the CLI's would tell the operator
+ * to go and fix a project that is not broken.
+ */
+export const REDUCED_REFUSAL = 'this console withholds that view for the fugaro it is driving'
+
+/** withheld throws the reduced mode's refusal. A handler refuses by throwing and
+ * `dispatch` turns the throw into the reply, which is the one path every refusal
+ * on this surface takes. */
+function withheld(): never {
+  throw new Error(REDUCED_REFUSAL)
+}
+
+/**
+ * reducedModeHandlers wraps the whole surface so that a withheld view's
+ * operations refuse **before the source is reached** (plan step 3).
+ *
+ * `current` is read per call and not captured once: the mode is the handshake's
+ * answer, and a wrapper built over a copy of it would keep answering whatever the
+ * copy said -- the same staleness `startupCompatibility`'s `read` exists to
+ * avoid, and the reason both take a function.
+ *
+ * **`startup.compatibility` is not wrapped, and that is load-bearing.** It is
+ * the operation every other one's gate is decided from -- the renderer asks it
+ * first and draws nothing until it has the answer -- so a wrapper that refused it
+ * in a refused console would leave the renderer with an unreadable answer and no
+ * way to learn *why*: the refusal screen would say the console could not read its
+ * own handshake. It is also the one operation that reads no view, which is why it
+ * is in none of `REDUCED_VIEW_OPERATIONS`' three lists; the exception is written
+ * out here, by name, so that it is a decision rather than an omission.
+ *
+ * The `refused` branch is belt-and-braces and it is deliberately kept: today a
+ * refused console registers no handler at all (`src/main/index.ts`), so no
+ * wrapped handler is ever reachable in that mode. It is here because that is a
+ * property of the *wiring*, and a later task that registers the surface earlier
+ * -- before the handshake, or on `activate` -- would otherwise make every read
+ * reachable in a console that may draw nothing at all.
+ */
+export function reducedModeHandlers(
+  handlers: ConsoleHandlers,
+  current: () => CliCompatibility,
+): ConsoleHandlers {
+  const wrapped: Record<OperationName, ConsoleHandler> = { ...handlers }
+  for (const operation of CONSOLE_OPERATIONS) {
+    if (operation.name === 'startup.compatibility') continue
+    const inner = handlers[operation.name]
+    wrapped[operation.name] = async (args) => {
+      const compatibility = current()
+      if (compatibility.mode === 'refused') withheld()
+      for (const view of REDUCED_VIEWS) {
+        if (!REDUCED_VIEW_OPERATIONS[view].includes(operation.name)) continue
+        if (hidesView(compatibility, view)) withheld()
+      }
+      return inner(args)
+    }
+  }
+  return Object.freeze(wrapped)
 }

@@ -289,7 +289,14 @@ function screen(page: Page): Promise<Screen> {
       replayAt: text('.run-replay-at'),
       replayNote: text('.run-replay-note'),
       anchors: all('a').length,
-      navigating: all('[href]').length + all('[src]').length,
+      // Counted inside the screen's own mount, which must exist (-1 otherwise,
+      // so a missing mount cannot read as zero): since Task 3.4a the document
+      // itself carries one `<script src="./console.js">`, the shell's and not
+      // the screen's, and test/unit/csp-document.test.ts pins that list.
+      navigating: ((mount) =>
+        mount === null ? -1 : all('[href]', mount).length + all('[src]', mount).length)(
+        document.getElementById('run-mount'),
+      ),
       text: document.getElementById('run-mount')?.textContent ?? '',
     }
   })
