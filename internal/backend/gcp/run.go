@@ -68,15 +68,51 @@ func parseInRegion(name, region string) (backend.ExecID, error) {
 	return backend.CloudRunCodec().ParseInRegion(name, region)
 }
 
-// CheckRunExecution refuses name, an execution name read from a run's
-// bucket objects, unless it is an execution of the run's own job,
-// JobName(slug, workflow), in region, spelled [a-z0-9-] throughout. The
-// run's service account can rewrite those objects, so without this check
-// a run could point the operator's cancel or logs at any job in the
-// project.
-func CheckRunExecution(name, region, slug, workflow string) error {
-	_, err := backend.CloudRunCodec().ValidateRun(name, region, JobName(slug, workflow))
+// CheckExecutionName refuses an execution name read from a run's bucket
+// objects unless the backend could have returned it: in region, and every
+// part [a-z0-9-]. The run's service account can rewrite those objects, so a
+// name nothing else checks would otherwise reach a request path or a log
+// filter.
+func CheckExecutionName(name, region string) error {
+	_, err := parseInRegion(name, region)
 	return err
+}
+
+// CheckRunExecution refuses x, an execution read from a run's bucket
+// objects, unless it is the execution of run (slug, runID): the FUGARO_RUN
+// the execution itself reports must be "<slug>/<run id>".
+//
+// It used to bind the run to the *job* the execution's name was in
+// (JobName(slug, variant)). Under the project-centric model one job is
+// shared by every repository admitted to a profile, so an execution's job
+// says nothing about which run it is, and two runs of one job — or of two
+// repositories on one profile — would have been followable by each other
+// (design §4.1, plan task 3.4 step 2). What does say it is the FUGARO_RUN
+// override the launcher set, which the platform reports back in the
+// execution's own template: a run's service account can write its own
+// bucket objects, but not another execution's environment.
+//
+// The name is checked separately (CheckExecutionName), and first: it is the
+// half that needs no request, so a name in another region is refused with
+// the region to pass (--region) rather than as a missing execution.
+func CheckRunExecution(x backend.Execution, slug, runID string) error {
+	want := slug + "/" + runID
+	if x.Run != want {
+		// Not x.Run: the refusal reaches whoever asked about this run, and
+		// the execution it names may be another repository's (review D2).
+		return fmt.Errorf("execution %s reports another run's FUGARO_RUN (or none), not %q: it is not the execution of run %s/%s. A run's objects may name only its own execution, and on a shared job they are the only thing that names one", x.Name, want, slug, runID)
+	}
+	return nil
+}
+
+// jobFor is the job a launch runs: the one the spec names (the shared
+// project job of the profile the workflow selects, plan task 3.4 step 1),
+// else the per-repository job of the slug and the workflow.
+func (b *Backend) jobFor(spec backend.LaunchSpec) string {
+	if spec.Job != "" {
+		return b.location() + "/jobs/" + spec.Job
+	}
+	return b.JobPath(spec.Repo.Slug, spec.Workflow)
 }
 
 // Launch starts one execution of the workflow's job with FUGARO_RUN set.
@@ -91,7 +127,7 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	if spec.Docker {
 		return backend.ExecutionRef{}, fmt.Errorf("launching %s/%s: this workflow asks for docker: true, and Cloud Run cannot give a run a Docker daemon: it has no VM to mount one from. Run it on a backend that has VMs, or drop docker: true: %w", spec.Repo.Slug, spec.Workflow, backend.ErrRejected)
 	}
-	job := b.JobPath(spec.Repo.Slug, spec.Workflow)
+	job := b.jobFor(spec)
 	// The spec's own variables (the launcher's budget marker) go in the same
 	// override as FUGARO_RUN: the API merges these into the job's environment.
 	// backend.LaunchEnv is where both backends read them, so an entry this one
@@ -134,7 +170,7 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	}
 	op, err := b.run.Projects.Locations.Jobs.Run(job, req).Context(ctx).Do()
 	if err != nil {
-		return backend.ExecutionRef{}, launchError(job, err)
+		return backend.ExecutionRef{}, launchError(job, spec.Job != "", err)
 	}
 	var meta struct {
 		Name   string `json:"name"`
@@ -157,10 +193,15 @@ const statusClientClosed = 499
 // launchError classifies a jobs.run failure. Only a definitive refusal (a
 // 4xx other than 408, 429 and 499) wraps ErrRejected: nothing can have started.
 // Anything else, including timeouts and transport errors, is ambiguous.
-func launchError(job string, err error) error {
+//
+// shared says the job was the spec's own (a shared project job), which has a
+// different fix from a repository's: no `fugaro init --repo` creates one.
+func launchError(job string, shared bool, err error) error {
 	var ge *googleapi.Error
 	if errors.As(err, &ge) {
 		switch {
+		case ge.Code == http.StatusNotFound && shared:
+			return fmt.Errorf("launching: the project job %s does not exist; the installation's shared project jobs are deployed by fugaro init, which also publishes the profiles the launcher selects them by (%v): %w: %w", job, err, backend.ErrNotFound, backend.ErrRejected)
 		case ge.Code == http.StatusNotFound:
 			return fmt.Errorf("launching: job %s does not exist; create it with fugaro init --repo (%v): %w: %w", job, err, backend.ErrNotFound, backend.ErrRejected)
 		case ge.Code >= 400 && ge.Code < 500 && ge.Code != http.StatusRequestTimeout && ge.Code != http.StatusTooManyRequests &&

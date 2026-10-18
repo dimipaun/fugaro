@@ -1307,6 +1307,12 @@ func TestFugaroSchemaProfileKeys(t *testing.T) {
 		"version: 1\nproject: acme\ngit: { provider: github }\nworkflows:\n  api: { commands: { build: a } }\n": false,
 		"version: 1\nproject: acme\ngcp_project: acme-fugaro\nprofile: Bad_Name\n":                              false,
 		"version: 1\nproject: acme\ngcp_project: acme-fugaro\nworkflows:\n  api: { profile: Bad_Name }\n":       false,
+		// The job profile's selection: the same name rule, on its own key —
+		// profile is the project layer's template and job_profile the policy's
+		// job, so a file may carry both and neither may be a bad name.
+		"version: 1\nproject: acme\ngcp_project: acme-fugaro\nworkflows:\n  api: { job_profile: standard-bitbucket, commands: { build: make, test: make } }\n":     true,
+		"version: 1\nproject: acme\ngcp_project: acme-fugaro\nworkflows:\n  api: { profile: node-web, job_profile: big, commands: { build: make, test: make } }\n": true,
+		"version: 1\nproject: acme\ngcp_project: acme-fugaro\nworkflows:\n  api: { job_profile: Bad_Name, commands: { build: make, test: make } }\n":               false,
 	} {
 		if err := sch.Validate(yamlInstance(t, []byte(text))); (err == nil) != valid {
 			t.Errorf("%q: valid = %v, want %v (%v)", text, err == nil, valid, err)

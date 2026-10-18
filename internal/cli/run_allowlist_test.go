@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -67,7 +68,7 @@ func TestLaunchPolicyGatesRefusesASlugOfAnotherRepository(t *testing.T) {
 	f := newLaunchBudget(t, "off")
 	// The allow-list admits every repository, so what refuses below is the
 	// binding and not the policy.
-	publishPolicy(t, f, `{"version":1,"allow_repos":["*"]}`)
+	publishPolicy(t, f, `{"version":2,"allow_repos":["*"]}`)
 	env := memEnv(t, f.cloudFixture)
 	spec := &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
 
@@ -114,7 +115,7 @@ func TestProviderKindsAgreeWithTheConfigsList(t *testing.T) {
 // is the only reason an operator sees it now rather than as a failed run.
 func TestRunRefusesBeforeLaunch(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":1,"allow_repos":["github/other/*"]}`)
+	publishPolicy(t, f, `{"version":2,"allow_repos":["github/other/*"]}`)
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
@@ -161,7 +162,9 @@ func TestRunRefusesUnderAPolicyOfThePolicyGeneration(t *testing.T) {
 	}
 	f := newLaunchBudget(t, "enforce")
 	markRules(t, f, projectpolicy.PolicyRulesVersion)
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":1,"allow_repos":["github/other/*"]}`))
+	// The policy node's own version is this binary's (projectpolicy.Version,
+	// 2 on next-0.8.5): the generation under test is the rules marker's.
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(fmt.Sprintf(`{"version":%d,"allow_repos":["github/other/*"]}`, projectpolicy.Version)))
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error: the policy of generation %d is read and its allow-list governs", err, ExitCode(err), projectpolicy.PolicyRulesVersion)
@@ -187,7 +190,7 @@ func TestRunRefusesUnderAPolicyOfThePolicyGeneration(t *testing.T) {
 // batch the policy refuses.
 func TestRunAttemptsRefusesBeforeAnyLaunch(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":1,"allow_repos":["github/other/*"]}`)
+	publishPolicy(t, f, `{"version":2,"allow_repos":["github/other/*"]}`)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "Add a feature")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error from the policy gate", err, ExitCode(err))
@@ -229,7 +232,7 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
 	}
 	for _, want := range []string{
-		"the project policy is version 99", "this Fugaro understands version 1",
+		"the project policy is version 99", "this Fugaro understands version " + strconv.Itoa(projectpolicy.Version),
 		policySince, "fugaro upgrade",
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -260,8 +263,9 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 
 // The other skew direction, which is the one the message used to get wrong: a
 // node below what this Fugaro understands (a hand-written one, or one a release
-// before this shape wrote; version 0 decodes fine and is not the legacy path,
-// that is the marker's job) is refused by the same gate, and the remedy printed
+// before this shape wrote — version 1, published before a runner enforced a
+// profile's allow_repos, plan task 3.3's bump; a version below Version decodes
+// fine and is not the legacy path, that is the marker's job) is refused by the same gate, and the remedy printed
 // is the operator's delete-then-publish — the same remedy internal/cli's
 // publishedPolicyOf refuses an older node with, because this release's publish
 // will not overwrite one — and never `fugaro upgrade`, which is this
@@ -271,13 +275,13 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 // upgrade a Fugaro that was already ahead of it.
 func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":0,"allow_repos":["*"]}`)
+	publishPolicy(t, f, `{"version":1,"allow_repos":["*"]}`)
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
 	}
 	for _, want := range []string{
-		"the project policy is version 0", "this Fugaro understands version 1",
+		"the project policy is version 1", fmt.Sprintf("this Fugaro understands version %d", projectpolicy.Version),
 		"fugaro project policy publish --delete", "publish it again", policySince,
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -288,7 +292,7 @@ func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 	// on this machine is behind the node) and init, which deploys the rules
 	// template and marker but writes no policy node — an operator sent to
 	// re-run it would meet this refusal again.
-	for _, bad := range []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase"} {
+	for _, bad := range []string{"upgrade", "init --firebase"} {
 		if strings.Contains(err.Error(), bad) {
 			t.Errorf("the refusal tells the operator to %q, but this binary is the newer side: what is behind is the node, and the remedy is the delete: %v", bad, err)
 		}
@@ -308,6 +312,7 @@ func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 func TestSkewSentencesSplitByDirection(t *testing.T) {
 	older := &projectpolicy.VersionError{Found: 0, Understood: projectpolicy.Version}
 	newer := &projectpolicy.VersionError{Found: projectpolicy.Version + 1, Understood: projectpolicy.Version}
+	understood := fmt.Sprintf("version %d", projectpolicy.Version)
 	for _, tc := range []struct {
 		name    string
 		ve      *projectpolicy.VersionError
@@ -316,12 +321,12 @@ func TestSkewSentencesSplitByDirection(t *testing.T) {
 	}{
 		{
 			name: "the node is older", ve: older,
-			want:    []string{"version 0", "version 1", "fugaro project policy publish --delete", "publish it again"},
+			want:    []string{"version 0", understood, "fugaro project policy publish --delete", "publish it again"},
 			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase"},
 		},
 		{
 			name: "the node is newer", ve: newer,
-			want:    []string{"version 2", "version 1", "upgrade Fugaro"},
+			want:    []string{fmt.Sprintf("version %d", projectpolicy.Version+1), understood, "upgrade Fugaro"},
 			notWant: []string{"publish --delete", "init --firebase"},
 		},
 	} {

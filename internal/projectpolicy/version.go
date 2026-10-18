@@ -11,7 +11,17 @@ import (
 // not know (a newer Fugaro that adds a budget key bumps Version), but a
 // version this code does not understand is a node it must not use (fail
 // closed, §5(3)).
-const Version = 1
+//
+// Version 2 (plan task 3.3) is the first whose runner enforces a profile's
+// allow_repos and binds a run of a project job to the profile it serves. A
+// version-1 runner decodes the profiles block and ignores it, so a launcher
+// that pointed a run of a profile's job (FUGARO_REMOTE, FUGARO_RUN) at another
+// repository of the project's allow_repos would run it with that profile's
+// secrets: project jobs run the installation's base image, which can lag the
+// CLI that published the policy. The bump makes that runner refuse the node
+// (RunnerSkew) instead of running past a gate it does not know. The shape is
+// version 1's; only what a runner must enforce changed.
+const Version = 2
 
 // PolicyRulesVersion is the generation of the Realtime Database security rules
 // that introduced the config/policy nodes of §5 and their per-child read

@@ -101,7 +101,7 @@ func (s *computeStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan,
 		return s.e.planned(s.changes), nil
 	}
 	fmt.Fprint(s.e.r.w, tf.Summary(plan))
-	if err := guard(plan, s.e.r.o.allowDelete); err != nil {
+	if err := s.e.r.guard(ctx, s.e.c, plan, s.e.r.o.allowDelete); err != nil {
 		return initflow.Plan{}, err
 	}
 	if err := s.grants(plan); err != nil {
@@ -127,7 +127,7 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	fmt.Fprint(r.w, tf.Summary(plan))
-	if err := guard(plan, r.o.allowDelete); err != nil {
+	if err := r.guard(ctx, e.c, plan, r.o.allowDelete); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if err := s.grants(plan); err != nil {
@@ -226,7 +226,7 @@ func (s *computeStage) apply(ctx context.Context, confirmed *tf.Plan) error {
 		if err != nil {
 			return remote(err)
 		}
-		if err := guard(next, r.o.allowDelete); err != nil {
+		if err := r.guard(ctx, s.e.c, next, r.o.allowDelete); err != nil {
 			return err
 		}
 		if err := s.grants(next); err != nil {

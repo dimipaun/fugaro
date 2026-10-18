@@ -44,7 +44,7 @@ func seedRun(t *testing.T, f *cloudFixture, id, batch, who string, launched bool
 	if !launched {
 		return ""
 	}
-	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, id)
 	_ = s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Execution: exec, LaunchedAt: time.Now()})
 	return exec
 }
@@ -129,7 +129,7 @@ func TestLsFollowsTheRecordsExecution(t *testing.T) {
 	f.run.Project, f.run.Region = "proj-1234", "us-east5"
 	id := time.Now().UTC().Format("20060102") + "-090000-aaaa"
 	dup := seedRun(t, f, id, "", "someone@example.com", true)
-	owner := f.run.Start(gcp.JobName(appSlug, "web"))
+	owner := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, id)
 	f.run.SetState(dup, backend.StateSucceeded)
 	f.run.SetState(owner, backend.StateRunning)
 	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Status: runstore.StatusRunning, Stage: "implement", Execution: owner})
@@ -624,7 +624,7 @@ func seedSpec(t *testing.T, f *cloudFixture, spec *task.Spec, launched bool) str
 	if !launched {
 		return ""
 	}
-	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, spec.RunID)
 	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: spec.RunID, Execution: exec, LaunchedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}

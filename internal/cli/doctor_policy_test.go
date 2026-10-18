@@ -78,7 +78,10 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 // (info), policy-newer-than-binary and policy-older-than-binary (warnings,
 // P8's release skew in each direction: the remedies are opposite, so one
 // check carrying both would print the wrong one for half the states),
-// policy-vs-jobs (warning), allow-list-empty (warning) and policy-rules-skew
+// policy-unknown-keys (warning, a review finding: the node is in force, and
+// the keys this Fugaro does not read have no effect while every CLI reader
+// refuses the node), policy-vs-jobs (warning), allow-list-empty (warning) and
+// policy-rules-skew
 // (warning, in all three of the states it exists for: the fixture an older
 // CLI's init --firebase leaves — the marker at RulesVersion and the deployed
 // rules from before the policy nodes — a marker present but below
@@ -125,7 +128,11 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 // in doctorRulesSkew with `string(live) == string(want)` — "the deployed rules
 // differ only in formatting" fails, the check warning about the generated rules
 // re-indented, which `fugaro init --firebase` itself (infra.Plan, the same
-// SameJSON) would leave alone.
+// SameJSON) would leave alone. Mutation for the unknown-key check (verified,
+// run and restored): drop the `len(p.UnknownKeys) > 0` branch from
+// doctorPolicyChecks — "a policy node with a key this Fugaro does not know"
+// fails, doctor reporting the node as published and saying nothing about the
+// key.
 func TestDoctorPolicyChecks(t *testing.T) {
 	t.Run("an installation with no budget backend publishes no policy", func(t *testing.T) {
 		newDoctorRig(t)
@@ -216,6 +223,42 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 		if !strings.Contains(c.Fix, "fugaro init --firebase") {
 			t.Errorf("the line does not name what makes the node govern: %+v", c)
+		}
+	})
+
+	t.Run("a policy node with a key this Fugaro does not know", func(t *testing.T) {
+		// A review finding: doctor reported the node as a published policy and
+		// said nothing about the key, though every CLI reader of that same node
+		// refuses it (refuseUnknownPolicyKeys) and the runner warns that the
+		// key has no effect. The check is a warning on top of the info line —
+		// the node is published and governs — and it names both the key and
+		// the remedies the readers name.
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathShared(), map[string]any{
+			"version":     projectpolicy.Version,
+			"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+			"allow_repos": []string{"github/acme/app"},
+			"model_costs": map[string]any{"claude-sonnet-5": 1.5},
+		})
+		if c, ok := doctorChecksByID(t)["policy-published"]; !ok || c.Severity != "info" {
+			t.Fatalf("policy-published = %+v (present %v): the node is in force, so the info line stays", c, ok)
+		}
+		c, ok := doctorChecksByID(t)["policy-unknown-keys"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-unknown-keys = %+v (present %v), want a warning", c, ok)
+		}
+		if !strings.Contains(c.Problem, "model_costs") || !strings.Contains(c.Problem, projectpolicy.PathShared()) {
+			t.Errorf("the check does not name the key and the node: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "fugaro upgrade") {
+			t.Errorf("the check does not name the upgrade the readers' refusal names: %+v", c)
+		}
+		// The other side: a node whose keys this Fugaro all knows is not
+		// warned about, so the check is about the keys and not about doctor
+		// always having something to say.
+		doctorPolicyRig(t, doctorPolicy(nil), "")
+		if c, ok := doctorChecksByID(t)["policy-unknown-keys"]; ok {
+			t.Errorf("policy-unknown-keys fired for a policy with no unknown key: %+v", c)
 		}
 	})
 

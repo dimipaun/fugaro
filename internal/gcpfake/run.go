@@ -29,7 +29,10 @@ import (
 // Known differences from real Cloud Run: execution names end in a counter
 // (<job>-1, <job>-2, …), not a random suffix; states change only through
 // SetState and cancel; cancelling a finished execution answers 400
-// FAILED_PRECONDITION, which the docs don't specify (the live test confirms).
+// FAILED_PRECONDITION, which the docs don't specify (the live test confirms);
+// and a :run of a job registered as a shared project job (AddProjectJob)
+// without FUGARO_RUN is refused, where Cloud Run would start an execution
+// nothing can be attributed to.
 type Run struct {
 	*Server
 
@@ -64,6 +67,20 @@ type Run struct {
 	patches  []map[string]any
 	faults   JobFaults
 	pending  map[string]*runOp // a patch's operations by name
+	// projectJobs are the jobs registered as shared project jobs, by name
+	// (AddProjectJob): one job per (profile, provider, account), shared by
+	// every repository admitted to the profile (design §4.1).
+	projectJobs map[string]projectJobTriple
+}
+
+// projectJobTriple is the (profile, provider, account) a shared project
+// job's name was computed from (plan task 3.4 step 4). The fake cannot
+// compute the name itself — internal/backend/gcp's own tests import this
+// package, so importing it back is an import cycle — and a second copy of
+// the naming rule here would be a second rule (R2-5). The name is therefore
+// the caller's (gcp.ProjectJobName) and the triple is what this records.
+type projectJobTriple struct {
+	profile, provider, account string
 }
 
 // JobFaults inject failures into jobs get and patch and into a patch's
@@ -168,6 +185,38 @@ func (f *Run) AddJob(name string, cpu, memory string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.jobs[name] = &runJob{cpu: cpu, memory: memory}
+}
+
+// AddProjectJob registers the shared project job of (profile, provider,
+// account) — name, which the caller computes with gcp.ProjectJobName — with
+// the given CPU and memory limits: one Cloud Run job shared by every
+// repository admitted to the profile (design §4.1, plan task 3.4 step 4).
+//
+// A project job is what makes the fake hold a launch to the one rule a
+// shared job has: the job's name no longer says which run it is, so an
+// execution of it must be launched with FUGARO_RUN. Real Cloud Run accepts
+// such a launch and starts a run nothing can be attributed to; the fake
+// refuses it, as it does for the other name and shape mistakes Cloud Run
+// would accept (the "known differences" above).
+func (f *Run) AddProjectJob(name, profile, provider, account, cpu, memory string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.projectJobs == nil {
+		f.projectJobs = map[string]projectJobTriple{}
+	}
+	f.projectJobs[name] = projectJobTriple{profile: profile, provider: provider, account: account}
+	f.jobs[name] = &runJob{cpu: cpu, memory: memory}
+}
+
+// ProjectJobOf reports the (profile, provider, account) name was registered
+// as a shared project job with, and whether it is one at all. A test asks
+// the fake what a launcher selected, rather than comparing against a name it
+// computed itself: the triple is what the launcher had to resolve.
+func (f *Run) ProjectJobOf(name string) (profile, provider, account string, ok bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.projectJobs[name]
+	return t.profile, t.provider, t.account, ok
 }
 
 // SetJob creates job name, or updates it, with labels and its container's
@@ -487,12 +536,24 @@ func (f *Run) render(project, region string, x *runExec) map[string]any {
 		"image":     "fake/" + x.key.job,
 		"resources": map[string]any{"limits": map[string]string{"cpu": j.cpu, "memory": j.memory}},
 	}
-	if len(x.env) > 0 {
-		var env []map[string]string
-		for k, v := range x.env {
-			env = append(env, map[string]string{"name": k, "value": v})
+	// The execution's environment is the job's own with the run's overrides
+	// merged over it, name by name, which is what the API does with
+	// overrides.containerOverrides (the fake used to report the override
+	// alone, which read as "the job sets nothing" to anything that looked at
+	// an execution's env).
+	env := make(map[string]string, len(j.env)+len(x.env))
+	for k, v := range j.env {
+		env[k] = v
+	}
+	for k, v := range x.env {
+		env[k] = v
+	}
+	if len(env) > 0 {
+		var out []map[string]string
+		for _, name := range slices.Sorted(maps.Keys(env)) {
+			out = append(out, map[string]string{"name": name, "value": env[name]})
 		}
-		container["env"] = env
+		container["env"] = out
 	}
 	e := map[string]any{
 		"name":       f.name(project, region, x.key),
@@ -816,6 +877,18 @@ func (f *Run) run(w http.ResponseWriter, r *http.Request, jp string, body []byte
 		}
 	}
 	call := RunCall{Job: job, Env: env, Timeout: req.Overrides.Timeout}
+	// A project job is shared by every repository admitted to its profile
+	// (design §4.1), so its name no longer says which run an execution is:
+	// the launcher must set FUGARO_RUN as an override, and nothing else can
+	// (the job's own environment is written by whoever deployed it, and a
+	// launcher can override any of it). An execution started without one is
+	// one no run, and no operator command, can be tied to.
+	if _, project := f.projectJobs[job]; project && env["FUGARO_RUN"] == "" {
+		f.requests = append(f.requests, call)
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+			"job "+job+" is a shared project job: it must be run with FUGARO_RUN set to the run the execution is for (<repo slug>/<run id>), or nothing can say which run it is")
+		return
+	}
 	if f.FailRunWith != 0 {
 		f.requests = append(f.requests, call)
 		writeError(w, f.FailRunWith, http.StatusText(f.FailRunWith), "injected failure")

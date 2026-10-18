@@ -86,6 +86,7 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"budget.per_day_usd":    InRepo,
 
 		"workflows.*.profile":                   InRepo,
+		"workflows.*.job_profile":               InRepo,
 		"workflows.*.base":                      InProfile | InRepo,
 		"workflows.*.image.node":                InProfile | InRepo,
 		"workflows.*.image.jdk":                 InRepo,

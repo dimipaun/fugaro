@@ -332,6 +332,31 @@ func TestProjectPolicyPublishDeleteRefusesANewerNode(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyPublishRefusesAProfileMountingAClaudeOAuthToken: publish
+// copies the operator's profiles into the node verbatim, so the policy's own
+// rule (projectpolicy.validProfiles) is the only thing that can refuse a
+// profile here — and it must, because `fugaro init` refuses to deploy the job
+// such a profile names (internal/infra's projectJobSecrets). One rule for both
+// is what keeps a published profile from naming a job that does not exist: the
+// launcher would compute the account segment of that job (the default account)
+// where the deployer deploys the empty one, and call Cloud Run on a 404, and
+// the runner would match no candidate and halt every run of the profile.
+func TestProjectPolicyPublishRefusesAProfileMountingAClaudeOAuthToken(t *testing.T) {
+	f := newProjectFixture(t, "profiles: { standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, secrets: [claude-oauth-token] } }\n")
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatal("publishing a profile mounting the reserved claude-oauth-token was allowed")
+	}
+	for _, want := range []string{"person-owned", "phase 5"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("a node was written anyway")
+	}
+}
+
 // put writes p as the policy node, the way an earlier publish did.
 func put(t *testing.T, f *projectFixture, p *projectpolicy.Policy) {
 	t.Helper()
@@ -1452,6 +1477,56 @@ func TestProjectReposEditKeepsTheKeysItDoesNotKnow(t *testing.T) {
 	// The value of the unknown key is the one that was planted, not a zero.
 	if v, _ := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing", "claude", "future_route"); v != "x" {
 		t.Errorf("routing's unknown key is %v, want x", v)
+	}
+}
+
+// TestProjectReposEditRefusesWithoutTheRulesMarker: `repos add` and `repos rm`
+// write the node the runner reads, so they are publishes of the allow-list and
+// take `policy publish`'s own gate (P3, a review finding): a policy edited
+// into a deployment whose rules carry no marker — or one older than this
+// Fugaro's — is one the runs it bounds cannot read. Before this they were the
+// one way to write the shared node on a deployment `policy publish` refuses to
+// touch, and the write went through.
+//
+// Mutation (run, restored): drop the requirePolicyRules call from
+// runProjectReposEdit. Both cases below write the node and the test fails on
+// the refusal it expects.
+func TestProjectReposEditRefusesWithoutTheRulesMarker(t *testing.T) {
+	for _, tc := range []struct {
+		what   string
+		marker any
+		want   string
+	}{
+		{"no marker at all", nil, "carry no policy marker"},
+		// main's requirePolicyRules (#532) admits every marker at or above
+		// PolicyRulesVersion — those rules carry the policy nodes — and words a
+		// marker below it as its own case ("records generation N", the
+		// pre-policy sentence doctor prints): that is the marker behind this
+		// Fugaro's that still refuses the write.
+		{"a marker behind this Fugaro's", projectpolicy.PolicyRulesVersion - 1, "records generation"},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			f.db.Set(projectpolicy.PathShared(), someFuturePolicy())
+			before := nodeJSON(t, f, projectpolicy.PathShared())
+			f.db.Set(projectpolicy.PathRulesMarker(), tc.marker)
+
+			for _, args := range [][]string{
+				{"project", "repos", "add", "github/acme/new"},
+				{"project", "repos", "rm", "github/acme/app"},
+			} {
+				_, _, err := execute(t, args...)
+				if err == nil {
+					t.Fatalf("%v was allowed with %s", args, tc.what)
+				}
+				if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "init --firebase") {
+					t.Errorf("%v refused with %q, want it to say %q and to name the fix", args, err, tc.want)
+				}
+			}
+			if got := nodeJSON(t, f, projectpolicy.PathShared()); got != before {
+				t.Errorf("the node changed: %s, want %s", got, before)
+			}
+		})
 	}
 }
 
@@ -2664,9 +2739,9 @@ func TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent(t *testing.T) {
 		pol       *projectpolicy.Policy
 		keep      bool
 	}{
-		{"a null routing member, kept", `{"version": 1, "routing": null}`, quiet, true},
-		{"a null routing member, replaced by the config's switch", `{"version": 1, "routing": null}`, switchOn, false},
-		{"a null claude member, replaced by the config's switch", `{"version": 1, "routing": {"claude": null}}`, switchOn, false},
+		{"a null routing member, kept", `{"version": 2, "routing": null}`, quiet, true},
+		{"a null routing member, replaced by the config's switch", `{"version": 2, "routing": null}`, switchOn, false},
+		{"a null claude member, replaced by the config's switch", `{"version": 2, "routing": {"claude": null}}`, switchOn, false},
 	} {
 		node, err := policyNodeBytes(tc.pol, []byte(tc.old), true, tc.keep)
 		if err != nil {
@@ -2710,16 +2785,16 @@ func TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent(t *testing.T) {
 func TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers(t *testing.T) {
 	pol := &projectpolicy.Policy{Version: projectpolicy.Version}
 	for name, old := range map[string]string{
-		"a case-folded via":    `{"version": 1, "routing": {"claude": {"via": "direct", "VIA": "openrouter"}}}`,
-		"models twice":         `{"version": 1, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "models": []}}}`,
-		"a case-folded claude": `{"version": 1, "routing": {"CLAUDE": {"via": "direct"}}}`,
+		"a case-folded via":    `{"version": 2, "routing": {"claude": {"via": "direct", "VIA": "openrouter"}}}`,
+		"models twice":         `{"version": 2, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "models": []}}}`,
+		"a case-folded claude": `{"version": 2, "routing": {"CLAUDE": {"via": "direct"}}}`,
 	} {
 		if _, err := policyNodeBytes(pol, []byte(old), true, true); err == nil || !strings.Contains(err.Error(), "routing block") {
 			t.Errorf("%s: policyNodeBytes = %v, want a refusal naming the block", name, err)
 		}
 	}
 	// The other side: a block this Fugaro reads as written is patched as before.
-	if _, err := policyNodeBytes(pol, []byte(`{"version": 1, "routing": {"claude": {"via": "direct"}}}`), true, true); err != nil {
+	if _, err := policyNodeBytes(pol, []byte(`{"version": 2, "routing": {"claude": {"via": "direct"}}}`), true, true); err != nil {
 		t.Errorf("a well-spelled block: policyNodeBytes = %v, want it written", err)
 	}
 }
@@ -3007,5 +3082,57 @@ func TestProjectPolicyPublishDiffDoesNotPrintAModelPricesCount(t *testing.T) {
 	}
 	if !strings.Contains(out, "+ model_prices deepseek/deepseek-v4-flash: input_per_m 1") {
 		t.Errorf("the diff no longer names the override it has:\n%s", out)
+	}
+}
+
+// TestProjectPolicyPublishKeepsCloneURLs: the clone_urls block is data the
+// runner obeys (a project job's clone URL, plan task 3.3 step 3) and no command
+// of this release writes one, so a publish that built the node from its own type
+// would drop an operator's entry — and a dropped entry is silently a repository
+// that clones from its provider's usual host instead of the mirror the project
+// chose to route it through. The block is kept, the diff says so (with the URL,
+// which is credential-free by the node's own validation), and `policy show`
+// prints it, so a node with an entry does not read like one without.
+func TestProjectPolicyPublishKeepsCloneURLs(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// The entry an operator (or a later release) put there: this project's own
+	// repository, on the provider's own host, under the escaped member name the
+	// node must use (projectpolicy's CloneURLs: RTDB refuses a key with a slash
+	// in it, and a canonical repository name has two).
+	const (
+		canonical = "github/acme/app"
+		member    = "github%2Facme%2Fapp"
+		url       = "https://github.com/acme/app.git"
+	)
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["clone_urls"] = map[string]any{member: url}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := f.db.Value(projectpolicy.PathShared())
+	if v, ok := nodeAt(got, "clone_urls", member); !ok || v != url {
+		t.Errorf("the publish dropped or changed the clone_urls block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	// The decoded policy the rest of this binary reads still carries it: the
+	// runner looks the entry up by canonical repository name.
+	pol := publishedPolicy(t, f)
+	if pol.CloneURL(canonical) != url {
+		t.Errorf("CloneURL(%q) = %q, want %q", canonical, pol.CloneURL(canonical), url)
+	}
+	if !strings.Contains(out, "clone_urls "+canonical+" kept: "+url) {
+		t.Errorf("the diff does not say the clone_urls entry is kept:\n%s", out)
+	}
+	shown, _, err := execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(shown, canonical+" → "+url) {
+		t.Errorf("policy show does not print the clone_urls entry:\n%s", shown)
 	}
 }

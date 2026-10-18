@@ -80,7 +80,7 @@ func cloneJobEnv(t *testing.T) map[string]string {
 func TestExecCloneJobClonesTheRepositoryItWasDeployedFor(t *testing.T) {
 	const runID = "20260926-221530-abcd"
 	testutil.IsolateGit(t)
-	setCloudRunEnv(t, "fugaro-acme-app-app-aaaaa")
+	setCloudRunEnv(t, "aaaaa")
 	files := testutil.FixtureFiles(t)
 	// The run must get past the clone and its configuration read to a
 	// failure this test can name: the fixture's own project, edited to
@@ -114,7 +114,7 @@ func TestExecCloneJobClonesTheRepositoryItWasDeployedFor(t *testing.T) {
 	defer b.Close()
 	ctx := context.Background()
 	store := runstore.Open(b, appSlug, runID)
-	if err := store.WriteTask(ctx, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "x"}); err != nil {
+	if err := store.WriteTask(ctx, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Workflow: "app", Ref: "main", Task: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	work := filepath.Join(t.TempDir(), "work")
