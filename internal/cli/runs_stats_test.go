@@ -471,15 +471,19 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 						"everyone's runs that recorded no launcher, not this caller's own",
 						own.Rows, own.Totals, userstats.UnknownUser)
 				}
+				// An empty view prints [] like every other list in the document,
+				// and `you` says what the CLI could tell: nothing at all for an
+				// identity with no printable text in it, and the identity's own
+				// text for one that reads as the unattributed key.
+				if own.Rows == nil {
+					t.Errorf("document = %+v, want an empty row list, not null", own)
+				}
 				wantYou := ""
 				if identity == userstats.UnknownUser {
 					wantYou = userstats.UnknownUser
 				}
 				if own.You != wantYou {
 					t.Errorf("you = %q, want %q", own.You, wantYou)
-				}
-				if own.Rows == nil {
-					t.Errorf("document = %+v, want an empty row list, not null", own)
 				}
 				human, _, err := execute(t, "runs", "stats")
 				if err != nil {
@@ -488,9 +492,9 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 				if !strings.Contains(human, "no run in this window was started by you") {
 					t.Errorf("the empty private table = %q, want it said plainly", human)
 				}
-				if identity == userstats.UnknownUser && !strings.Contains(human, "unknown") {
-					t.Errorf("the table = %q, want the caller told their identity is the unattributed "+
-						"row's own word", human)
+				if identity == userstats.UnknownUser && !strings.Contains(human, "is not only yours") {
+					t.Errorf("the table = %q, want the caller told that the row keyed %q is not "+
+						"theirs alone", human, userstats.UnknownUser)
 				}
 				// The opt-in still shows everyone, the unattributed row included:
 				// the guard is on whose row the own view claims, not on the table.
