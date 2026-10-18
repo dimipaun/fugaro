@@ -4254,20 +4254,29 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    shot's. The `h1` alone is not the claim: a page whose heading fits and whose lead does not has
    a title above the fold and no gist, which is why the lead's bottom is the second number. RF23
    measured the homepage's `h1` at 893 px at this width — one line below the fold — and every
-   other route's inside the first screen. **FACT:** per route, `h1Bottom` and `leadBottom` in
-   pixels, and whether each is under 844.
+   other route's inside the first screen. In the console, the two numbers are read the way the
+   script reads them:
+
+   ```js
+   const bottom = (el) => el && Math.round(el.getBoundingClientRect().bottom + window.scrollY)
+   bottom(document.querySelector('main h1'))   // h1Bottom
+   bottom(document.querySelector('main p'))    // leadBottom — the lead paragraph
+   ```
+
+   **FACT:** per route, `h1Bottom` and `leadBottom` in pixels, and whether each is under 844.
 
 2. **The homepage's first command is above the fold at 390 × 844, with its copy control.** Read
    the homepage's first command out of the page's own source rather than remembering it:
    `website/src/pages/index.astro` renders the hero, and `Hero.astro`'s `HERO_PATHS` names the
    paths it renders — Homebrew first, then the Go install — so the first command is the first
    path's first command, and whichever P5 shipped is what this step reads and not a command typed
-   here. At 390 × 844, read `firstCommandBottom` for `/` and the copy control's own rectangle
-   beside it. The control is P6's and it sits above its command, so a command whose own bottom is
-   inside the first screen while its button is not is a command a reader can see and cannot copy
-   — which is why this step reads both rectangles and not the command's alone. **FACT:** the
-   command as rendered, its bottom in pixels, the control's top and bottom, and whether the whole
-   of both is above 844.
+   here. At 390 × 844, read `firstCommandBottom` for `/` — the script's key is `main pre`'s bottom
+   — and the copy control's own rectangle beside it (the control the markup wraps each command in,
+   `[data-copy] button`). The control is P6's and it sits above its command, so a command whose
+   own bottom is inside the first screen while its button is not is a command a reader can see and
+   cannot copy — which is why this step reads both rectangles and not the command's alone.
+   **FACT:** the command as rendered, its bottom in pixels, the control's top and bottom, and
+   whether the whole of both is above 844.
 
 3. **Getting Started's first command block is above the fold on both sizes.** At 390 × 844 and at
    1280 × 900, read `firstCommandBottom` for `/getting-started/` and check the first command
@@ -4300,9 +4309,19 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    README the gate reads (the block above) rather than from this section, and count the words the
    way the gate counts them: every word a reader sees inside `main`, command blocks and code spans
    included, an image's `alt` standing in for the image, and a `hidden` subtree not counted at
-   all. In the console, the page's own count is `main`'s rendered text and the lead's is the text
-   between the two headings; the gate itself is `(cd website && npm run check)`, whose `budget.mjs`
-   cases are the ceilings' own. RF23 measured the pages before the redesign — getting-started 431
+   all. In the console, a first reading of the same two counts is:
+
+   ```js
+   const m = document.querySelector('main'), h1 = m.querySelector('h1'), h2 = m.querySelector('h2')
+   const words = (s) => s.trim().split(/\s+/).filter(Boolean).length
+   words(m.innerText)                          // the page's words (250, except the three exempt pages)
+   const between = () => { const r = document.createRange(); r.setStartAfter(h1); r.setEndBefore(h2); return r.toString() }
+   h2 && (h1.compareDocumentPosition(h2) & Node.DOCUMENT_POSITION_FOLLOWING) ? words(between()) : 0   // the lead's words (40)
+   ```
+
+   The gate is the authority and not this snippet — `budget.mjs` also counts an image's `alt`,
+   which `innerText` does not — and it is `(cd website && npm run check)`, whose `budget.mjs` cases
+   are the ceilings' own. RF23 measured the pages before the redesign — getting-started 431
    words, caps-and-costs 487, faq 493, community 268, privacy 277, every one of them over the page
    ceiling, and the three exempt pages at 18,282, 6,240 and 6,191 — which is the size of the
    change the ceiling was set to make. **FACT:** per page, the lead's word count and the page's
