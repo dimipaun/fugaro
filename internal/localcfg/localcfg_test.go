@@ -252,7 +252,7 @@ func TestParseEndpoints(t *testing.T) {
 
 // The Firestore endpoints are checked like identity_toolkit.
 func TestParseFirestoreEndpoints(t *testing.T) {
-	for _, field := range []string{"firestore", "firebase_rules", "identity_toolkit"} {
+	for _, field := range []string{"firestore", "firebase_rules", "identity_toolkit", "cloud_asset"} {
 		if _, err := Parse([]byte(sample + "endpoints: { " + field + ": \"http://127.0.0.1:9\" }\n")); err != nil {
 			t.Errorf("%s: %v", field, err)
 		}
