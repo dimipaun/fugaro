@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -277,6 +278,45 @@ func TestManagedFlagNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 				t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
 			}
 		})
+	}
+}
+
+// TestManagedFlagNeedsTheDefaultRunsBucket: the marker is only ever read from
+// the project's runs bucket under its default name — the rule the managed
+// apply and fugaro allow-delete already apply — so a marker written into a
+// bucket the config names instead would be read by nobody, which is the fail-
+// open direction of a command whose whole point is the object it writes.
+func TestManagedFlagNeedsTheDefaultRunsBucket(t *testing.T) {
+	r := managedFlagRig(t)
+	// The config names another bucket, which the installation otherwise has.
+	const other = "fugaro-runs-elsewhere"
+	r.gcs.AddBucket(other, initProjectNumber, managedBucketLabels)
+	cfg, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	custom := strings.Replace(string(cfg), "runs_bucket: "+initRunsBucket, "runs_bucket: "+other, 1)
+	if custom == string(cfg) {
+		t.Fatal("the rig's config does not name the default runs bucket")
+	}
+	if err := os.WriteFile(r.cfg, []byte(custom), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	terminal(t, true)
+	out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+	if err == nil {
+		t.Fatalf("the marker was written into a bucket nothing reads:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), initRunsBucket) {
+		t.Errorf("the refusal does not name the bucket the marker has to be in: %v", err)
+	}
+	for _, bucket := range []string{initRunsBucket, other} {
+		if got, ok := managedFlagAt(t, r.gcs, bucket); ok {
+			t.Errorf("a refused run wrote gs://%s/%s = %s", bucket, managed.MarkerObject, got)
+		}
 	}
 }
 
