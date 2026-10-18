@@ -338,7 +338,7 @@ describe('the writer', () => {
       installations: [installation(), installation({ id: 'ffffffffffffffff', project: 'other' })],
     }
     const text = serializeInstallationFile(file)
-    expect(text.split('\n').filter((line) => line.startsWith('    {')).toHaveLength(2)
+    expect(text.split('\n').filter((line) => line.startsWith('    {')).toHaveLength(2))
     const read = readInstallationFile(text)
     expect(read.ok).toBe(true)
     if (read.ok) expect(read.file).toEqual(file)

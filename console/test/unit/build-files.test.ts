@@ -101,7 +101,8 @@ function covers(pattern: string, path: string): boolean {
   return globToRegExp(bare).test(path)
 }
 
-/** uncovered returns, for each required path, the reason no pattern carries it. */
+/** uncovered returns the required paths no pattern carries -- the files a
+ * `build.files` list would leave out of the shipped app. */
 function uncovered(patterns: readonly string[], required: readonly string[]): readonly string[] {
   return required.filter((path) => !patterns.some((pattern) => covers(pattern, path)))
 }

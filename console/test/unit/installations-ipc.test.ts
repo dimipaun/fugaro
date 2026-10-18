@@ -437,8 +437,10 @@ describe('the picker’s document', () => {
   })
 
   it('loads exactly one script, as a file from its own origin, deferred, and nothing inline', () => {
+    // The extraction takes the opening tag of every `<script>`, so a second
+    // script, a remote one, or an inline one is a second element here.
     const tags = [...html.matchAll(/<script\b[^>]*>/g)].map((match) => match[0])
-    expect(tags).toEqual(['<script src="./installations.js" defer></script>'])
+    expect(tags).toEqual(['<script src="./installations.js" defer>'])
     // Non-vacuity, against the same extraction: an inline script is a tag this
     // assertion does not accept, so the check is not merely "there is a tag".
     expect([...('<script>alert(1)</script>'.matchAll(/<script\b[^>]*>/g))].map((match) => match[0])).toEqual([
