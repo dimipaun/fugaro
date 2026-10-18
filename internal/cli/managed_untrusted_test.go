@@ -51,8 +51,14 @@ func hostileCLIValues() map[string]string {
 }
 
 // noRawHostile fails when out carries a control or bidi character as itself,
-// a line of its own the hostile value forged, more than lines lines, or a line
-// longer than a sentence of this program's own carrying bounded values can be.
+// more lines than the lines this print site is known to emit, or a line longer
+// than a sentence of this program's own carrying bounded values can be.
+//
+// The line limit is not optional: a newline is a legitimate separator and so
+// is exempt from the character scan above, which means the count is the only
+// check that can see a hostile value forging a line of this program's output.
+// A limit of zero would skip exactly that check, so the limit is required and
+// refused when it is not a limit at all.
 //
 // The length bound is not FieldMax: one sentence legitimately holds several
 // bounded values (the root and the error about it, the project and the bucket
@@ -61,6 +67,9 @@ func hostileCLIValues() map[string]string {
 // thousand characters on one line and cannot be mistaken for it.
 func noRawHostile(t *testing.T, what, out string, lines int) {
 	t.Helper()
+	if lines < 1 {
+		t.Fatalf("%s: no line limit given, so a forged newline would go unseen", what)
+	}
 	for _, r := range out {
 		if (r >= 0x80 && r <= 0x9f) || r == 0x202e || (r < 0x20 && r != '\n') {
 			t.Errorf("%s carries %U:\n%q", what, r, out)
@@ -68,8 +77,8 @@ func noRawHostile(t *testing.T, what, out string, lines int) {
 		}
 	}
 	// A trailing newline is the end of the last line, not an empty one.
-	if n := strings.Count(strings.TrimSuffix(out, "\n"), "\n") + 1; lines > 0 && n > lines {
-		t.Errorf("%s is %d lines, want at most %d:\n%q", what, n, lines, out)
+	if n := strings.Count(strings.TrimSuffix(out, "\n"), "\n") + 1; n != lines {
+		t.Errorf("%s is %d lines, want exactly %d:\n%q", what, n, lines, out)
 	}
 	for _, line := range strings.Split(out, "\n") {
 		if len([]rune(line)) > 4*safetext.FieldMax {
@@ -103,7 +112,12 @@ func TestTheApplysRootRefusalIsBoundedEndToEnd(t *testing.T) {
 			if ExitCode(err) != ExitUserError {
 				t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
 			}
-			noRawHostile(t, name+" in the apply's refusal", err.Error()+"\n"+out+errOut, 0)
+			// The refusal itself, and this command's own output beside it —
+			// checked apart so that the refusal's line count is its own: a
+			// hostile root forging a line would add one to a count that no
+			// longer depends on how much else was printed.
+			noRawHostile(t, name+" in the apply's refusal", err.Error(), 1)
+			noRawHostile(t, name+" in the apply's output", out+errOut, 2)
 			if !strings.Contains(err.Error(), "the root") {
 				t.Errorf("the refusal is not the one about the root: %v", err)
 			}
@@ -124,7 +138,7 @@ func TestTheRootsRefusalBoundsTheRootAndTheCheckoutsProject(t *testing.T) {
 			if err == nil {
 				t.Fatal("a root that is there was accepted")
 			}
-			noRawHostile(t, name+" in the root's refusal", err.Error(), 0)
+			noRawHostile(t, name+" in the root's refusal", err.Error(), 1)
 		})
 		t.Run(name+" in the checkout's project", func(t *testing.T) {
 			// A checkout of its own whose fugaro.yaml names another project:
@@ -146,7 +160,7 @@ func TestTheRootsRefusalBoundsTheRootAndTheCheckoutsProject(t *testing.T) {
 			if !strings.Contains(err.Error(), "checkout of project") {
 				t.Fatalf("the refusal is not the one about the checkout's project: %v", err)
 			}
-			noRawHostile(t, name+" in the checkout's refusal", err.Error(), 0)
+			noRawHostile(t, name+" in the checkout's refusal", err.Error(), 1)
 		})
 	}
 }
@@ -199,7 +213,7 @@ func TestTheApplyRefusalsMapBoundsEveryValue(t *testing.T) {
 				"the apply's":    managedApplyErr(lc, v, managedmode.Result{}, fmt.Errorf("boom: %s", v)),
 				"the gate's":     managedApplyErr(lc, v, managedmode.Result{}, fmt.Errorf("%w: %s", managedmode.ErrRefused, v)),
 			} {
-				noRawHostile(t, name+" in "+what, err.Error(), 0)
+				noRawHostile(t, name+" in "+what, err.Error(), 1)
 			}
 		})
 	}
@@ -302,7 +316,7 @@ func TestTheCredentialFilesOwnTextIsBounded(t *testing.T) {
 			if err == nil {
 				t.Fatal("a credential file that is not there was read")
 			}
-			noRawHostile(t, name+" in the ADC refusal", err.Error(), 0)
+			noRawHostile(t, name+" in the ADC refusal", err.Error(), 1)
 		})
 		t.Run(name+" in the type", func(t *testing.T) {
 			adc := filepath.Join(t.TempDir(), "adc.json")
@@ -318,7 +332,7 @@ func TestTheCredentialFilesOwnTextIsBounded(t *testing.T) {
 			if err == nil {
 				t.Fatal("a credential of another kind was used")
 			}
-			noRawHostile(t, name+" in the credential type's refusal", err.Error(), 0)
+			noRawHostile(t, name+" in the credential type's refusal", err.Error(), 1)
 		})
 	}
 }
@@ -333,7 +347,7 @@ func TestTheImpersonationsOwnWordsAreBounded(t *testing.T) {
 			if err == nil {
 				t.Fatal("a URL naming no account was read as one")
 			}
-			noRawHostile(t, name+" in the URL's refusal", err.Error(), 0)
+			noRawHostile(t, name+" in the URL's refusal", err.Error(), 1)
 		})
 		t.Run(name+" in the API's answer", func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
