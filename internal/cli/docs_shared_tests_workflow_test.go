@@ -40,6 +40,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -115,50 +116,79 @@ type sharedTestsStep struct {
 // readSharedTestsWorkflow returns the workflow's bytes and the path they came
 // from, reading the staged copy while it exists and the real file after the
 // copy-in.
-//
-// Byte-identity is asserted here, while both exist, and it is the weaker half
-// of the pair on purpose: it says the file under `.github/workflows/` is the
-// reviewed staged one rather than something hand-written, which is what makes
-// the staged copy worth reviewing. It is deliberately not an assertion that
-// the real file is *absent*: Task P4.3's whole point is that the owner copies
-// it in, so absence would turn this test red the moment they did. Once the
-// staged copy is gone the real file is read alone and must carry the marker,
-// so a copy that lost the job (or a file renamed over it) fails here.
 func readSharedTestsWorkflow(t *testing.T) (sharedTestsWorkflow, []byte, string) {
 	t.Helper()
-	staged, stagedErr := os.ReadFile("../../" + stagedSharedTestsWorkflowPath)
-	real, realErr := os.ReadFile("../../" + realSharedTestsWorkflowPath)
-	switch {
-	case stagedErr == nil && realErr == nil:
-		if !bytes.Equal(staged, real) {
-			t.Errorf("%s and %s both exist and differ: the copied-in file is not the reviewed staged one (docs/pending-workflows/README.md says to copy the file in and `git rm` the staged copy, and until it is removed nothing here can see an edit to the real file)",
-				realSharedTestsWorkflowPath, stagedSharedTestsWorkflowPath)
-		}
-	case stagedErr == nil:
-		real = staged
-		realErr = nil
-	case os.IsNotExist(stagedErr) && realErr == nil:
-		if !strings.Contains(string(real), sharedTestsWorkflowMarker) {
-			t.Fatalf("%s does not contain %q and %s no longer exists: was the staged file removed without its content reaching the real file?",
-				realSharedTestsWorkflowPath, sharedTestsWorkflowMarker, stagedSharedTestsWorkflowPath)
-		}
-	default:
-		t.Fatalf("neither %s nor %s is readable: %v", stagedSharedTestsWorkflowPath, realSharedTestsWorkflowPath, stagedErr)
+	raw, problems, err := readSharedTestsWorkflowAt(
+		"../../"+stagedSharedTestsWorkflowPath, "../../"+realSharedTestsWorkflowPath)
+	for _, p := range problems {
+		t.Error(p)
 	}
-
+	if err != nil {
+		t.Fatal(err)
+	}
 	var wf sharedTestsWorkflow
-	dec := yaml.NewDecoder(bytes.NewReader(real))
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true)
 	if err := dec.Decode(&wf); err != nil {
-		t.Fatalf("decode %s: %v", pathFor(stagedErr), err)
+		t.Fatalf("decode %s: %v", sharedTestsWorkflowSource(raw), err)
 	}
-	return wf, real, pathFor(stagedErr)
+	return wf, raw, sharedTestsWorkflowSource(raw)
 }
 
-// pathFor names the copy that was read, from the staged read's error: for a
-// failure message, so a red run says which of the two files it judged.
-func pathFor(stagedErr error) string {
-	if stagedErr == nil {
+// readSharedTestsWorkflowAt is the read the test above uses, with its two
+// paths as arguments and its verdicts returned rather than reported: that is
+// what lets TestReadSharedTestsWorkflowFallsBackOnlyWhilePending pin both
+// modes against temp files, independently of what this repository currently
+// holds -- the same shape images/base_workflow_test.go's readWorkflow uses.
+//
+// The rules, in the order they are decided:
+//
+//   - The staged copy wins outright while it exists. It is the file a human
+//     reviews, so it is the file the assertions judge.
+//   - While both exist they must be byte-identical, and that is the weaker
+//     half of the pair on purpose: it says the file under `.github/workflows/`
+//     is the reviewed staged one rather than something hand-written, which is
+//     what makes reviewing the staged copy worth anything. It is deliberately
+//     not an assertion that the real file is *absent*: Task P4.3's whole point
+//     is that the owner copies it in, so absence would turn this test red the
+//     moment they did.
+//   - Once the staged copy is gone the real file must carry the marker, so a
+//     copy that lost the job -- or a file renamed over it -- is refused here
+//     rather than passing vacuously. This is also why the README's copy-in
+//     procedure removes the staged copy: left in place, it would freeze these
+//     assertions on its own bytes and hide every later edit to the real file.
+//
+// problems are reported and the read continues; err is fatal, because there
+// is then no document to judge.
+func readSharedTestsWorkflowAt(stagedPath, realPath string) (raw []byte, problems []string, err error) {
+	staged, stagedErr := os.ReadFile(stagedPath)
+	real, realErr := os.ReadFile(realPath)
+	switch {
+	case stagedErr == nil && realErr == nil:
+		raw = staged
+		if !bytes.Equal(staged, real) {
+			problems = append(problems, fmt.Sprintf(
+				"%s and %s both exist and differ: the copied-in file is not the reviewed staged one (copy the file in and `git rm` the staged copy, as docs/pending-workflows/README.md says -- until it is removed, nothing here can see an edit to the real file)",
+				realPath, stagedPath))
+		}
+	case stagedErr == nil:
+		raw = staged
+	case os.IsNotExist(stagedErr) && realErr == nil:
+		raw = real
+		if !strings.Contains(string(real), sharedTestsWorkflowMarker) {
+			return nil, problems, fmt.Errorf("%s does not contain %q and %s no longer exists: was the staged file removed without its content reaching the real file?", realPath, sharedTestsWorkflowMarker, stagedPath)
+		}
+	default:
+		return nil, problems, fmt.Errorf("neither %s nor %s is readable: %v", stagedPath, realPath, stagedErr)
+	}
+	return raw, problems, nil
+}
+
+// sharedTestsWorkflowSource names which copy is in hand, from the bytes: the
+// staged file carries its `STAGED, NOT INSTALLED` banner and the copied-in one
+// does not, so a red run says which of the two files it judged.
+func sharedTestsWorkflowSource(raw []byte) string {
+	if strings.Contains(string(raw), "STAGED, NOT INSTALLED") {
 		return stagedSharedTestsWorkflowPath
 	}
 	return realSharedTestsWorkflowPath
@@ -379,6 +409,87 @@ func TestSharedTestsWorkflowIsStagedAndPinned(t *testing.T) {
 	}
 }
 
+// TestReadSharedTestsWorkflowFallsBackOnlyWhilePending pins every mode of the
+// read above against temp files, so the rules stay checkable whatever state
+// this repository is in -- the staged copy here, the copied-in file there, or
+// both. It is what makes the copy-in procedure safe rather than a hope.
+func TestReadSharedTestsWorkflowFallsBackOnlyWhilePending(t *testing.T) {
+	dir := t.TempDir()
+	staged := filepath.Join(dir, "pending.yml")
+	real := filepath.Join(dir, "real.yml")
+
+	pending := "name: shared-tests\n# STAGED, NOT INSTALLED\n"
+	copiedIn := "name: shared-tests\non:\n  push:\n"
+	if err := os.WriteFile(staged, []byte(pending), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pending alone: the staged bytes are what is judged, and there is nothing
+	// to report.
+	raw, problems, err := readSharedTestsWorkflowAt(staged, real)
+	if err != nil || len(problems) != 0 {
+		t.Fatalf("staged alone: want no problems and no error, got %q and %v", problems, err)
+	}
+	if string(raw) != pending {
+		t.Fatalf("staged alone: read %q, not the staged bytes", raw)
+	}
+
+	// Both, identical: the staged copy still wins and the pair is consistent.
+	if err := os.WriteFile(real, []byte(pending), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if raw, problems, err := readSharedTestsWorkflowAt(staged, real); err != nil || len(problems) != 0 || string(raw) != pending {
+		t.Fatalf("both, identical: want the staged bytes and no problems, got %q, %q, %v", raw, problems, err)
+	}
+
+	// Both, differing: the copy-in was edited after review, which is the one
+	// thing the staged file cannot otherwise notice.
+	if err := os.WriteFile(real, []byte("name: not-the-staged-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, problems, err = readSharedTestsWorkflowAt(staged, real)
+	if err != nil {
+		t.Fatalf("both, differing: the staged copy is still readable, so this is a problem and not an error: %v", err)
+	}
+	if len(problems) != 1 || !strings.Contains(problems[0], "both exist and differ") {
+		t.Fatalf("both, differing: want the byte-identity problem, got %q", problems)
+	}
+	if string(raw) != pending {
+		t.Fatalf("both, differing: the staged copy must still be what is judged, read %q", raw)
+	}
+
+	// Copied in and the staged copy removed: the real file is read alone, and
+	// must carry the marker.
+	if err := os.WriteFile(real, []byte(copiedIn), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(staged); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readSharedTestsWorkflowAt(staged, real); err == nil {
+		t.Fatal("copied in, marker missing: want an error, got none: this is the read that refuses a copy which lost the job")
+	}
+	if err := os.WriteFile(real, []byte(copiedIn+sharedTestsWorkflowMarker+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, problems, err = readSharedTestsWorkflowAt(staged, real)
+	if err != nil || len(problems) != 0 {
+		t.Fatalf("copied in, marker present: want the real bytes and no problems, got %q, %q, %v", raw, problems, err)
+	}
+	if string(raw) != copiedIn+sharedTestsWorkflowMarker+"\n" {
+		t.Fatalf("copied in, marker present: read %q, not the real file's bytes", raw)
+	}
+
+	// Neither: there is no document to judge, and that is fatal rather than a
+	// silently empty run.
+	if err := os.Remove(real); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readSharedTestsWorkflowAt(staged, real); err == nil {
+		t.Fatal("neither file: want an error, got none")
+	}
+}
+
 // TestSharedTestsWorkflowPinsAgreeWithTheOtherWorkflows: once the staged copy
 // has been copied in and removed, this workflow's pins cannot drift from the
 // other workflows' pins of the same action. While it is pending the comparison
@@ -405,11 +516,41 @@ func TestSharedTestsWorkflowPinsAgreeWithTheOtherWorkflows(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for action, ref := range workflowPins(string(data)) {
-			if other, ok := mine[action]; ok && other != ref {
-				t.Errorf("%s pins %s to %s and %s pins it to %s: the two must be the same commit, or one of them is an older tag of the same action", path, action, other, name, ref)
-			}
+		for _, p := range pinDriftProblems(mine, path, name, workflowPins(string(data))) {
+			t.Error(p)
 		}
+	}
+}
+
+// pinDriftProblems names every action in mine that name also uses at another
+// ref, and is a function rather than an inline loop so that
+// TestPinDriftProblemsFindsDrift can pin it against two maps: the test above
+// skips while the staged copy exists, and a skip is not a proof.
+func pinDriftProblems(mine map[string]string, path, name string, other map[string]string) []string {
+	var out []string
+	for action, ref := range other {
+		if ours, ok := mine[action]; ok && ours != ref {
+			out = append(out, fmt.Sprintf("%s pins %s to %s and %s pins it to %s: the two must be the same commit, or one of them is an older tag of the same action", path, action, ours, name, ref))
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestPinDriftProblemsFindsDrift pins pinDriftProblems itself: a disagreement
+// is reported, and an action one workflow uses and the other does not is not.
+func TestPinDriftProblemsFindsDrift(t *testing.T) {
+	const a, b = "3d3c42e5aac5ba805825da76410c181273ba90b1", "949feb2413d6458794dcd2491c4babbbce0c15c1"
+	got := pinDriftProblems(
+		map[string]string{"actions/checkout": a, "actions/setup-node": b},
+		"shared-tests.yml", "ci.yml",
+		map[string]string{"actions/checkout": b, "actions/setup-go": b},
+	)
+	if len(got) != 1 || !strings.Contains(got[0], "actions/checkout") {
+		t.Fatalf("want exactly the checkout drift, got %q", got)
+	}
+	if p := pinDriftProblems(map[string]string{"actions/checkout": a}, "shared-tests.yml", "ci.yml", map[string]string{"actions/checkout": a}); len(p) != 0 {
+		t.Fatalf("matching pins reported: %q", p)
 	}
 }
 
