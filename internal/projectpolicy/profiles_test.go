@@ -358,6 +358,42 @@ func TestDecodeRefusesAProfileMountingACodexOAuthToken(t *testing.T) {
 	}
 }
 
+// TestDecodeRefusesAProfileNameWrittenTwice: profiles are keyed by their exact
+// spelling and looked up by it (ProfileFor, and every reader of a selection
+// through it), so encoding/json keeping the last of a repeated key would drop
+// the first profile whole and leave which profile a run lands on — and every
+// gate that profile carries, its allow_repos and its secrets among them —
+// depending on the order the document's keys were written in. The providers
+// block already holds this rule (validProviders, checkNoDuplicateNames); this
+// is the same rule for the block beside it.
+//
+// The mutation is dropping the checkNoDuplicateNames call from
+// decodeProfileBlock: the first document below decodes to the second profile.
+func TestDecodeRefusesAProfileNameWrittenTwice(t *testing.T) {
+	const one = `{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":["github/acme/app"]}`
+	const second = `{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"}`
+	doc := `{"standard":` + one + `,"standard":` + second + `}`
+	_, err := decodeProfiles(t, doc)
+	if err == nil {
+		t.Fatal("a profile name written twice was accepted")
+	}
+	for _, want := range []string{"profiles", `"standard"`, "twice"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// A second name is not a duplicate: the same two profiles under two names
+	// decode, so this rule claims only the repeat.
+	two := `{"standard":` + one + `,"big":` + second + `}`
+	p, err := decodeProfiles(t, two)
+	if err != nil {
+		t.Fatalf("two distinct profile names were refused: %v", err)
+	}
+	if len(p.Profiles) != 2 {
+		t.Errorf("profiles = %v, want both", p.ProfileNames())
+	}
+}
+
 // TestDecodeRefusesAnExplicitlyEmptyProfileAllowRepos: a written empty list is
 // not the same statement as an absent one, and the node cannot carry the
 // difference (the carrier's omitempty): read as "the project's list applies",
