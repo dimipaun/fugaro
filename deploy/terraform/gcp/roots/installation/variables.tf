@@ -176,6 +176,10 @@ variable "project_jobs" {
       title      = string
       expression = string
     })
+    token_condition = object({
+      title      = string
+      expression = string
+    })
     vertex = bool
   }))
   default  = {}

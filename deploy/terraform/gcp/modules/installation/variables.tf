@@ -161,7 +161,7 @@ variable "operators" {
 }
 
 variable "launcher_bucket_condition" {
-  description = "The condition of the launchers' objectUser grant on the runs bucket: runs/ of that bucket only (gcp.LauncherBucketCondition). Passed byte for byte, so every launcher shares one binding."
+  description = "The condition of the launchers' objectUser grant on the runs bucket: runs/ and tokens/ of that bucket only (gcp.LauncherBucketCondition). Passed byte for byte, so every launcher shares one binding."
   type = object({
     title      = string
     expression = string

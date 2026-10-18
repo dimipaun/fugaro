@@ -39,7 +39,15 @@ type ProjectJob struct {
 	Env             map[string]string `json:"env"`
 	SecretEnv       map[string]string `json:"secret_env"` // env var → logical secret name
 	BucketCondition Condition         `json:"bucket_condition"`
-	Vertex          bool              `json:"vertex"`
+	// TokenCondition is the project job account's read-only grant on the
+	// runs bucket's budget token objects, the whole of tokens/ with no slug
+	// (gcp.ProjectTokenBucketCondition): the same widening as
+	// BucketCondition, and the same reason — one job serves every repository
+	// admitted to its profile, so its token read cannot name one repository's
+	// prefix. objectViewer, never objectUser: it must never be able to delete
+	// or replace a queued run's token (budget-token-channel.md §7.2, D16).
+	TokenCondition Condition `json:"token_condition"`
+	Vertex         bool      `json:"vertex"`
 }
 
 // ProjectJobs is the installation's project jobs, by job name: one job and
@@ -110,6 +118,10 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 			BucketCondition: Condition{
 				Title:      gcp.BucketConditionTitle(saID),
 				Expression: gcp.ProjectBucketCondition(bucket, gcp.JobBucketPrefixes),
+			},
+			TokenCondition: Condition{
+				Title:      gcp.ProjectTokenBucketConditionTitle(saID),
+				Expression: gcp.ProjectTokenBucketCondition(bucket),
 			},
 			Vertex: vertex,
 		}

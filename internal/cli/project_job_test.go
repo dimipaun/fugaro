@@ -77,8 +77,11 @@ func newProjectJobFixtureMode(t *testing.T, mode string) *projectJobFixture {
 		"profiles: { standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h } }\n"+
 			// A checkout: clone workflow runs the installation's base image,
 			// which the launch gate holds to a release whose runner knows
-			// FUGARO_CHECKOUT (internal/cli/recipes_skew.go).
-			"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.7.5 }\n")
+			// FUGARO_CHECKOUT and, for the launches in this fixture, reads the
+			// sealed budget token (internal/cli/recipes_skew.go: cloneSince and
+			// sealSince — the fixture publishes a policy, so a launch here
+			// mints whatever the local mode says).
+			"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:"+sealSince+" }\n")
 	publishPolicy(t, f, projectJobPolicy)
 	// The name is the caller's to compute (the fake cannot import
 	// internal/backend/gcp: that package's own tests import the fake), and
@@ -346,10 +349,10 @@ func TestLaunchMintsTheSelectedJobsTimeout(t *testing.T) {
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
-	tok := readToken(t, f.cloudFixture, run)
-	if tok == "" {
-		t.Fatal("the launch minted no budget token")
-	}
+	// The object in the bucket is a sealed envelope, not the token (the
+	// seal's launcher half): launchedToken opens it with the key this
+	// launch's execution received, and fails if the launch minted none.
+	tok := launchedToken(t, f.cloudFixture, run)
 	fx, _ := claimsOf(t, f.launchBudgetFixture, tok)["fx"].(json.Number)
 	ms, err := fx.Int64()
 	if err != nil {

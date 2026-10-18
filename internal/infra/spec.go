@@ -176,8 +176,12 @@ type WorkflowSpec struct {
 	Env             map[string]string `json:"env"`
 	SecretEnv       map[string]string `json:"secret_env"` // env var → logical secret name
 	BucketCondition Condition         `json:"bucket_condition"`
-	Vertex          bool              `json:"vertex"`
-	DeployJob       bool              `json:"deploy_job"`
+	// TokenCondition is the job account's read-only grant on its own
+	// repository's budget token objects, tokens/<slug>/
+	// (gcp.TokenBucketCondition; budget-token-channel.md §7.2, D16).
+	TokenCondition Condition `json:"token_condition"`
+	Vertex         bool      `json:"vertex"`
+	DeployJob      bool      `json:"deploy_job"`
 
 	Name                string            `json:"-"`
 	Slug                string            `json:"-"`
@@ -699,6 +703,10 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 			Title:      gcp.BucketConditionTitle(saID),
 			Expression: gcp.BucketCondition(c.bucket, gcp.JobBucketPrefixes, slug),
 		},
+		TokenCondition: Condition{
+			Title:      gcp.TokenBucketConditionTitle(saID),
+			Expression: gcp.TokenBucketCondition(c.bucket, slug),
+		},
 		Vertex:    c.in.Cfg.Agent.Auth == "vertex",
 		DeployJob: true,
 
@@ -1208,6 +1216,7 @@ func (rs RepoSpec) Addresses() []string {
 			add(p + "google_service_account_iam_member.operator[" + q(member) + "]")
 		}
 		add(p + "google_storage_bucket_iam_member.job")
+		add(p + "google_storage_bucket_iam_member.job_tokens")
 		for _, logical := range uniqueSecrets(ws) {
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
 		}

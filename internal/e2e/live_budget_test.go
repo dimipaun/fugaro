@@ -95,6 +95,7 @@ type lbRun struct {
 	spec      lbRunSpec
 	slug      string
 	custom    string
+	key       []byte // the seal key the launcher would hand the execution
 	dir       string
 	cmd       *exec.Cmd
 	out       *bytes.Buffer
@@ -368,7 +369,10 @@ func lbStart(t *testing.T, ctx context.Context, env lbEnv, remote string, spec l
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := token.PutObject(ctx, b, slug, spec.runID, r.custom); err != nil {
+		if r.key, err = token.NewKey(); err != nil {
+			t.Fatal(err)
+		}
+		if err := token.PutObject(ctx, b, slug, spec.runID, r.custom, r.key); err != nil {
 			t.Fatal(err)
 		}
 		_ = b.Close()
@@ -403,6 +407,12 @@ func lbStart(t *testing.T, ctx context.Context, env lbEnv, remote string, spec l
 		// No value: the key comes from the docker process's environment.
 		args = append(args, "-e", "ANTHROPIC_API_KEY")
 	}
+	if r.key != nil {
+		// The launcher's marker, whose value is the seal key (D15). No value
+		// here either: it comes from the docker process's environment, so it
+		// is not on a command line.
+		args = append(args, "-e", "FUGARO_BUDGET_TOKEN")
+	}
 	args = append(args, env.base, "fugaro", "exec",
 		"--bucket", "file:///mnt/run/bucket?no_tmp_dir=true", "--task-file", "/mnt/run/task.json",
 		"--remote", remote, "--provider", "fake", "--provider-state", "/mnt/run/provider.json",
@@ -413,6 +423,9 @@ func lbStart(t *testing.T, ctx context.Context, env lbEnv, remote string, spec l
 	r.cmd.Env = os.Environ()
 	if spec.withModel {
 		r.cmd.Env = append(r.cmd.Env, "ANTHROPIC_API_KEY="+env.anthropicKey)
+	}
+	if r.key != nil {
+		r.cmd.Env = append(r.cmd.Env, "FUGARO_BUDGET_TOKEN="+token.EncodeKey(r.key))
 	}
 	r.cmd.Stdout, r.cmd.Stderr = r.out, r.out
 	r.started = time.Now()

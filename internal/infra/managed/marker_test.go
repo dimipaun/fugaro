@@ -416,8 +416,12 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 		// A project job's widened grant (phase 3, Task 3.2): no slug, but
 		// still the three prefixes, so never the bucket's root.
 		"a project job account's grant": gcp.ProjectBucketCondition(testBucket, gcp.JobBucketPrefixes),
-		"a build account's grant":       gcp.BucketCondition(testBucket, gcp.BuildBucketPrefixes, "web"),
-		"a launcher's grant":            gcp.LauncherBucketCondition(testBucket),
+		// A project job's read-only tokens/ grant (phase 3, Task 3.2): the
+		// whole prefix, and still not the bucket's root.
+		"a project job account's tokens grant": gcp.ProjectTokenBucketCondition(testBucket),
+		"a job account's tokens grant":         gcp.TokenBucketCondition(testBucket, "web-a1b2c3"),
+		"a build account's grant":              gcp.BucketCondition(testBucket, gcp.BuildBucketPrefixes, "web"),
+		"a launcher's grant":                   gcp.LauncherBucketCondition(testBucket),
 	} {
 		prefixes := startsWithPrefixes(expr, testBucket)
 		if len(prefixes) == 0 {
@@ -431,14 +435,18 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 	}
 	// The prefixes the fakes and the modules agree on, named here so a
 	// widening of one is a visible diff: a job writes runs/, cache/ and
-	// locks/, a build writes builds/, a launcher writes runs/.
+	// locks/, a build writes builds/, a launcher writes runs/ and, since the
+	// sealed budget token moved there, tokens/ (budget-token-channel.md §7.2,
+	// D16: the deliberate widening). tokens/ is not a run account's write
+	// prefix — the job's grant there is objectViewer, checked by
+	// runAccountGrants and by the scan's write-role rules.
 	if !slices.Equal(gcp.JobBucketPrefixes, []string{"runs", "cache", "locks"}) {
 		t.Errorf("gcp.JobBucketPrefixes = %v", gcp.JobBucketPrefixes)
 	}
 	if !slices.Equal(gcp.BuildBucketPrefixes, []string{"builds"}) {
 		t.Errorf("gcp.BuildBucketPrefixes = %v", gcp.BuildBucketPrefixes)
 	}
-	if got := startsWithPrefixes(gcp.LauncherBucketCondition(testBucket), testBucket); !slices.Equal(got, []string{"runs/"}) {
+	if got := startsWithPrefixes(gcp.LauncherBucketCondition(testBucket), testBucket); !slices.Equal(got, []string{"runs/", "tokens/"}) {
 		t.Errorf("the launcher condition grants %v", got)
 	}
 
@@ -1099,6 +1107,13 @@ var runAccountGrants = setOf(
 	`google_project_iam_member | "roles/aiplatform.user" | project=var.project | google_service_account.job.member | for_each= | perms=`,
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset(values(var.workflow.secret_env)) | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
+	// The same account's read-only grant on the budget token objects, in the
+	// workflow module (tokens/<slug>/, one repository) and in the project
+	// module (the whole of tokens/, a shared job; phase 3, modules/project/
+	// sa.tf). objectViewer carries no create, no delete and no update, so
+	// neither can write, replace or remove a token object — and what the
+	// shared job reads is sealed ciphertext (budget-token-channel.md §7.2).
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
 	// A project job account's (phase 3, modules/project/sa.tf): the same
 	// shape, its secrets keyed by the profile's mounts; its bucket grant is
 	// the workflow job's key above, under the widened condition.
