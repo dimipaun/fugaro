@@ -226,13 +226,13 @@ run "a command from a spent utterance is refused" \
   "  if (hasLedgerId(state, LEDGER_KIND.UTTERANCE, utteranceId)) {
     return refuse(REFUSAL.REPLAYED_UTTERANCE, 'utteranceId');
   }
-  if (kind !== undefined && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {" \
+  if (kinds !== undefined && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {" \
   "  if (false) {
     return refuse(REFUSAL.REPLAYED_UTTERANCE, 'utteranceId');
   }
-  if (kind !== undefined && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {"
+  if (kinds !== undefined && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {"
 run "a reused action id is refused" \
-  "  if (kind !== undefined && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {" "  if (false) {"
+  "  if (kinds !== undefined && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {" "  if (false) {"
 run "an abort from a spent utterance is refused" \
   "  if (hasLedgerId(state, LEDGER_KIND.UTTERANCE, utteranceId)) {
     return refuse(REFUSAL.REPLAYED_UTTERANCE, 'utteranceId');
