@@ -1015,7 +1015,7 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		{`mailbox/$mb/inbox/$msg/mac`, `newData.val().length == ` + strconv.Itoa(MaxMacLength)},
 		{`mailbox/$mb/inbox/$msg/agent`, `newData.val().length <= ` + strconv.Itoa(MaxAgentLength)},
 		{`mailbox/$mb/inbox/$msg/options/$i`, `newData.val().length <= ` + strconv.Itoa(MaxOptionLength)},
-		{`mailbox/$mb/inbox/$msg/options`, `newData.numChildren() <= ` + strconv.Itoa(MaxOptions)},
+		{`mailbox/$mb/inbox/$msg/options/$i`, `$i.matches(` + indexPattern(MaxOptions) + `)`},
 		{`mailbox/$mb/inbox/$msg/action/target/run`, `newData.val().length <= ` + strconv.Itoa(MaxTargetLength)},
 		{`mailbox/$mb/outbox/$msg`, `$msg.length <= ` + strconv.Itoa(MaxKeyLength)},
 		{`mailbox/$mb/outbox/$msg/text`, `newData.val().length <= ` + strconv.Itoa(MaxText)},
@@ -1023,7 +1023,7 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		{`mailbox/$mb/outbox/$msg/mac`, `newData.val().length == ` + strconv.Itoa(MaxMacLength)},
 		{`mailbox/$mb/heartbeat/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
 		{`mailbox/$mb/heartbeat/mac`, `newData.val().length == ` + strconv.Itoa(MaxMacLength)},
-		{`mailbox/$mb/heartbeat/agents`, `newData.numChildren() <= ` + strconv.Itoa(MaxAgents)},
+		{`mailbox/$mb/heartbeat/agents/$i`, `$i.matches(` + indexPattern(MaxAgents) + `)`},
 		{`mailbox/$mb/heartbeat/agents/$i/id`, `newData.val().length <= ` + strconv.Itoa(MaxAgentLength)},
 		{`mailbox/$mb/heartbeat/agents/$i/name`, `newData.val().length <= ` + strconv.Itoa(MaxAgentNameLength)},
 	} {
@@ -1195,5 +1195,147 @@ func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 		if !want[p] {
 			t.Errorf("/%s carries the user claim's read grant (%s) and is not one of the families tension (b1) names", p, r)
 		}
+	}
+}
+
+// rulesMethods are the methods the Realtime Database rules language has: the
+// RuleDataSnapshot methods (val, child, parent, hasChild, hasChildren, exists,
+// getPriority, isNumber, isString, isBoolean) and the string methods
+// (contains, beginsWith, endsWith, replace, toLowerCase, toUpperCase,
+// matches). A method outside the list is not a rule the database runs — the
+// deploy refuses the whole document ("No such method/property"), which is
+// what a `numChildren()` in P6.4's first draft did: the document type-checked
+// here and failed only against the emulator, which was not run.
+var rulesMethods = []string{
+	"val", "child", "parent", "hasChild", "hasChildren", "exists", "getPriority",
+	"isNumber", "isString", "isBoolean",
+	"contains", "beginsWith", "endsWith", "replace", "toLowerCase", "toUpperCase", "matches",
+}
+
+// TestGeneratedRulesUseOnlyRulesLanguageMethods is the check that does not need
+// the emulator: every method a generated expression calls is one the rules
+// language has. It is not a parser; it is the cheap half that catches a method
+// borrowed from the client SDK (DataSnapshot.numChildren, forEach, size).
+func TestGeneratedRulesUseOnlyRulesLanguageMethods(t *testing.T) {
+	call := regexp.MustCompile(`\.([A-Za-z_]+)\(`)
+	walk(rulesTree(t), nil, func(path []string, attrs map[string]any) {
+		for k, v := range attrs {
+			s, ok := v.(string)
+			if !ok {
+				continue
+			}
+			// Regex literals are not calls: drop them before scanning.
+			s = regexLiteral.ReplaceAllString(s, "/re/")
+			for _, m := range call.FindAllStringSubmatch(s, -1) {
+				if !slices.Contains(rulesMethods, m[1]) {
+					t.Errorf("/%s %s calls %s(), which the rules language does not have: the deploy refuses the document", strings.Join(path, "/"), k, m[1])
+				}
+			}
+		}
+	})
+}
+
+// regexLiteral matches a rules regex literal as the generator writes one.
+var regexLiteral = regexp.MustCompile(`/\^[^ ]*\$/`)
+
+// schemaPatterns reads the shared schema's character patterns, by name, as the
+// literal source of each (`/^...$/`).
+func schemaPatterns(t *testing.T) map[string]string {
+	t.Helper()
+	b, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("reading the shared schema: %v", err)
+	}
+	out := map[string]string{}
+	for _, m := range regexp.MustCompile(`(?m)^const ([A-Z_]+_PATTERN) = (/.*/);$`).FindAllStringSubmatch(string(b), -1) {
+		out[m[1]] = m[2]
+	}
+	return out
+}
+
+// TestMailboxRulesCheckTheSchemasCharacters: the rules language does have
+// `matches()`, so every field whose character set the schema states as a
+// pattern carries the same pattern at the database — the tag and the head SHA
+// are hex, an agent id and a boot id are identities, a run target and a repo
+// target are the schema's run and repo shapes. A list (options, agents) is a
+// list: present means a child at an index below its bound, and a scalar in
+// its place is refused. And a pairing uid is the `p~` uid P6.6 mints.
+func TestMailboxRulesCheckTheSchemasCharacters(t *testing.T) {
+	pats := schemaPatterns(t)
+	for _, c := range []struct{ name, got string }{
+		{"HEX_PATTERN", patternHex},
+		{"IDENTITY_PATTERN", patternIdentity},
+		{"RUN_PATTERN", patternRun},
+		{"REPO_PATTERN", patternRepo},
+	} {
+		if want, ok := pats[c.name]; !ok {
+			t.Errorf("the shared schema no longer defines %s: the rules' copy has nothing to agree with", c.name)
+		} else if c.got != want {
+			t.Errorf("the rules' %s = %s, the shared schema's = %s", c.name, c.got, want)
+		}
+	}
+	paths := generatedPaths(t)
+	for _, dir := range []string{"inbox", "outbox"} {
+		m := `mailbox/$mb/` + dir + `/$msg`
+		for _, c := range []struct{ path, frag string }{
+			{m + `/mac`, ".matches(" + patternHex + ")"},
+			{m + `/agent`, ".matches(" + patternIdentity + ")"},
+			{m + `/action/head_sha`, ".matches(" + patternHex + ")"},
+			{m + `/action/target/run`, ".matches(" + patternRun + ")"},
+			{m + `/action/target/repo`, ".matches(" + patternRepo + ")"},
+			{m + `/options`, "newData.hasChildren()"},
+			{m + `/options/$i`, "$i.matches(" + indexPattern(MaxOptions) + ")"},
+		} {
+			wantFrag(t, paths, c.path, c.frag)
+		}
+	}
+	for _, c := range []struct{ path, frag string }{
+		{`mailbox/$mb/heartbeat/mac`, ".matches(" + patternHex + ")"},
+		{`mailbox/$mb/heartbeat/boot`, ".matches(" + patternIdentity + ")"},
+		{`mailbox/$mb/heartbeat/boot`, "newData.val().length <= " + strconv.Itoa(MaxBootLength)},
+		{`mailbox/$mb/heartbeat/agents`, "newData.hasChildren()"},
+		{`mailbox/$mb/heartbeat/agents/$i`, "$i.matches(" + indexPattern(MaxAgents) + ")"},
+		{`mailbox/$mb/heartbeat/agents/$i/id`, ".matches(" + patternIdentity + ")"},
+		{`mailbox/$mb/heartbeat/agents/$i/name`, "newData.val().length > 0"},
+	} {
+		wantFrag(t, paths, c.path, c.frag)
+	}
+	consts, _, _ := schemaCatalog(t)
+	if int64(MaxBootLength) != consts["BOOT_MAX"] {
+		t.Errorf("MaxBootLength = %d, the schema's BOOT_MAX = %d", MaxBootLength, consts["BOOT_MAX"])
+	}
+	if !strings.Contains(pairingClaim, "auth.uid.beginsWith('p~')") {
+		t.Errorf("pairingClaim = %q, want it bound to the p~ uid P6.6 mints", pairingClaim)
+	}
+}
+
+// TestIndexPattern: the index pattern admits exactly 0..n-1, so a list keyed
+// by its indexes holds at most n entries.
+func TestIndexPattern(t *testing.T) {
+	for _, n := range []int{1, 8, 32} {
+		lit := indexPattern(n)
+		re := regexp.MustCompile(strings.TrimSuffix(strings.TrimPrefix(lit, "/"), "/"))
+		for i := -1; i <= n+1; i++ {
+			if got, want := re.MatchString(strconv.Itoa(i)), i >= 0 && i < n; got != want {
+				t.Errorf("indexPattern(%d) matches %d = %v, want %v", n, i, got, want)
+			}
+		}
+		for _, s := range []string{"", "00", "01", "a", "1a", " 1"} {
+			if re.MatchString(s) {
+				t.Errorf("indexPattern(%d) matches %q", n, s)
+			}
+		}
+	}
+}
+
+func wantFrag(t *testing.T, paths map[string]map[string]any, path, frag string) {
+	t.Helper()
+	attrs, ok := paths[path]
+	if !ok {
+		t.Errorf("the template does not generate /%s", path)
+		return
+	}
+	if v, _ := attrs[".validate"].(string); !strings.Contains(v, frag) {
+		t.Errorf("/%s .validate = %q, want it to carry %q", path, v, frag)
 	}
 }

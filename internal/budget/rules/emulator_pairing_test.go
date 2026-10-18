@@ -22,6 +22,7 @@ package rules
 // the database never holds.
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -206,6 +207,10 @@ func TestPairingSessionWritesItsRequestOnceAndReadsOnlyItsDelivery(t *testing.T)
 	empty := aRequest()
 	empty["key"] = ""
 	h.mustDeny(h.pairing(fresh), "an empty request key", put(request(fresh), empty))
+	fresh = uid + "-chars"
+	spaced := aRequest()
+	spaced["key"] = "not a key"
+	h.mustDeny(h.pairing(fresh), "a request key outside the base64 alphabet", put(request(fresh), spaced))
 
 	// The request is nobody's to read: the operator checks the fingerprint
 	// against the key they were shown (P6.6), not against the database.
@@ -247,6 +252,15 @@ func TestPairingSessionWritesItsRequestOnceAndReadsOnlyItsDelivery(t *testing.T)
 	plain := h.as(claims{uid: uid, fp: "-"})
 	h.mustReadDenied(plain, delivery(uid))
 	h.mustDeny(plain, "a request from a token with no pu claim", put(request(uid+"-plain"), aRequest()))
+	// A pu token whose uid is not a `p~` pairing uid is not a pairing session:
+	// the rules bind the session to the uid shape P6.6 mints, so a pu claim
+	// minted onto an account's own uid cannot open pairing nodes under it.
+	notPairUid := "m~alice-device"
+	h.mustDeny(h.pairing(notPairUid), "a request from a pu token whose uid is not a p~ uid",
+		put(request(notPairUid), aRequest()))
+	h.set(delivery(notPairUid), map[string]any{"token": "sealed"})
+	h.mustReadDenied(h.pairing(notPairUid), delivery(notPairUid))
+
 	// The pu claim has to name the token's own uid, exactly as mu does.
 	mismatched := h.as(claims{pu: uid, uid: pairUid2, fp: "-"})
 	h.mustDeny(mismatched, "a request under a pu claim that is not this token's uid",
@@ -310,11 +324,13 @@ func TestMailboxMessagesRequireTheTag(t *testing.T) {
 	// The heartbeat's advertised agent list: optional, bounded in count, each
 	// entry an id and a name.
 	withAgents := func(n int) map[string]any {
-		agents := map[string]any{}
+		// A list, as the consumer writes it: the database stores it keyed by
+		// index, which is what the rules bound.
+		agents := []any{}
 		for i := 0; i < n; i++ {
-			agents[string(rune('a'+i%26))+string(rune('0'+i/26))] = map[string]any{
-				"id": "agent-" + string(rune('a'+i%26)), "name": "Agent",
-			}
+			agents = append(agents, map[string]any{
+				"id": "agent-" + string(rune('a'+i%26)) + string(rune('0'+i/26)), "name": "Agent",
+			})
 		}
 		b := aHeartbeat()
 		b["agents"] = agents
@@ -329,15 +345,59 @@ func TestMailboxMessagesRequireTheTag(t *testing.T) {
 		b := aHeartbeat()
 		entry := map[string]any{"id": "agent-a", "name": "Agent"}
 		delete(entry, missing)
-		b["agents"] = map[string]any{"a": entry}
+		b["agents"] = []any{entry}
 		h.mustDeny(consumer, "an advertised agent with no "+missing, put(beat(mbAlice), b))
 	}
 	b := aHeartbeat()
-	b["agents"] = map[string]any{"a": map[string]any{"id": "agent-a", "name": "Agent", "load": 3}}
+	b["agents"] = []any{map[string]any{"id": "agent-a", "name": "Agent", "load": 3}}
 	h.mustDeny(consumer, "an advertised agent carrying a field the schema does not name", put(beat(mbAlice), b))
 	b = aHeartbeat()
-	b["agents"] = map[string]any{"a": map[string]any{"id": strings.Repeat("i", MaxAgentLength+1), "name": "Agent"}}
+	b["agents"] = []any{map[string]any{"id": strings.Repeat("i", MaxAgentLength+1), "name": "Agent"}}
 	h.mustDeny(consumer, "an advertised agent id over its bound", put(beat(mbAlice), b))
+
+	// The list is a list: a scalar in its place, or an entry under a key that is
+	// not an index below the bound, is not one. Without this a single string
+	// passed as `agents` was stored (the review of P6.4: the count bound was a
+	// method the rules language does not have, and nothing bounded the type).
+	for _, bad := range []any{"agent-a", 7, true} {
+		b = aHeartbeat()
+		b["agents"] = bad
+		h.mustDeny(consumer, "an agents field that is not a list", put(beat(mbAlice), b))
+	}
+	b = aHeartbeat()
+	b["agents"] = map[string]any{"a": map[string]any{"id": "agent-a", "name": "Agent"}}
+	h.mustDeny(consumer, "an advertised agent under a key that is not an index", put(beat(mbAlice), b))
+	b = aHeartbeat()
+	b["agents"] = map[string]any{strconv.Itoa(MaxAgents): map[string]any{"id": "agent-a", "name": "Agent"}}
+	h.mustDeny(consumer, "an advertised agent at an index past the bound", put(beat(mbAlice), b))
+
+	// The characters the schema states as a pattern are checked here too.
+	b = aHeartbeat()
+	b["agents"] = []any{map[string]any{"id": "agent a", "name": "Agent"}}
+	h.mustDeny(consumer, "an advertised agent id with a space", put(beat(mbAlice), b))
+	b = aHeartbeat()
+	b["agents"] = []any{map[string]any{"id": "agent-a", "name": ""}}
+	h.mustDeny(consumer, "an advertised agent with an empty name", put(beat(mbAlice), b))
+	for _, boot := range []string{strings.Repeat("b", MaxBootLength+1), "boot 1", ""} {
+		b = aHeartbeat()
+		b["boot"] = boot
+		h.mustDeny(consumer, "a heartbeat whose boot is not an identity of at most BOOT_MAX", put(beat(mbAlice), b))
+	}
+	b = aHeartbeat()
+	b["boot"] = strings.Repeat("b", MaxBootLength)
+	h.mustAllow(consumer, "a heartbeat whose boot is BOOT_MAX long", put(beat(mbAlice), b))
+	for i, bad := range []string{strings.Repeat("g", MaxMacLength), strings.Repeat("A", MaxMacLength), strings.Repeat(" ", MaxMacLength)} {
+		id := "m5-" + string(rune('a'+i))
+		m := aMessage(id, mbAlice)
+		m["mac"] = bad
+		h.mustDeny(alice, "an inbox message whose mac is not lowercase hex", put(inbox(mbAlice, id), m))
+		b = aHeartbeat()
+		b["mac"] = bad
+		h.mustDeny(consumer, "a heartbeat whose mac is not lowercase hex", put(beat(mbAlice), b))
+	}
+	m := aMessage("m6", mbAlice)
+	m["agent"] = "agent one"
+	h.mustDeny(alice, "a message addressed to an agent id with a space", put(inbox(mbAlice, "m6"), m))
 }
 
 // aActionRecord is a merge's action record: D169's typed destructive command,
@@ -458,6 +518,20 @@ func TestMailboxActionRecordShape(t *testing.T) {
 	wrongLen["head_sha"] = strings.Repeat("a", MinShaLength-1)
 	h.mustDeny(alice, "a head SHA of a length Git never produces",
 		put(inbox(mbAlice, "b9"), actionMessage("b9", mbAlice, wrongLen)))
+	nonHex := aActionRecord()
+	nonHex["head_sha"] = strings.Repeat("z", MinShaLength)
+	h.mustDeny(alice, "a head SHA that is not hex",
+		put(inbox(mbAlice, "b9x"), actionMessage("b9x", mbAlice, nonHex)))
+	badRepo := aActionRecord()
+	badRepo["target"] = map[string]any{"repo": "no-owner", "pr": 7}
+	h.mustDeny(alice, "a repo target that is not owner/name",
+		put(inbox(mbAlice, "b9y"), actionMessage("b9y", mbAlice, badRepo)))
+	badRun := map[string]any{
+		"id": "act-9", "verb": "cancel", "target": map[string]any{"run": "-r1"},
+		"confirmation": map[string]any{"id": "cfm-9", "at": msgAt},
+	}
+	h.mustDeny(alice, "a run target that is not a run id",
+		put(inbox(mbAlice, "b9z"), actionMessage("b9z", mbAlice, badRun)))
 	shaOf64 := aActionRecord()
 	shaOf64["head_sha"] = strings.Repeat("a", MaxShaLength)
 	h.mustAllow(alice, "a head SHA of a SHA-256 repository",
@@ -509,6 +583,10 @@ func TestMailboxActionRecordShape(t *testing.T) {
 		put(inbox(mbAlice, "c5"), prompt("c5", []any{""})))
 	h.mustDeny(alice, "a prompt with an option that is not a string",
 		put(inbox(mbAlice, "c6"), prompt("c6", []any{1})))
+	h.mustDeny(alice, "a prompt whose options is a string, not a list",
+		put(inbox(mbAlice, "c7"), prompt("c7", "ship it")))
+	h.mustDeny(alice, "a prompt whose options are keyed by name, not by index",
+		put(inbox(mbAlice, "c8"), prompt("c8", map[string]any{"a": "ship it"})))
 
 	// An answer names the prompt it answers, and an action may name it too (it
 	// is how P6.7 applies the prompt's window rather than the command's).
