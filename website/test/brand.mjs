@@ -174,9 +174,18 @@ test('firebase.json deploys the build and names no project, and no .firebaserc i
   const all = Object.fromEntries(config.hosting.headers.find((h) => h.source === '**').headers.map((h) => [h.key, h.value]))
   const csp = all['Content-Security-Policy']
   assert.ok(csp, 'no Content-Security-Policy')
-  assert.ok(!/https?:|\*/.test(csp), `the CSP admits a remote origin: ${csp}`)
+  // The site loads from no origin but its own, with the one analytics exception W3.2 pins
+  // (D93, D106) — and that exception is read here as an exact origin, not as "a remote
+  // origin is fine". `website/test/origins.mjs` holds the whole policy to Google's
+  // documented minimum; this is the coarser check that the exception is the only one.
+  assert.deepEqual(
+    [...new Set([...csp.matchAll(/https?:\/\/[^\s;]*/g)].map((m) => m[0]))],
+    ['https://www.googletagmanager.com', 'https://*.google-analytics.com', 'https://*.google.com'],
+    `the CSP admits an origin that is not one of the three W3.2 pins: ${csp}`,
+  )
+  assert.ok(!/script-src[^;]*\*/.test(csp), 'script-src admits a wildcard origin')
   assert.match(csp, /default-src 'self'/)
-  assert.match(csp, /script-src 'self'(;|$)/, 'scripts are first-party only')
+  assert.match(csp, /script-src 'self' https:\/\/www\.googletagmanager\.com(;|$)/, 'scripts are this site and Google Analytics, and nothing else')
   assert.equal(all['X-Content-Type-Options'], 'nosniff')
   assert.ok(all['Referrer-Policy'], 'no Referrer-Policy')
 

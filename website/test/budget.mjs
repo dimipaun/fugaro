@@ -11,21 +11,24 @@
 // The README's numbers are DELIBERATELY LOOSE (owner's ruling, 2026-10-17: "ignore them for
 // now and optimize later"): each is three times the tight derivation below, until a later
 // optimisation pass tightens them back towards these figures. The tight derivation is the
-// build of 2026-10-18 — the one that ships the site's script (P6), its menu behaviour (P3) and
-// the homepage's run animation (P7), with the How It Works flow (P8) merged in — plus 25 %, which is D192's rule and the rule the
+// build of 2026-10-18 — the one that ships the site's script (P6), its menu behaviour (P3),
+// the homepage's run animation (P7), the How It Works flow (P8) and, re-derived for W3.2, the
+// consent gate's analytics bootstrap in that same script — plus 25 %, which is D192's rule and the rule the
 // README's loose figures are three times:
 //
-//   - JavaScript per page: 8,218 bytes. The one script the site ships,
-//     `public/scripts/site.js` (P6, P3, D183), is 6,574 bytes; × 1.25, rounded up. Every page
-//     loads it exactly once, so the file's own size IS the whole of a page's JavaScript —
-//     which is why the case below reads the artifact rather than trusting this line.
-//   - Page weight per page: 266,209 bytes. The heaviest page on 2026-10-18, `docs/index.html`,
-//     weighed 212,967 bytes: its HTML 183,914 bytes (the whole generated CLI reference, inline
-//     CSS included) plus the 29,053 bytes of first-party files it fetches — the script above
-//     and the logo and icons the layout links; × 1.25, rounded up. One ceiling for every page
-//     rather than one per page, so a page that grows with the product (the changelog, the
+//   - JavaScript per page: 17,212 bytes. The one script the site ships,
+//     `public/scripts/site.js` (P6, P3, D183, and W3.2's gate), is 13,769 bytes; × 1.25,
+//     rounded up. Every page loads it exactly once, so the file's own size IS the whole of a
+//     page's JavaScript — which is why the case below reads the artifact rather than trusting
+//     this line, and why D192 requires the README's figure to be re-derived in the same commit
+//     that changes the script.
+//   - Page weight per page: 276,238 bytes. The heaviest page on 2026-10-18, `docs/index.html`,
+//     weighed 220,990 bytes: its HTML 184,742 bytes (the whole generated CLI reference, 11,300
+//     of them inline CSS) plus the 36,248 bytes of first-party files it fetches — the script
+//     above and the logo and icons the layout links; × 1.25, rounded up. One ceiling for every
+//     page rather than one per page, so a page that grows with the product (the changelog, the
 //     reference) is held to the same line as the rest instead of to its own history.
-//   - Whole site: 936,705 bytes. Every file in `dist/` on that build summed to 749,364
+//   - Whole site: 971,565 bytes. Every file in `dist/` on that build summed to 777,252
 //     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
 //     × 1.25, rounded up.
 //
