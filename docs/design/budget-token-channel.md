@@ -401,20 +401,23 @@ nothing.
   the bytes: a later version's envelope can then only be opened by code that knows which format it
   holds. The AAD is not part of the envelope, so binding it changes nothing about the shape above.
   **What stops a sealed object from being replayed sideways is the
-  per-launch key, not the AAD**: while the object still lives under `runs/` — the seal-only first
-  step D19 ships — copying one run's object onto another run's key is a write the peer's grant
-  already allows (`google_storage_bucket_iam_member.job`, whose condition covers the bucket's
-  declared prefixes), but the copy is sealed under the *other* run's key, so it fails to unseal at
-  the victim regardless of what the AAD says. After the move the peer cannot make that copy at all:
+  per-launch key, not the AAD**: while the object lived under `runs/` — where it sat before the
+  move, and where D19's seal-only step priced it staying — copying one run's object onto another
+  run's key was a write the peer's grant allows (`google_storage_bucket_iam_member.job`, whose
+  condition covers the bucket's declared prefixes), but such a copy is sealed under the *other*
+  run's key, so it fails to unseal at the victim regardless of what the AAD says. In the merged tree,
+  after the move, the peer cannot make that copy at all:
   its grant on `tokens/` is read-only (D16, §7.2), so the sideways *write* stops being available
   while the sideways *read* is exactly what the seal is for. The AAD's job is narrower and still
   worth its line: it binds the ciphertext to the object's own name, so a blob sealed for one key
   string cannot be read under another — which is what makes the move out of `runs/` safe rather than
   merely tidy, since the move changes the key string and the AAD with it. **What lands together is
-  therefore the name change and the code that computes the name, not the seal and the move**: the
-  seal's own first step (D19) seals under the name the shipped `token.ObjectKey` computes, inside
-  `runs/`, and the `tokens/` form of that name lands later with Task 3.2, in the same change as the
-  grant that reads it (D18). **The AAD cannot be proved
+  therefore the name change and the code that computes the name, not the seal and the move**: D18's
+  rule held in the merge rather than being deferred — Slice B moved `token.ObjectKey` to the
+  `tokens/` form in the same change that sealed, so no shipped tree ever seals under the `runs/`
+  name, and the grants that read the new name travelled with it (the per-repository one in the
+  workflow module, the shared job's whole-prefix one in the phase-3 tree: the paragraph above).
+  **The AAD cannot be proved
   by the end-to-end check**: every step of Check 60 that could exercise it already fails earlier, at
   the unseal, because the keys differ. It needs a unit test in `internal/budget/token` that seals under
   one key string and opens under another and asserts the tag check refuses — that test, not a check
@@ -546,29 +549,35 @@ the second half of the recommendation moves the object:
   token. **The launchers' grant does not stay as it is**, and pretending otherwise would be the
   expensive kind of wrong: their only write grant on the runs bucket
   (`deploy/terraform/gcp/modules/installation/iam.tf`,
-  `google_storage_bucket_iam_member.runs_launcher`, `roles/storage.objectUser`) is conditioned to
-  `runs/`, and the member's own `precondition` pins exactly that — title `fugaro-launchers-runs` and
-  the expression `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/")`, the string
-  `gcp.LauncherBucketCondition` builds (`internal/backend/gcp/names.go`). `PutObject`, `DeleteObject`
-  and `dropBudgetToken` under `tokens/` therefore need either a second conditioned member or a
-  widened expression with a new title, and that precondition, its tftest line and the install
-  guard's reading of the grant move with them. This is a deliberate widening of a *launcher* grant —
-  the price of the move, not of the seal — and D16 and D19 are where it is decided and ordered. The
-  launchers need nothing new to *read* the prefix: their `google_storage_bucket_iam_member.runs_reader`
-  (`objectViewer`, no condition) already covers the whole bucket.
-- the bucket's one-day lifecycle rule moves with it (the rule is scoped by
-  `matches_prefix = ["runs/"]` and `matches_suffix = ["/budget-token"]`,
-  `deploy/terraform/gcp/modules/installation/bucket.tf`), so an untaken token still dies;
-- the take has **two shapes and one switch, and no path infers the shape from an error.** Under
-  `runs/` — today's key, and the shape the seal-only step (D19) ships with — the take is exactly the
-  shipped one: read with the object's generation, then delete that generation, and **a delete that
-  fails is fatal**: the token is not returned, because a token that outlives its take is a token a
-  peer can take (`token.TakeObject`'s own contract, "the token object could not be deleted, so it is
-  not used"). Under `tokens/`, where the job's grant is read-only, the take reads with the
-  generation and **does not call delete at all**: no delete error exists to be misread, and a run in
-  a read-only deployment never issues a request it already knows is denied. The switch is the key
-  the run computes, from `token.ObjectKey` — one constant, so the prefix a run reads and the shape
-  of its take cannot disagree — and never a retry-on-error: gocloud maps every 403 to `NotFound`
+  `google_storage_bucket_iam_member.runs_launcher`, `roles/storage.objectUser`) was conditioned to
+  `runs/` alone, under the title `fugaro-launchers-runs` and the expression
+  `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/")`. **The 2026-10-18 review
+  of the merged tree caught this paragraph pricing a choice the merge had already made**: it landed
+  as one widened member, not a second conditioned one, and the widened expression carries a new
+  title, because an installation still holding the runs/-only binding has to read as a *different*
+  binding rather than as this one. The title is now `fugaro-launchers-runs-tokens` and the
+  expression is the two-prefix string `gcp.LauncherBucketCondition` builds —
+  `resource.name.startsWith("…/objects/runs/") || resource.name.startsWith("…/objects/tokens/")`
+  (`internal/backend/gcp/names.go`) — with the member's own `precondition` pinning exactly that
+  pair, its tftest line and the install guard's reading of the grant beside it. `PutObject`,
+  `DeleteObject` and `dropBudgetToken` under `tokens/` are what the widened expression is for. This
+  is a deliberate widening of a *launcher* grant — the price of the move, not of the seal — and D16
+  and D19 are where it is decided and ordered. The launchers need nothing new to *read* the prefix:
+  their `google_storage_bucket_iam_member.runs_reader` (`objectViewer`, no condition) already covers
+  the whole bucket.
+- the bucket's one-day lifecycle rule moved with it: it is scoped by
+  `matches_prefix = ["runs/", "tokens/"]` and `matches_suffix = ["/budget-token"]`
+  (`deploy/terraform/gcp/modules/installation/bucket.tf`), so an untaken token still dies;
+- the take has **one shape, and no path infers anything from a delete's error.** `token.ObjectKey`
+  is fixed at `tokens/<slug>/<run>/budget-token`, and the take on it is the read-only one: it
+  unseals the object with the launch's key and **never calls delete at all** — no delete error
+  exists to be misread, and the run never issues a request its grant already denies. **The
+  2026-10-18 review caught this bullet describing two shapes and a switch between them**: the
+  runs/-keyed shape, and with it the fatal delete (`token.TakeObject`'s own contract then, "the
+  token object could not be deleted, so it is not used"), was Slice A's, and the merge shipped the
+  seal and the move in one change, so the merged tree has one shape only and there is nothing for a
+  fallback to fall back to. The rule the switch was written for is still worth stating, for anyone
+  tempted to key a fallback on an error later: gocloud maps every 403 to `NotFound`
   (`docs/design/bucket-iam.md` §2.3), so "the delete was refused" and "the object is already gone"
   arrive as the same error, and a fallback keyed on that error would read a denied delete as a clean
   consume-once and would silently stop deleting wherever the grant is misconfigured. Consume-once
@@ -792,8 +801,9 @@ additional authenticated data,
 and a 32-byte key carried as unpadded base64url. **The AAD makes the envelope's bytes depend on the
 name they are stored under**, so the `tokens/` move of §7.2 changes the AAD and cannot be deployed
 against a launcher or a runner that still computes the old key — **the move and the code that
-computes the name land together**, and that change is Task 3.2's, not the seal's (D19: the seal,
-shipping first, seals under the name the shipped `token.ObjectKey` computes) — and the formats are
+computes the name land together**, and the merge did exactly that rather than deferring it: this
+paragraph read "that change is Task 3.2's, not the seal's" while it was a plan, and the 2026-10-18
+review of the merged tree found Slice B had moved the name as it sealed (§7.1, §7.2) — and the formats are
 not interchangeable across the move (an object sealed under one name does not unseal under the
 other, which is the property and not a migration problem, since a queued token is short-lived and a
 re-launch re-seals). A generic helper package is the alternative; it would be the
@@ -845,7 +855,8 @@ release on its own**, which is why it is the only half that may come earlier: th
 byte keeps a plaintext object from a launcher that does not seal yet readable, and no grant changes
 with it. **The launcher-seals half** (the mint writing a sealed object, and the marker's value
 becoming the key) **and the `tokens/` move** — with its prefix condition, in the same change as the
-grant that reads it, Task 3.2's, per D18 and D19 above — are **not earlier than 0.9.0**.
+grant that reads it, which the merge made in Slice B rather than leaving to Task 3.2 (§7.1, per D18
+and D19 above) — are **not earlier than 0.9.0**.
 
 ## The check outline: Check 60, owner-run, sandbox only
 
@@ -939,7 +950,8 @@ untouched:
    run's key to another run's key in the sandbox bucket and watch the second run refuse rather than
    unseal it; then put the bytes back. The copy is made with the operator's own credentials, which
    after the move are the only ones with a write on `tokens/`: a peer *run* could make this copy only
-   while the object is still under `runs/`, which is the seal-only step of D19 (§7.1, D16).
+   in a tree that still kept the object under `runs/`, the seal-only step D19 priced and the merge
+   did not ship (§7.1, D16).
    **This step proves the per-launch key, not the AAD.** The copy
    is sealed under a different launch's key, so it fails at the unseal before the AAD is ever
    consulted — the refusal would be identical if the AAD were the empty string. The AAD's own property

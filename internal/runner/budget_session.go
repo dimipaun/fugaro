@@ -295,8 +295,9 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 	// The run's identity, taken out of the runs bucket once and shared with the
 	// project policy's read (projectpolicy.go): the take is read-only since the
 	// seal — the job's grant on tokens/ has no delete (D16), so it would find
-	// the object again — but the identity is built once, so the policy read and
-	// budget.Open unseal the same object under the same launch key (finding 2).
+	// the object again — but the identity is built once, so budget.Open consumes
+	// the token the policy read unsealed under this launch's key (finding 2):
+	// Open exchanges a custom token, and unseals nothing itself.
 	// Its refusals are this function's own, shipped ones: a job whose backend is
 	// damaged, or whose budget is on with no token in the bucket, stops here
 	// (B1).

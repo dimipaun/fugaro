@@ -4009,7 +4009,7 @@ FACT: the run's outcome (`fugaro runs ls --project fugaro`, or `fugaro diagnose 
 gcloud storage cat "gs://${SANDBOX_BUCKET:?}/runs/${SLUG:?}/${RUN2:?}/launch.json" --project="${P:?}" | jq -r .job
 ```
 
-Step 8 records the `tokens/` grant of whichever job this is; the two kinds have different shapes (§7.2, and the FACT there).
+Step 8 records the `tokens/` grant of whichever job this is; the two kinds have different shapes — the repository's own job reads exactly `tokens/<its slug>/`, the shared project job the whole `tokens/` (design `docs/design/budget-token-channel.md`, the **Slice B is built** paragraph, and the FACT in step 8 below).
 
 ```bash
 O="gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token"

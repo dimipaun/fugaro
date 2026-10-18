@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
 // TestDocsBudgetTokenChannelDesignIsWritten (plan task 3b.1,
@@ -139,6 +141,44 @@ func TestDocsBudgetTokenChannelCitationsExist(t *testing.T) {
 	}
 	if strings.Contains(section, "fugaro status") {
 		t.Errorf("Check 60 reads a run with `fugaro status`, which no command implements: the one-run read is `fugaro diagnose RUN --json` (.row.execution), the list is `fugaro runs ls`")
+	}
+}
+
+// TestDocsBudgetTokenChannelSection72IsTheMergedTree: Check 60 sends the owner
+// to §7.2 for the moved object's grant, its lifecycle rule and the shape of its
+// take, so that section has to describe the tree the owner is standing in
+// rather than the two-step plan D19 priced — the 2026-10-18 review found it
+// three versions behind (title `fugaro-launchers-runs` and a runs/-only
+// expression, `matches_prefix = ["runs/"]`, and a take with "two shapes and one
+// switch" shipping a runs/-keyed fatal delete). Each fact is asserted against
+// the merged code's own name for it, so the section cannot drift from
+// `gcp.LauncherBucketConditionTitle` or from `token.TakeObject`'s contract
+// without this failing.
+func TestDocsBudgetTokenChannelSection72IsTheMergedTree(t *testing.T) {
+	const path = "docs/design/budget-token-channel.md"
+	doc := readDoc(t, path)
+	i := strings.Index(doc, "### 7.2 ")
+	j := strings.Index(doc, "### 7.3 ")
+	if i < 0 || j < i {
+		t.Fatalf("%s has no §7.2 followed by §7.3: the section the checklist points at is gone", path)
+	}
+	sec := doc[i:j]
+	for _, want := range []string{
+		// The launchers' widened condition and its new title, in Terraform
+		// and in gcp.LauncherBucketConditionTitle (iam.tf's precondition
+		// pins both).
+		gcp.LauncherBucketConditionTitle,
+		// The one-day rule that moved with the object.
+		`matches_prefix = ["runs/", "tokens/"]`,
+		// The one take shape, the read-only one.
+		"never calls delete",
+	} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("%s §7.2 does not say %q: the checklist sends the owner here for the moved token's grant, its rule and its take", path, want)
+		}
+	}
+	if strings.Contains(sec, "two shapes and one switch") {
+		t.Errorf("%s §7.2 still describes the take as \"two shapes and one switch\": the merged tree has one shape, the read-only one that never deletes (token.TakeObject)", path)
 	}
 }
 
