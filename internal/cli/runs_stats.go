@@ -72,9 +72,12 @@ type userStatsDoc struct {
 	By string `json:"by"`
 	// View is which rows the caller is shown: "all" (every user of the
 	// installation), or "own" (their own row alone). You is the identity the
-	// view was resolved for ("" when the caller asked for every user with
-	// --all-users and the CLI could not tell who they are), and Operator
-	// whether the installation's own lists place You as one.
+	// view was resolved for, in the same domain a row's key is -- sanitised,
+	// one printable line, capped at userstats.MaxIdentityRunes, so a consumer
+	// can match it against rows[].user. It is "" when the caller asked for
+	// every user with --all-users and the CLI could not tell who they are,
+	// which is unavailable rather than a person. Operator says whether the
+	// installation's own lists place You as one.
 	View     string `json:"view"`
 	You      string `json:"you"`
 	Operator bool   `json:"operator"`
@@ -197,6 +200,18 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 	// identity `fugaro run` records and `runs ls --mine` matches, and the
 	// lists are the ones fugaro doctor's bucket check reads (roles.go).
 	me, meErr := env.lc.Me(ctx)
+	// The identity is emitted the way every other identity in this document
+	// is: through IdentityOf, so it is one printable line, bounded, and the
+	// same value a row's key is. git config user.email is read out of the
+	// checkout the caller happens to stand in, so this text is no more
+	// trustworthy than a launcher's -- and a consumer can match `you` against
+	// rows[].user only if both are in the key's own domain. It stays "" when
+	// the CLI cannot tell who the caller is, which is "unavailable", not a
+	// person named "unknown".
+	you := ""
+	if me != "" {
+		you = userstats.IdentityOf(me)
+	}
 	operator := operatorOf(env.lc, me)
 	view := userStatsViewOwn
 	if operator || o.allUsers {
@@ -222,19 +237,18 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 	}
 	if view == userStatsViewOwn {
 		// Matched in the table's own domain: a row's key is IdentityOf's
-		// sanitised form, so the caller's identity is put through the same
-		// function before it is compared. For an ordinary address the two are
-		// the same value; for one a paste left an invisible character in, only
-		// this comparison finds the caller's own row rather than none.
-		mine := userstats.IdentityOf(me)
-		read.runs = slices.DeleteFunc(read.runs, func(r userstats.Run) bool { return r.User != mine })
+		// sanitised form, so the caller's identity is compared through the same
+		// function -- `you` itself. For an ordinary address the two are the
+		// same value; for one a paste left an invisible character in, only this
+		// comparison finds the caller's own row rather than none.
+		read.runs = slices.DeleteFunc(read.runs, func(r userstats.Run) bool { return r.User != you })
 	}
 	res := userstats.Aggregate(read.runs)
 	return writeUserStats(cmd.OutOrStdout(), userStatsDoc{
 		Project:    env.lc.Name,
 		By:         userStatsByUser,
 		View:       view,
-		You:        me,
+		You:        you,
 		Operator:   operator,
 		Since:      dateOrEmpty(from),
 		Until:      until.Format("2006-01-02"),
@@ -492,6 +506,9 @@ func userStatsNotes(doc userStatsDoc) []string {
 	var notes []string
 	who := "the CLI cannot tell who you are"
 	if doc.You != "" {
+		// You is already IdentityOf's value, so this and the document's own
+		// field are one text; oneLine is the second belt on the line the note
+		// is interpolated into, not a second rendering of a different value.
 		who = "you are " + oneLine(doc.You)
 	}
 	if doc.View == userStatsViewAll {

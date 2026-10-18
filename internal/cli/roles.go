@@ -53,14 +53,17 @@ func meMember(me string) string {
 }
 
 // operatorOf reports whether the local config's lists make me an operator of
-// its installation, and launcherOf whether they make me a launcher. Both are
-// false for an identity that cannot be told -- and for an installation whose
-// config carries neither list, which is every installation from before the
-// 0.7.0 hardening: a caller the lists do not place is not an operator.
+// its installation. It is false for an identity that cannot be told -- and for
+// an installation whose config carries no operators list, which is every
+// installation from before the 0.7.0 hardening: a caller the lists do not
+// place is not an operator.
+//
+// There is deliberately no launcherOf beside it. The two member predicates are
+// the shared notion, and what a caller may be shown turns on being an operator
+// (runs stats), so a launcherOf would be a function with no caller: the day
+// something needs it, it is two lines here rather than a permission nobody
+// reads. launcherMember is not dead -- doctor's bucket check places the caller
+// as a launcher to say what its unconditioned write access means.
 func operatorOf(lc *localcfg.Config, me string) bool {
 	return operatorMember(meMember(me), lc.Terraform.Operators)
-}
-
-func launcherOf(lc *localcfg.Config, me string) bool {
-	return launcherMember(meMember(me), lc.Terraform.Launchers)
 }

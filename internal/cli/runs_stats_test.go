@@ -345,18 +345,47 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 		}
 	})
 
-	t.Run("the caller's own row is matched in the table's own domain", func(t *testing.T) {
+	t.Run("the caller's own identity is the table's own domain", func(t *testing.T) {
 		f := newCloudFixture(t)
-		// The config's identity carries an invisible character (a paste), and
-		// the run recorded the address without it: the row key is the
-		// sanitised form, so the caller is found by the same function that
-		// made the key, not by a raw string comparison that would show them an
-		// empty table.
-		userStatsPlace(t, f, "dana@example.com​", []string{"user:dana@example.com​"}, nil)
-		seed(t, f)
+		// The config's identity carries an invisible character (a paste) and a
+		// long tail, and the run recorded the same value: `you` and the row
+		// key are one text, sanitised and capped -- a consumer matches `you`
+		// against rows[].user, and an empty table would be the private view
+		// showing the caller nobody.
+		raw := "dana@example.com​" + strings.Repeat("z", 200)
+		userStatsPlace(t, f, raw, []string{"user:" + raw}, nil)
+		seedUserRun(t, f, userStatsID(day, 0), raw, userRec(runstore.StatusSucceeded, 1.00, runstore.BasisAPIList))
+		seedUserRun(t, f, userStatsID(day, 1), "sam@example.com", userRec(runstore.StatusSucceeded, 2.00, runstore.BasisAPIList))
+
 		doc := runsStats(t)
-		if len(doc.Rows) != 1 || doc.Rows[0].User != "dana@example.com" {
-			t.Fatalf("the caller's own view = %+v, want their own row", doc.Rows)
+		if len(doc.Rows) != 1 {
+			t.Fatalf("the caller's own view = %+v, want their own row alone", doc.Rows)
+		}
+		if doc.You != doc.Rows[0].User {
+			t.Errorf("you = %q, the row key = %q: the two are not in the same domain, so no "+
+				"consumer can match them", doc.You, doc.Rows[0].User)
+		}
+		if !strings.HasPrefix(doc.You, "dana@example.com") {
+			t.Errorf("you = %q, want the printable prefix to survive", doc.You)
+		}
+		if n := len([]rune(doc.You)); n > userstats.MaxIdentityRunes {
+			t.Errorf("you is %d runes, want at most %d", n, userstats.MaxIdentityRunes)
+		}
+		for _, bad := range []string{"​", "\x1b", "\n"} {
+			if strings.Contains(doc.You, bad) {
+				t.Errorf("you = %q carries %q", doc.You, bad)
+			}
+		}
+		// The table's note names the same text, from the same field.
+		human, _, err := execute(t, "runs", "stats")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(human, "you are "+doc.You) {
+			t.Errorf("the note does not name the identity the document states:\n%s", human)
+		}
+		if strings.Contains(human, "​") {
+			t.Errorf("the table carries the invisible character:\n%q", human)
 		}
 	})
 
