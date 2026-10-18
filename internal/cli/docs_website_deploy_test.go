@@ -40,7 +40,6 @@ const (
 	websitePromoteReal     = "../../.github/workflows/website-promote.yml"
 	websiteDeployScript    = "scripts/deploy-website.sh"
 	websiteSiteFacts       = "website/data/site.yaml"
-	websiteStagedREADME    = "../../docs/pending-workflows/README.md"
 	websitePreviewDoc      = "../../docs/website/preview-promote.md"
 	websitePreviewDocNamed = "docs/website/preview-promote.md"
 	websiteLiveEnvironment = "website-live"
