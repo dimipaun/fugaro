@@ -266,4 +266,6 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` holds no pending workflow today.
+change `.github/workflows/`. `docs/pending-workflows/` holds one pending workflow today,
+`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+P4.3), which is not this site's — and nothing else.

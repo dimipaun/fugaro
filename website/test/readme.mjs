@@ -550,10 +550,21 @@ test('the README claims about docs/pending-workflows/, firebase.json and the dep
   const text = readme()
   assert.ok(!/Nothing under `docs\/pending-workflows\/`/.test(text), 'the README says nothing is staged under docs/pending-workflows/, but other pending workflows are committed there')
   const staged = path.join(REPO_ROOT, 'docs', 'pending-workflows')
-  // The README says the directory holds no pending workflow today: it must hold none.
-  assert.ok(/holds no pending workflow today/.test(text.replace(/\s+/g, ' ')), 'the README no longer says docs/pending-workflows/ holds no pending workflow today')
-  const pending = existsSync(staged) ? readdirSync(staged).filter((n) => /\.ya?ml$/i.test(n)) : []
-  assert.deepEqual(pending, [], 'a workflow is pending under docs/pending-workflows/: the README says there is none, so update the README')
+  // The README says what the directory holds, and the claim is checked in both directions
+  // rather than as a bare count: a workflow staged there that the README does not name is a
+  // pending change nobody was told about, and a name in the README that is not staged is an
+  // instruction to copy in a file that is not there. The count is asserted too, so that
+  // "holds one pending workflow today" cannot survive a second file arriving beside it.
+  const flat = text.replace(/\s+/g, ' ')
+  assert.ok(/holds no pending workflow today|holds one pending workflow today/.test(flat), 'the README no longer says how many workflows docs/pending-workflows/ holds today')
+  const pending = (existsSync(staged) ? readdirSync(staged).filter((n) => /\.ya?ml$/i.test(n)) : []).sort()
+  const claimed = [...flat.matchAll(/`docs\/pending-workflows\/([\w.-]+\.ya?ml)`/g)].map((m) => m[1])
+  assert.deepEqual([...new Set(claimed)].sort(), pending, 'the README and docs/pending-workflows/ disagree: the README names exactly the staged workflows and no others (a staged file it does not name, or a named file that is not staged)')
+  assert.equal(
+    /holds one pending workflow today/.test(flat) ? 1 : 0,
+    pending.length,
+    'the README says how many workflows are pending under docs/pending-workflows/ and the directory holds a different number: update the sentence',
+  )
   // firebase.json landed ahead of W2.1 with scripts/deploy-website.sh, and the README says so.
   assert.ok(existsSync(path.join(REPO_ROOT, 'firebase.json')), 'firebase.json is missing: the README says the hosting configuration is at the repository root')
   assert.ok(/`firebase\.json`/.test(text) && /scripts\/deploy-website\.sh/.test(text), 'the README does not describe firebase.json and scripts/deploy-website.sh')
