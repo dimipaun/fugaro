@@ -738,12 +738,13 @@ function command(state, values) {
     // action" to be about, so the command is malformed rather than read back
     // with an action nobody can confirm.
     return refuse(REFUSAL.MISSING_FIELD, 'actionId');
-  } else if (target === undefined || target === null) {
-    // P6.2: an unresolved target is refused and cannot be read back, so it can
-    // never be confirmed. Ambiguity is the same refusal: the router resolves
-    // against the configured lists and hands in nothing when it cannot.
-    return refuse(REFUSAL.UNRESOLVED_TARGET, 'target');
   }
+
+  // P6.2: an unresolved target is refused and cannot be read back, so it can
+  // never be confirmed. Ambiguity is the same refusal: the router resolves
+  // against the configured lists and hands in nothing when it cannot.
+  // readResolvedTarget is the one place that says so, so a command and a
+  // confirmation cannot disagree about what "no target" means.
 
   let resolved = null;
   if (kind !== undefined) {

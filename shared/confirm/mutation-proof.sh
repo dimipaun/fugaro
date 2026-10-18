@@ -235,13 +235,16 @@ run "the kill switch, the budget writes and the deletes are refused outright" \
 run "a destructive verb with no action id is refused" \
   "  } else if (actionId === undefined) {" "  } else if (false) {"
 run "an unresolved target is refused, so it can never be read back" \
-  "  } else if (target === undefined || target === null) {" "  } else if (false) {"
+  "  if (value === undefined || value === null) return refuse(REFUSAL.UNRESOLVED_TARGET, 'target');" \
+  "  if (value === undefined) return refuse(REFUSAL.UNRESOLVED_TARGET, 'target');"
 run "a launch takes no target" \
   "    if (target !== undefined) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'target');" ""
 run "a launch takes no action id" \
   "    if (actionId !== undefined) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'actionId');" ""
 run "the target's kind must be the verb's kind" \
-  "  if (read.kind !== kind) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');" ""
+  "  if (kindDescriptor.value !== kind) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');" ""
+run "a target with no kind at all is missing a field, not of the wrong kind" \
+  "  if (kindDescriptor === undefined) return refuse(REFUSAL.MISSING_FIELD, 'target.kind');" ""
 
 # The ledger and the pending set: bounded, and a refusal rather than an amnesia.
 run "the ledger refuses rather than forgetting (command)" \
@@ -261,7 +264,12 @@ run "the ledger refuses rather than forgetting (confirm)" \
 run "the ledger refuses rather than forgetting (launch)" \
   "    if (state.ledger.length + 1 > state.maxLedger) return refuse(REFUSAL.LEDGER_FULL, 'ledger');" ""
 run "the ledger refuses rather than forgetting (abort)" \
-  "  if (state.ledger.length + 1 > state.maxLedger) return refuse(REFUSAL.LEDGER_FULL, 'ledger');" ""
+  "  if (state.ledger.length + 1 > state.maxLedger) return refuse(REFUSAL.LEDGER_FULL, 'ledger');
+
+  const live = sweep(state.pending, values.now);" \
+  "  if (false) return refuse(REFUSAL.LEDGER_FULL, 'ledger');
+
+  const live = sweep(state.pending, values.now);"
 run "the pending set refuses rather than growing past its cap" \
   "  if (live.length + 1 > state.maxPending) return refuse(REFUSAL.PENDING_FULL, 'pending');" ""
 run "a read-back at its deadline exactly is still inside it" \
@@ -297,8 +305,8 @@ run "the pending set is bounded by the state's own cap" \
   "  const items = readArray(value, maxPending);" "  const items = readArray(value, Number.MAX_SAFE_INTEGER);"
 run "the ledger is bounded by the state's own cap" \
   "  const items = readArray(value, maxLedger);" "  const items = readArray(value, Number.MAX_SAFE_INTEGER);"
-run "a state with a pending record of a pass-through verb is not a state" \
-  "      !DESTRUCTIVE_VERBS.includes(entry.verb) ||" ""
+run "a pending record's issuing utterance id must be a key" \
+  "      !isKeyId(entry.by) ||" ""
 run "a state's pending deadline must be one this module could have minted" \
   "      !isIntegerInRange(entry.deadline - entry.at, MIN_CONFIRM_TIMEOUT_MS, MAX_CONFIRM_TIMEOUT_MS) ||" ""
 
@@ -331,12 +339,39 @@ run "an id past its bound is refused" \
   "  if (value.length > ID_MAX) return { bad: refuse(REFUSAL.TOO_LONG, field) };" ""
 run "a text past its bound is refused" \
   "  if (value.length > max) return { bad: refuse(REFUSAL.TOO_LONG, field) };" ""
-run "an empty id or text is refused" \
-  "  if (value === '') return { bad: refuse(REFUSAL.EMPTY_STRING, field) };" ""
-run "a field of the wrong type is refused, not coerced" \
-  "  if (value === undefined) return { bad: refuse(REFUSAL.MISSING_FIELD, field) };" ""
-run "-0 is not a time" \
-  "    !Object.is(value, -0) &&" ""
+run "an empty id is refused" \
+  "  if (value === '') return { bad: refuse(REFUSAL.EMPTY_STRING, field) };
+  if (value.length > ID_MAX)" "  if (value.length > ID_MAX)"
+run "an empty text is refused" \
+  "  if (value === '') return { bad: refuse(REFUSAL.EMPTY_STRING, field) };
+  if (value.length > max)" "  if (value.length > max)"
+run "an absent id is missing, not merely wrong" \
+  "  // same failure here: the event did not carry the id it must carry.
+  if (value === undefined) return { bad: refuse(REFUSAL.MISSING_FIELD, field) };" \
+  "  // same failure here: the event did not carry the id it must carry."
+run "an absent text is missing, not merely wrong" \
+  "  // carry the text it must carry.
+  if (value === undefined) return { bad: refuse(REFUSAL.MISSING_FIELD, field) };" \
+  "  // carry the text it must carry."
+run "an id of the wrong type is refused, not coerced" \
+  "  if (typeof value !== 'string') return { bad: refuse(REFUSAL.WRONG_TYPE, field) };
+  if (value === '') return { bad: refuse(REFUSAL.EMPTY_STRING, field) };
+  if (value.length > ID_MAX) return { bad: refuse(REFUSAL.TOO_LONG, field) };" \
+  "  if (value === '') return { bad: refuse(REFUSAL.EMPTY_STRING, field) };
+  if (value.length > ID_MAX) return { bad: refuse(REFUSAL.TOO_LONG, field) };"
+run "a text of the wrong type is refused, not coerced" \
+  "  if (typeof value !== 'string') return { bad: refuse(REFUSAL.WRONG_TYPE, field) };
+  if (value === '') return { bad: refuse(REFUSAL.EMPTY_STRING, field) };
+  if (value.length > max) return { bad: refuse(REFUSAL.TOO_LONG, field) };" \
+  "  if (value === '') return { bad: refuse(REFUSAL.EMPTY_STRING, field) };
+  if (value.length > max) return { bad: refuse(REFUSAL.TOO_LONG, field) };"
+
+# NOT proved here, and why: `!Object.is(value, -0)` in isIntegerInRange. Every
+# field this module bounds has a minimum of 1, so `-0` is refused by the range
+# whether that clause is there or not: removing it cannot change any answer, and
+# a mutation that cannot be caught is not evidence about anything. The clause
+# stays because shared/lease's own isIntegerInRange has it and this module must
+# read a time the same way the rest of the package does.
 
 git checkout -- "$F"
 echo "--- control killed; $guards guards: $killed killed, $survivors survived, $unapplied not applied"
