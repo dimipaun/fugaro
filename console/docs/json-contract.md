@@ -520,7 +520,7 @@ accounts"** (the type's own doc comment is the authority). Flags: `--repo`
 (`secrets.go:669`), not an object with a wrapper key. Each element is
 `secretEntry` (`secrets.go:486`): `name`° (the logical name, from the
 `fugaro_secret` label), `scope`° (`repo` / `project` / a project secret with a
-repo override), `allowed`° (`[]string`, `--project-wide` only), `missing`° (`true` on a name a job of the repository needs that has no enabled version — `--repo` only; a name with **no entry at all** gets a synthesized row with an empty `id` and no `created`, while a name that already has one is marked on **that** row, which keeps its own `id` and `created` — its versions are all disabled, or its container was left behind before a value was stored), and the
+repo override), `allowed`° (`[]string`, `--project-wide` only), `missing`° (`true` on a name a job of the repository needs that has no enabled version — `--repo` only; such a row has an empty `id` and no `created`), and the
 embedded **`gcp.SecretInfo`** (`internal/backend/gcp/secrets.go:40`), whose own
 JSON keys are `id`, `created` (RFC 3339), `labels`°, `versions` (the count of
 versions not destroyed) and `latest`° (the newest enabled version, if any) —

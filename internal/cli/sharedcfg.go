@@ -177,18 +177,7 @@ type SharedAnchor struct {
 // here while Shared already dropped it, so a tampered document carrying one
 // decoded to a ProjectSecrets map the commands then read (code review of the
 // shared-config reader); it is refused by key below and again by value.
-//
-// profiles is the same case again, and was missing here for the same reason
-// (second code review of the shared-config reader). A profile is what a
-// repository's clone workflow is launched on — its provider, resources,
-// secrets and allow_repos (design docs/design/project-centric.md §4.1) — and
-// the owner publishes it through `fugaro project policy publish` into the
-// policy node. A writer of the runs bucket publishing one would choose the
-// job a repository runs on and rename the set of repositories it admits;
-// and because localcfg.Config.Shared drops the map, SharedDiff — which
-// compares both sides through Shared() — would not even report the edit.
-// Refused by key below and again by value, as project_secrets is.
-var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "profiles", "update_check"}
+var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "update_check"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
@@ -198,7 +187,7 @@ var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "
 // base image or log view elsewhere, a budget block whose Firebase project
 // is not the anchor's GCP project or whose database or signer is not its
 // Firebase project's, a forbidden section (providers, routing,
-// claude_accounts, project_secrets and profiles among them), an unknown key, YAML
+// claude_accounts and project_secrets among them), an unknown key, YAML
 // anchors, aliases, merge keys, explicit
 // tags, repeated keys or documents, and anything over
 // localcfg.SharedMaxBytes. Every refusal names the field and says to have
@@ -255,7 +244,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		return bad("gcp_project", "%q is not %s", c.GCPProject, a.GCPProject)
 	case c.RunsBucket != a.Bucket || c.RunsBucketName() != a.Bucket:
 		return bad("runs_bucket", "%q is not the bucket it was read from, %s", c.RunsBucket, a.Bucket)
-	case c.User != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.Profiles != nil || c.UpdateCheck != nil:
+	case c.User != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.UpdateCheck != nil:
 		return refuse("carries a section that is never published (%s)", strings.Join(sharedForbidden, ", "))
 	case c.RegistryHost != c.Region+"-docker.pkg.dev/"+a.GCPProject:
 		return bad("registry_host", "%q is not this project's registry, %s-docker.pkg.dev/%s", c.RegistryHost, c.Region, a.GCPProject)

@@ -509,21 +509,6 @@ func sortedStringKeys[V any](m map[string]V) []string {
 // the same tolerance fails open, and a newer profile field bumps Version,
 // which is what refuses a node this binary cannot read.
 func decodeProfileBlock(raw json.RawMessage) (map[string]Profile, error) {
-	// A profile named twice is one profile to every reader here — the map
-	// keeps the last entry — and the entry it keeps is the whole of what that
-	// profile is: a second `standard` written beside a first replaces its cpu,
-	// its memory, its timeout, its secrets and its allow_repos, so a node can
-	// widen a profile's admission (or shrink its resources) by repeating the
-	// block. The providers block is refused the same way and for the same
-	// reason (validProviders); this block was the one keyed block that did not
-	// check it.
-	names, err := objectMemberNames(raw)
-	if err != nil {
-		return nil, fmt.Errorf("projectpolicy: profiles: %w", err)
-	}
-	if err := checkNoDuplicateNames("profiles", names); err != nil {
-		return nil, fmt.Errorf("projectpolicy: %w", err)
-	}
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return nil, fmt.Errorf("projectpolicy: profiles: %w", err)
@@ -585,9 +570,8 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 }
 
 // checkWrittenProfileFields applies the profile rules that read the written
-// document rather than the decoded value: a member written twice (the map the
-// checks below read keeps only the last one), the spelling of a profile's
-// members, and an explicitly empty allow_repos.
+// document rather than the decoded value: the spelling of a profile's members,
+// and an explicitly empty allow_repos.
 //
 // A profile that names no list falls back to the project's allow_repos
 // (§4.1), and the carrier's `omitempty` means the node cannot carry an empty
@@ -606,19 +590,6 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 // same guard, and the same reason, as validProviders' member check: a name
 // that differs only in case is read by the decoder and by nothing else here.
 func checkWrittenProfileFields(name string, raw json.RawMessage) error {
-	// The entry's own names, duplicates included, before the map below folds
-	// them away: encoding/json keeps the last of a repeated member, so a second
-	// allow_repos is the list this reader ends up with, a second secrets is the
-	// set the job mounts, and a second provider is the credential it holds —
-	// each of them the same fail-open repeat validProviders refuses one level
-	// up. The map below cannot see it: it holds one member per name already.
-	members, err := objectMemberNames(raw)
-	if err != nil {
-		return fmt.Errorf("projectpolicy: profiles.%s: %w", name, err)
-	}
-	if err := checkNoDuplicateNames("profiles."+name, members); err != nil {
-		return fmt.Errorf("projectpolicy: %w", err)
-	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return fmt.Errorf("projectpolicy: profiles.%s: %w", name, err)
