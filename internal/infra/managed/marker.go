@@ -162,6 +162,88 @@ func (m Marker) Bytes() ([]byte, error) {
 	return json.Marshal(m)
 }
 
+// ErrAlreadyMarked is what the flag writer returns when the object is
+// already there: a project that records a marker is one that is already
+// marked, whether a run created it or an owner flagged it, and the marker is
+// a fact written once rather than a value to update.
+var ErrAlreadyMarked = errors.New("the project already records a marker")
+
+// WriteFlag records the owner's statement that an EXISTING project is
+// managed (docs/design/managed-projects.md, D58; the plan's Task 6.1) — the
+// second way a project becomes managed, and the only one that does not need
+// a creation.
+//
+// It is the creation fact's object and the creation fact's discipline, and
+// the one thing it does not need is the fact: WriteMarker is gated on
+// "this run created this project", and this write is gated on nothing but
+// the owner having said so — which is D58's answer, and the reason its
+// refusal lives in the command rather than here (the operator's own
+// terminal, the exact project ID typed, and a coding agent's session
+// refused). What DOES live here is everything the object itself must be:
+//
+//   - the project's own runs bucket, by its number and the installation's
+//     fugaro=managed label, exactly as WriteMarker proves it and as the read
+//     proves it before believing an object in it. A bucket name is global,
+//     so without that proof a mark written into a stranger's bucket would
+//     read as a fact about this project.
+//   - the version that carries a budget, and never version 1. A managed
+//     project whose creation fact records no amount is refused by the
+//     apply-time budget read (Task 4.4: ReadBudget answers ok=false for
+//     version 1 and the apply gate stays closed), so a flag that wrote the
+//     bare fact would lower the guard on a project Fugaro did not create and
+//     buy nothing at all. The amount is the owner's, required and never
+//     defaulted (D64), and it is checked by the marker's own Budget.Check
+//     before anything is written.
+//   - written once. A project that already records a marker is already
+//     marked — by a creation or by an earlier flag — so a second write is
+//     ErrAlreadyMarked rather than an update: this command records a fact,
+//     it does not edit one, and IfGenerationMatch(0) is what makes that true
+//     against a concurrent writer as well as against a marker already there.
+//
+// budget is the monthly amount and the currency the owner states, and it is
+// a value rather than a pointer because there is no version of this write
+// without one.
+func WriteFlag(ctx context.Context, s *storage.Service, bucket, project string, number uint64, budget Budget) error {
+	switch {
+	case bucket == "" || number == 0:
+		return refusedf("to write %s for %s: no runs bucket, or no project number to check it against", MarkerObject, project)
+	case s == nil:
+		return refusedf("to write %s for %s: no storage client", MarkerObject, project)
+	}
+	// Before the bucket is read, and before anything else: a pair that is not
+	// one writes nothing at all, and it is refused without an API call. The
+	// rule is the marker's own rather than a copy of it — Bytes applies it
+	// again, which is what makes this an early refusal and not the only one.
+	if err := budget.Check(); err != nil {
+		return refusedf("to flag %s as managed: the budget the flag would record is not a managed creation's: %v", project, err)
+	}
+	b, err := s.Buckets.Get(bucket).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("reading gs://%s before writing %s for %s: %w", bucket, MarkerObject, project, err)
+	}
+	if b.ProjectNumber != number || b.Labels[gcp.LabelManaged] != gcp.ManagedValue {
+		return refusedf("gs://%s is not %s's own runs bucket (project number %d, label %s=%s)",
+			bucket, project, number, gcp.LabelManaged, gcp.ManagedValue)
+	}
+	// The version follows the budget here too, and there is only one: this
+	// writer has no version-1 branch, so no argument can reach one.
+	m := Marker{Version: MarkerVersionBudget, GCPProject: project, Budget: &budget}
+	data, err := m.Bytes()
+	if err != nil {
+		return err
+	}
+	_, err = s.Objects.Insert(bucket, &storage.Object{Name: MarkerObject, ContentType: "application/json"}).
+		IfGenerationMatch(0).Media(bytes.NewReader(data)).Context(ctx).Do()
+	if err != nil {
+		var ge *googleapi.Error
+		if errors.As(err, &ge) && ge.Code == http.StatusPreconditionFailed {
+			return fmt.Errorf("%w: gs://%s/%s is already there, so %s already records whether it is managed: this command records the fact once and never rewrites one", ErrAlreadyMarked, bucket, MarkerObject, project)
+		}
+		return fmt.Errorf("writing gs://%s/%s for %s: %w", bucket, MarkerObject, project, err)
+	}
+	return nil
+}
+
 // WriteMarker records the creation fact — "this run created this project" —
 // in the runs bucket of that project, for a run that created it.
 //
