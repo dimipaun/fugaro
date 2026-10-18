@@ -1,8 +1,8 @@
 # The Fugaro website
 
-**Status: plan only; nothing is implemented.** Owner: **@Dimi**. Date: **2026-10-16**, the day **every decision (D90–D109) was answered**; **2026-10-17: the owner gave the go for wave 1 (W0.1, W0.3, W0.4, W0.5, W0.6), which is launched** — an answered decision is not an approved plan, and every other wave still starts only on the owner's go (the plan's §7.1).
+**Status: the site is built.** Owner: **@Dimi**. Date: **2026-10-16**, the day **every decision (D90–D109) was answered**; **2026-10-17: the owner gave the go for wave 1 (W0.1, W0.3, W0.4, W0.5, W0.6), which is launched** — an answered decision is not an approved plan, and every other wave still starts only on the owner's go (the plan's §7.1). **2026-10-17 is also the date the site became true: `website/` is the eleven-route Astro build, `npm run check` passes, and the redesign ([redesign/](redesign/README.md)) is the line of work now open against it.**
 
-This directory is the documentation of a **second artifact**: a public site for Fugaro. It is a directory rather than a pair of files under `docs/design/` and `docs/plans/` because the site is not a feature of the Go program — it is its own build, in its own language, deployed on its own schedule, which is what `console/` is (reconciliation F2). **No site code exists**: there is no `website/` directory, no hosting configuration, no domain and no web asset of any kind in this repository today (F1).
+This directory is the documentation of a **second artifact**: a public site for Fugaro. It is a directory rather than a pair of files under `docs/design/` and `docs/plans/` because the site is not a feature of the Go program — it is its own build, in its own language, deployed on its own schedule, which is what `console/` is (reconciliation F2). **The site code exists** (F1 was checked on 2026-10-16 and is no longer true): `website/` is that build, `firebase.json` is the hosting configuration, `website/data/site.yaml` names the canonical origin, and `brand/` holds the logo and the icons.
 
 ## The four documents, in reading order
 
@@ -38,11 +38,12 @@ The plan takes **check 69 and up** (written as 69a–69c) for the site's live ch
 |---|---|---|
 | **Part 0 — the facts** | The generated content layer and its drift tests, plus the aggregation command. No site code. Mergeable on its own. | `website/data/`, `website/content/`, `internal/clidoc/`, `internal/stats/`, `internal/cli/docs_website_*.go`, `internal/cli/stats.go` |
 | **Part 1 — the site** | The Astro app: toolchain, tokens and three palettes, layout, and the ten sections the repository can back — plus the hermetic gates (build, links, anchors, origins, accessibility, byte budget) and the consent banner that keeps analytics behind consent. | `website/` |
-| **Part 2 — hosting and the live checks** | The deploy workflow **staged** for the owner to copy (no run may touch `.github/workflows/`), deploying to the **site's own Firebase project** with the owner's project id from the workflow's variable; the canonical URL; check 69a–69c. | `docs/pending-workflows/website.yml`, `website/data/site.yaml`, `firebase.json`, `docs/gcp-live-checklist.md` |
+| **Part 2 — hosting and the live checks** | The deploy workflows **staged** for the owner to copy (no run may touch `.github/workflows/`), deploying to the **site's own Firebase project** with the owner's project id from the workflow's variable; the canonical URL; check 69a–69c. The plan's one `website.yml` became the manual pair `website-preview.yml` + `website-promote.yml` in W2.1's amendment of 2026-10-18 (see `preview-promote.md`). | `docs/pending-workflows/website-preview.yml`, `docs/pending-workflows/website-promote.yml`, `website/data/site.yaml`, `firebase.json`, `docs/gcp-live-checklist.md` |
 | **Part 3 — after the console ships** | Real console downloads, the explainer video, and Firebase Analytics switched on behind the consent banner D93 chose. **Unscheduled** — bar the analytics switch, which waits only on the consent task (W1.12). | `website/content/downloads.json`, `website/src/components/`, `website/data/site.yaml` |
 
 ## See also
 
+- [preview-promote.md](preview-promote.md) — the site's two deploy workflows (a manual preview and an owner-only promote), staged under `docs/pending-workflows/` for the owner to copy in, and the owner-only one-time setup they need (the Workload Identity Federation pool and provider, the deployer service account, the `website-live` environment, the repository variables). **Nothing in it has been run.**
 - [docs/release.md](../release.md) — what a tag publishes, and how a user verifies it (the site's install text is pinned to this file, W0.1)
 - [docs/design/desktop-console.md](../design/desktop-console.md) — D2, D4, D10 and D11, which the console section reads and does not reopen
 - [docs/gcp-setup.md](../gcp-setup.md) — `## Adoption`, where the one-Firebase-per-installation rule is stated
