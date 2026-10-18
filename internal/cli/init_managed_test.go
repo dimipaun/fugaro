@@ -105,6 +105,56 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; b != want {
 			t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, b, want)
 		}
+		// And the other half of the same fact, written by the same step
+		// (Task 3.0): the label on the project itself, which the read
+		// requires. Both, or the project is not managed at all.
+		if got := r.crm.Labels(newProj)[managed.ProjectLabelKey]; got != managed.ProjectLabelValue {
+			t.Errorf("%s on the created project %s = %q, want %q: the run that creates a project writes both halves of the fact", managed.ProjectLabelKey, newProj, got, managed.ProjectLabelValue)
+		}
+	})
+
+	// (c'') The label write refused: the project can be read and not written
+	// (no resourcemanager.projects.update — the shape every credential a run
+	// holds is in), so the object lands and the label does not. It is the one
+	// state where the two halves disagree, and what it must not do is report
+	// the project as marked: the read answers "not managed" for a project
+	// with the object and no label, so a run that said it marked one would be
+	// telling the operator that confirmations are skipped for a project they
+	// are not.
+	t.Run("--create-project with the label refused", func(t *testing.T) {
+		r := newProjectRig(t)
+		bucket := "fugaro-runs-" + newProj
+		r.gcs.AddProject(newProj, gcpfake.FirstCreatedProjectNumber)
+		r.gcs.AddBucket(bucket, gcpfake.FirstCreatedProjectNumber, managedBucketLabels)
+		roles := map[string]string{}
+		for _, r := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+			roles[r] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(r[:1]) + r[1:]
+		}
+		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+			"runs_bucket":               bucket,
+			"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
+			"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
+			"role_ids":                  roles,
+		})}
+		r.save(t)
+		r.bill.AddAccount(billingAcc, true)
+		r.crm.DenyUpdate(newProj)
+		out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n"+initProjectName+"\n", "--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if _, ok := markerAt(t, r.gcs, bucket); !ok {
+			t.Fatalf("no %s in gs://%s: the object is written first and this run wrote it\n%s", managed.MarkerObject, bucket, out)
+		}
+		if got := r.crm.Labels(newProj)[managed.ProjectLabelKey]; got != "" {
+			t.Errorf("%s on %s = %q, want it unwritten: the API refused the update", managed.ProjectLabelKey, newProj, got)
+		}
+		if !strings.Contains(out, "not marked as managed") {
+			t.Errorf("the run did not say the project is unmarked, and the read answers \"not managed\" for it:\n%s", out)
+		}
+		if strings.Contains(out, "recorded that this run created project "+newProj) {
+			t.Errorf("the run reported a project marked when only half the fact was written:\n%s", out)
+		}
 	})
 
 	// (c') --create-project on a project that already exists and has no

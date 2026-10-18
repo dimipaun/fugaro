@@ -381,6 +381,164 @@ func TestWriteMarkerNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 	}
 }
 
+// WriteManagedLabel is the other half of the same fact (Task 3.0), on the
+// project itself rather than in its bucket: the gate is WriteMarker's, the
+// write is idempotent in the one direction that is not dangerous (the label
+// already says what this package writes), and a label someone else put there
+// is refused rather than overwritten — `fugaro_managed=false` is a statement,
+// and this package does not get to replace it. A Resource Manager v1 update
+// replaces the whole label map, so the other labels the project carries are
+// the third thing the rows below pin: a writer that sent only its own key
+// would drop them.
+func TestWriteManagedLabel(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		created, project string
+		labels           map[string]string // the project's labels as the fake has them
+		missing          bool              // the project is not in the fake at all
+		refuse           int               // a status for every Resource Manager call
+		noUpdate         bool              // the read is readable and the update is refused
+		want             string            // a substring the refusal must carry, "" for no refusal
+		wantLabels       map[string]string // what the project carries afterwards
+		wantCalls        int               // Resource Manager calls the write may make
+	}{
+		"the project this run created": {
+			created: testProject, project: testProject,
+			labels:     map[string]string{"environment": "prod"},
+			wantLabels: map[string]string{"environment": "prod", ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  2, // the read and the update
+		},
+		"a project with no labels at all": {
+			created: testProject, project: testProject,
+			wantLabels: map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  2,
+		},
+		"a project that already carries the label": {
+			created: testProject, project: testProject,
+			labels:     map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantLabels: map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  1, // the read, and no update: the mark is written once
+		},
+		"a project carrying the key with another value": {
+			created: testProject, project: testProject,
+			labels:     map[string]string{ProjectLabelKey: "false"},
+			want:       "already carries",
+			wantLabels: map[string]string{ProjectLabelKey: "false"},
+			wantCalls:  1,
+		},
+		"an empty value is not the label": {
+			created: testProject, project: testProject,
+			labels:     map[string]string{ProjectLabelKey: ""},
+			wantLabels: map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  2,
+		},
+		"another project": {
+			created: testProject, project: "belong",
+			want:      "did not create",
+			wantCalls: 0,
+		},
+		"nothing to mark": {
+			created: testProject, project: "",
+			want:      "did not create",
+			wantCalls: 0,
+		},
+		"the project read is refused": {
+			created: testProject, project: testProject, refuse: http.StatusForbidden,
+			want:      "reading project",
+			wantCalls: 1,
+		},
+		"the project is not there": {
+			created: testProject, project: testProject, missing: true,
+			want:      "reading project",
+			wantCalls: 1,
+		},
+		// The shape every credential a run holds is in: the project can be
+		// read and its label cannot be written (no
+		// resourcemanager.projects.update). The object may already be in the
+		// bucket by then — this is
+		// the half-mark of Task 3.0's point 4, and the read answers "not
+		// managed" for it.
+		"the update is refused": {
+			created: testProject, project: testProject,
+			labels:     map[string]string{"environment": "prod"},
+			noUpdate:   true,
+			want:       "labelling project",
+			wantLabels: map[string]string{"environment": "prod"},
+			wantCalls:  2,
+		},
+		"the read fails": {
+			created: testProject, project: testProject, refuse: http.StatusInternalServerError,
+			want:      "reading project",
+			wantCalls: 1,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, cf := newCRM(t)
+			if !tc.missing {
+				cf.AddProject(testProject, testProjectNumber)
+				if tc.labels != nil {
+					cf.SetLabels(testProject, tc.labels)
+				}
+			}
+			if tc.refuse != 0 {
+				cf.Refuse(tc.refuse, "PERMISSION_DENIED", "", "refused")
+			}
+			if tc.noUpdate {
+				cf.DenyUpdate(testProject)
+			}
+			err := WriteManagedLabel(ctx, c, tc.created, tc.project)
+			switch {
+			case tc.want == "" && err != nil:
+				t.Fatalf("err = %v, want the label written", err)
+			case tc.want != "" && err == nil:
+				t.Fatalf("want a refusal carrying %q", tc.want)
+			case tc.want != "" && !strings.Contains(err.Error(), tc.want):
+				t.Errorf("err = %v, want it to carry %q", err, tc.want)
+			}
+			if n := len(cf.Requests()); n != tc.wantCalls {
+				t.Errorf("the write made %d Resource Manager calls, want %d: %v", n, tc.wantCalls, cf.Requests())
+			}
+			// Every call is a read or the one update, and the update is a
+			// projects update: a writer reaching for anything else (a policy,
+			// a create) is not this function.
+			for _, r := range cf.Requests() {
+				if r.Method != http.MethodGet && r.Method != http.MethodPut {
+					t.Errorf("the write made a %s %s", r.Method, r.Path)
+				}
+			}
+			if tc.wantLabels != nil {
+				if got := cf.Labels(testProject); !maps.Equal(got, tc.wantLabels) {
+					t.Errorf("the project carries %v, want %v", got, tc.wantLabels)
+				}
+			}
+		})
+	}
+
+	// A run that created no project writes nothing at all — not a read, not a
+	// label — exactly as WriteMarker does not: adding Firebase to an existing
+	// project (D73) and every ordinary run of an existing installation come
+	// through here with created == "", and the owner's own projects, belong
+	// among them, must come out of it untouched.
+	c, cf := newCRM(t)
+	cf.AddProject(testProject, testProjectNumber)
+	if err := WriteManagedLabel(ctx, c, "", testProject); err != nil {
+		t.Fatalf("err = %v, want a silent no-op", err)
+	}
+	if reqs := cf.Requests(); len(reqs) != 0 {
+		t.Errorf("the call touched the API: %v", reqs)
+	}
+	if got := cf.Labels(testProject); len(got) != 0 {
+		t.Errorf("the project carries %v, want nothing", got)
+	}
+
+	// And the client the rows above all have: a call with none is a refusal
+	// rather than a panic (WriteMarker's own nil-client branch, and
+	// WriteDeleteList's).
+	if err := WriteManagedLabel(ctx, nil, testProject, testProject); err == nil {
+		t.Error("the write was made with no Resource Manager client")
+	}
+}
+
 // The write half of Global Constraint 4 (design D57): no credential a run
 // holds may have a write path to the marker. The agent of a run holds a job
 // account and a build holds a build account, and the grant each is given on

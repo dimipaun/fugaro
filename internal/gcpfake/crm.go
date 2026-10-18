@@ -24,6 +24,7 @@ type CRM struct {
 	policies map[string][]Binding
 	states   map[string]string
 	noGet    map[string]bool // projects whose plain read answers 403 (the policy stays readable)
+	noUpdate map[string]bool // projects whose update answers 403 (the plain read stays readable)
 
 	// PropagationReads is how many reads of a project answer 403 right
 	// after its creation, as happens while a new project propagates.
@@ -72,7 +73,7 @@ var (
 func NewCRM(t *testing.T) *CRM {
 	t.Helper()
 	f := &CRM{projects: map[string]int64{}, labels: map[string]map[string]string{}, policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
-		noPolicy: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{},
+		noPolicy: map[string]bool{}, noUpdate: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{},
 		nextProj: FirstCreatedProjectNumber - 1}
 	f.Server = newServer(t, f.handle)
 	return f
@@ -125,6 +126,17 @@ func (f *CRM) DenyGet(project string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.noGet[project] = true
+}
+
+// DenyUpdate makes project's update answer 403 while its plain read stays
+// readable: a caller that holds resourcemanager.projects.get and not
+// resourcemanager.projects.update, which is every credential a run holds —
+// the write permission the project label needs (Task 3.0, design finding 14)
+// and the one no run account may have.
+func (f *CRM) DenyUpdate(project string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.noUpdate[project] = true
 }
 
 // DenyPolicy makes project's getIamPolicy answer 403 while its plain read
@@ -290,6 +302,10 @@ func (f *CRM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 	}
 	if r.Method == http.MethodPut {
+		if f.noUpdate[m[1]] {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
+			return
+		}
 		var in struct {
 			Labels map[string]string `json:"labels"`
 		}
