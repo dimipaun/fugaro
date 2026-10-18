@@ -36,7 +36,6 @@ import { createContext, runInContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 
 import { SERVED_FILES } from '../../src/main/protocol'
-import { CLI_HARD_FLOOR_VERSION, CLI_VERSION_BUILT_AGAINST, SUPPORTED_CLI_MINORS } from '../../src/shared/version'
 import {
   BundleRefusal,
   bundleRenderer,
@@ -50,6 +49,15 @@ import {
   resolveSpecifier,
 } from '../../tools/bundle-renderer/index'
 import { CONSOLE_ROOT, builtFile, builtListing, builtPath } from '../support/built'
+import {
+  FakeDocument,
+  FakeNode,
+  aReducedCompatibility,
+  anOkCompatibility,
+  everyNode,
+  recordingTimers,
+  textOf,
+} from '../support/fakeDom'
 
 /** ENTRY is the compiled entry the build walks, and OUT the file it writes. */
 const PATHS = consoleBundlePaths(CONSOLE_ROOT)
@@ -211,192 +219,10 @@ describe('the bundle', () => {
 // ---------------------------------------------------------------------------
 // The bundle, run the way the document runs it.
 // ---------------------------------------------------------------------------
-
-/**
- * FakeNode is one element of the fake document the bundle is run against, and it
- * is hostile in the two places a drawing must not reach:
- *
- *   - **the markup-parsing slots** (`innerHTML`, `outerHTML`,
- *     `insertAdjacentHTML`) throw, so a bundle that built an element from a
- *     string fails here rather than in a window (design section 5.1 rule 7);
- *   - **the navigating, styling and event attributes** throw in
- *     `setAttribute`, so a drawing cannot set `href`, an inline style or an
- *     `on*` handler even by accident. `style` is in that set because rule 3's
- *     `style-src 'self'` allows no inline style, and the theme is drawn as
- *     `data-theme` rather than as one.
- */
-class FakeNode {
-  readonly tagName: string
-  readonly children: FakeNode[] = []
-  readonly attributes = new Map<string, string>()
-  private text: string | null = null
-
-  constructor(tagName: string) {
-    this.tagName = tagName.toUpperCase()
-  }
-
-  get textContent(): string | null {
-    return this.text
-  }
-
-  set textContent(value: string | null) {
-    this.text = value
-  }
-
-  get innerHTML(): never {
-    throw new Error('the bundle read innerHTML')
-  }
-
-  set innerHTML(_value: string) {
-    throw new Error('the bundle assigned innerHTML')
-  }
-
-  get outerHTML(): never {
-    throw new Error('the bundle read outerHTML')
-  }
-
-  insertAdjacentHTML(): never {
-    throw new Error('the bundle called insertAdjacentHTML')
-  }
-
-  getAttribute(name: string): string | null {
-    return this.attributes.get(name) ?? null
-  }
-
-  setAttribute(name: string, value: string): void {
-    if (name === 'href' || name === 'src' || name === 'srcdoc' || name === 'style' || name.startsWith('on')) {
-      throw new Error(`the bundle set the ${name} attribute`)
-    }
-    this.attributes.set(name, value)
-  }
-
-  removeAttribute(name: string): void {
-    this.attributes.delete(name)
-  }
-
-  appendChild(child: FakeNode): FakeNode {
-    this.children.push(child)
-    return child
-  }
-
-  /**
-   * replaceChildren is how the entry swaps one screen for another inside its
-   * own panel (Task 3.4c). It is here rather than a text write because a screen
-   * is replaced as a *tree*: assigning `textContent` would be the one write this
-   * realm's fake exists to keep out of the entry.
-   */
-  replaceChildren(...nodes: FakeNode[]): void {
-    this.children.length = 0
-    this.children.push(...nodes)
-  }
-
-  /** listeners is what the entry attached, by event type. The wiring is a click
-   * on a drawn control, and a test drives it by calling `click()`. */
-  readonly listeners = new Map<string, (() => void)[]>()
-
-  addEventListener(type: string, listener: () => void): void {
-    const found = this.listeners.get(type) ?? []
-    found.push(listener)
-    this.listeners.set(type, found)
-  }
-
-  /** click fires this node's click listeners, in the order they were added. */
-  click(): void {
-    for (const listener of this.listeners.get('click') ?? []) listener()
-  }
-}
-
-/** FakeDocument is the whole document the entry is given: a body to mount into,
- * a factory, and the visibility the Live poll reads. Nothing else of the DOM is
- * offered, so a bundle that reached for something else fails here. */
-class FakeDocument {
-  readonly body = new FakeNode('body')
-  readonly visibilityState = 'visible'
-
-  createElement(tag: string): FakeNode {
-    return new FakeNode(tag)
-  }
-
-  addEventListener(_type: string, _listener: () => void): void {
-    // The entry listens for `visibilitychange` and nothing else; the poll's own
-    // pause and resume is `entry-wiring.test.ts`'s subject, with a fake document
-    // whose visibility it can move.
-  }
-}
-
-/**
- * recordingTimers is the sandbox's clock. `setInterval` is a **host** object,
- * not a language one, so a `vm` realm has none -- and the Live screen's poll is
- * one. The test lends it a timer that records the callback and never fires on
- * its own, so nothing keeps the test process alive and no poll happens unless a
- * case asks for one.
- */
-function recordingTimers(): {
-  readonly globals: Record<string, unknown>
-  tick(): void
-  readonly live: () => number
-} {
-  const callbacks = new Map<number, () => void>()
-  let next = 1
-  return {
-    globals: {
-      setInterval: (callback: () => void): number => {
-        const handle = next
-        next += 1
-        callbacks.set(handle, callback)
-        return handle
-      },
-      clearInterval: (handle: number): void => {
-        callbacks.delete(handle)
-      },
-    },
-    tick(): void {
-      for (const callback of [...callbacks.values()]) callback()
-    },
-    live: () => callbacks.size,
-  }
-}
-
-/** everyNode is the tree under a node, depth first. */
-function everyNode(node: FakeNode): readonly FakeNode[] {
-  return [node, ...node.children.flatMap((child) => everyNode(child))]
-}
-
-/** textOf is all the text drawn under a node. */
-function textOf(node: FakeNode): string {
-  return everyNode(node)
-    .map((each) => each.textContent ?? '')
-    .join('\n')
-}
-
-/** anOkCompatibility is a handshake answer in range, built from the console's
- * own constants rather than from literals a drift could leave behind. */
-function anOkCompatibility(): Record<string, unknown> {
-  return {
-    mode: 'ok',
-    skew: 'supported',
-    cliVersion: '1.2.3',
-    consoleVersion: CLI_VERSION_BUILT_AGAINST,
-    supported: [...SUPPORTED_CLI_MINORS],
-    floor: CLI_HARD_FLOOR_VERSION,
-    hidden: [],
-  }
-}
-
-/** aReducedCompatibility is the answer for a CLI newer than this console reads:
- * reduced, with all three views withheld (`hidesView` is `hidden.includes`, and
- * `compatibilityFrom` refuses a mode whose hidden list disagrees with it). */
-function aReducedCompatibility(): Record<string, unknown> {
-  return {
-    mode: 'reduced',
-    skew: 'newer',
-    cliVersion: '9.9.9',
-    consoleVersion: CLI_VERSION_BUILT_AGAINST,
-    supported: [...SUPPORTED_CLI_MINORS],
-    floor: CLI_HARD_FLOOR_VERSION,
-    hidden: ['spend', 'caps', 'kill'],
-  }
-}
+//
+// The document and the clock are `test/support/fakeDom.ts`'s, shared with
+// `entry-wiring.test.ts` so both suites drive the entry against one surface --
+// this one through the built bundle, that one through the sources.
 
 /**
  * runBundle runs the built bundle in a fresh realm, against a fresh document,
