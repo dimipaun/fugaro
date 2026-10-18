@@ -539,7 +539,7 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	// every run that opens a pull request has none, and its columns do not
 	// change (design artifact-runs.md §9).
 	showArtifacts := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ArtifactCount > 0 })
-	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR"
+	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR\tBY"
 	if showRecipe {
 		header += "\tRECIPE"
 	}
@@ -561,7 +561,7 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 		if !r.Cost.ComputeEstimated {
 			cost += ", compute not estimated" // never "free" (design §10.1)
 		}
-		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s", oneLine(r.Run), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r))
+		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", oneLine(r.Run), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r), launcherCell(r))
 		if showRecipe {
 			name := r.Recipe
 			if name == "" {
@@ -604,6 +604,24 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	}
 	_, err := fmt.Fprintln(w, line)
 	return err
+}
+
+// launcherCell is a row's BY cell: who started the run, in the short form a
+// column has room for (the part before the @ of an address, the whole value
+// for anything else — a service account name, a CI identity), or "-" for a
+// run whose launch.json recorded no launcher. Several people start runs on
+// one project at once, so the column is always there, and the dash is a fact
+// ("nobody recorded"), never a placeholder for one.
+//
+// The launcher is untrusted text a launcher wrote, so it is clipped and
+// escaped like every other name column, whether or not it arrived through
+// runview.Join's own sanitising.
+func launcherCell(r runview.Row) string {
+	by := runview.LauncherShort(r.LaunchedBy)
+	if by == "" {
+		return "-"
+	}
+	return cellOneLine(clipRunes(by, maxNameCellRunes))
 }
 
 // statusCell is a row's status; a halted run says which limit halted it.
