@@ -519,6 +519,288 @@ interface ResolvedSource {
   readonly installation: InstallationRef
 }
 
+// ---------------------------------------------------------------------------
+// The bound source (desktop-console plan Task 3.4c)
+// ---------------------------------------------------------------------------
+
+/**
+ * BoundInstallation is one installation as the console's own state holds it:
+ * D13's tuple, plus the id that says *which* installation it is and the version
+ * the handshake read for it. It is structurally the store's `ActiveInstallation`
+ * with `chosen: true`, declared here rather than imported because this module is
+ * the source layer: it knows an installation's four fields and nothing about the
+ * file they are kept in.
+ *
+ * `binaryPath` is the installation's **own** binary and it is passed to the
+ * resolver as the configured path (rule 4's first place), so a source bound to
+ * an installation reads that binary or refuses -- never another `fugaro` the
+ * machine happens to have. That is the same rule the startup handshake follows
+ * (`resolveHandshakeBinary`, review B1).
+ */
+export interface BoundInstallation {
+  readonly id: string
+  readonly project: string
+  readonly binaryPath: string
+  /** the config path, when this installation is not the ambient one (rule 3). */
+  readonly configPath?: string | undefined
+  /** the checkout, which is also the child's working directory (rule 5). */
+  readonly checkout?: string | undefined
+  /** the version the handshake read for it, when one has read it. */
+  readonly version?: string | undefined
+}
+
+/** SourceForOptions is `CliSourceOptions` minus the three fields the
+ * installation itself supplies: the target, the binary and the directory. */
+export type SourceForOptions = Omit<CliSourceOptions, 'target' | 'configuredBinaryPath' | 'checkout'>
+
+/**
+ * sourceFor binds a real `CliSource` to one installation, and it is **the only
+ * source the shipped app can construct** (plan step 1).
+ *
+ * The alternative -- a source built from the ambient environment -- is what
+ * design section 3.4 rule 3 forbids: a Finder-launched app has cwd `/` and
+ * launchd's environment, so an unbound source would read whatever installation
+ * the login shell happened to select. There is no environment variable, argv or
+ * setting that chooses a source or a binary: `src/source/fixture.ts` is reachable
+ * only through the unit tests' injected `create`, and a grep-style test asserts
+ * that `src/main/index.ts` imports nothing from it (plan step 1).
+ */
+export function sourceFor(
+  installation: BoundInstallation,
+  options: SourceForOptions = {},
+): Promise<CliSource> {
+  return CliSource.create({
+    ...options,
+    target: Object.freeze({
+      project: installation.project,
+      ...(installation.configPath === undefined ? {} : { configPath: installation.configPath }),
+    }),
+    configuredBinaryPath: installation.binaryPath,
+    ...(installation.checkout === undefined ? {} : { checkout: installation.checkout }),
+  })
+}
+
+/** BoundSourceDeps is the bound source's two seams: where the active
+ * installation is read from, and how a source is built for one. */
+export interface BoundSourceDeps extends SourceForOptions {
+  /**
+   * installation is the console's own state, read **at call time** -- so a
+   * removal or a switch is answered by the next read rather than by a value
+   * captured when the surface was registered.
+   */
+  readonly installation: () => BoundInstallation | null
+  /**
+   * create builds the source for one installation. It is a seam and not a
+   * parameter of the shipped app: the e2e specs and the unit tests hand in a
+   * source they control, and `src/main/index.ts` leaves it out so that the only
+   * thing it can construct is `sourceFor`.
+   */
+  readonly create?: ((installation: BoundInstallation) => Promise<CliSource>) | undefined
+}
+
+/** BoundSource is the source the IPC surface is built over, plus the one
+ * operation the surface has no name for: dropping what is bound to an
+ * installation that is gone. */
+export interface BoundSource extends FugaroSource {
+  /**
+   * forget closes the source bound to the installation the console no longer
+   * has and clears the binding, so the next read answers D13's no-installation
+   * refusal rather than a document from an installation nobody chose. It is
+   * `onRemoved`'s whole body (plan 3.4b's deferred N1) and it is idempotent.
+   */
+  forget(): Promise<void>
+}
+
+/**
+ * createBoundSource is the join between the console's own state and the data
+ * plane: every read resolves the installation that is active **now**, builds the
+ * one source for it if there is not one already, and delegates.
+ *
+ * Three decisions are worth reading off the code rather than out of a comment:
+ *
+ *   - **no installation, no spawn.** `resolve` throws `NoInstallation` before
+ *     anything is constructed, so a console with nothing chosen drives nothing.
+ *   - **one source per installation.** The source is cached by the
+ *     installation's id and the previous one is closed when the id changes, so a
+ *     switch cannot leave a `fugaro watch` child running for an installation the
+ *     console has stopped showing.
+ *   - **`subscribeLive` stays synchronous and idempotent.** Building a
+ *     `CliSource` is asynchronous (it resolves and probes the binary) and
+ *     `FugaroSource.subscribeLive` is not, so the feed this returns is a
+ *     **lazy** one: it attaches on the first `current()`, and the same argument
+ *     object answers the same feed object while it is live -- the contract the
+ *     interface states, kept here rather than only under it.
+ */
+export function createBoundSource(deps: BoundSourceDeps): BoundSource {
+  const create = deps.create ?? ((installation: BoundInstallation): Promise<CliSource> => sourceFor(installation, deps))
+  let bound: { readonly id: string; readonly source: CliSource } | null = null
+  let pending: { readonly id: string; readonly source: Promise<CliSource> } | null = null
+  const feeds = new Map<string, LiveFeed>()
+
+  const noInstallation = (): NoInstallation =>
+    new NoInstallation(
+      noInstallationState({
+        reason: 'no installation is chosen, so there is no binary for the console to read',
+        ...(deps.appEnv === undefined ? {} : { appEnv: deps.appEnv }),
+        ...(deps.home === undefined ? {} : { home: deps.home }),
+      }),
+    )
+
+  const resolve = async (): Promise<CliSource> => {
+    const installation = deps.installation()
+    if (installation === null) throw noInstallation()
+    if (bound !== null && bound.id === installation.id) return bound.source
+    if (pending !== null && pending.id === installation.id) return pending.source
+    // A different installation, or none bound: the previous source's children
+    // are stopped before a new one is built. `bound` is cleared first so a read
+    // that arrives while the close is in flight cannot be handed the source that
+    // is on its way out.
+    const previous = bound
+    bound = null
+    pending = null
+    feeds.clear()
+    if (previous !== null) await previous.source.close()
+    const source = create(installation).then((created) => {
+      bound = { id: installation.id, source: created }
+      pending = null
+      return created
+    })
+    pending = { id: installation.id, source }
+    return source
+  }
+
+  const installationRef = (installation: BoundInstallation): InstallationRef => ({
+    binaryPath: installation.binaryPath,
+    version: installation.version ?? '',
+    project: installation.project,
+    // The binary came from the installation the operator chose, which is rule
+    // 4's first place -- there is no second spelling of this vocabulary here.
+    source: 'configured',
+    ...(installation.checkout === undefined ? {} : { checkout: installation.checkout }),
+  })
+
+  /**
+   * lazyFeed wraps one subscription. It is deliberately small: the three
+   * listeners attach once the source exists (nothing in this console calls them
+   * yet -- the surface is `invoke`-only and `live.watch` is a poll), and
+   * `current`/`stop` are the two the handler uses.
+   */
+  const lazyFeed = (args: ValidatedArguments): LiveFeed => {
+    let real: LiveFeed | null = null
+    let attaching: Promise<LiveFeed> | null = null
+    const attach = (): Promise<LiveFeed> => {
+      if (real !== null) return Promise.resolve(real)
+      attaching ??= resolve().then((source) => {
+        real = source.subscribeLive(args)
+        return real
+      })
+      return attaching
+    }
+    const defer = (wire: (feed: LiveFeed) => Unsubscribe): Unsubscribe => {
+      let off: Unsubscribe | null = null
+      let stopped = false
+      void attach()
+        .then((feed) => {
+          if (!stopped) off = wire(feed)
+        })
+        .catch(() => undefined)
+      return () => {
+        stopped = true
+        if (off !== null) off()
+      }
+    }
+    return {
+      get latest(): Snapshot | null {
+        return real === null ? null : real.latest
+      },
+      onChange: (listener) => defer((feed) => feed.onChange(listener)),
+      onNotice: (listener) => defer((feed) => feed.onNotice(listener)),
+      onEnded: (listener) => defer((feed) => feed.onEnded(listener)),
+      current: async (): Promise<Snapshot> => (await attach()).current(),
+      stop: async (): Promise<void> => {
+        if (real !== null) {
+          await real.stop()
+          return
+        }
+        if (attaching !== null) {
+          const feed = await attaching.catch(() => null)
+          if (feed !== null) await feed.stop()
+        }
+      },
+    }
+  }
+
+  /** drop clears the binding and stops everything the bound source started.
+   * `forget` and `close` are the same act under two names: the interface's
+   * `close` stops every child this source started, and `forget` is what
+   * `onRemoved` calls -- an installation that is gone must leave nothing running
+   * for it. */
+  const drop = async (): Promise<void> => {
+    const previous = bound
+    bound = null
+    pending = null
+    feeds.clear()
+    if (previous !== null) await previous.source.close()
+  }
+
+  const read = async <T>(operation: string, go: (source: CliSource) => Promise<T>): Promise<T> => {
+    let source: CliSource
+    try {
+      source = await resolve()
+    } catch (error) {
+      // A source that could not be built is the read's refusal, named: the CLI's
+      // own sentence when it printed one (a binary whose version cannot be read),
+      // and the console's own no-installation sentence otherwise.
+      if (error instanceof SourceRefusal) throw error
+      throw new SourceRefusal(`${operation} failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    return go(source)
+  }
+
+  return {
+    get installation(): InstallationRef {
+      const installation = deps.installation()
+      if (installation === null) throw noInstallation()
+      return installationRef(installation)
+    },
+    version: () => read('cli.version', (source) => source.version()),
+    subscribeLive(args: ValidatedArguments): LiveFeed {
+      // One feed object per (installation, arguments) while it is live, which is
+      // the idempotency `FugaroSource.subscribeLive` states. The key is the
+      // active installation's id and the argument object: the same arguments
+      // under a different installation are legitimately a different feed.
+      const installation = deps.installation()
+      if (installation === null) throw noInstallation()
+      const key = `${installation.id}\u0000${JSON.stringify(sortedArguments(args))}`
+      const existing = feeds.get(key)
+      if (existing !== undefined) return existing
+      const feed = lazyFeed(args)
+      feeds.set(key, feed)
+      return feed
+    },
+    showBudget: (args) => read('budget.show', (source) => source.showBudget(args)),
+    runReport: (args) => read('spend.report', (source) => source.runReport(args)),
+    listRuns: (args) => read('runs.list', (source) => source.listRuns(args)),
+    diagnoseRun: (args) => read('run.diagnose', (source) => source.diagnoseRun(args)),
+    readRunLogs: (args) => read('run.logs', (source) => source.readRunLogs(args)),
+    runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),
+    listSecrets: (args) => read('secrets.inventory', (source) => source.listSecrets(args)),
+    listAccounts: (args) => read('accounts.inventory', (source) => source.listAccounts(args)),
+    environmentReport: (args) => read('environment.report', (source) => source.environmentReport(args)),
+    forget: drop,
+    close: drop,
+  }
+}
+
+/** sortedArguments is one argument object with its keys in a fixed order, so two
+ * calls with the same arguments answer the same key however the object was
+ * built. Values are already validated (strings and booleans only). */
+function sortedArguments(args: ValidatedArguments): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(args).sort()) out[key] = args[key]
+  return out
+}
+
 /**
  * parseStdout reads a one-shot read's stdout. Every one-shot command in the
  * console's set prints ONE document indented over several lines

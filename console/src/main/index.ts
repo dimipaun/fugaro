@@ -49,15 +49,11 @@ import type { ConsoleWindowDeps, VersionRead } from './window'
 import { privateWorkingDirectory, resolveHandshakeBinary } from './spawn'
 import type { SpawnTarget } from './spawn'
 import { createSpawnLog } from './spawnlog'
-import {
-  NO_ACTIVE_INSTALLATION,
-  reducedModeHandlers,
-  registerConsoleHandlers,
-  startupCompatibility,
-} from './ipc'
-import type { ConsoleHandlers, ValidatedArguments } from './ipc'
-import { SourceRefusal, handlersFor } from '../source/source'
-import type { FugaroSource, InstallationRef, LiveFeed } from '../source/source'
+import { reducedModeHandlers, registerConsoleHandlers, startupCompatibility } from './ipc'
+import type { ConsoleHandlers } from './ipc'
+import { handlersFor } from '../source/source'
+import { createBoundSource } from '../source/cli'
+import type { BoundInstallation } from '../source/cli'
 import type { CliCompatibility } from '../shared/version'
 
 // Before `whenReady` resolves, which is the only window Electron gives for it:
@@ -230,50 +226,50 @@ function storedCompatibility(): CliCompatibility {
 }
 
 /**
- * noInstallation is the console's answer for every read, until Task 3.4c binds
- * a `CliSource` to the installation the picker (Task 3.4b) made active.
+ * activeBinding is the installation the source is bound to, as the store holds
+ * it **now** (Task 3.4c, step 1). `null` is D13's no-installation state, and it
+ * is answered with no spawn at all -- the alternative would be a source built
+ * from whatever the machine happened to have (the ambient `FUGARO_PROJECT` and
+ * the first `fugaro` on `PATH`), which is a console driving something the
+ * operator never chose.
  *
- * The alternative to this refusal would be
- * a source built from whatever the machine happened to have -- the ambient
- * `FUGARO_PROJECT` and the first `fugaro` on `PATH` -- which is a console
- * driving something the operator never chose. So the surface exists, every
- * operation on it answers `NO_ACTIVE_INSTALLATION`, and no child process is
- * started by any of them. The sentence is `src/main/ipc.ts`'s, so the renderer's
- * degraded screen draws a refusal it already knows how to draw.
+ * It is a function rather than a value for the reason `handlersFor`'s
+ * `installation` dep is: the store is read at message time, so a choose or a
+ * removal is answered by the next read rather than by a value captured when the
+ * surface was registered.
  */
-function noInstallation(operation: string): never {
-  throw new SourceRefusal(`${NO_ACTIVE_INSTALLATION}: ${operation} has nothing to read`)
+function activeBinding(): BoundInstallation | null {
+  const chosen = picker?.installation()
+  if (chosen === undefined || !chosen.chosen) return null
+  return {
+    id: chosen.id,
+    project: chosen.project,
+    binaryPath: chosen.binary,
+    ...(chosen.config === undefined ? {} : { configPath: chosen.config }),
+    ...(chosen.checkout === undefined ? {} : { checkout: chosen.checkout }),
+    ...(chosen.cliVersion === null ? {} : { version: chosen.cliVersion }),
+  }
 }
 
 /**
- * activeSource is the `FugaroSource` the surface is built over: a source that
- * refuses every read, including its own `installation`.
+ * boundSource is the `FugaroSource` the whole surface is built over: the real
+ * `CliSource` for the active installation, built by `sourceFor` and cached by
+ * the installation's id (`createBoundSource` in `src/source/cli.ts`, where the
+ * whole of the decision is unit-tested).
  *
- * It is written out method by method rather than derived, because the *point* of
- * it is that there is no code path here that could reach a binary: every member
- * is one call to `noInstallation`, so a reviewer reads eleven identical lines and
- * knows there is nothing else in the object. `installation` is a getter for the
- * same reason -- a value there would be a claim about a binary this console has
- * not chosen -- and `subscribeLive` throws rather than answering an empty feed,
- * because a feed that never delivers is a screen that waits forever.
+ * **This is the only source the shipped app can construct.** `sourceFor` passes
+ * the installation's own binary as the configured path, so the child is the
+ * binary the operator chose or there is no child; `src/source/fixture.ts` -- the
+ * replaying source the unit tests use -- is reachable only through the tests'
+ * injected `create`, and a grep-style test holds `test/unit/entry-wiring.test.ts`
+ * to that: this file imports nothing from `fixture.ts`, and no environment
+ * variable, argv or setting selects a source.
+ *
+ * The store is read through `activeBinding`, and the source it builds spawns on
+ * the first read rather than here, so a console with nothing chosen -- and a
+ * console in a mode that draws no screen -- drives nothing at all.
  */
-const activeSource: FugaroSource = {
-  get installation(): InstallationRef {
-    return noInstallation('the installation')
-  },
-  version: (): never => noInstallation('cli.version'),
-  subscribeLive: (_args: ValidatedArguments): LiveFeed => noInstallation('live.watch'),
-  showBudget: (_args: ValidatedArguments): never => noInstallation('budget.show'),
-  runReport: (_args: ValidatedArguments): never => noInstallation('spend.report'),
-  listRuns: (_args: ValidatedArguments): never => noInstallation('runs.list'),
-  diagnoseRun: (_args: ValidatedArguments): never => noInstallation('run.diagnose'),
-  readRunLogs: (_args: ValidatedArguments): never => noInstallation('run.logs'),
-  runLogLink: (_args: ValidatedArguments): never => noInstallation('run.logLink'),
-  listSecrets: (_args: ValidatedArguments): never => noInstallation('secrets.inventory'),
-  listAccounts: (_args: ValidatedArguments): never => noInstallation('accounts.inventory'),
-  environmentReport: (_args: ValidatedArguments): never => noInstallation('environment.report'),
-  close: async (): Promise<void> => undefined,
-}
+const boundSource = createBoundSource({ installation: activeBinding, appEnv: process.env })
 
 /**
  * openExternalFromShell is the surface's one operation that is not a read of the
@@ -289,18 +285,18 @@ async function openExternalFromShell(raw: unknown): Promise<void> {
 
 /**
  * gated is the whole surface, and it is the join the two modules describe:
- * `handlersFor` answers the twelve operations that read the CLI (here: all of
- * them, with the refusal above), and `startup.compatibility` is joined in here
- * because it is the one operation whose answer is the console's own state rather
- * than a read (`CliBackedHandlers` in `src/source/source.ts` says so from the
- * other side).
+ * `handlersFor` answers the twelve operations that read the CLI (over
+ * `boundSource`, so each of them reaches the active installation's own binary
+ * and nothing else), and `startup.compatibility` is joined in here because it is
+ * the one operation whose answer is the console's own state rather than a read
+ * (`CliBackedHandlers` in `src/source/source.ts` says so from the other side).
  *
  * `reducedModeHandlers` wraps the result in `registerHandlers` below rather than
  * here, so that what this constant holds is the surface and what the wrapper
  * holds is the gate over it.
  */
 const gated: ConsoleHandlers = {
-  ...handlersFor(activeSource, {
+  ...handlersFor(boundSource, {
     openExternal: openExternalFromShell,
     // `installation.current` (Task 3.4b): the picker's store, read at message
     // time. Before the picker exists the answer is `handlersFor`'s own
@@ -420,6 +416,15 @@ async function main(): Promise<void> {
     // The picker awaits this inside its own serial chain (review S6), so a
     // second choose cannot start until the window this one asked for is up.
     onChosen: (chosen) => lifecycle.choose(chosen.compatibility).catch(reportAndQuit),
+    // A removal that took the active installation drops the bound source (Task
+    // 3.4c; the seam 3.4b left for it). Without this the surface would keep
+    // answering from a source built for a binary the store no longer names --
+    // and, worse, would keep its child process alive. `forget` is safe with
+    // nothing bound (the first run) and safe to call twice, so the wiring is
+    // unconditional.
+    onRemoved: () => {
+      void boundSource.forget()
+    },
   })
   // The menu is installed in **every** mode, `refused` included: choosing an
   // installation is how an operator gets out of a refusal, and a console that
