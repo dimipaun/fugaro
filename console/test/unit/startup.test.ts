@@ -1003,6 +1003,14 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     // The kill switch has no operation of its own (C10), so nothing here names
     // one: the field travels inside `live.watch`.
     expect(indexSource).not.toContain('budget.kill')
+    // And no code is injected into the window. The screens are drawn by the one
+    // bundle the document loads (design section 5.1 rule 1: `script-src 'self'`,
+    // no inline script), and `executeJavaScript` is the other way a main process
+    // draws -- one that would put the console's own text into the page outside
+    // the document's policy and outside the preload's frozen surface. The e2e
+    // reads the window for the same claim from the other side (one `<script>`,
+    // and the Live screen's rows drawn by it).
+    expect(indexSource).not.toContain('executeJavaScript')
   })
 
   // The two Task 3.4b cases that stood here were greps of this file's text
