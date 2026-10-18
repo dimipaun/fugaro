@@ -84,12 +84,16 @@ about an answer — are `bad-character`, `bad-key`, `empty-string`, `missing-fie
 `too-long`, `unknown-field`, `wrong-type`, and they are declared in every cell because a
 caller can hand any event any string.
 
-`INPUT_REFUSALS` names the codes that belong to **no** cell, because they are refused before
-the machine's phase can matter: `not-an-object`, `accessor-property`, `internal-error`,
-`invalid-now`, `now-went-backwards`, `now-jumped`, `unknown-event`, `unknown-state`,
-`invalid-state`, `invalid-timeout`, `invalid-max-pending`, `invalid-max-ledger`,
-`invalid-pending`, `invalid-pending-entry`, `duplicate-pending-entry`, `unsorted-pending`,
-`invalid-ledger`, `invalid-ledger-entry`, `duplicate-ledger-entry`, `unsorted-ledger`.
+`INPUT_REFUSALS` names the codes that are about the **input** rather than about the answer,
+refused before the machine's phase can matter: `not-an-object`, `accessor-property`,
+`internal-error`, `invalid-now`, `now-went-backwards`, `now-jumped`, `unknown-event`,
+`unknown-state`, `invalid-state`, `invalid-timeout`, `invalid-max-pending`,
+`invalid-max-ledger`, `invalid-pending`, `invalid-pending-entry`, `duplicate-pending-entry`,
+`unsorted-pending`, `invalid-ledger`, `invalid-ledger-entry`, `duplicate-ledger-entry`,
+`unsorted-ledger`, and — because a state read through them can refuse a *field* as well as an
+event can — `missing-field` and `unknown-field`, which are also declared in every cell. The
+vocabulary test uses this set only to check that no code is unaccounted for; each cell is still
+checked for exact reachability, so a code being in both lists excuses nothing.
 
 That split is what makes the table test able to check **both directions**: every cell's codes
 must be declared *and reached* by a probe (so a rule nothing enforces shows up), and no code
