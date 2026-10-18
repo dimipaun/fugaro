@@ -139,7 +139,7 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 	// own, leniently made resolution, which a repeated run's stored layer can
 	// legitimately disagree with — and a credential that cannot be resolved is
 	// refused rather than guessed at (projectJobAgentAuth).
-	auth, err := projectJobAgentAuth(ctx, spec)
+	auth, err := e.projectJobAgentAuth(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -390,8 +390,28 @@ func checkProjectJobOAuth(profile, auth, selected string) error {
 // A resolution that cannot be made is refused rather than guessed at: an
 // unknown credential is one the job may not be able to serve, and the run would
 // halt inside Cloud Run, past the claim and the budget token, instead of here.
-func projectJobAgentAuth(ctx context.Context, spec *task.Spec) (string, error) {
-	var data []byte
+//
+// The resolution itself is the runner's own — runner.ResolveConfig, the
+// exported core of (*run).resolveConfig, called with the deployment's project
+// exactly as the runner calls it (internal/cli/consumers_test.go states the
+// convention: every consumer resolves the same bytes through that function,
+// never through a copy of its logic). Two of its decisions are the ones this
+// check has to share:
+//
+//   - it parses the carried layer against the *deployment's* project alone and
+//     then computes Applied, the layer's project and gcp_project against the
+//     file's own; a layer that belongs to another project, or to another GCP
+//     project, is not an error there — it simply does not apply, and the file
+//     resolves alone (out.Applied false, the case the runner logs as "project
+//     layer not applied"). Reading the file's own pair as the anchor instead
+//     would refuse such a launch here with "the project layer its task carries
+//     is invalid" although the run would start perfectly well, and would refuse
+//     it on a document the run is not affected by.
+//   - an invalid layer is LayerErr, and the credential is then unknown rather
+//     than the file's: the run itself fails bootstrap on it
+//     (resolveConfig), so a launch that resolved past it would start a run that
+//     cannot begin.
+func (e *cloudEnv) projectJobAgentAuth(ctx context.Context, spec *task.Spec) (string, error) {
 	root := checkoutRoot(ctx, spec.Repo)
 	if root == "" {
 		// launchProjectJobFor only reaches this from a launch that has a
@@ -403,28 +423,14 @@ func projectJobAgentAuth(ctx context.Context, spec *task.Spec) (string, error) {
 	if err != nil {
 		return "", checkProjectJobAuthUnknown(spec.Repo, "the fugaro.yaml it resolves against could not be read ("+oneLineCLI(err.Error())+")")
 	}
-	var layer *config.ProjectLayer
-	if pl := spec.ProjectLayer; pl != nil {
-		// The same parse announceProjectLayer makes of the same bytes: the
-		// stored layer was validated when it was first embedded or first
-		// stored, and this only re-derives it against the anchor of the
-		// file it is resolved over. A layer that no longer parses against
-		// that anchor is refused rather than dropped: resolving without it
-		// would answer the file's own auth, which is exactly the wrong
-		// answer for a run whose task carries a layer that sets one.
-		project, _ := config.ProjectOf(data)
-		gcpProject, _ := config.GCPProjectOf(data)
-		l, ps := config.ParseProjectLayer([]byte(pl.YAML), config.LayerAnchor{Project: project, GCPProject: gcpProject})
-		if len(ps) > 0 {
-			return "", checkProjectJobAuthUnknown(spec.Repo, "the project layer its task carries is invalid ("+oneLineCLI(layerProblemsText(ps))+")")
-		}
-		layer = l
+	out := runner.ResolveConfig(data, spec.ProjectLayer, e.lc.Name)
+	if out.LayerErr != nil {
+		return "", checkProjectJobAuthUnknown(spec.Repo, oneLineCLI(out.LayerErr.Error()))
 	}
-	cfg, _, ps := config.Resolve(data, layer)
-	if len(ps) > 0 {
-		return "", checkProjectJobAuthUnknown(spec.Repo, "its fugaro.yaml and the project layer its task carries do not resolve ("+oneLineCLI(layerProblemsText(ps))+")")
+	if len(out.Problems) > 0 {
+		return "", checkProjectJobAuthUnknown(spec.Repo, "its fugaro.yaml and the project layer its task carries do not resolve ("+oneLineCLI(layerProblemsText(out.Problems))+")")
 	}
-	return cfg.Agent.Auth, nil
+	return out.Cfg.Agent.Auth, nil
 }
 
 // checkProjectJobAuthUnknown refuses a launch onto a shared project job whose

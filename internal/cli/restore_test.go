@@ -405,13 +405,15 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		lc := &localcfg.Config{
 			Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5",
 			RunsBucket: initRunsBucket, Bucket: "gs://" + initRunsBucket,
-			RegistryHost: "us-east5-docker.pkg.dev/" + initProject, LogView: initLogView,
+			Registry: "gcr.io/" + initProject, RegistryHost: "us-east5-docker.pkg.dev/" + initProject, LogView: initLogView,
 			Build:       localcfg.Build{ServiceAccount: "fugaro-build@" + initProject + ".iam.gserviceaccount.com", MachineType: "E2_HIGHCPU_8"},
 			Terraform:   localcfg.Terraform{StateBucket: initStateBucket, Launchers: []string{"user:test@example.com"}, Operators: []string{"user:test@example.com"}},
 			Budget:      &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
 			MaxParallel: 4,
 		}
-		next, left, err := restoreConfig(lc, restoreNewProj)
+		// The two arguments are the same config here; the region subtest below
+		// is the one where they differ.
+		next, left, err := restoreConfig(lc, lc, restoreNewProj)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -423,6 +425,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		}
 		for _, f := range []struct{ what, got string }{
 			{"bucket_url", next.Bucket},
+			{"registry", next.Registry},
 			{"registry_host", next.RegistryHost},
 			{"log_view", next.LogView},
 			{"build.service_account", next.Build.ServiceAccount},
@@ -451,6 +454,29 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		}
 	})
 
+	// The invocation's flags address the old project; they are not the
+	// installation's own settings. --region is applied to the selection
+	// (selectProject's announce → localcfg.Config.Override), and a moved config
+	// written from that copy would make a per-invocation override the
+	// installation's region on disk — and, because the creating path derives the
+	// new project's resources from the moved config, the new project's region
+	// too. The region that moves is the one the file writes.
+	t.Run("the invocation's --region does not become the installation's", func(t *testing.T) {
+		onDisk := &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5"}
+		selected := *onDisk
+		selected.Region = "us-central1" // what --region leaves behind
+		next, _, err := restoreConfig(&selected, onDisk, restoreNewProj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if next.Region != "us-east5" {
+			t.Errorf("the moved config's region is %q, want us-east5 (the file's): --region overrides the project config's for this invocation, and the restore is not a way to change the installation's region", next.Region)
+		}
+		if selected.Region != "us-central1" {
+			t.Errorf("the caller's selection now names %q: the move is a new value, not an edit in place", selected.Region)
+		}
+	})
+
 	t.Run("what the restore cannot place in the new project is refused by name", func(t *testing.T) {
 		for _, tc := range []struct {
 			what string
@@ -460,7 +486,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 			{"a state bucket of its own", &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, Terraform: localcfg.Terraform{StateBucket: "my-own-state"}}, "state_bucket"},
 			{"a runs bucket that is not the default", &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, RunsBucket: "somewhere-else"}, "runs_bucket"},
 		} {
-			_, _, err := restoreConfig(tc.lc, restoreNewProj)
+			_, _, err := restoreConfig(tc.lc, tc.lc, restoreNewProj)
 			if err == nil {
 				t.Errorf("%s was accepted", tc.what)
 				continue
@@ -487,7 +513,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 				RTDBURL:         "https://" + initProject + "-default-rtdb.firebaseio.com",
 				FirebaseProject: initProject, FirebaseAPIKey: fixtureToken("apikey"), TokenSigner: "fugaro-token-signer@" + initProject + ".iam.gserviceaccount.com"},
 		}
-		next, left, err := restoreConfig(lc, restoreNewProj)
+		next, left, err := restoreConfig(lc, lc, restoreNewProj)
 		if err != nil {
 			t.Fatal(err)
 		}

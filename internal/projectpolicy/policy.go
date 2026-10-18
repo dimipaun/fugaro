@@ -584,8 +584,8 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 }
 
 // checkWrittenProfileFields applies the profile rules that read the written
-// document rather than the decoded value: the spelling of a profile's members,
-// and an explicitly empty allow_repos.
+// document rather than the decoded value: a member named twice, the spelling
+// of a profile's members, and an explicitly empty allow_repos.
 //
 // A profile that names no list falls back to the project's allow_repos
 // (§4.1), and the carrier's `omitempty` means the node cannot carry an empty
@@ -603,7 +603,25 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 // empty list becomes the nil slice that means the project's list. It is the
 // same guard, and the same reason, as validProviders' member check: a name
 // that differs only in case is read by the decoder and by nothing else here.
+//
+// The duplicate rule comes first, and it has to read the document rather than
+// the map: encoding/json keeps the last value of a repeated member, so the map
+// below — and the Profile decodeProfileBlock has already made — carry one
+// `provider`, one `secrets` and one `allow_repos` however many the document
+// wrote. A profile is what a shared job's name and credentials are computed
+// from (§10, projectJobSecrets), and the two members a repeat can move in the
+// direction that matters are exactly the ones a reader would not expect to be
+// a choice: a second `provider` picks the provider axis of the job's name, and
+// a second `secrets` is the list the job mounts, so which one a run lands
+// under would depend on the order the keys were written in.
 func checkWrittenProfileFields(name string, raw json.RawMessage) error {
+	members, err := objectMemberNames(raw)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: profiles.%s: %w", name, err)
+	}
+	if err := checkNoDuplicateNames("profiles."+name, members); err != nil {
+		return fmt.Errorf("projectpolicy: %w", err)
+	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return fmt.Errorf("projectpolicy: profiles.%s: %w", name, err)

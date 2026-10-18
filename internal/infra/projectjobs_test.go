@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // projectProfilesLCBlock is the local config block the project-job tests and
@@ -179,7 +180,7 @@ func TestProjectJobEnvIsTheInstallationsAlone(t *testing.T) {
 	// is not per-repository: one App serves the project (owner ruling of
 	// 2026-10-17, plan task 3.5 step 4), so it is resolved once and is the
 	// same in every job.
-	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, RTDBURLEnv, FirebaseAPIKeyEnv, providers.EnvGitHubAppID}
+	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, RTDBURLEnv, FirebaseAPIKeyEnv, providers.EnvGitHubAppID, runner.SecretEnvsVar}
 	for name, j := range jobs {
 		keys := slices.Sorted(maps.Keys(j.Env))
 		for _, k := range keys {
@@ -214,6 +215,20 @@ func TestProjectJobEnvIsTheInstallationsAlone(t *testing.T) {
 				t.Errorf("job %s sets %s plainly and as a secret", name, k)
 			}
 		}
+		// Every mounted variable is named in FUGARO_SECRET_ENVS, and nothing
+		// else is: the runner registers exactly the names in that list with the
+		// redactor (runner.addMountedSecrets), so a mounted key the list omits
+		// is logged wherever a reason quotes the environment, and a name in the
+		// list that is not mounted registers a variable the job does not have.
+		// The per-repository path sets the same variable from the same mounts
+		// (spec.go's ws.Env, readiness.go after a gate).
+		wantSecretEnvs := strings.Join(slices.Sorted(maps.Keys(wantSecrets)), ",")
+		if got := j.Env[runner.SecretEnvsVar]; got != wantSecretEnvs {
+			t.Errorf("job %s sets %s=%q, want %q (every mounted variable, sorted)", name, runner.SecretEnvsVar, got, wantSecretEnvs)
+		}
+		if wantSecretEnvs == "" {
+			t.Errorf("job %s mounts nothing: this test would pass a %s that names nothing", name, runner.SecretEnvsVar)
+		}
 	}
 
 	// With a budget backend the two backend variables are there, and they
@@ -226,8 +241,8 @@ budget: { rtdb_url: https://aurora-default-rtdb.firebaseio.com, firebase_api_key
 		if j.Env[RTDBURLEnv] != "https://aurora-default-rtdb.firebaseio.com" || j.Env[FirebaseAPIKeyEnv] != "AIzaSyA1234567890abcdefghijklmnopqrstu" {
 			t.Errorf("job %s backend env = %v", name, j.Env)
 		}
-		if len(j.Env) != 7 {
-			t.Errorf("job %s sets %d variables, want the four identity ones, the two backend ones and the App's ID: %v", name, len(j.Env), j.Env)
+		if len(j.Env) != 8 {
+			t.Errorf("job %s sets %d variables, want the four identity ones, the two backend ones, the App's ID and %s: %v", name, len(j.Env), runner.SecretEnvsVar, j.Env)
 		}
 		if j.Env[providers.EnvGitHubAppID] != "123456789" {
 			t.Errorf("job %s carries %s=%q, want the App ID the local config records", name, providers.EnvGitHubAppID, j.Env[providers.EnvGitHubAppID])
@@ -339,7 +354,7 @@ func TestProjectJobsOnVertexCarryTheVertexEnvironment(t *testing.T) {
 	}
 	// The four identity variables plus Vertex's two — no budget backend in
 	// this fixture, so nothing else may appear.
-	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, VertexRegionEnv, VertexProjectEnv, providers.EnvGitHubAppID}
+	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, VertexRegionEnv, VertexProjectEnv, providers.EnvGitHubAppID, runner.SecretEnvsVar}
 	for name, j := range jobs {
 		if !j.Vertex {
 			t.Errorf("job %s is on Vertex: grant and environment disagree", name)

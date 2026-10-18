@@ -3,6 +3,7 @@ package projectpolicy
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 // CloneURLs is the clone_urls block of a policy: the clone URL the project
@@ -48,18 +49,49 @@ func (cs CloneURLs) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON reads the block off a node: one member per repository,
 // unescaped back into the canonical name. The member name is in the error, so a
 // refusal names the entry rather than only the key.
+//
+// Two keys that are one repository are refused, for the reason a repeated
+// member is refused everywhere else in this package: the URL a run clones from
+// would otherwise be whichever of them encoding/json or this loop happened to
+// keep. A key written twice is the plain case (checkNoDuplicateNames); the
+// other is the escaped spelling beside the literal one, or two spellings the
+// same canonical name comes out of — the block's keys are not canonical names
+// on the node (§CloneURLs), and unescKey maps every escaped form of one name
+// back onto it, so `github/acme/app` and `github%2Facme%2Fapp` are one entry
+// written two ways. Prices refuses both for the identical scheme; the clone URL
+// is the more consequential of the two — it is where a run fetches its
+// repository from, while a price is what it is billed by.
 func (cs *CloneURLs) UnmarshalJSON(raw []byte) error {
 	var entries map[string]string
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return err
 	}
+	// The names in the order the document writes them, duplicates included:
+	// the map above has already folded a repeated key away.
+	names, err := objectMemberNames(json.RawMessage(raw))
+	if err != nil {
+		return err
+	}
+	if err := checkNoDuplicateNames("clone_urls", names); err != nil {
+		return fmt.Errorf("projectpolicy: %w", err)
+	}
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys) // a stable order, so the refusal below names the same pair every time
 	out := make(CloneURLs, len(entries))
-	for key, url := range entries {
+	spelled := make(map[string]string, len(entries)) // canonical name -> the key it was written under
+	for _, key := range keys {
 		canonical, err := unescKey(key)
 		if err != nil {
 			return fmt.Errorf("%q: %w", key, err)
 		}
-		out[canonical] = url
+		if first, dup := spelled[canonical]; dup {
+			return fmt.Errorf("%q and %q are both the repository %q, and a repository is cloned from one URL: the URL this run clones from would otherwise depend on the order the block's keys are in", first, key, canonical)
+		}
+		spelled[canonical] = key
+		out[canonical] = entries[key]
 	}
 	*cs = out
 	return nil

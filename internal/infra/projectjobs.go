@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // ProjectJob is one shared project job: one entry of the installation root's
@@ -115,6 +116,16 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 		if err != nil {
 			return nil, err
 		}
+		// Every variable a secret is mounted as, so the runner registers them
+		// all with the redactor before bootstrap: runner.addMountedSecrets
+		// reads this list and nothing else, and a job whose mounted key is not
+		// named here logs it wherever a reason quotes the environment. The
+		// per-repository path sets the same variable from the same mount
+		// (spec.go's ws.Env, and readiness.go after a gate), so a shared job
+		// that left it out would be the one job of the installation whose
+		// secrets are not redacted. It is derived from secretEnv, never
+		// written by hand, so the two cannot drift.
+		env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(secretEnv)), ",")
 		// The account axis: empty until phase 5, because no profile may
 		// mount a Claude OAuth token yet — projectpolicy.validProfiles
 		// refuses such a profile above, which is the one rule publish, this
@@ -212,8 +223,12 @@ func profilesAsPolicy(profiles map[string]config.JobProfile) map[string]projectp
 	return out
 }
 
-// projectJobEnv is a project job's plain environment: the installation's
-// identity and the budget backend's address and web key, and nothing else.
+// projectJobEnv is the installation's half of a project job's plain
+// environment: its identity and the budget backend's address and web key, and
+// nothing else. ProjectJobs adds the two values that follow from the profile —
+// the GitHub App's ID (non-secret, owner ruling of 2026-10-17) and
+// runner.SecretEnvsVar, the list of variables the profile's secrets are
+// mounted as.
 //
 // It is deliberately *not* budgetEnv, which sets per-repository values too
 // (the token ceiling, the model allow-list, the price overrides and the

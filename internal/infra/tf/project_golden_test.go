@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // installationFixture is the installation root's golden tfvars (the one
@@ -38,7 +39,8 @@ type projectJobFixture struct {
 		Title      string `json:"title"`
 		Expression string `json:"expression"`
 	} `json:"token_condition"`
-	Env map[string]string `json:"env"`
+	Env       map[string]string `json:"env"`
+	SecretEnv map[string]string `json:"secret_env"`
 }
 
 func installationGoldenFixture(t *testing.T) installationFixture {
@@ -233,6 +235,26 @@ func TestProjectJobCarriesTheGitHubAppID(t *testing.T) {
 			if keyMaterial(v) {
 				t.Errorf("%s sets %s to what looks like key material: the App's private key is a Secret Manager secret, never an environment value", mod, k)
 			}
+		}
+		// FUGARO_SECRET_ENVS names every variable the job mounts as a secret, so
+		// the runner registers them all with the redactor before bootstrap
+		// (runner.addMountedSecrets reads this list and nothing else). A job that
+		// mounts a key and does not name it here logs that key wherever a reason
+		// quotes the environment, so the two halves are checked against each
+		// other in both places the value exists: the fixture internal/infra
+		// writes, and the environment Terraform deploys from it.
+		wantSecretEnvs := strings.Join(slices.Sorted(maps.Keys(j.SecretEnv)), ",")
+		if wantSecretEnvs == "" {
+			t.Errorf("the fixture's job %s mounts no secret, so this check would pass a %s that names nothing", name, runner.SecretEnvsVar)
+		}
+		if got := j.Env[runner.SecretEnvsVar]; got != wantSecretEnvs {
+			t.Errorf("the fixture's job %s sets %s=%q, want %q (every mounted variable, sorted)", name, runner.SecretEnvsVar, got, wantSecretEnvs)
+		}
+		if got := plain[runner.SecretEnvsVar]; got != wantSecretEnvs {
+			t.Errorf("%s deploys %s=%q, want the fixture's %q", mod, runner.SecretEnvsVar, got, wantSecretEnvs)
+		}
+		if _, dup := secret[runner.SecretEnvsVar]; dup {
+			t.Errorf("%s mounts %s as a secret: it names the mounted variables and is not one", mod, runner.SecretEnvsVar)
 		}
 	}
 	if seen == 0 {
