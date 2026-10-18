@@ -11,8 +11,157 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
+
+// refSpec is the harness's task with the run started from ref, as
+// `fugaro run --ref console` starts one.
+func refSpec(ref string) *task.Spec {
+	return &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: ref, Task: "Add a feature"}
+}
+
+// commitOnBranch commits files onto a new branch name of the remote, cut
+// from main: a person's own work, already on the branch a run starts from.
+func commitOnBranch(t *testing.T, remote, name string, files map[string]string) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "seed")
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", remote, dir)
+	testutil.WriteFiles(t, dir, files)
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "a person's work on "+name)
+	testutil.Git(t, dir, "push", "--quiet", "origin", "HEAD:refs/heads/"+name)
+}
+
+// consoleHarness is a run started from the branch console, which already
+// carries workflow files main does not have — the shape of the reported
+// bug: the owner committed .github/workflows/console-*.yml on console, and
+// `fugaro run --ref console` is cut from it.
+func consoleHarness(t *testing.T) *harness {
+	t.Helper()
+	h := newHarness(t, "", refSpec("console"))
+	commitOnBranch(t, h.remote, "console", map[string]string{
+		".github/workflows/console-tests.yml":   "on: push\n",
+		".github/workflows/console-release.yml": "on: release\n",
+		"pipeline.yml":                          "steps:\n",
+	})
+	return h
+}
+
+// consoleStep runs script — which edits, adds, deletes or moves a file and
+// commits it — and verifies, the way implement does for a source file.
+func consoleStep(script string) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, script)
+		return implementVerified(t, ctx, req)
+	}
+}
+
+// A run cut from a branch that already carries workflow files main does
+// not have changed none of them, so it is pushed as any run is: the guard
+// compares against the commit the run was cut from, not the base branch.
+func TestRunFromARefWithWorkflowFilesIsNotRefused(t *testing.T) {
+	h := consoleHarness(t)
+	// A refusal would end the run non-zero without pushing (endRefused), so
+	// the run's own success is the guard letting the push through.
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status == runstore.StatusInfraError {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.PushedHead == "" || !remoteHasBranch(t, h) || rec.PushedHead != rec.HeadSHA {
+		t.Fatalf("the run's work was not pushed: %+v", rec)
+	}
+	// The branch that landed carries the owner's workflow files and the
+	// run's own commit: nothing was stripped off it.
+	names := testutil.Git(t, h.remote, "ls-tree", "-r", "--name-only", "refs/heads/"+rec.Branch)
+	for _, want := range []string{"feature.txt", ".github/workflows/console-tests.yml", ".github/workflows/console-release.yml"} {
+		if !strings.Contains(names, want) {
+			t.Errorf("the pushed tree lacks %s: %q", want, names)
+		}
+	}
+}
+
+// The run's own changes on that same ref are still caught, and named.
+func TestWorkflowChangesOnTheRunsOwnRefAreRefused(t *testing.T) {
+	// want is the file the refusal must name; quiet is one of the owner's
+	// workflow files this run did not touch, which it must not name.
+	cases := []struct {
+		name, script, want, quiet string
+	}{
+		{
+			"edited",
+			"echo 'on: pull_request' >> .github/workflows/console-tests.yml && git add -A && git commit -qm 'Edit CI'",
+			".github/workflows/console-tests.yml", ".github/workflows/console-release.yml",
+		},
+		{
+			"deleted",
+			"git rm -q .github/workflows/console-release.yml && git commit -qm 'Drop CI'",
+			".github/workflows/console-release.yml", ".github/workflows/console-tests.yml",
+		},
+		{
+			"added",
+			"echo 'on: push' > .github/workflows/new.yml && git add -A && git commit -qm 'Add CI'",
+			".github/workflows/new.yml", ".github/workflows/console-release.yml",
+		},
+		{
+			"renamed in",
+			"git mv pipeline.yml .github/workflows/pipeline.yml && git commit -qm 'Move it in'",
+			".github/workflows/pipeline.yml", ".github/workflows/console-tests.yml",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := consoleHarness(t)
+			marker := refuseAll(t, h.remote, "this hook must never run")
+			rec := runRefused(t, h, consoleStep(c.script), review("ship", 0))
+			if !strings.Contains(rec.Reason, "never has permission to change workflow files") {
+				t.Fatalf("reason = %q", rec.Reason)
+			}
+			if !strings.Contains(rec.Reason, c.want) {
+				t.Fatalf("reason = %q, want it to name %s", rec.Reason, c.want)
+			}
+			if strings.Contains(rec.Reason, c.quiet) {
+				t.Fatalf("reason = %q, and it blames the run for %s, which it did not touch", rec.Reason, c.quiet)
+			}
+			if exists(marker) || remoteHasBranch(t, h) {
+				t.Fatal("a push was attempted")
+			}
+			readWork(t, h)
+		})
+	}
+}
+
+// The default-branch case is unchanged: a person's workflow file that was
+// already on main before the run started is not the run's either.
+func TestRunOnTheBaseBranchIgnoresAPersonsWorkflowFile(t *testing.T) {
+	h := newHarness(t, "", nil)
+	commitOnBranch(t, h.remote, "main", map[string]string{".github/workflows/person.yml": "on: push\n"})
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status == runstore.StatusInfraError {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.PushedHead == "" || !remoteHasBranch(t, h) {
+		t.Fatalf("the run's own work was not pushed: %+v", rec)
+	}
+}
+
+// The run's own base is the commit its branch was cut from, recorded at
+// bootstrap so the guard's comparison is auditable.
+func TestTheRunRecordsTheCommitItWasCutFrom(t *testing.T) {
+	h := consoleHarness(t)
+	console := testutil.Git(t, h.remote, "rev-parse", "refs/heads/console")
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.StartSHA != console {
+		t.Fatalf("recorded start_sha = %q, want console's tip %s", rec.StartSHA, console)
+	}
+	stored, rerr := h.store.ReadRecord(context.Background())
+	if rerr != nil || stored.StartSHA != console {
+		t.Fatalf("stored start_sha = %q, %v", stored.StartSHA, rerr)
+	}
+}
 
 // workflowCommit commits a workflow file and a source file, then verifies.
 func workflowCommit() step {

@@ -61,6 +61,7 @@
       "started_at": "<time>"
     }
   ],
+  "start_sha": "<sha>",
   "started_at": "<time>",
   "status": "succeeded",
   "verify": [

@@ -1023,8 +1023,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 		r.rec.Branch = branch
 		// The start commit, read at once and locally: a checkpoint never
-		// pushes a tip at or behind it (nothing of the agent's yet).
+		// pushes a tip at or behind it (nothing of the agent's yet), and it
+		// is the base the workflow guard measures the run's changes
+		// against (workBase) — the task's ref, which is not the base branch
+		// when the run was started from another one. Recorded as it is read,
+		// so what the guard compared against is in the record.
 		r.startSHA, startErr = repo.CommitOf(ctx, "refs/heads/"+branch)
+		r.rec.StartSHA = r.startSHA
 		data, err := os.ReadFile(filepath.Join(r.d.WorkDir, "fugaro.yaml"))
 		if err != nil {
 			return fmt.Errorf("reading fugaro.yaml at %s: %w", spec.Ref, err)

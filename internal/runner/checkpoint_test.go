@@ -109,6 +109,34 @@ func TestCheckpointPushesCommittedWorkMidStage(t *testing.T) {
 	}
 }
 
+// TestCheckpointOnARefWithWorkflowFilesPushesItsOwnWork: the checkpoint
+// guard asks the same question finalize's does — what did this run change —
+// so it is measured against the commit the run was cut from too. A run
+// started from console, which already carries a workflow file main does
+// not have (the reported bug), keeps its checkpoints and pushes them.
+func TestCheckpointOnARefWithWorkflowFilesPushesItsOwnWork(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	commitOnBranch(t, g.remote, "console", map[string]string{
+		".github/workflows/console-tests.yml": "on: push\n",
+	})
+	setRef(t, g.harness, *refSpec("console"))
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		head := commitWIP(t, req, "wip")
+		g.settle()
+		if pushedHead(t, g.harness) != head || remoteTip(t, g.harness) != head {
+			t.Errorf("the checkpoint was refused although the run changed no workflow file")
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := g.run(t, long, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if strings.Contains(g.logs.String(), "no more checkpoint pushes") {
+		t.Fatalf("the checkpoints were stopped:\n%s", g.logs)
+	}
+}
+
 // TestCheckpointIgnoresALocalBaseRefTheAgentMoved: the agent's own git (a
 // fetch of the base branch, or an adversarial update-ref) can move the
 // local origin/<base> tracking ref forward during the stage. Checkpoints

@@ -22,12 +22,29 @@ const workSaveTimeout = 2 * time.Minute
 // workFile is the bundle's name in the run's prefix.
 const workFile = "work.bundle"
 
-// workBase is the revision the run's own commits start after: the base
-// branch for a first run, and for a follow-up the commit it started from,
-// so commits people put on the branch earlier are not the run's.
+// workBase is the revision the run's own changes start after: the commit
+// the run was cut from, so nothing a person put on the branch earlier is
+// the run's. For a follow-up that is the pull request's head when it
+// started; for a first run it is the task's ref as bootstrap read it right
+// after the checkout — NOT the base branch, which is another branch
+// whenever the run was started from one (--ref console with base_branch
+// main): measured against main, a run cut from console looks like it
+// added every workflow file console already carried, and the push was
+// refused for files the run never touched.
+//
+// A full commit SHA, never a ref name: the agent controls the checkout
+// while a stage runs and could repoint origin/<base> at will
+// (checkpoint.go's C6a), and the SHA was read before the agent ever ran.
+//
+// The base branch stays the fallback for the one case that has no start
+// commit — a start that could not be resolved at bootstrap (startErr),
+// which is also the case checkpoints are off for.
 func (r *run) workBase() string {
 	if r.follow != nil {
 		return r.follow.startSHA
+	}
+	if r.startSHA != "" {
+		return r.startSHA
 	}
 	return "origin/" + r.cfg.Git.BaseBranch
 }
