@@ -238,7 +238,11 @@ func projectJobEnv(lc *localcfg.Config, bucket string, vertex bool) map[string]s
 //
 // The Bitbucket token is the one this function refuses itself, because
 // Bitbucket stays per-repository in phase 3 (see ProjectJobs) and that is not
-// a rule about profiles a policy would have an opinion on.
+// a rule about profiles a policy would have an opinion on. It is reached on a
+// profile of a provider a shared job serves — a GitHub profile mounting it,
+// which would hand a job every repository of a Bitbucket workspace the token
+// reaches. A Bitbucket profile mounting it never gets here: ProjectJobs skips
+// such a profile before this call, and no job of it exists to hold anything.
 //
 // What a shared job does not honour for the secrets it does mount is the
 // project_secrets entry's allow_data_to: the entry decides that the container
