@@ -6,9 +6,13 @@ package cli
 //
 // 70b is the third of the redesign's three owner-run live checks and the one part P5 owed
 // the register: P5 merged in #603 and shipped the ordering gate (website/test/fold.mjs)
-// and the word ceilings (website/test/budget.mjs) but not the check that measures the fold
-// itself, which the register's note under "Check 70 is the website redesign's" recorded as
-// not in the file yet. These two tests pin the two halves of the entry the way
+// and its own revision of the word ceiling's lead reading (website/test/budget.mjs, which
+// now measures the lead as the region between the `h1` and the first `h2`), but not the
+// check that measures the fold itself, which the register's note under "Check 70 is the
+// website redesign's" recorded as not in the file yet. The ceilings themselves are P4's
+// (#572), which the plan's §3 says in as many words ("part P4 of the plan writes the word
+// ceiling either way"), and the check's section attributes the gates to no part at all.
+// These two tests pin the two halves of the entry the way
 // TestWebsiteChecklistHasCheck69aAnd69b pins the website plan's 69a and 69b -- the row a
 // reader meets first and the section it points at -- because a check that exists as a
 // section but not as a row is a check nobody reads first, and a row with no section is a

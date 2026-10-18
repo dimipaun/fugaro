@@ -4272,11 +4272,13 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
    path's first command, and whichever P5 shipped is what this step reads and not a command typed
    here. At 390 × 844, read `firstCommandBottom` for `/` — the script's key is `main pre`'s bottom
    — and the copy control's own rectangle beside it (the control the markup wraps each command in,
-   `[data-copy] button`). The control is P6's and it sits above its command, so a command whose
-   own bottom is inside the first screen while its button is not is a command a reader can see and
-   cannot copy — which is why this step reads both rectangles and not the command's alone.
-   **FACT:** the command as rendered, its bottom in pixels, the control's top and bottom, and
-   whether the whole of both is above 844.
+   `[data-copy] button`). The control is P6's and it is in the flow in a row **above** its command,
+   so the command's own bottom is the later of the two and a command inside the first screen
+   carries its control in with it. What the second rectangle is read for is the other arrangement:
+   a control that has moved **below** its command — the case the Fails-when block below names —
+   where the command is visible and the button is not, and which no reading of the command's own
+   rectangle can see. **FACT:** the command as rendered, its bottom in pixels, the control's top
+   and bottom, and whether both are above 844.
 
 3. **Getting Started's first command block is above the fold on both sizes.** At 390 × 844 and at
    1280 × 900, read `firstCommandBottom` for `/getting-started/` and check the first command
