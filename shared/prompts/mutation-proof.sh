@@ -359,6 +359,25 @@ run "a prompt never announced is always due" \
   "  if (entry.announcedAt === null) return true;" \
   "  if (entry.announcedAt === null) return false;"
 
+# A prompt announced at its current stage is not due again until its hour has
+# passed. The branch looks redundant and is not: a prompt's `at` may lead the
+# clock by up to the future tolerance, so at stage 0 the reminder time can still
+# be in the future, and without the branch the question is re-read at every
+# pause (and, under `widen`, keeps interrupting).
+run "a prompt announced at its current stage is not due again" \
+  "  if (stage === 0) return false;" \
+  "  if (false) return false;"
+
+# The future tolerance takes P1.1's 24-hour ceiling, not the window's seven
+# days: it is the bound that decides how far a prompt's `at` may lead the clock.
+run "the future tolerance takes P1.1's ceiling, not the window's" \
+  "  if (!isIntegerInRange(futureToleranceMs, 0, MAX_FUTURE_TOLERANCE_MS)) {" \
+  "  if (!isIntegerInRange(futureToleranceMs, 0, MAX_WINDOW_MS)) {"
+
+run "a handed-back queue's future tolerance takes the same ceiling" \
+  "  if (!isIntegerInRange(values.futureToleranceMs, 0, MAX_FUTURE_TOLERANCE_MS)) {" \
+  "  if (!isIntegerInRange(values.futureToleranceMs, 0, MAX_WINDOW_MS)) {"
+
 run "a prompt whose reminder has come round is due again" \
   "  return entry.announcedAt < reminderAt(entry.prompt.at, stage);" \
   "  return false;"

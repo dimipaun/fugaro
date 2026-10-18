@@ -106,6 +106,7 @@ import {
   DEFAULT_FUTURE_TOLERANCE_MS,
   DEFAULT_WINDOW_MS,
   KIND,
+  MAX_FUTURE_TOLERANCE_MS,
   MAX_PROMPT_TTL_MS,
   MAX_WINDOW_MS,
   MIN_WINDOW_MS,
@@ -391,16 +392,22 @@ function reminderAt(at, stage) {
  * announcement made after a reminder's due time counts as that reminder's, so a
  * prompt announced late is not announced twice for one stage.
  */
-// A prompt announced before its first reminder is not due again until the hour
-// has passed, and the arithmetic says so on its own: at stage 0 the reminder
-// time is `at - 23h`, which no announcement can precede -- an announcement is
-// made at the queue's own `now`, and a prompt's `at` is never more than the
-// future tolerance above it. So there is no stage-0 branch here to be
-// redundant; a guard that cannot be told apart from the fall-through is a
-// guard no test can defend.
+// What is due: never announced, or this stage's reminder not yet spoken.
+//
+// The stage-0 branch is not redundant, and an earlier version of this module
+// removed it on the argument that the fall-through already answers false --
+// that at stage 0 the reminder time is `at - 23h`, which no announcement can
+// precede. The argument does not hold against this module's own bounds: a
+// prompt may be written up to `futureToleranceMs` AHEAD of the clock (P1.1's
+// 24-hour ceiling, and a hand-built queue may carry any `announcedAt`), and for
+// an `at` between 23 and 24 hours ahead the stage-0 reminder time is still in
+// the future, so the fall-through would report the question due at every pause
+// and `announce` would re-speak it for ever. Stage 0 means one announcement,
+// its own; the hour has to pass before anything is due again.
 function isDue(entry, now) {
   if (entry.announcedAt === null) return true;
   const stage = reminderStage(entry.prompt.at, now);
+  if (stage === 0) return false;
   return entry.announcedAt < reminderAt(entry.prompt.at, stage);
 }
 
@@ -462,7 +469,10 @@ export function initialQueue(options = {}) {
 
   const futureToleranceMs =
     values.futureToleranceMs === undefined ? DEFAULT_FUTURE_TOLERANCE_MS : values.futureToleranceMs;
-  if (!isIntegerInRange(futureToleranceMs, 0, MAX_WINDOW_MS)) {
+  // P1.1's ceiling, imported rather than restated: this is the bound that says
+  // how far a prompt's `at` may lead the clock, and the reminder schedule is
+  // read off the same clock (see `isDue`), so the two must not be free to drift.
+  if (!isIntegerInRange(futureToleranceMs, 0, MAX_FUTURE_TOLERANCE_MS)) {
     return refuse(REFUSAL.INVALID_FUTURE_TOLERANCE, 'futureToleranceMs');
   }
 
@@ -518,7 +528,7 @@ function readQueue(value, where) {
   if (!isIntegerInRange(values.maxPending, MIN_MAX_PENDING, MAX_MAX_PENDING)) {
     return refuse(REFUSAL.INVALID_QUEUE, 'maxPending');
   }
-  if (!isIntegerInRange(values.futureToleranceMs, 0, MAX_WINDOW_MS)) {
+  if (!isIntegerInRange(values.futureToleranceMs, 0, MAX_FUTURE_TOLERANCE_MS)) {
     return refuse(REFUSAL.INVALID_QUEUE, 'futureToleranceMs');
   }
   if (!Array.isArray(values.prompts) || values.prompts.length > values.maxPending) {

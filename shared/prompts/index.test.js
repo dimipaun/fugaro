@@ -22,6 +22,7 @@ import assert from 'node:assert/strict';
 import {
   initialState,
   KIND as MAILBOX_KIND,
+  MAX_FUTURE_TOLERANCE_MS,
   step,
 } from '../mailbox/index.js';
 import { validateMessage } from '../mailbox-schema/index.js';
@@ -130,6 +131,14 @@ test('a queue refuses what it cannot read, one code per fault', () => {
     [{ now: T0, account: 'a', maxPending: 0 }, REFUSAL.INVALID_MAX_PENDING, 'maxPending'],
     [{ now: T0, account: 'a', maxPending: MAX_MAX_PENDING + 1 }, REFUSAL.INVALID_MAX_PENDING, 'maxPending'],
     [{ now: T0, account: 'a', futureToleranceMs: -1 }, REFUSAL.INVALID_FUTURE_TOLERANCE, 'futureToleranceMs'],
+    // P1.1's ceiling for the same field, imported rather than restated, and
+    // checked at the boundary: this is how far a prompt's `at` may lead the
+    // clock, and the reminder schedule is read off that clock.
+    [
+      { now: T0, account: 'a', futureToleranceMs: MAX_FUTURE_TOLERANCE_MS + 1 },
+      REFUSAL.INVALID_FUTURE_TOLERANCE,
+      'futureToleranceMs',
+    ],
     [{ now: T0, account: '' }, REFUSAL.INVALID_ACCOUNT, 'account'],
     [{ now: T0, account: 7 }, REFUSAL.INVALID_ACCOUNT, 'account'],
     [{ now: 0, account: 'a' }, REFUSAL.INVALID_NOW, 'now'],
@@ -612,6 +621,41 @@ test('a pause speaks what is due, then the count alone, then escalates', () => {
   assert.equal(sixth.spoken[0].stage, 3, 'the day-two reminder');
 });
 
+test('a prompt announced at its current stage is not due again until its hour', () => {
+  // The reachable case, and the reason the stage-0 branch exists: a prompt may
+  // be written up to the future tolerance AHEAD of the clock. An `at` inside
+  // the last hour of that tolerance has its stage-0 reminder time (`at - 23h`,
+  // which the day-long interval makes land in the future) still ahead of the
+  // announcement, so without the branch the question would be reported due at
+  // every pause and read out for ever.
+  const built = enqueue(makeQueue({ futureToleranceMs: MAX_FUTURE_TOLERANCE_MS }), {
+    now: T0,
+    prompt: promptMessage({ at: T0 + MAX_FUTURE_TOLERANCE_MS }),
+  });
+  assert.equal(built.ok, true, JSON.stringify(built));
+
+  const first = announce(built.queue, { now: T0 + MINUTE });
+  assert.equal(first.spoken.length, 1, 'the first pause reads the question');
+  assert.equal(first.spoken[0].stage, 0);
+  assert.equal(first.spoken[0].announcedAt, T0 + MINUTE);
+
+  const second = announce(first.queue, { now: T0 + 2 * MINUTE });
+  assert.equal(second.spoken.length, 0, 'the user has just heard it: never twice');
+  const listed = pending(second.queue, { now: T0 + 2 * MINUTE });
+  assert.equal(listed.pending[0].due, false);
+  assert.equal(listed.pending[0].stage, 0);
+  // And widening does not turn a question just read into an interruption.
+  assert.equal(
+    evaluateInterrupt({ queue: second.queue, now: T0 + 2 * MINUTE, switch: SWITCH.WIDEN }).reason,
+    null,
+  );
+
+  // The hour after the prompt's own `at`, it comes round like any other.
+  const third = announce(second.queue, { now: T0 + MAX_FUTURE_TOLERANCE_MS + HOUR + 1 });
+  assert.equal(third.spoken.length, 1);
+  assert.equal(third.spoken[0].stage, 1);
+});
+
 test('pending lists per installation, escalated first', () => {
   // p1 was asked at the start and announced at the first pause, so by the
   // listing its hour has passed and it has escalated; p2 and p3 were asked a
@@ -923,6 +967,7 @@ test('a queue handed back mutated is refused, not trusted', () => {
     [{ ...queue, maxPending: 0 }, REFUSAL.INVALID_QUEUE],
     [{ ...queue, account: '' }, REFUSAL.INVALID_QUEUE],
     [{ ...queue, nope: 1 }, REFUSAL.UNKNOWN_FIELD],
+    [{ ...queue, futureToleranceMs: MAX_FUTURE_TOLERANCE_MS + 1 }, REFUSAL.INVALID_QUEUE],
     [{ ...queue, prompts: [queue.prompts[0], queue.prompts[0]] }, REFUSAL.DUPLICATE_ENTRY],
     [{ ...queue, prompts: [{ ...queue.prompts[0], prompt: { ...queue.prompts[0].prompt, mac: 'zz' } }] }, REFUSAL.INVALID_ENTRY],
     [{ ...queue, prompts: [{ ...queue.prompts[0], destructive: 'yes' }] }, REFUSAL.INVALID_ENTRY],
