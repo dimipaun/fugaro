@@ -645,27 +645,38 @@ func TestLaunchKeepsAnotherProvidersRepositoryOnItsOwnJob(t *testing.T) {
 	}
 }
 
-// TestLaunchRefusesABitbucketProfile: a profile whose provider is bitbucket
-// passes projectpolicy and is published copy by copy from the local config,
-// but `fugaro init` refuses to deploy one (a Bitbucket credential cannot be
-// scoped to one project's repositories -- the owner's ruling of 2026-10-15,
-// design §4.1, D5 as amended, internal/infra's ProjectJobs). The launcher used
-// to compute the shared job's name from such a profile all the same: a
-// Bitbucket repository selecting it matches the profile's provider, so the
-// comparison beside this check sees no mismatch, and the launch went to a
-// Cloud Run job nothing deployed -- after the claim and the budget token --
-// where the 404's message blames `fugaro init` for a refusal it made on
-// purpose. The launch is refused here instead, naming the profile and the real
-// reason, and the per-repository fallback is not an option: it would run the
-// workflow while silently dropping the profile it selected.
+// TestLaunchKeepsABitbucketProfileOnItsOwnJob: a profile whose provider is
+// bitbucket passes projectpolicy and is published copy by copy from the local
+// config, and `fugaro init` deploys no job for it (a Bitbucket credential
+// cannot be scoped to one project's repositories -- the owner's ruling of
+// 2026-10-15, design §4.1, D5 as amended, internal/infra's ProjectJobs, which
+// *skips* such a profile rather than refusing the installation).
 //
-// Mutation (run, restore): drop the checkProjectJobProvider call in
-// launchProjectJobFor -- the launch makes a jobs.run call for the profile's
-// undeployed job.
-func TestLaunchRefusesABitbucketProfile(t *testing.T) {
+// A Bitbucket repository selecting it is the case the provider comparison
+// beside this guard cannot catch: the repository's provider agrees with the
+// profile's, so there is no mismatch to see, and the launcher used to compute
+// the name of a Cloud Run job nothing deployed -- after the claim and the
+// budget token -- where the 404 blames `fugaro init`. infra.SharedJobProvider
+// is the fact both sides read, and the launch keeps the repository on the
+// per-repository job it has always had, exactly as a repository on another
+// provider does. Refusing the launch instead was tried and rejected (the
+// owner's ruling of 2026-10-18): the policy admits such a profile and the
+// publisher copies it, so a document `fugaro project policy publish` accepts
+// would hold a workflow no launch of which could ever run.
+//
+// Mutation (run, restore): drop `!infra.SharedJobProvider(pr.Provider)` from
+// the guard -- the launch makes its jobs.run call on the profile's undeployed
+// shared job instead of the repository's own.
+func TestLaunchKeepsABitbucketProfileOnItsOwnJob(t *testing.T) {
 	f := newProjectJobFixture(t)
 	const bbRepo = "acme/bb"
 	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
+	bbSlug, err := task.Slug("bitbucket", bbRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perRepo := gcp.JobName(bbSlug, "web")
+	f.run.AddJob(perRepo, "4", "8Gi")
 	// The policy carries both profiles, as a publish from a local config that
 	// declares a bitbucket one leaves it, and admits the repository.
 	publishPolicy(t, f.launchBudgetFixture, `{"version":2,"allow_repos":["github/acme/*","bitbucket/acme/*"],`+
@@ -681,17 +692,12 @@ func TestLaunchRefusesABitbucketProfile(t *testing.T) {
 	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
 	t.Chdir(dir)
 
-	_, _, err := execute(t, "run", "--repo", bbRepo, "--run-id", "20261017-100000-bbbb", "Add a feature")
-	if err == nil {
-		t.Fatal("a launch on a bitbucket profile was accepted")
+	if _, _, err := execute(t, "run", "--repo", bbRepo, "--run-id", "20261017-100000-bbbb", "Add a feature"); err != nil {
+		t.Fatalf("launch on a bitbucket profile: %v", err)
 	}
-	for _, want := range []string{"profile \"bb\"", "bitbucket", "per-repository jobs"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not say %q: %v", want, err)
-		}
-	}
-	if calls := f.run.RunRequests(); len(calls) != 0 {
-		t.Errorf("the launch reached Cloud Run anyway: %+v", calls)
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != perRepo {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s: no shared job serves the bitbucket profile %q, so the launch must never reach the job the github profile's name would compute", len(calls), calls, perRepo, "bb")
 	}
 }
 

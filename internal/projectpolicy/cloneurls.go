@@ -50,25 +50,26 @@ func (cs CloneURLs) MarshalJSON() ([]byte, error) {
 // unescaped back into the canonical name. The member name is in the error, so a
 // refusal names the entry rather than only the key.
 //
-// Two keys that are one repository are refused, for the reason a repeated
-// member is refused everywhere else in this package: the URL a run clones from
-// would otherwise be whichever of them encoding/json or this loop happened to
-// keep. A key written twice is the plain case (checkNoDuplicateNames); the
-// other is the escaped spelling beside the literal one, or two spellings the
-// same canonical name comes out of — the block's keys are not canonical names
-// on the node (§CloneURLs), and unescKey maps every escaped form of one name
-// back onto it, so `github/acme/app` and `github%2Facme%2Fapp` are one entry
-// written two ways. Prices refuses both for the identical scheme; the clone URL
-// is the more consequential of the two — it is where a run fetches its
-// repository from, while a price is what it is billed by.
+// The block's own keys are held to a rule of their own, exactly as model_prices
+// is (Prices.UnmarshalJSON): one repository may be named once, whether it is
+// repeated under one key or written under two spellings of its name
+// (checkNoDuplicateNames, then the unescaped canonical names). The two
+// spellings are not hypothetical — the escape is only what this package writes,
+// and a key with no escape in it is read as it is, so a hand-written node
+// carrying "github/acme/app" beside the "github%2Facme%2Fapp" this package
+// writes folds both members onto one canonical repository. Which of the two
+// URLs survived would then be whichever member the map's iteration happened to
+// see last: a node whose *validation* (validCloneURLs, entry by entry) and
+// whose run's clone URL both depend on Go's map order, so the same bytes are
+// accepted on one read and refused on the next. A repository named twice is
+// refused rather than read, and the keys are walked in sorted order so the
+// refusal names the same pair every time.
 func (cs *CloneURLs) UnmarshalJSON(raw []byte) error {
 	var entries map[string]string
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return err
 	}
-	// The names in the order the document writes them, duplicates included:
-	// the map above has already folded a repeated key away.
-	names, err := objectMemberNames(json.RawMessage(raw))
+	names, err := objectMemberNames(raw)
 	if err != nil {
 		return err
 	}
@@ -88,7 +89,7 @@ func (cs *CloneURLs) UnmarshalJSON(raw []byte) error {
 			return fmt.Errorf("%q: %w", key, err)
 		}
 		if first, dup := spelled[canonical]; dup {
-			return fmt.Errorf("%q and %q are both the repository %q, and a repository is cloned from one URL: the URL this run clones from would otherwise depend on the order the block's keys are in", first, key, canonical)
+			return fmt.Errorf("%q and %q are both the repository %q, and a repository may be named once: the clone URL a run uses would otherwise depend on the order the block's keys are in", first, key, canonical)
 		}
 		spelled[canonical] = key
 		out[canonical] = entries[key]
