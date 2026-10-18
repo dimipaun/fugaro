@@ -63,6 +63,12 @@ import {
   readBack,
   step,
 } from './index.js';
+import {
+  CONFIRMATION_PHRASES as COMMAND_CONFIRMATION_PHRASES,
+  isConfirmation,
+  routeUtterance,
+} from '../command/index.js';
+import { ACTIONS as SCHEMA_ACTIONS, validateMessage } from '../mailbox-schema/index.js';
 
 // The module's `pending` (P6.12's screen view) under a name that does not read
 // like the state's own `pending` array.
@@ -90,7 +96,13 @@ const SHA_MOVED = 'c'.repeat(40);
 const RUN = Object.freeze({ kind: TARGET_KIND.RUN, runId: 'run_9f3c' });
 const RUN_OTHER = Object.freeze({ kind: TARGET_KIND.RUN, runId: 'run_0a11' });
 const MERGE = Object.freeze({ kind: TARGET_KIND.MERGE, repo: REPO, pr: PR, headSha: SHA });
-const ACTION = Object.freeze({ kind: TARGET_KIND.ACTION, actionId: 'act_target' });
+// What "confirming an action" confirms (P6.3: `confirm` takes a run or a
+// repository and PR, and carries no head SHA).
+const PR_TARGET = Object.freeze({ kind: TARGET_KIND.PR, repo: REPO, pr: PR });
+
+// The fixed phrase as P6.1's router recognises it: an app command, so it
+// carries the wake word. A bare "confirm" is agent text (D164).
+const CONFIRM_TEXT = 'Fugaro, confirm';
 
 // The phrase the plan names, and the utterance that resolves it to a run id.
 const CANCEL_TEXT = 'cancel the docs refactor';
@@ -131,7 +143,7 @@ function confirmActionEvent(overrides = {}) {
     utteranceId: 'utt_c',
     text: 'approve the deploy',
     verb: VERB.CONFIRM_ACTION,
-    target: ACTION,
+    target: PR_TARGET,
     actionId: 'act_c',
     ...overrides,
   };
@@ -153,7 +165,7 @@ function confirmEvent(overrides = {}) {
     type: EVENT.CONFIRM,
     now: NOW + 2_000,
     utteranceId: 'utt_b',
-    text: 'confirm',
+    text: CONFIRM_TEXT,
     actionId: 'act_a',
     confirmationId: 'cnf_1',
     target: RUN,
@@ -214,6 +226,12 @@ test('the verb sets are closed, disjoint, and frozen', () => {
   assert.equal(new Set(all).size, all.length, 'a verb is in two sets');
   assert.deepEqual([...DESTRUCTIVE_VERBS], [VERB.CANCEL, VERB.CONFIRM_ACTION, VERB.MERGE]);
 
+  // The destructive verbs are exactly P6.3's action-record verbs, spelled the
+  // same: the record this machine authorises is the record the schema admits.
+  assert.deepEqual([...DESTRUCTIVE_VERBS].sort(), [...SCHEMA_ACTIONS].sort());
+  // And D162's launch is not one of them: it travels as a plain message.
+  assert.equal(SCHEMA_ACTIONS.includes(VERB.LAUNCH), false);
+
   // D162's answer: a launch is the only verb that passes through.
   assert.deepEqual([...PASS_THROUGH_VERBS], [VERB.LAUNCH]);
 
@@ -227,17 +245,34 @@ test('the verb sets are closed, disjoint, and frozen', () => {
   }
 });
 
-test('the fixed phrase is "confirm" alone, and the words the ruling excludes are not phrases', () => {
+test('the fixed phrase is P6.1\'s confirmation command, and the words the ruling excludes are not phrases', () => {
   assert.deepEqual([...CONFIRM_PHRASES], ['confirm']);
+  // One vocabulary: this module's phrase is P6.1's, imported, not restated.
+  assert.deepEqual([...CONFIRM_PHRASES], [...COMMAND_CONFIRMATION_PHRASES]);
 
-  // What the phrase is.
-  for (const text of ['confirm', 'Confirm', 'CONFIRM', '  confirm  ', 'confirm\n']) {
+  // What the phrase is: whatever P6.1's router reads as the `confirm` app
+  // command -- the wake word (or its alias), then "confirm", and nothing else.
+  for (const text of [
+    'Fugaro, confirm',
+    'fugaro confirm',
+    'FUGARO, CONFIRM',
+    'Figaro, confirm',
+    'Fugaro, confirm.',
+    'Fugaro: confirm',
+    '  Fugaro,   confirm  ',
+  ]) {
     assert.equal(isConfirmPhrase(text), true, `${JSON.stringify(text)} is the phrase`);
+    assert.equal(isConfirmation(routeUtterance({ utterance: text })), true, `P6.1 disagrees about ${JSON.stringify(text)}`);
   }
 
   // What it is not: D47's Rule asks for a fixed, short, low-confusability
-  // phrase, and G10's own example ("yes, merge it") is not one.
+  // phrase, and G10's own example ("yes, merge it") is not one. A bare
+  // "confirm" is not one either: P6.1 routes it to the agent as text (D164), so
+  // a machine that accepted it would confirm on words the agent also received.
   for (const text of [
+    'confirm',
+    'Confirm',
+    'confirm.',
     'conform',
     'confirmed',
     'confirmed it',
@@ -251,14 +286,28 @@ test('the fixed phrase is "confirm" alone, and the words the ruling excludes are
     'affirmative',
     'do it',
     'go ahead',
-    'confirm.',
-    'confirm!',
     'confirmation',
     'please confirm',
     'say confirm',
     'can you confirm',
     'confirm cancel the docs refactor',
     'konfirm',
+    'Fugaro, conform',
+    'Fugaro, confirmed',
+    'Fugaro, confirmed it',
+    'Fugaro, confirm it',
+    'Fugaro, yes',
+    'Fugaro, please confirm',
+    'Fugaro, confirm, cancel the docs refactor',
+    'Um, Fugaro, confirm',
+    'Fugaro, con​firm',
+    'Fugaro​, confirm',
+    'Fugaro, confirm​',
+    '​Fugaro, confirm',
+    'Fugaro, confirm⁠',
+    'Fugaro, ｃｏｎｆｉｒｍ',
+    'Fugaro, confırm',
+    'Fugaro, ' + 'confirm '.repeat(600),
     '',
     '   ',
   ]) {
@@ -266,9 +315,29 @@ test('the fixed phrase is "confirm" alone, and the words the ruling excludes are
   }
 
   // And nothing that is not a string is a phrase.
-  for (const value of [undefined, null, 1, true, {}, [], ['confirm']]) {
+  for (const value of [undefined, null, 1, true, {}, [], ['Fugaro, confirm']]) {
     assert.equal(isConfirmPhrase(value), false);
   }
+});
+
+test('a bare "confirm", which P6.1 forwards to the agent, never confirms a pending action', () => {
+  const withPending = machineWith();
+  for (const text of ['confirm', 'Confirm', 'CONFIRM', 'confirm.']) {
+    refused(step(withPending.state, confirmEvent({ text })), REFUSAL.NOT_A_CONFIRMATION, 'text');
+  }
+  accepted(step(withPending.state, confirmEvent({ text: 'Figaro, confirm.' })), OUTCOME.CONFIRMED);
+});
+
+test('an invisible format character is refused in every text, so what is shown is what is judged', () => {
+  const withPending = machineWith();
+  for (const text of ['Fugaro, con​firm', 'Fugaro,​ confirm', 'Fugaro, confirm‍', '⁦Fugaro, confirm⁩', 'Fugaro, confirm﻿']) {
+    refused(step(withPending.state, confirmEvent({ text })), REFUSAL.BAD_CHARACTER, 'text');
+  }
+  // A command whose text hides the confirming word behind an invisible
+  // character is refused too: otherwise "con​firm" slips past the
+  // command-and-confirm rule on a screen that shows "confirm".
+  refused(step(newMachine(), cancelEvent({ text: 'cancel it con​firm' })), REFUSAL.BAD_CHARACTER, 'text');
+  refused(step(newMachine(), abortEvent({ text: 'cancel that​' })), REFUSAL.BAD_CHARACTER, 'text');
 });
 
 // ---------------------------------------------------------------------------
@@ -357,7 +426,7 @@ test('the read-back is built from the resolved target alone, for every destructi
   );
   assert.equal(
     machineWith(confirmActionEvent()).readBack,
-    `Confirm action ${ACTION.actionId}. ${CONFIRM_CUE}`,
+    `Confirm ${REPO}#${PR}. ${CONFIRM_CUE}`,
   );
   // A 64-character SHA is carried as it is, not shortened.
   assert.equal(
@@ -400,11 +469,17 @@ test('an ambiguous or unresolved target is refused, so it can never be read back
 test('a verb handed an argument of the wrong kind is refused', () => {
   // cancel takes a run, not a merge or an action.
   refused(step(newMachine(), cancelEvent({ target: MERGE })), REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');
-  refused(step(newMachine(), cancelEvent({ target: ACTION })), REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');
-  // merge takes a repository, PR and head.
+  refused(step(newMachine(), cancelEvent({ target: PR_TARGET })), REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');
+  // merge takes a repository, PR and head -- never a bare PR, which would be a
+  // merge with no head bound to it.
   refused(step(newMachine(), mergeEvent({ target: RUN })), REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');
-  // confirm-action takes an action.
-  refused(step(newMachine(), confirmActionEvent({ target: RUN })), REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');
+  refused(step(newMachine(), mergeEvent({ target: PR_TARGET })), REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');
+  // confirm takes a run or a repository and PR (P6.3's `confirm`), never a
+  // head SHA: P6.3 refuses a head SHA on anything but a merge.
+  accepted(step(newMachine(), confirmActionEvent({ target: RUN })), OUTCOME.READ_BACK);
+  accepted(step(newMachine(), confirmActionEvent({ target: PR_TARGET })), OUTCOME.READ_BACK);
+  refused(step(newMachine(), confirmActionEvent({ target: MERGE })), REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');
+  refused(step(newMachine(), confirmActionEvent({ target: { kind: 'action', actionId: 'act_x' } })), REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');
 
   // And a launch takes neither a target nor an action id: D162's answer is that
   // it is not read back, so an argument beside it is a caller that thinks it is.
@@ -535,16 +610,19 @@ test('the fixed phrase confirms exactly once, and the action record is what it a
   assert.equal(result.confirmedAt, NOW + 2_000);
   assert.deepEqual(result.target, RUN);
 
-  // The record P6.3 will carry to the consumer: the verb, the action id, the
-  // confirmation id, when, and the resolved target -- and nothing else.
+  // The record is P6.3's action record, field for field: the action id, the
+  // verb, the resolved target, and the confirmation's id and time -- and
+  // nothing else. It is what goes into `message.action` unchanged.
   assert.deepEqual(result.record, {
+    id: 'act_a',
     verb: VERB.CANCEL,
-    actionId: 'act_a',
-    confirmationId: 'cnf_1',
-    confirmedAt: NOW + 2_000,
-    target: RUN,
+    target: { run: RUN.runId },
+    confirmation: { id: 'cnf_1', at: NOW + 2_000 },
   });
-  assert.deepEqual(Object.keys(result.record).sort(), ['actionId', 'confirmationId', 'confirmedAt', 'target', 'verb']);
+  assert.deepEqual(Object.keys(result.record).sort(), ['confirmation', 'id', 'target', 'verb']);
+  assert.ok(Object.isFrozen(result.record));
+  assert.ok(Object.isFrozen(result.record.target));
+  assert.ok(Object.isFrozen(result.record.confirmation));
 
   // The pending action is consumed, and every id the confirmation spent is in
   // the ledger: this is what makes a replay visible.
@@ -560,6 +638,64 @@ test('the fixed phrase confirms exactly once, and the action record is what it a
   assert.equal(result.readBack, `Cancel run ${RUN.runId}. ${CONFIRM_CUE}`);
 });
 
+test('every record the machine authorises is an action record P6.3 accepts, and binds what was read back', () => {
+  // A message wrapping the record exactly as the app will send it. The mac is a
+  // placeholder of the right shape: its value is P6.3's and P6.7's business.
+  const wrap = (record) => ({
+    id: 'msg_1',
+    sender: 'phone',
+    text: 'action',
+    at: NOW,
+    mac: '0'.repeat(64),
+    kind: 'action',
+    action: record,
+  });
+  const cases = [
+    [cancelEvent(), RUN, { id: 'act_a', verb: 'cancel', target: { run: RUN.runId } }],
+    [mergeEvent(), MERGE, { id: 'act_m', verb: 'merge', target: { repo: REPO, pr: PR }, head_sha: SHA }],
+    [mergeEvent({ target: { ...MERGE, headSha: SHA_64 } }), { ...MERGE, headSha: SHA_64 }, { id: 'act_m', verb: 'merge', target: { repo: REPO, pr: PR }, head_sha: SHA_64 }],
+    [confirmActionEvent({ target: RUN }), RUN, { id: 'act_c', verb: 'confirm', target: { run: RUN.runId } }],
+    [confirmActionEvent(), PR_TARGET, { id: 'act_c', verb: 'confirm', target: { repo: REPO, pr: PR } }],
+  ];
+  for (const [command, target, expected] of cases) {
+    const opened = machineWith(command);
+    const confirmed = accepted(
+      step(opened.state, confirmEvent({ actionId: command.actionId, target, now: NOW + 2_000 })),
+      OUTCOME.CONFIRMED,
+    );
+    assert.deepEqual(confirmed.record, { ...expected, confirmation: { id: 'cnf_1', at: NOW + 2_000 } });
+    const validated = validateMessage(wrap(confirmed.record));
+    assert.equal(validated.ok, true, `P6.3 refuses the ${command.verb} record: ${validated.code} ${validated.field}`);
+    assert.deepEqual(validated.message.action, confirmed.record);
+  }
+
+  // A merge record without its head is not a record P6.3 admits, so the head
+  // the machine binds is load-bearing, not decoration.
+  const merge = machineWith(mergeEvent());
+  const record = accepted(step(merge.state, confirmEvent({ actionId: 'act_m', target: MERGE })), OUTCOME.CONFIRMED).record;
+  const { head_sha: _dropped, ...headless } = record;
+  assert.equal(validateMessage(wrap(headless)).ok, false);
+});
+
+test('a target P6.3 would refuse is refused before it is read back, so it can never be confirmed', () => {
+  // A run id the consumer would pass to `fugaro cancel` as a flag or a path,
+  // or one carrying a character outside P6.3's run alphabet.
+  for (const runId of ['-rf', '--help', '.hidden', 'run 1', 'run@1', 'run,1', 'ünï']) {
+    refused(step(newMachine(), cancelEvent({ target: { kind: TARGET_KIND.RUN, runId } })), REFUSAL.BAD_KEY, 'target.runId');
+    refused(step(newMachine(), confirmActionEvent({ target: { kind: TARGET_KIND.RUN, runId } })), REFUSAL.BAD_KEY, 'target.runId');
+  }
+  // P6.3's run alphabet admits these, so this module does too.
+  for (const runId of ['20261018-125859-d3c8', 'run_9f3c', 'a:b', '_x']) {
+    accepted(step(newMachine(), cancelEvent({ target: { kind: TARGET_KIND.RUN, runId } })), OUTCOME.READ_BACK);
+  }
+  // A repository P6.3 caps at 200 code units, both segments full.
+  const long = `${'o'.repeat(100)}/${'n'.repeat(100)}`;
+  refused(step(newMachine(), mergeEvent({ target: { ...MERGE, repo: long } })), REFUSAL.TOO_LONG, 'target.repo');
+  refused(step(newMachine(), confirmActionEvent({ target: { ...PR_TARGET, repo: long } })), REFUSAL.TOO_LONG, 'target.repo');
+  // And a PR number with nothing in front of it is P6.3's too.
+  refused(step(newMachine(), confirmActionEvent({ target: { ...PR_TARGET, pr: 0 } })), REFUSAL.BAD_PR, 'target.pr');
+});
+
 test('a command and "confirm" in one utterance is refused', () => {
   for (const text of [
     'cancel the docs refactor, confirm',
@@ -567,6 +703,14 @@ test('a command and "confirm" in one utterance is refused', () => {
     'cancel run 42 confirm please',
     'merge it — confirm',
     'Confirm the docs refactor',
+    // Punctuation glued to the word is still the word: P6.1 strips it, so a
+    // command that ends "confirm." carries the phrase as much as one ending
+    // "confirm" does.
+    'cancel the docs refactor confirm.',
+    'cancel the docs refactor,confirm',
+    'cancel the docs refactor (confirm)',
+    'cancel the docs refactor -- "confirm"',
+    'Fugaro, cancel the docs refactor; Fugaro, confirm!',
   ]) {
     refused(step(newMachine(), cancelEvent({ text })), REFUSAL.COMMAND_AND_CONFIRM, 'text');
   }
@@ -700,9 +844,11 @@ test('a confirm for a different target is refused', () => {
     'target',
   );
 
-  // The merge record carries the head the speaker was read back, not a new one.
+  // The merge record carries the head the speaker was read back, bound as
+  // P6.3's `head_sha`, so the consumer can refuse a merge whose head moved.
   const mergeConfirm = step(merge.state, confirmEvent({ target: MERGE, actionId: 'act_m', now: NOW + 2_000 }));
-  assert.deepEqual(mergeConfirm.record.target, MERGE);
+  assert.deepEqual(mergeConfirm.record.target, { repo: REPO, pr: PR });
+  assert.equal(mergeConfirm.record.head_sha, SHA);
 });
 
 test('a second pending action makes a confirm ambiguous, and abort clears them all', () => {
@@ -845,9 +991,9 @@ test('an event that is not an event, and a field it may not carry, are refused',
 
   refused(step(machine, { now: NOW }), REFUSAL.MISSING_FIELD, 'type');
   refused(step(machine, { type: EVENT.COMMAND, now: NOW, utteranceId: 'u', text: 'cancel it', verb: 'cancel', target: RUN }), REFUSAL.MISSING_FIELD, 'actionId');
-  refused(step(machine, { type: EVENT.CONFIRM, now: NOW, text: 'confirm', actionId: 'a', confirmationId: 'c', target: RUN }), REFUSAL.MISSING_FIELD, 'utteranceId');
+  refused(step(machine, { type: EVENT.CONFIRM, now: NOW, text: CONFIRM_TEXT, actionId: 'a', confirmationId: 'c', target: RUN }), REFUSAL.MISSING_FIELD, 'utteranceId');
   refused(step(machine, { type: EVENT.ABORT, now: NOW, utteranceId: 'u' }), REFUSAL.MISSING_FIELD, 'text');
-  refused(step(machine, { type: EVENT.CONFIRM, now: NOW, utteranceId: 'u', text: 'confirm', confirmationId: 'c', target: RUN }), REFUSAL.MISSING_FIELD, 'actionId');
+  refused(step(machine, { type: EVENT.CONFIRM, now: NOW, utteranceId: 'u', text: CONFIRM_TEXT, confirmationId: 'c', target: RUN }), REFUSAL.MISSING_FIELD, 'actionId');
 
   // The field set is the version: a field of another event, or one this module
   // does not name, is refused rather than read with it dropped.
@@ -1382,7 +1528,7 @@ const COMPOSITIONS = {
   },
   'one live cancel, no room for another': { pendings: [spawn('act_1')], maxPending: MIN_MAX_PENDING },
   'one live merge': { pendings: [spawn('act_m', { verb: VERB.MERGE, target: MERGE, by: 'utt_m' })] },
-  'one live action': { pendings: [spawn('act_c', { verb: VERB.CONFIRM_ACTION, target: ACTION, by: 'utt_c' })] },
+  'one live action': { pendings: [spawn('act_c', { verb: VERB.CONFIRM_ACTION, target: PR_TARGET, by: 'utt_c' })] },
   'one expired cancel': { pendings: [spawn('act_1', { at: EXPIRED_LONG })] },
   'two live cancels': {
     pendings: [spawn('act_1', { at: NOW - 200 }), spawn('act_2', { at: NOW - 100, target: RUN_OTHER, by: 'utt_2' })],
@@ -1484,7 +1630,7 @@ function probesFor(pendings, now) {
         type: EVENT.CONFIRM,
         now: now + 1,
         utteranceId: `utt_pc_${entry.actionId}`,
-        text: 'confirm',
+        text: CONFIRM_TEXT,
         actionId: entry.actionId,
         confirmationId: `cnf_pc_${entry.actionId}`,
         target: entry.target,
@@ -1498,7 +1644,7 @@ function probesFor(pendings, now) {
         type: EVENT.CONFIRM,
         now: now + 1,
         utteranceId: entry.by,
-        text: 'confirm',
+        text: CONFIRM_TEXT,
         actionId: entry.actionId,
         confirmationId: `cnf_self_${entry.actionId}`,
         target: entry.target,
@@ -1509,7 +1655,7 @@ function probesFor(pendings, now) {
       entry.verb === VERB.MERGE
         ? { ...MERGE, headSha: SHA_MOVED }
         : entry.verb === VERB.CONFIRM_ACTION
-          ? { ...ACTION, actionId: 'act_other' }
+          ? { ...PR_TARGET, pr: PR + 1 }
           : RUN_OTHER;
     events.push([
       'confirm',
@@ -1518,7 +1664,7 @@ function probesFor(pendings, now) {
         type: EVENT.CONFIRM,
         now: now + 1,
         utteranceId: `utt_po_${entry.actionId}`,
-        text: 'confirm',
+        text: CONFIRM_TEXT,
         actionId: entry.actionId,
         confirmationId: `cnf_po_${entry.actionId}`,
         target: other,
@@ -1537,7 +1683,7 @@ function probesFor(pendings, now) {
             type: EVENT.CONFIRM,
             now: now + 1,
             utteranceId: `utt_pm_${entry.actionId}`,
-            text: 'confirm',
+            text: CONFIRM_TEXT,
             actionId: entry.actionId,
             confirmationId: `cnf_pm_${entry.actionId}`,
             target,
