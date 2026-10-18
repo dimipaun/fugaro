@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/oauth2"
+	"google.golang.org/api/option"
+	"google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
@@ -134,6 +136,16 @@ func TestManagedInventoryAccountsForTheStatesItReads(t *testing.T) {
 			cause    managedmode.Cause
 			names    []string
 		}{fallback: true, cause: managedmode.CauseStateUnread}},
+		{name: "a state object that answers no read falls back", breakState: "unreadable", want: struct {
+			fallback bool
+			cause    managedmode.Cause
+			names    []string
+		}{fallback: true, cause: managedmode.CauseStateUnread}},
+		{name: "a state bucket that cannot be listed falls back", breakState: "unlisted", want: struct {
+			fallback bool
+			cause    managedmode.Cause
+			names    []string
+		}{fallback: true, cause: managedmode.CauseStateUnread}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, _, _ := inventoryRig(t)
@@ -144,6 +156,15 @@ func TestManagedInventoryAccountsForTheStatesItReads(t *testing.T) {
 				r.gcs.Put(managedmode.InstallationsStateBucket(initProject), infra.StatePrefixInstallation+"/default.tfstate", []byte("<html>error</html>"))
 			case "managed":
 				r.gcs.Put(managedmode.ManagedStateBucketName(initProject), infra.StatePrefixManaged+"/default.tfstate", []byte(`{"version":3}`))
+			case "unreadable":
+				// Listed, and then refused when it is read: a state skipped
+				// over is a state that accounts for nothing, which is not the
+				// cause this run falls back for.
+				r.gcs.FailObjectGetsAfter(managedmode.ManagedStateBucketName(initProject), infra.StatePrefixManaged+"/default.tfstate", 0)
+			case "unlisted":
+				// Real GCS answers a bucket the caller cannot list (or that is
+				// not there) with an error, never with an empty listing.
+				r.gcs.FailListings(managedmode.ManagedStateBucketName(initProject))
 			}
 			var fake managedmode.Assets = &fakeManagedAssets{assets: tc.assets, err: tc.err}
 			if tc.assets == nil && tc.err == nil {
@@ -176,6 +197,47 @@ func TestManagedInventoryAccountsForTheStatesItReads(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The inventory is bounded in time as a whole, not only its Cloud Asset half:
+// a state bucket that never answers must end in the fallback rather than hold
+// the command forever, because D59's answer to a read that cannot be made is
+// "keep the confirmations", never "halt". The caller's context here has no
+// deadline, which is the command's own case.
+func TestManagedInventoryEndsWhenAStateReadNeverAnswers(t *testing.T) {
+	r, _, _ := inventoryRig(t)
+	stubManagedAssets(t, &fakeManagedAssets{assets: []managedmode.Asset{
+		{Name: "//storage.googleapis.com/" + initRunsBucket, Type: "storage.googleapis.com/Bucket"},
+	}})
+	lc, c := inventoryClients(t, r)
+	release := make(chan struct{})
+	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		select {
+		case <-req.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(hang.Close)
+	t.Cleanup(func() { close(release) })
+	st, err := storage.NewService(context.Background(), option.WithEndpoint(hang.URL+"/storage/v1/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Storage = st
+	old := managedInventoryTimeout
+	managedInventoryTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { managedInventoryTimeout = old })
+
+	done := make(chan managedmode.InventoryCheck, 1)
+	go func() { done <- managedInventory(context.Background(), lc, c, initProjectNumber) }()
+	select {
+	case got := <-done:
+		if !got.Fallback() || got.Cause() != managedmode.CauseStateUnread {
+			t.Fatalf("a state read that never answered = %s, want the state-unread fallback", got)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the inventory did not end: a state bucket that never answers held the command")
 	}
 }
 

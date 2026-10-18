@@ -187,6 +187,9 @@ func StateObjects(ctx context.Context, c *Clients, stateBucket, prefix string) (
 	if prefix != "" {
 		call = call.Prefix(prefix)
 	}
+	if stateListPageSize > 0 {
+		call = call.MaxResults(stateListPageSize)
+	}
 	err := call.Pages(ctx, func(o *storage.Objects) error {
 		for _, it := range o.Items {
 			if isState(it.Name) && !strings.HasSuffix(it.Name, "/") {
@@ -201,6 +204,11 @@ func StateObjects(ctx context.Context, c *Clients, stateBucket, prefix string) (
 	slices.Sort(out)
 	return out, nil
 }
+
+// stateListPageSize is the page size StateObjects asks for; zero leaves it to
+// GCS. It is a variable only so a test can make the listing span pages and
+// see that every page is read.
+var stateListPageSize int64
 
 // maxStateObject is as much of a state object as this build reads. A root's
 // state is a few hundred kilobytes; anything of this size is not a state this

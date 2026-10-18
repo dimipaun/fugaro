@@ -197,6 +197,50 @@ func TestStateObjectsListsEveryRootsState(t *testing.T) {
 	}
 }
 
+// A listing GCS answers in pages is read to its last page: a state left on a
+// page the read did not follow would account for nothing, and a project
+// whose state was read short is one whose own resources read as foreign. The
+// page size is the fake's to honour, so the test asks for one object a page.
+func TestStateObjectsFollowsEveryPage(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	f.gcs.AddBucket(testStateBucket, testProjectNumber, tfstate)
+	b := f.gcs.Bucket(t, testStateBucket)
+	want := []string{
+		"fugaro/firebase/default.tfstate",
+		"fugaro/installation/default.tfstate",
+		"fugaro/repos/bitbucket-acme-sandbox/default.tfstate",
+	}
+	for _, k := range want {
+		if err := b.WriteAll(ctx, k, []byte("{}"), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func(n int64) { stateListPageSize = n }(stateListPageSize)
+	stateListPageSize = 1
+	before := f.gcs.ListCalls()
+	got, err := StateObjects(ctx, f.c, testStateBucket, "")
+	if err != nil || !slices.Equal(got, want) {
+		t.Fatalf("state objects = %q, %v, want every page's %q", got, err, want)
+	}
+	if calls := f.gcs.ListCalls() - before; calls < len(want) {
+		t.Errorf("the listing took %d page(s), want one per object", calls)
+	}
+}
+
+// A listing that fails is an error, never an empty list: an empty list is
+// "this bucket holds no state", and the inventory would read the project's own
+// resources as foreign and blame the project for a read that was not made.
+func TestStateObjectsListingThatFailsIsAnError(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	f.gcs.AddBucket(testStateBucket, testProjectNumber, tfstate)
+	f.gcs.FailListings(testStateBucket)
+	if got, err := StateObjects(ctx, f.c, testStateBucket, ""); err == nil {
+		t.Fatalf("a refused listing answered %q and no error", got)
+	}
+}
+
 // A bucket with no state at all — an installation that has applied nothing —
 // is an empty list and not an error, which is the honest answer the accounting
 // reads as "the state accounts for nothing". The listing's own failures are

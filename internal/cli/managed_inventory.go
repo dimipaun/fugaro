@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -46,6 +47,11 @@ var managedAssets = func(ctx context.Context, lc *localcfg.Config) (managedmode.
 	return managedmode.NewCloudAssets(ctx, doctorAPIOpts(lc, lc.Endpoints.CloudAsset)...)
 }
 
+// managedInventoryTimeout bounds the whole inventory: the Cloud Asset read and
+// every state read. It is a variable only so a test can end a read that never
+// answers without waiting minutes for it.
+var managedInventoryTimeout = 3 * time.Minute
+
 // managedInventory is the whole of the wiring: it returns a check and never an
 // error, because every way this read can fail is a fallback and not a halt
 // (D59: never halt and never delete; Global Constraint 3: a read that could
@@ -59,6 +65,13 @@ var managedAssets = func(ctx context.Context, lc *localcfg.Config) (managedmode.
 // (CauseStateUnread) — the accounted side of the comparison, without which
 // every listed resource would read as foreign.
 func managedInventory(ctx context.Context, lc *localcfg.Config, c *infra.Clients, number uint64) managedmode.InventoryCheck {
+	// One deadline over both halves: the Cloud Asset read bounds itself when
+	// its context has none, but the state reads below are plain storage calls,
+	// and a state bucket that never answered would hold the command forever —
+	// a halt, which D59 rules out. A read the deadline ends is an error, and an
+	// error is the fallback.
+	ctx, cancel := context.WithTimeout(ctx, managedInventoryTimeout)
+	defer cancel()
 	assets, err := managedAssets(ctx, lc)
 	if err != nil {
 		return managedmode.CheckedInventory(managedmode.Unread(lc.Name, lc.GCPProject, managedmode.CauseNoReader,
