@@ -210,7 +210,7 @@ func TestMailboxConsumerWritesOnlyItsMailbox(t *testing.T) {
 	h.wantValue(beat(mbAlice)+"/boot", `"boot-1"`)
 	// The heartbeat is the one node overwritten by design: it is the latest
 	// liveness, not a record.
-	h.mustAllow(consumer, "its heartbeat again", put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "boot-1"}))
+	h.mustAllow(consumer, "its heartbeat again", put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "boot-1", "mac": aMac}))
 
 	// An outbox message is written once: the consumer cannot rewrite history,
 	// with the same words, other words, or one field at a time.
@@ -243,10 +243,11 @@ func TestMailboxConsumerWritesOnlyItsMailbox(t *testing.T) {
 	h.mustDeny(consumer, "an outbox id that is not the node it is stored under",
 		put(outbox(mbAlice, "c5"), aMessage("other-id", mbAlice)))
 
-	// The heartbeat's shape: both fields, at an instant, unknown refused.
-	h.mustDeny(consumer, "a heartbeat with no boot", put(beat(mbAlice), map[string]any{"at": msgAt}))
+	// The heartbeat's shape: each required field, at an instant, unknown refused
+	// (each case carries a mac, so the refusal is the field it names).
+	h.mustDeny(consumer, "a heartbeat with no boot", put(beat(mbAlice), map[string]any{"at": msgAt, "mac": aMac}))
 	h.mustDeny(consumer, "a heartbeat with an unknown field",
-		put(beat(mbAlice), map[string]any{"at": msgAt, "boot": "b", "pid": 7}))
+		put(beat(mbAlice), map[string]any{"at": msgAt, "boot": "b", "mac": aMac, "pid": 7}))
 
 	// The ack is the phone's alone. The consumer's grant on the message node
 	// cascades to `acked`, but that grant is write-once (`!data.exists()`), so
@@ -283,7 +284,7 @@ func TestMailboxHeartbeatDeleteIsDenied(t *testing.T) {
 
 	// The consumer may overwrite it — that is what the node is for — but not
 	// remove it, whole or field by field.
-	h.mustAllow(consumer, "overwriting the heartbeat", put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "boot-2"}))
+	h.mustAllow(consumer, "overwriting the heartbeat", put(beat(mbAlice), map[string]any{"at": msgAt + 1, "boot": "boot-2", "mac": aMac}))
 	h.mustDeny(consumer, "deleting its own heartbeat", map[string]any{beat(mbAlice): nil})
 	h.mustDeny(consumer, "deleting one field of its own heartbeat", map[string]any{beat(mbAlice) + "/at": nil})
 	// A denial is atomic: the message this multi-path update writes beside the

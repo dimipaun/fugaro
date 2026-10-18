@@ -947,11 +947,11 @@ func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required []st
 //
 // What this test cannot pin is the rest of the schema's judgement, and §6.4
 // says where the rules are looser rather than claiming they are the same: the
-// rules cannot inspect characters, so the id's key rule (no `%`, no control
-// character, no lone surrogate — all of which the schema refuses) is the
-// schema's alone, `text`'s control characters with it, and so are the hex
-// character sets of a `mac` and of a head SHA (the rules check those two
-// lengths, and the two SHA lengths exactly). The emulator cases
+// id's key rule (no `%`, no control character, no lone surrogate — all of
+// which the schema refuses) is the schema's alone, and `text`'s control
+// characters with it. The characters the schema states as a pattern (a tag, a
+// head SHA, an identity, a target) are checked at the database too, and
+// TestMailboxRulesCheckTheSchemasCharacters pins them. The emulator cases
 // (emulator_mailbox_test.go, emulator_pairing_test.go) prove what the rules do
 // refuse.
 func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {

@@ -68,6 +68,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 )
@@ -113,10 +114,10 @@ const (
 
 	// MaxMacLength is the length of a message's or a heartbeat's MAC, in hex
 	// characters: 32 bytes of HMAC-SHA-256 (§3.5, D169, D171, O7). The rules
-	// check the length and nothing else — this language cannot test a string's
-	// characters, so "lowercase hex" is the shared schema's half and
-	// TestMailboxRulesAgreeWithTheSharedSchema is what holds the two numbers
-	// together. It is shared/mailbox-schema's MAC_MAX.
+	// check the length and the lowercase-hex characters (patternHex), never the
+	// value: verifying a tag needs the key, which the database never holds.
+	// TestMailboxRulesAgreeWithTheSharedSchema holds the number to the schema's
+	// MAC_MAX.
 	MaxMacLength = 64
 	// MaxAgentLength bounds an agent id: the value that travels in a message's
 	// `agent` field and that the consumer advertises in its heartbeat, so that
@@ -137,8 +138,8 @@ const (
 	MaxOptions      = 8
 	MaxOptionLength = 200
 	// MaxTargetLength bounds an action target's run id or repository slug. It is
-	// the schema's TARGET_MAX; the schema's pattern for each is one of the
-	// character checks this language cannot make.
+	// the schema's TARGET_MAX; the characters are the schema's RUN_PATTERN and
+	// REPO_PATTERN (patternRun, patternRepo).
 	MaxTargetLength = 200
 	// MinShaLength and MaxShaLength are the two accepted lengths of a merge's
 	// head SHA: Git's SHA-1 object name, and a SHA-256 repository (the schema's
@@ -152,7 +153,43 @@ const (
 	// nodes, which are the rules' half of D165 — the node a phone writes before
 	// it holds anything else.
 	MaxPublicKey = 4096
+	// MaxBootLength bounds a heartbeat's boot id: the schema's BOOT_MAX.
+	MaxBootLength = 64
 )
+
+// The character patterns the rules apply, each the shared schema's own regex
+// literal, byte for byte (TestMailboxRulesCheckTheSchemasCharacters reads
+// shared/mailbox-schema/index.js and fails when either side moves). The rules
+// language has `String.matches(regex)`, so the characters of a tag, a head
+// SHA, an identity and a target are checked at the database as well as by the
+// schema. What stays the schema's alone is the free text (`text`, `sender`, an
+// option, an agent's display name), where the schema refuses only control
+// characters and lone surrogates, a class this file does not spell in the
+// rules' regex dialect.
+const (
+	patternHex      = `/^[0-9a-f]+$/`
+	patternIdentity = `/^[A-Za-z0-9._:-]+$/`
+	patternRun      = `/^[A-Za-z0-9_:][A-Za-z0-9._:-]*$/`
+	patternRepo     = `/^[A-Za-z0-9_][A-Za-z0-9._-]*\/[A-Za-z0-9_][A-Za-z0-9._-]*$/`
+	// patternPublicKey is the pairing request's key: base64 or base64url text.
+	// It is this package's own, like MaxPublicKey: P6.3's schema does not model
+	// the pairing nodes.
+	patternPublicKey = `/^[A-Za-z0-9+\/=_-]+$/`
+)
+
+// indexPattern is a rules regex literal matching exactly the list indexes
+// 0..n-1 as the database stores them (decimal, no leading zero). A list's
+// children are keyed by index, so "every key matches" is "at most n entries":
+// the rules language has no count of a node's children (DataSnapshot's
+// numChildren is the client SDK's, not the rules'; a document that calls it is
+// refused at deploy), so the count is bounded through the keys.
+func indexPattern(n int) string {
+	alts := make([]string, n)
+	for i := range alts {
+		alts[i] = strconv.Itoa(i)
+	}
+	return "/^(" + strings.Join(alts, "|") + ")$/"
+}
 
 // Generate returns the rules JSON, indented and deterministic.
 func Generate() ([]byte, error) {
@@ -167,16 +204,8 @@ func Generate() ([]byte, error) {
 		"MaxKeyLength":       MaxKeyLength,
 		"MaxTextLength":      MaxText,
 		"MaxTimestamp":       MaxTimestamp,
-		"MaxMacLength":       MaxMacLength,
-		"MaxAgentLength":     MaxAgentLength,
 		"MaxAgentNameLength": MaxAgentNameLength,
-		"MaxAgents":          MaxAgents,
-		"MaxOptions":         MaxOptions,
 		"MaxOptionLength":    MaxOptionLength,
-		"MaxTargetLength":    MaxTargetLength,
-		"MinShaLength":       MinShaLength,
-		"MaxShaLength":       MaxShaLength,
-		"MaxPublicKey":       MaxPublicKey,
 	}); err != nil {
 		return nil, fmt.Errorf("rules: template: %w", err)
 	}
@@ -465,12 +494,12 @@ const userClaim = "(auth != null && auth.token.mu != null && auth.token.mu == au
 // holder may use. It is read, never minted, like mu and mc, and it is the
 // identity that exists *before* a device does.
 //
-// It is a claim rather than a test on the shape of auth.uid for the reason the
-// whole mailbox design reads claims: a client chooses neither its uid nor its
-// claims, and the rules cannot look at a string's characters (design §6.4), so
-// "the uid begins with p~" is not a predicate this language can write. The
-// `p~<random>` prefix is P6.6's naming convention for the uid it mints, and
-// nothing in the rules depends on it.
+// It is a claim *and* a test on the shape of auth.uid. The claim is what the
+// whole mailbox design reads: a client chooses neither its uid nor its claims.
+// The uid test, `auth.uid.beginsWith('p~')`, binds the session to the
+// `p~<random>` uid P6.6 mints for it, so a pu claim minted onto any other uid
+// (a device's `m~` uid, an account's own) opens no pairing node under it. P6.6
+// must mint both: the pu claim, and a uid that begins with `p~`.
 //
 // What a minted pu reaches, stated: a launcher can mint pu == auth.uid == a
 // uid of its choosing, so it can write that uid's own request node — a public
@@ -481,7 +510,7 @@ const userClaim = "(auth != null && auth.token.mu != null && auth.token.mu == au
 // launcher that cannot open the ciphertext learns nothing from it. The
 // one-shot property the same claim must not break is the write-once rule on
 // the request node below.
-const pairingClaim = "(auth != null && auth.token.pu != null && auth.token.pu == auth.uid)"
+const pairingClaim = "(auth != null && auth.token.pu != null && auth.token.pu == auth.uid && auth.uid.beginsWith('p~'))"
 
 // wordMacro expands a macro word that takes no path.
 func wordMacro(m string, depth int) (string, error) {
@@ -573,13 +602,31 @@ func wordMacro(m string, depth int) (string, error) {
 	case "SHAOK":
 		// A merge's head SHA: present only on a merge (the record has no field
 		// for it on any other verb), and one of Git's two object-name lengths.
-		return fmt.Sprintf("(newData.parent().child('verb').val() == 'merge' && newData.isString() && (newData.val().length == %d || newData.val().length == %d))", MinShaLength, MaxShaLength), nil
+		return fmt.Sprintf("(newData.parent().child('verb').val() == 'merge' && newData.isString() && (newData.val().length == %d || newData.val().length == %d) && newData.val().matches(%s))", MinShaLength, MaxShaLength, patternHex), nil
 	case "MACOK":
 		// A tag's shape: a string of exactly MAC_MAX characters. Not the
 		// characters themselves — see MaxMacLength — and never the value:
 		// verifying a tag needs the key, which is D171's, and the rules have
 		// none (P6.7 verifies; the rules can only require the field).
-		return fmt.Sprintf("(newData.isString() && newData.val().length == %d)", MaxMacLength), nil
+		return fmt.Sprintf("(newData.isString() && newData.val().length == %d && newData.val().matches(%s))", MaxMacLength, patternHex), nil
+	case "AGENTID":
+		// An agent id: the schema's identity, at most AGENT_MAX.
+		return boundedMatch(MaxAgentLength, patternIdentity), nil
+	case "BOOTOK":
+		// A heartbeat's boot id: the schema's identity, at most BOOT_MAX.
+		return boundedMatch(MaxBootLength, patternIdentity), nil
+	case "RUNTARGET":
+		return boundedMatch(MaxTargetLength, patternRun), nil
+	case "REPOTARGET":
+		return boundedMatch(MaxTargetLength, patternRepo), nil
+	case "PUBKEY":
+		return boundedMatch(MaxPublicKey, patternPublicKey), nil
+	case "OPTIONIDX":
+		// A prompt's option sits at an index below OPTIONS_MAX.
+		return "$i.matches(" + indexPattern(MaxOptions) + ")", nil
+	case "AGENTIDX":
+		// An advertised agent sits at an index below AGENTS_MAX.
+		return "$i.matches(" + indexPattern(MaxAgents) + ")", nil
 	case "PERRUNOK":
 		return perRunOK(depth)
 	case "GLOBALDAILY":
@@ -605,6 +652,12 @@ func wordMacro(m string, depth int) (string, error) {
 		return "(" + rc + " == " + d + " && " + gc + " == " + d + ")", nil
 	}
 	return "", fmt.Errorf("unknown macro %s", m)
+}
+
+// boundedMatch is a non-empty string of at most max characters, every one of
+// them in the pattern's set.
+func boundedMatch(max int, pattern string) string {
+	return fmt.Sprintf("(newData.isString() && newData.val().length > 0 && newData.val().length <= %d && newData.val().matches(%s))", max, pattern)
 }
 
 // kindOf is the kind of the message at the snapshot, as the rules read it: the

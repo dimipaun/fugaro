@@ -36,7 +36,7 @@
           ".read": false,
           ".write": "PAIRING && newData.exists() && !data.exists()",
           ".validate": "newData.hasChildren(['key', 'at'])",
-          "key": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxPublicKey}}" },
+          "key": { ".validate": "PUBKEY" },
           "at": { ".validate": "TIMESTAMP" },
           "$other": { ".validate": false }
         },
@@ -223,11 +223,11 @@
             "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
             "at": { ".validate": "TIMESTAMP" },
             "mac": { ".validate": "MACOK" },
-            "agent": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxAgentLength}}" },
+            "agent": { ".validate": "AGENTID" },
             "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action')" },
             "options": {
-              ".validate": "PARENTKIND == 'prompt' && newData.numChildren() <= {{.MaxOptions}}",
-              "$i": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxOptionLength}}" }
+              ".validate": "PARENTKIND == 'prompt' && newData.hasChildren()",
+              "$i": { ".validate": "OPTIONIDX && newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxOptionLength}}" }
             },
             "reply_to": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}} && (PARENTKIND == 'answer' || PARENTKIND == 'action')" },
             "action": {
@@ -236,8 +236,8 @@
               "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')" },
               "target": {
                 ".validate": "TARGETOK",
-                "run": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTargetLength}}" },
-                "repo": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTargetLength}}" },
+                "run": { ".validate": "RUNTARGET" },
+                "repo": { ".validate": "REPOTARGET" },
                 "pr": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() % 1 == 0 && newData.val() <= {{.MaxTimestamp}}" },
                 "$other": { ".validate": false }
               },
@@ -263,11 +263,11 @@
             "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
             "at": { ".validate": "TIMESTAMP" },
             "mac": { ".validate": "MACOK" },
-            "agent": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxAgentLength}}" },
+            "agent": { ".validate": "AGENTID" },
             "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action')" },
             "options": {
-              ".validate": "PARENTKIND == 'prompt' && newData.numChildren() <= {{.MaxOptions}}",
-              "$i": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxOptionLength}}" }
+              ".validate": "PARENTKIND == 'prompt' && newData.hasChildren()",
+              "$i": { ".validate": "OPTIONIDX && newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxOptionLength}}" }
             },
             "reply_to": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}} && (PARENTKIND == 'answer' || PARENTKIND == 'action')" },
             "action": {
@@ -276,8 +276,8 @@
               "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')" },
               "target": {
                 ".validate": "TARGETOK",
-                "run": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTargetLength}}" },
-                "repo": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTargetLength}}" },
+                "run": { ".validate": "RUNTARGET" },
+                "repo": { ".validate": "REPOTARGET" },
                 "pr": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() % 1 == 0 && newData.val() <= {{.MaxTimestamp}}" },
                 "$other": { ".validate": false }
               },
@@ -302,14 +302,14 @@
           ".write": "CONSUMER && newData.exists()",
           ".validate": "newData.hasChildren(['at', 'boot', 'mac'])",
           "at": { ".validate": "TIMESTAMP" },
-          "boot": { ".validate": "STR" },
+          "boot": { ".validate": "BOOTOK" },
           "mac": { ".validate": "MACOK" },
           "agents": {
-            ".validate": "newData.numChildren() <= {{.MaxAgents}}",
+            ".validate": "newData.hasChildren()",
             "$i": {
-              ".validate": "newData.hasChildren(['id', 'name'])",
-              "id": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxAgentLength}}" },
-              "name": { ".validate": "newData.isString() && newData.val().length <= {{.MaxAgentNameLength}}" },
+              ".validate": "AGENTIDX && newData.hasChildren(['id', 'name'])",
+              "id": { ".validate": "AGENTID" },
+              "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxAgentNameLength}}" },
               "$other": { ".validate": false }
             }
           },

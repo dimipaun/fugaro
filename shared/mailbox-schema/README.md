@@ -350,11 +350,12 @@ assuming it:
   heartbeat, with `agent`, `kind`, `options`, `reply_to` and the action record beside it,
   and the (kind, field) table's per-kind clauses — and
   `TestMailboxRulesAgreeWithTheSharedSchema` asserts the two lists against each other,
-  bound by bound. The rules stay looser in one direction and it is stated there: this
-  language cannot look at a string's characters, so the hex character sets of a `mac` and
-  a head SHA, the key rule on an id and the patterns a `run` and a `repo` target must
-  match are this module's alone. What the rules never do is verify a tag — they hold no
-  key (P6.7 does, over `verifyMac`).
+  bound by bound. The rules also apply this module's own patterns (`HEX_PATTERN`,
+  `IDENTITY_PATTERN`, `RUN_PATTERN`, `REPO_PATTERN`) to a `mac`, a head SHA, an agent or
+  boot id and a target, held byte for byte by `TestMailboxRulesCheckTheSchemasCharacters`.
+  They stay looser in one direction and it is stated there: the key rule on an id and the
+  control characters of free text are this module's alone. What the rules never do is
+  verify a tag — they hold no key (P6.7 does, over `verifyMac`).
 - **Not the node's retention.** D118's TTL and the owner's sweeper are properties of
   the mailbox node, not of a message.
 
@@ -434,12 +435,11 @@ mode the harness exists to surface.
   plan's Global Constraint 8: no agent edits `.github/workflows/`). Until it exists the
   tests run only where someone runs them — the same gap [the package's
   README](../README.md) records.
-- **The rules carry the fields but cannot check a tag's characters or value.** P6.4 has
+- **The rules carry the fields and a tag's characters, never its value.** P6.4 has
   landed (level 3, after P2.2): `rules.json.tmpl`, `rules.go` and the golden plan now
   gate this field set, `mac` included, and the mailbox's bounds are this module's numbers
-  bound for bound. What remains outside them is exact rather than vague: an RTDB
-  expression cannot inspect a string's characters, so a tag's hex spelling, an id's key
-  rule, `text`'s control characters and the target patterns are this module's alone; and
+  bound for bound, patterns included. What remains outside them is exact rather than
+  vague: an id's key rule and `text`'s control characters are this module's alone; and
   the rules check a tag's *shape*, never its value, because the per-pairing key (D171)
   never reaches the database. `fugaro mailbox` (P6.7) is where a tag is verified.
 - **The heartbeat this schema signs is not the heartbeat `shared/presence` reads.**

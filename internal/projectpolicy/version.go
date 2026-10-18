@@ -77,6 +77,18 @@ const PolicyRulesVersion = 1
 // installation that deploys these rules and forgets `fugaro pair` finds every
 // app read refused — the skew doctor reports is what says why.
 //
+// What the bump does to an existing installation, plainly. Runs and the
+// project policy are untouched: Read and the publish gate stay on
+// PolicyRulesVersion (1). Under a generation-2 marker this binary's doctor
+// warns policy-rules-skew until the owner deploys. Once generation 3 is
+// deployed: every phone is refused every read and write until its account has
+// a device node, and until `fugaro pair` (P6.6) ships the only way to write one
+// is by hand over IAM; every mailbox writer that does not send a `mac` (no code in this
+// repository writes the mailbox yet, so this reaches a hand-written consumer
+// or script only) is refused; and a 0.8.5 CLI
+// (generation 2) refuses `fugaro init --firebase` against the generation-3
+// marker rather than deploying its older rules over it, and its doctor warns.
+//
 // It is not Version: the policy schema and the rules that guard it move
 // independently.
 const RulesVersion = 3

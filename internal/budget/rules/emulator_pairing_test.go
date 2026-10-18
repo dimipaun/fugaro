@@ -156,12 +156,10 @@ func TestDeviceNodeGatesEverythingUserReaches(t *testing.T) {
 // TestPairingSessionWritesItsRequestOnceAndReadsOnlyItsDelivery is D165: the
 // two nodes a phone reaches before it is a device.
 //
-// The session is identified by the pu claim, not by the shape of its uid: this
-// language cannot look at a string's characters (design §6.4), so "the uid
-// begins with p~" is not a predicate the rules can write, and the rules' half
-// of D165 is the claim. Everything else about a pairing uid — that it is
-// one-shot, short-lived, and never reused — is P6.6's to mint and the
-// operator's to check.
+// The session is identified by the pu claim and by the shape of its uid: the
+// rules require both pu == auth.uid and a uid that begins with `p~`.
+// Everything else about a pairing uid — that it is one-shot, short-lived, and
+// never reused — is P6.6's to mint and the operator's to check.
 func TestPairingSessionWritesItsRequestOnceAndReadsOnlyItsDelivery(t *testing.T) {
 	h := newHarness(t)
 	uid := pairUid
@@ -270,8 +268,8 @@ func TestPairingSessionWritesItsRequestOnceAndReadsOnlyItsDelivery(t *testing.T)
 
 // TestMailboxMessagesRequireTheTag is D169/D171/O7's field, at the database:
 // every message of every kind carries a tag, and so does the heartbeat, and the
-// tag's shape is the schema's own (64 characters — the rules cannot check the
-// character set; shared/mailbox-schema's HEX_PATTERN does).
+// tag's shape is the schema's own (64 lowercase hex characters: MAC_MAX and
+// HEX_PATTERN, both checked at the database).
 //
 // The heart of it, for the reviewer: the rules can only require the *field*.
 // They have no key and cannot verify a value, so this case proves that a
@@ -300,8 +298,8 @@ func TestMailboxMessagesRequireTheTag(t *testing.T) {
 	h.mustDeny(consumer, "a heartbeat with no mac", put(beat(mbAlice), beatNoMac))
 
 	// A tag of the wrong shape: short, long, not a string at all. The rules
-	// check the length and the type, which is everything this language can
-	// check about a hex tag.
+	// check the type, the length and (below) the hex characters; never the
+	// value.
 	for i, bad := range []any{"0f1e2d", strings.Repeat("0", MaxMacLength+1), 42, true, nil} {
 		id := "m3-" + string(rune('a'+i))
 		m := aMessage(id, mbAlice)
