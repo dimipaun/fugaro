@@ -3973,7 +3973,7 @@ git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
 # The step's variables: fill the two SANDBOX_* values in once (read-only
 # lines below), every one ${VAR:?}-guarded.
 SANDBOX_BUCKET=${SANDBOX_BUCKET:?the runs bucket the local config names}
-SANDBOX_JOB=${SANDBOX_JOB:?the sandbox repository job name}
+SANDBOX_JOB=${SANDBOX_JOB:?the job the steps below execute: step 2's launch.json names it}
 CHK60=/tmp/chk60; mkdir -p "$CHK60"; chmod 700 "$CHK60"
 ```
 
@@ -4002,6 +4002,14 @@ fugaro logs --project fugaro --follow "${SLUG:?}/${RUN2:?}" > "$CHK60/run2.log"
 FACT: the run's outcome (`fugaro runs ls --project fugaro`, or `fugaro diagnose "${SLUG:?}/${RUN2:?}" --project fugaro` for the one run), and that `run2.log` and the run's `result.json` carry no budget token and no key (`grep -c` for `eyJ` and for the marker's value: both `0`; the key is not printed anywhere for you to grep, which is the point — record the count of `FUGARO_BUDGET_TOKEN=` in the log, which must be `0` too).
 
 ### 3. The object is worthless without the key, and where the key is (design steps 2 and 3)
+
+**Which job `SANDBOX_JOB` is.** The one step 2's run launched on, which is not always the sandbox repository's own job: a `checkout: clone` workflow of a project whose published policy defines the profile it selects launches on the **shared project job** (`internal/cli/project_job.go`'s `launchProjectJobFor` — the clone path only, and only once the project has published that profile), and a baked workflow, or a project that has published none, keeps the repository's own job. Read it off the run's own launch record, and use that job in every step below that names it (3, and 5 to 9):
+
+```bash
+gcloud storage cat "gs://${SANDBOX_BUCKET:?}/runs/${SLUG:?}/${RUN2:?}/launch.json" --project="${P:?}" | jq -r .job
+```
+
+Step 8 records the `tokens/` grant of whichever job this is; the two kinds have different shapes (§7.2, and the FACT there).
 
 ```bash
 O="gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token"
@@ -4086,7 +4094,7 @@ gcloud storage buckets get-iam-policy "gs://${SANDBOX_BUCKET:?}" --project="${P:
 jq -r '.bindings[] | select(.condition) | [.role, .condition.title, .condition.expression] | @tsv' "$CHK60/bucket-policy.after.json"
 ```
 
-FACT: the launchers' binding is `roles/storage.objectUser`, title `fugaro-launchers-runs-tokens`, expression exactly `gcp.LauncherBucketCondition`'s (`runs/` **or** `tokens/` of this bucket, nothing else); the sandbox job's account holds `roles/storage.objectViewer` titled `fugaro-tokens-<account id>` on exactly `tokens/<its slug>/`; and its `objectUser` condition on `runs/`, `cache/`, `locks/` is byte-identical to `bucket-policy.before.json`'s (the `apply` replaced the launchers' binding, so it is **not** unchanged — record the old and the new).
+FACT: the launchers' binding is `roles/storage.objectUser`, title `fugaro-launchers-runs-tokens`, expression exactly `gcp.LauncherBucketCondition`'s (`runs/` **or** `tokens/` of this bucket, nothing else); step 3's job account holds `roles/storage.objectViewer` on `tokens/`, in the shape its kind has — the repository's own job: title `fugaro-tokens-<account id>` on exactly `tokens/<its slug>/` (`gcp.TokenBucketCondition`); the shared project job: title `fugaro-project-tokens-<account id>` on the whole `tokens/` (`gcp.ProjectTokenBucketCondition`, `internal/backend/gcp/names.go`) — read-only, with no create, delete or update; and its `objectUser` condition on `runs/`, `cache/`, `locks/` is byte-identical to `bucket-policy.before.json`'s (the `apply` replaced the launchers' binding, so it is **not** unchanged — record the old and the new).
 
 ### 9. A sideways replay refuses, and what that does and does not prove (design step 9)
 
