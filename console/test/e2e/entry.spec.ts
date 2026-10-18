@@ -185,6 +185,8 @@ function pageShape(page: Page): Promise<{
   mode: string | null
   bannerHeadline: string | null
   hiddenViews: readonly string[]
+  bodyChildren: readonly string[]
+  bodyText: string
 }> {
   return page.evaluate(() => {
     const bridge = (window as unknown as { fugaro?: Record<string, unknown> }).fugaro
@@ -209,6 +211,13 @@ function pageShape(page: Page): Promise<{
       hiddenViews: [...document.querySelectorAll('li.skew-hidden')].map(
         (element) => element.getAttribute('data-hidden') ?? '',
       ),
+      // What the document's body holds, which is the entry's own drawing and
+      // nothing else: the placeholder Task 1.1's document carried would be a
+      // child here that no screen of this console draws.
+      bodyChildren: [...document.body.children].map(
+        (element) => element.getAttribute('class') ?? element.tagName.toLowerCase(),
+      ),
+      bodyText: document.body.textContent ?? '',
     }
   })
 }
@@ -597,6 +606,13 @@ test.describe('the renderer entry, in the real window', () => {
       // `test/unit/startup.test.ts` holds it to that).
       expect(shape.scripts).toHaveLength(1)
       expect(shape.scriptUrls).toEqual([`${APP_ORIGIN}/console.js`])
+      // And the window holds the entry's drawing and nothing the document
+      // shipped: the header, the navigation and the panel, in that order. Task
+      // 1.1's placeholder -- "The console's window is up. It has no data yet." --
+      // would be a fourth child here, a second `<h1>` and a sentence this task
+      // made false, printed above the figures.
+      expect(shape.bodyChildren).toEqual(['console-installation', 'console-views', 'console-panel'])
+      expect(shape.bodyText).not.toContain('It has no data yet')
 
       const panel = launched.page.locator('div.console-panel')
       await expect(panel.locator('li.live-repo')).toHaveCount(1)
