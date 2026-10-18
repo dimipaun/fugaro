@@ -1,9 +1,11 @@
 # The current site, captured (2026-10-18)
 
-These are the "before" pictures of the redesign brief (`../spec.md`, process step:
-"Playwright full-page screenshots of every page (desktop and mobile)"). They are the
-input to the owner's graphic-design step and the baseline the finished site is
-compared against.
+This directory holds the "before" pictures of the redesign brief (`../spec.md`, process
+step: "Playwright full-page screenshots of every page (desktop and mobile)") **once they are
+regenerated: the images are not committed.** `docs/website/redesign/current/*.jpg` is in the
+root `.gitignore`; the set taken on 2026-10-18 (22 JPEGs, 7.8 MiB) was removed from the
+branch before merge. They are the input to the owner's graphic-design step and the baseline
+the finished site is compared against.
 
 **No agent has looked at any of these images.** The model that took them cannot view
 an image, so nothing below is a description of what is in them: the file names, the
@@ -42,25 +44,24 @@ the page. `/docs/` at 390 px would need seventeen.
 ## Format
 
 `*-fullpage.jpg` is a whole page, JPEG quality 78. `*-part01ofNN.jpg` is a band,
-JPEG quality 62. The whole set is about 8 MB; a lossless set of the same pages was
-36 MB, most of it in those three tall pages, which is not a trade a docs pull request
-should make. If the owner prefers, the directory can be dropped before merge — it is
-regenerable by the script below, and nothing in the repository reads it.
+JPEG quality 62. The set is about 8 MB; a lossless set of the same pages was 36 MB, most
+of it in those three tall pages.
 
 ## Reproducing it
 
-`../capture-screenshots.mjs`, with its output directory as the argument:
+From the repository root, on the commit whose site you want to capture (Playwright is
+installed out of tree, so `website/package.json` never changes):
 
 ```sh
-node docs/website/redesign/capture-screenshots.mjs docs/website/redesign/current
+(cd website && npm ci && npm run build)
+npm install --prefix /tmp/fugaro-pw playwright@1.49.1
+/tmp/fugaro-pw/node_modules/.bin/playwright install chromium
+PLAYWRIGHT_PREFIX=/tmp/fugaro-pw node docs/website/redesign/capture-screenshots.mjs docs/website/redesign/current
 ```
 
-(The same script writes the redesign's **"after"** set by being given
-`docs/website/redesign/after` instead — the directory is an argument precisely so that the
-second run cannot overwrite this baseline.) It is committed because the screenshots are
-evidence and how they were taken should be re-runnable rather than remembered. It is not part
-of the site's build: it installs nothing into `website/`, and `website/package.json`
-is untouched by it. Its header records the two things the container needed — Node
-unpacked to `/tmp`, and Chromium's shared libraries extracted from `.deb` files into
-a local sysroot, because the container has neither Node nor root — and the exact
-environment that made the browser start.
+The script serves `website/dist` on 127.0.0.1:8099, writes the 22 images here and the
+measurements to `/tmp/website-screenshots.json` (its second argument changes that path).
+The redesign's **"after"** set is the same command with `docs/website/redesign/after` as
+the argument — the directory is an argument precisely so that the second run cannot
+overwrite this baseline, and `after/*.jpg` is ignored too. The script's header records how
+the 2026-10-18 set was taken in a container with no Node and no root.

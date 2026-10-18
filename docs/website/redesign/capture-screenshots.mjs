@@ -8,20 +8,24 @@
 // only, and the site's dependency set does not change because a screenshot was
 // taken).
 //
-// How it was run on 2026-10-18:
+// How to run it (from the repository root; Playwright is installed OUT OF TREE, so
+// website/package.json never changes):
 //
-//   * Playwright 1.49.1, installed OUT OF TREE (`npm i playwright@1.49.1` in
-//     /tmp/pw) with its own Chromium. The container this run happened in had no
-//     Node at all, so Node v22.22.0 was unpacked to /tmp as well.
-//   * The container is Debian 13 with no root and no sudo, and Chromium refused
-//     to start for want of 21 shared libraries. They were fetched as .deb files
-//     (`apt-get ... install --download-only` against a writable list directory)
-//     and extracted into a local sysroot, then telegraphed to the browser:
+//   (cd website && npm ci && npm run build)
+//   npm install --prefix /tmp/fugaro-pw playwright@1.49.1
+//   /tmp/fugaro-pw/node_modules/.bin/playwright install chromium
+//   PLAYWRIGHT_PREFIX=/tmp/fugaro-pw node docs/website/redesign/capture-screenshots.mjs docs/website/redesign/current
 //
-//       export LD_LIBRARY_PATH=/tmp/sysroot/usr/lib/x86_64-linux-gnu:/tmp/sysroot/lib/x86_64-linux-gnu
-//       export FONTCONFIG_PATH=/tmp/sysroot/etc/fonts
-//       export XDG_DATA_DIRS=/tmp/sysroot/usr/share:/usr/share
-//       node docs/website/redesign/capture-screenshots.mjs
+// `PLAYWRIGHT_PREFIX` is the directory Playwright was installed into: an ES module
+// resolves a bare `playwright` from its own directory and ignores NODE_PATH, so the
+// script loads it from there explicitly. `REPO_ROOT` defaults to the repository this
+// file is in.
+//
+// How it was run on 2026-10-18, in a container with no Node and no root: Node
+// v22.22.0 unpacked to /tmp, Playwright 1.49.1 installed in /tmp/pw with its own
+// Chromium, and Chromium's 21 missing shared libraries extracted from .deb files into
+// /tmp/sysroot and named through LD_LIBRARY_PATH, FONTCONFIG_PATH and XDG_DATA_DIRS.
+// None of that is needed on a machine where `playwright install chromium` works.
 //
 //   * It serves website/dist over 127.0.0.1 (never file://, because the site's
 //     own asset paths are absolute) and shoots every route at 1280×900 and
@@ -31,14 +35,16 @@
 //
 //   * The output DIRECTORY is an argument, and that is the point of it:
 //
-//       node docs/website/redesign/capture-screenshots.mjs                      # -> current/
-//       node docs/website/redesign/capture-screenshots.mjs docs/website/redesign/after
+//       ... capture-screenshots.mjs docs/website/redesign/current   # the "before" set
+//       ... capture-screenshots.mjs docs/website/redesign/after     # the "after" set
 //
 //     The "before" set is the baseline the "after" set is compared against, so a
 //     script that wrote both to one hard-coded directory would overwrite the
 //     baseline on the second run — the redesign plan's part P9 asks for the
 //     "after" set, and this is the argument that makes that safe. The second
-//     argument is where its measurements are written as JSON.
+//     argument is where its measurements are written as JSON. Neither directory's
+//     images are committed: `docs/website/redesign/{current,after}/*.jpg` are in
+//     the root .gitignore, and this script is how they are made again.
 //
 // Two things the set records honestly rather than hiding:
 //
@@ -50,17 +56,21 @@
 //     `docs-desktop-part01of10.jpg` is the first of ten such bands, so nobody
 //     mistakes it for the whole page. The measured height of every page is in
 //     docs/website/redesign/reconciliation.md §6.
-//   * The band captures are JPEG quality 62 and the full-page ones quality 78:
-//     dense text at 1280×8000 does not compress, and a 36 MB set in a docs pull
-//     request would be a worse trade than a lossy band. Visual comparison is the
+//   * The band captures are JPEG quality 62 and the full-page ones quality 78
+//     (about 8 MB for the set; a lossless set was 36 MB). Visual comparison is the
 //     owner's design step; no agent looked at any of these images.
 
-import { chromium } from 'playwright'
 import { createServer } from 'node:http'
 import { readFileSync, statSync, mkdirSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const REPO = process.env.REPO_ROOT ?? '/work/repo'
+const { chromium } = createRequire(
+  process.env.PLAYWRIGHT_PREFIX ? path.join(path.resolve(process.env.PLAYWRIGHT_PREFIX), 'noop.js') : import.meta.url,
+)('playwright')
+
+const REPO = path.resolve(process.env.REPO_ROOT ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '../../..'))
 const DIST = path.join(REPO, 'website/dist')
 // Where the images go: the first argument, relative to the repository root. The
 // default is the "before" set, and `docs/website/redesign/after` is the "after"
