@@ -64,14 +64,15 @@ This is a plan for a second artifact that does not exist yet, in a repository wh
 
 ## 5. File structure
 
-**What exists today:** nothing under `website/`; nothing under `docs/website/` except the four documents this plan's PR adds; no CLI reference; no generator of any kind; `internal/cli/docs_*.go` as the only document-pinning tests.
+**What exists today:** nothing under `website/`; nothing under `docs/website/` except the four documents this plan's PR adds and the W2.1 amendment's fifth, `preview-promote.md` (below); no CLI reference; no generator of any kind; `internal/cli/docs_*.go` as the only document-pinning tests.
 
 **What this plan creates:**
 
 ```
-docs/website/                     # this PR — the four documents, and nothing else
+docs/website/                     # the plan's PR — the four documents; W2.1's amendment of 2026-10-18 adds a fifth, preview-promote.md (the owner-only one-time setup the two staged workflows need)
 docs/pending-workflows/
-  website.yml                     # W2.1 — staged, for the owner to copy; deploys to the website-only Firebase project
+  website-preview.yml             # W2.1 — staged, for the owner to copy; the manual preview deploy (amendment of 2026-10-18)
+  website-promote.yml             # W2.1 — staged, for the owner to copy; the owner-only promote to live (amendment of 2026-10-18)
 firebase.json                     # W2.1 creates it, and it carries no redirects — a redirect rule cannot match on host, and there is no second domain (W2.2's amendments)
 website/                          # Part 1 — the artifact
   package.json, package-lock.json, astro.config.mjs, tsconfig.json
@@ -532,6 +533,14 @@ The waves, and what each one now waits on:
 **Depends on:** W1.11. **Commit:** `feat(website): stage the deploy workflow for the owner to copy, with no credential a run can hold`
 
 **Red step.** Write the "no credential outside `secrets.`" test against a workflow carrying an inline token. `Expected: FAIL` — `website.yml carries a literal token`.
+
+**Amended 2026-10-18 (owner ruling) — the deploy is TWO manual workflows, a preview and a promote, and the credential is federated rather than a secret.** The owner approved this shape on 2026-10-18, and it supersedes three of the steps above:
+
+- **Step 4's trigger is struck.** There is no path filter on `website/**` and no push trigger anywhere: **both workflows are `workflow_dispatch` only**. One (`website-preview.yml`) builds a ref the owner names and deploys it to a Firebase Hosting **preview channel** of the site's project, printing the preview URL in the job summary — and **a preview is public**, which the owner accepted with the shape. The other (`website-promote.yml`) **copies an existing preview channel's version onto the live channel** and is the owner's alone: the job carries `environment: website-live` whose only required reviewer is the owner, plus a guard on `github.actor`. So the live site moves only when the owner promotes bytes they have already seen, which is D109's decoupling taken one step further than step 4 had it (nothing at all runs on a merge).
+- **Step 3's credential is struck and replaced.** The deploy credential is **not** a GitHub Actions secret: both workflows authenticate to Google through **Workload Identity Federation** (`google-github-actions/auth`, pinned by SHA), exchanging the run's own OIDC token for a short-lived access token for a deployer service account that holds only Firebase Hosting roles on the site's project. **Never a key file**, and `secrets.` appears nowhere in either file: the three values they read (`FIREBASE_PROJECT_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOYER_SERVICE_ACCOUNT`) are repository **variables**, which are identifiers rather than credentials. The rest of step 3 stands unchanged: least privilege declared in `permissions:` (`contents: read` and `id-token: write`, nothing else), no `pull_request_target`, no `.firebaserc`, the project named only through the variable, and neither workflow runs a Fugaro command or is invoked by one.
+- **Step 1's staged name is struck.** The staged files are **`docs/pending-workflows/website-preview.yml`** and **`docs/pending-workflows/website-promote.yml`**, not `website.yml`, and the owner's one-time setup (the WIF pool and provider, the deployer service account and its roles, the `website-live` environment, the three repository variables) is written out for the owner in **`docs/website/preview-promote.md`** — commands to run, never run by an agent. `docs/pending-workflows/README.md` carries the copy-in steps for the pair, and the channel-name input is validated against **the same pattern `scripts/deploy-website.sh` validates `--channel` against** (`^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$`), which a Go test reads out of both files.
+
+Steps 2, 5 and 6 stand: `firebase.json` as it exists, the staged README updated, and nothing under `.github/workflows/` touched. The tests step is `internal/cli/docs_website_deploy_test.go`: it parses each staged YAML and requires `workflow_dispatch` to be the only trigger, no `pull_request_target`, every `uses:` pinned to a full commit SHA with its version comment, explicit least-privilege `permissions:` on the workflow and on every job, the environment and actor guard on the promote job, the channel pattern above, the preview URL written to `$GITHUB_STEP_SUMMARY`, and no key-file credential — with a companion test that plants a weakening per rule and requires the check that names it to report it.
 
 ### Task W2.2: The canonical URL and check 69a/69b in the register
 

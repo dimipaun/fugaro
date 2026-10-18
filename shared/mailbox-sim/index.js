@@ -152,6 +152,18 @@ export const PHONE = 'phone';
 /** How many passes `run` may take before it refuses to go on. */
 export const MAX_TICKS = 1_000;
 
+/**
+ * The tag every message the simulation writes carries. P6.3 requires a `mac`
+ * on every message of every kind, and the schema validates its shape; the
+ * simulation says nothing about its VALUE, because the tag is the consumer's
+ * to check with the per-pairing key it holds and the harness does not (D171),
+ * and a simulated key would be a key-shaped literal in a repository. So the
+ * phone writes a mac-SHAPED placeholder — 64 lowercase hex characters no key
+ * produces — and the end-to-end tests that do care about a real tag over real
+ * bytes use `shared/mailbox-schema`'s vectors.
+ */
+export const PLACEHOLDER_MAC = 'f'.repeat(64);
+
 /** The refusals, each with a code of its own. */
 export const REFUSAL = Object.freeze({
   NOT_AN_OBJECT: 'not-an-object',
@@ -992,6 +1004,7 @@ export function createSimulator(options = {}) {
           sender: PHONE,
           text: fields.text,
           at: stamp(PHONE),
+          mac: PLACEHOLDER_MAC,
         });
         const validated = validateMessage(message);
         if (!validated.ok) return refuse(validated.code, validated.field);
@@ -1226,7 +1239,13 @@ export function createSimulator(options = {}) {
           const key = replyId(acting.id);
           if (!store.outbox.has(key) && !replies.has(key)) {
             const validated = validateMessage(
-              Object.freeze({ id: key, sender: id, text: `answer to ${acting.id}`, at: stamp(id) }),
+              Object.freeze({
+                id: key,
+                sender: id,
+                text: `answer to ${acting.id}`,
+                at: stamp(id),
+                mac: PLACEHOLDER_MAC,
+              }),
             );
             if (validated.ok) replies.set(key, validated.message);
           }

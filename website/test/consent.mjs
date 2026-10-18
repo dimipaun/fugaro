@@ -27,11 +27,13 @@
 //      banner goes, and no interception of the keyboard.
 //
 // And the shipped state, which is the one a reader meets today: with `site.yaml`'s flag false
-// there is no banner markup, no loader, no origin and no script anywhere in the artifact, and
-// the privacy page says in one sentence that the site collects nothing. (The banner's own
-// stylesheet does ship, inert and fetching nothing: Astro collects an imported component's
-// scoped styles whether or not the component rendered. The first case below says so out loud
-// and holds the stylesheet to being inert.)
+// there is no banner markup, no loader, no origin and no inline script anywhere in the
+// artifact, and the privacy page says in one sentence that the site collects nothing. (The
+// site's one script *file*, `/scripts/site.js`, ships either way: it is the copy control's
+// (D183), it names no origin and fetches nothing, and the first case below holds the artifact
+// to exactly that one script. The banner's own stylesheet does ship, inert and fetching
+// nothing: Astro collects an imported component's scoped styles whether or not the component
+// rendered. The first case below says so out loud and holds the stylesheet to being inert.)
 //
 // The red step, and what it turned out to be. The plan's red step reads: "Write the 'no
 // request before consent' case against a page that emits the analytics tag unconditionally.
@@ -362,6 +364,16 @@ function pageOf(pages, rel) {
   return page.html
 }
 
+/**
+ * Every `<script>` a built page carries, as the source it loads: its `src`, or the marker
+ * `(inline)` for a script whose code is in the page. The site's shipped state is "one file
+ * and no inline script" and this is the reading that says so — a page's script count on its
+ * own would not distinguish the copy control's file from a second, unadmitted inline block.
+ */
+function scriptSources(html) {
+  return [...html.matchAll(/<script\b([^>]*)>/g)].map((match) => /\bsrc="([^"]+)"/.exec(match[1])?.[1] ?? '(inline)')
+}
+
 const SHIPPED_HOME = pageOf(SHIPPED, 'index.html')
 
 // ---- 1. the state the site ships in ------------------------------------------------------
@@ -373,9 +385,15 @@ test('with analytics off, the built site carries no analytics: no origin, no loa
       !ANALYTICS_SHAPED.test(page.html),
       `${page.rel} names the analytics surface while site.yaml's analytics.enabled is false: the banner and the loader are emitted only when the flag is on, so that the artifact a reader is served today names no third party and loads no script (D93, W1.12 step 3)`,
     )
-    assert.ok(
-      !/<script/i.test(page.html),
-      `${page.rel} ships a script while analytics are off: the consent banner's controller and the gated loader are the site's only scripts, and neither is emitted until the flag is on`,
+    // The site's one script, and it is a file of its own (D183): the copy control's. The
+    // banner's controller and the gated loader are the site's only *inline* scripts and
+    // neither is emitted until the flag is on, which is what this asserts — a page with no
+    // inline script has nothing for the policy's hash allow-list to admit, and nothing here
+    // is fetched from anywhere but this site.
+    assert.deepEqual(
+      scriptSources(page.html),
+      ['/scripts/site.js'],
+      `${page.rel} ships scripts while analytics are off: the site's one script is its own /scripts/site.js, and the consent banner's controller and the gated loader are emitted only when the flag is on`,
     )
     const doc = parse(page.html)
     assert.equal(findAll(doc, (el) => el.attrs.get('id') === 'consent-banner').length, 0, `${page.rel} renders the consent banner while the flag is off`)
@@ -623,7 +641,7 @@ test('the claims the privacy page makes about the site are held to the artifact'
 
 // ---- the policy the artifact is served with ---------------------------------------------
 
-test('the deployed policy admits no remote script while the site ships none', () => {
+test("the deployed policy admits no remote script, and the site's one script is its own file", () => {
   const firebase = JSON.parse(readFileSync(path.join(REPO, 'firebase.json'), 'utf8'))
   const headers = firebase.hosting.headers.flatMap((entry) => entry.headers)
   const csp = headers.find((header) => header.key.toLowerCase() === 'content-security-policy')
@@ -632,10 +650,14 @@ test('the deployed policy admits no remote script while the site ships none', ()
   assert.deepEqual(
     remoteScriptSources(csp.value),
     [],
-    "firebase.json's script-src admits a remote origin while the built site ships no script at all: W3.2 is the task that widens this policy, in the commit that turns analytics on, and the hashes it has to name are the ones website/test/origins.mjs lists",
+    "firebase.json's script-src admits a remote origin: the site's one script is /scripts/site.js, which `script-src 'self'` already admits, and W3.2 is the task that widens this policy — in the commit that turns analytics on, with the hashes website/test/origins.mjs lists",
   )
   for (const page of SHIPPED) {
-    assert.ok(!/<script/i.test(page.html), `${page.rel} ships a script the policy above does not admit`)
+    assert.deepEqual(
+      scriptSources(page.html),
+      ['/scripts/site.js'],
+      `${page.rel} ships a script the policy above does not admit: the site's one script is its own file, and an inline script would need a hash the policy does not carry`,
+    )
   }
 })
 

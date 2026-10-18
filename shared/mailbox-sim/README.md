@@ -45,8 +45,9 @@ mutation proof has no mutation for them for that reason, and says so.
 The plan needs two things the merged modules have no field for, and the honest answer is
 to say so rather than to grow a rule here:
 
-- **There is no `kind` field.** P6.3 adds one, and P6.3 is proposed and **NOT APPROVED**,
-  so the schema's field set is `id, sender, text, at, acked` and nothing else. The kind
+- **There is no `kind` field in the harness's own messages.** P6.3 names one in the schema,
+  and P6.3 is proposed and **NOT APPROVED**; this harness was written against P0.2's field
+  set and does not grow a rule the plan has not approved. The kind
   therefore travels **beside** the message, in the store's own record
   (`store.kinds`, written by `phone.writeInbox` and read by the consumer), and never inside
   the message. A test asserts that no message the harness writes carries a field the
@@ -57,8 +58,9 @@ to say so rather than to grow a rule here:
   calling the same exported function, so a mutation there would move the expectation with
   the behaviour, and no test could catch it.
 
-Both are the harness's own inventions and are named here rather than hidden. If P6.3 is
-approved, they are what P6.3 replaces.
+Both are the harness's own inventions and are named here rather than hidden. P6.3's field
+set is what replaces them for a **signed** write, and this harness does not sign: see the
+placeholder tag below.
 
 ## The model
 
@@ -71,7 +73,9 @@ asserts neither was touched.
 **The randomness is a seeded PRNG written in this file** (`makeRng`, a mulberry32-style
 generator over 32-bit integer arithmetic, so its sequence is identical in every engine).
 There is no `Math.random` anywhere, and no `node:crypto`: nothing in this task's scope needs
-cryptographic determinism, because the MAC is P6.3's and does not exist yet.
+cryptographic determinism, and a simulator must not hold a key. The tag the schema now
+requires is written as `PLACEHOLDER_MAC` — the shape of a tag, never its meaning — and
+nothing here computes or verifies one.
 
 **The store** holds the account's inbox, its outbox, the consumer's heartbeat, the consumer
 lease and the mailbox's ledger. The three message families are plain maps, written by
@@ -201,9 +205,15 @@ Over 120 seeded schedules, each with three messages, two consumers and twelve pa
 
 ## What it deliberately does not model
 
-- **The MAC.** P6.3's signed message does not exist yet, and neither does the "fixed function
-  of the MAC-verified message" that the mailbox's README requires `kind` to be. The kind
-  comes out of band instead, and says so above.
+- **The MAC.** The harness writes the tag's **shape** and not its meaning: every message it
+  writes carries `PLACEHOLDER_MAC`, an obviously fake 64-hex string, and nothing here
+  computes a tag, verifies one, or holds a key — a simulator with the per-pairing key of
+  D171 would be a simulator that could forge. P6.3's `macOf` and `verifyMac` live in
+  `../mailbox-schema/mac.js` — Node-only, and deliberately not imported by that module's
+  entry point, which imports nothing so the phone can load the validator — and the
+  "fixed function of the MAC-verified message" that
+  `../mailbox/README.md` requires `kind` to be is still the consumer's: the kind comes out
+  of band here instead, and says so above.
 - **The rules.** `database.rules.json`, the tree's `$other` denial and the write permissions
   are P2.1's. This is a simulator of the *modules*, not of the deployment: it models what the
   pure logic decides, and nothing about who is allowed to write what.

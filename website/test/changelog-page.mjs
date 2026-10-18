@@ -12,11 +12,18 @@
 //   3. **The page adds no sentence of its own**, and drops no line of any file.** Every
 //      sentence the page renders appears in a release file, and every content line of
 //      every release file appears on the page. The only words the page writes itself are
-//      its title, the "not yet released" marker W1.9 step 1 requires, and the tags, which
-//      come from the filenames.
+//      its title, the summary block's heading, the "not yet released" marker W1.9 step 1
+//      requires, and the tags, which come from the filenames.
 //   4. **Every entry links to its GitHub release**, at a URL built from site.yaml's
 //      repository rather than typed into the page, and the page states no date — the files
 //      carry none and the newest entry has no tag to read one from (D100).
+//   5. **The summary block is the files' text too** (P4, D189; RF24). The page opens with
+//      the newest releases' first Highlights line above the full list, and those lines are
+//      the release files' own: the case below pins each item to the first content line of
+//      the file its tag names, in the newest-first order, so the one place where a line
+//      appears twice on this page is still a line no one wrote here. The block is a
+//      summary a reader reads and not a second changelog — the number of releases it shows
+//      is the page's choice and is deliberately not pinned here; what it shows is.
 //
 // **How it builds, and why the build has no tags.** A page is observable only as HTML, so
 // this file builds the site — in a **copy of the repository in a temp directory**, with
@@ -59,6 +66,12 @@ const NON_RELEASE = 'README.md'
 // one content line the page does not render verbatim: the page prints it as the block's own
 // heading, which is the same words.
 const OPERATORS_HEADING = '### For operators'
+
+// The heading of the summary block P4 put above the list (D189). It is the page's own word
+// — the block is the page's summary of the newest releases, not a line of any one of them —
+// and it is named here because the "no sentence of its own" case below has to allow it, and
+// nothing else of that kind, on the page.
+const SUMMARY_HEADING = 'The newest releases'
 
 // What a site build cannot read, and therefore what the copy below leaves out: the Go
 // module's own tree and test data, the console application, and the installed and built
@@ -238,11 +251,44 @@ function pageSentences(html) {
   )
 }
 
-/** The tags the page's entry headings carry, in the order they appear. */
+/**
+ * The tags the page's **entry** headings carry, in the order they appear.
+ *
+ * An entry heading is an `<h2>` whose `id` is the tag and whose text is the tag: the id is
+ * what the entry is linked by, and the text is what a reader reads, so the two are one fact
+ * and are asserted to agree. The summary block P4 added above the list (D189) carries a
+ * heading of its own, which is a heading like any other and is not an entry — reading every
+ * `<h2>` on the page would count it as a release and fail the coverage case below for the
+ * wrong reason, so an entry heading is recognised by its id, which is the tag and nothing
+ * else.
+ */
 function tagsOnPage(html) {
-  return [...html.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/g)].map((match) =>
-    decodeEntities(match[1].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim(),
-  )
+  return [...html.matchAll(/<h2\b[^>]*\bid="([^"]*)"[^>]*>([\s\S]*?)<\/h2>/g)].map((match) => {
+    const text = decodeEntities(match[2].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim()
+    assert.equal(
+      text,
+      match[1],
+      `an entry heading carries the id ${JSON.stringify(match[1])} and the text ${JSON.stringify(text)}: the id is what the entry is linked by and the text is what a reader reads, and they are one fact (W1.9)`,
+    )
+    return match[1]
+  })
+}
+
+/**
+ * The summary block's items, in the order the page renders them: the tag each item names
+ * and the text of its line. The block is the page's one summary (P4, D189), and it is read
+ * here as a block of its own so that the case below can pin it to the release files.
+ */
+function summaryItems(html) {
+  const items = []
+  for (const match of html.matchAll(/<div class="summary-release"[^>]*\bdata-summary-release="([^"]+)"[^>]*>([\s\S]*?)<\/div>/g)) {
+    const line = /<p class="summary-line"[^>]*>([\s\S]*?)<\/p>/.exec(match[2])
+    items.push({
+      tag: match[1],
+      line: line === null ? null : decodeEntities(line[1].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim(),
+    })
+  }
+  return items
 }
 
 // ---------------------------------------------------------------------------------------
@@ -287,15 +333,56 @@ test('the changelog page lists the newest release first', () => {
 test('the changelog page adds no sentence of its own', () => {
   const html = builtPage()
   const files = releasesText()
-  // The page's own words, and the whole of them: its title, the marker W1.9 step 1
+  // The page's own words, and the whole of them: its title, the summary block's heading —
+  // the one word of the block that is not a release file's, which names what the block is
+  // rather than saying anything about a release (P4, D189) — the marker W1.9 step 1
   // requires for a release with no tag, and the tags, which come from the filenames.
-  const own = new Set(['Changelog', 'not yet released', ...releaseFiles().map(tagOf)])
+  const own = new Set(['Changelog', SUMMARY_HEADING, 'not yet released', ...releaseFiles().map(tagOf)])
 
   for (const sentence of pageSentences(html)) {
     if (files.includes(sentence)) continue
     assert.ok(
       own.has(sentence),
       `the page carries a sentence no release file does: ${JSON.stringify(sentence)}. The page renders the release notes; it writes no summary, no "what's new" and no editorial of its own (W1.9 step 2).`,
+    )
+  }
+})
+
+test('the summary block renders the newest releases’ first Highlights line', () => {
+  const html = builtPage()
+  const items = summaryItems(html)
+  const newest = newestFirst()
+
+  // The block exists and is a summary rather than a second changelog: it shows a run of the
+  // newest releases, in the order a reader expects, and never more than the list below
+  // carries. How many it shows is the page's choice (P4, D189) — a summary is a gist — so
+  // the number is not pinned here; that it is the *newest* run of them is.
+  assert.ok(
+    items.length > 0,
+    'the page carries no summary block: the changelog opens straight into its first entry, which is the gap RF24 names and D189 answers with the newest releases’ first Highlights line',
+  )
+  assert.ok(
+    items.length <= newest.length,
+    `the summary block shows ${items.length} releases and docs/releases/ holds ${newest.length}`,
+  )
+  assert.deepEqual(
+    items.map((item) => item.tag),
+    newest.slice(0, items.length),
+    'the summary block is not the newest releases, in the order the list below renders them',
+  )
+
+  // And every line in it is the file's own: the first line a reader of that release file
+  // reads, with its bullet marker and its inline markup rendered the way the entry below
+  // renders it. This is the assertion D189 asks for — the summary is rendered from the
+  // files, so a line written for the summary instead is a defect, not copy.
+  for (const item of items) {
+    const first = contentLines(`${item.tag}.md`)[0]
+    assert.ok(first !== undefined, `docs/releases/${item.tag}.md carries no line for the summary to render`)
+    assert.ok(item.line !== null, `the summary's item for ${item.tag} carries no line`)
+    assert.equal(
+      item.line,
+      plain(first),
+      `the summary block's line for ${item.tag} is not the first line of docs/releases/${item.tag}.md`,
     )
   }
 })
