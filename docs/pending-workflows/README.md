@@ -77,9 +77,12 @@ wrote the website's deploy path (website plan Task W2.1, D91, D109, F14). They
 replace nothing: `.github/workflows/` holds `ci.yml`, `images.yml` and
 `release.yml` today, and neither staged file touches the release train.
 
-- **`website-preview.yml`** builds a chosen ref (`ref`, default `main`), runs
-  the site's own gate (`npm run check` in `website/`: the Astro build plus
-  every `website/test/*.mjs`), and deploys the result to a **preview channel**
+- **`website-preview.yml`** builds a chosen ref (`ref`, default `main`) and
+  runs the site's own gate (`npm run check` in `website/`: the Astro build plus
+  every `website/test/*.mjs`) in a `build` job that holds **no** `id-token`
+  scope, then a separate `deploy` job takes the build as an artifact, refuses a
+  `firebase.json` with a lifecycle hook or a `public` dir other than
+  `website/dist`, authenticates, and deploys the result to a **preview channel**
   of the website's own Firebase project with `firebase hosting:channel:deploy
   --expires 7d --json`. It writes the channel, the URL, the ref and the commit
   into the job summary, because the URL is the run's whole output. The live
@@ -118,12 +121,17 @@ have: it parses each staged YAML (the fields GitHub executes, not strings in
 comments) and requires `workflow_dispatch` to be the **only** trigger, no
 `pull_request_target` anywhere, every `uses:` pinned to a full commit SHA with
 its version comment, an explicit least-privilege `permissions:` block on the
-workflow and on every job, the environment and the owner guard on the promote
+workflow and on every job, `id-token: write` only on the job that
+authenticates (never on the preview's `build` job, which also may not share a
+job with the auth step), no `${{ }}` expression inside any `run:` script, the
+environment and the owner guard on the promote
 job, the channel pattern above, the preview URL written to
 `$GITHUB_STEP_SUMMARY`, and **no key-file credential** — no `credentials_json`,
 no token flag, and no `secrets.` reference — in any of them. A companion test
 feeds that checker a planted weakening per rule and requires each to be
-reported, so no check can rot unnoticed.
+reported, so no check can rot unnoticed. A second test holds
+`docs/website/preview-promote.md`'s WIF provider condition to this repository
+(name and id), `refs/heads/main` and `workflow_dispatch`, and refuses a key.
 
 **The owner's one-time setup is `docs/website/preview-promote.md`**, and it is
 the owner's alone: the WIF pool and provider, the deployer service account and

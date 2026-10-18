@@ -282,10 +282,34 @@ func websiteWorkflowProblems(name string, want websiteWorkflowExpectations, data
 		}
 	}
 	checkPermissions("the workflow", doc.Permissions)
+	if _, ok := doc.Permissions["id-token"]; ok {
+		add("permissions", "%s grants id-token at the workflow level: only the job that authenticates may hold it", name)
+	}
+	authenticates := func(job websiteWorkflowJob) bool {
+		return slices.ContainsFunc(job.Steps, func(s websiteWorkflowStep) bool {
+			return strings.HasPrefix(s.Uses, "google-github-actions/auth@")
+		})
+	}
 	for jobID, job := range doc.Jobs {
 		checkPermissions(fmt.Sprintf("job %q", jobID), job.Permissions)
-		if job.Permissions["id-token"] != "write" {
-			add("permissions", "%s job %q does not hold id-token: write, so it cannot authenticate through Workload Identity Federation", name, jobID)
+		_, holdsIDToken := job.Permissions["id-token"]
+		switch {
+		case authenticates(job) && job.Permissions["id-token"] != "write":
+			add("permissions", "%s job %q authenticates but does not hold id-token: write, so it cannot use Workload Identity Federation", name, jobID)
+		case !authenticates(job) && holdsIDToken:
+			add("permissions", "%s job %q holds id-token without authenticating: every step of that job could mint an OIDC token the deployer trusts", name, jobID)
+		}
+	}
+
+	// 5b. No expression in a shell. A `${{ ... }}` inside a run: block is
+	// substituted into the script text before bash reads it, so an input (a
+	// ref, a channel) could change the shape of the command: script
+	// injection. Inputs reach a shell through env: only.
+	for jobID, job := range doc.Jobs {
+		for _, step := range job.Steps {
+			if strings.Contains(step.Run, "${{") {
+				add("no-expression-in-shell", "%s job %q step %q interpolates a ${{ }} expression into its shell; pass it through env: instead", name, jobID, step.Name)
+			}
 		}
 	}
 
@@ -335,8 +359,10 @@ func websiteWorkflowProblems(name string, want websiteWorkflowExpectations, data
 	}
 	// The live channel is never an input: one workflow deploys to a preview
 	// channel, the other promotes an existing one.
-	if !regexp.MustCompile(`\$CHANNEL\s*!=\s*live`).MatchString(body) {
-		add("channel-pattern", "%s does not refuse the channel name `live` as an input", name)
+	// Every validation of the pattern is paired with the refusal (one per job
+	// that validates), so dropping either one in any job is reported.
+	if refusals := len(regexp.MustCompile(`\$CHANNEL\s*!=\s*live`).FindAllString(body, -1)); refusals == 0 || refusals != len(workflowPatterns) {
+		add("channel-pattern", "%s validates the channel %d time(s) but refuses the name `live` %d time(s): every validation must refuse it", name, len(workflowPatterns), refusals)
 	}
 
 	// The steps' own fields, for the rules below: a `run:` block is what the
@@ -400,6 +426,37 @@ func websiteWorkflowProblems(name string, want websiteWorkflowExpectations, data
 		}
 		if runs("hosting:clone") {
 			add("preview-deploy", "%s promotes with hosting:clone: the preview workflow must never write the live channel", name)
+		}
+		// The build runs the requested ref's code and its whole npm
+		// dependency tree, so it never shares a job with the credential: the
+		// job that authenticates checks nothing out, installs no site
+		// dependency and runs no site script, and takes the build as an
+		// artifact whose firebase.json it vets first (a lifecycle hook is a
+		// shell command from the ref, run with the credential; a widened
+		// public dir would publish the credential file the auth step writes).
+		for jobID, job := range doc.Jobs {
+			if !authenticates(job) {
+				continue
+			}
+			jobRuns := func(needle string) bool {
+				return slices.ContainsFunc(job.Steps, func(s websiteWorkflowStep) bool { return strings.Contains(s.Run, needle) })
+			}
+			for _, step := range job.Steps {
+				switch {
+				case strings.HasPrefix(step.Uses, "actions/checkout@"):
+					add("build-isolation", "%s job %q authenticates and also checks the requested ref out", name, jobID)
+				case strings.Contains(step.Run, "npm ci"), strings.Contains(step.Run, "npm run"):
+					add("build-isolation", "%s job %q authenticates and also runs the site's npm tree (step %q)", name, jobID, step.Name)
+				}
+			}
+			if !slices.ContainsFunc(job.Steps, func(s websiteWorkflowStep) bool {
+				return strings.HasPrefix(s.Uses, "actions/download-artifact@")
+			}) {
+				add("build-isolation", "%s job %q deploys without taking the build as an artifact from a credential-free job", name, jobID)
+			}
+			if !jobRuns("predeploy") || !jobRuns("postdeploy") || !jobRuns(`"website/dist"`) {
+				add("build-isolation", "%s job %q does not refuse a firebase.json with lifecycle hooks or a public dir other than website/dist", name, jobID)
+			}
 		}
 	case websitePromoteKind:
 		if len(doc.Jobs) == 0 {
@@ -555,6 +612,13 @@ func TestWebsiteWorkflowChecksFindEveryMutation(t *testing.T) {
 		{"a pin with no version comment", preview, previewData, "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0", "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1", "pins"},
 		{"a job that drops its permissions block", promote, promoteData, "    permissions:\n      # Nothing is checked out", "    x-permissions:\n      # Nothing is checked out", "permissions"},
 		{"a job that drops id-token: write", preview, previewData, "      id-token: write\n    env:", "    env:", "permissions"},
+		{"id-token granted to the build job", preview, previewData, "  build:\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    permissions:\n      contents: read\n", "  build:\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    permissions:\n      contents: read\n      id-token: write\n", "permissions"},
+		{"id-token granted at the workflow level", promote, promoteData, "permissions:\n  contents: read\n", "permissions:\n  contents: read\n  id-token: write\n", "permissions"},
+		{"an input interpolated into the preview's shell", preview, previewData, `[[ -n ${CHANNEL:-} ]] || die "no channel was given"`, `[[ -n "${{ inputs.channel }}" ]] || die "no channel was given"`, "no-expression-in-shell"},
+		{"an input interpolated into the promote's shell", promote, promoteData, `firebase hosting:clone "${FIREBASE_PROJECT_ID}:${CHANNEL}"`, `firebase hosting:clone "${FIREBASE_PROJECT_ID}:${{ inputs.channel }}"`, "no-expression-in-shell"},
+		{"the deploy job checking the ref out", preview, previewData, "      - name: take the build from the credential-free job\n", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n      - name: take the build from the credential-free job\n", "build-isolation"},
+		{"the deploy job running the site's npm tree", preview, previewData, "        run: npm install --global --no-audit --no-fund firebase-tools@15.19.0", "        run: npm ci && npm install --global --no-audit --no-fund firebase-tools@15.19.0", "build-isolation"},
+		{"the deploy job's firebase.json vetting dropped", preview, previewData, `.hosting.public == "website/dist"`, `.hosting.public != ""`, "build-isolation"},
 		{"a job granted contents: write", promote, promoteData, "    permissions:\n      # Nothing is checked out, so there is no contents scope to either grant\n      # or withhold; the federation exchange is the job's only need.\n      id-token: write", "    permissions:\n      contents: write\n      id-token: write", "permissions"},
 		{"the federation exchange replaced by a key", promote, promoteData, "          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}", "          credentials_json: ${{ secrets.GCP_SA_KEY }}", "no-credential"},
 		{"a token flag on a command line", preview, previewData, "            --expires 7d \\", "            --token \"$FIREBASE_TOKEN\" --expires 7d \\", "no-credential"},
@@ -588,6 +652,73 @@ func TestWebsiteWorkflowChecksFindEveryMutation(t *testing.T) {
 				}
 			}
 			t.Errorf("the %s mutation was not reported by the %q check; problems: %v", tc.what, tc.checkID, problems)
+		})
+	}
+}
+
+// websiteSetupDocProblems checks the owner's one-time setup in
+// docs/website/preview-promote.md for the properties the credential's boundary
+// rests on: the WIF provider's attribute condition names this repository (by
+// name and by its immutable id) and the main branch, the impersonation binding
+// is scoped to the repository's principal set, and no step creates a key.
+func websiteSetupDocProblems(doc string) []string {
+	var problems []string
+	add := func(check, format string, args ...any) {
+		problems = append(problems, check+": "+fmt.Sprintf(format, args...))
+	}
+	cond := regexp.MustCompile(`--attribute-condition="([^"]*)"`).FindStringSubmatch(doc)
+	if cond == nil {
+		add("wif-condition", "the setup creates the WIF provider with no --attribute-condition")
+	} else {
+		for _, want := range []string{
+			"assertion.repository == 'dimipaun/fugaro'",
+			"assertion.repository_id == '",
+			"assertion.ref == 'refs/heads/main'",
+			"assertion.event_name == 'workflow_dispatch'",
+		} {
+			if !strings.Contains(cond[1], want) {
+				add("wif-condition", "the provider's attribute condition %q does not require %s", cond[1], want)
+			}
+		}
+		if strings.Contains(cond[1], "||") {
+			add("wif-condition", "the provider's attribute condition %q has an || that can widen it", cond[1])
+		}
+	}
+	if !strings.Contains(doc, `--member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/github/attribute.repository/$REPO"`) {
+		add("wif-binding", "the workloadIdentityUser binding is not scoped to this repository's principal set")
+	}
+	if strings.Contains(doc, "keys create") {
+		add("no-key", "the setup creates a service account key")
+	}
+	if !strings.Contains(doc, `--role="roles/firebasehosting.admin"`) || strings.Contains(doc, "roles/owner") || strings.Contains(doc, "roles/editor") || strings.Contains(doc, "roles/firebase.admin") {
+		add("deployer-role", "the deployer's role is not roles/firebasehosting.admin alone")
+	}
+	return problems
+}
+
+// TestWebsiteSetupDocHoldsTheBoundary: the setup doc as written, and one
+// planted weakening per rule.
+func TestWebsiteSetupDocHoldsTheBoundary(t *testing.T) {
+	doc := readDoc(t, websitePreviewDocNamed)
+	for _, p := range websiteSetupDocProblems(doc) {
+		t.Errorf("%s: %s", websitePreviewDocNamed, p)
+	}
+	for _, tc := range []struct{ what, old, new, check string }{
+		{"the ref condition dropped", " && assertion.ref == 'refs/heads/main'", "", "wif-condition"},
+		{"the repository condition widened", "assertion.repository == 'dimipaun/fugaro'", "assertion.repository_owner == 'dimipaun'", "wif-condition"},
+		{"an || added", "assertion.event_name == 'workflow_dispatch'", "assertion.event_name == 'workflow_dispatch' || true", "wif-condition"},
+		{"the binding widened to the pool", "/attribute.repository/$REPO\"", "/*\"", "wif-binding"},
+		{"a key created", "gcloud iam service-accounts create website-deployer", "gcloud iam service-accounts keys create key.json --iam-account=\"$SA\"\ngcloud iam service-accounts create website-deployer", "no-key"},
+		{"the deployer made an editor", `--role="roles/firebasehosting.admin"`, `--role="roles/editor"`, "deployer-role"},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			if !strings.Contains(doc, tc.old) {
+				t.Fatalf("the mutation does not apply: %q is not in the doc", tc.old)
+			}
+			problems := websiteSetupDocProblems(strings.Replace(doc, tc.old, tc.new, 1))
+			if !slices.ContainsFunc(problems, func(p string) bool { return strings.HasPrefix(p, tc.check+": ") }) {
+				t.Errorf("not reported by %q; problems: %v", tc.check, problems)
+			}
 		})
 	}
 }

@@ -22,10 +22,10 @@ Federation, never a key file.**
 |---|---|---|
 | Trigger | `workflow_dispatch` only | `workflow_dispatch` only |
 | Inputs | `ref` (default `main`), `channel` | `channel` (an existing preview channel) |
-| What it does | checks out the ref, runs the site's gate (`npm run check` in `website/`: the Astro build and every `website/test/*.mjs`), deploys `website/dist` to a **preview channel** of the site's own Firebase project (`firebase hosting:channel:deploy "$CHANNEL" --project "$FIREBASE_PROJECT_ID" --expires 7d --json`) | copies an existing preview channel's current version onto the **live** channel (`firebase hosting:clone "$PROJECT:$CHANNEL" "$PROJECT:live"`); nothing is rebuilt |
+| What it does | a credential-free `build` job checks out the ref and runs the site's gate (`npm run check` in `website/`: the Astro build and every `website/test/*.mjs`); a separate `deploy` job takes the build as an artifact, vets its `firebase.json`, and deploys `website/dist` to a **preview channel** of the site's own Firebase project (`firebase hosting:channel:deploy "$CHANNEL" --project "$FIREBASE_PROJECT_ID" --expires 7d --json`) | copies an existing preview channel's current version onto the **live** channel (`firebase hosting:clone "$PROJECT:$CHANNEL" "$PROJECT:live"`); nothing is rebuilt |
 | What it writes | a new version in one preview channel | the live channel |
 | Output | the preview URL, the channel, the ref and the commit, in the run's **job summary** | the project, the promoted channel and who promoted it, in the job summary |
-| Who may start it | anyone with write access to the repository | **the owner alone** — the `website-live` environment's required reviewer *and* a guard on `github.actor` |
+| Who may start it | anyone with write access to the repository, from `main` (the WIF provider refuses any other dispatch ref) | **the owner alone** — the `website-live` environment's required reviewer *and* a guard on `github.actor` |
 | Credential | none in the file: Workload Identity Federation | none in the file: Workload Identity Federation |
 | May leave the site down? | no: the live channel is never read or written | yes, by design: promoting is the one thing that moves the live site |
 
@@ -55,8 +55,12 @@ site.
   identifiers rather than credentials, and nothing is written into a log.
 - **Least privilege, declared.** `permissions:` is written out at the workflow
   level and on every job; the only scopes used are `contents: read` (the
-  preview's checkout) and `id-token: write` (the federation exchange). Neither
-  file asks for `workflows: write`, and neither ever holds `contents: write`.
+  preview's checkout) and `id-token: write` (the federation exchange), and
+  `id-token: write` is held only by the job that authenticates — never at the
+  workflow level and never by the preview's `build` job, which runs the
+  requested ref's code. Neither file asks for `workflows: write`, and neither
+  ever holds `contents: write`. No `${{ }}` expression appears inside any
+  `run:` script: inputs reach the shell as environment variables only.
 - **No `pull_request_target`, and no pull request at all.** The trigger block
   contains exactly one key. A pull request from a fork runs nothing here — it
   cannot, because there is no event for it — so it can reach no credential and
@@ -99,6 +103,7 @@ below is built from the project **number**, not the id:
 ```sh
 PROJECT=fugaro-prod                 # the website's own Firebase project (D91)
 REPO=dimipaun/fugaro                # this repository, owner included
+REPO_ID=$(gh api "repos/$REPO" --jq .id)   # its immutable numeric id
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
 SA=website-deployer@$PROJECT.iam.gserviceaccount.com
 ```
@@ -135,9 +140,15 @@ and read the run's own error before doing so:
   *read* the project itself (`firebase.projects.get`).
 
 **Step 3 — the Workload Identity Federation pool and provider.** The provider
-is conditioned on this repository **and** on the event being a
-`workflow_dispatch`, so no other repository and no push-triggered workflow can
-ever exchange a token through it.
+is conditioned on this repository (by name **and** by its immutable numeric
+id, so a deleted-and-recreated or transferred `dimipaun/fugaro` is not the same
+repository), on the event being a `workflow_dispatch`, **and on the workflow
+having been dispatched from `main`** (`assertion.ref`, the ref the workflow
+*file* came from — not the preview's `ref` input, which only chooses what is
+built). So no other repository, no push-triggered workflow and **no branch's
+own copy of a workflow file** can ever exchange a token through it: only the
+two files as `main` has them, which is what branch protection on `main`
+reviews.
 
 ```sh
 gcloud iam workload-identity-pools create github \
@@ -151,8 +162,8 @@ gcloud iam workload-identity-pools providers create-oidc github \
   --workload-identity-pool=github \
   --display-name="GitHub Actions (OIDC)" \
   --issuer-uri="https://token.actions.githubusercontent.com" \
-  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment,attribute.event_name=assertion.event_name" \
-  --attribute-condition="assertion.repository == 'dimipaun/fugaro' && assertion.event_name == 'workflow_dispatch'"
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment,attribute.event_name=assertion.event_name,attribute.repository_id=assertion.repository_id" \
+  --attribute-condition="assertion.repository == 'dimipaun/fugaro' && assertion.repository_id == '$REPO_ID' && assertion.ref == 'refs/heads/main' && assertion.event_name == 'workflow_dispatch'"
 ```
 
 **Step 4 — let that repository's workflows impersonate the deployer.** The
@@ -229,44 +240,43 @@ this page; that is the setup above being incomplete, not a bug in the workflow.
 
 ## What this authorises, and the accepted limits
 
-- **Anyone with write access to the repository can reach the live channel, not
-  only the previews.** The preview/live split is *not* a boundary in the
-  credential: it is held by the two files' own contents, and the file that runs
-  is the one the dispatched **ref** has. Three concrete paths, in increasing
-  order of what the actor has to do:
-  - **A preview dispatch.** `gh workflow run website-preview --ref <any branch>
-    -f channel=…` works for a write-access holder against *any* branch of this
-    repository, not only `main`, and the deploy's output is a **public** URL.
-    `channel=live` is refused, but that refusal is about the channel *name*: it
-    says nothing about what the credential behind the run may write.
-  - **A branch's own copy of a workflow file.** GitHub runs a
-    `workflow_dispatch` workflow as the dispatched ref has it, not as `main` has
-    it. A branch copy of `website-promote.yml` with its `if:` and its
-    `environment:` removed is a promotion that never requests an approval and
-    never consults `github.actor`.
-  - **The credential is not scoped to previews either.** The WIF provider is
-    conditioned on the repository and on `workflow_dispatch` — not on the ref,
-    the actor or the environment — and the deployer service account holds
-    `roles/firebasehosting.admin` on the project, which is exactly the role that
-    writes the live channel. Any of the runs above is issued a token that can
-    write live.
-  The owner accepted the preview half of this on 2026-10-18 (previews are manual
-  and public, and the write-access set is the collaborators who can already merge
-  to `main`), and accepted the live half knowingly, with the next bullet as the
-  way to close it. **What the environment and the actor guard stop is an
-  accidental promotion by someone who is not the owner, and a promotion the
-  owner did not review; they are not a boundary against a write-access holder
-  who means it, because the provider hands out the same credential whatever the
-  workflow file says.**
-- **A tighter provider is available, and is the first thing to change if that
-  exposure is to be closed rather than accepted.** Adding
-  `assertion.ref == 'refs/heads/main'` to the provider's condition restricts the
-  *run's* ref; and because the promote job carries an environment, GitHub's OIDC
-  token includes an `environment` claim, so a second provider conditioned on
-  `assertion.environment == 'website-live'` — plus a second repository variable
-  for the promote job to read — would let only the environment-gated job
-  impersonate a deployer at all. Neither is done here: one provider, one
-  service account, one project, both workflows.
+- **The credential is held by `main`'s copy of the two files and nothing
+  else.** The provider's condition requires `assertion.ref ==
+  'refs/heads/main'`, so a workflow dispatched from any other branch — including
+  a branch's own copy of `website-promote.yml` with its `if:` and its
+  `environment:` removed — is refused a token by Google, before the service
+  account is consulted. What a write-access holder can still do with `main`'s
+  files:
+  - **A preview of any ref.** `gh workflow run website-preview --ref main -f
+    ref=<any branch> -f channel=…` builds and deploys that branch to a
+    **public** preview URL. The owner accepted this on 2026-10-18 (previews are
+    manual and public). `channel=live` is refused by `main`'s file.
+  - **No promotion.** `main`'s `website-promote.yml` is skipped for any actor
+    but the owner, and the `website-live` environment holds it for the owner's
+    approval.
+  The boundary therefore rests on **branch protection on `main`**: a change
+  that weakens either file has to be reviewed and merged there first. The
+  deployer still holds `roles/firebasehosting.admin`, which can write live, so
+  a weakened file on `main` *is* a path to live — keep `main` protected, and
+  keep both files' changes under the owner's review.
+- **The build never holds the credential.** The preview's `build` job runs the
+  requested ref's code and the site's whole npm tree, so it has no `id-token`
+  scope: neither the ref nor a compromised dependency can mint the OIDC token
+  the deployer trusts. The `deploy` job checks nothing out and runs no site
+  script; it takes the build as an artifact and refuses a `firebase.json` with a
+  `predeploy`/`postdeploy` hook or a `public` dir other than `website/dist`
+  (either would let the ref run a command with the credential or publish the
+  credential file). The residual is firebase-tools itself: it is installed by
+  version (`firebase-tools@15.19.0`), but its transitive dependencies are not
+  locked, and it runs in the job that holds `id-token: write`.
+- **A tighter split is available if wanted.** Because the promote job carries
+  an environment, GitHub's OIDC token includes an `environment` claim, so a
+  second provider conditioned on `assertion.environment == 'website-live'` —
+  plus a second repository variable for the promote job to read — would let
+  only the environment-gated job impersonate a deployer that can write live.
+  Firebase Hosting has no predefined role that deploys previews but not live,
+  so this would need a custom role or an IAM condition; it is not done here:
+  one provider, one service account, one project, both workflows.
 - **A preview channel expires.** `--expires 7d` on each deploy, so a preview
   that is not deployed again disappears; the live channel is unaffected. A
   promotion copies the channel's *current* version, so promoting an expired (or
@@ -313,7 +323,12 @@ Specifically unexercised, and each is named so the first real run settles it:
   either of the two add-on roles in step 2 is needed (that step's symptoms are
   the ones to match against the run's error);
 - that `firebase hosting:clone "$PROJECT:$CHANNEL" "$PROJECT:live"` names the
-  project's default Hosting site correctly as a site id.
+  project's default Hosting site correctly as a site id;
+- that the preview's artifact hand-off (`actions/upload-artifact` of
+  `firebase.json` + `website/dist`, downloaded into `site/`) lays the two out
+  as the deploy step expects, and that the provider's `assertion.ref` and
+  `assertion.repository_id` conditions admit `main`'s dispatches (a refusal
+  here is an STS `unauthorized_client` error in the auth step).
 
 ## See also
 
