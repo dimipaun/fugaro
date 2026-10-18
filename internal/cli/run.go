@@ -478,7 +478,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			}
 			if spec.Title != "" {
 				if err := checkCloneImageSince(env.lc, spec, titlesSince,
-					"--title", "the job title", "", warn); err != nil {
+					"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
 					return launchResult{}, err
 				}
 			}
@@ -507,7 +507,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// is never gated: the check is the field's, not the flag's.
 			if spec.Title != "" {
 				if err := checkImageSince(ctx, env, slug, spec, kind, titlesSince,
-					"--title", "the job title", "", warn); err != nil {
+					"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
 					return launchResult{}, err
 				}
 			}

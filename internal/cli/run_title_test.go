@@ -370,7 +370,7 @@ func TestRunTitleGatesOnACloneWorkflow(t *testing.T) {
 		"  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"})
 	t.Chdir(dir)
 	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "--title", "Ship the flaky-test fix", "A task")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--title needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") ||
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "a job title (--title, kept by --pr follow-ups and --retry) needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") ||
 		!strings.Contains(err.Error(), "ghcr.io/dimipaun/fugaro-base:0.7.5, release 0.7.5") {
 		t.Fatalf("err = %v", err)
 	}
@@ -401,7 +401,7 @@ func TestRunTitleGatesOnAFollowUpThatInheritsOne(t *testing.T) {
 
 	writeBuildRecord(t, f, appSlug, "web", release080)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--title needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "a job title (--title, kept by --pr follow-ups and --retry) needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") {
 		t.Fatalf("err = %v, want the inherited title gated", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
@@ -421,7 +421,7 @@ func TestRunTitleGatesOnAFollowUpThatOverridesIt(t *testing.T) {
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
 	writeBuildRecord(t, f, appSlug, "web", release080)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--title", "Rename it properly", "also rename x")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--title needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "a job title (--title, kept by --pr follow-ups and --retry) needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") {
 		t.Fatalf("err = %v, want the overridden title gated", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
@@ -452,7 +452,7 @@ func TestRunTitleGatesOnARetryOfAStoredTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, err = execute(t, "run", "--retry", spec.RunID)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--title needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "a job title (--title, kept by --pr follow-ups and --retry) needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") {
 		t.Fatalf("err = %v, want the stored title gated", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {

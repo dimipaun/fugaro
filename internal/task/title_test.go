@@ -101,6 +101,14 @@ func TestValidateRefusesABadTitle(t *testing.T) {
 		{"two\nlines", "must be one line"},
 		{strings.Repeat("x", MaxTitleRunes+1), "longer than 100 characters"},
 		{"bell\x07", "holds a control character"},
+		// The launcher stores only safetext.Field's form of a title, so a
+		// stored title holding what that sanitiser drops was not written by
+		// it: a bidi override would otherwise reach the pull request's
+		// title verbatim (rawPRText does not sanitise the stored title).
+		{"evil‮gnp.exe", "is not in its sanitised form"},
+		{"zero​width", "is not in its sanitised form"},
+		{"two  spaces", "is not in its sanitised form"},
+		{" padded", "is not in its sanitised form"},
 	} {
 		s := &Spec{Version: 1, RunID: "20261018-120000-abcd", Repo: "acme/app", Ref: "main", Task: "do it", Title: tc.title}
 		err := s.Validate()

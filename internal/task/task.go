@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 var (
@@ -490,6 +491,13 @@ func (s *Spec) Validate() error {
 	if s.Title != "" {
 		if p := TitleProblem(s.Title); p != "" {
 			bad("task spec: title %s", p)
+		} else if safetext.Field(s.Title) != s.Title {
+			// The launcher stores only safetext.Field's form of a title
+			// (titleFlag), so one holding what that drops — a bidi
+			// override, a zero-width character, untrimmed or repeated
+			// spaces — was not written by it, and would otherwise reach
+			// the pull request's title (rawPRText) verbatim.
+			bad("task spec: title %q is not in its sanitised form (bidi, zero-width or other invisible characters, or untrimmed or repeated spaces)", s.Title)
 		}
 	}
 	// config.ClaudeAccountNameRE and config.MaxClaudeAccountNameLen are the
