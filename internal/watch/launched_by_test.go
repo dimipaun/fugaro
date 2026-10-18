@@ -308,3 +308,35 @@ func detailValue(frame, key string) string {
 	}
 	return ""
 }
+
+// TestPlainLauncherCellIsClippedToTheColumn: a long launcher with no @ (a CI
+// identity of 10 KB) is capped at safetext.FieldMax by the sanitiser, which is
+// far wider than a column; the plain tables clip it like runs ls does (64
+// runes, an ellipsis marking the cut), so one value cannot widen the table.
+// Mutation caught: printing the sanitised value unclipped.
+func TestPlainLauncherCellIsClippedToTheColumn(t *testing.T) {
+	got := plainFrame(t, launcherView(strings.Repeat("ö", 10_000)))
+	for _, c := range []struct{ header, id string }{{"RUN", "r-live"}, {"FINISHED", "r-done"}} {
+		cell, _, _, _ := byCellOf(t, got, c.header, c.id)
+		if n := utf8.RuneCountInString(cell); n != launcherCellRunes+1 || !strings.HasSuffix(cell, "…") {
+			t.Errorf("%s BY cell is %d runes, want %d ending in an ellipsis: %q", c.header, n, launcherCellRunes+1, cell)
+		}
+	}
+	// Exactly the cap is not cut.
+	exact := strings.Repeat("y", launcherCellRunes)
+	got = plainFrame(t, launcherView(exact))
+	if cell, _, _, _ := byCellOf(t, got, "RUN", "r-live"); cell != exact {
+		t.Errorf("a value of exactly %d runes was changed: %q", launcherCellRunes, cell)
+	}
+}
+
+// TestPlainLauncherCellCutsAtTheBoundary: one rune past the cap is cut, the cap
+// itself is not. Mutation caught: a threshold off by one.
+func TestPlainLauncherCellCutsAtTheBoundary(t *testing.T) {
+	over := strings.Repeat("z", launcherCellRunes+1)
+	got := plainFrame(t, launcherView(over))
+	want := strings.Repeat("z", launcherCellRunes) + "…"
+	if cell, _, _, _ := byCellOf(t, got, "RUN", "r-live"); cell != want {
+		t.Errorf("a value one rune over the cap shows %q, want %q", cell, want)
+	}
+}

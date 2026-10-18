@@ -1357,3 +1357,43 @@ func TestLsFollowUpShowsItsOwnLauncher(t *testing.T) {
 		t.Fatalf("text listing does not show both short forms:\n%s", human)
 	}
 }
+
+// TestLsLauncherShortFormAndClip: runs ls has a BY column showing the short form of the
+// launcher (the part before an @, the whole value otherwise), a dash when none
+// was recorded, and a value past the column's cap is clipped so one launch.json
+// cannot widen the table. Mutation caught: no clip, full address, no dash.
+func TestLsLauncherShortFormAndClip(t *testing.T) {
+	long := strings.Repeat("c", maxNameCellRunes+30)
+	rows := []runview.Row{
+		{Run: "acme-app/20261007-100000-aaaa", Status: "succeeded", LaunchedBy: "dana@example.com"},
+		{Run: "acme-app/20261007-100000-bbbb", Status: "succeeded", LaunchedBy: "ci-runner@proj.iam.gserviceaccount.com"},
+		{Run: "acme-app/20261007-100000-cccc", Status: "succeeded", LaunchedBy: "plain-id"},
+		{Run: "acme-app/20261007-100000-dddd", Status: "succeeded"},
+		{Run: "acme-app/20261007-100000-eeee", Status: "succeeded", LaunchedBy: "@example.com"},
+		{Run: "acme-app/20261007-100000-ffff", Status: "succeeded", LaunchedBy: long},
+	}
+	var b strings.Builder
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for id, want := range map[string]string{"aaaa": "dana", "bbbb": "ci-runner", "cccc": "plain-id", "dddd": "-", "eeee": "-",
+		"ffff": strings.Repeat("c", maxNameCellRunes) + "…"} {
+		found := false
+		for _, l := range strings.Split(out, "\n") {
+			if strings.Contains(l, "-"+id) {
+				found = true
+				f := strings.Fields(l)
+				if got := f[len(f)-1]; got != want {
+					t.Errorf("run %s: BY = %q, want %q\n%s", id, got, want, out)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("no row for %s:\n%s", id, out)
+		}
+	}
+	if strings.Contains(out, "@") {
+		t.Errorf("an address reached the text table:\n%s", out)
+	}
+}

@@ -154,8 +154,16 @@ func dashIfEmpty(s string) string {
 // shortening it here cannot unsanitise it: LauncherShort only drops the domain
 // of an address.
 func launcherText(run RunRow) string {
-	return dashIfEmpty(runview.LauncherShort(run.LaunchedBy))
+	by := runview.LauncherShort(run.LaunchedBy)
+	if r := []rune(by); len(r) > launcherCellRunes {
+		by = string(r[:launcherCellRunes]) + "…"
+	}
+	return dashIfEmpty(by)
 }
+
+// launcherCellRunes bounds the BY cell, as fugaro runs ls bounds its own
+// (maxNameCellRunes): the sanitiser's cap is far wider than a column.
+const launcherCellRunes = 64
 
 // USD is an amount for people: cents, or four places below a cent.
 func USD(m budget.Micros) string {
