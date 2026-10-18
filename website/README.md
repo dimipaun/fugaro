@@ -65,7 +65,7 @@ asserts the same over the built HTML's script, link, iframe and image origins.
 
 ## The gates
 
-Five checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Six checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network:
 
 - `test/linkcheck.mjs` — every internal link and asset resolves to a built file, every
@@ -137,6 +137,16 @@ with fixtures that keep its refusals running, and none of them needs the network
     The ceiling is set against the site as it was measured before the redesign
     (`docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
     getting-started 431, privacy 277, community 268 — every one of them over it).
+- `test/fold.mjs` — the ordering the fold claim rests on (P5, RF5). Whether the promise and
+  the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
+  word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
+  is a statement about the built pages, though, and it is this file's three cases: the
+  homepage's lead region holds one element and it is the promise, so the install block and the
+  terminal are the section the heading opens; Getting Started's install section opens with its
+  commands, with the sentence about them after the paths; and on every route the first `h2`
+  precedes the first `pre`. Each was mutation-proved by planting the ordering P5 fixed — the
+  hero's `h2` moved under its install block, the install section's sentence moved back above
+  the paths.
 - `test/meta.mjs` — the provenance-phrase gate (D186): a page must not explain why its own
   text exists, so D186's phrase list (`rendered from`, `generated rather than written`, …) is
   refused in the text a reader reads, on every built page. It is the one defect the other
