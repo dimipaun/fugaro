@@ -162,7 +162,9 @@ func TestRunRefusesUnderAPolicyOfThePolicyGeneration(t *testing.T) {
 	}
 	f := newLaunchBudget(t, "enforce")
 	markRules(t, f, projectpolicy.PolicyRulesVersion)
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":1,"allow_repos":["github/other/*"]}`))
+	// The policy node's own version is this binary's (projectpolicy.Version,
+	// 2 on next-0.8.5): the generation under test is the rules marker's.
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(fmt.Sprintf(`{"version":%d,"allow_repos":["github/other/*"]}`, projectpolicy.Version)))
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error: the policy of generation %d is read and its allow-list governs", err, ExitCode(err), projectpolicy.PolicyRulesVersion)

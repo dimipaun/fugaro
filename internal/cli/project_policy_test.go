@@ -1498,10 +1498,12 @@ func TestProjectReposEditRefusesWithoutTheRulesMarker(t *testing.T) {
 		want   string
 	}{
 		{"no marker at all", nil, "carry no policy marker"},
-		// main's requirePolicyRules words a marker below RulesVersion as its own
-		// case ("records generation N, below the generation M"): the marker,
-		// not the rules, is what is behind there.
-		{"a marker behind this Fugaro's", projectpolicy.RulesVersion - 1, "below the generation"},
+		// main's requirePolicyRules (#532) admits every marker at or above
+		// PolicyRulesVersion — those rules carry the policy nodes — and words a
+		// marker below it as its own case ("records generation N", the
+		// pre-policy sentence doctor prints): that is the marker behind this
+		// Fugaro's that still refuses the write.
+		{"a marker behind this Fugaro's", projectpolicy.PolicyRulesVersion - 1, "records generation"},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			f := newProjectFixture(t, "")
