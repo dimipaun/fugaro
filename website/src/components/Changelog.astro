@@ -27,8 +27,10 @@
  *      whose file carries no Highlights line stops the build rather than leaving a hole in
  *      the summary (the format requires 3 to 6 bullets, `docs/releases/README.md`).
  *   3. **The file's own line structure is kept.** A line the file writes as a bullet
- *      becomes a list item and any other line becomes a paragraph of its own, so a note
- *      that is prose does not gain a bullet and a list does not lose one.
+ *      becomes a list item, a line it writes as a heading becomes a heading, and any other
+ *      line becomes a paragraph of its own, so a note that is prose does not gain a bullet,
+ *      a list does not lose one, and a heading does not reach a reader with its `#` markers
+ *      still in front of it.
  *   4. **The file's inline markup is rendered, not printed.** `` `code` `` becomes a
  *      `<code>` element and `**bold**` a `<strong>` one: the markers are markup and not
  *      text, and printing them would put backticks in front of a reader. The files carry
@@ -90,13 +92,27 @@ function inline(text: string): string {
 }
 
 /**
- * The lines as the elements a reader sees: consecutive bullets become one list, and every
- * other line is a paragraph of its own, with the bullet marker left to the list that
- * renders it and everything else kept as written (an operator step's own `1.`, for one).
+ * The lines as the elements a reader sees: consecutive bullets become one list, a heading
+ * line becomes a heading, and every other line is a paragraph of its own, with the bullet
+ * marker left to the list that renders it and everything else kept as written (an operator
+ * step's own `1.`, for one).
+ *
+ * A heading line — `## Known limits`, which the 0.8.5 release notes carry and the format
+ * in `docs/releases/README.md` does not forbid — is the one line whose markers are the
+ * page's to render: `#` is markup and not text, so a line the file writes as a heading is
+ * a heading whose words are the line's own, with the markers taken off. Printing the line
+ * as a paragraph instead would put `##` in front of a reader; dropping it would drop the
+ * section it names. The page's `<h3>` is the depth a section of an entry has, which is the
+ * depth the operator heading already takes.
  */
 function elements(lines: string[]): Element[] {
   const out: Element[] = []
   for (const line of lines) {
+    const heading = /^#{1,6}\s+(.*)$/.exec(line)
+    if (heading !== null) {
+      out.push({ kind: 'heading', text: heading[1].trim() })
+      continue
+    }
     const bullet = /^[-*]\s+(.*)$/.exec(line)
     if (bullet !== null) {
       const last = out[out.length - 1]

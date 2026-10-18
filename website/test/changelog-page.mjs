@@ -42,12 +42,12 @@
 
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { linkNodeModules } from './lib/build.mjs'
+import { buildCopy, linkNodeModules } from './lib/build.mjs'
 
 // website/test/changelog-page.mjs -> website/test -> website.
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -61,11 +61,6 @@ const RELEASES_DIR = path.join(REPO, 'docs', 'releases')
 // file the generator does not recognise fails the coverage case instead of being filtered
 // out of the expectation by the same rule that filtered it out of the answer (W0.6).
 const NON_RELEASE = 'README.md'
-
-// The heading the files use to separate the operator steps from the user bullets. It is the
-// one content line the page does not render verbatim: the page prints it as the block's own
-// heading, which is the same words.
-const OPERATORS_HEADING = '### For operators'
 
 // The heading of the summary block P4 put above the list (D189). It is the page's own word
 // — the block is the page's summary of the newest releases, not a line of any one of them —
@@ -241,6 +236,18 @@ function pageText(html) {
   return pageChunks(html).map(plain).join('\n')
 }
 
+/**
+ * The page's headings, as words: the `<h3>` an entry renders for a heading line of its
+ * file (a release's section — the operator steps, and any other heading a file writes).
+ * An entry's own `<h2>` is its tag and is read by `tagsOnPage`; the summary block's `<h2>`
+ * is the page's, and neither has a heading line of a file behind it.
+ */
+function headingsOnPage(html) {
+  return [...html.matchAll(/<h3\b[^>]*>([\s\S]*?)<\/h3>/g)].map((match) =>
+    plain(decodeEntities(match[1].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim()),
+  )
+}
+
 /** The chunks split into sentences, each chunk on its own: see `pageChunks`. */
 function pageSentences(html) {
   return pageChunks(html).flatMap((chunk) =>
@@ -387,12 +394,52 @@ test('the summary block renders the newest releases’ first Highlights line', (
   }
 })
 
+test("a release file's heading line is rendered as a heading, and not as its own markers", (t) => {
+  // The defect this case is about is the one `docs/releases/v0.8.5.md` found: the file
+  // writes `## Known limits`, the page renders its lines one by one, and a page that has no
+  // rule for a heading line prints it as the paragraph "## Known limits" — the markers are
+  // markup, and a reader is being shown the page's rendering rather than the file's words.
+  // The copy carries the shape, so the case proves the rule rather than the file: a
+  // heading line is an `<h3>` whose words are the line's, and the markers are nowhere in
+  // the text a reader reads.
+  const built = buildCopy(t, ({ root }) => {
+    writeFileSync(
+      path.join(root, 'docs', 'releases', 'v9.9.9.md'),
+      '- A fixture release, so a heading line has a file to be written in.\n\n## Known limits\n\n- The fixture names a limit.\n',
+    )
+  })
+  assert.equal(built.status, 0, `the site's build failed:\n${built.output}`)
+  const html = readFileSync(path.join(built.dist, 'changelog', 'index.html'), 'utf8')
+
+  assert.ok(
+    headingsOnPage(html).includes('Known limits'),
+    'a release file writes "## Known limits" as a heading and the page renders no heading with those words: a heading line becomes a heading',
+  )
+  assert.ok(
+    !pageText(html).includes('## Known limits'),
+    'the page prints the heading line\'s own markers: `##` is markup rather than text, and a reader is shown the page\'s rendering instead of the file\'s words',
+  )
+})
+
 test('the changelog page renders every line of every release file', () => {
-  const text = pageText(builtPage())
+  const html = builtPage()
+  const text = pageText(html)
 
   for (const fileName of releaseFiles()) {
     for (const line of contentLines(fileName)) {
-      if (line === OPERATORS_HEADING) continue
+      // A heading line is rendered as a heading, and its words are the line's own with the
+      // marker taken off: `## Known limits` is a section of an entry, and the `##` is
+      // markup rather than text. The line and the page are compared as words in both
+      // directions, so a heading that reaches a reader with its markers still on it fails
+      // here — and so does one the page drops.
+      const heading = /^#{1,6}\s+(.*)$/.exec(line)
+      if (heading !== null) {
+        assert.ok(
+          headingsOnPage(html).includes(plain(heading[1])),
+          `docs/releases/${fileName} writes ${JSON.stringify(line)} as a heading, and the page does not render it as one: a heading line becomes a heading whose words are the line's, without its markers`,
+        )
+        continue
+      }
       assert.ok(
         text.includes(plain(line)),
         `docs/releases/${fileName} carries a line the page does not render: ${JSON.stringify(line)}`,
