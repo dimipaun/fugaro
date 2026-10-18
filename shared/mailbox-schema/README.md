@@ -18,7 +18,8 @@ cd shared && npm test          # this module's tests, with no install and no net
 ```
 
 ```js
-import { validateMessage, isMessage, macOf, verifyMac, canonicalBytes } from './mailbox-schema/index.js';
+import { validateMessage, isMessage, canonicalBytes } from './mailbox-schema/index.js';
+import { macOf, verifyMac } from './mailbox-schema/mac.js';   // Node only — see below
 
 const message = { id: 'm-0001', sender: 'phone', text: 'run 42 finished', at: 1700000000000, mac: '…64 hex…' };
 validateMessage(message);
@@ -141,19 +142,27 @@ never written down here, and the module never reads one from anywhere.
 
 ### `canonicalBytes` — the one serialisation the tag covers
 
-JSON, keys sorted by code point at every depth, no insignificant whitespace, absent
+JSON, keys sorted by **code point** at every depth, no insignificant whitespace, absent
 fields **omitted** (never `null`), strings as UTF-8 with JSON's own escaping only,
 numbers as integers. One message, one byte string — which is the only thing a MAC can
 mean across two languages.
 
+**Code point, not UTF-16 code unit.** §3.5's word is "code point", and Go's bytewise
+map-key order is the same order (UTF-8 byte order *is* code-point order); JavaScript's
+own `Array.prototype.sort` compares UTF-16 code **units**, which for exactly one pair of
+ranges — an astral key against a key in U+E000..U+FFFF — gives the opposite order, and
+therefore a different tag for the same record. `canonicalBytes` sorts with a code-point
+comparator, and a vectors case pins it with the two keys U+FFFF and U+1F600: the hazard
+is narrow, which is exactly why a port that used `.sort()` would otherwise ship it.
+
 That is the hard part of this task, because the two ends are JavaScript (the phone) and
 Go (the consumer), and the Go end cannot call into JavaScript. It reimplements the
-serialisation and **tests against [`vectors.json`](vectors.json)**: 20 cases — the four
+serialisation and **tests against [`vectors.json`](vectors.json)**: 21 cases — the four
 kinds, the heartbeat, the argv-shaped targets, HTML characters Go escapes by default,
-an emoji, an unknown field inside the bytes, and the swaps a token-holder without the
-key would try (text, options, option order, `reply_to`, answer, agents, agent name,
-target, head SHA, confirmation, verb) — each pinning the message, the exact bytes, the
-tag and whether it verifies. A
+an emoji, an unknown field inside the bytes, the key order above, and the swaps a
+token-holder without the key would try (text, options, option order, `reply_to`, answer,
+agents, agent name, target, head SHA, confirmation, verb) — each pinning the message,
+the exact bytes, the tag and whether it verifies. A
 disagreement about key order, whitespace or escaping fails on the side that is wrong,
 at the byte level, rather than at three in the morning on a phone. Regenerate with
 `node shared/mailbox-schema/vectors.generate.mjs`; the key in the file is a readable
@@ -168,6 +177,11 @@ that looks like a credential.
   for the same double, so a float inside a signed record is a tag that verifies on one
   end and not the other. Every number the schema accepts is an integer (`at`, a
   confirmation's `at`, a pull request number), so nothing valid is refused.
+- **a string the two encoders spell differently** — an **unpaired surrogate**, U+2028,
+  U+2029 — in a key exactly as in a value. The schema refuses all three in every string
+  it validates (`bad-character`, `bad-key`), so a caller that validated first cannot
+  reach this; it is the second fence, for the exported function called on a record that
+  did not come through the validator.
 
 And the schema itself refuses **U+2028 LINE SEPARATOR and U+2029 PARAGRAPH
 SEPARATOR** in every string it validates, for the same class of reason: Go's
@@ -178,11 +192,26 @@ refusal, for a character nobody can speak. (The converse hazard is the Go side's
 handle: it escapes `<`, `>`, `&` unless it disables HTML escaping, and the vectors pin
 the raw bytes it must produce.)
 
-**The one import.** The module now imports `node:crypto` for HMAC-SHA-256 — a builtin,
-not a dependency: nothing is installed, nothing is fetched, and the package stays
-`private` with no `dependencies` (D119). It is used by `macOf` and `verifyMac` only.
-The React Native side must reimplement HMAC over the vectors' key: that is an honest
-gap, recorded in the pull request rather than papered over.
+**The one import, in its own file.** The tag is HMAC-SHA-256, and the only
+implementation of it in a runtime with no dependencies is a runtime builtin — Node has
+one, React Native's bundler resolves neither it nor a buffer type. So the tag lives in
+[`mac.js`](mac.js), which imports `node:crypto` (a builtin, not a dependency: nothing
+is installed, nothing is fetched, and the package stays `private` with no
+`dependencies`, D119), and **`index.js` imports nothing at all**. That split is not
+tidiness, it is what keeps the schema usable by both of this package's consumers
+(D119): a `node:crypto` import in the entry point would not cost the phone the tag
+alone — it would make `validateMessage`, `validateHeartbeat` and `canonicalBytes`
+unimportable there too, and those are pure logic over values, the parts the phone needs
+most. `mac.js` is the Node implementation: P4.1's CLI consumer, the console, the tests
+and the vectors generator.
+
+The phone imports `index.js` and **implements HMAC-SHA-256 itself** — SHA-256 and the
+HMAC construction over bytes — testing it against `vectors.json`, which is the only
+contract between the two implementations. That port is P3.6's, not this task's, and it
+is named in the pull request as an honest gap rather than implied by a sentence about
+"reimplementing HMAC over the vectors' key". `index.test.js` asserts that the entry
+point has no import statement, no `from '…'` and no buffer type, so re-introducing one
+is a failing test rather than a discovery a bundler makes on a phone.
 
 ## Fail closed, and each refusal is named
 
@@ -263,22 +292,23 @@ shape, and `FIELDS`/`REQUIRED_FIELDS` are the two arrays it compares.
 
 ## Evidence, and how to reproduce it
 
-The module imports one node builtin (`node:crypto`) and has **no dependency**: nothing
-is installed, nothing is fetched. The tests are the plan's verification list (a missing
+The package has **no dependency** and one builtin import, in `mac.js` alone: nothing is
+installed, nothing is fetched, and the entry point the phone loads imports nothing at
+all. The tests are the plan's verification list (a missing
 id, a wrong type, an oversize body and an unknown field refused; a well-formed message
 accepted) plus the fail-closed families above and P6.3's kind, action, tag and
-canonical-byte cases.
+canonical-byte cases: 313 tests over the package, 37 of them this module's.
 
-**Every guard in `index.js` is mutation-proved**, not merely covered — 62 guards, one
-mutation each:
+**Every guard is mutation-proved**, not merely covered — 67 guards over `index.js` and
+`mac.js`, one mutation each:
 
 ```sh
 shared/mailbox-schema/mutation-proof.sh
-# control       the pristine suite passes, 310 tests, 0 failures
+# control       the pristine suite passes, 313 tests, 0 failures
 # killed        control: refuse() always succeeds (must be killed)
 # killed        not-an-object guard (null/array/primitive)
-# ...                                                        (60 more)
-# --- control killed; 62 guards: 62 killed, 0 survived, 0 not applied
+# ...                                                        (65 more)
+# --- control killed; 67 guards: 67 killed, 0 survived, 0 not applied
 ```
 
 The script disables one guard at a time — the object check, the unknown-field check,
@@ -286,8 +316,15 @@ each type check, each bound, each character rule, the surrogate and separator ru
 timestamp range, the ack's type check, the deep freeze and the copy, then P6.3's: the
 kind vocabulary and its (kind, field) table, the agent and option shapes, the action
 record's verbs and both target shapes, the argv alphabets and the head SHA, the required
-tag, and the canonical serialisation — runs `npm test`, and requires the suite to fail
-each time. It restores the file with `git checkout` after each one and refuses to run
+tag, the canonical serialisation — including the code-point sort and the strings it
+refuses — and, in `mac.js`, that the tag is computed over the canonical bytes and that
+`verifyMac` answers `false` rather than throwing. Two of the guards are about the
+**boundary** rather than a refusal: that `index.js` carries no import and no buffer
+type, because that is what keeps the schema importable by the phone and nothing else in
+the suite would notice it breaking.
+
+It runs `npm test`, and requires the suite to fail
+each time. It restores the files with `git checkout` after each one and refuses to run
 against an uncommitted module.
 
 **"Killed" is only worth reading because of three things it does first**, since
@@ -313,7 +350,7 @@ they were trusted: the first run of the extended script reported four `APPLY-FAI
 lines against patterns that no longer matched the module, which is exactly the failure
 mode the harness exists to surface.
 
-## Two honest gaps
+## Three honest gaps
 
 - **No CI job runs these tests yet.** P4.3 is that job and it is **owner-made** (the
   plan's Global Constraint 8: no agent edits `.github/workflows/`). Until it exists the
@@ -323,6 +360,21 @@ mode the harness exists to surface.
   after P2.2) changes `rules.json.tmpl`, `rules.go` and the golden plan. Until it lands,
   a write carrying `mac` is refused by the template. The Go test asserts the gap in both
   directions and names it, so the difference is a listed state and not an oversight.
+- **The heartbeat this schema signs is not the heartbeat `shared/presence` reads.**
+  `validateHeartbeat` accepts `{at, boot, agents?, mac}` — `boot` is the field name
+  P2.1's template already gates (`rules.json.tmpl`), and `mac` and `agents` are what P6.3
+  and O7 added. P1.4's staleness rule accepts `{at, bootId}` and refuses **any other
+  field** (`heartbeat-unknown-field`), so a heartbeat signed per §3.5 cannot be handed to
+  the rule that decides whether the phone is offline without a mapping in between — and
+  nothing landed or planned maps it: P6.4's Files row is `rules.json.tmpl`, `rules.go`,
+  the golden plan, the version and the emulator test, and it does not touch `presence`.
+  The `boot`/`bootId` half is older than this task and the template sides with `boot`;
+  the `mac` and `agents` halves are new here. This is a **conflict for the owner**, not a
+  design decision this task may take: the fix is either a rename on one side, or a
+  caller-side mapping (P3.6's read of the heartbeat) that is named and tested where it
+  is written. It is recorded here because the tag's own paragraph says an unsigned
+  heartbeat is treated as offline, and a consumer that cannot feed a *signed* heartbeat to
+  the staleness rule would treat every heartbeat as offline instead.
 
 Where the reasoning lives: [implementation-plan.md](../../docs/mobile/implementation-plan.md)
 (P0.2, P6.3, the critical-path note that keeps this task small, and P6.4's own row),

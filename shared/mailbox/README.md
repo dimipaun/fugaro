@@ -321,14 +321,17 @@ message from a bad state: `wrong-type`, `empty-string`, `bad-key`, `too-long`,
 `not-an-object`, `unknown-field`, `missing-field`.
 
 P6.3 added a `mac` to every message and the four message kinds to the schema,
-so five more of the schema's families reach the mailbox through a delivery,
+so nine of the schema's refusal codes reach the mailbox through a delivery,
 unchanged and unprefixed but for the field: `too-many` and `too-few` (a
 prompt's options and a heartbeat's agents are bounded lists), `unknown-verb`
 (an action record's verb), `bad-target` and `bad-sha` (an action record that
 could not be executed as it is written), `bad-mac` (a tag that is not a
 32-byte HMAC-SHA-256 in lowercase hex), `duplicate-entry` (two options, or two
 agents, that a spoken "option two" or "talk to <agent>" could not tell apart),
-and `field-not-allowed` (a field on a kind of message that does not carry it).
+and `field-not-allowed` (a field on a kind of message that does not carry it) —
+plus `unknown-kind` below. A delivery's refusal set is the schema's whole table
+(`Object.values(REFUSALS)`), so a code added there reaches here without an edit
+in this module.
 `unknown-kind` is spelled the same in both modules and means a different
 thing in each: the schema's is a message's `kind`, this module's is a
 delivery's. They are told apart by the field, exactly as the three shared

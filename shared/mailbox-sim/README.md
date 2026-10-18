@@ -209,7 +209,9 @@ Over 120 seeded schedules, each with three messages, two consumers and twelve pa
   writes carries `PLACEHOLDER_MAC`, an obviously fake 64-hex string, and nothing here
   computes a tag, verifies one, or holds a key — a simulator with the per-pairing key of
   D171 would be a simulator that could forge. P6.3's `macOf` and `verifyMac` live in
-  `../mailbox-schema/`, and the "fixed function of the MAC-verified message" that
+  `../mailbox-schema/mac.js` — Node-only, and deliberately not imported by that module's
+  entry point, which imports nothing so the phone can load the validator — and the
+  "fixed function of the MAC-verified message" that
   `../mailbox/README.md` requires `kind` to be is still the consumer's: the kind comes out
   of band here instead, and says so above.
 - **The rules.** `database.rules.json`, the tree's `$other` denial and the write permissions
