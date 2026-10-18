@@ -23,7 +23,7 @@ test('one turn at a time: begin, end, and the refusals between them', () => {
   const stt = new FakeStt();
   assert.equal(stt.listening(), false);
   assert.deepEqual({ ...stt.end() }, { ok: false, code: STT_CODES.NOT_LISTENING, field: 'turn' });
-  assert.deepEqual({ ...stt.begin() }, { ok: true, changed: true });
+  assert.deepEqual({ ...stt.begin() }, { ok: true, changed: true, turnId: 1 });
   assert.equal(stt.listening(), true);
   assert.deepEqual({ ...stt.begin() }, { ok: false, code: STT_CODES.ALREADY_LISTENING, field: 'turn' });
   assert.deepEqual({ ...stt.end() }, { ok: true, changed: true });
@@ -71,9 +71,9 @@ test('the end of speech flushes the turn; the final is what ends it', () => {
   assert.deepEqual({ ...stt.final('too late') }, { ok: false, code: STT_CODES.NOT_LISTENING, field: 'turn' });
 });
 
-test('D123: a partial is a fact the interface carries, and text is all it carries', () => {
+test('D123: a partial is a fact the interface carries, and the words are all it carries', () => {
   assert.deepEqual([...STT_EVENTS], ['partial', 'final']);
-  assert.deepEqual([...STT_EVENT_FIELDS], ['kind', 'text']);
+  assert.deepEqual([...STT_EVENT_FIELDS], ['kind', 'turnId', 'text']);
   const stt = new FakeStt();
   stt.begin();
   stt.partial('he');
@@ -83,6 +83,61 @@ test('D123: a partial is a fact the interface carries, and text is all it carrie
   }
   assert.throws(() => stt.partial(42), TypeError, 'a transcript is a string');
   assert.throws(() => stt.final(null), TypeError);
+});
+
+test('every event names the turn it belongs to, and begin() is where the name comes from', () => {
+  // Identity, not decoration: without it a caller cannot tell an abandoned
+  // turn's flush from the turn it is in (see `pipeline.js`'s header).
+  const stt = new FakeStt();
+  assert.equal(stt.turnId(), 0, 'no turn is 0: it is never a turn\'s id');
+  const first = stt.begin();
+  assert.equal(first.turnId, 1);
+  stt.partial('one');
+  const [partial] = stt.emitted();
+  assert.equal(partial.turnId, first.turnId);
+  const theFinal = stt.final('one');
+  assert.equal(theFinal.event.turnId, first.turnId);
+  assert.equal(stt.turnId(), 0, 'the final ends the turn');
+  // A second turn is a new id, and it is the one its events carry.
+  const second = stt.begin();
+  assert.equal(second.turnId, 2, 'a turn id is never reused');
+  stt.partial('two');
+  assert.equal(stt.emitted().at(-1).turnId, 2);
+});
+
+test('an abandoned turn\'s revision is emitted for that turn, not the open one', () => {
+  // The escape hatch `latePartial` exists for: a revision that arrives after
+  // the turn was cancelled (or after its speech ended) is the abandoned turn's
+  // words, and it has to say so -- otherwise a caller cannot drop it.
+  const stt = new FakeStt();
+  stt.begin();
+  const abandoned = stt.turnId();
+  stt.cancel();
+  const open = stt.begin();
+  assert.notEqual(open.turnId, abandoned);
+  stt.latePartial('the abandoned one');
+  assert.equal(stt.emitted().at(-1).turnId, abandoned, 'the words say which turn they are');
+  // ... and it can be aimed at the open turn instead, which is the other
+  // hostile case: a revision the engine sends after the end of speech.
+  stt.end();
+  stt.latePartial('too late', open.turnId);
+  assert.equal(stt.emitted().at(-1).turnId, open.turnId, 'the same turn, but no longer open');
+  assert.equal(stt.partial('honest').ok, false, 'the honest call is still refused while flushing');
+});
+
+test('an engine that has lost the turn says so, and the fake can be made to', () => {
+  // `outOfStep` is what makes the pipeline's two defensive branches reachable:
+  // without it, no fake could produce a refusal the pipeline has to survive.
+  const already = new FakeStt({ outOfStep: 'begin' });
+  assert.deepEqual({ ...already.begin() }, { ok: false, code: STT_CODES.ALREADY_LISTENING, field: 'turn' });
+  assert.equal(already.listening(), false, 'a refused begin opens nothing');
+
+  const notListening = new FakeStt({ outOfStep: 'end' });
+  notListening.begin();
+  assert.deepEqual({ ...notListening.end() }, { ok: false, code: STT_CODES.NOT_LISTENING, field: 'turn' });
+  assert.equal(notListening.listening(), true, 'a refused end flushes nothing');
+
+  assert.throws(() => new FakeStt({ outOfStep: 'sideways' }), TypeError, 'a third state is a programming error');
 });
 
 test('a cancelled turn is abandoned, and cancelling twice is not an error', () => {
@@ -126,6 +181,9 @@ test('a subscriber hears its own kind, and an unsubscribe is idempotent', () => 
 
 test('an unknown event and a handler that is not a function are programming errors', () => {
   const stt = new FakeStt();
-  assert.throws(() => stt.on('transcript', () => {}), TypeError);
-  assert.throws(() => stt.on('final', {}), TypeError);
+  // The message, not just the type: without the guard, `handlers.get(undefined)`
+  // throws a TypeError too, and a test that only checked the type could not tell
+  // the guard from the crash it prevents.
+  assert.throws(() => stt.on('transcript', () => {}), /unknown event: transcript/);
+  assert.throws(() => stt.on('final', {}), /a handler is a function/);
 });

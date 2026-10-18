@@ -195,7 +195,7 @@ the first three tests of `src/audio/pipeline.test.js`, in that order.
 | Port | Methods | What it answers |
 | --- | --- | --- |
 | **AudioIn** (`audio-in.js`) | `start()`, `stop()`, `running()`, `on(kind, handler)` | `{ ok: true, changed }`, or **D122**'s `microphone-denied` / `background-audio-denied`; events `speech-start`, `speech-end`, `barge-in` |
-| **SpeechToText** (`stt.js`) | `begin()`, `end()`, `cancel()`, `listening()`, `on(kind, handler)` | one turn at a time, `partial` events while the user speaks, one `final` per turn |
+| **SpeechToText** (`stt.js`) | `begin()`, `end()`, `cancel()`, `listening()`, `on(kind, handler)` | one turn at a time, `partial` events while the user speaks, one `final` per turn — every event carrying the `turnId` `begin()` answered with |
 | **TextToSpeech** (`tts.js`) | `speak(text)`, `cancel()`, `speaking()` | `{ ok: true, spoken: true }`, `interrupted`, or a `bad-text` / `already-speaking` refusal |
 
 **The fakes are the point, not a convenience.** D52 requires them from the
@@ -205,9 +205,12 @@ test in `src/audio/` runs against `FakeAudioIn`, `FakeStt` and `FakeTts`, with
 any of them — a test decides when an utterance ends and when the engine
 answers — so a barge-in is asserted at the exact moment it is decided, and the
 ~300 ms of §5 is the owner-run half (check 86). One fake is deliberately
-*honest about the hard case*: `FakeStt.lateFinal()` delivers a final with no
-turn open, which is what a real engine's flush does when it races a cancel, so
-the pipeline's protection against it is a test rather than a comment.
+*honest about the hard cases*, because a fake that only ever did what the
+contract promises would make the protection untestable: `FakeStt` can deliver a
+`final` or a `partial` for a turn it no longer holds (`lateFinal`,
+`latePartial` — the flush that raced a cancel), and an engine that has lost the
+turn outright (`outOfStep`). Those are the only ways to reach the pipeline's
+guards, so without them the guards would be code no test held to anything.
 
 **The three rules the pipeline holds**, each with its own test:
 
@@ -216,29 +219,43 @@ the pipeline's protection against it is a test rather than a comment.
    schema (P0.2), whose verdict is passed through unchanged. A transcript the
    schema refuses — the cough that produced the empty string — is a `refused`
    event and no message at all.
-2. **A final with no turn open is dropped, before an id is drawn.** The engine's
-   flush after a `stop()`, or racing a cancel, must not become a message: §5's
-   grace period exists so that "cancel that" is possible, and this is the line
-   that makes it true.
+2. **A final from a turn the pipeline is not in is dropped, before an id is
+   drawn.** The engine's flush after a `stop()`, or after a cancel, or — the
+   case a state machine alone gets *wrong* — after a new `speech-start` already
+   abandoned the flushing turn and opened its own, must not become a message.
+   §5's grace period exists so that "cancel that" is possible, and this is the
+   line that makes it true. **Which turn the words belong to is why every event
+   carries a `turnId`** (`begin()`'s answer, echoed back): the state cannot say
+   it, because the abandoned turn's flush arrives while the *new* turn is open,
+   and composing it would send the cancelled text **and** swallow the text the
+   user is actually saying.
 3. **Any speech during playback interrupts it** — both of the capture path's
    two ways of saying that. `barge-in` is the echo-cancelled signal; a plain
    `speech-start` is all a simpler path can say, and a pipeline that honoured
    only the first would be one where the assistant talks over the user on
    exactly the devices that can least afford it.
 
-**The turn outlives the end of speech.** The pipeline's state is `idle` /
-`open` / `flushing`, mirroring the port: `speech-end` flushes the engine and
-the engine's `final` is what ends the turn. A pipeline that closed its turn on
-`speech-end` would drop every final — every message, always — which is the
-first mutation in the table below.
+**The turn outlives the end of speech, and it has an identity.** The
+pipeline's state is `idle` / `open` / `flushing`, mirroring the port:
+`speech-end` flushes the engine and the engine's `final` is what ends the turn.
+A pipeline that closed its turn on `speech-end` would drop every final — every
+message, always — which is the first mutation in the table below. Beside the
+state it holds the **turn id**, and every event is compared against it: the
+state says whether a turn is in progress, the id says whether the words are
+*this* turn's.
 
 **What the module deliberately does not have.** No capture path, no speech
 engine, no audio decoder: D123 inherits Voice D46 (on-device engines only,
 chosen by a bake-off measured on the oldest supported device — owner-run check
 **85**, phase 5), and a cloud engine needs a second explicit owner decision.
-`src/audio/index.test.js` is what keeps that true — the directory's files are a
-literal list, the door's exports are a literal list, and the code is scanned
-for the things an engine would need:
+`src/audio/index.test.js` is what keeps that true — the module's files, **at
+every depth**, are a literal list, the door's exports are a literal list, and
+the code is scanned for the things an engine would need. The walk is recursive
+on purpose and the recursion has its own test: a non-recursive walk is a fence
+one directory deep, and `src/audio/native/engine.js` would never enter the list,
+the rules or the scan. (`boundary.test.js` walks recursively too, but it does
+not close this gap: its import rule judges *path* specifiers, so a package name
+like `react-native-voice` is not a thing it can see.)
 
 | Rule | Why |
 | --- | --- |
@@ -258,7 +275,7 @@ which is what lets these files' headers explain the rules they are held to.
 ### Mutations run against this task
 
 Each was planted, the run went red on the named test, and the bug was removed.
-The tests are run with `node --test "src/**/*.test.js"` (178 tests, all
+The tests are run with `node --test "src/**/*.test.js"` (186 tests, all
 passing); the first three sentences of `pipeline.test.js` are the plan's own
 verification.
 
@@ -268,12 +285,22 @@ verification.
 | the `barge-in` signal is not wired to the speech handler | the plan's sentence three, and fifteen more (the file's tests cancel as a promise never settles) |
 | speech no longer cancels the playback it interrupts | the plan's sentence three, `the barge-in is a speech-start too` |
 | a partial is composed into a message | `a partial is shown and is never sent` |
-| the `idle` guard is removed from `onFinal` | `a final with no turn open is dropped` |
+| **`onFinal` keys on the state alone, not the turn id** | `a superseded turn's late final is not this turn's message` |
+| **`onPartial` keys on the state alone, not the turn id** | `a partial from a turn this pipeline is not in is not shown` |
+| `onPartial` stops checking whether the turn is open | `a partial from a turn this pipeline is not in is not shown` |
+| **`begin()` reuses turn id 1 for every turn** | four tests, including `every event names the turn it belongs to` |
+| **`outOfStep` stops being validated at construction** | `an engine that has lost the turn says so` |
+| **`beginTurn` stops reporting the engine's refusal** | `an engine that says it is already listening is reported` |
+| **`endTurn` stops reporting the engine's refusal** | `an engine that refuses the end of speech is reported` |
+| **the file walk stops recursing** | `the walk is recursive, so a file in a subdirectory is part of the module` |
+| **`src/audio/native/index.js` imports `react-native-voice`** | `the module is exactly these files, at every depth`, the scan's non-empty control, and `the module imports its own files and shared/` |
+| **`PIPELINE_EVENTS.includes(kind)` is removed from `on`** | `an unknown event and a handler that is not a function are programming errors` |
+| **`isVoicePipeline` is weakened to two methods** | `the pipeline is six methods, and the check says so` |
 | an empty transcript is repaired (`\|\| ' '`) instead of refused | `a transcript the schema refuses is refused here too` |
 | the `unavailable` event loses the OS code | `D122: the OS refusing the microphone…` |
 | every message reuses one id | `each message is its own id, sender and clock` |
 | `FakeStt.end()` closes the turn (the engine's final has nowhere to land) | eight tests, including `the end of speech flushes the turn` |
-| a partial is allowed out of a flushed turn | `the end of speech flushes the turn` |
+| `FakeStt.partial` is allowed out of a flushed turn | `the end of speech flushes the turn` |
 | an interrupted utterance settles as finished | four tests, including the plan's sentence three |
 | a second utterance is queued instead of refused | `one utterance at a time` and the pipeline's refusal test |
 | the two OS denials collapse into one code | both D122 tests |
@@ -281,14 +308,37 @@ verification.
 | a draft accepts a field the protocol does not have | `a field this draft does not have is refused with the protocol's own code` |
 | `refuse()` stops freezing its verdict | `a refusal is a frozen value with a code` |
 | the door grows one more export | `the door exports exactly this` |
-| a production file imports `@react-native-voice/voice` | three test files fail to load (module resolution) — the suite goes red before the rule can report it; the rule's own positive control is what proves the pattern matches |
+| a **sibling** production file imports `@react-native-voice/voice` | three test files fail to load (module resolution) — the suite goes red before the rule can report it; the nested-file mutation above is the one that proves the rule itself |
 | `Date.now()` planted in `pipeline.js` | `no clock` |
+
+**Three tests were passing for the wrong reason, and each is now a mutation
+above rather than a claim.** The `on(kind, handler)` guards threw a `TypeError`
+either way — the guard, or the `handlers.get(undefined)` crash it prevents — so
+they now assert the *message*; `isVoicePipeline` was probed with
+`{ start: () => {} }`, which a check weakened to two methods still rejects, so
+it is now probed with a real pipeline missing one method; and the partial
+suppression and the two engine-refusal branches were unreachable with the
+fakes as they were, so `FakeStt` grew `latePartial` and `outOfStep`.
 
 One mutation found a bug in the **tests**: `messageDraft` was composing
 `{ id: draft.id, … }`, so an absent field reached the schema as an explicit
 `undefined` and its refusal was `wrong-type` rather than `missing-field` — the
 caller would have been told the wrong fault. The draft now preserves presence,
 and `missing-field` is reachable and asserted.
+
+A later review found two more, and the first is worth reading as the class it
+belongs to: **the pipeline was keyed on the turn's state, and a state cannot
+say whose words arrived.** A review-supplied case — speech starting again while
+the engine is still flushing, and the abandoned turn's `final` arriving after —
+composed the cancelled text into a message *and* swallowed the text the user
+was saying. The mirrored state is necessary and not sufficient; the turn id is
+what makes the rule hold, and `begin()` answering with it is now part of the
+port's contract. The second: the "no engine can arrive quietly" fence was one
+directory deep, so `src/audio/native/engine.js` was outside the file list, the
+token rules and the import scan — invisible to a directory that exists to
+refuse exactly that. The walk is recursive now and has a control of its own,
+because with no subdirectory in the tree yet, no other assertion in the file
+could tell a recursive walk from a flat one.
 
 ## What is not verified here
 

@@ -42,13 +42,15 @@
 // module's own scan asserts (there is no `Date.now`, no `Math.random`, no
 // `fetch` and no timer in any file under `src/audio/`).
 //
-// **A stopped or barge-in-interrupted turn produces no message.** Two cases
-// that look different and are the same rule: the engine's `final` arriving with
-// no turn open (its flush racing a cancel or a stop) is dropped, and the turn
-// is closed the moment a `final` is taken. A message the user cancelled, or one
-// that arrives after the session stopped, is a message sent that nobody asked
-// for -- §5's grace period exists precisely so "cancel that" is possible, and
-// this is the line that makes it true rather than aspirational.
+// **A stopped or superseded turn produces no message.** Cases that look
+// different and are the same rule: the engine's `final` arriving with no turn
+// open (its flush racing a `stop()`), or for a turn this pipeline has left
+// behind (its flush racing a cancel, or a new `speech-start`), is dropped -- and
+// the turn is closed the moment one `final` is taken, so a second one cannot
+// arrive for it. A message the user cancelled, or one that arrives after the
+// session stopped, is a message sent that nobody asked for -- §5's grace period
+// exists precisely so "cancel that" is possible, and this is the line that makes
+// it true rather than aspirational.
 //
 // **The turn outlives the end of speech, and that is the whole reason this
 // file has a state machine.** Speech ending is not the transcript arriving: the
@@ -60,6 +62,19 @@
 // a new turn abandons the last two. The engine, not the microphone, decides
 // when a transcript is finished; the microphone only decides when a turn
 // starts.
+//
+// **The state alone cannot say whose words these are, so the turn id does.**
+// Every event carries the id `begin()` answered with, and both handlers below
+// compare it against the turn this pipeline believes it is in. The case that
+// forces it -- and the one a state machine alone gets *wrong*, not merely
+// incomplete -- is speech starting again while the engine is still flushing:
+// that abandons the old turn and opens a new one, and if the abandoned turn's
+// `final` arrives now, `state` is `open` and the words look like this turn's.
+// Composing them would send the text the user moved on from **and** swallow the
+// text they are actually saying, because the real `final` follows a moment
+// later and the turn has already been closed. Both halves of that are the
+// failure §5's grace period exists to prevent, so the rule is the id: an event
+// whose id is not the current turn's is not this turn's, and is dropped.
 
 import { isAudioIn } from './audio-in.js';
 import { isSpeechToText } from './stt.js';
@@ -132,10 +147,20 @@ export function createVoicePipeline({ audioIn, stt, tts, sender, newId, now } = 
   /** `idle`, `open` or `flushing` -- the engine's turn, mirrored here, because
    * the pipeline is what decides whether a `final` may become a message. */
   let state = 'idle';
+  /** The id of the turn this pipeline is in, and **0** when it is in none. Every
+   * event is compared against it: see the header on why the state alone cannot
+   * say whose words arrived. */
+  let turnId = 0;
 
   function emit(kind, fields) {
     const event = Object.freeze({ kind, ...fields });
     for (const handler of [...handlers.get(kind)]) handler(event);
+  }
+
+  /** Whether an event belongs to the turn this pipeline is in. `0` is never a
+   * turn's id, so an engine that never opened one matches nothing. */
+  function inTurn(event) {
+    return state !== 'idle' && event.turnId === turnId;
   }
 
   /** Open a turn. A refusal from the engine opens nothing, so the mirror and
@@ -147,6 +172,7 @@ export function createVoicePipeline({ audioIn, stt, tts, sender, newId, now } = 
       return;
     }
     state = 'open';
+    turnId = begun.turnId;
   }
 
   function onSpeechStart() {
@@ -157,15 +183,19 @@ export function createVoicePipeline({ audioIn, stt, tts, sender, newId, now } = 
     if (state === 'open') return; // the capture path saying it twice is one turn
     // `flushing` is the previous turn the engine still owes a `final` for, and
     // this is the user starting a new one: the old transcript is abandoned, not
-    // raced -- hearing the last turn's final now would make it this turn's.
+    // raced. `turnId` is cleared with it, so the abandoned turn's `final` --
+    // which may arrive while the new turn is already open -- is not this turn's
+    // words.
     if (state === 'flushing') stt.cancel();
     state = 'idle';
+    turnId = 0;
     beginTurn();
   }
 
   function endTurn() {
     // `speech-end` flushes; the engine's `final` is what ends the turn. See the
-    // header: closing it here would drop every message.
+    // header: closing it here would drop every message. The turn id stays: the
+    // engine still owes this turn a `final`.
     if (state !== 'open') return;
     const ended = stt.end();
     if (!ended.ok) {
@@ -177,17 +207,22 @@ export function createVoicePipeline({ audioIn, stt, tts, sender, newId, now } = 
 
   function onPartial(event) {
     // A partial is what the user is still saying: it is shown, and it is never
-    // a message. Only a `final` is. A partial out of a flushed turn is not
-    // emitted at all -- the engine has already stopped revising.
-    if (state !== 'open') return;
+    // a message. Only a `final` is. Nor is a partial from a turn this pipeline
+    // is not in -- the abandoned turn's last revision, or one the engine sends
+    // after the end of speech -- shown at all: the words on screen are the
+    // words of the turn in progress.
+    if (!inTurn(event) || state !== 'open') return;
     emit('transcript', { text: event.text, final: false });
   }
 
   function onFinal(event) {
-    // `idle` means the engine's flush raced a cancel or a stop. It is dropped
-    // here, before an id is drawn, so a cancelled turn cannot become a message.
-    if (state === 'idle') return;
+    // An event from a turn this pipeline is not in is dropped here, before an
+    // id is drawn: the abandoned turn's flush, and the flush that raced a stop.
+    // Composing it would send text the user moved on from and swallow the text
+    // they are saying, since it also closes the turn the real final belongs to.
+    if (!inTurn(event)) return;
     state = 'idle';
+    turnId = 0;
     const draft = messageDraft({ id: newId(), sender, text: event.text, at: now() });
     if (!draft.ok) {
       emit('refused', { code: draft.code, field: draft.field });
@@ -232,6 +267,7 @@ export function createVoicePipeline({ audioIn, stt, tts, sender, newId, now } = 
       if (tts.speaking()) tts.cancel();
       stt.cancel();
       state = 'idle';
+      turnId = 0;
       return audioIn.stop();
     },
 

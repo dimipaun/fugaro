@@ -105,7 +105,10 @@ test('an unknown event and a handler that is not a function are programming erro
   // Thrown rather than refused: `on` always returns a function, and a
   // subscription that silently did not happen is the one outcome a caller
   // cannot check for (see refusal.js).
-  assert.throws(() => fake.on('speech-pause', () => {}), TypeError);
-  assert.throws(() => fake.on('speech-start', 'not a function'), TypeError);
-  assert.throws(() => fake.on('speech-start', null), TypeError);
+  // The message, not just the type: without the guard, `handlers.get(undefined)`
+  // throws a TypeError too, and a test that only checked the type could not tell
+  // the guard from the crash it prevents.
+  assert.throws(() => fake.on('speech-pause', () => {}), /unknown event: speech-pause/);
+  assert.throws(() => fake.on('speech-start', 'not a function'), /a handler is a function/);
+  assert.throws(() => fake.on('speech-start', null), /a handler is a function/);
 });

@@ -37,9 +37,9 @@ const CLOCK = 1_700_000_000_000;
  * source are counters, not a real clock and not a real random source: that is
  * the point of injecting them (see `pipeline.js`'s header).
  */
-function harness({ refuse = null } = {}) {
+function harness({ refuse = null, stt: sttOptions } = {}) {
   const audioIn = new FakeAudioIn(refuse ? { refuse } : {});
-  const stt = new FakeStt();
+  const stt = new FakeStt(sttOptions);
   const tts = new FakeTts();
   let ids = 0;
   const pipeline = createVoicePipeline({
@@ -183,6 +183,89 @@ test('D118/§5: a final with no turn open is dropped, before an id is even drawn
   assert.equal(h.pipeline.turn(), false);
 });
 
+test('a superseded turn\'s late final is not this turn\'s message', async () => {
+  // The case a state machine alone gets **wrong** rather than merely
+  // incomplete, and the reason every event carries a turn id. The user speaks,
+  // stops, and starts again before the engine has flushed the first turn: the
+  // old turn is abandoned, the new one is open, and the old turn's flush now
+  // arrives while `state` is `open`. Keyed on the state, those words look like
+  // this turn's -- so the text the user moved on from would be sent, and the
+  // text they are actually saying would be swallowed, because the turn is
+  // closed by the message that should never have been made.
+  const h = harness();
+  await h.pipeline.start();
+  h.audioIn.speechStart();
+  h.stt.partial('send a message to mum');
+  h.audioIn.speechEnd();
+  const abandoned = h.stt.turnId();
+  h.audioIn.speechStart();
+  const current = h.stt.turnId();
+  assert.notEqual(current, abandoned, 'the new turn is a new turn');
+
+  h.stt.lateFinal('send a message to mum'); // the abandoned turn's flush
+  assert.deepEqual(h.of('message'), [], 'the cancelled text is not sent');
+  assert.equal(h.pipeline.turn(), true, 'and the turn the user is in is still open');
+
+  h.stt.partial('what I am saying now');
+  h.stt.final('what I am saying now');
+  assert.deepEqual(h.of('message').map((event) => event.message.text), ['what I am saying now']);
+  assert.deepEqual(
+    h.of('transcript').map((event) => `${event.text}:${event.final}`),
+    ['send a message to mum:false', 'what I am saying now:false', 'what I am saying now:true'],
+    'the abandoned turn shows nothing more, and the current turn shows exactly itself',
+  );
+  assert.equal(h.pipeline.turn(), false);
+});
+
+test('a partial from a turn this pipeline is not in is not shown', async () => {
+  // Two ways a revision arrives out of a turn the pipeline is not in, and both
+  // are the fake's `latePartial`: after the end of speech, and from the turn a
+  // new speech-start abandoned. Neither is the user's current words, so
+  // neither is what the screen shows.
+  const h = harness();
+  await h.pipeline.start();
+  h.audioIn.speechStart();
+  h.audioIn.speechEnd();
+  const flushed = h.stt.turnId();
+  assert.notEqual(flushed, 0, 'the engine still holds the flushed turn');
+  h.stt.latePartial('a revision after the end of speech', flushed);
+  assert.deepEqual(h.of('transcript'), [], 'the user has finished speaking: nothing is revised on screen');
+
+  h.audioIn.speechStart();
+  h.stt.latePartial('the abandoned turn speaking again');
+  assert.deepEqual(h.of('transcript'), [], 'and an abandoned turn does not speak into the new one');
+
+  h.stt.partial('exactly what I am saying');
+  assert.deepEqual(h.of('transcript').map((event) => event.text), ['exactly what I am saying']);
+});
+
+test('an engine that says it is already listening is reported, and opens no turn', async () => {
+  // The first of the pipeline's two defensive branches, reachable only through
+  // `outOfStep` -- no honest fake can produce an engine that refuses `begin()`.
+  const h = harness({ stt: { outOfStep: 'begin' } });
+  await h.pipeline.start();
+  h.audioIn.speechStart();
+  assert.deepEqual({ ...h.of('refused')[0] }, { kind: 'refused', code: 'already-listening', field: 'turn' });
+  assert.equal(h.pipeline.turn(), false, 'the mirror does not open a turn the engine refused');
+  h.stt.lateFinal('the engine thinks it heard something');
+  assert.deepEqual(h.of('message'), [], 'and nothing it then says becomes a message');
+});
+
+test('an engine that refuses the end of speech is reported, and its final still arrives', async () => {
+  // The second branch. The mirror is left where it was rather than guessed at:
+  // the turn was open, the engine says it is not listening, and the words it
+  // sends afterwards are still that turn's -- so they are still shown and still
+  // become a message, rather than being lost to a state the pipeline invented.
+  const h = harness({ stt: { outOfStep: 'end' } });
+  await h.pipeline.start();
+  h.audioIn.speechStart();
+  h.audioIn.speechEnd();
+  assert.deepEqual({ ...h.of('refused')[0] }, { kind: 'refused', code: 'not-listening', field: 'turn' });
+  assert.equal(h.pipeline.turn(), true, 'the turn is still the engine\'s, whatever it says');
+  h.stt.final('the words');
+  assert.deepEqual(h.of('message').map((event) => event.message.text), ['the words']);
+});
+
 test('stop() abandons the turn and interrupts an utterance in flight', async () => {
   const h = harness();
   await h.pipeline.start();
@@ -312,6 +395,12 @@ test('D118/F26: every event carries exactly its fields, and no audio', async () 
 test('the pipeline is six methods, and the check says so', () => {
   const h = harness();
   assert.equal(isVoicePipeline(h.pipeline), true);
+  assert.equal(isVoicePipeline({ ...h.pipeline }), true, 'the control: an unbroken copy is a pipeline');
+  // ... and a real pipeline missing or breaking **one** method is not, which is
+  // the case a probe of `{ start: () => {} }` cannot tell from a complete one:
+  // a check weakened to three methods would still reject these two.
+  assert.equal(isVoicePipeline({ ...h.pipeline, stop: undefined }), false, 'a missing method');
+  assert.equal(isVoicePipeline({ ...h.pipeline, say: 'not a function' }), false, 'a method that is not one');
   for (const value of [null, undefined, 42, {}, { start: () => {} }]) {
     assert.equal(isVoicePipeline(value), false, `${JSON.stringify(value)} is not a pipeline`);
   }
@@ -352,7 +441,10 @@ test('a subscriber hears its own kind, and an unsubscribe is idempotent', async 
 
 test('an unknown event and a handler that is not a function are programming errors', () => {
   const h = harness();
-  assert.throws(() => h.pipeline.on('audio', () => {}), TypeError);
-  assert.throws(() => h.pipeline.on('message', 'not a function'), TypeError);
-  assert.throws(() => h.pipeline.on('message', null), TypeError);
+  // The message, not just the type: without the guard, `handlers.get(undefined)`
+  // throws a TypeError too, and a test that only checked the type could not tell
+  // the guard from the crash it prevents.
+  assert.throws(() => h.pipeline.on('audio', () => {}), /unknown event: audio/);
+  assert.throws(() => h.pipeline.on('message', 'not a function'), /a handler is a function/);
+  assert.throws(() => h.pipeline.on('message', null), /a handler is a function/);
 });

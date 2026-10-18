@@ -25,7 +25,8 @@
 // a rule that forbade its own explanation would be a rule nobody could document.
 
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import test from 'node:test';
 
@@ -35,17 +36,68 @@ const DIR = import.meta.dirname;
 const MOBILE = join(DIR, '..', '..');
 const SELF = 'index.test.js';
 
-/** Every file in this directory, sorted -- the module's whole surface. */
-const FILES = readdirSync(DIR)
-  .filter((name) => name.endsWith('.js'))
-  .sort();
+/**
+ * Every `.js` file of the module, **at any depth**, sorted, as this directory's
+ * relative paths with `/` separators.
+ *
+ * Recursive on purpose, and the recursion is not a detail: a non-recursive walk
+ * is a fence one directory deep. `src/audio/native/engine.js` would never enter
+ * the file list, the token rules or the no-package scan -- an engine arriving
+ * quietly, which is the one thing this file exists to refuse. `boundary.test.js`
+ * walks the same way and for the same reason; it does not close the gap either,
+ * because its import rule judges *path* specifiers and says nothing about
+ * `import voice from '@react-native-voice/voice'`.
+ */
+function audioFiles(dir = DIR, prefix = '') {
+  const found = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      found.push(...audioFiles(path, `${prefix}${entry.name}/`));
+    } else if (entry.name.endsWith('.js')) {
+      found.push(`${prefix}${entry.name}`);
+    }
+  }
+  return found.sort();
+}
+
+const FILES = audioFiles();
 
 const isTest = (file) => file.endsWith('.test.js');
 
-test('the module is exactly these files', () => {
+test('the walk is recursive, so a file in a subdirectory is part of the module', () => {
+  // The control for the fence above, and the reason it is a test rather than a
+  // comment: with a non-recursive walk every assertion below still passes today
+  // -- there is no subdirectory yet -- so nothing else in this file can tell
+  // the two walks apart.
+  const root = mkdtempSync(join(tmpdir(), 'fugaro-audio-'));
+  try {
+    writeFileSync(join(root, 'top.js'), 'export const top = 1;\n');
+    mkdirSync(join(root, 'native', 'deep'), { recursive: true });
+    writeFileSync(join(root, 'native', 'engine.js'), "import Voice from 'react-native-voice';\n");
+    writeFileSync(join(root, 'native', 'deep', 'codec.js'), 'export const codec = 1;\n');
+    writeFileSync(join(root, 'native', 'notes.txt'), 'not a module\n');
+    assert.deepEqual(audioFiles(root), ['native/deep/codec.js', 'native/engine.js', 'top.js'], 'at every depth');
+    // ... and a nested file is scanned exactly like a sibling: the package
+    // import that was invisible to the old walk is an offence to the rule.
+    assert.deepEqual(
+      production(root).map(([file]) => file),
+      ['native/deep/codec.js', 'native/engine.js', 'top.js'],
+    );
+    assert.deepEqual(
+      strangers('native/engine.js', readFileSync(join(root, 'native', 'engine.js'), 'utf8'), root),
+      ['native/engine.js: react-native-voice'],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the module is exactly these files, at every depth', () => {
   // A new file here is a new thing the app can import, so it is a deliberate
   // edit to this list. That is what makes "no engine yet" checkable rather
-  // than a claim in a header: an engine is `engine.js`, and this fails.
+  // than a claim in a header: an engine is `engine.js`, and this fails -- at
+  // any depth, which is why the walk above is recursive.
   assert.deepEqual(FILES, [
     'audio-in.js',
     'audio-in.test.js',
@@ -172,9 +224,11 @@ function code(text) {
   return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
-/** The production files of this directory, as path -> code. */
-function production() {
-  return FILES.filter((file) => !isTest(file) && file !== SELF).map((file) => [file, code(readFileSync(join(DIR, file), 'utf8'))]);
+/** The production files of this module -- at any depth -- as path -> code. */
+function production(dir = DIR) {
+  return audioFiles(dir)
+    .filter((file) => !isTest(file) && file !== SELF)
+    .map((file) => [file, code(readFileSync(join(dir, file), 'utf8'))]);
 }
 
 test('the scan reads the module, and not an empty list', () => {
@@ -223,16 +277,17 @@ function specifiers(text) {
   return found;
 }
 
-/** The specifiers in `file` (this directory's name) that are not this
- * directory's own files or `shared/`. */
-function strangers(file, text) {
+/** The specifiers in `file` (relative to `dir`) that are not the module's own
+ * files or `shared/`. `dir` is a parameter because the walk is tested against a
+ * temporary tree, where the module's root is not this directory. */
+function strangers(file, text, dir = DIR) {
   const shared = join(MOBILE, '..', 'shared');
   return specifiers(code(text))
     .filter((spec) => {
       if (spec.startsWith('node:')) return true; // a test's own tooling; the walk below excludes them
       if (!spec.startsWith('.')) return true; // a package name: the offence this rule exists for
-      const target = resolve(join(DIR, dirname(file)), spec);
-      const inModule = target === DIR || target.startsWith(DIR + sep); // a sibling file
+      const target = resolve(join(dir, dirname(file)), spec);
+      const inModule = target === dir || target.startsWith(dir + sep); // a file of this module
       const inShared = target === shared || target.startsWith(shared + sep);
       return !inModule && !inShared;
     })
