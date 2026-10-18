@@ -803,3 +803,18 @@ func TestInventoryWithoutANumberIgnoresNoNumberNamedAccount(t *testing.T) {
 		t.Fatalf("a number-named account with no project number decided %+v, want a foreign fallback", d)
 	}
 }
+
+// M1: an account under the project's own domain is one somebody created in
+// it, even when the project id itself has the agents' gcp-sa- shape: the
+// domain check is on this project's id, not only on the prefix.
+func TestInventoryNeverIgnoresAnAccountUnderTheProjectsOwnDomain(t *testing.T) {
+	const pid = "gcp-sa-lookalike1"
+	runsName := "//storage.googleapis.com/projects/_/buckets/fugaro-runs-" + pid
+	sa := listed("//iam.googleapis.com/projects/"+pid+"/serviceAccounts/service-123456789012@"+pid+".iam.gserviceaccount.com", "iam.googleapis.com/ServiceAccount")
+	in := Inventory{Project: project, GCPProject: pid, ProjectNumber: testProjectNumber,
+		Assets:    &fakeAssets{assets: []Asset{sa, listed(runsName, "storage.googleapis.com/Bucket")}},
+		Accounted: []StateResource{{Type: "storage.googleapis.com/Bucket", Name: "fugaro-runs-" + pid}}}
+	if d := in.Check(context.Background()); !d.Fallback || d.Cause != CauseForeign {
+		t.Fatalf("an account under %s's own domain decided %+v, want a foreign fallback", pid, d)
+	}
+}
