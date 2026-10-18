@@ -1,4 +1,4 @@
-**Status: DECLINED by the owner on 2026-10-18 (D79: no hard stop). Kept as the record of what was considered and why. D80-D86 are moot. Budget alerts remain alert-only.**
+**Status: DECLINED by the owner on 2026-10-18 (D79: no unlink hard stop). Kept as the record of what was considered and why. D80-D85 are recorded as the owner's pre-answers (the recommended answers) for a future hard stop, unbuilt; D86 is ACCEPTED (Google's native spend caps on Cloud Run and Vertex AI only, opt-in beside the budget flag at managed-project creation, owner-run, no credential) and is to be built, as Task 6.0b, after this document's UNVERIFIED items (launch stage, quota, Cloud Run jobs coverage) are settled by an owner-run check. Budget alerts remain alert-only.**
 
 The text below is the design as it was written, before the decision, and is not edited.
 

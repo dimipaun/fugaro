@@ -337,10 +337,10 @@ func TestDocsManagedHardStopDesignIsMarkedDeclined(t *testing.T) {
 	const path = "docs/design/managed-projects-hard-stop.md"
 	doc := readDoc(t, path)
 	head := doc
-	if len(head) > 600 {
-		head = head[:600]
+	if len(head) > 1000 {
+		head = head[:1000]
 	}
-	for _, want := range []string{"DECLINED", "2026-10-18", "D79", "no hard stop", "D80-D86 are moot", "alert-only"} {
+	for _, want := range []string{"DECLINED", "2026-10-18", "D79", "no unlink hard stop", "D80-D85 are recorded as the owner's pre-answers", "D86 is ACCEPTED", "Task 6.0b", "alert-only"} {
 		if !strings.Contains(head, want) {
 			t.Errorf("%s's opening status line lacks %q", path, want)
 		}
