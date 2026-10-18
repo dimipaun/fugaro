@@ -33,7 +33,11 @@
  *      still in front of it.
  *   4. **The file's inline markup is rendered, not printed.** `` `code` `` becomes a
  *      `<code>` element and `**bold**` a `<strong>` one: the markers are markup and not
- *      text, and printing them would put backticks in front of a reader. The files carry
+ *      text, and printing them would put backticks in front of a reader. This is a rule
+ *      about the file's text wherever it appears — a bullet, a paragraph and a heading line
+ *      alike — because a heading line is a line like the others and `## A `code` limit`
+ *      would otherwise reach a reader with its backticks on, which is exactly the defect the
+ *      `#` markers were just taken off for. The files carry
  *      no link, no image and no other construct — the generator hands the lines over as
  *      written — so this is the whole of the inline rendering, and it is applied to text
  *      that is escaped first.
@@ -202,7 +206,7 @@ const summary = entries.slice(0, SUMMARY_RELEASES).map((entry) => {
             ))}
           </ul>
         ) : element.kind === 'heading' ? (
-          <h3>{element.text}</h3>
+          <h3 set:html={inline(element.text)}></h3>
         ) : (
           <p set:html={inline(element.text)}></p>
         ),

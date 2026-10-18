@@ -421,6 +421,41 @@ test("a release file's heading line is rendered as a heading, and not as its own
   )
 })
 
+test("a heading line's inline markup is rendered, not printed", (t) => {
+  // A heading line is a line of the file like any other, so the inline rule reaches it too:
+  // `` ## The `fugaro` limit `` is a heading whose words carry a `<code>` element. A page
+  // that renders a heading line's words as plain text — which is what the heading rule did
+  // before this case — puts the backticks in front of a reader, which is the same defect as
+  // leaving `##` on: one marker later, and the reason the rule is stated for the file's text
+  // rather than for its bullets and paragraphs alone.
+  const built = buildCopy(t, ({ root }) => {
+    writeFileSync(
+      path.join(root, 'docs', 'releases', 'v9.9.9.md'),
+      '- A fixture release, so a heading line has a file to be written in.\n\n## The `fugaro` limit\n\n- The fixture names a limit.\n',
+    )
+  })
+  assert.equal(built.status, 0, `the site's build failed:\n${built.output}`)
+  const html = readFileSync(path.join(built.dist, 'changelog', 'index.html'), 'utf8')
+
+  const heading = /<h3\b[^>]*>([\s\S]*?)<\/h3>/g
+  const carrier = [...html.matchAll(heading)]
+    .map((match) => match[1])
+    .find((inner) => inner.includes('limit'))
+  assert.ok(carrier !== undefined, 'the page renders no heading for the fixture release\'s heading line')
+  assert.ok(
+    /<code>fugaro<\/code>/.test(carrier),
+    `the heading line's \`code\` span reaches a reader as markup rather than as a code element: ${JSON.stringify(carrier)}`,
+  )
+  assert.ok(
+    !carrier.includes('`'),
+    `the heading line's own backticks are printed in the heading: ${JSON.stringify(carrier)}`,
+  )
+  assert.ok(
+    headingsOnPage(html).includes('The fugaro limit'),
+    'the heading\'s words are the line\'s own, with its inline markers rendered rather than printed',
+  )
+})
+
 test('the changelog page renders every line of every release file', () => {
   const html = builtPage()
   const text = pageText(html)
