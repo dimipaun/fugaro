@@ -200,8 +200,9 @@ function textBetween(main, from, to) {
  *
  * The lead is the visible text between the page's `h1` and its first `h2` — the paragraph a
  * page opens with before its first section, which is the text D188's 40-word ceiling is
- * about. A page whose `main` carries no `h2` at all (the homepage, whose hero is the whole
- * page) has no such region; its lead is the paragraphs that follow the `h1`, which is the
+ * about. A page whose `main` carries no `h2` in the `h1`'s own container (the homepage: the
+ * hero's section holds the `h1`, and the first `h2` is a step of the flow under it) has no
+ * such region; its lead is the paragraphs that follow the `h1`, which is the
  * same text read from the other end, rather than the hero's install block and terminal. The
  * whitespace a template leaves between the `h1` and the paragraph under it is a text node and
  * not a paragraph: it is skipped, because reading it as the end of the opening would measure
@@ -216,7 +217,12 @@ export function pageWords(html) {
   const h1 = find(main, 'h1')
   if (h1 === null) return { words: words(visibleText(main)), lead: 0 }
   const firstH2 = find(main, 'h2')
-  if (firstH2 !== null) {
+  // The h1 -> first h2 region is the lead when the `h2` sits in the same container as the
+  // `h1`. When it does not — the homepage's hero holds its `h1` in a section of its own and
+  // the flow's step names, further down, are the first `h2`s — the region would be the hero's
+  // install block and terminal and everything after, so the lead is the paragraph run under
+  // the `h1`, as on a page with no `h2` at all.
+  if (firstH2 !== null && within(firstH2, h1.parent)) {
     return { words: words(visibleText(main)), lead: words(textBetween(main, h1, firstH2)) }
   }
   const siblings = h1.parent.children
@@ -412,6 +418,27 @@ test('a page with no h2 measures the paragraph under its h1, through the newline
     'over/index.html': page(budgets.lead + 1),
     'under/index.html': page(budgets.lead),
   })
+  const f = wordFailures(dist, budgets)
+  assert.equal(f.length, 1, f.join('\n'))
+  assert.match(f[0], new RegExp(`^over/index\\.html opens with a ${budgets.lead + 1}-word lead`))
+})
+
+test('a hero whose section holds the h1 has the paragraph run under the h1 as its lead, and not the sections after it', (t) => {
+  // The homepage since the flow went under the hero: the flow's step names are `h2`s, so the
+  // first `h2` of `main` is no longer the end of the hero but the start of a figure that sits
+  // outside the hero's section. Reading h1 -> first h2 would measure the hero's install block
+  // and terminal as the lead (85 words on the built page). The hero's own paragraph run is
+  // the lead, and a lead one word over the ceiling still fails.
+  const budgets = { ...readmeBudgets(), words: 100000 }
+  const page = (n) =>
+    shell(
+      '',
+      `<main>\n <section class="hero">\n  <h1>t</h1>\n  <p>${Array.from({ length: n }, () => 'w').join(' ')}</p>\n` +
+        `  <div><p>${Array.from({ length: 200 }, () => 'x').join(' ')}</p></div>\n </section>\n` +
+        '<ol><li><h2>step</h2></li></ol>\n</main>',
+    )
+  assert.equal(pageWords(page(3)).lead, 3)
+  const dist = distOf(t, { 'over/index.html': page(budgets.lead + 1), 'under/index.html': page(budgets.lead) })
   const f = wordFailures(dist, budgets)
   assert.equal(f.length, 1, f.join('\n'))
   assert.match(f[0], new RegExp(`^over/index\\.html opens with a ${budgets.lead + 1}-word lead`))

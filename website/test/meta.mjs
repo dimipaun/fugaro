@@ -46,6 +46,9 @@ export const PHRASES = [
   'rather than written here',
   'rather than described here',
   'points at those documents rather than repeating them',
+  // Not on D186's list; added in review of P4 after the flow (#574) shipped it on / and
+  // /how-it-works/: a caption about where the captions come from is the same defect.
+  'Every caption below is a line of',
 ]
 
 /**

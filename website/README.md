@@ -102,8 +102,9 @@ with fixtures that keep its refusals running, and none of them needs the network
     the page's `h1` and its first `h2` — the paragraph a page opens with before its first
     section — and it is a lead and not an introduction: 40 words at most, on every page,
     the three reference pages included, because a lead is the page's own whichever page it
-    is. A page whose `main` carries no `h2` at all (the homepage, whose hero is the whole
-    page) has no such region, and its lead is the paragraphs that follow its `h1`. A page
+    is. A page whose first `h2` is not in the `h1`'s own container (the homepage: the hero's
+    section holds the `h1`, and the first `h2` is a step of the flow under it) or that has
+    no `h2` at all has no such region, and its lead is the paragraphs that follow its `h1`. A page
     whose `h1` is followed straight by its first `h2` has no lead region either, and 0 words
     is inside the ceiling: `/security/` is shaped that way (its `h1` is the rendered
     document's own title, and the page's lead line comes before it) and so is `/changelog/`
@@ -316,4 +317,5 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` holds no pending workflow today.
+change `.github/workflows/`. `docs/pending-workflows/` holds only the website's two manual workflows,
+`website-preview.yml` and `website-promote.yml` (#566), and no deploy workflow.
