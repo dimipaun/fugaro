@@ -9,6 +9,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -37,6 +38,28 @@ const githubAppKeyLCBlock = `project_secrets:
   github-app-key: { allow_data_to: [acme/sandbox] }
 `
 
+// projectJobRepoLC is the GitHub repository every project-job config records,
+// with the GitHub App ID a shared job is built from (the owner's ruling of
+// 2026-10-17, plan task 3.5 step 4). It is one line appended to m4LocalConfig's
+// repos block — the way spec_test.go appends its Vertex repository — because
+// the block is the last key of that config. A project that declares job
+// profiles and records no App ID is refused:
+// TestProjectJobsNeedAGitHubAppID.
+const projectJobRepoLC = "  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: \"123456789\" }\n"
+
+// projectJobSpec is installationSpecWith for the profiles-bearing config. The
+// repository line cannot travel through installationSpecWith's extraLC: it
+// belongs inside m4LocalConfig's repos block, and those extras follow the M5
+// top-level fields, so a repository put there is a parse error.
+func projectJobSpec(t *testing.T) InstallationSpec {
+	t.Helper()
+	s, err := Installation(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock), InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 // threeReposLocalConfig is m4LocalConfig with three repositories instead of
 // one, for the claim that the job set does not move with them (design §13).
 var threeReposLocalConfig = func() string {
@@ -44,7 +67,7 @@ var threeReposLocalConfig = func() string {
 	const three = `repos:
   acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }
   acme/other: { provider: bitbucket, base_branch: master, workflows: [web] }
-  acme/webapp: { provider: github, base_branch: main, workflows: [web] }
+  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456789" }
 `
 	if !strings.Contains(m4LocalConfig, one) {
 		panic("m4LocalConfig's repos block moved: threeReposLocalConfig is stale")
@@ -65,7 +88,7 @@ func projectJobsFor(t *testing.T, lc string) map[string]ProjectJob {
 // One job and one job service account per (profile, provider, account) — the
 // resource set the whole phase rests on (plan task 3.2 step 1).
 func TestProjectJobsAreOnePerProfileProviderAccount(t *testing.T) {
-	jobs := projectJobsFor(t, m4LocalConfig+m5Additions+projectProfilesLCBlock)
+	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock)
 	if len(jobs) != 2 {
 		t.Fatalf("%d jobs, want 2: %v", len(jobs), slices.Sorted(maps.Keys(jobs)))
 	}
@@ -125,7 +148,7 @@ func TestProjectJobsAreOnePerProfileProviderAccount(t *testing.T) {
 // repositories (design §13, plan step 6): the repository count moves, the
 // jobs and their service accounts do not.
 func TestProjectJobsDoNotFollowTheRepositories(t *testing.T) {
-	one := projectJobsFor(t, m4LocalConfig+m5Additions+projectProfilesLCBlock)
+	one := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock)
 	three := projectJobsFor(t, threeReposLocalConfig+m5Additions+projectProfilesLCBlock)
 	if !maps.EqualFunc(one, three, func(a, b ProjectJob) bool { return a.Job == b.Job && a.ServiceAccount == b.ServiceAccount }) {
 		t.Errorf("jobs = %v with one repository and %v with three", sortedJobNames(one), sortedJobNames(three))
@@ -151,8 +174,12 @@ func sortedJobNames(jobs map[string]ProjectJob) []string { return slices.Sorted(
 // is never one of them — a launcher overrides any variable — and neither is
 // anything a repository's own config decides.
 func TestProjectJobEnvIsTheInstallationsAlone(t *testing.T) {
-	jobs := projectJobsFor(t, m4LocalConfig+m5Additions+projectProfilesLCBlock)
-	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, RTDBURLEnv, FirebaseAPIKeyEnv}
+	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock)
+	// The App's ID is the one non-installation variable a job carries, and it
+	// is not per-repository: one App serves the project (owner ruling of
+	// 2026-10-17, plan task 3.5 step 4), so it is resolved once and is the
+	// same in every job.
+	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, RTDBURLEnv, FirebaseAPIKeyEnv, providers.EnvGitHubAppID}
 	for name, j := range jobs {
 		keys := slices.Sorted(maps.Keys(j.Env))
 		for _, k := range keys {
@@ -192,15 +219,94 @@ func TestProjectJobEnvIsTheInstallationsAlone(t *testing.T) {
 	// With a budget backend the two backend variables are there, and they
 	// are the only addition: a job that cannot read the project's policy
 	// would run on the environment ceiling with the policy unenforced (D11).
-	withBudget := projectJobsFor(t, m4LocalConfig+m5Additions+projectProfilesLCBlock+`
+	withBudget := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock+`
 budget: { rtdb_url: https://aurora-default-rtdb.firebaseio.com, firebase_api_key: AIzaSyA1234567890abcdefghijklmnopqrstu }
 `)
 	for name, j := range withBudget {
 		if j.Env[RTDBURLEnv] != "https://aurora-default-rtdb.firebaseio.com" || j.Env[FirebaseAPIKeyEnv] != "AIzaSyA1234567890abcdefghijklmnopqrstu" {
 			t.Errorf("job %s backend env = %v", name, j.Env)
 		}
-		if len(j.Env) != 6 {
-			t.Errorf("job %s sets %d variables, want the four identity ones and the two backend ones: %v", name, len(j.Env), j.Env)
+		if len(j.Env) != 7 {
+			t.Errorf("job %s sets %d variables, want the four identity ones, the two backend ones and the App's ID: %v", name, len(j.Env), j.Env)
+		}
+		if j.Env[providers.EnvGitHubAppID] != "123456789" {
+			t.Errorf("job %s carries %s=%q, want the App ID the local config records", name, providers.EnvGitHubAppID, j.Env[providers.EnvGitHubAppID])
+		}
+	}
+}
+
+// A project that declares profiles and records no GitHub App ID is refused,
+// rather than deployed without one (owner ruling of 2026-10-17, plan task 3.5
+// step 4). The refusal is not pedantry: a shared job serves the github
+// provider, and internal/gitprov/providers builds that provider from
+// FUGARO_GITHUB_APP_ID, refusing to start without it — so the job would deploy
+// cleanly and then halt every run it started, at run time, in the credential,
+// where nothing points back at the local config.
+//
+// The state is reachable: a project that writes its profiles before it has
+// onboarded a GitHub repository has exactly this local config, and that is why
+// the message names the command that fixes it.
+func TestProjectJobsNeedAGitHubAppID(t *testing.T) {
+	// m4LocalConfig's own repository is a Bitbucket one, so nothing in this
+	// config records an App ID.
+	lc := parseLC(t, m4LocalConfig+m5Additions+projectProfilesLCBlock)
+	if _, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false); err == nil {
+		t.Fatal("ProjectJobs deployed shared jobs for a config that records no GitHub App ID")
+	} else {
+		for _, want := range []string{providers.EnvGitHubAppID, "--github-app-id"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("err = %v, want one naming %q", err, want)
+			}
+		}
+	}
+
+	// The same profiles with one GitHub repository that records the ID: the
+	// jobs are built, and every one of them carries it.
+	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock)
+	if len(jobs) == 0 {
+		t.Fatal("no jobs for a config that records an App ID")
+	}
+	for name, j := range jobs {
+		if j.Env[providers.EnvGitHubAppID] != "123456789" {
+			t.Errorf("job %s carries %s=%q, want 123456789", name, providers.EnvGitHubAppID, j.Env[providers.EnvGitHubAppID])
+		}
+	}
+
+	// A repository that records the ID but is not GitHub's does not count:
+	// the field is the App's, and only a github repository has an App.
+	bitbucket := strings.Replace(projectJobRepoLC, "provider: github", "provider: bitbucket", 1)
+	if _, err := ProjectJobs(parseLC(t, m4LocalConfig+bitbucket+m5Additions+projectProfilesLCBlock), "fugaro-runs-proj-1234", false); err == nil {
+		t.Error("ProjectJobs took the App ID from a repository that is not on GitHub")
+	}
+}
+
+// Two GitHub Apps in one local config are refused rather than one of them
+// chosen (design §4.5: the runner mints a token per repository from the
+// project's App, and a profile's repositories all run on one shared job). A
+// job built from either ID is wrong for the other's repositories, and the
+// failure would be at run time, in the credential — so the deploy stops and
+// says which two repositories disagree.
+//
+// Two repositories on the SAME App are the normal shape, and they are the
+// control: the refusal is about disagreement, not about the number of
+// repositories.
+func TestProjectJobsRefuseTwoGitHubApps(t *testing.T) {
+	second := "  acme/other: { provider: github, base_branch: main, workflows: [web], github_app_id: \"987654321\" }\n"
+	_, err := ProjectJobs(parseLC(t, m4LocalConfig+projectJobRepoLC+second+m5Additions+projectProfilesLCBlock), "fugaro-runs-proj-1234", false)
+	if err == nil {
+		t.Fatal("ProjectJobs deployed shared jobs for a config that records two GitHub Apps")
+	}
+	for _, want := range []string{"acme/webapp", "123456789", "acme/other", "987654321"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want one naming %q", err, want)
+		}
+	}
+
+	agreed := "  acme/other: { provider: github, base_branch: main, workflows: [web], github_app_id: \"123456789\" }\n"
+	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+agreed+m5Additions+projectProfilesLCBlock)
+	for name, j := range jobs {
+		if j.Env[providers.EnvGitHubAppID] != "123456789" {
+			t.Errorf("job %s carries %s=%q, want the one App both repositories record", name, providers.EnvGitHubAppID, j.Env[providers.EnvGitHubAppID])
 		}
 	}
 }
@@ -220,7 +326,7 @@ budget: { rtdb_url: https://aurora-default-rtdb.firebaseio.com, firebase_api_key
 // Vertex branches below fail; the rest of the file is unaffected, because the
 // non-Vertex branches assert the names are *absent*.
 func TestProjectJobsOnVertexCarryTheVertexEnvironment(t *testing.T) {
-	lc := parseLC(t, m4LocalConfig+m5Additions+projectProfilesLCBlock)
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock)
 	if !slices.Contains(PlatformEnv, VertexRegionEnv) || !slices.Contains(PlatformEnv, VertexProjectEnv) {
 		t.Fatalf("PlatformEnv = %v, want it to name Vertex's two variables: it is the list upgrade copies over, and the list these jobs are held to", PlatformEnv)
 	}
@@ -233,7 +339,7 @@ func TestProjectJobsOnVertexCarryTheVertexEnvironment(t *testing.T) {
 	}
 	// The four identity variables plus Vertex's two — no budget backend in
 	// this fixture, so nothing else may appear.
-	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, VertexRegionEnv, VertexProjectEnv}
+	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, VertexRegionEnv, VertexProjectEnv, providers.EnvGitHubAppID}
 	for name, j := range jobs {
 		if !j.Vertex {
 			t.Errorf("job %s is on Vertex: grant and environment disagree", name)
@@ -283,7 +389,7 @@ func TestProjectJobSecretsMustBeProjectWide(t *testing.T) {
   github-app-key: { allow_data_to: [acme/webapp] }
 `, "", 1)
 	for _, c := range []struct{ name, lc, want string }{
-		{"no container at all", m4LocalConfig + m5Additions + bare, "not stored project-wide"},
+		{"no container at all", m4LocalConfig + projectJobRepoLC + m5Additions + bare, "not stored project-wide"},
 	} {
 		_, err := ProjectJobs(parseLC(t, c.lc), "fugaro-runs-proj-1234", false)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -294,13 +400,13 @@ func TestProjectJobSecretsMustBeProjectWide(t *testing.T) {
 	// resolver itself. No local config can reach it — projectSecretContainers
 	// only ever produces names of the three kinds below — so this is the
 	// backstop that keeps that true if either list changes.
-	if env, ok := projectSecretEnv(parseLC(t, m4LocalConfig+m5Additions), "acme-workflow-secret"); ok {
+	if env, ok := projectSecretEnv(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions), "acme-workflow-secret"); ok {
 		t.Errorf("a workflow's own secret resolves to the variable %s", env)
 	}
 
 	// A provider's key is project-wide by construction (projectSecretContainers),
 	// and it is mounted as the runner's provider variable.
-	jobs := projectJobsFor(t, m4LocalConfig+m5Additions+providerLC+`profiles:
+	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+providerLC+`profiles:
   standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [openrouter-api-key] }
 `)
 	j, ok := jobs[gcp.ProjectJobName("standard", "github", "")]
@@ -341,7 +447,7 @@ profiles:
   standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [claude-oauth-token-acme-personal] }
 `},
 	} {
-		lc := parseLC(t, m4LocalConfig+m5Additions+c.lc)
+		lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+c.lc)
 		// The accounts block the deployer judges the profiles against is
 		// derived from the same config, exactly as ProjectJobs derives it.
 		accounts, err := projectpolicy.DeriveAccounts(profilesAsPolicy(lc.Profiles), lc.ClaudeAccounts, lc.ProjectSecrets)
@@ -381,7 +487,7 @@ profiles:
   standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [bitbucket-token] }
 `, "profiles.standard.secrets[0]: \"bitbucket-token\" is the Bitbucket credential"},
 	} {
-		_, err := ProjectJobs(parseLC(t, m4LocalConfig+m5Additions+c.lc), "fugaro-runs-proj-1234", false)
+		_, err := ProjectJobs(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+c.lc), "fugaro-runs-proj-1234", false)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want one naming %q", c.name, err, c.want)
 		}
@@ -410,7 +516,7 @@ func TestProjectJobsRefuseAProfileThePolicyWouldRefuse(t *testing.T) {
   standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [bitbucket/acme/web] }
 `, "this profile serves github"},
 	} {
-		_, err := ProjectJobs(parseLC(t, m4LocalConfig+m5Additions+c.profiles), "fugaro-runs-proj-1234", false)
+		_, err := ProjectJobs(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+c.profiles), "fugaro-runs-proj-1234", false)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want one naming %q", c.name, err, c.want)
 		}
@@ -431,7 +537,7 @@ func TestInstallationWithoutProfilesWritesNoProjectJobs(t *testing.T) {
 	if _, ok := doc["project_jobs"]; ok {
 		t.Errorf("an installation with no profiles writes project_jobs:\n%s", data)
 	}
-	jobs, err := ProjectJobs(parseLC(t, m4LocalConfig+m5Additions), "fugaro-runs-proj-1234", false)
+	jobs, err := ProjectJobs(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions), "fugaro-runs-proj-1234", false)
 	if err != nil || jobs != nil {
 		t.Errorf("ProjectJobs = %v, %v; want none", jobs, err)
 	}
@@ -460,7 +566,7 @@ const projectAccountLCBlock = `profiles:
 // CLOUD_RUN_JOB against — and not only the field beside it, because the name is
 // what a run has to reproduce.
 func TestProjectJobAccountIsWhatTheRunnerRecomputes(t *testing.T) {
-	lc := parseLC(t, m4LocalConfig+m5Additions+projectAccountLCBlock)
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountLCBlock)
 	jobs, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
 	if err != nil {
 		t.Fatal(err)
