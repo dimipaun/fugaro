@@ -1019,3 +1019,134 @@ test('the vectors carry no secret-shaped literal', () => {
   assert.match(vectors.key, /not-a-secret|fake|test-key|placeholder/i, 'the key is an obvious placeholder');
   assert.ok(vectors.key.length <= 64, 'and it is plainly not a generated key');
 });
+
+// ---------------------------------------------------------------------------
+// Independent review of P6.3 (2026-10-18): the cases below pin defects the
+// review found in canonicalBytes and the timestamp rule, and the properties the
+// brief asks to be pinned by name (every field covered or explicitly excluded,
+// the tag required on every kind, the vectors carrying schema refusals).
+// ---------------------------------------------------------------------------
+
+test('canonicalBytes covers an own __proto__ key instead of losing it to a prototype', () => {
+  // JSON.parse makes `__proto__` an OWN property. Assigning it onto an ordinary
+  // object sets the prototype instead, so a serialiser that rebuilds the record
+  // that way drops the field from the bytes: two different records, one tag.
+  // validateMessage refuses the field, but canonicalBytes and verifyMac are
+  // exported and are called on records as they arrived.
+  const raw = JSON.parse(
+    '{"id":"m-0001","sender":"phone","text":"run 42 finished","at":1700000000000,"__proto__":{"x":1}}',
+  );
+  assert.equal(
+    canonicalBytes(raw),
+    '{"__proto__":{"x":1},"at":1700000000000,"id":"m-0001","sender":"phone","text":"run 42 finished"}',
+  );
+  assert.notEqual(canonicalBytes(raw), canonicalBytes(good()));
+  const mac = macOf(good(), TEST_KEY);
+  assert.equal(verifyMac({ ...raw, mac }, TEST_KEY), false, 'a smuggled __proto__ is inside the bytes');
+});
+
+test('integer-like keys are ordered by code point too, not by JavaScript\'s index order', () => {
+  // A JavaScript object enumerates array-index keys ("9", "10") numerically and
+  // BEFORE every other key, whatever order they were inserted in, so an object
+  // rebuilt in sorted order and handed to JSON.stringify does not keep the sort.
+  // Go sorts map keys bytewise: "10" before "9". One record, two byte strings.
+  assert.equal(canonicalBytes({ 10: 1, 9: 2, a: 3 }), '{"10":1,"9":2,"a":3}');
+  assert.equal(canonicalBytes({ b: { 2: 'x', 10: 'y', '': 'z' } }), '{"b":{"":"z","10":"y","2":"x"}}');
+});
+
+test('negative zero, and an integer the two ends spell differently, have no canonical form', () => {
+  // -0 passes Number.isSafeInteger and `>= 0`, so the schema accepts it as an
+  // `at` (P0.2's contract, which P1.1 relies on: it refuses -0 itself with its
+  // own `negative-zero` code). But JSON.stringify writes it as "0", so a record
+  // carrying -0 would be signed as a value it is not: canonicalBytes refuses
+  // it, and so a -0 record can be neither tagged nor verified. It refuses every
+  // integer outside the exact-double range too, which JavaScript prints in
+  // exponent form ("1e+21") and Go's integer types print in full or cannot hold.
+  assert.equal(validateMessage(good({ at: -0 })).ok, true, 'the schema\'s contract is unchanged');
+  assert.throws(() => macOf(good({ at: -0 }), TEST_KEY), TypeError);
+  assert.equal(verifyMac({ ...good({ at: -0 }), mac: macOf(good({ at: 0 }), TEST_KEY) }, TEST_KEY), false);
+  assert.throws(() => canonicalBytes({ ...good(), at: -0 }), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), at: 2 ** 53 }), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), at: 1e21 }), TypeError);
+  assert.equal(canonicalBytes({ n: Number.MAX_SAFE_INTEGER }), `{"n":${Number.MAX_SAFE_INTEGER}}`);
+  assert.equal(canonicalBytes({ n: -1 }), '{"n":-1}', 'a negative integer is a canonical number');
+});
+
+test('canonicalBytes refuses a value that is not plain JSON data, rather than guessing at it', () => {
+  // A Date, a Map or a class instance has no fields of its own to sort, and
+  // JSON.stringify would ask it (toJSON) what it wants to be: a record whose
+  // bytes depend on a method is not a canonical record.
+  assert.throws(() => canonicalBytes({ ...good(), when: new Date(0) }), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), m: new Map() }), TypeError);
+  assert.throws(() => canonicalBytes({ ...good(), n: 1n }), TypeError);
+  // A null-prototype object is plain data, which is what a hardened parser gives.
+  const bare = Object.assign(Object.create(null), { b: 1, a: 2 });
+  assert.equal(canonicalBytes(bare), '{"a":2,"b":1}');
+  assert.equal(canonicalBytes({ t: true, f: false }), '{"f":false,"t":true}');
+});
+
+test('every field the schema names is covered by the tag, or excluded by name', () => {
+  // §3.5: "every field of the message except mac itself", acked excluded. A
+  // field added to FIELDS must either appear in the canonical bytes of a
+  // maximal message or be added to this list on purpose; the two fixtures below
+  // must between them carry every field, so a new field also fails here until a
+  // fixture carries it.
+  const EXCLUDED = ['mac', 'acked'];
+  const maximal = [
+    good({ kind: 'prompt', agent: 'orchestrator', options: ['merge it', 'leave it'], acked: true }),
+    { ...withAction({ verb: 'merge' }), reply_to: 'm-0000', acked: false },
+  ];
+  for (const m of maximal) assert.equal(validateMessage(m).ok, true, JSON.stringify(m));
+  const carried = new Set(maximal.flatMap((m) => Object.keys(m)));
+  for (const field of FIELDS) {
+    assert.ok(carried.has(field), `a maximal fixture carries ${field}`);
+  }
+  const covered = new Set(maximal.flatMap((m) => Object.keys(JSON.parse(canonicalBytes(m)))));
+  for (const field of FIELDS) {
+    assert.equal(covered.has(field), !EXCLUDED.includes(field), `${field} is ${EXCLUDED.includes(field) ? 'excluded' : 'covered'}`);
+  }
+  // And a field no version of the schema names is covered by default.
+  assert.match(canonicalBytes({ ...good(), later: 'x' }), /"later":"x"/);
+});
+
+test('the tag is required on every kind, and a wrong-length one is refused on every kind', () => {
+  const kinds = {
+    message: good({ kind: 'message' }),
+    prompt: good({ kind: 'prompt', options: ['merge it'] }),
+    answer: good({ kind: 'answer', reply_to: 'm-0000' }),
+    action: withAction({ verb: 'merge' }),
+    absent: good(),
+  };
+  for (const [name, m] of Object.entries(kinds)) {
+    assert.equal(validateMessage(m).ok, true, `${name} is well formed`);
+    const unsigned = { ...m };
+    delete unsigned.mac;
+    refusal(unsigned, REFUSALS.MISSING_FIELD, 'mac');
+    refusal({ ...m, mac: 'f'.repeat(MAC_MAX - 1) }, REFUSALS.BAD_MAC, 'mac');
+    refusal({ ...m, mac: 'f'.repeat(MAC_MAX + 1) }, REFUSALS.BAD_MAC, 'mac');
+    refusal({ ...m, mac: 'f'.repeat(40) }, REFUSALS.BAD_MAC, 'mac');
+    refusal({ ...m, mac: null }, REFUSALS.WRONG_TYPE, 'mac');
+  }
+});
+
+test('the vectors carry the schema refusals both ends must agree on', () => {
+  const vectors = JSON.parse(readFileSync(new URL('./vectors.json', import.meta.url), 'utf8'));
+  assert.ok(Array.isArray(vectors.refusals), 'the vectors have a refusals section');
+  for (const c of vectors.refusals) {
+    assert.equal(typeof c.name, 'string');
+    assert.equal(typeof c.why, 'string', `${c.name}: every refusal says what it pins`);
+    assert.ok(c.record === 'message' || c.record === 'heartbeat', `${c.name}: names its record`);
+    const verdict = c.record === 'message' ? validateMessage(c.value) : validateHeartbeat(c.value);
+    assert.equal(verdict.ok, false, `${c.name}: refused`);
+    assert.equal(verdict.code, c.code, `${c.name}: the code`);
+    assert.equal(verdict.field, c.field, `${c.name}: the field`);
+  }
+  const names = vectors.refusals.map((c) => c.name).join(' | ');
+  for (const required of [
+    'unsigned message', 'unsigned prompt', 'unsigned answer', 'unsigned action', 'unsigned heartbeat',
+    'short mac', 'long mac', 'uppercase mac', 'unknown verb', 'short head SHA', 'uppercase head SHA',
+    'too many options', 'unknown field', '__proto__ field',
+  ]) {
+    assert.ok(names.includes(required), `the vectors refuse "${required}": ${names}`);
+  }
+});

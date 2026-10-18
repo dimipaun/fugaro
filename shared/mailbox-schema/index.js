@@ -552,16 +552,11 @@ export function canonicalBytes(record) {
   if (!isPlainObject(record)) {
     throw new TypeError('canonicalBytes: a record must be a plain object');
   }
-  const covered = {};
-  for (const key of Object.keys(record)) {
-    // `mac` is the tag itself, and `acked` is the phone's write after the tag
-    // was made (§3.5). Every other field is covered, including one a later
-    // protocol version adds: absent fields are omitted, so an unknown field
-    // signs as itself rather than being silently outside the bytes.
-    if (key === 'mac' || key === 'acked') continue;
-    covered[key] = record[key];
-  }
-  return JSON.stringify(canonicalValue(covered));
+  // `mac` is the tag itself, and `acked` is the phone's write after the tag was
+  // made (§3.5). Every other field is covered, including one a later protocol
+  // version adds: absent fields are omitted, so an unknown field signs as itself
+  // rather than being silently outside the bytes.
+  return serialiseObject(record, (key) => key !== 'mac' && key !== 'acked');
 }
 
 
@@ -919,38 +914,60 @@ function isSeparator(s, i) {
   return code === 0x2028 || code === 0x2029;
 }
 
-// canonicalValue rebuilds a value with object keys sorted by code point,
-// refusing the values a canonical form cannot survive. Arrays keep their order
-// — an option's position is what "option two" means — and everything else is
-// returned as it is, so that `JSON.stringify` applies JSON's own escaping and
-// nothing of this module's.
-function canonicalValue(value) {
+// serialiseValue writes one value's canonical bytes, refusing the values a
+// canonical form cannot survive. It writes the JSON itself rather than
+// rebuilding an object and handing it to `JSON.stringify`, because a rebuilt
+// object cannot hold the order or the keys the bytes need: JavaScript
+// enumerates integer-like keys ("9", "10") numerically and before every other
+// key whatever the insertion order, and assigning `__proto__` sets a prototype
+// instead of a field — which dropped the field from the bytes. Arrays keep their
+// order — an option's position is what "option two" means — and each string,
+// key or value, goes through `JSON.stringify` alone, so that JSON's own escaping
+// is the only escaping.
+function serialiseValue(value) {
   if (value === undefined || value === null) {
     throw new TypeError(
       'canonicalBytes: absent fields are omitted and never null, so a record carrying one has no canonical form',
     );
   }
-  if (typeof value === 'function' || typeof value === 'symbol') {
-    throw new TypeError(`canonicalBytes: a ${typeof value} is not a value a message carries`);
+  switch (typeof value) {
+    case 'string':
+      return JSON.stringify(canonicalString(value, 'a string'));
+    case 'boolean':
+      return value ? 'true' : 'false';
+    case 'number':
+      // Go prints `1e-07` where JavaScript prints `1e-7` for the same double, so
+      // a float is a byte string two languages spell differently; an integer
+      // past the exact-double line is printed in exponent form here and in full
+      // (or not at all) by Go's integer types; and -0 is written "0", so it
+      // would sign as a value it is not. Safe integers — every number this
+      // schema accepts — agree exactly.
+      if (!Number.isSafeInteger(value) || Object.is(value, -0)) {
+        throw new TypeError('canonicalBytes: a number must be a safe integer, and not -0');
+      }
+      return String(value);
+    case 'object':
+      if (Array.isArray(value)) return `[${value.map(serialiseValue).join(',')}]`;
+      return serialiseObject(value, () => true);
+    default:
+      throw new TypeError(`canonicalBytes: a ${typeof value} is not a value a message carries`);
   }
-  if (typeof value === 'number') {
-    // Go prints `1e-07` where JavaScript prints `1e-7` for the same double, so
-    // a float is a byte string two languages spell differently. Integers —
-    // every number this schema accepts — agree exactly.
-    if (!Number.isFinite(value) || !Number.isInteger(value)) {
-      throw new TypeError('canonicalBytes: a number must be a finite integer');
-    }
-    return value;
+}
+
+// serialiseObject writes a plain object's canonical bytes: its own enumerable
+// keys that `keep` admits, sorted by code point, each written as a JSON string.
+// An object that is not plain data — a Date, a Map, a class instance — has a
+// shape decided by its methods rather than its fields, and is refused.
+function serialiseObject(value, keep) {
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    throw new TypeError('canonicalBytes: only plain objects have a canonical form');
   }
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (typeof value === 'object') {
-    const sorted = {};
-    for (const key of Object.keys(value).sort(compareKeys)) {
-      sorted[canonicalString(key, 'a key')] = canonicalValue(value[key]);
-    }
-    return sorted;
+  const members = [];
+  for (const key of Object.keys(value).filter(keep).sort(compareKeys)) {
+    members.push(`${JSON.stringify(canonicalString(key, 'a key'))}:${serialiseValue(value[key])}`);
   }
-  return canonicalString(value, 'a string');
+  return `{${members.join(',')}}`;
 }
 
 /**

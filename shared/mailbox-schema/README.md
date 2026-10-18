@@ -162,21 +162,43 @@ kinds, the heartbeat, the argv-shaped targets, HTML characters Go escapes by def
 an emoji, an unknown field inside the bytes, the key order above, and the swaps a
 token-holder without the key would try (text, options, option order, `reply_to`, answer,
 agents, agent name, target, head SHA, confirmation, verb) — each pinning the message,
-the exact bytes, the tag and whether it verifies. A
+the exact bytes, the tag and whether it verifies — and **20 schema refusals**
+(`refusals`: an unsigned message of every kind and an unsigned heartbeat, a short, long,
+uppercase or null tag, an unknown verb, a short or uppercase head SHA, a merge without
+one, too many options, an oversize body, an unknown field, a parsed `__proto__`, a field
+on the wrong kind, an answer without `reply_to`, a float time), each with the value, the
+record it is judged as and the code and field this validator answers. The Go consumer
+need not copy the codes' wording, but it must refuse every one of those values. A
 disagreement about key order, whitespace or escaping fails on the side that is wrong,
 at the byte level, rather than at three in the morning on a phone. Regenerate with
 `node shared/mailbox-schema/vectors.generate.mjs`; the key in the file is a readable
 placeholder, and a test asserts that neither the vectors nor the suite carries anything
 that looks like a credential.
 
+**The bytes are written, not rebuilt.** `canonicalBytes` writes the JSON itself, one
+`JSON.stringify` per string, rather than building a sorted object and stringifying it,
+because a JavaScript object cannot hold the order or the keys the bytes need: it
+enumerates integer-like keys (`"9"`, `"10"`) numerically and before every other key,
+whatever the insertion order — Go writes `"10"` first — and assigning an own `__proto__`
+key (which `JSON.parse` produces) sets a prototype instead of a field, which dropped the
+field from the bytes and gave two different records one tag. Both were found by the
+independent review and are pinned by tests and mutations.
+
 `canonicalBytes` **refuses, by throwing**:
 
 - **`undefined` and `null`.** A dropped field is two different records with one
   canonical form: absent is omitted, present is covered, and there is no third state.
-- **a number that is not an integer.** Go prints `1e-07` where JavaScript prints `1e-7`
-  for the same double, so a float inside a signed record is a tag that verifies on one
-  end and not the other. Every number the schema accepts is an integer (`at`, a
-  confirmation's `at`, a pull request number), so nothing valid is refused.
+- **a number that is not a safe integer, and `-0`.** Go prints `1e-07` where JavaScript
+  prints `1e-7` for the same double, so a float inside a signed record is a tag that
+  verifies on one end and not the other; an integer past 2^53 is printed in exponent
+  form by JavaScript (`1e+21`); and `-0` is written `0`, a value it is not. Every number
+  the schema accepts is a safe integer (`at`, a confirmation's `at`, a pull request
+  number). The one exception is `-0`, which the schema accepts as an `at` (P0.2's
+  contract; P1.1 refuses it with its own `negative-zero`): it has no canonical form, so
+  a record carrying it can be neither tagged nor verified.
+- **an object that is not plain data** — a `Date`, a `Map`, a class instance — whose
+  shape is decided by its methods (`toJSON`) rather than its fields. A null-prototype
+  object is plain data and is accepted.
 - **a string the two encoders spell differently** — an **unpaired surrogate**, U+2028,
   U+2029 — in a key exactly as in a value. The schema refuses all three in every string
   it validates (`bad-character`, `bad-key`), so a caller that validated first cannot
@@ -212,6 +234,39 @@ is named in the pull request as an honest gap rather than implied by a sentence 
 "reimplementing HMAC over the vectors' key". `index.test.js` asserts that the entry
 point has no import statement, no `from '…'` and no buffer type, so re-introducing one
 is a failing test rather than a discovery a bundler makes on a phone.
+
+### P6.3 is a breaking change to P0.2's messages
+
+`mac` is **required**, so every message P0.2's schema accepted — `{id, sender, text,
+at}` with an optional `acked` — is now refused as `missing-field` `mac`. That is
+intended (§3.5: no unsigned message, of any kind, in either direction) and there is no
+compatibility path: nothing has shipped that writes a mailbox message (P3.6 and P4.1
+are not built), and the project's own rule is no backward compatibility before release.
+What it costs inside the repository is stated rather than discovered: the simulator
+(`shared/mailbox-sim`) writes a mac-shaped placeholder on every message it makes, the
+mailbox module's tests carry one, and P2.1's rules template still refuses a write that
+carries `mac` until P6.4 (see the gaps below). A stored message written before P6.3 is
+refused on read, which is the fail-closed reading of version skew.
+
+### For the Go consumer (P4.1, P6.7): three things the vectors cannot say alone
+
+- **Decode case-sensitively, and refuse unknown fields.** `encoding/json` matches object
+  keys to struct fields **case-insensitively**, and keeps the last of duplicate keys, so
+  a stored message carrying both `text` and `Text` would decode to one field while this
+  validator refuses `Text` as unknown. Verify and validate over the decoded **map** (or a
+  case-sensitive decoder) with every key checked against this module's field set, and
+  compute the canonical bytes from the same map, never from a re-marshalled struct.
+- **Write HTML characters raw** (`SetEscapeHTML(false)`) and sort keys by byte; the
+  vectors pin both.
+- **A verified tag proves the pairing, not the direction.** One per-pairing key signs
+  the inbox (the phone) and the outbox and heartbeat (the consumer), and nothing in the
+  covered bytes says which way a message travelled, so a phone-signed inbox message
+  copied into the outbox by a minted token still verifies, and so does the reverse. Each
+  reader must therefore also check that `sender` is the other end's identity (the
+  consumer refuses an inbox message whose sender is not a phone; the phone refuses an
+  outbox message whose sender is its own) — the schema cannot, because it has no notion
+  of who is reading. Binding the direction into the bytes would change §3.5's
+  serialisation and is the owner's call (raised on the pull request).
 
 ## Fail closed, and each refusal is named
 
@@ -297,18 +352,18 @@ installed, nothing is fetched, and the entry point the phone loads imports nothi
 all. The tests are the plan's verification list (a missing
 id, a wrong type, an oversize body and an unknown field refused; a well-formed message
 accepted) plus the fail-closed families above and P6.3's kind, action, tag and
-canonical-byte cases: 313 tests over the package, 40 of them in this module's test file.
+canonical-byte cases: 47 tests in this module's test file.
 
-**Every guard is mutation-proved**, not merely covered — 67 guards over `index.js` and
+**Every guard is mutation-proved**, not merely covered — 73 guards over `index.js` and
 `mac.js`, one mutation each:
 
 ```sh
 shared/mailbox-schema/mutation-proof.sh
-# control       the pristine suite passes, 313 tests, 0 failures
+# control       the pristine suite passes, 376 tests, 0 failures
 # killed        control: refuse() always succeeds (must be killed)
 # killed        not-an-object guard (null/array/primitive)
-# ...                                                        (65 more)
-# --- control killed; 67 guards: 67 killed, 0 survived, 0 not applied
+# ...                                                        (71 more)
+# --- control killed; 73 guards: 73 killed, 0 survived, 0 not applied
 ```
 
 The script disables one guard at a time — the object check, the unknown-field check,

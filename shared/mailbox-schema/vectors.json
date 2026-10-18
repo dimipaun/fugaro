@@ -429,5 +429,386 @@
       "mac": "c9cb888b65b9b1be2b2ca2f1ca75c10516d6159feaedc44cc3b680f91cd5549c",
       "verdict": "refused"
     }
+  ],
+  "refusals": [
+    {
+      "name": "unsigned message",
+      "why": "the tag is required on every inbox and outbox message (§3.5)",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000
+      },
+      "code": "missing-field",
+      "field": "mac"
+    },
+    {
+      "name": "unsigned prompt",
+      "why": "a prompt is signed like every other kind",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "kind": "prompt",
+        "options": [
+          "merge it",
+          "leave it"
+        ]
+      },
+      "code": "missing-field",
+      "field": "mac"
+    },
+    {
+      "name": "unsigned answer",
+      "why": "an unsigned answer is exactly what an impostor would send to \"approve the merge?\"",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "kind": "answer",
+        "reply_to": "m-0000"
+      },
+      "code": "missing-field",
+      "field": "mac"
+    },
+    {
+      "name": "unsigned action",
+      "why": "an action record without a tag is never executed",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "kind": "action",
+        "action": {
+          "id": "a-0001",
+          "verb": "cancel",
+          "target": {
+            "run": "20261018-125859-d3c8"
+          },
+          "confirmation": {
+            "id": "c-0001",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "missing-field",
+      "field": "mac"
+    },
+    {
+      "name": "unsigned heartbeat",
+      "why": "an unsigned heartbeat is offline, and its agent list is ignored (O7)",
+      "record": "heartbeat",
+      "value": {
+        "at": 1700000000000,
+        "boot": "boot-01",
+        "agents": [
+          {
+            "id": "orchestrator",
+            "name": "Orchestrator"
+          }
+        ]
+      },
+      "code": "missing-field",
+      "field": "mac"
+    },
+    {
+      "name": "short mac",
+      "why": "a tag is exactly 64 hex characters: 63 is not a tag",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "bad-mac",
+      "field": "mac"
+    },
+    {
+      "name": "long mac",
+      "why": "65 is not a tag either",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "bad-mac",
+      "field": "mac"
+    },
+    {
+      "name": "uppercase mac",
+      "why": "hex has one spelling here, so one tag has one string",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+      },
+      "code": "bad-mac",
+      "field": "mac"
+    },
+    {
+      "name": "null mac",
+      "why": "absent is omitted, never null",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": null
+      },
+      "code": "wrong-type",
+      "field": "mac"
+    },
+    {
+      "name": "unknown verb",
+      "why": "the verbs are cancel, merge and confirm, and nothing else",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "action": {
+          "id": "a-0001",
+          "verb": "delete",
+          "target": {
+            "run": "20261018-125859-d3c8"
+          },
+          "confirmation": {
+            "id": "c-0001",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "unknown-verb",
+      "field": "action.verb"
+    },
+    {
+      "name": "short head SHA",
+      "why": "a head SHA is 40 or 64 hex characters: an abbreviation cannot be compared byte for byte",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "action": {
+          "id": "a-0001",
+          "verb": "merge",
+          "target": {
+            "repo": "dimipaun/fugaro",
+            "pr": 532
+          },
+          "head_sha": "aaaaaaaaaaaa",
+          "confirmation": {
+            "id": "c-0001",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "bad-sha",
+      "field": "action.head_sha"
+    },
+    {
+      "name": "uppercase head SHA",
+      "why": "a head SHA is lowercase, as the provider returns it",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "action": {
+          "id": "a-0001",
+          "verb": "merge",
+          "target": {
+            "repo": "dimipaun/fugaro",
+            "pr": 532
+          },
+          "head_sha": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "confirmation": {
+            "id": "c-0001",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "bad-sha",
+      "field": "action.head_sha"
+    },
+    {
+      "name": "merge without head SHA",
+      "why": "a merge carries the head it was confirmed against",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "action": {
+          "id": "a-0001",
+          "verb": "merge",
+          "target": {
+            "repo": "dimipaun/fugaro",
+            "pr": 532
+          },
+          "confirmation": {
+            "id": "c-0001",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "missing-field",
+      "field": "action.head_sha"
+    },
+    {
+      "name": "too many options",
+      "why": "a prompt carries at most eight options",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "prompt",
+        "options": [
+          "option 0",
+          "option 1",
+          "option 2",
+          "option 3",
+          "option 4",
+          "option 5",
+          "option 6",
+          "option 7",
+          "option 8"
+        ]
+      },
+      "code": "too-many",
+      "field": "options"
+    },
+    {
+      "name": "too long text",
+      "why": "a body is at most 4096 code units",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "too-long",
+      "field": "text"
+    },
+    {
+      "name": "unknown field",
+      "why": "a field the schema does not name is refused, so the field set is the version",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "expires_at": 1700000000000
+      },
+      "code": "unknown-field",
+      "field": "expires_at"
+    },
+    {
+      "name": "__proto__ field",
+      "why": "a parsed __proto__ is an unknown field, never a prototype",
+      "record": "message",
+      "value": {
+        "__proto__": {
+          "kind": "action"
+        },
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "unknown-field",
+      "field": "__proto__"
+    },
+    {
+      "name": "action on a plain message",
+      "why": "a kind carries its own fields and no others",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "action": {
+          "id": "a-0001",
+          "verb": "cancel",
+          "target": {
+            "run": "20261018-125859-d3c8"
+          },
+          "confirmation": {
+            "id": "c-0001",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "field-not-allowed",
+      "field": "action"
+    },
+    {
+      "name": "answer without reply_to",
+      "why": "an answer names the prompt it answers",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "answer"
+      },
+      "code": "missing-field",
+      "field": "reply_to"
+    },
+    {
+      "name": "float at",
+      "why": "a time is an integer millisecond",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000.5,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "bad-timestamp",
+      "field": "at"
+    }
   ]
 }

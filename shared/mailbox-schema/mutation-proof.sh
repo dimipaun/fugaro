@@ -373,13 +373,20 @@ run "the two encoders' separators are refused (Go escapes them, JavaScript does 
   "  const code = s.charCodeAt(i);
   return code === 0x2028 || code === 0x2029;" "  return false;"
 run "canonicalBytes: the tag itself is not covered" \
-  "    if (key === 'mac' || key === 'acked') continue;" "    if (key === 'acked') continue;"
+  "  return serialiseObject(record, (key) => key !== 'mac' && key !== 'acked');" "  return serialiseObject(record, (key) => key !== 'acked');"
 run "canonicalBytes: the ack is outside the bytes" \
-  "    if (key === 'mac' || key === 'acked') continue;" "    if (key === 'mac') continue;"
+  "  return serialiseObject(record, (key) => key !== 'mac' && key !== 'acked');" "  return serialiseObject(record, (key) => key !== 'mac');"
+run "canonicalBytes: a covered field is never dropped (reply_to)" \
+  "  return serialiseObject(record, (key) => key !== 'mac' && key !== 'acked');" "  return serialiseObject(record, (key) => key !== 'mac' && key !== 'acked' && key !== 'reply_to');"
 run "canonicalBytes: keys are sorted at all" \
-  "    for (const key of Object.keys(value).sort(compareKeys)) {" "    for (const key of Object.keys(value)) {"
+  "  for (const key of Object.keys(value).filter(keep).sort(compareKeys)) {" "  for (const key of Object.keys(value).filter(keep)) {"
 run "canonicalBytes: the sort is by code point, not UTF-16 code unit" \
-  "    for (const key of Object.keys(value).sort(compareKeys)) {" "    for (const key of Object.keys(value).sort()) {"
+  "  for (const key of Object.keys(value).filter(keep).sort(compareKeys)) {" "  for (const key of Object.keys(value).filter(keep).sort()) {"
+run "canonicalBytes: the bytes are written, not rebuilt (__proto__, integer-like keys)" \
+  "  return \`{\${members.join(',')}}\`;" \
+  "  return JSON.stringify(Object.assign({}, ...members.map((m) => JSON.parse(\`{\${m}}\`))));"
+run "canonicalBytes: only plain objects have a canonical form" \
+  "  if (proto !== Object.prototype && proto !== null) {" "  if (false) {"
 run "canonicalBytes: a string the two encoders spell differently is refused" \
   "function canonicalString(value, where) {
   if (hasLoneSurrogate(value)) {" "function canonicalString(value, where) {
@@ -391,7 +398,11 @@ run "canonicalBytes: the separators are refused inside a string too" \
 run "canonicalBytes: a null or undefined is refused, never dropped" \
   "  if (value === undefined || value === null) {" "  if (false) {"
 run "canonicalBytes: a number is an integer, because two languages spell floats differently" \
-  "    if (!Number.isFinite(value) || !Number.isInteger(value)) {" "    if (!Number.isFinite(value)) {"
+  "      if (!Number.isSafeInteger(value) || Object.is(value, -0)) {" "      if (!Number.isFinite(value) || Object.is(value, -0)) {"
+run "canonicalBytes: an integer past the exact-double line is refused" \
+  "      if (!Number.isSafeInteger(value) || Object.is(value, -0)) {" "      if (!Number.isInteger(value) || Object.is(value, -0)) {"
+run "canonicalBytes: -0 is refused" \
+  "      if (!Number.isSafeInteger(value) || Object.is(value, -0)) {" "      if (!Number.isSafeInteger(value)) {"
 
 # ---------------------------------------------------------------------------
 # 6. mac.js, and the boundary that keeps the entry point loadable by the phone.

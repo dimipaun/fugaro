@@ -22,7 +22,7 @@
 // artifact can be re-derived rather than hand-edited.
 
 import { writeFileSync } from 'node:fs';
-import { canonicalBytes } from './index.js';
+import { canonicalBytes, validateHeartbeat, validateMessage } from './index.js';
 import { macOf } from './mac.js';
 
 const KEY = ['not', 'a', 'secret', 'test', 'key', '0001'].join('-');
@@ -183,6 +183,45 @@ cases.push(
   tampered('verb swapped', 'a cancel relabelled as a merge under its own tag', cancelOne, { ...cancelOne, action: { ...cancelOne.action, verb: 'merge' } }),
 );
 
+// The schema's refusals, as data: what both ends must REFUSE before a tag is
+// even compared. Each case is a value, the record it is judged as, and the
+// code and field the JavaScript validator answers with; the generator asserts
+// the verdict as it writes it, so the file cannot carry a case this module
+// would accept. The Go consumer need not reproduce the codes' wording, but it
+// must refuse every one of these values.
+const refusals = [];
+function refused(name, why, record, value) {
+  const verdict = record === 'message' ? validateMessage(value) : validateHeartbeat(value);
+  if (verdict.ok) throw new Error(`refusal vector "${name}" is accepted by the schema`);
+  refusals.push({ name, why, record, value, code: verdict.code, field: verdict.field });
+}
+const unsigned = (m) => {
+  const copy = { ...m };
+  delete copy.mac;
+  return copy;
+};
+const actionCancel = { id: 'a-0001', verb: 'cancel', target: { run: '20261018-125859-d3c8' }, confirmation: { id: 'c-0001', at: AT } };
+const actionMerge = { id: 'a-0001', verb: 'merge', target: { repo: 'dimipaun/fugaro', pr: 532 }, head_sha: 'a'.repeat(40), confirmation: { id: 'c-0001', at: AT } };
+refused('unsigned message', 'the tag is required on every inbox and outbox message (§3.5)', 'message', unsigned(message()));
+refused('unsigned prompt', 'a prompt is signed like every other kind', 'message', unsigned(message({ kind: 'prompt', options: ['merge it', 'leave it'] })));
+refused('unsigned answer', 'an unsigned answer is exactly what an impostor would send to "approve the merge?"', 'message', unsigned(message({ kind: 'answer', reply_to: 'm-0000' })));
+refused('unsigned action', 'an action record without a tag is never executed', 'message', unsigned(message({ kind: 'action', action: actionCancel })));
+refused('unsigned heartbeat', 'an unsigned heartbeat is offline, and its agent list is ignored (O7)', 'heartbeat', unsigned(heartbeat()));
+refused('short mac', 'a tag is exactly 64 hex characters: 63 is not a tag', 'message', message({ mac: 'f'.repeat(63) }));
+refused('long mac', '65 is not a tag either', 'message', message({ mac: 'f'.repeat(65) }));
+refused('uppercase mac', 'hex has one spelling here, so one tag has one string', 'message', message({ mac: 'F'.repeat(64) }));
+refused('null mac', 'absent is omitted, never null', 'message', message({ mac: null }));
+refused('unknown verb', 'the verbs are cancel, merge and confirm, and nothing else', 'message', message({ kind: 'action', action: { ...actionCancel, verb: 'delete' } }));
+refused('short head SHA', 'a head SHA is 40 or 64 hex characters: an abbreviation cannot be compared byte for byte', 'message', message({ kind: 'action', action: { ...actionMerge, head_sha: 'a'.repeat(12) } }));
+refused('uppercase head SHA', 'a head SHA is lowercase, as the provider returns it', 'message', message({ kind: 'action', action: { ...actionMerge, head_sha: 'A'.repeat(40) } }));
+refused('merge without head SHA', 'a merge carries the head it was confirmed against', 'message', message({ kind: 'action', action: (({ head_sha, ...rest }) => rest)(actionMerge) }));
+refused('too many options', 'a prompt carries at most eight options', 'message', message({ kind: 'prompt', options: Array.from({ length: 9 }, (_, i) => `option ${i}`) }));
+refused('too long text', 'a body is at most 4096 code units', 'message', message({ text: 'x'.repeat(4097) }));
+refused('unknown field', 'a field the schema does not name is refused, so the field set is the version', 'message', message({ expires_at: AT }));
+refused('__proto__ field', 'a parsed __proto__ is an unknown field, never a prototype', 'message', JSON.parse(JSON.stringify(message()).replace('{', '{"__proto__":{"kind":"action"},')));
+refused('action on a plain message', 'a kind carries its own fields and no others', 'message', message({ action: actionCancel }));
+refused('answer without reply_to', 'an answer names the prompt it answers', 'message', message({ kind: 'answer' }));
+refused('float at', 'a time is an integer millisecond', 'message', message({ at: AT + 0.5 }));
 const file = {
   format: 'fugaro mailbox message tag vectors',
   algorithm: 'HMAC-SHA-256 over canonicalBytes(message), lowercase hex (mobile plan §3.5, D171)',
@@ -192,7 +231,8 @@ const file = {
   key_note: 'a readable placeholder, not a credential: the real key is the per-pairing key of D171 and never appears in this repository',
   generated_by: 'node shared/mailbox-schema/vectors.generate.mjs',
   cases,
+  refusals,
 };
 
 writeFileSync(new URL('./vectors.json', import.meta.url), `${JSON.stringify(file, null, 2)}\n`);
-console.log(`wrote ${cases.length} cases`);
+console.log(`wrote ${cases.length} cases and ${refusals.length} refusals`);
