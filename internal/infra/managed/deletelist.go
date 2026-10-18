@@ -158,7 +158,16 @@ func refusedf(format string, a ...any) error {
 // it (0 for no object), and the write is conditioned on it: a list another
 // writer changed since that read is not overwritten (ErrChanged), so two
 // concurrent writers cannot silently drop each other's approvals.
+// The error is one bounded field (safetext.FieldErr) before it is returned:
+// it carries the project's and the bucket's names, the addresses' own text and
+// an API's words, and the owner-run command prints it. The bound is on the
+// message alone, so ErrChanged, ErrRefused and a *googleapi.Error inside it
+// are still matched.
 func WriteDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64, addresses []string, generation int64) error {
+	return safetext.FieldErr(writeDeleteList(ctx, s, bucket, gcpProject, number, addresses, generation))
+}
+
+func writeDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64, addresses []string, generation int64) error {
 	data, err := DeleteList{Version: AllowDeleteVersion, GCPProject: gcpProject, Addresses: addresses}.Bytes()
 	if err != nil {
 		return err
@@ -199,7 +208,17 @@ func WriteDeleteList(ctx context.Context, s *storage.Service, bucket, gcpProject
 // an error would add: a caller that propagated it as "could not check" would
 // have to refuse anyway, and one that treated it as "nothing to check" would
 // be the bug this shape removes.
+// The error is bounded (safetext.FieldErr): it names the bucket, the project
+// and the object's own content, and it is printed. The addresses themselves
+// are returned exactly as the owner wrote them — they are compared against a
+// plan's, and a sanitised copy would admit a different address than the one
+// listed.
 func AllowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64) ([]string, error) {
+	addrs, err := allowDelete(ctx, s, bucket, gcpProject, number)
+	return addrs, safetext.FieldErr(err)
+}
+
+func allowDelete(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64) ([]string, error) {
 	if bucket == "" || gcpProject == "" || number == 0 || s == nil {
 		return nil, nil
 	}
@@ -283,7 +302,15 @@ type DeleteListState struct {
 // transient failure read as "nothing approved" would let the next write drop
 // every approval without that question. An absent object is no addresses and
 // generation 0; the bucket is proved the project's own first.
+// The error is bounded (safetext.FieldErr): the object's content, the
+// bucket's name and an API's words are in it, and the command prints it.
+// Generation, the answer the write is conditioned on, is untouched.
 func ReadDeleteListForWrite(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64) (DeleteListState, error) {
+	return readDeleteListForWrite(ctx, s, bucket, gcpProject, number)
+}
+
+// The state the caller is handed is this read's own (the doc above).
+func readDeleteListForWrite(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64) (DeleteListState, error) {
 	switch {
 	case bucket == "" || number == 0 || gcpProject == "":
 		return DeleteListState{}, refusedf("to read %s for %s: no runs bucket, or no project number to check it against", AllowDeleteObject, gcpProject)
@@ -390,6 +417,11 @@ func strictFields(data []byte) error {
 // and its --firebase branch) still feed their own flag to tf.Guard today, and
 // routing them through this call — with the wording of the refusal, which
 // D74 leaves to the managed mode's own message — is Tasks 3.1 and 3.2.
+// Every value the refusal interpolates is bounded where it is written and not
+// as a whole: the addresses are Field'd one by one (the comment below), and
+// the bucket's name is Field'd here. The sentence itself is not cut short —
+// this refusal enumerates every address the command line named, and its last
+// clause is the one its reader acts on.
 func GuardAllowList(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64, applied []string) ([]string, error) {
 	if len(applied) > 0 {
 		// The addresses are repeated to the person they were given by, and
@@ -403,7 +435,7 @@ func GuardAllowList(ctx context.Context, s *storage.Service, bucket, gcpProject 
 		}
 		slices.Sort(named)
 		return nil, fmt.Errorf("refusing the addresses the applying command was given on its own command line (%s): in a managed project the addresses a run may delete or replace come from the owner's own list at gs://%s/%s, written with the operator's credentials by fugaro allow-delete, never from the arguments of the command that applies the plan; ask the owner to approve %s",
-			strings.Join(named, ", "), bucket, AllowDeleteObject, strings.Join(named, ", "))
+			strings.Join(named, ", "), safetext.Field(bucket), AllowDeleteObject, strings.Join(named, ", "))
 	}
 	return AllowDelete(ctx, s, bucket, gcpProject, number)
 }

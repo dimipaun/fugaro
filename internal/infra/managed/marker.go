@@ -20,6 +20,7 @@ import (
 	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 const (
@@ -201,7 +202,16 @@ func (m Marker) Bytes() ([]byte, error) {
 // project exists either way, an unmarked project is the fail-closed
 // direction (nothing is skipped for it), and the owner-run flagging of an
 // existing project (D58, Task 6.1) is the way back.
+// The error is one bounded field (safetext.FieldErr) before it is returned:
+// what it carries is a project name out of a configuration, a bucket name and
+// the words of an API's answer, and the caller prints it. The bound is on the
+// message alone — the chain stays, so a caller that matches a *googleapi.Error
+// inside it still does.
 func WriteMarker(ctx context.Context, s *storage.Service, bucket, created, project string, number uint64, budget *Budget) error {
+	return safetext.FieldErr(writeMarker(ctx, s, bucket, created, project, number, budget))
+}
+
+func writeMarker(ctx context.Context, s *storage.Service, bucket, created, project string, number uint64, budget *Budget) error {
 	if created == "" {
 		return nil
 	}

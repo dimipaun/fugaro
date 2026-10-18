@@ -91,11 +91,16 @@ func runsBucketName(gcpProject string) string { return "fugaro-runs-" + gcpProje
 // err == nil and managed == true, and a caller that wants to explain itself
 // prints the reason whenever managed is false, error or not.
 func IsManaged(ctx context.Context, s *storage.Service, c *crm.Service, project, gcpProject string) (ok bool, reason string, err error) {
-	// The reason is one line wherever a caller prints it, and both a name out
-	// of a config file and an API's error text can carry a control character
-	// or a newline (a 5xx body does): safetext.OneLine is the boundary, so no
-	// return below has to remember it.
-	defer func() { reason = safetext.OneLine(reason) }()
+	// The reason and the error are one bounded field wherever a caller prints
+	// them, and both a name out of a config file and an API's error text can
+	// carry a control character, a newline (a 5xx body does), a bidi override
+	// or ten thousand characters: safetext.Field is the boundary, so no return
+	// below has to remember it. The error keeps its chain (safetext.FieldErr),
+	// so a caller that reads a *googleapi.Error out of it still does.
+	defer func() {
+		reason = safetext.Field(reason)
+		err = safetext.FieldErr(err)
+	}()
 	_, ok, reason, err = readFact(ctx, s, c, project, gcpProject)
 	return ok, reason, err
 }
@@ -141,9 +146,14 @@ type BudgetAnswer struct {
 	Reason  string
 }
 
-// ReadBudgetAnswer is ReadBudget, answering with a BudgetAnswer.
+// ReadBudgetAnswer is ReadBudget, answering with a BudgetAnswer. The reason
+// and the error are bounded the way IsManaged's are: this is the same read,
+// and what it prints is the same text.
 func ReadBudgetAnswer(ctx context.Context, s *storage.Service, c *crm.Service, project, gcpProject string) (a BudgetAnswer, err error) {
-	defer func() { a.Reason = safetext.OneLine(a.Reason) }()
+	defer func() {
+		a.Reason = safetext.Field(a.Reason)
+		err = safetext.FieldErr(err)
+	}()
 	m, managed, reason, err := readFact(ctx, s, c, project, gcpProject)
 	if err != nil || !managed {
 		if err == nil && m.Budget != nil && m.Budget.Check() != nil {
