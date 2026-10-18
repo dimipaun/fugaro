@@ -429,7 +429,10 @@ type Endpoints struct {
 	FirebaseRules string `yaml:"firebase_rules,omitempty"`
 	// IAMCredentials is where the launcher signs a run's budget token (signJwt).
 	IAMCredentials string `yaml:"iam_credentials,omitempty"`
-	NoAuth         bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
+	// CloudAsset is where fugaro managed apply makes the whole-project
+	// inventory read (Cloud Asset's SearchAllResources, Task 4.1a/4.5).
+	CloudAsset string `yaml:"cloud_asset,omitempty"`
+	NoAuth     bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
 }
 
 // Repo is an onboarded repository.
@@ -878,6 +881,7 @@ func (c *Config) validate() error {
 		{"cloud_billing", c.Endpoints.CloudBilling}, {"firebase_database", c.Endpoints.FirebaseDatabase}, {"api_keys", c.Endpoints.APIKeys}, {"firebase_management", c.Endpoints.FirebaseManagement},
 		{"iam_credentials", c.Endpoints.IAMCredentials}, {"identity_toolkit", c.Endpoints.IdentityToolkit},
 		{"firestore", c.Endpoints.Firestore}, {"firebase_rules", c.Endpoints.FirebaseRules},
+		{"cloud_asset", c.Endpoints.CloudAsset},
 	} {
 		if ep.url == "" {
 			continue

@@ -199,6 +199,15 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	if err != nil {
 		return managedListErr(lc, bucket, err)
 	}
+	// The whole-project inventory (Task 4.5, D59), read here because this is
+	// the last moment the operator's own credential is the one in hand: the
+	// Cloud Asset read role is granted to the operators, the deployer holds
+	// neither it nor the installation's state bucket, and everything after
+	// the impersonation below runs as the deployer. It cannot fail the
+	// command — every way it can go wrong is a fallback that keeps the run's
+	// confirmations (managedInventory's own comment) — and the answer is
+	// handed to the apply, which asks D55's rule with it.
+	inventory := managedInventory(ctx, lc, c, number)
 	// Who is running, and with which credential: the impersonation grant is
 	// on people (deployer.tf grants it to var.operators), so this is the
 	// operator's own identity and the credential the IAM Credentials calls
@@ -233,8 +242,13 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 		// so the value is checked twice and neither check can be left out.
 		Enable:  gate,
 		Project: lc.Name, GCPProject: lc.GCPProject,
-		Fact:    fact,
-		Workdir: wd,
+		Fact: fact,
+		// The whole-project inventory read above: D59's third fact of the
+		// confirmation rule, and the reason this run keeps its confirmations
+		// when the read found a resource the state does not account for or
+		// could not be made at all (Task 4.5).
+		Inventory: inventory,
+		Workdir:   wd,
 		// Terraform is built inside the deployer's assumption, around the
 		// credential it was handed: the plan is read from this root's own
 		// state bucket (D77), which the deployer holds and the operator's
