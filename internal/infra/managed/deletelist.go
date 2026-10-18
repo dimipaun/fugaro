@@ -306,7 +306,13 @@ type DeleteListState struct {
 // bucket's name and an API's words are in it, and the command prints it.
 // Generation, the answer the write is conditioned on, is untouched.
 func ReadDeleteListForWrite(ctx context.Context, s *storage.Service, bucket, gcpProject string, number uint64) (DeleteListState, error) {
-	return readDeleteListForWrite(ctx, s, bucket, gcpProject, number)
+	state, err := readDeleteListForWrite(ctx, s, bucket, gcpProject, number)
+	// The bound is on the error's message alone and never on the state: the
+	// addresses the caller is handed are the object's own, to compare against
+	// a plan and to print bounded where they are printed (the caller's own
+	// listing), not to be cut here where a bound address would be an approval
+	// of nothing.
+	return state, safetext.FieldErr(err)
 }
 
 // The state the caller is handed is this read's own (the doc above).

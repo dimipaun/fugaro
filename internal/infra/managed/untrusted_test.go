@@ -125,6 +125,58 @@ func TestTheWritesRefusalIsBounded(t *testing.T) {
 	bounded(t, "the bucket mismatch's refusal", err.Error(), 1)
 }
 
+// TestTheWritersReadErrorIsBounded: the writer's read of the owner's list is
+// strict — a read that fails is an error — and that error names the bucket, the
+// project the run is for and an API's own words about a request that failed,
+// all three of which the command prints. The state beside it is not bounded:
+// the read hands the caller the owner's addresses exactly, so an approval is
+// compared against the owner's own text and a cut copy never approves nothing.
+func TestTheWritersReadErrorIsBounded(t *testing.T) {
+	ctx := context.Background()
+	for name, v := range hostileValues() {
+		t.Run(name+" in the read's error", func(t *testing.T) {
+			// The bucket is proved first, so the object read is the one that
+			// fails: the API's 5xx body is what arrives in the error.
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, testManaged)
+			f.RefusePath(AllowDeleteObject, http.StatusInternalServerError, "INTERNAL", "", "backend error"+v)
+			st, err := ReadDeleteListForWrite(ctx, s, testBucket, testProject, testProjectNumber)
+			if err == nil {
+				t.Fatalf("the API did not answer, and the writer's read was not told: %+v", st)
+			}
+			bounded(t, name+" in ReadDeleteListForWrite's error", err.Error(), 1)
+		})
+		t.Run(name+" in the bucket's name", func(t *testing.T) {
+			// The same sentence names the bucket, out of the caller's
+			// configuration, and the bucket read is what fails here.
+			s, _ := newStorage(t)
+			_, err := ReadDeleteListForWrite(ctx, s, v, testProject, testProjectNumber)
+			if err == nil {
+				t.Fatal("a bucket that is not the project's own was read")
+			}
+			bounded(t, name+" in ReadDeleteListForWrite's error", err.Error(), 1)
+		})
+		t.Run(name+" in the project", func(t *testing.T) {
+			// And the project, which the read names before it reads anything.
+			_, err := ReadDeleteListForWrite(ctx, nil, testBucket, v, testProjectNumber)
+			if err == nil {
+				t.Fatal("a read with no storage client was made")
+			}
+			bounded(t, name+" in ReadDeleteListForWrite's error", err.Error(), 1)
+		})
+	}
+	// The state is the owner's own text: the bound is on the error alone.
+	list := `{"version":1,"gcp_project":"` + testProject + `","addresses":["google_storage_bucket.a\u001b[31m"]}`
+	s, bucket := seedDeleteList(t, list)
+	st, err := ReadDeleteListForWrite(ctx, s, bucket, testProject, testProjectNumber)
+	if err != nil {
+		t.Fatalf("ReadDeleteListForWrite: %v", err)
+	}
+	if want := "google_storage_bucket.a\u001b[31m"; len(st.Addresses) != 1 || st.Addresses[0] != want {
+		t.Errorf("the writer's read = %q, want the owner's own address %q", st.Addresses, want)
+	}
+}
+
 // TestTheGuardsRefusalIsBounded: the addresses an applying command's own
 // command line named — the one argument a coding agent writes — are repeated
 // back in the refusal, and the refusal is what its reader acts on.
