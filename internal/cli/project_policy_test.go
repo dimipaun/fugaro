@@ -691,20 +691,20 @@ func TestProjectPolicyPublishRefusesWithoutTheRulesMarker(t *testing.T) {
 	}
 }
 
-// TestProjectPolicyPublishRefusesOlderRules: the marker exists and is behind
-// this Fugaro's, which is the state an older CLI's init --firebase leaves
-// behind. The refusal is the other one, names the marker it found — and is the
-// same sentence doctor prints for the state (rulesMarkerBelowText), because a
-// refusal and a report that word one state differently disagree about where
-// the operator is standing.
+// TestProjectPolicyPublishRefusesOlderRules: the marker exists and records a
+// generation below the one that carries the policy nodes, which is the state a
+// pre-policy installation leaves behind. The refusal is the other one, names
+// the marker it found — and is the same sentence doctor prints for the state
+// (rulesMarkerPrePolicyText), because a refusal and a report that word one state
+// differently disagree about where the operator is standing.
 func TestProjectPolicyPublishRefusesOlderRules(t *testing.T) {
 	f := newProjectFixture(t, "")
-	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion-1)
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion-1)
 	_, _, err := execute(t, "project", "policy", "publish")
 	if err == nil {
 		t.Fatal("a publish behind the deployed rules was allowed")
 	}
-	if !strings.Contains(err.Error(), "records generation "+strconv.Itoa(projectpolicy.RulesVersion-1)) || !strings.Contains(err.Error(), "init --firebase") {
+	if !strings.Contains(err.Error(), "records generation "+strconv.Itoa(projectpolicy.PolicyRulesVersion-1)) || !strings.Contains(err.Error(), "init --firebase") {
 		t.Errorf("the refusal does not say the marker is below the generation a policy is read under: %v", err)
 	} // Not the marker-current state's sentence: "the deployed rules are older
 	// than the marker" is a claim about a document, and nothing here compared
@@ -712,17 +712,44 @@ func TestProjectPolicyPublishRefusesOlderRules(t *testing.T) {
 	if strings.Contains(err.Error(), "older than the marker") {
 		t.Errorf("the refusal for a marker below the generation reuses the other state's sentence: %v", err)
 	}
-	if !strings.Contains(err.Error(), rulesMarkerBelowText(projectpolicy.RulesVersion-1)) {
-		t.Errorf("the refusal is not the sentence doctor prints for this state:\n got %v\nwant %q", err, rulesMarkerBelowText(projectpolicy.RulesVersion-1))
+	if !strings.Contains(err.Error(), rulesMarkerPrePolicyText(projectpolicy.PolicyRulesVersion-1)) {
+		t.Errorf("the refusal is not the sentence doctor prints for this state:\n got %v\nwant %q", err, rulesMarkerPrePolicyText(projectpolicy.PolicyRulesVersion-1))
 	}
 	if f.db.Value(projectpolicy.PathShared()) != nil {
 		t.Error("a node was written anyway")
 	}
 }
 
+// TestProjectPolicyPublishIsAllowedAtThePolicyGeneration: a marker *above* the
+// generation that carries the policy nodes and below this binary's is not a
+// refusal — generation 1 is a real deployment whose rules carry
+// config/policy/shared and grant a run's read of it, and a policy published
+// under it is read and enforced by every run. Refusing there refused a publish
+// on an installation whose policy governs, worded as "no run reads a published
+// policy" about rules that read one, and it is a behaviour change the bump to
+// generation 2 must not make on its own (the review finding on P2.1): the bar
+// is the generation that introduced the nodes, and the same predicate is Read's.
+//
+// Mutation (verified, run and restored): make requirePolicyRules' case
+// `gen >= projectpolicy.RulesVersion` — this test fails, the publish refusing
+// under a marker the rules carry the node for.
+func TestProjectPolicyPublishIsAllowedAtThePolicyGeneration(t *testing.T) {
+	if projectpolicy.PolicyRulesVersion >= projectpolicy.RulesVersion {
+		t.Fatalf("PolicyRulesVersion = %d and RulesVersion = %d: this test is about a generation below this binary's, and the two have met", projectpolicy.PolicyRulesVersion, projectpolicy.RulesVersion)
+	}
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("publishing under generation %d was refused (%v), want it allowed: these rules carry the policy nodes and a run reads the policy they hold", projectpolicy.PolicyRulesVersion, err)
+	}
+	if f.db.Value(projectpolicy.PathShared()) == nil {
+		t.Error("the publish was allowed but wrote nothing")
+	}
+}
+
 // TestProjectPolicyPublishRefusesANegativeRulesMarker: the marker is an integer
-// that no deploy writes. requirePolicyRules branched on `gen < RulesVersion`,
-// so a hand-edited -1 was refused with rulesMarkerBelowText — the sentence for
+// that no deploy writes. requirePolicyRules branched on the generation a policy
+// is read under, so a hand-edited -1 was refused with rulesMarkerPrePolicyText — the sentence for
 // an old deployment, which says this installation's rules predate the policy
 // nodes — while projectpolicy.Read reads the same node as the MarkerError it is
 // (a launcher's -1 would otherwise read as "no policy here", taking a published

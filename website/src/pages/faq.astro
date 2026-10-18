@@ -1,0 +1,510 @@
+---
+/**
+ * website/src/pages/faq.astro — the FAQ (website plan, Task W1.10; findings 50-52, decisions
+ * D102 and D103).
+ *
+ * The page renders `website/data/faq.yaml` and nothing else: the six answers, the file each
+ * one is traceable to, and the comparison section. It is the site's rule in one file — **a
+ * page renders a fact; it never restates one** (Global Constraint 6) — so there is no
+ * question, no answer and no comparison row written in this template, and the page's own
+ * prose is limited to the headings, the lede, the "Source:" label and the empty state.
+ *
+ * Three things this file does that the page's test holds it to:
+ *
+ *   1. **A comparison row without provenance stops the build** (D103, F51-F52). The
+ *      repository has no network and records no sourced, dated fact about any other agent
+ *      runner, so a comparison is a claim the site cannot verify — a row carries a `source:`
+ *      and a `date:` or the build fails, naming the row. With no rows the section renders
+ *      empty and says why, which is the honest state on day one and the one the owner
+ *      supplies rows out of.
+ *   2. **An answer whose source is not in the tree stops the build.** Every answer names the
+ *      file that proves it, the page links it at the branch the repository builds on, and a
+ *      source that is not there is a build error rather than a link that 404s.
+ *   3. **The page carries no pending-review notice** (D103). The owner approved the FAQ on
+ *      2026-10-17, and the page's test pins that the notice is gone.
+ *
+ * It reads the file itself rather than through `src/content.ts`, and that is a consequence
+ * of this task's Files list rather than a preference: W1.3 owns `content.ts` and its reader
+ * is not exported, no page here may write it, and no npm package is added for the site's
+ * benefit (Global Constraint 5). The reader below is deliberately the same subset that file
+ * reads its own data files with — nested maps, sequences of maps, quoted scalars, `[]` and
+ * folded block scalars — and it refuses anything else with the line number rather than
+ * guessing at it.
+ */
+import Base from '../layouts/Base.astro'
+import { loadSite, REPO_ROOT } from '../content.ts'
+import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
+
+// ---------------------------------------------------------------------------------------
+// The reader for website/data/faq.yaml
+// ---------------------------------------------------------------------------------------
+
+type Scalar = string | number | boolean | null
+type Value = Scalar | Value[] | { [key: string]: Value }
+
+interface Line {
+  number: number
+  indent: number
+  text: string
+  blank: boolean
+}
+
+const FAQ_FILE = 'website/data/faq.yaml'
+
+function parseFaqYAML(raw: string): { [key: string]: Value } {
+  const lines: Line[] = raw.split('\n').map((text, index) => {
+    const trimmed = text.trim()
+    return {
+      number: index + 1,
+      indent: text.length - text.trimStart().length,
+      text: trimmed,
+      blank: trimmed === '' || trimmed.startsWith('#'),
+    }
+  })
+  let i = 0
+
+  // Every refusal names the file and the line: a build error is read by whoever just edited
+  // the data file, and a message that does not point at the line leaves them searching.
+  const fail = (message: string, at?: Line): never => {
+    throw new Error(
+      `${FAQ_FILE}${at ? `:${at.number}` : ''}: ${message}. The FAQ is rendered from this file by the site's own reader, which understands the subset the file uses — nested maps, sequences of maps, quoted scalars, [] and folded block scalars (>-) — and refuses anything else rather than guessing at it (W1.10 step 2).`,
+    )
+  }
+
+  const skip = (): void => {
+    while (i < lines.length && lines[i].blank) i++
+  }
+
+  const scalar = (text: string, at: Line): Scalar => {
+    if (text === '[]') return []
+    if (text.startsWith('[')) fail(`the flow sequence ${JSON.stringify(text)} is not one this file uses (only [])`, at)
+    if (text.startsWith('"') || text.startsWith("'")) {
+      if (text.length < 2 || !text.endsWith(text[0])) {
+        fail(`the quoted scalar ${JSON.stringify(text)} does not close on this line`, at)
+      }
+      return text.slice(1, -1)
+    }
+    if (text === 'true') return true
+    if (text === 'false') return false
+    if (text === 'null' || text === '~') return null
+    if (/^-?\d+$/.test(text)) return Number(text)
+    return text
+  }
+
+  // A folded block scalar (`>-`): the lines under the indicator, indented past it, folded
+  // into one line per paragraph. The FAQ's answers are written this way so that a reader —
+  // and the owner, who approved this page (D103) — edits a paragraph
+  // rather than a line a thousand characters wide.
+  const blockScalar = (indicator: string, parentIndent: number): string => {
+    const folded = indicator.startsWith('>')
+    const strip = indicator.endsWith('-')
+    const kept: string[] = []
+    let bodyIndent = -1
+    while (i < lines.length) {
+      const line = lines[i]
+      if (line.text === '') {
+        kept.push('')
+        i++
+        continue
+      }
+      if (line.indent <= parentIndent) break
+      if (bodyIndent === -1) bodyIndent = line.indent
+      kept.push(' '.repeat(line.indent - bodyIndent) + line.text)
+      i++
+    }
+    while (kept.length > 0 && kept[kept.length - 1] === '') kept.pop()
+    const text = folded
+      ? kept
+          .join('\n')
+          .split(/\n\s*\n/)
+          .map((paragraph) => paragraph.split('\n').map((line) => line.trim()).filter((line) => line !== '').join(' '))
+          .join('\n')
+      : kept.join('\n')
+    return strip ? text : `${text}\n`
+  }
+
+  const readValue = (rest: string, at: Line, parentIndent: number): Value => {
+    if (rest === '') {
+      skip()
+      const next = lines[i]
+      if (next && next.indent > parentIndent) return block()
+      fail(`"${at.text}" has no value`, at)
+    }
+    if (/^[|>][-+]?$/.test(rest)) return blockScalar(rest, parentIndent)
+    return scalar(rest, at)
+  }
+
+  const mapping = (indent: number, seed?: { key: string; rest: string; at: Line }): { [key: string]: Value } => {
+    const map: { [key: string]: Value } = {}
+    const put = (key: string, rest: string, at: Line): void => {
+      if (key in map) fail(`the key "${key}" is written twice`, at)
+      map[key] = readValue(rest, at, indent)
+    }
+    if (seed) put(seed.key, seed.rest, seed.at)
+    while (true) {
+      skip()
+      const line = lines[i]
+      if (!line || line.indent < indent) break
+      if (line.indent > indent) fail('this line is indented further than the key above it', line)
+      const m = /^([^:#\s][^:#]*):(\s.*|)$/.exec(line.text)
+      if (!m) fail(`cannot read ${JSON.stringify(line.text)} as a "key: value" line`, line)
+      const key = m[1].trim()
+      const rest = m[2].trim()
+      i++
+      put(key, rest, line)
+    }
+    return map
+  }
+
+  const sequence = (indent: number): Value[] => {
+    const out: Value[] = []
+    while (true) {
+      skip()
+      const line = lines[i]
+      if (!line || line.indent < indent) break
+      if (line.indent > indent) fail('this line is indented further than the sequence item above it', line)
+      if (!(line.text === '-' || line.text.startsWith('- '))) break
+      const rest = line.text === '-' ? '' : line.text.slice(2).trim()
+      const m = rest === '' ? null : /^([^:#\s][^:#]*):(\s.*|)$/.exec(rest)
+      if (m) {
+        i++
+        out.push(mapping(indent + 2, { key: m[1].trim(), rest: m[2].trim(), at: line }))
+        continue
+      }
+      i++
+      out.push(readValue(rest, line, indent))
+    }
+    return out
+  }
+
+  const block = (): Value => {
+    skip()
+    const line = lines[i]
+    if (!line) return fail('the document ends where a value was expected')
+    return line.text === '-' || line.text.startsWith('- ') ? sequence(line.indent) : mapping(line.indent)
+  }
+
+  skip()
+  if (i >= lines.length) fail('the file carries no document')
+  const document = block()
+  skip()
+  if (i < lines.length) fail('there is content after the document', lines[i])
+  if (typeof document !== 'object' || document === null || Array.isArray(document)) {
+    fail('the document is not a map of keys to values')
+  }
+  return document as { [key: string]: Value }
+}
+
+// ---------------------------------------------------------------------------------------
+// The validator: what a page may render, and what stops the build.
+// ---------------------------------------------------------------------------------------
+
+interface Question {
+  id: string
+  question: string
+  answer: string
+  source: string
+  moreLabel: string
+  moreHref: string
+}
+
+interface ComparisonRow {
+  id: string
+  name: string
+  claim: string
+  source: string
+  date: string
+}
+
+interface Faq {
+  questions: Question[]
+  rows: ComparisonRow[]
+}
+
+const TOP_LEVEL_KEYS = ['version', 'questions', 'comparison']
+
+/** A required string of the file, or a build error naming the key and the entry. */
+function text(entry: { [key: string]: Value }, key: string, what: string): string {
+  const value = entry[key]
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`${FAQ_FILE}: ${what} carries no \`${key}:\`, and every one of them is required — an entry is rendered from what this file writes and nothing is defaulted (W1.10 step 2).`)
+  }
+  return value.trim()
+}
+
+/** An optional string, read as the empty string: a page renders what the file writes. */
+function optionalText(entry: { [key: string]: Value }, key: string): string {
+  const value = entry[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function asMap(value: Value, what: string): { [key: string]: Value } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`${FAQ_FILE}: ${what} is not a map of keys to values (W1.10 step 2).`)
+  }
+  return value
+}
+
+function loadFaq(): Faq {
+  const document = parseFaqYAML(readFileSync(path.join(REPO_ROOT, FAQ_FILE), 'utf8'))
+
+  for (const key of Object.keys(document)) {
+    if (!TOP_LEVEL_KEYS.includes(key)) {
+      throw new Error(
+        `${FAQ_FILE}: the key "${key}" is not one this page reads. A fact nobody renders is a fact nothing holds to its source, so a new key arrives with the page that renders it (W1.10 step 2).`,
+      )
+    }
+  }
+  if (document.version !== 1) {
+    throw new Error(`${FAQ_FILE}: version is ${JSON.stringify(document.version)}, and this reader knows version 1 (W1.10 step 2).`)
+  }
+
+  const questions = (Array.isArray(document.questions) ? document.questions : []).map((value, index) => {
+    const entry = asMap(value, `questions[${index}]`)
+    const id = text(entry, 'id', `questions[${index}]`)
+    const what = `the FAQ entry "${id}"`
+    const source = text(entry, 'source', what)
+    if (!existsSync(path.join(REPO_ROOT, source))) {
+      throw new Error(
+        `${FAQ_FILE}: ${what} names ${JSON.stringify(source)} as the file that proves it, and this repository does not have that file. Every answer is traceable to a document in the tree or it is not written (D102, Global Constraint 6), so the build fails rather than linking a source that is not there (W1.10 step 1).`,
+      )
+    }
+    const moreHref = optionalText(entry, 'more_href')
+    if (moreHref !== '' && !moreHref.startsWith('/')) {
+      throw new Error(`${FAQ_FILE}: ${what} names ${JSON.stringify(moreHref)} as its second link, and a link this page renders is a path on this site, written from the root (W1.10 step 1).`)
+    }
+    return {
+      id,
+      question: text(entry, 'question', what),
+      answer: text(entry, 'answer', what),
+      source,
+      moreLabel: optionalText(entry, 'more_label'),
+      moreHref,
+    }
+  })
+  if (questions.length < 6) {
+    throw new Error(
+      `${FAQ_FILE}: carries ${questions.length} questions, and the FAQ answers the six things W1.10 step 1 fixes — what Fugaro is, where the code runs, what a run costs and what stops it, what a failed run leaves behind, what a run can never change, and what the security model does not promise.`,
+    )
+  }
+  for (const question of questions) {
+    if (question.moreHref !== '' && question.moreLabel === '') {
+      throw new Error(`${FAQ_FILE}: the FAQ entry "${question.id}" carries a more_href with no more_label, so the link would have no text (W1.10 step 1).`)
+    }
+  }
+
+  // D103, and the reason this page has a comparison section at all: a row about another tool
+  // carries its source and the date it was checked, or the build stops. `belong`-style
+  // fixtures are not the point here — the point is that a claim about a third party cannot
+  // reach a published page without provenance.
+  const rows = (Array.isArray(document.comparison) ? document.comparison : []).map((value, index) => {
+    const entry = asMap(value, `comparison[${index}]`)
+    const id = optionalText(entry, 'id') || `#${index + 1}`
+    const what = `comparison row "${id}"`
+    const source = optionalText(entry, 'source')
+    if (source === '') {
+      throw new Error(
+        `${FAQ_FILE}: ${what} carries no source, so it is a claim about another tool that nothing in this repository can verify — every comparison row carries a source and a date or it is not published (D103, F51-F52, W1.10 step 2).`,
+      )
+    }
+    const date = optionalText(entry, 'date')
+    if (date === '') {
+      throw new Error(
+        `${FAQ_FILE}: ${what} carries no date, and a comparison row is a fact about another tool at a moment: the date is when the source was read, so a row with no date cannot be checked again (D103, W1.10 step 2).`,
+      )
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+      throw new Error(`${FAQ_FILE}: ${what} carries the date ${JSON.stringify(date)}, which is not the YYYY-MM-DD the page renders (D103, W1.10 step 2).`)
+    }
+    try {
+      new URL(source)
+    } catch {
+      throw new Error(`${FAQ_FILE}: ${what} names ${JSON.stringify(source)} as its source, which is not an absolute URL — a comparison's provenance is a document a reader can open (D103, W1.10 step 2).`)
+    }
+    return { id, name: text(entry, 'name', what), claim: text(entry, 'claim', what), source, date }
+  })
+
+  return { questions, rows }
+}
+
+// ---------------------------------------------------------------------------------------
+// The page's own facts: the repository, the branch its links point at, and the FAQ.
+// ---------------------------------------------------------------------------------------
+
+const site = loadSite()
+const facts = site.facts
+const faq = loadFaq()
+
+/**
+ * The branch the answers' source links point at: the branch the repository's CI pushes to,
+ * read from `ci.yml` rather than typed here. A link to a file at a branch that no longer
+ * exists is a broken link, and the branch a repository builds on is the one fact about it
+ * this site can read from the tree.
+ *
+ * The `branches:` line is read **inside `on:`'s `push:` trigger**, not from anywhere in the
+ * file: `ci.yml` carries other `branches:`-shaped lines (its jobs' matrices and its own
+ * comments), and an unscoped match would take whichever came first — a fact about a job
+ * rather than the fact about the workflow. `website/test/faq-community.mjs` builds the page
+ * against a copy of `ci.yml` whose push trigger names another branch and requires the links
+ * to follow it, which is what holds this reader and that file together.
+ */
+function baseBranch(): string {
+  const file = '.github/workflows/ci.yml'
+  const lines = readFileSync(path.join(REPO_ROOT, file), 'utf8').split('\n')
+
+  const start = lines.findIndex((line) => line.trimEnd() === 'on:')
+  if (start === -1) {
+    throw new Error(`${file} has no top-level \`on:\` block, and the site links the repository's files at the branch its CI builds on (W1.10).`)
+  }
+  // The block's body: the indented lines under `on:`, comments and blanks skipped, up to the
+  // next top-level key. A comment is not a trigger — ci.yml explains its triggers in comments.
+  const body: { indent: number; text: string }[] = []
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i]
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed.startsWith('#')) continue
+    if (!/^\s/.test(line)) break
+    body.push({ indent: line.length - line.trimStart().length, text: trimmed })
+  }
+  const triggerIndent = body.length > 0 ? Math.min(...body.map((line) => line.indent)) : 0
+  const pushAt = body.findIndex((line) => line.indent === triggerIndent && line.text.startsWith('push:'))
+
+  let branch = ''
+  if (pushAt >= 0) {
+    for (let i = pushAt + 1; i < body.length && body[i].indent > triggerIndent; i++) {
+      const m = /^branches:\s*\[([^\]]*)\]\s*$/.exec(body[i].text)
+      if (m) {
+        branch = m[1].split(',')[0].trim()
+        break
+      }
+    }
+  }
+  if (branch === '') {
+    throw new Error(`${file}'s \`push:\` trigger names no \`branches: [...]\`, and the site links the repository's files at the branch its CI builds on (W1.10).`)
+  }
+  return branch
+}
+
+const branch = baseBranch()
+const sourceHref = (file: string): string => `${facts.repository}/blob/${branch}/${file}`
+---
+
+<Base title="FAQ" description="What Fugaro is, where the code runs, what a run costs and what stops it, and what a run cannot change — answered from this repository's own documents.">
+  <h1>Frequently asked questions</h1>
+
+  <p class="lede">
+    Six answers, each one taken from a document in this repository rather than written here — and
+    each one names the document it came from. Where the detail matters it is a link, not a
+    summary.
+  </p>
+
+  <div class="questions">
+    {faq.questions.map((entry) => (
+      <article id={entry.id}>
+        <h2>{entry.question}</h2>
+        <p>{entry.answer}</p>
+        <p class="source">
+          Source: <a href={sourceHref(entry.source)} rel="noopener">{entry.source}</a>
+          {entry.moreHref !== '' && (
+            <>
+              {' · '}
+              <a href={entry.moreHref}>{entry.moreLabel}</a>
+            </>
+          )}
+        </p>
+      </article>
+    ))}
+  </div>
+
+  {/* The comparison section (D103). The count is on the element so the page's own test can
+      read the state from the artifact rather than from this template, and the table is
+      rendered only when faq.yaml carries rows: an empty table is a claim that there is
+      nothing to compare, which is not what an empty list means. */}
+  <section id="comparison" data-comparison-rows={String(faq.rows.length)}>
+    <h2>How Fugaro compares</h2>
+
+    {faq.rows.length === 0 ? (
+      <p id="comparison-empty">
+        No comparison is published. A row about another tool is a claim this repository cannot
+        verify, so every row carries the source it was read from and the date it was read —
+        and none has been supplied yet.
+      </p>
+    ) : (
+      <table>
+        <caption>Comparisons, each with the source and the date it was read (D103).</caption>
+        <thead>
+          <tr>
+            <th scope="col">Tool</th>
+            <th scope="col">What the source says</th>
+            <th scope="col">Source</th>
+            <th scope="col">Read on</th>
+          </tr>
+        </thead>
+        <tbody>
+          {faq.rows.map((row) => (
+            <tr id={row.id}>
+              <th scope="row">{row.name}</th>
+              <td>{row.claim}</td>
+              <td>
+                <a href={row.source} rel="noopener">{row.source}</a>
+              </td>
+              <td>
+                <time datetime={row.date}>{row.date}</time>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}
+  </section>
+</Base>
+
+<style>
+  /* The page's own layout, in the site's tokens: no colour is named here, and none is
+     needed — the palette decides every colour the site paints (W1.2, D104). */
+  .lede {
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-snug);
+  }
+
+  .note {
+    max-width: var(--measure);
+    border-left: var(--border-width) solid var(--warn);
+    padding-left: var(--space-sm);
+    color: var(--text-muted);
+  }
+
+  .questions article {
+    max-width: var(--measure);
+    margin-block: var(--space-lg);
+  }
+
+  .source {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  #comparison table {
+    border-collapse: collapse;
+    width: 100%;
+    max-width: var(--page-max);
+  }
+
+  #comparison caption {
+    text-align: left;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    padding-block-end: var(--space-2xs);
+  }
+
+  #comparison th,
+  #comparison td {
+    text-align: left;
+    vertical-align: top;
+    border-bottom: var(--border-width) solid var(--border);
+    padding: var(--space-2xs) var(--space-xs) var(--space-2xs) 0;
+  }
+</style>

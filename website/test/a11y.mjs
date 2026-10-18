@@ -227,6 +227,30 @@ export const PAIRS = [
   ['--accent', '--gradient-to', LARGE_OR_UI],
 ]
 
+// The pairs `base.css` paints — the page chrome and the element defaults every page gets.
+// Each one is also in PAIRS (a case below holds that), so each is computed for all three
+// palettes by the per-palette cases; this list is the record of which pairs the base layer
+// depends on, and the cases at the end of this file hold base.css to it in both directions:
+// a rule that sets a colour and a background names a pair listed here, and every colour
+// token the file paints with appears in some pair here.
+export const BASE_PAIRS = [
+  // The document: body text, headings and the wordmark on the ground.
+  ['--text', '--ground', BODY_TEXT],
+  // The quieter tone: nav links, the footer, definitions, captions, blockquotes, markers.
+  ['--text-muted', '--ground', BODY_TEXT],
+  // Links, and the wordmark on hover.
+  ['--accent-on-dark', '--ground', BODY_TEXT],
+  // Code chips, code blocks and table headers sit on the surface.
+  ['--text', '--surface', BODY_TEXT],
+  // The current page in the nav (accent text on a surface pill), and a link in a header cell.
+  ['--accent-on-dark', '--surface', BODY_TEXT],
+  // The focused skip link and the text selection: the ground as a label on the accent fill.
+  ['--ground', '--accent', BODY_TEXT],
+  // The focus ring, the current page's underline and the blockquote rule, as UI colours.
+  ['--accent', '--ground', LARGE_OR_UI],
+  ['--accent', '--surface', LARGE_OR_UI],
+]
+
 // The pairs of a palette that are below their ratio, as the lines a reader sees. Exported
 // with a `pairs` parameter so that the red-step case at the bottom of this file can run the
 // same function over a pair that is meant to fail.
@@ -411,3 +435,450 @@ export function assertColourFree(tokens) {
     }
   }
 }
+
+// ---- the base stylesheet ------------------------------------------------------------------
+
+// `base.css` paints the document and the chrome with the tokens, and it is held to the same
+// rule as the semantic layer — no colour of its own — plus the pair bookkeeping above.
+const BASE_FILE = 'base.css'
+
+// Every `property: value;` in a stylesheet, as [property, value] pairs (custom properties
+// included). Selectors never match: a selector ends in `{`, which a value cannot contain.
+function allDeclarations(css) {
+  return [...stripComments(css).matchAll(/(-{0,2}[a-zA-Z][a-zA-Z0-9-]*)\s*:\s*([^;{}]+);/g)].map(([, prop, value]) => [prop, value.trim()])
+}
+
+// The innermost `{ ... }` blocks, each as a list of declarations: one per rule.
+function rules(css) {
+  return [...stripComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(([, selector, body]) => ({
+    selector: selector.trim(),
+    decls: allDeclarations(`${body};`),
+  }))
+}
+
+const COLOUR_PROPS = /^(color|background|background-color|border(-[a-z]+)*|outline(-color)?|text-decoration(-color)?|fill|stroke)$/
+// The palette tokens a value names (spacing, radius and width tokens are not colours).
+const tokenIn = (value) =>
+  [...value.matchAll(/var\(\s*(--[a-zA-Z0-9-]+)\s*\)/g)].map((m) => m[1]).filter((t) => COLOUR_TOKENS.includes(t.slice(2)))
+const sameAs = (a, b) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2]
+
+test('base.css carries no colour literal: every colour is a palette token', () => {
+  const decls = allDeclarations(readStyleFile(BASE_FILE))
+  assert.ok(decls.length > 0, 'base.css declares nothing: the page chrome is missing')
+  assertColourFree(new Map(decls.map(([prop, value], i) => [`${prop} (declaration ${i + 1})`, value])))
+})
+
+test('the colour literal scan refuses a hex, a colour function and a named colour in a declaration', () => {
+  for (const bad of ['a { color: #fff; }', 'a { color: rgb(1 2 3); }', 'a { background: hsl(0 0% 0%); }', 'a { color: white; }']) {
+    const decls = allDeclarations(bad)
+    assert.throws(() => assertColourFree(new Map(decls)), undefined, `the scan let ${bad} through`)
+  }
+})
+
+test('every pair base.css paints is in the contrast set, for all three palettes', () => {
+  for (const pair of BASE_PAIRS) {
+    assert.ok(
+      PAIRS.some((p) => sameAs(p, pair)),
+      `${pair[0]} on ${pair[1]} is a pair base.css paints and the contrast set does not check: add it to PAIRS`,
+    )
+  }
+
+  const listed = new Set(BASE_PAIRS.flatMap(([fg, bg]) => [fg, bg]))
+  const texts = new Set(BASE_PAIRS.map(([fg]) => fg))
+  for (const { selector, decls } of rules(readStyleFile(BASE_FILE))) {
+    let fg = null
+    let bg = null
+    for (const [prop, value] of decls) {
+      if (!COLOUR_PROPS.test(prop)) continue
+      for (const token of tokenIn(value)) {
+        // --border is a decorative separator, deliberately outside the pair set (see PAIRS).
+        if (token === '--border') continue
+        assert.ok(listed.has(token), `base.css paints ${token} in "${selector}" (${prop}), which no pair in BASE_PAIRS names`)
+      }
+      if (prop === 'color') fg = tokenIn(value)[0] ?? null
+      if (prop === 'background' || prop === 'background-color') bg = tokenIn(value)[0] ?? null
+    }
+    if (fg) {
+      assert.ok(texts.has(fg), `"${selector}" paints text in ${fg}, which BASE_PAIRS never uses as a text colour`)
+    }
+    if (fg && bg && fg !== bg) {
+      assert.ok(
+        BASE_PAIRS.some(([f, b]) => f === fg && b === bg),
+        `"${selector}" paints ${fg} on ${bg}, which is not in BASE_PAIRS (and so not checked for contrast)`,
+      )
+    }
+  }
+})
+
+// =========================================================================================
+// W1.11: the rest of the accessibility contract, over the BUILT pages (website plan, W1.11
+// step 3; reconciliation findings 53 and 54, D105).
+//
+// Everything above reads the stylesheets; everything below reads `dist/`, which
+// `npm run check` builds before it runs this file (`FUGARO_GATES_DIST` points it at a copy,
+// which is how each refusal was mutation-proved). It is appended rather than woven in, so
+// that W1.2's cases above are untouched. Per built page:
+//
+//   - the document: `<html lang>` is a language tag, `<title>` is not empty, ids are unique;
+//   - structure: exactly one `h1`, and headings never skip a level going down (h2 -> h4);
+//   - landmarks: one `main`, a page `header` and `footer`, at least one `nav`, and every
+//     `nav` named (aria-label or a resolving aria-labelledby), uniquely when there are two;
+//   - the skip link: the first thing a keyboard reaches is an in-page link to `main` (or
+//     into it);
+//   - names: every `img` has an `alt` (empty is a decision: decorative), every `svg` with
+//     role="img" has a name, every link and button has a name, every form control a label;
+//   - the keyboard: no positive tabindex, no focusable element hidden with aria-hidden, a
+//     non-native role=button/link is focusable, and no stylesheet removes the focus outline
+//     except for the `:focus:not(:focus-visible)` pattern that keeps it for the keyboard;
+//   - reduced motion (D105): every animation, transition and smooth scroll the page's CSS
+//     declares is either gated on `prefers-reduced-motion: no-preference` or neutralised by
+//     a `prefers-reduced-motion: reduce` rule — the universal one the base layout writes, or
+//     one naming the same selector;
+//   - contrast over the built CSS: the colour tokens the page ships are the palette in
+//     force's (so the pairs checked above are the pairs a reader gets), no shipped stylesheet
+//     paints a colour literal outside the token block, and an element that sets both its
+//     colour and its background inline (the code blocks) clears AA.
+//
+// One recorded exception, and it is a DEFECT: the docs page renders the generated CLI
+// reference, and cobra's own help text for `fugaro completion bash|zsh` writes `#### Linux:`
+// and `#### macOS:` under a `##` command heading — an h2 -> h4 jump. W1.11 may not edit the
+// generator (internal/clidoc) or the page (W1.7's), so exactly those headings are accepted on
+// that page, and a case fails once they are gone so the exception is deleted with the fix
+// (the generator demotes or escapes headings inside a command's long text).
+
+import { readFileSync as readBuilt } from 'node:fs'
+import {
+  DIST,
+  HTMLScanError,
+  builtPages,
+  cssDeclarations,
+  cssRules,
+  filesUnder,
+  hasAncestor,
+  parse,
+  servedFile,
+  textOf,
+  walk,
+} from './lib/html.mjs'
+
+// The recorded heading-order defect described above: page, and the ids of the headings
+// that are accepted as the jump.
+export const HEADING_JUMP_DEFECT = {
+  page: 'docs/index.html',
+  ids: new Set(['linux', 'macos', 'linux-1', 'macos-1']),
+  why: "cobra's completion help writes #### headings under the reference's ## command headings",
+}
+
+const FOCUSABLE_NATIVE = (el) =>
+  (el.name === 'a' && el.attrs.has('href')) ||
+  (el.name === 'area' && el.attrs.has('href')) ||
+  ['button', 'select', 'textarea', 'iframe', 'summary'].includes(el.name) ||
+  (el.name === 'input' && (el.attrs.get('type') ?? '').toLowerCase() !== 'hidden')
+
+function focusable(el) {
+  if (el.attrs.has('disabled')) return false
+  const tabindex = el.attrs.get('tabindex')
+  if (tabindex !== undefined && Number(tabindex) < 0) return false
+  return FOCUSABLE_NATIVE(el) || (tabindex !== undefined && Number(tabindex) >= 0)
+}
+
+function nameOf(el, byId) {
+  const label = (el.attrs.get('aria-label') ?? '').trim()
+  if (label) return label
+  const by = (el.attrs.get('aria-labelledby') ?? '').trim()
+  if (by) {
+    return by
+      .split(/\s+/)
+      .map((id) => (byId.has(id) ? textOf(byId.get(id)).trim() : ''))
+      .join(' ')
+      .trim()
+  }
+  return ''
+}
+
+/** The CSS a built page ships: its <style> blocks and the first-party stylesheets it links. */
+export function shippedCSS(doc, dist = DIST) {
+  const out = []
+  for (const el of walk(doc)) {
+    if (el.name === 'style') out.push(el.raw ?? '')
+    if (el.name === 'link' && /(^|\s)stylesheet(\s|$)/i.test(el.attrs.get('rel') ?? '')) {
+      const href = el.attrs.get('href') ?? ''
+      if (/^[a-z]+:|^\/\//i.test(href)) continue // origins.mjs refuses a remote one
+      const served = servedFile(dist, new URL(href, 'https://x/').pathname)
+      if (served) out.push(readBuilt(path.join(dist, served), 'utf8'))
+    }
+  }
+  return out.join('\n')
+}
+
+const REDUCE = /prefers-reduced-motion\s*:\s*reduce/i
+const NO_PREFERENCE = /prefers-reduced-motion\s*:\s*no-preference/i
+
+/** Motion the CSS declares that a reduce rule does not neutralise. */
+export function motionFailures(css, inlineStyles = []) {
+  const rules = cssRules(css)
+  const reduce = rules.filter((r) => r.conditions.some((c) => REDUCE.test(c)) && r.selector && !r.selector.startsWith('@'))
+  const universal = reduce.filter((r) => r.selector.split(',').some((s) => s.trim() === '*'))
+  const sets = (rs, prop) => rs.some((r) => cssDeclarations(r.body).some(([p]) => p === prop))
+  const neutralised = (selector, kind) =>
+    reduce.some(
+      (r) =>
+        r.selector === selector &&
+        cssDeclarations(r.body).some(([p, v]) => (p === kind || p === `${kind}-name` || p === `${kind}-duration`) && /^(none|0m?s|1ms)\b/.test(v)),
+    )
+  const covered = {
+    animation: sets(universal, 'animation-duration') && sets(universal, 'animation-iteration-count'),
+    transition: sets(universal, 'transition-duration'),
+    'scroll-behavior': sets(universal, 'scroll-behavior'),
+  }
+  const failures = []
+  const consider = (selector, conditions, body) => {
+    if (conditions.some((c) => REDUCE.test(c) || NO_PREFERENCE.test(c))) return
+    for (const [p, v] of cssDeclarations(body)) {
+      let kind = null
+      if ((p === 'animation' || p === 'animation-name') && !/^none\b/.test(v)) kind = 'animation'
+      if ((p === 'transition' || p === 'transition-duration') && !/^(none|0s|0ms)\b/.test(v)) kind = 'transition'
+      if (p === 'scroll-behavior' && /smooth/.test(v)) kind = 'scroll-behavior'
+      if (kind && !covered[kind] && !neutralised(selector, kind)) {
+        failures.push(`${selector} declares ${p}: ${v}, and no prefers-reduced-motion: reduce rule neutralises it (D105)`)
+      }
+    }
+  }
+  for (const r of rules) if (r.selector && !r.selector.startsWith('@')) consider(r.selector, r.conditions, r.body)
+  for (const [where, body] of inlineStyles) consider(where, [], body)
+  return failures
+}
+
+/** Every accessibility failure of one built page. */
+export function pageA11yFailures(html, rel, { css = null, dist = DIST, palette = paletteTokens(PALETTE_IN_FORCE) } = {}) {
+  const out = []
+  const fail = (why) => out.push(`${rel}: ${why}`)
+  let doc
+  try {
+    doc = parse(html)
+  } catch (err) {
+    if (err instanceof HTMLScanError) return [`${rel}: ${err.message}`]
+    throw err
+  }
+  const all = [...walk(doc)]
+  const byId = new Map()
+  for (const el of all) {
+    if (!el.attrs.has('id')) continue
+    const id = el.attrs.get('id')
+    if (byId.has(id)) fail(`the id "${id}" is used twice: an anchor or a label can point at only one of them`)
+    byId.set(id, el)
+  }
+
+  // The document.
+  const htmlEl = all.find((el) => el.name === 'html')
+  const lang = htmlEl?.attrs.get('lang') ?? ''
+  if (!/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(lang)) fail(`<html lang="${lang}"> is not a language tag: a screen reader picks its voice from it`)
+  const title = all.find((el) => el.name === 'title')
+  if (!title || !textOf(title).trim()) fail('the page has no <title>')
+  const body = all.find((el) => el.name === 'body')
+  if (!body) return [...out, `${rel}: the page has no <body>`]
+
+  // Headings.
+  const headings = all.filter((el) => /^h[1-6]$/.test(el.name))
+  const h1s = headings.filter((el) => el.name === 'h1').length
+  if (h1s !== 1) fail(`the page has ${h1s} h1 elements; it has exactly one`)
+  let prev = 1
+  for (const h of headings) {
+    const level = Number(h.name[1])
+    if (level > prev + 1) {
+      const known = rel === HEADING_JUMP_DEFECT.page && HEADING_JUMP_DEFECT.ids.has(h.attrs.get('id'))
+      if (!known) fail(`a heading jumps from h${prev} to h${level} ("${textOf(h).trim().slice(0, 60)}"): heading levels go down one at a time`)
+      if (known) continue // the recorded defect: the next heading is judged against its h2
+    }
+    prev = level
+  }
+
+  // Landmarks.
+  const mains = all.filter((el) => el.name === 'main' || el.attrs.get('role') === 'main')
+  if (mains.length !== 1) fail(`the page has ${mains.length} main landmarks; it has exactly one`)
+  const sectioning = ['article', 'aside', 'main', 'nav', 'section']
+  const pageLevel = (name) => all.filter((el) => el.name === name && !sectioning.some((s) => hasAncestor(el, s)))
+  if (pageLevel('header').length !== 1) fail(`the page has ${pageLevel('header').length} page-level <header> landmarks; it has exactly one`)
+  if (pageLevel('footer').length !== 1) fail(`the page has ${pageLevel('footer').length} page-level <footer> landmarks; it has exactly one`)
+  const navs = all.filter((el) => el.name === 'nav')
+  if (navs.length === 0) fail('the page has no <nav> landmark')
+  const navNames = navs.map((n) => nameOf(n, byId))
+  navNames.forEach((name, i) => {
+    if (!name) fail(`<nav> number ${i + 1} has no name (aria-label or aria-labelledby): a screen reader lists landmarks by name`)
+  })
+  if (new Set(navNames).size !== navNames.length) fail(`two <nav> landmarks share a name (${navNames.join(', ')})`)
+
+  // The skip link.
+  const firstFocusable = all.find((el) => hasAncestor(el, 'body') && focusable(el))
+  const skipTarget = firstFocusable?.name === 'a' ? /^#(.+)$/.exec(firstFocusable.attrs.get('href') ?? '') : null
+  const target = skipTarget ? byId.get(decodeURIComponent(skipTarget[1])) : null
+  if (!target || !(target === mains[0] || [...walk(mains[0] ?? { children: [] })].includes(target))) {
+    fail('the first focusable element is not a skip link to the main content: a keyboard user should not tab through the navigation on every page')
+  }
+
+  // Names.
+  for (const el of all) {
+    if (el.name === 'img' && !el.attrs.has('alt')) fail(`<img src="${el.attrs.get('src') ?? ''}"> has no alt (alt="" marks it decorative)`)
+    if (el.name === 'svg' && el.attrs.get('role') === 'img' && !nameOf(el, byId) && !el.children.some((c) => c.name === 'title' && textOf(c).trim())) {
+      fail('an <svg role="img"> has no name (aria-label, aria-labelledby or a <title>)')
+    }
+    if ((el.name === 'a' && el.attrs.has('href')) || el.name === 'button') {
+      if (!nameOf(el, byId) && !textOf(el).trim() && !el.attrs.get('title')) fail(`a <${el.name}> has no accessible name${el.attrs.has('href') ? ` (href="${el.attrs.get('href')}")` : ''}`)
+    }
+    const control =
+      ['select', 'textarea'].includes(el.name) ||
+      (el.name === 'input' && !['hidden', 'submit', 'button', 'reset', 'image'].includes((el.attrs.get('type') ?? 'text').toLowerCase()))
+    if (control) {
+      const id = el.attrs.get('id')
+      const labelled =
+        nameOf(el, byId) ||
+        el.attrs.get('title') ||
+        hasAncestor(el, 'label') ||
+        (id && all.some((l) => l.name === 'label' && l.attrs.get('for') === id))
+      if (!labelled) fail(`a <${el.name}${el.attrs.has('name') ? ` name="${el.attrs.get('name')}"` : ''}> has no label`)
+    }
+  }
+
+  // The keyboard.
+  for (const el of all) {
+    const tabindex = el.attrs.get('tabindex')
+    if (tabindex !== undefined && Number(tabindex) > 0) fail(`<${el.name} tabindex="${tabindex}">: a positive tabindex reorders the keyboard path away from the reading order`)
+    if (focusable(el) && (el.attrs.get('aria-hidden') === 'true' || all.some((a) => a.attrs.get('aria-hidden') === 'true' && [...walk(a)].includes(el)))) {
+      fail(`a focusable <${el.name}> is inside aria-hidden: the keyboard reaches what a screen reader cannot see`)
+    }
+    const role = el.attrs.get('role')
+    if (['button', 'link', 'tab', 'menuitem', 'checkbox', 'switch'].includes(role) && !FOCUSABLE_NATIVE(el) && tabindex === undefined) {
+      fail(`<${el.name} role="${role}"> is not keyboard-reachable (no tabindex)`)
+    }
+  }
+
+  // The shipped CSS: focus, motion, colour.
+  const sheet = css ?? shippedCSS(doc, dist)
+  let rules = []
+  try {
+    rules = cssRules(sheet)
+  } catch (err) {
+    fail(`the page's CSS could not be read (${err.message})`)
+  }
+  for (const r of rules) {
+    if (!r.selector || r.selector.startsWith('@')) continue
+    for (const [p, v] of cssDeclarations(r.body)) {
+      if ((p === 'outline' || p === 'outline-style' || p === 'outline-width') && /^(none|0)(px)?\b/.test(v) && !/:not\(\s*:focus-visible\s*\)/.test(r.selector)) {
+        fail(`${r.selector} removes the focus outline (${p}: ${v}); keep it for the keyboard (:focus-visible), or scope the removal to :focus:not(:focus-visible)`)
+      }
+    }
+  }
+  const inlineStyles = all.filter((el) => el.attrs.has('style')).map((el) => [`<${el.name} style>`, el.attrs.get('style')])
+  try {
+    for (const why of motionFailures(sheet, inlineStyles)) fail(why)
+  } catch (err) {
+    fail(`the page's CSS could not be read for motion (${err.message})`)
+  }
+
+  const root = new Map()
+  for (const r of rules) {
+    if (r.selector === ':root' && r.conditions.length === 0) for (const [p, v] of cssDeclarations(r.body)) if (p.startsWith('--')) root.set(p.slice(2), v)
+  }
+  for (const name of COLOUR_TOKENS) {
+    if (!root.has(name)) fail(`the page ships no --${name}: the palette's tokens are what the contrast pairs above are computed from`)
+    else if (parseColour(root.get(name), `--${name}`).join() !== parseColour(palette.get(name), `--${name}`).join()) {
+      fail(`the page ships --${name}: ${root.get(name)}, but ${PALETTE_IN_FORCE} says ${palette.get(name)}: the contrast checked above is not the contrast a reader gets`)
+    }
+  }
+  for (const r of rules) {
+    if (!r.selector || r.selector === ':root' || r.selector.startsWith('@')) continue
+    if (HEX_LITERAL.test(r.body) || COLOUR_FUNCTION.test(r.body)) {
+      fail(`${r.selector} paints a colour literal (${r.body.slice(0, 80)}): every colour the site paints comes from the palette in force, so the contrast check can see it`)
+    }
+  }
+  for (const [where, style] of inlineStyles) {
+    const decl = new Map(cssDeclarations(style))
+    const fg = decl.get('color')
+    const bg = decl.get('background-color') ?? decl.get('background')
+    if (fg && bg && /^#[0-9a-f]{3,6}$/i.test(fg) && /^#[0-9a-f]{3,6}$/i.test(bg)) {
+      const ratio = contrastRatio(parseColour(fg, 'color'), parseColour(bg, 'background'))
+      if (ratio < BODY_TEXT) fail(`${where}: ${fg} on ${bg} is ${ratio.toFixed(1)}:1, needs ${BODY_TEXT}:1`)
+    }
+  }
+  return out
+}
+
+/** Every accessibility failure of a built artifact. */
+export function artifactA11yFailures(dist = DIST) {
+  const out = []
+  for (const page of builtPages(dist)) out.push(...pageA11yFailures(page.html, page.rel, { dist }))
+  return out
+}
+
+test('every built page meets the accessibility contract: landmarks, headings, names, keyboard, motion, contrast', () => {
+  const failures = artifactA11yFailures()
+  assert.deepEqual(failures, [], `the built site breaks the accessibility contract (D105):\n  ${failures.join('\n  ')}`)
+})
+
+test('the recorded heading-order defect on the docs page is still real, so its exception is still needed', () => {
+  const docs = builtPages().find((p) => p.rel === HEADING_JUMP_DEFECT.page)
+  assert.ok(docs, `${HEADING_JUMP_DEFECT.page} was not built`)
+  const ids = [...docs.html.matchAll(/<h4 id="([^"]+)"/g)].map((m) => m[1]).filter((id) => HEADING_JUMP_DEFECT.ids.has(id))
+  assert.ok(
+    ids.length > 0,
+    `${HEADING_JUMP_DEFECT.page} no longer carries the recorded h2 -> h4 headings: the defect is fixed, so delete HEADING_JUMP_DEFECT in website/test/a11y.mjs and let every jump fail again`,
+  )
+})
+
+// ---- the refusals, kept ----------------------------------------------------------------
+
+// A page in the layout's shape, which passes; each fixture below breaks one thing in it.
+const GOOD_CSS = (() => {
+  const palette = paletteTokens(PALETTE_IN_FORCE)
+  const tokens = COLOUR_TOKENS.map((n) => `--${n}:${palette.get(n)}`).join(';')
+  return `:root{${tokens}}@media (prefers-reduced-motion:reduce){*,:before,:after{animation-duration:1ms!important;animation-iteration-count:1!important;transition-duration:1ms!important;scroll-behavior:auto!important}}`
+})()
+
+function fixture({ head = '', header = '<header><a href="/">Site</a><nav aria-label="Sections"><a href="/a/">A</a></nav></header>', main = '<h1>Title</h1><h2>Part</h2><p>x</p>', skip = '<a href="#main">Skip to content</a>', lang = 'en', css = GOOD_CSS } = {}) {
+  return [`<!DOCTYPE html><html lang="${lang}"><head><title>T</title><style>${css}</style>${head}</head>`, `<body>${skip}${header}<main id="main">${main}</main><footer><p>f</p></footer></body></html>`]
+}
+
+function a11yOf(parts) {
+  const html = parts.join('')
+  const css = /<style>([\s\S]*?)<\/style>/.exec(html)[1]
+  return pageA11yFailures(html, 'fixture.html', { css })
+}
+
+test('the fixture page passes, so each refusal below is the one thing it breaks', () => {
+  assert.deepEqual(a11yOf(fixture()), [])
+})
+
+test('every accessibility refusal fires on the defect it names', () => {
+  const cases = [
+    ['an img without alt', { main: '<h1>T</h1><img src="/a.png">' }, /has no alt/],
+    ['a heading jump', { main: '<h1>T</h1><h2>a</h2><h4>b</h4>' }, /jumps from h2 to h4/],
+    ['two h1s', { main: '<h1>T</h1><h1>U</h1>' }, /2 h1 elements/],
+    ['no lang', { lang: '' }, /lang=""/],
+    ['no nav', { header: '<header><a href="/">Site</a></header>' }, /no <nav>/],
+    ['an unnamed nav', { header: '<header><nav><a href="/a/">A</a></nav></header>' }, /has no name/],
+    ['no header landmark', { header: '<nav aria-label="S"><a href="/a/">A</a></nav>' }, /0 page-level <header>/],
+    ['no skip link', { skip: '' }, /not a skip link/],
+    ['a skip link to nowhere', { skip: '<a href="#nope">Skip</a>' }, /not a skip link/],
+    ['an unlabelled input', { main: '<h1>T</h1><form action="/s/"><input name="q"></form>' }, /<input name="q"> has no label/],
+    ['an empty link', { main: '<h1>T</h1><a href="/a/"></a>' }, /has no accessible name/],
+    ['a positive tabindex', { main: '<h1>T</h1><p tabindex="3">x</p>' }, /positive tabindex/],
+    ['a div acting as a button', { main: '<h1>T</h1><div role="button">x</div>' }, /not keyboard-reachable/],
+    ['a focus outline removed', { css: GOOD_CSS + 'a:focus{outline:none}' }, /removes the focus outline/],
+    ['an animation with no reduce path', { css: GOOD_CSS.replace(/@media[\s\S]*$/, '') + '.t{animation:spin 1s infinite}' }, /\.t declares animation/],
+    ['a transition the reduce rule does not cover', { css: GOOD_CSS.replace('transition-duration:1ms!important;', '') + '.t{transition:opacity .2s}' }, /\.t declares transition/],
+    ['a colour literal in a component', { css: GOOD_CSS + '.t{color:#ff0000}' }, /paints a colour literal/],
+    ['a shipped token that is not the palette', { css: GOOD_CSS.replace(/--text:#[0-9a-fA-F]+/, '--text:#777777') }, /ships --text: #777777/],
+    ['an inline pair below AA', { main: '<h1>T</h1><pre style="background-color:#24292e;color:#444444" tabindex="0">x</pre>' }, /#444444 on #24292e is/],
+    ['a duplicated id', { main: '<h1 id="x">T</h1><p id="x">y</p>' }, /used twice/],
+  ]
+  for (const [what, opts, expected] of cases) {
+    const failures = a11yOf(fixture(opts))
+    assert.ok(failures.some((f) => expected.test(f)), `${what} was not refused (${expected}); the check said:\n  ${failures.join('\n  ') || '(nothing)'}`)
+  }
+})
+
+test('motion gated on no-preference, or neutralised by its own reduce rule, passes', () => {
+  const bare = GOOD_CSS.replace(/@media[\s\S]*$/, '')
+  assert.deepEqual(motionFailures(bare + '@supports (animation-timeline:view()){@media (prefers-reduced-motion:no-preference){.s{animation:in linear both}}}'), [])
+  assert.deepEqual(motionFailures(bare + '.t{animation:spin 1s}@media (prefers-reduced-motion:reduce){.t{animation:none}}'), [])
+})

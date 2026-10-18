@@ -1,0 +1,226 @@
+---
+/**
+ * website/src/components/ConsentBanner.astro — the consent banner (website plan, Task W1.12;
+ * reconciliation findings 16, 18 and 55; decisions D93 and D106).
+ *
+ * D93 chose Firebase Analytics for the site and answered the question that comes with it:
+ * nothing is requested from the analytics origin until the visitor consents. `Base.astro`
+ * holds the loader, which is written to read a decision rather than a flag; this component
+ * is the only thing that writes one, and it is rendered only when `site.yaml` says analytics
+ * are on, so the artifact the site serves today carries no banner, no script and no origin.
+ *
+ * The decisions this file makes, and why:
+ *
+ *   - **Two choices, equally offered.** Both are native `<button type="button">` elements
+ *     with the same class, the same size and the same treatment. There is no "reject all"
+ *     buried in a settings page and no pre-ticked box: accepting and declining are one press
+ *     each, and neither is the one the layout nudges a visitor towards.
+ *   - **Dismissal is a refusal.** Escape hides the banner and records `denied`, and a
+ *     visitor who navigates away without choosing loads nothing either — the default when
+ *     nobody chooses is that nothing is measured, because the loader needs a stored
+ *     `granted` to fetch anything at all.
+ *   - **Nothing is loaded to ask the question.** This component ships one inline script of
+ *     its own and no third party; the loader it wakes is the layout's, and that one is
+ *     gated. `website/test/origins.mjs` lists this script's SHA-256 as the allow-list entry
+ *     W3.2 copies into the Content-Security-Policy in the commit that turns analytics on.
+ *   - **Storage that is refused is treated as no decision.** Reads and writes are wrapped,
+ *     the write is read back (a private-mode browser may accept a write and keep nothing),
+ *     and when the choice cannot be kept the banner stays, says so in a `role="status"`
+ *     line, and loads nothing. The visitor is asked again rather than answered for.
+ *   - **No focus trap, and no focus stolen.** The banner does not take focus on load, does
+ *     not intercept Tab, and on a choice it moves focus to `<main>` — the content the
+ *     visitor asked for — rather than leaving it on a control that has just vanished.
+ *   - **Withdrawal.** On the privacy page the banner is offered even when a decision is
+ *     stored (`alwaysOffer`), which is how consent is withdrawn: the one page that says how
+ *     is the one page where the choice is always available again.
+ *
+ * The markup is emitted hidden and the script reveals it: a browser that runs no script
+ * shows no control it cannot honour.
+ */
+interface Props {
+  /** Offer the choice even when a decision is stored: the privacy page's job (withdrawal). */
+  alwaysOffer?: boolean
+}
+
+const { alwaysOffer = false } = Astro.props
+
+// The key the decision is stored under. It is written once, here, and the script below reads
+// it back out of the markup: the layout's loader reads the same key, and a second literal
+// would be a second thing to keep in step.
+const CONSENT_KEY = 'fugaro:analytics-consent'
+---
+
+<aside
+  class="consent-banner"
+  id="consent-banner"
+  role="region"
+  aria-label="Analytics consent"
+  data-consent-key={CONSENT_KEY}
+  data-consent-always={alwaysOffer ? 'true' : undefined}
+  hidden
+>
+  <div class="consent-banner__inner">
+    <p class="consent-banner__text">
+      This site counts page views with <strong>Google Analytics</strong>, a third-party script that sets identifiers in your browser, and it loads nothing from Google until you accept. <a href="/privacy/">What this site measures</a>
+    </p>
+    <div class="consent-banner__choices">
+      <button type="button" class="consent-banner__button" data-consent="granted">Accept analytics</button>
+      <button type="button" class="consent-banner__button" data-consent="denied">Decline analytics</button>
+    </div>
+    <p class="consent-banner__status" id="consent-banner-status" role="status" hidden>
+      Your browser is not storing this choice, so this site cannot keep it: nothing is loaded from Google, and you will be asked again on your next visit.
+    </p>
+  </div>
+</aside>
+
+<script is:inline>
+  // The banner's controller. It is inline, and it is the second of the site's two scripts:
+  // the layout's gated loader is the other, and neither is emitted while analytics are off.
+  ;(function () {
+    var banner = document.getElementById('consent-banner')
+    if (!banner) return
+
+    // The key, from the markup rather than from a second literal: one string, one place.
+    var key = banner.getAttribute('data-consent-key')
+    var status = document.getElementById('consent-banner-status')
+
+    function stored() {
+      // Storage the browser refuses is not a decision: the loader reads it the same way, so
+      // an unreadable answer is no answer rather than a guess.
+      try {
+        return window.localStorage.getItem(key)
+      } catch (err) {
+        return null
+      }
+    }
+
+    function keep(decision) {
+      // Write, then read back. A browser in private mode may accept the write and keep
+      // nothing, and the visitor has to be told that rather than asked again in silence.
+      try {
+        window.localStorage.setItem(key, decision)
+        return window.localStorage.getItem(key) === decision
+      } catch (err) {
+        return false
+      }
+    }
+
+    function announce(decision) {
+      window.dispatchEvent(new CustomEvent('fugaro:consent', { detail: { analytics: decision } }))
+    }
+
+    function dismiss() {
+      banner.hidden = true
+      // Focus goes to the content, not back to the top of the page and not to a control
+      // that has just disappeared. `tabindex="-1"` makes <main> a focus target without
+      // putting it in the tab order.
+      var main = document.getElementById('main')
+      if (main) {
+        main.setAttribute('tabindex', '-1')
+        main.focus()
+      }
+    }
+
+    function choose(decision) {
+      if (!keep(decision)) {
+        // The answer cannot be kept, so it is not honoured: nothing is loaded, the banner
+        // stays, and the status line says why.
+        if (status) status.hidden = false
+        announce('denied')
+        return
+      }
+      dismiss()
+      announce(decision)
+    }
+
+    var controls = banner.querySelectorAll('[data-consent]')
+    for (var i = 0; i < controls.length; i++) {
+      ;(function (control) {
+        control.addEventListener('click', function () {
+          choose(control.getAttribute('data-consent'))
+        })
+      })(controls[i])
+    }
+
+    // Escape dismisses, and a dismissal is a refusal: the loader fetches nothing until
+    // something stores `granted`, so ignoring the banner measures nothing either.
+    window.addEventListener('keydown', function (event) {
+      if (banner.hidden) return
+      if (event.key === 'Escape' || event.key === 'Esc') choose('denied')
+    })
+
+    // The choice is offered when there is no readable decision — and always on the privacy
+    // page, which is where a visitor withdraws one.
+    if (banner.getAttribute('data-consent-always') === 'true' || stored() === null) banner.hidden = false
+  })()
+</script>
+
+<style>
+  /* A bar at the foot of the window, so the page a visitor asked for is not pushed around by
+     a question about measurement. `.consent-banner` deliberately declares no `display`, so
+     that the `hidden` attribute keeps it hidden; the rule below says so out loud, because a
+     fixed-position element is exactly the one that grows a `display` later. */
+  .consent-banner {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 20;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--surface);
+    color: var(--text);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .consent-banner[hidden] {
+    display: none;
+  }
+
+  .consent-banner__inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-xs) var(--space-md);
+    max-width: var(--page-max);
+    margin-inline: auto;
+  }
+
+  .consent-banner__text {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .consent-banner__choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2xs);
+  }
+
+  /* One rule for both choices: the same control, at the same size, with nothing that makes
+     one of them easier to press than the other. */
+  .consent-banner__button {
+    padding: var(--space-2xs) var(--space-md);
+    border: var(--border-width) solid var(--accent);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--accent-on-dark);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    font-weight: var(--weight-semibold);
+    cursor: pointer;
+  }
+
+  .consent-banner__button:hover {
+    background: var(--accent);
+    color: var(--ground);
+  }
+
+  .consent-banner__status {
+    flex-basis: 100%;
+    margin: 0;
+    color: var(--warn);
+    font-size: var(--font-size-xs);
+  }
+</style>

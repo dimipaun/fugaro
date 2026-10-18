@@ -443,7 +443,9 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 	}
 
 	scan := scanModuleIAM(moduleFiles(t))
-	for _, f := range scan.findings {
+	// The compute module's grants are refused, and that refusal is expected
+	// for 0.8.5 (knownComputeRefusals): every other finding is a failure.
+	for _, f := range otherThanComputeRefusals(t, scan.findings) {
 		t.Errorf("%s", f)
 	}
 	// Non-vacuity, one count per shape of grant the scan exists for. The
@@ -819,8 +821,91 @@ locals {
 	// The modules as they are are the other half of the fixture: the scan
 	// above must find nothing in them, or the mutations would be passing for
 	// a reason that has nothing to do with them.
-	if scan := scanModuleIAM(moduleFiles(t)); len(scan.findings) != 0 {
-		t.Errorf("the modules as they are: %v", scan.findings)
+	// The compute module's grants are the one known exception: the scan
+	// refuses them, on purpose for 0.8.5 (knownComputeRefusals), so they are
+	// set aside by name and every other finding still fails this.
+	if rest := otherThanComputeRefusals(t, scanModuleIAM(moduleFiles(t)).findings); len(rest) != 0 {
+		t.Errorf("the modules as they are: %v", rest)
+	}
+}
+
+// knownComputeRefusals are the compute module's grants (main's Cloud Batch
+// backend, deploy/terraform/gcp/modules/compute/iam.tf) that this scan
+// refuses: every one is a grant to a run, reaper or preload account (or to a
+// Google service agent) that runAccountGrants does not list. For 0.8.5 the
+// refusal stands (the owner's ruling of 2026-10-17/18 on the merge of main
+// into next-0.8.5): nobody has reviewed these grants for a write path to
+// fugaro/managed.json, so they are not allowlisted, and the managed cover
+// keeps refusing the compute module. Reviewing them and moving them into
+// runAccountGrants is a decision for a later release, and this list is what
+// that decision deletes.
+var knownComputeRefusals = []string{
+	"run_agent_reporter", "run_log_writer", "run_registry_reader", "launcher_user",
+	"reaper", "preload_builder", "preload_build_submitter", "preload_log_writer",
+	"preload_scheduler_agent", "preload_cloud_build_agent", "preload_self_user", "preload_run_account_user",
+}
+
+// computeRefusalFile is where every known compute refusal is found.
+const computeRefusalFile = "modules/compute/iam.tf: "
+
+// otherThanComputeRefusals returns the findings that are not one of the
+// known compute refusals, and fails the test when the known refusals are not
+// all there: a compute grant that stops being refused is a change to this
+// known limit, made on purpose or not, and either way it must be looked at.
+func otherThanComputeRefusals(t *testing.T, findings []string) []string {
+	t.Helper()
+	var rest []string
+	seen := map[string]bool{}
+	for _, f := range findings {
+		name, ok := computeRefusalName(f)
+		if !ok {
+			rest = append(rest, f)
+			continue
+		}
+		seen[name] = true
+	}
+	for _, name := range knownComputeRefusals {
+		if !seen[name] {
+			t.Errorf("the scan no longer refuses the compute module's %s grant: the known limit (knownComputeRefusals) changed, so review it", name)
+		}
+	}
+	return rest
+}
+
+// computeRefusalName is the compute grant a finding refuses, when it is one
+// of knownComputeRefusals in modules/compute/iam.tf.
+func computeRefusalName(f string) (string, bool) {
+	rest, ok := strings.CutPrefix(f, computeRefusalFile)
+	if !ok {
+		return "", false
+	}
+	name, _, _ := strings.Cut(rest, " ")
+	return name, slices.Contains(knownComputeRefusals, name)
+}
+
+// TestTheScanRefusesTheComputeModulesGrantsAsAKnownLimit names the known
+// limit of 0.8.5: the run-account grant scan refuses every grant the compute
+// module (main's Cloud Batch backend) makes to an account that is not a set
+// of people, and nothing else in the modules. The refusal is the expected
+// answer, not a failure to fix by allowlisting: the grants have not been
+// reviewed for a write path to the creation fact.
+func TestTheScanRefusesTheComputeModulesGrantsAsAKnownLimit(t *testing.T) {
+	findings := scanModuleIAM(moduleFiles(t)).findings
+	refused := map[string]bool{}
+	for _, f := range findings {
+		if name, ok := computeRefusalName(f); ok {
+			if !strings.Contains(f, "not on the allowlist") && !strings.Contains(f, "cannot resolve") {
+				t.Errorf("the compute grant %s is refused for another reason than the allowlist: %s", name, f)
+			}
+			refused[name] = true
+		} else if strings.HasPrefix(f, "modules/compute/") {
+			t.Errorf("a compute finding outside the known limit: %s", f)
+		}
+	}
+	for _, name := range knownComputeRefusals {
+		if !refused[name] {
+			t.Errorf("the compute module's %s grant is not refused: the known limit says it is", name)
+		}
 	}
 }
 

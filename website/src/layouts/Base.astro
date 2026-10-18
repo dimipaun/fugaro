@@ -21,35 +21,48 @@
  *      forget it (step 3, D105).
  *   4. **The analytics gate.** The loader is emitted only when `site.yaml` says analytics
  *      are on, and even then it fetches nothing until the visitor has consented. The gate,
- *      not the flag, decides (D93, D106) — and W1.12 owns the banner that sets it, and
- *      rewrites this loader with its own tests.
+ *      not the flag, decides (D93, D106): the loader reads a stored decision and nothing
+ *      else, so a visitor who never chooses is measured by nothing. W1.12 owns the banner
+ *      that writes the decision — `ConsentBanner.astro`, rendered here only when the flag is
+ *      on — and this file holds no copy of it.
+ *
+ *      The deployed policy does not admit this loader yet, and deliberately so: with the flag
+ *      off the built site ships no script at all, so there is nothing for a policy to allow.
+ *      W3.2 is the task that widens `firebase.json`'s `script-src` and `connect-src` in the
+ *      commit that turns analytics on, with the SHA-256 hashes `website/test/origins.mjs`
+ *      lists — the loader's own hash depends on the measurement id, so it cannot be written
+ *      down before the property exists.
  *
  * Nothing in this file fetches anything at build time: the site is built from the files in
  * this repository, with no network and no clock (Global Constraints 4 and 5).
  */
 import { loadSite } from '../content.ts'
+import ConsentBanner from '../components/ConsentBanner.astro'
 
-// The design tokens, which are W1.2's files.
+// The design tokens (W1.2), then the page chrome and element defaults that apply them.
 //
-// They are named through `import.meta.glob` rather than imported directly, and the reason
-// is a real one rather than a stylistic one: W1.2 writes `src/styles/` in parallel with
-// this task, so at the moment this file is written `tokens.css` may not exist yet — and a
-// static `import '../styles/tokens.css'` of a file that does not exist fails the build,
-// which would make this task's own gate red until another task's branch merges. The glob
-// resolves to nothing when the file is absent (the build stays green, and the pages fall
-// back to the browser's own defaults) and bundles the stylesheet into the build, with the
-// `<link>` Astro emits for it, the moment W1.2's file lands. No file is created under
-// `src/styles/` here: that directory is W1.2's.
-import.meta.glob('../styles/tokens.css', { eager: true })
+// The order is the point: `tokens.css` declares the vocabulary (and imports the palette in
+// force), and `base.css` paints the document with it — the ground, the text, the type, the
+// header, the nav, the footer, links, code and tables. Before `base.css` existed the tokens
+// were in every built page and nothing used them, so the browser's white page and serif
+// text showed through. Both are plain static imports: Astro bundles them into the page.
+import '../styles/tokens.css'
+import '../styles/base.css'
 
 interface Props {
   /** The page's `<title>` suffix and its `og:title`: the page names itself. */
   title: string
   /** The page's description, when the tagline is not the right one. */
   description?: string
+  /**
+   * Offer the analytics choice even when a decision is already stored. The privacy page sets
+   * it, because the page that says how consent is withdrawn is the page where it has to be
+   * withdrawable (W1.12, D93).
+   */
+  alwaysOffer?: boolean
 }
 
-const { title, description } = Astro.props
+const { title, description, alwaysOffer = false } = Astro.props
 
 // The whole generated layer, read and validated. A missing file, a file whose generated
 // header is gone, a data file this reader does not understand: the build stops here, with
@@ -103,6 +116,19 @@ const NAV = [
   { href: '/community/', label: 'Community' },
 ]
 
+// The footer's links into the site: entries of NAV, picked by route, so a label is never
+// written twice — and the privacy statement, which is not a section of the site but the page
+// every page owes a reader, and the page where the analytics choice can be taken back
+// (W1.12, reconciliation finding 16).
+const FOOTER_NAV = [
+  ...['/security/', '/changelog/'].map((href) => {
+    const item = NAV.find((entry) => entry.href === href)
+    if (!item) throw new Error(`Base.astro: the footer links ${href}, which NAV does not list`)
+    return item
+  }),
+  { href: '/privacy/', label: 'Privacy' },
+]
+
 // Analytics (D93): off in site.yaml today, and gated on consent even when it is on. The
 // origin is written here rather than added to `site.yaml`'s `allowed_hosts`, because that
 // list is the hosts the site's own pages link to and this one is the single third-party
@@ -112,9 +138,9 @@ const ANALYTICS_ORIGIN = 'https://www.googletagmanager.com'
 const ANALYTICS_SCRIPT_PATH = '/gtag/js'
 const analyticsEnabled = facts.analytics.enabled
 
-// The consent decision's key. W1.12 owns the banner that writes it, and the loader below
-// is deliberately written to read a decision rather than a flag: with the flag on and
-// nothing stored, this page fetches nothing.
+// The consent decision's key. `ConsentBanner.astro` writes it and this loader reads it, and
+// nothing else does: with the flag on and nothing stored, this page fetches nothing, which
+// is why the loader below is written to read a decision rather than a flag (D93).
 const CONSENT_KEY = 'fugaro:analytics-consent'
 ---
 
@@ -141,6 +167,15 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
     <meta property="og:description" content={pageDescription} />
     <meta property="og:url" content={canonicalHref} />
     <meta name="twitter:card" content="summary" />
+
+    {/* The icons and the manifest, all derived from brand/fugaro-logo.png by
+        scripts/gen-brand-icons.py and served from public/, so no icon is fetched from
+        anywhere but this site (D106). */}
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
 
     {fonts.map((font) => (
       <link rel="preload" as="font" type={font.type} href={font.href} crossorigin />
@@ -206,7 +241,9 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
     {analyticsEnabled && (
       <script is:inline define:vars={{ measurementID: facts.analytics.measurementID, origin: ANALYTICS_ORIGIN, scriptPath: ANALYTICS_SCRIPT_PATH, consentKey: CONSENT_KEY }}>
         // The analytics gate (D93, D106): nothing is fetched, and nothing is stored, until
-        // the visitor has consented. The reasoning is above this element, in the file.
+        // the visitor has consented. The decision is the banner's (ConsentBanner.astro); this
+        // reads it, and the listener below is how a choice takes effect on the page the
+        // visitor is already on. `load` is idempotent, so a second acceptance fetches once.
         ;(function () {
           function decide() {
             // Storage the browser refuses is not consent: the loader stays off.
@@ -246,9 +283,17 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
 
-    <header>
-      <a href="/" rel="home">{SITE_NAME}</a>
-      <nav aria-label="Sections">
+    {/* The consent banner (W1.12): the only thing that writes the decision the loader above
+        reads, and it is rendered only when analytics are on — so with the flag off there is
+        no banner, no script and no analytics origin anywhere in the artifact. It sits after
+        the skip link and before the header, which is where a keyboard reaches it first. */}
+    {analyticsEnabled && <ConsentBanner alwaysOffer={alwaysOffer} />}
+
+    <header class="site-header">
+      {/* The logo is decoration beside the name, so its alt is empty: the link's
+          accessible name is the word "Fugaro", said once. The file is 2x the size drawn. */}
+      <a class="site-wordmark" href="/" rel="home"><img src="/logo.png" alt="" width="47" height="32" decoding="async" />{SITE_NAME}</a>
+      <nav class="site-nav" aria-label="Sections">
         <ul>
           {NAV.map((item) => (
             <li>
@@ -265,13 +310,23 @@ const CONSENT_KEY = 'fugaro:analytics-consent'
       <slot />
     </main>
 
-    <footer>
-      {/* The repository, from site.yaml: the one fact the footer states, and a link to
-          where the site's own source and the guides it renders live (W1.7 links the same
-          repository from the docs hub). */}
-      <p>
-        <a href={facts.repository} rel="noopener">{facts.repository}</a>
-      </p>
+    <footer class="site-footer">
+      {/* The repository, from site.yaml, and two of the site's own sections from NAV above:
+          the security policy and the changelog, the two pages a reader looks for at the foot
+          of a project's site. No fact is written here that the layout did not already hold
+          (W1.7 links the same repository from the docs hub). */}
+      <nav aria-label="Footer">
+        <ul>
+          <li>
+            <a href={facts.repository} rel="noopener">{facts.repository}</a>
+          </li>
+          {FOOTER_NAV.map((item) => (
+            <li>
+              <a href={item.href}>{item.label}</a>
+            </li>
+          ))}
+        </ul>
+      </nav>
     </footer>
   </body>
 </html>

@@ -512,7 +512,6 @@ export interface FeatureFacts {
 /** website/data/site.yaml, validated: every value a page reads comes from here. */
 export interface SiteFacts {
   canonicalURL: string
-  secondaryDomain: string
   repository: string
   analytics: AnalyticsFacts
   features: FeatureFacts
@@ -521,7 +520,12 @@ export interface SiteFacts {
 }
 
 const SITE_FILE = 'website/data/site.yaml'
-const SITE_KEYS = ['allowed_hosts', 'analytics', 'canonical_url', 'features', 'min_runs', 'repository', 'secondary_domain', 'version']
+// The keys site.yaml may carry: the reader refuses any other, so a fact nobody reads is a
+// failure rather than a value no page and no test would ever see. A second domain's key is
+// not here and no longer exists in the file -- W2.2 wrote one and the owner ruled on
+// 2026-10-17 that there is no second domain (the amendment under plan Task W2.2), so the
+// key coming back is refused with the key list as well as by the Go boundary test.
+const SITE_KEYS = ['allowed_hosts', 'analytics', 'canonical_url', 'features', 'min_runs', 'repository', 'version']
 
 export function loadSiteFacts(): SiteFacts {
   const file = SITE_FILE
@@ -538,7 +542,9 @@ export function loadSiteFacts(): SiteFacts {
 
   // The canonical URL: the origin alone, because the canonical <link>, the sitemap, the
   // OpenGraph tag and every absolute link the site prints are built from it. The Go
-  // boundary test pins it to a reserved placeholder host until W2.2 writes the real one.
+  // boundary test refuses a reserved placeholder host here since W2.2 wrote the real
+  // domain, so a build with the placeholder back in this line fails there rather than
+  // shipping a canonical link to a name that cannot resolve.
   const written = asString(doc.canonical_url, file, 'canonical_url')
   const canonical = new URL(asURL(doc.canonical_url, file, 'canonical_url'))
   if (written !== canonical.origin) {
@@ -585,7 +591,6 @@ export function loadSiteFacts(): SiteFacts {
 
   return {
     canonicalURL: canonical.origin,
-    secondaryDomain: asString(doc.secondary_domain, file, 'secondary_domain'),
     repository: asURL(doc.repository, file, 'repository'),
     analytics: { enabled, measurementID },
     features: {
@@ -944,9 +949,9 @@ export function loadFonts(): { href: string; type: string }[] {
  * pointer at a file, and the site's rule about pointers is the one Global Constraint 9
  * states for downloads: a page names an artifact that exists. The sitemap arrives with
  * the integration that produces it — `@astrojs/sitemap`, declared in astro.config.mjs,
- * which no Part 1 task adds and W2.2's canonical-URL work is where it belongs — so the
- * link is emitted from the canonical origin the moment that line is there, and not
- * before.
+ * which no task adds yet (W2.2 set the canonical URL the sitemap would be built from and
+ * added no integration) — so the link is emitted from the canonical origin the moment
+ * that line is there, and not before.
  */
 export function loadSitemapHref(canonicalURL: string): string | null {
   const config = path.join(SITE_ROOT, 'astro.config.mjs')

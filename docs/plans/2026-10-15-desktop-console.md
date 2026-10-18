@@ -77,7 +77,7 @@ These hold for every task below, and the plan's own review checks them:
 6. **`belong` is never touched** by any step, agent-run or owner-run, and no fixture is ever recorded from it.
 7. **Nothing under `.github/workflows/` is created or edited by an agent.** The console's workflow text is written as **two staged files under `docs/pending-workflows/`** for the owner to copy — **`console-tests.yml`** (staged by Task 1.4, copied in by the owner as Task 1.5) and **`console-release.yml`** (the signing pipeline, staged by Task 4.2, copied in as Task 4.5) — which is the mechanism this repo already uses (`docs/pending-workflows/README.md`) and names as an owner step in `docs/release.md`'s "Before you tag". **The two are separate files because they must have different triggers**: the tests job runs on every pull request and every `main` push and holds no secret, the signing job runs only on a version tag and reads its secrets from a protected environment (design §9.4). One file carrying both would put the signing key's job on every pull-request run.
 8. **The Go module is untouched.** `console/` holds no Go package, `go.mod` and `go.sum` do not change, and no Go file references a path under `console/`. Task 0.3's test is what makes this a fact rather than an intention.
-9. **Security-sensitive tasks are flagged `SECURITY-SENSITIVE — independent opus review`** in their own heading and are not merged on a self-review. **This list is the headings, and nothing else is on it**: 1.1, 1.2, 1.3, 2.0, 4.1, 4.2 and 4.4, plus 5.2 when it is scheduled. (An earlier revision listed 2.1 and 4.3 and omitted 2.0, 4.4 and 4.5; the headings are the authority, and Task 2.1 is not flagged — it draws the states Task 2.0 defines rather than handling hostile text itself.) **A separate flag, `OWNER-RUN`, marks the tasks no agent performs at all** — 1.4's recordings, **Task 1.5's copy-in**, 4.3, and 4.5's copy-in — and the two flags are independent: a task may carry neither, either, or both.
+9. **Security-sensitive tasks are flagged `SECURITY-SENSITIVE — independent opus review`** in their own heading and are not merged on a self-review. **This list is the headings, and nothing else is on it**: 1.1, 1.2, 1.3, 2.0, **2.4 (added 2026-10-17)**, 4.1, 4.2 and 4.4, plus 5.2 when it is scheduled. (An earlier revision listed 2.1 and 4.3 and omitted 2.0, 4.4 and 4.5; the headings are the authority, and Task 2.1 is not flagged — it draws the states Task 2.0 defines rather than handling hostile text itself.) **A separate flag, `OWNER-RUN`, marks the tasks no agent performs at all** — 1.4's recordings, **Task 1.5's copy-in**, 4.3, and 4.5's copy-in — and the two flags are independent: a task may carry neither, either, or both.
 10. **Docs-only tasks keep the docs suite green**: every task that touches a `.md` file under `docs/` runs `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`, the command this repository's docs tests are reached by.
 
 ## Review Focus
@@ -150,6 +150,7 @@ Each row is one mergeable PR, green on its own:
 | C2 | **1.5** | **OWNER-RUN**: the owner copies the staged tests workflow in — no agent performs any step of it |
 | D | 2.0 | **SECURITY-SENSITIVE** (the text path) |
 | E | 2.1, 2.2, 2.3 | |
+| E2 | 2.4 | **SECURITY-SENSITIVE** (edits the IPC allow-list's schema); added 2026-10-17 |
 | F | 3.1, 3.2 | |
 | G | 4.1, 4.2, 4.4 | **SECURITY-SENSITIVE** (supply chain) |
 | H | 4.3, 4.5 | **OWNER-RUN**, no agent performs any step of either; 4.5 copies in the **signing** workflow |
@@ -434,6 +435,34 @@ The owner copies `docs/pending-workflows/console-tests.yml` to `.github/workflow
 **Commit:** `console: projects, run detail, and the replay buffer`
 
 **Red step — `Expected: FAIL`** — the unbuilt-section test before the not-built state exists, and the ring-bound test before the bound is enforced.
+
+### Task 2.4: Wire the Spend screen's controls — SECURITY-SENSITIVE, independent opus review
+
+**Added 2026-10-17 at the owner's approval** (the owner approved adding this task; nothing else about it is approved, and the plan's approval gate stands). **Why it exists:** Task 2.2 draws a range picker, a breakdown switch and a person-view knob, and **nothing wires them** — Task 2.2's steps name `--since`/`--until` and the switch, but no task makes a control change what is read. Numbered 2.4, after 2.3, and **no other task is renumbered**.
+
+**Files:** `console/src/renderer/screens/spend.ts`, `console/src/main/ipc.ts`, `console/src/preload/index.ts`, `console/test/unit/spend-controls.test.ts`, `console/test/unit/ipc.test.ts`, `console/test/e2e/spend.spec.ts`
+
+**Steps.**
+
+1. **Wire the range picker and the breakdown switch to `report --json` reads**, through the **existing** `runReport` operation (the design's §5.1 rule 5 names it) and `FugaroSource`'s allow-listed read — **no new write, no new spawn-table entry**: the spawn table's `report --json` row (design §5.1 rule 6: `--by …`, `--since`, `--until`, `--repo`, never `--csv`) already admits exactly these flags, and `internal/cli/report.go` defines them (`--since` is `YYYY-MM-DD` UTC or `Nd`, `--until` is `YYYY-MM-DD`, `--by` is `day|week|month|year|repo|model|person`). The screen sends `--since`/`--until` from the picker and `--by` from the switch (`day`, `week`, `month`, `repo`, `model`, `person`, the six Task 2.2 draws) and re-renders from the new document; a range beyond the retained window renders as a gap, not a zero (Task 2.2's rule).
+2. **The IPC allow-list's one documented extension, spelled out, and nothing beyond it.** **No new channel name is added to the preload object** (Task 1.2's frozen, versioned object keeps exactly its operations). The **existing `runReport` operation's closed argument schema**, validated in the main process, gains **three** fields and no others: `since` (a string matching `^\d{4}-\d{2}-\d{2}$` or `^\d+d$`), `until` (a string matching `^\d{4}-\d{2}-\d{2}$`) and `by` (an enum of exactly the six values above). **`--repo` is unchanged. There is no `--csv`, no path, no free-form string, no command and no URL.** The main process builds the argv itself from the validated values, in the table's order; the renderer never supplies argv. This is the only edit to `ipc.ts`/`preload/index.ts`, and the **never-reachable table of Task 1.2 is re-run unchanged**.
+3. **The person breakdown stays OFF by default, with an explicit operator switch** (design §2.3 and §6.2, as Task 2.2 states). The person option is not offered by the breakdown switch until the operator turns the separate switch on; **turning it on is a renderer-side view choice that sends the same `runReport` with `by` = `person` and nothing more**, the setting is per session unless the owner decides otherwise, and **the fixture still contains the person data** so the test is meaningful.
+
+**Tests.**
+
+- `spend-controls.test.ts` — changing the range changes the `--since`/`--until` of the next `report --json` spawn and nothing else; changing the switch changes `--by` only; **the person view is not on screen, and no spawn carries `--by person`, until the operator turns the switch on** (asserted on the screen model and on the spawn log, with the mutation being a default of `on`); a range or `by` value outside the schema is refused before spawn; the spend model still never adds `NOTIONAL~` to a real total after a re-read.
+- `ipc.test.ts` — the `runReport` schema accepts exactly the three fields and refuses a fourth (`csv`, `path`, `repo` as an array, an unknown `by`); the preload object is still frozen and exposes **no channel that was not there before this task** (a diff against the frozen operation list); the never-reachable table still passes.
+- `spend.spec.ts` — the person view is absent in the default golden and present after the switch is turned on; a range change redraws the series.
+
+**Command:** `npm run test:unit && npm run test:e2e -- spend`
+
+**Depends on:** Task 2.2 (the screen that draws the controls), and Task 1.2 (the allow-list it extends) already merged.
+
+**Commit:** `console: wire the spend screen's range and breakdown controls through the allow-listed report read`
+
+**Reviewer tier:** the same as Task 2.2 (a standard review of the screen), **plus: this task edits the IPC allow-list's schema (`ipc.ts`, `preload/index.ts`), so it is SECURITY-SENSITIVE and gets an independent opus review** on the diff, by a reviewer that did not write it (Global Constraint 9). The reviewer should try to widen the schema and to reach a command through `by`/`since`/`until`.
+
+**Red step — `Expected: FAIL`** — the person-view test against a default that shows it, and the schema test against a `runReport` that accepts a fourth field.
 
 ---
 

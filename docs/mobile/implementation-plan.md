@@ -4,7 +4,9 @@
 
 **Status: plan only; nothing is implemented.** No app, no mailbox, no shared module and no rules change exists. **The owner answered every decision this plan depends on on 2026-10-17** ([reconciliation.md](reconciliation.md) D110–D129, D113b and D113c) — D112 **against** the recommendation (direct RTDB reads) and D113c as option (ii) (a new `fugaro` command) — and the answers are written back below (Task P0.4). **Answering a decision is not approving a task: nothing in this plan is approved**, the gate at the end of this file is not passed, and three tensions the answers create are open ([reconciliation.md](reconciliation.md) §4, "Open tensions").
 
-**Spec.** [spec.md](spec.md) (the owner's spec, verbatim). **Reconciliation.** [reconciliation.md](reconciliation.md) — findings F1–F37, decisions D110–D129, open items. **Index.** [README.md](README.md).
+**Status as of 2026-10-17, later (added by the functional-spec v0.1 reconciliation; the paragraph above is kept as written).** Some of this plan now exists: **P0.1, P0.2, P0.3, P1.2, P1.3 and P1.4 are merged on `main`** (`shared/`), the owner **approved Phase 2 (P2.1, P2.2) on 2026-10-17**, and **P2.1 is draft PR #532**. Nothing else is built. **Phase 6 below is proposed by [functional-spec-reconciliation.md](functional-spec-reconciliation.md) and is NOT APPROVED**: none of its tasks may start without the owner's explicit go, and their decisions D160–D172 were **answered by the owner on 2026-10-17** (D162 and D168 against the recommendation), which approves none of them; Phase 6's rules changes land **after #532** (O2). The owner's **amendment of D128 (2026-10-17)** — cancel, approve/merge and confirming an action allowed on the phone with a spoken read-back and an explicit "confirm" — is what P6.2 and P6.7 would build; recording it approves neither.
+
+**Spec.** [spec.md](spec.md) (the owner's spec, verbatim); [functional-spec-v0.1.md](functional-spec-v0.1.md) (the owner's functional spec, verbatim), reconciled in [functional-spec-reconciliation.md](functional-spec-reconciliation.md). **Reconciliation.** [reconciliation.md](reconciliation.md) — findings F1–F37, decisions D110–D129, open items. **Index.** [README.md](README.md).
 
 **Related.** [voice.md](../design/voice.md) · [2026-10-16-voice.md](../plans/2026-10-16-voice.md) · [desktop-console.md](../design/desktop-console.md) · [desktop-console-v2.md](../design/desktop-console-v2.md) · [managed-projects.md](../design/managed-projects.md) · [console/docs/json-contract.md](../../console/docs/json-contract.md) · [gcp-live-checklist.md](../gcp-live-checklist.md)
 
@@ -28,7 +30,7 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 | The sweeper shape | `internal/budget/sweep.go` (F26) | P4.1 |
 | The check register | `docs/gcp-live-checklist.md` (F30) | P4.2 |
 
-**No existing CLI command changes its behaviour.** The only Go this plan touches is `internal/projectpolicy/version.go` (the `RulesVersion` bump, P2.1), the rules template's **tests** (P2.1, P2.2 — the template itself is JSON, not Go) and the boundary allow-list's one deliberate entry (P3.1). **Where the consumer (P4.1) lives is D113c's answer of 2026-10-17: a new `fugaro` command**, so it is Go under `internal/cli` — a new file (written `internal/cli/mailbox.go` below as a placeholder; the command's name is open, tension (c)) plus one registration line in `internal/cli/root.go` — and under console D19 it is written in **a CLI plan** rather than here. Nothing here rewrites a command that exists.
+**No existing CLI command changes its behaviour.** The only Go this plan touches is `internal/projectpolicy/version.go` (the `RulesVersion` bump, P2.1), the rules template's **tests** (P2.1, P2.2 — the template itself is JSON, not Go) and the boundary allow-list's one deliberate entry (P3.1). **Where the consumer (P4.1) lives is D113c's answer of 2026-10-17: a new `fugaro` command**, so it is Go under `internal/cli` — a new file (`internal/cli/mailbox.go`, the file of **`fugaro mailbox`**, named by the owner on 2026-10-17, tension (c)) plus one registration line in `internal/cli/root.go` — and under console D19 it is written in **a CLI plan** rather than here. Nothing here rewrites a command that exists.
 
 ---
 
@@ -41,7 +43,8 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 | **2 — The rules** | The template's new subtree, the golden and parity, the emulator's denial cases, and the owner-run deploy | P2.1–P2.3 | Yes, with one caveat — **P2.2 is a test file**; **P2.1 edits the production rules template**, which ships only when the owner deploys it (P2.3), and **P2.3 itself is a live deploy and is not mergeable by an agent** |
 | **3 — The app** | The skeleton and account store, the feed reader, the job list, the audio interfaces, the mailbox client, the voice screen | P3.1–P3.6 | Yes — the app is its own artifact and merges without touching the CLI |
 | **4 — The other end, the checks, the release** | The consumer beside the orchestrator, checks 80–89, the CI job, the store path | P4.1–P4.4, P4.2a | P4.1 yes — **D113c** answered it a new `fugaro` command, so it merges from a CLI plan (D19); P4.2a and P4.2 write the register, and **the checks they write, P4.3 and P4.4 are owner-run** |
-| **5 — Later, unscheduled** | Phase 2 hosting, push, the cloud STT/TTS allow-list | P5.1–P5.3 | Unscheduled by construction |
+| **5 — Later, unscheduled** | Phase 2 hosting, push, the cloud STT/TTS allow-list, the conversational front agent | P5.1–P5.4 | Unscheduled by construction |
+| **6 — PROPOSED, NOT APPROVED (functional spec v0.1)** | Wake-word routing and the app-command grammar, the spoken-confirmation machine, the schema and rules for agents/prompts/action records/the MAC, the prompt queue, `fugaro pair`, the consumer's enforcement, pairing and overview in the app, the text screen, the offline gate, checks 100–104 | P6.1–P6.13 | Yes, each — but **none is approved**, and each waits on the D160–D172 rows its line names |
 
 ---
 
@@ -64,6 +67,8 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 | **88** | Push delivery — **only if D121 says yes** | P5.2 | Needs a real push service |
 | **89** | A signed EAS build, and the store's internal track | written by P4.2a; run at P4.4 | Needs the owner's signing keys and store accounts |
 
+**Checks 100–109 (proposed, NOT APPROVED).** The functional-spec reconciliation took a second block, **100–109**, after reading every number in use on `main` and in every open pull request (credentials-service holds 90–99). Phase 6 proposes **100** (QR pairing end to end, with the code confirmation), **101** (revocation: deleting the device node denies the next read; the Auth user's token timing), **102** (the wake word's recognition rate on the oldest supported device), **103** (a spoken cancel and a spoken merge on the **sandbox repository only**, each with its read-back and "confirm", and the refusals: a misheard confirm, a replayed confirm, a confirm for another target), **104** (offline: no command is sent or queued while disconnected). **105–109 are reserved and unused.** All are owner-run; P6.11 writes 100–104 into the register.
+
 **Checks 81, 82 and 89 are written into the register by P4.2a — before P2.3 and P4.4 run them — and checks 80 and 83–88 by P4.2; all ten are run by the owner.** A check is never run before its text is in the register. Until they are run, the app's live behaviour is **unverified**, and no task below may claim otherwise.
 
 ---
@@ -74,7 +79,7 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 2. **The gating six come first.** P0.1 onward starts only after the owner answers **D110, D111, D112, D113, D113b and D114** and passes the gate at the end of this file. The recommendations in the reconciliation are **not** answers. *(2026-10-17: the owner answered all six, and the rest; the gate is not passed, so no task may start.)*
 3. **No ruling is reversed silently.** Any edit to [voice.md](../design/voice.md)'s D49 cell **or its D50 cell (the amendment D119 makes)**, to [desktop-console.md](../design/desktop-console.md), or to the console v2 pair is a **separate, owner-approved, docs-only change** (D129) — made on 2026-10-17 by the change that wrote these answers back, which amended Voice D40, D42, D49 and D50 keeping their original text visible and recorded D112 in the two console designs. If D110 is answered "no", this plan's phases 1, 3 and 4 are not built at all.
 4. **The app holds exactly two items per account, both in platform secure storage, both never logged and never in a settings file: a Firebase Auth ID token, and — only if D113b's pairing-key question is answered (a) — the per-pairing MAC key** (**D111, answered 2026-10-17 as recommended**; the pairing key presupposes D113b's option (a), which D113b's answer does not state — tension (b)). The pairing key is a **new secret**; the laptop keeps its copy in the **OS keychain**, and the consumer's settings hold only the keychain item's **name** (Voice D42(2)). Never a Fugaro or cloud admin credential, never an LLM key, never a service-account JSON, never a `fugaro` config file.
-5. ~~**No direct database reads by the app** (D112's recommendation; the owner's answer governs).~~ **Amended 2026-10-17 by D112's answer: the app reads the database directly** (the row's alternative (iii)), signed in with Firebase Auth, under a **user-claim read grant** the rules change adds (P2.1) and the emulator scopes (P2.2). This reverses console D1's "option B never" **for the mobile app only**. **Which families the grant covers, and whether the job list is read from them or from a mirror of the documented feed (D124), are open** — tensions (a) and (b) in [reconciliation.md](reconciliation.md) §4 — and **P3.2 may not start until tension (a) is resolved**.
+5. ~~**No direct database reads by the app** (D112's recommendation; the owner's answer governs).~~ **Amended 2026-10-17 by D112's answer: the app reads the database directly** (the row's alternative (iii)), signed in with Firebase Auth, under a **user-claim read grant** the rules change adds (P2.1) and the emulator scopes (P2.2). This reverses console D1's "option B never" **for the mobile app only**. **Which families the grant covers, and whether the job list is read from them or from a mirror of the documented feed (D124), were open** — tensions (a) and (b) in [reconciliation.md](reconciliation.md) §4 — **and were resolved 2026-10-17: direct reads under the feed's reader rules, and a grant of exactly `config/caps/**`, `spend/$day/**`, `config/kill/**` and the phone's own mailbox (outbox, heartbeat) — not `agents/$slug/$run`, no new `.read` on `outcomes/**`.**
 6. **The phone writes two paths and no others, both inside its own account's mailbox subtree** (F21, D113): (a) its own **inbox messages** — one `.write` on the message node, in the subtree idiom the template already uses for `agents/$slug/$run`, with `.validate`-only children and `"$other"` denied — and (b) the **ack on a message it has already spoken**, which is **one write more than "inbox messages only" and needs the owner's explicit approval** (P3.6, D113). The **heartbeat is not the phone's write**: the spec has the orchestrator write it, and that writer's identity and grant are **D113b**. A rules change that would let a phone write any other path is not acceptable, and the emulator asserts the denial. **Under D112's answer the phone also reads**, and its reads are fenced the same way: only the families the user-claim read grant names (tension (b)), with the emulator asserting the **read** denials too.
 7. **Every rules change is owner-deployed**, with the regenerated golden, the parity test, a `RulesVersion` bump and the emulator's denial cases, and with the deploy performed by the owner through `fugaro init --firebase` (F20, D113).
 8. **No agent edits `.github/workflows/`.** GitHub refuses Fugaro's push of workflow changes, so the CI job the shared package needs (P4.3) is **owner-made**, and this plan describes the change rather than making it.
@@ -83,13 +88,13 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 11. **`belong` is never touched by an agent**, and no fixture is ever recorded from it (F31). The `belong` account is added by the owner by hand.
 12. **The app never stores or uploads audio** (D118, answered 2026-10-17 as recommended). STT is on-device; the mailbox carries text.
 13. **Every task's verification names the exact command**, and every verification runs without a live cloud, a device or a network.
-14. **A task marked SECURITY-SENSITIVE gets an independent review** (an opus review on the diff, by a reviewer that did not write it) before it merges. The tasks marked below are: P0.3, P1.1, P1.2, P2.1, P2.2, P3.1, P3.6, P4.1.
+14. **A task marked SECURITY-SENSITIVE gets an independent review** (an opus review on the diff, by a reviewer that did not write it) before it merges. The tasks marked below are: P0.3, P1.1, P1.2, P2.1, P2.2, P3.1, P3.6, P4.1 — and, in Phase 6 (proposed, NOT APPROVED), P6.1, P6.2, P6.3, P6.4, P6.6, P6.7, P6.8, P6.10, P6.12, P6.13.
 
 ---
 
 ## What may start before the decisions are answered
 
-**Still nothing — as of 2026-10-17, for a different reason.** The owner answered every row on 2026-10-17, so the paragraph below no longer describes the state of the decisions; it is kept as written. What holds every task back now is the **approval gate**, which is not passed, and the three **open tensions** ([reconciliation.md](reconciliation.md) §4), which hold back P2.1, P2.2, P3.1, P3.2, P3.3, P3.6 and P4.1. The one task the answers themselves perform is **P0.4**, the write-back.
+**Still nothing — as of 2026-10-17, for a different reason.** The owner answered every row on 2026-10-17, so the paragraph below no longer describes the state of the decisions; it is kept as written. What holds every task back now is the **approval gate**, which is not passed. The three tensions ([reconciliation.md](reconciliation.md) §4) that held back P2.1, P2.2, P3.1, P3.2, P3.3, P3.6 and P4.1 were **resolved by the owner on 2026-10-17**; resolving them approves no task. The one task the answers themselves perform is **P0.4**, the write-back.
 
 *As written before the answers:* **Nothing.** The owner's instruction for the **website** work was to start as soon as we can; **no equivalent instruction exists for the mobile work**, and this plan does not borrow one. The spec arrived with eleven labelled conflicts against rulings this repository has already made, and every one of them is a decision row with an **empty** answer column (D110–D129). Until the owner answers:
 
@@ -131,12 +136,19 @@ A reviewer of a **task** should read that task's own "Reviewer tier" line. The S
 | `shared/mailbox-sim/` | P1.5 | The deterministic mailbox simulator the end-to-end tests run against |
 | `internal/budget/rules/emulator_mailbox_test.go` | P2.2 | The emulator's denial cases |
 | `mobile/` (the app: `package.json`, `app.json`, `src/`) | P3.1–P3.6 | The Expo app, its own artifact, outside the Go module |
-| The consumer beside the orchestrator | P4.1 | **D113c answered (ii), 2026-10-17:** a new `fugaro` command — `internal/cli/mailbox.go` (placeholder name; tension (c)) and its tests — written in a CLI plan (D19), not this one |
+| The consumer beside the orchestrator | P4.1 | **D113c answered (ii), 2026-10-17:** a new `fugaro` command, **`fugaro mailbox`** — `internal/cli/mailbox.go` (named by the owner 2026-10-17, tension (c)) and its tests — written in a CLI plan (D19), not this one |
+
+**Proposed by Phase 6 (NOT APPROVED), created:** `shared/command/` (P6.1) · `shared/confirm/` (P6.2) · `shared/prompts/` (P6.5) · `internal/budget/rules/emulator_pairing_test.go` (P6.4) · `internal/cli/pair.go` and its tests (P6.6, in a CLI plan per console D19) · `internal/budget/token/device.go` and its test, `internal/budget/sweep_device_test.go` (P6.6) · `mobile/src/text/` (P6.9) · `mobile/src/pairing/`, `mobile/src/overview/` (P6.8).
 
 ### Edited
 
 | Path | Task | The edit |
 |---|---|---|
+| `shared/mailbox-schema/` | **P6.3 (proposed, NOT APPROVED)** | The fields D161, D167, D168, D169 and D171 need: `agent`, `kind`, `options`, `reply_to`, the action record, `mac` (no `expires_at` field: under D168 as amended a prompt expires at D118's TTL, computed by the consumer from `at`) |
+| `internal/budget/rules/rules.json.tmpl`, `rules.go`, `testdata/rules.golden.json`, `internal/projectpolicy/version.go`, `docs/design/m9-budget-and-dashboard.md` | **P6.4 (proposed, NOT APPROVED)** | The same fields in the mailbox subtree, and the device-node conjunct in `USER` (D166) — after P2.1, never beside it |
+| `internal/cli/mailbox.go`, `internal/cli/root.go`, `internal/budget/sweep.go` | **P6.7, P6.6, P6.13 (proposed, NOT APPROVED)** | The consumer's enforcement (P6.7) and its sweeper rule for waiting prompts (P6.13); one registration line for `fugaro pair` and the sweep's `m~` rule (P6.6; no other task writes `sweep.go`) |
+| `mobile/src/mailbox/`, `mobile/src/voice/` | **P6.10, P6.12 (proposed, NOT APPROVED)** | The offline gate; the spoken confirmation and routing in the voice screen |
+| `docs/gcp-live-checklist.md` | **P6.11 (proposed, NOT APPROVED)** | Checks 100–104 |
 | `docs/mobile/reconciliation.md`, `docs/mobile/implementation-plan.md`, `docs/mobile/README.md` | P0.4 | The owner's answers, written into the empty column, and the plan updated to match |
 | `internal/budget/rules/rules.json.tmpl` | P2.1 | The new mailbox and heartbeat subtree |
 | `internal/budget/rules/testdata/rules.golden.json` | P2.1 | Regenerated |
@@ -195,6 +207,29 @@ P3.1 ──┬─► P3.2 ──► P3.3
        └─► P4.4
 
 every task a check covers ──► P4.2
+
+Phase 6 — PROPOSED, NOT APPROVED:
+P0.1 ──┬─► P6.1 ──┬─► P6.8
+       │          └─► P6.12
+       └─► P6.2 ──┬─► P6.7
+                  └─► P6.12
+P6.3 ──► P3.6          (P3.6 signs inbox messages; added 2026-10-17)
+P0.2 ──► P6.3 ──┬─► P6.4 ──┬─► P6.6 ──► P6.8
+                │          ├─► P6.7
+                │          └─► P6.11
+                ├─► P6.5 ──┬─► P6.9
+                │          └─► P6.12
+                ├─► P6.7
+                └─► P6.10
+P2.2 ──► P6.4
+P4.1 ──┬─► P6.6          (shared file: internal/cli/root.go)
+       └─► P6.7          (shared file: internal/cli/mailbox.go)
+P1.3, P1.4 ──► P6.5
+P3.1 ──► P6.8
+P3.6 ──┬─► P6.9
+       └─► P6.10         (shared directory: mobile/src/mailbox/)
+P3.5 ──► P6.12           (shared directory: mobile/src/voice/)
+P6.7 ──► P6.13           (shared file: internal/cli/mailbox.go)
 ```
 
 **Every arrow is a "Depends on" line below. There is no edge that is not written down.**
@@ -213,6 +248,14 @@ every task a check covers ──► P4.2
 | `docs/gcp-live-checklist.md` | **P4.2a** (level 2: checks 81, 82, 89) **and P4.2** (level 5: checks 80, 83–88) | Two writers at **different levels**, never the same one. P2.3 and P4.4 **run** checks 81, 82 and 89 and do not write the register — which is why P4.2a comes before them |
 | `docs/mobile/*` | **P0.4 only** | It is the only task that writes an answer |
 | `.github/workflows/ci.yml` | **P4.3, owner-made** | No agent writes it (Global Constraint 8) |
+| **Phase 6 (proposed, NOT APPROVED) adds these writers, each at a different level from the earlier writer of the same file:** | | |
+| `shared/mailbox-schema/` | **P0.2** (level 1, merged) **and P6.3** (level 2) | P6.3 makes `mac` **required on every inbox and outbox message and on the heartbeat**, and adds the canonical serialisation; P1.1 (level 2, `shared/mailbox/`) validates messages and P3.6 (level 3) writes the inbox, so P3.6 depends on P6.3 and signs; P1.1 does not write the schema |
+| `internal/budget/rules/rules.json.tmpl`, `rules.go`, `testdata/rules.golden.json`, `internal/projectpolicy/version.go`, `docs/design/m9-budget-and-dashboard.md` | **P2.1** (level 0) **and P6.4** (level 3) | P6.4 starts only after P2.2 has merged; if the owner folds P6.4's changes into draft #532 instead (open item O2), P6.4 shrinks to its emulator file |
+| `internal/cli/root.go` | **P4.1** (level 3) **and P6.6** (level 4) | One registration line each; the explicit edge P4.1 → P6.6 keeps them apart |
+| `internal/cli/mailbox.go` | **P4.1** (level 3), **P6.7** (level 4) **and P6.13** (level 5) | P6.7 extends the consumer P4.1 creates; P6.13 changes only its sweeper rule, after P6.7 |
+| `mobile/src/mailbox/` | **P3.6** (level 3) **and P6.10** (level 4) | The offline gate wraps P3.6's client |
+| `mobile/src/voice/` | **P3.5** (level 4) **and P6.12** (level 5) | The confirmation dialogue sits on P3.5's screen |
+| `docs/gcp-live-checklist.md` | **P4.2a** (level 2), **P6.11** (level 4) **and P4.2** (level 5) | Three writers at three levels |
 
 ### Levels
 
@@ -224,7 +267,19 @@ every task a check covers ──► P4.2
 | **3** | **P1.5** the mailbox simulator · **P3.6** the app's mailbox client · **P4.1** the consumer · **P2.3** the owner-run deploy · **P4.4** the store path (owner-run) | No | P1.5 standard · **P3.6 SECURITY-SENSITIVE** · **P4.1 SECURITY-SENSITIVE** · P2.3 owner · P4.4 owner | `shared/mailbox-sim/` · `mobile/src/mailbox/` · the consumer's files — **D113c answered (ii)**: `internal/cli/mailbox.go` (placeholder name) and one line of `internal/cli/root.go`, in a CLI plan · none (a live deploy) · none (the owner's accounts) |
 | **4** | **P3.5** the voice screen | No | standard | `mobile/src/voice/` |
 | **5** | **P4.2** checks 80 and 83–88, written into the register | No | standard | `docs/gcp-live-checklist.md` |
-| **unscheduled** | **P5.1** phase 2 hosting · **P5.2** push · **P5.3** the cloud STT/TTS allow-list | **No, and not scheduled** | — | — |
+| **unscheduled** | **P5.1** phase 2 hosting · **P5.2** push · **P5.3** the cloud STT/TTS allow-list · **P5.4** the conversational front agent | **No, and not scheduled** | — | — |
+
+**Phase 6 — PROPOSED, NOT APPROVED — placed on the same levels** (a task is on the level after its deepest dependency; no level gains a second writer of a file, per the shared-files table):
+
+| Level | Phase 6 tasks | Approved? | Reviewer | Files touched |
+|---|---|---|---|---|
+| **1** | **P6.1** wake-word router and app-command grammar · **P6.2** the spoken-confirmation machine | **No** | **P6.1 SECURITY-SENSITIVE** · **P6.2 SECURITY-SENSITIVE** | `shared/command/` · `shared/confirm/` |
+| **2** | **P6.3** the schema extension | **No** | **SECURITY-SENSITIVE** | `shared/mailbox-schema/` |
+| **3** | **P6.4** the rules for the new fields and the device node · **P6.5** the prompt queue and interrupt policy | **No** | **P6.4 SECURITY-SENSITIVE (mandatory)** · P6.5 standard | the rules files and `internal/budget/rules/emulator_pairing_test.go` · `shared/prompts/` |
+| **4** | **P6.6** `fugaro pair` · **P6.7** the consumer's enforcement · **P6.9** the text screen · **P6.10** the offline gate · **P6.11** checks 100–104 written | **No** | **P6.6, P6.7, P6.10 SECURITY-SENSITIVE** · P6.9, P6.11 standard | `internal/cli/pair.go`, one line of `internal/cli/root.go`, `internal/budget/token/device.go`, `internal/budget/sweep.go`, `internal/budget/sweep_device_test.go` · `internal/cli/mailbox.go` · `mobile/src/text/` · `mobile/src/mailbox/` · `docs/gcp-live-checklist.md` |
+| **5** | **P6.8** pairing and the overview in the app · **P6.12** the confirmation and routing in the voice screen · **P6.13** the real sweeper's prompt rule | **No** | **P6.8, P6.12, P6.13 SECURITY-SENSITIVE** | `mobile/src/pairing/`, `mobile/src/overview/` · `mobile/src/voice/` · `internal/cli/mailbox.go` (the sweeper part) and its test |
+
+**Phase 6 adds no level.** Its longest chain is **P0.1 → P0.2 → P6.3 → P6.4 → P6.6 → P6.8**, six deep — the same depth as the plan's critical path — of which P0.1 and P0.2 are already merged; the spoken-confirmation chain is **P0.1 → P6.2 → P6.12**, gated in practice by P3.5.
 
 **Six levels, and up to nine tasks in one level.** Level 1 is by far the widest — the shared package's modules are parallel with each other and with the app's own work — and the width is real rather than a scheduling wish: level 1's nine tasks write **nine different paths** and no two of them touch one file. The owner-run P2.3 and P4.4 sit at level 3 because each runs a check P4.2a must write first.
 
@@ -311,7 +366,7 @@ every task a check covers ──► P4.2
 
 **Files.** `shared/mailbox/`.
 **Depends on.** P0.2.
-**Verification.** Tests over the schema: a message carries an id; delivering the same id twice is **acted on once** and the second delivery is acknowledged as a duplicate, not re-acted; an id from a different sender is not deduped against; a message older than the window is refused as a replay; the state machine's transitions are total (every state × every event has a defined outcome, asserted by an exhaustive table test).
+**Verification.** Tests over the schema: a message carries an id; delivering the same id twice is **acted on once** and the second delivery is acknowledged as a duplicate, not re-acted; an id from a different sender is not deduped against; a message older than the window is refused as a replay *(D173, owner ruling 2026-10-17: the 6-hour window applies to commands — cancel, merge, launch, confirm; for prompts the acceptance window is the prompt's TTL, D118. P1.1 ships a **kind-parameterised window API** — the caller passes the kind or the TTL — over the kinds that exist; P6.3 adds the `kind` field; `MAX_WINDOW_MS` must be at least D118's TTL, whose value the owner set on 2026-10-17 at **72 hours** — inside the 7-day cap — so the consumer passes `promptTtlMs` = 259 200 000; [functional-spec-reconciliation.md](functional-spec-reconciliation.md) §3.6, O5)*; the state machine's transitions are total (every state × every event has a defined outcome, asserted by an exhaustive table test).
 **Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.**
 
 **Why it is the load-bearing module.** F19 records that the tree has no message id, no ordering, no idempotency, no replay protection and no ack. This module is where all five are decided, and it is what answers D49's "no ack, no expiry, no dedupe" objection **in code rather than in prose**.
@@ -359,7 +414,7 @@ every task a check covers ──► P4.2
 ### Task P2.1: The template's new subtree, the golden, the parity and the version bump — SECURITY-SENSITIVE
 
 **Files.** `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/testdata/rules.golden.json`, `internal/projectpolicy/version.go`, and **the document that describes the database tree: `docs/design/m9-budget-and-dashboard.md`** — §6.2 ("Data model") for the tree, §6.4 ("Security: per-run tokens and database rules (D1)") for what the rules permit, §6.5 ("The agent registry without `onDisconnect`") for the heartbeat's nearest precedent.
-**Depends on.** D113 and D113b answered (2026-10-17), **and D112's answer — which adds read grants — with tensions (a) and (b) resolved**, because they decide which families the user claim may read.
+**Depends on.** D113 and D113b answered (2026-10-17), **and D112's answer — which adds read grants — with tensions (a) and (b) resolved (both resolved 2026-10-17)**, because they decide which families the user claim may read.
 **Verification.** `go test ./internal/budget/rules/...` — `TestRulesGolden`, `TestGeneratedRulesParse` and `TestRulesParity` — and `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1` for the document (it is a `docs/design/*.md` file, so the docs tests see it). **No emulator case here**; that is P2.2.
 **Reviewer tier.** **SECURITY-SENSITIVE — MANDATORY independent opus review.** This is the widest change in the plan: it is the only one that changes what the database permits.
 
@@ -367,13 +422,17 @@ every task a check covers ──► P4.2
 
 **What D112's answer adds (2026-10-17).** The phone reads the database directly, so the user claim also needs **`.read` grants**: on its own account's mailbox subtree (the outbox and the heartbeat) and on exactly the families tension (b) settles — D112's row named `agents/$slug/$run`, `config/caps/**`, `spend/$day/**`, `config/kill/**`, and a `.read` on `outcomes/$day/$slug/$run`, which has none today (F13). Each grant is scoped by the user claim to the user's own installation, and none is wider than the owner's ruling.
 
+**Resolved 2026-10-17 (tension (b1)) — the read grants are exactly these.** `.read` for the user claim on **`config/caps/**`**, **`spend/$day/**`**, **`config/kill/**`** and **its own mailbox (the outbox and the heartbeat)** — and on **nothing else**. **No `.read` on `agents/$slug/$run`** (the list above names it only as D112's row did, and the owner struck it) and **no new `.read` on `outcomes/$day/$slug/$run`** (it keeps having none, F13). The job list therefore has **no run titles** until a separate owner decision. The golden (`rules.golden.json`) and `TestRulesParity` pin that set, and a grant on any other family fails them. The MAC key of tension (b2) adds nothing to the template: it reaches no database.
+
+**Resolved 2026-10-17 (tension (b1)) — the read grants are exactly these.** `.read` for the user claim on **`config/caps/**`**, **`spend/$day/**`**, **`config/kill/**`** and **its own mailbox (the outbox and the heartbeat)** — and on **nothing else**. **No `.read` on `agents/$slug/$run`** (the list above names it only as D112's row did, and the owner struck it) and **no new `.read` on `outcomes/$day/$slug/$run`** (it keeps having none, F13). The job list therefore has **no run titles** until a separate owner decision. The golden (`rules.golden.json`) and `TestRulesParity` pin that set, and a grant on any other family fails them. The MAC key of tension (b2) adds nothing to the template: it reaches no database.
+
 **What it must not do.** Loosen any existing `.write`, or any `.read` beyond the families the owner names under tension (b) (F11, F13). *(Amended 2026-10-17: the original sentence, "Loosen any existing `.read` or `.write`", held before D112 was answered direct reads.)* Grant a phone anything but the two writes D113 names — its own inbox messages and the ack on a message it has spoken (F21). Grant the **consumer** — D113b's writer, wherever D113c puts it — anything but the outbox and the heartbeat (D113b). Admit a signed-in user anywhere else (D14's argument, F8). Each of those is a review question and each has an emulator case in P2.2.
 
 ### Task P2.2: The emulator's denial cases — SECURITY-SENSITIVE
 
 **Files.** `internal/budget/rules/emulator_mailbox_test.go`.
 **Depends on.** P2.1.
-**Verification.** `go test -tags firebase ./internal/budget/rules/...` against the pinned `firebase-tools`. The cases **assert denials**, and there are at least: a signed-in user writing outside its own inbox is refused; writing into another user's inbox is refused; ~~reading `/config/**` is refused; reading `/outcomes/**` is refused;~~ *(amended 2026-10-17: under D112's answer these become "reading any family the user-claim read grant does not name is refused", the list being fixed by tension (b));* reading `/fugaro/**` is refused; **reading another account's mailbox subtree is refused**; **a read by a user claim of another installation is refused**; a message over the size bound is refused; a message missing the schema's required fields is refused; **a write to the outbox or the heartbeat by anything other than D113b's writer identity is refused**; **an ack on a message that is not one's own is refused**; and the positive controls — writing one's own well-formed inbox message, and acking one's own message, both succeed, and **each granted read succeeds for the claim it is scoped to and for no other**. **Read scoping per user claim is part of this task's denials** (D112's answer): a rules test that proves only the writes are fenced leaves the reads open.
+**Verification.** `go test -tags firebase ./internal/budget/rules/...` against the pinned `firebase-tools`. The cases **assert denials**, and there are at least: a signed-in user writing outside its own inbox is refused; writing into another user's inbox is refused; ~~reading `/config/**` is refused; reading `/outcomes/**` is refused;~~ *(amended 2026-10-17: under D112's answer these become "reading any family the user-claim read grant does not name is refused", the list being fixed by tension (b));* reading `/fugaro/**` is refused; **(resolved 2026-10-17, tension (b1): a read of every family the grant does not name is refused by an explicit case each — `agents/$slug/$run`, `outcomes/$day/$slug/$run`, the rest of `config/**` beside `config/caps/**` and `config/kill/**`, and `/fugaro/**` — and the four named families are read-allowed only for the claim they are scoped to)**; **reading another account's mailbox subtree is refused**; **a read by a user claim of another installation is refused**; a message over the size bound is refused; a message missing the schema's required fields is refused; **a write to the outbox or the heartbeat by anything other than D113b's writer identity is refused**; **an ack on a message that is not one's own is refused**; and the positive controls — writing one's own well-formed inbox message, and acking one's own message, both succeed, and **each granted read succeeds for the claim it is scoped to and for no other**. **Read scoping per user claim is part of this task's denials** (D112's answer): a rules test that proves only the writes are fenced leaves the reads open.
 **Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.**
 
 **Why the denials are the point.** A rules test that only asserts what succeeds proves the feature works; it does not prove the fence holds. F21 is a claim about what a phone **cannot** do, and this is the only place it is tested.
@@ -411,12 +470,15 @@ every task a check covers ──► P4.2
 **Verification.** Tests over recorded documents, with **no child process and no network**: a non-JSON line is skipped; a missing field becomes `unavailable` and never `0`; the newest document is not accumulated onto the previous one; a changed `day` is treated as a break; the degraded shape renders as degraded rather than as zero spend; and **a feed that stops arriving is not treated as a dead process** — silence is not death (§10.13).
 **Reviewer tier.** standard.
 
-**Every rule in this task is a rule the contract already states** (`console/docs/json-contract.md` §10.13, F35), and they are rules about **documents**, which is why they carry over to a phone. **The task builds no child-process supervisor**: §10.11's "does option A need a supervisor process? Yes" is about **the console** — a desktop sidecar beside a binary the operator has, `desktop-console.md` D13's binary path — and a phone has no such thing: there is no iOS or Android build of the Go CLI, and a phone could not execute one if there were. ~~**What is *not* designed is how the document reaches the phone**, and that is **D112's open decision**; this task does not start until it is answered.~~ **Amended 2026-10-17:** D112 is answered **direct RTDB reads**, so the document reaches the phone through a Firebase listener under the user-claim read grant (P2.1), per account, torn down on switch (P3.1). What is still open is **which nodes it reads** — tension (a) — and this task does not start until that is resolved. Its tests add one case either way: **a node the grant does not cover is never requested**.
+**Every rule in this task is a rule the contract already states** (`console/docs/json-contract.md` §10.13, F35), and they are rules about **documents**, which is why they carry over to a phone. **The task builds no child-process supervisor**: §10.11's "does option A need a supervisor process? Yes" is about **the console** — a desktop sidecar beside a binary the operator has, `desktop-console.md` D13's binary path — and a phone has no such thing: there is no iOS or Android build of the Go CLI, and a phone could not execute one if there were. ~~**What is *not* designed is how the document reaches the phone**, and that is **D112's open decision**; this task does not start until it is answered.~~ **Amended 2026-10-17:** D112 is answered **direct RTDB reads**, so the document reaches the phone through a Firebase listener under the user-claim read grant (P2.1), per account, torn down on switch (P3.1). What was still open was **which nodes it reads** — tension (a) — and this task did not start until that was resolved. Its tests add one case either way: **a node the grant does not cover is never requested**.
+
+**Resolved 2026-10-17 (tension (a), with (b1)).** The reader reads **database nodes directly**, as validated documents under §10.13's rules, from the four granted families only (`config/caps/**`, `spend/$day/**`, `config/kill/**`, the phone's own mailbox). D124 is kept as the reader rules and the document shapes, not the `watch --json` transport. **The queued and finished rows are in the runs bucket and the phone does not see them.** **The burn rate and the cap fractions are recomputed on the phone from `spend/$day/**` and `config/caps/**`, or not shown** (the choice is P3.2's, stated in its PR). Added test cases: **no request is ever made for `agents/**` or `outcomes/**`** (the grant denies them, and the reader does not try); a missing field is `unavailable`, never `0`, for every recomputed figure. **Depends on, additionally:** P2.1's grant set as resolved.
 
 ### Task P3.3: The job list
 
 **Files.** `mobile/src/jobs/`.
 **Depends on.** P3.2, P0.3.
+**Resolved 2026-10-17 (tensions (a) and (b1)) — this task's scope changes; the verification paragraph below is kept as written and is superseded where it conflicts:** the phone reads only `config/caps/**`, `spend/$day/**`, `config/kill/**` and its own mailbox, so **the job list shows numbers and states only — spend, caps, the kill state and the heartbeat — with no run titles, no repositories, no queued rows, no finished rows and no PR link.** Its tests become: every figure is rendered from a granted family only; a missing field is `unavailable` and never `0`; a recomputed burn rate or cap fraction is either correct against a fixture or not shown; **no run title is on screen and no code path asks for one** (a grep-style test over `mobile/src/jobs/` for `agents` and `outcomes` paths); and a changed `day` is a break. The completed/failed/queued-row, keep-window and PR-link cases below do not apply until a separate decision gives the phone those rows; P0.3's validator is still built (it gates any link the app ever opens) and stays a dependency.
 **Verification.** Tests: a completed job older than the keep window is hidden by default and shown when the toggle is on; a **failed** job is kept by the failed-keep rule; a queued job is shown; the per-job fields the spec names are rendered when present and marked `unavailable` when not; a PR link is opened **only** through P0.3's validator, and a link the validator refuses is rendered as text and not as a link.
 **Reviewer tier.** standard.
 
@@ -434,8 +496,9 @@ every task a check covers ──► P4.2
 ### Task P3.6: The app's mailbox client — SECURITY-SENSITIVE
 
 **Files.** `mobile/src/mailbox/`.
-**Depends on.** P1.1, P1.3 (the redactor D118 requires before anything is written), P1.4, P3.1.
-**Verification.** Tests over the simulator and the fakes: the client writes **one** message per utterance, with a fresh id; it writes **no other path**; it reads only its own outbox; **it acks a message only after it has spoken it** — and that ack is the plan's **second, explicitly-allowed phone write**, which the owner approves with D113 and P2.1's template grants on the message's own `acked` child and nowhere else; it re-delivers an unacked message after a reconnect and the duplicate is not acted on twice; and **it writes no heartbeat** — the heartbeat is the orchestrator's (D113b), and the app only **reads** it, through P1.4's rule. Under D112's answer the outbox and the heartbeat are **direct reads** under the user-claim read grant (P2.1), scoped to the phone's own account.
+**Depends on.** P1.1, P1.3 (the redactor D118 requires before anything is written), P1.4, P3.1, **and P6.3** *(added 2026-10-17 by the functional-spec review: P6.3/P6.4 require `mac` on every inbox message, so P3.6 must sign — with P6.3's canonical serialisation and the key from secure storage — and cannot start until P6.3, which is proposed and NOT APPROVED, exists; P3.6 never writes an unsigned inbox message)*.
+**Resolved 2026-10-17 (tension (b)):** the app's reads are exactly its own outbox and the heartbeat under the (b1) grant, and **the per-pairing MAC key is confirmed (b2)**, so the client **verifies the MAC over each outbox message's id, text and timestamp before it speaks a word or acks**, with the key read from platform secure storage and never logged; a message that fails verification is dropped and not acked. Added tests: a tampered text, id or timestamp is refused; a message with no MAC is refused; the key never appears in a log line or fixture.
+**Verification.** Tests over the simulator and the fakes: the client writes **one** message per utterance, with a fresh id; it writes **no other path**; it reads only its own outbox; **every inbox message it writes carries a `mac` over P6.3's canonical bytes with the key from secure storage, and a test proves an unsigned write is never attempted**; the outbox and heartbeat MACs are verified over every field (§3.5 of the functional-spec reconciliation), and an unsigned heartbeat is treated as offline; **it acks a message only after it has spoken it** — and that ack is the plan's **second, explicitly-allowed phone write**, which the owner approves with D113 and P2.1's template grants on the message's own `acked` child and nowhere else; it re-delivers an unacked message after a reconnect and the duplicate is not acted on twice; and **it writes no heartbeat** — the heartbeat is the orchestrator's (D113b), and the app only **reads** it, through P1.4's rule. Under D112's answer the outbox and the heartbeat are **direct reads** under the user-claim read grant (P2.1), scoped to the phone's own account.
 **Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.**
 
 **This is the only place in the app that writes to the database**, its test list is deliberately written as a list of things it does **not** do, and its write set is exactly **two paths**, both named in D113 and both granted in P2.1's template. The ack is the one that would otherwise be smuggled in: "the phone only writes its own inbox messages" and "the phone acks what it has spoken" are not the same sentence, and D113 is where the owner is asked to approve the second.
@@ -455,9 +518,9 @@ every task a check covers ──► P4.2
 
 ### Task P4.1: The consumer beside the orchestrator — SECURITY-SENSITIVE
 
-**Files.** **D113c answered (ii), 2026-10-17: a new `fugaro` command, not Voice D40's helper.** The consumer is Go code under `internal/cli` — a new command file (written `internal/cli/mailbox.go` here as a **placeholder**: the command does not exist yet and **no document fixes its name**, so the name is open for the owner, tension (c)), its tests, and **one line in `internal/cli/root.go`'s `root.AddCommand(...)`** registering it. By console **D19**'s rule this task is written and approved in **a CLI plan**, not here; this entry stays as the cross-reference. *(Option (i), the helper's consumer module with no Go file, is the one not chosen; the helper stays for voice.)*
-**Depends on.** P1.1, P1.2, P1.3 (the redactor D118 requires before anything is written), P2.1, **D113c answered (2026-10-17)**, the command's **name** (tension (c)), and **the CLI plan** D19 requires.
-**Verification.** Tests over the simulator: the consumer leases before it acts; a lease it does not hold means it does not act; it acks after it acts; **if D113b's pairing-key question is answered (a), every message it puts in the outbox carries the pairing MAC over its id, text and timestamp, with the key read from the OS keychain by the item name its settings hold and never logged**; a duplicate delivery is not acted on twice; a message it cannot parse is refused and **not** retried forever; and the consumer **never** runs a destructive command from a voice-originated message (D128's recommendation — the test asserts the refusal, and it is the test that makes D47's rule true on this channel).
+**Files.** **D113c answered (ii), 2026-10-17: a new `fugaro` command, not Voice D40's helper.** The consumer is Go code under `internal/cli` — a new command file (`internal/cli/mailbox.go`, the file of **`fugaro mailbox`** — **named by the owner on 2026-10-17, tension (c), no longer a placeholder**; the command does not exist yet), its tests, and **one line in `internal/cli/root.go`'s `root.AddCommand(...)`** registering it. By console **D19**'s rule this task is written and approved in **a CLI plan**, not here; this entry stays as the cross-reference. *(Option (i), the helper's consumer module with no Go file, is the one not chosen; the helper stays for voice.)*
+**Depends on.** P1.1, P1.2, P1.3 (the redactor D118 requires before anything is written), P2.1, **D113c answered (2026-10-17)**, the command's **name** (resolved 2026-10-17: `fugaro mailbox`), and **the CLI plan** D19 requires.
+**Verification.** Tests over the simulator: the consumer leases before it acts; a lease it does not hold means it does not act; it acks after it acts; **D113b's pairing-key question is answered (a) — confirmed 2026-10-17, tension (b2) — so every message it puts in the outbox carries the pairing MAC over its id, text and timestamp, with the key read from the OS keychain by the item name its settings hold and never logged**; a duplicate delivery is not acted on twice; a message it cannot parse is refused and **not** retried forever; and the consumer **never** runs a destructive command from a voice-originated message (D128's recommendation — the test asserts the refusal, and it is the test that makes D47's rule true on this channel).
 **Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.**
 
 **Why this is the most dangerous task in the plan.** The consumer acts on the operator's behalf, next to an orchestrator that can run `fugaro cancel`, `fugaro budget kill` and `gh pr merge` — and [voice.md](../design/voice.md) F38 records that **no argv table fences that**. D128 is the decision that governs it, and this task's tests are where the answer becomes a fence.
@@ -516,6 +579,89 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 
 **Depends on.** D123 answered, and Voice D44's **second explicit decision**. **Files.** None yet. **Verification.** Check 85 records the bake-off; a cloud decision would need its own check. **Reviewer tier.** SECURITY-SENSITIVE, when it is scheduled.
 
+### Task P5.4: The conversational front agent — UNSCHEDULED
+
+**Depends on.** D172 answered (recommended: decided with D115, after phase 1 ships). **Files.** None yet. **Verification.** None until scheduled. **Reviewer tier.** SECURITY-SENSITIVE, when it is scheduled. *(Added by the functional-spec v0.1 reconciliation; not approved.)*
+
+---
+
+## Phase 6 — PROPOSED by the functional spec v0.1, NOT APPROVED
+
+*Every task here is a proposal from [functional-spec-reconciliation.md](functional-spec-reconciliation.md). **None is approved**, none may start without the owner's explicit go, and each also waits on the decision rows its "Depends on" names. The conventions of this plan apply unchanged (Global Constraints 1–14): no live cloud in a test, no secret-shaped literal, `belong` never touched, no agent edits a workflow, owner-run checks only.*
+
+### Task P6.1: Wake-word routing and the app-command grammar — SECURITY-SENSITIVE
+
+**Files.** `shared/command/` (new). **Depends on.** P0.1; **D164**, D161, D163.
+**Verification.** `npm test` in `shared/` (the glob picks the module up). Tests: an utterance whose first token is in the closed alias set is an app command, any other utterance is agent text; each of the five §3.4 commands parses with a spoken project or agent name matched only against the configured lists; an unmatched "Fugaro …" yields "not understood" and **is never forwarded**; "confirm" and "cancel that" are recognised only as app commands; the alias set is data, and a test pins that "yes" is not an alias of "confirm".
+**Red step.** The "unmatched Fugaro utterance is not forwarded" test, failing against a stub router that forwards. **Reviewer tier.** SECURITY-SENSITIVE — independent opus review (it decides what counts as "confirm").
+
+### Task P6.2: The spoken-confirmation state machine — SECURITY-SENSITIVE
+
+**Files.** `shared/confirm/` (new), including `shared/confirm/vectors.json` — the accept/refuse cases as data, for P6.7's Go parity test. **Depends on.** P0.1; **D169**, D162, and the owner's D128 amendment (2026-10-17).
+**What it is.** Pure logic with an **injected clock**. A destructive command (cancel; merge/approve; confirm-an-action — **not launch**: D162 answered 2026-10-17 that "kick off …" goes through without confirmation, the caps applying) enters `pending` only with a **resolved target** (a run id, or repository + PR number); an ambiguous or unresolved target is refused and **cannot be read back, so cannot be confirmed**. The read-back text is built **from the resolved target**, never from the transcript. A confirmation must be a **separate utterance** recognised as the fixed phrase; it has a **timeout**; **one confirmation authorises exactly one action** (it carries the action id); **the utterance that issued a command can never confirm it**. Every other destructive verb (the kill switch, budget writes, deletes) is refused outright.
+**Verification.** `npm test` in `shared/`. Tests, at least: a **misrecognised "confirm"** ("conform", "confirmed it", "yes") does not confirm; a **replayed confirm** (the same confirmation id or utterance id twice) authorises nothing the second time; a **confirm for a different target** (the pending action changed, or a second pending action) is refused; a confirm after the timeout is refused; a command and "confirm" in one utterance is refused; the read-back for "cancel the docs refactor" names the resolved run id; the state machine's transitions are total (an exhaustive table test).
+**Red step.** The replayed-confirm test against a machine without an action-id check. **Reviewer tier.** SECURITY-SENSITIVE — independent opus review.
+
+### Task P6.3: The schema extension — SECURITY-SENSITIVE
+
+**Files.** `shared/mailbox-schema/`. **Depends on.** P0.2; **D161, D167, D168, D169, D171**.
+**What it adds.** Optional fields: `agent` (D161); `kind` (`message` · `prompt` · `answer` · `action`); `options`, `reply_to` (no expiry field: under D168 as amended, prompts expire at D118's TTL, computed by the consumer from `at`); an **action record** (verb from a closed set, resolved target, action id, confirmation id and time, and for a merge the PR's **head SHA** read back at confirmation) (D169); `canonicalBytes(message)`, the one pure serialisation of every field except `mac` (and `acked`) that the MAC covers, with `vectors.json`; `mac`, **required on every outbox message and on every inbox message of every kind**, with the covered fields and canonical serialisation of [functional-spec-reconciliation.md](functional-spec-reconciliation.md) §3.5, fixed by a vectors file both ends test against (tension (b2), D169, D171; O3); and on the **heartbeat**, an `agents` list (id and spoken name, bounded count and length) and a `mac` (O7) so that "list agents" and D163's "first advertised agent" have a source (D161). Any inbox message without `mac`, an `action` without a complete confirmation record, a merge action without a head SHA, an outbox message without `mac`, and an over-long `agents` list are refused; **the vectors include a valid MAC with `text`, `options`, `reply_to` or the answer swapped, each refused**, and a heartbeat with its `agents` changed under a valid MAC, refused.
+**Verification.** `npm test` in `shared/`; the existing `mutation-proof.sh` extended to the new refusals. **Reviewer tier.** SECURITY-SENSITIVE — independent opus review.
+
+### Task P6.4: The rules for the new fields, and the device node — SECURITY-SENSITIVE
+
+**Files.** `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/rules.go`, `internal/budget/rules/testdata/rules.golden.json`, `internal/projectpolicy/version.go`, `docs/design/m9-budget-and-dashboard.md`, `internal/budget/rules/emulator_pairing_test.go` (new). **Depends on.** P2.2 (P2.1 merged first), P6.3; **D161, D166, D169, D171**. *(If the owner folds these changes into draft #532 — open item O2 — this task shrinks to its emulator file.)*
+**What it adds.** The P6.3 fields as `.validate`-only children (the subtree idiom, F21), including **`mac`, required on the outbox and on every inbox message** (O3, D169; the rules check presence, the consumer verifies), the merge record's head SHA, and the heartbeat's bounded **`agents`** child and its `mac` (D161, O7; draft #532's heartbeat admits only `at` and `boot`, so this lands after #532, O2); in `USER`, the conjunct `root.child('config/admin/devices/' + auth.uid).exists()` (D166); and the **pairing nodes** of D165 — a one-shot request node the `p~` pairing uid may write once (its public key) and a delivery node it may read (the encrypted payload), both denied to every other identity. No existing grant is loosened.
+**Verification.** `go test ./internal/budget/rules/...` and `go test -tags firebase ./internal/budget/rules/...`: a revoked device (node deleted) is denied every read and write it had; a session whose device node was never written is denied everything; a `p~` pairing uid can write its request node once and read only its own delivery node; an `action` message without a confirmation record is refused by `.validate`; an outbox message without `mac` and an inbox message of any kind without `mac` are refused; a heartbeat `agents` list over its bound is refused; positive controls for each new field. **Reviewer tier.** SECURITY-SENSITIVE — **mandatory** independent opus review. **The deploy is P2.3's shape: owner-run.**
+
+### Task P6.5: The prompt queue and the interrupt policy
+
+**Files.** `shared/prompts/` (new). **Depends on.** P1.3, P1.4, P6.3; **D160, D168 (amended: prompts expire at D118's TTL), D173**, D127.
+**Verification.** `npm test` in `shared/`: prompts queue by default; at a natural pause the announcement counts pending prompts across every account ("Two questions waiting"); "what's pending" lists them per installation; **an unanswered prompt expires at D118's mailbox TTL** (D168 as amended 2026-10-17), decided as a pure function of the prompt's `at`, the TTL and the consumer's clock, and the expiry yields the prompt's non-destructive answer, or a stop if it has none (the consumer, P6.7, delivers it once); a prompt answer is **accepted within its TTL, not P1.1's 6-hour command replay window**, except that an answer to a **destructive** prompt is a confirmation and takes the command window (D173; §3.6, O6 confirmed 2026-10-17; TTL 72 hours, O5); P1.1's kind-parameterised window API implements the windows and this module passes the kind; **reminder escalation**, before expiry — a waiting prompt is re-announced at the next natural pause after 1 hour, then once a day, and is listed first in "what's pending" (the bounded alternative of [functional-spec-reconciliation.md](functional-spec-reconciliation.md) §3.4; proposed, NOT APPROVED); a **hard cap on pending prompts per consumer**: at the maximum count a new prompt is refused with a defined answer to the orchestrator ("queue full"), tested at the boundary; reminder escalation bounds attention, the cap bounds storage;  only D160's set interrupts, and the local switch narrows or widens it; a pure function of (queue, digest, presence, switch, now).
+**Reviewer tier.** standard.
+
+### Task P6.6: `fugaro pair` — SECURITY-SENSITIVE
+
+**Files.** `internal/cli/pair.go` (new) and tests, `internal/budget/token/device.go` (new) and test, `internal/budget/sweep_device_test.go` (new), `internal/budget/sweep.go` (the `m~` rule), **one line** in `internal/cli/root.go`. Written in **a CLI plan** (console D19), as P4.1 is. **Depends on.** P6.4, P4.1 (the shared `root.go` line); **D165, D166, D171**.
+**What it does.** Mints a **pairing** token (one-shot `p~<random>` uid, `exp` ≤ 5 minutes) and shows the QR (Firebase config from what `init` recorded, and that token — **no key**); waits for the phone's public key in its pairing-request node and for the operator to type the code (the key's fingerprint) the phone shows; only then mints the **device** token (`m~<random>`, `mu = uid`), generates the per-pairing MAC key into the OS keychain (the settings hold the item's name only, Voice D42(2)), writes `config/admin/devices/$uid`, and delivers token and key encrypted to the phone's key (D165, D171). `ls` and `revoke` per D166; extends the history sweep to remove `m~` users whose device node is gone. **Needs two separate role sets, and states both:** the `token_minter` custom role on the signer (launchers and operators, `iam.tf`'s `minter`) to mint either token, **and** `roles/firebasedatabase.admin` (admins and budget admins) to write or delete the device node; it refuses clearly, naming the missing one, without either.
+**Verification.** `go test ./internal/budget/token/... ./internal/budget/... ./internal/cli -run 'Pair|Sweep'` with the fakes (`internal/gcpfake/identitytoolkit.go`): the minted uids never start with `r~`; the sweeper never deletes an `m~` user whose device node exists and does delete one whose node is gone; a wrong typed code writes nothing; the delivered payload is unreadable without the phone's private key (a fake key pair); `exp` is at most five minutes; no device node is written before the typed code matches; the key never appears in output, a log line or a fixture; revoke deletes the node before the Auth user; **a caller without the minter role is refused with a message naming it, and a caller without database admin is refused with a message naming it**, each before any side effect (two tests, fakes). **Reviewer tier.** SECURITY-SENSITIVE — independent opus review.
+
+### Task P6.7: The consumer's enforcement of the D128 amendment — SECURITY-SENSITIVE
+
+**Files.** `internal/cli/mailbox.go` and its tests (extending P4.1's consumer; CLI plan per D19). **Depends on.** P4.1, P6.2, P6.3, P6.4; **D169**, D162, D168.
+**What it does.** Re-validates every action record with a **Go implementation** of `shared/confirm`'s rules (the consumer is Go; the JS module cannot be imported), held to them by a parity test over `shared/confirm/vectors.json`: (verb in the closed set, target resolved, confirmation present, inside the 6-hour command window from the confirmation time — **the confirmation timeout itself is checked on the phone (P6.2)**, because the pending time is phone-local state — not already used; `at` and confirmation time at most 5 minutes ahead of the consumer's clock), and **first verifies the MAC of every inbox message, of every kind,** with the per-pairing key read from the OS keychain by the item name (D169, D171; §3.5's covered fields and serialisation) — an unsigned or wrongly signed message is refused before anything else; accepts an answer to a **destructive** prompt only as a MAC-verified action record with a confirmation (never a plain `answer` or text); keeps a **ledger of used message, action and confirmation ids, and of prompts expired or answered, that survives a restart** for at least the 72-hour TTL plus one sweep interval (or until the stored message is gone, whichever is later); **persists its pending prompts locally (id, `at`, safe answer)** so a sweep of the stored prompt does not lose the safe answer; after a `fugaro pair revoke`, drops that pairing's pending prompts (safe answer once) and refuses messages signed with the revoked key; signs every outbox message and the heartbeat; for a merge, re-reads the PR's head and **refuses if it differs from the head SHA in the record**; **refuses a destructive command that arrives without a valid confirmation record**; executes cancel through the CLI's own cancel path and merge as D169 says; refuses destructive free text it recognises; produces prompts that **expire at D118's TTL** (D168 as amended 2026-10-17) — **the consumer expires them on its own clock**, so expiry does not depend on when the owner-run sweeper runs, and at expiry it hands the orchestrator the prompt's non-destructive answer, or tells it to stop if there is none, **exactly once** (recorded in the same restart-surviving ledger) — up to P6.5's pending-prompt cap (beyond it, it answers "queue full"); applies the 6-hour replay window to commands and the TTL to prompts (D173); advertises its agents in the heartbeat's `agents` list (D161); a launch ("kick off …") is passed through without a confirmation record (D162), and the caps apply.
+**Verification.** `go test ./internal/cli -run 'Mailbox'` over the simulator, including `TestConfirmParityWithShared` over every vector in `shared/confirm/vectors.json`: an action with no confirmation record is refused and nothing runs; **a forged record — unsigned, or signed with the wrong key — is refused and nothing runs**, including one whose confirmation id and time are well-formed (the launcher-as-`m~` case of D169); **an unsigned `message`, an unsigned `answer`, and a plain-text answer to a destructive prompt are each refused and nothing runs**; a validly signed record with a **tampered target or head SHA** is refused; a signed record **re-sent under a new message id** is refused (action-id dedupe), also after a consumer restart; **a restart after a prompt expired does not deliver its safe answer a second time**; **a stored prompt deleted by the sweeper is still expired from the local copy with its safe answer**; an `at` more than 5 minutes ahead is refused; a message signed with a revoked pairing's key is refused; a merge whose PR head moved since the read-back is refused; the pending-prompt cap refuses the next prompt at the boundary; a **replayed** confirmation id is refused; a confirmation for **a different target** is refused; an expired confirmation is refused; a well-formed confirmed cancel calls the cancel path once (a fake); a launch with no confirmation record is **not** refused for lacking one (D162); an expired prompt gives the orchestrator its non-destructive answer, never a destructive one; a prompt answer older than 6 hours but within the TTL is accepted while a command older than 6 hours is refused (D173); the kill switch and budget writes are refused even when confirmed. **Reviewer tier.** SECURITY-SENSITIVE — independent opus review.
+
+### Task P6.8: Pairing and the overview in the app — SECURITY-SENSITIVE
+
+**Files.** `mobile/src/pairing/`, `mobile/src/overview/` (new). **Depends on.** P3.1, P6.1, P6.6; **D165, D170, D171**, D114.
+**Verification.** The app's runner: a scanned payload is validated before anything is stored; the key pair is generated on the phone and the code shown is its fingerprint; the delivered device token and MAC key are decrypted and go only to secure storage (P3.1's rule); the code shown is derived per pairing; the overview renders one tile per installation with its freshness and no summed total (D170); switching by voice (P6.1's commands) tears down the previous account first (D114). **Reviewer tier.** SECURITY-SENSITIVE — independent opus review.
+
+### Task P6.9: The text screen
+
+**Files.** `mobile/src/text/` (new). **Depends on.** P3.6, P6.5; **D167**.
+**Verification.** Tests: pending prompts and recent summaries render per installation; typed input goes through the same mailbox client; a typed destructive command goes through the same confirmation machine (typed "confirm"). **Reviewer tier.** standard.
+
+### Task P6.10: The offline gate — SECURITY-SENSITIVE
+
+**Files.** `mobile/src/mailbox/` (extending P3.6). **Depends on.** P3.6, P6.3; **D167**.
+**Verification.** Tests over a fake connection state: with no connection, or a stale/offline consumer, nothing is written and the user is told; an action record is never queued; the client never relies on the SDK's offline queue (a test that pending writes are cancelled or never issued). **Reviewer tier.** SECURITY-SENSITIVE — independent opus review.
+
+### Task P6.11: Checks 100–104, written into the register
+
+**Files.** `docs/gcp-live-checklist.md`. **Depends on.** P6.4; D126. **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`. **Reviewer tier.** standard. **Running them is the owner's**, check 103 on the sandbox repository only.
+
+### Task P6.12: The spoken confirmation and routing in the voice screen — SECURITY-SENSITIVE
+
+**Files.** `mobile/src/voice/` (extending P3.5). **Depends on.** P3.5, P6.1, P6.2, P6.5; D162, D169.
+**Verification.** Tests over the audio fakes: a destructive command produces the read-back from the resolved target and waits; a confirm in the same utterance is refused; a misheard confirm is refused; a timeout says so and drops the action; a read-back for a merge states the PR's **current** head at confirmation time (D168: a prompt can be answered days later); a queued prompt is not spoken over the user. **Reviewer tier.** SECURITY-SENSITIVE — independent opus review.
+
+### Task P6.13: The real sweeper's rule for waiting prompts
+
+**Files.** `internal/cli/mailbox.go` (the D118 mailbox sweeper P4.1 builds in `internal/budget/sweep.go`'s shape) and its test. **Depends on.** P6.7; D118, D168 (as amended 2026-10-17: prompts expire at the TTL).
+**What it does.** Makes the real, owner-run sweeper **delete** stored prompts past D118's TTL — and nothing more: **the consumer, not the sweeper, expires a prompt and delivers its safe answer** (P6.7), because a sweep can run while the consumer is down. The sweeper never answers the conversation.
+**Verification.** `go test ./internal/cli -run 'MailboxSweep'` with a fake clock: a stored prompt older than the TTL is deleted by the sweep; a prompt younger than the TTL survives; **a sweep run while the consumer is down deletes the stored prompt, and the consumer on restart still delivers the non-destructive answer (or a stop) exactly once** from its own clock and ledger; the sweeper itself never writes an answer; the pending-prompt cap (P6.5, P6.7) is the storage bound and a test pins that a full queue plus a sweep never exceeds it. **Red step.** The consumer-down test, against a consumer that only answers when it sees the sweeper delete. **Reviewer tier.** **SECURITY-SENSITIVE — opus + independent review** (it decides the default answer the orchestrator receives).
+
 ---
 
 ## Cross-task dependencies
@@ -539,13 +685,27 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 | P3.3 | P3.2, P0.3 | D124 |
 | P3.4 | P3.1 | D122, D123 |
 | P3.5 | P3.4, P3.6, P1.2, P1.3, P1.4 | D122, D127 |
-| P3.6 | P1.1, P1.3, P1.4, P3.1 | D111, D113, **D113b**, D118 |
-| P4.1 | P1.1, P1.2, P1.3, P2.1 | D110, D128, **D113b**, **D113c** (answered (ii); name open, tension (c)), D118 |
+| P3.6 | P1.1, P1.3, P1.4, P3.1, **P6.3** (signing; proposed, NOT APPROVED) | D111, D113, **D113b**, D118 |
+| P4.1 | P1.1, P1.2, P1.3, P2.1 | D110, D128, **D113b**, **D113c** (answered (ii); named `fugaro mailbox`, 2026-10-17), D118 |
 | P4.2a | P2.2 | D113, D120, D126 |
 | P4.2 | all | D126 |
 | P4.3 | P0.1 | D119 |
 | P4.4 | P3.1, P4.2a | D120, D125 |
 | P5.1–P5.3 | — | D115, D121, D123 |
+| P5.4 *(unscheduled)* | — | D172 |
+| P6.1 *(proposed, NOT APPROVED)* | P0.1 | D164, D161, D163 |
+| P6.2 *(proposed, NOT APPROVED)* | P0.1 | D169, D162, D128 as amended 2026-10-17 |
+| P6.3 *(proposed, NOT APPROVED)* | P0.2 | D161, D167, D168, D169, D171 |
+| P6.4 *(proposed, NOT APPROVED)* | P2.2, P6.3 | D161, D166, D169, D171 |
+| P6.5 *(proposed, NOT APPROVED)* | P1.3, P1.4, P6.3 | D160, D168, D173, D127 |
+| P6.6 *(proposed, NOT APPROVED)* | P6.4, P4.1 | D165, D166, D171 |
+| P6.7 *(proposed, NOT APPROVED)* | P4.1, P6.2, P6.3, P6.4 | D169, D162, D168 |
+| P6.8 *(proposed, NOT APPROVED)* | P3.1, P6.1, P6.6 | D165, D170, D171, D114 |
+| P6.9 *(proposed, NOT APPROVED)* | P3.6, P6.5 | D167 |
+| P6.10 *(proposed, NOT APPROVED)* | P3.6, P6.3 | D167 |
+| P6.11 *(proposed, NOT APPROVED)* | P6.4 | D126 |
+| P6.12 *(proposed, NOT APPROVED)* | P3.5, P6.1, P6.2, P6.5 | D162, D169 |
+| P6.13 *(proposed, NOT APPROVED)* | P6.7 | D118, D168 (amended) |
 
 ---
 
@@ -561,7 +721,7 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 | **C4** | The heartbeat's default interval and its floor are chosen in P1.4, from the measurement in check 84 | A fixed interval now — cost: an interval chosen without the write-cost measurement D117 asks for |
 | **C5** | The retention window is **not** this plan's choice: it is the owner's answer to **D118**, and P1.3 takes it as a parameter with no default of its own | A default picked in P1.3 — cost: a privacy-relevant number chosen without the owner, in the row D118 asks the owner to answer |
 | **C6** | The app is versioned with the CLI's tag (D11's precedent) but released on the stores' cadence | Its own version line — cost: two version lines to reconcile, for an artifact that ships with the CLI's features |
-| **C7** | **Withdrawn — now decision row D113c, answered 2026-10-17: a new `fugaro` command** (option (ii)), which console D19 sends to a CLI plan; the command's name is open (tension (c)). Where the consumer lives was a choice between following Voice D40 and D50 (the helper) and departing from them, so it was the owner's question, not this plan's | — |
+| **C7** | **Withdrawn — now decision row D113c, answered 2026-10-17: a new `fugaro` command** (option (ii)), which console D19 sends to a CLI plan; the command is named `fugaro mailbox` (tension (c), resolved 2026-10-17). Where the consumer lives was a choice between following Voice D40 and D50 (the helper) and departing from them, so it was the owner's question, not this plan's | — |
 | **C8** | The store's internal track is used for check 89, and no public release is implied | A public release — cost: a public app is not reversible, and the spec does not ask for one |
 
 ---
@@ -575,13 +735,13 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 5. **Checks 80–89 are owner-run and none has been run.** Until they are, every live claim in the app is unverified.
 6. **`belong` has not been looked up** — not whether it has a Firebase project, not what its installation tuple is — because no agent touches it (F31, U8).
 7. **The console's voice module does not exist** (Voice D50/D53), and **D119 amends where the shared code lives without making that module exist**. P1.3 and P1.5 are written for the shared package, which the console would consume; until the console's side exists the shared package has **one** consumer, not two, and "shared" is a claim about the future.
-8. **The three open tensions of 2026-10-17** ([reconciliation.md](reconciliation.md) §4): (a) D112's direct reads against D124's documented feed as the job list's source; (b) what D112's answer does to D113's grants, D111's token scope (and the pairing key D113b's answer leaves unstated) and D118's read-side exposure; (c) the name of D113c's new `fugaro` command. **None is resolved by this plan.**
+8. **The three tensions of 2026-10-17** ([reconciliation.md](reconciliation.md) §4): (a) D112's direct reads against D124's documented feed as the job list's source; (b) what D112's answer does to D113's grants, D111's token scope (and the pairing key D113b's answer leaves unstated) and D118's read-side exposure; (c) the name of D113c's new `fugaro` command. **All three were resolved by the owner on 2026-10-17** (direct reads under the reader rules; a four-family read grant with no titles; the MAC key confirmed with a D54b-shaped exception; `fugaro mailbox`), each with a dated "Resolved" block in §4. **Open item 1's finished-run PR link is now moot for v1: the phone does not see finished rows.** **No task is approved by this.**
 
 ---
 
 ## OWNER APPROVAL GATE
 
-**Nothing in this plan is approved.** *(Status 2026-10-17: steps 1 and 2 are done — every decision is answered — and steps 3–7 are not taken, so no task is approved; the three open tensions in [reconciliation.md](reconciliation.md) §4 are for the owner as well.)* The steps below are taken **in this order**. No task may start — not P0.1, not the docs write-back — before step 1 is done; after that, a task starts only when **every step that names it** is done and **every decision row its "Cross-task dependencies" line names** is answered.
+**Nothing in this plan is approved.** *(Status 2026-10-17: steps 1 and 2 are done — every decision is answered — and steps 3–7 are not taken, so no task is approved; the three tensions in [reconciliation.md](reconciliation.md) §4 were resolved by the owner on 2026-10-17, which approves nothing.)* The steps below are taken **in this order**. No task may start — not P0.1, not the docs write-back — before step 1 is done; after that, a task starts only when **every step that names it** is done and **every decision row its "Cross-task dependencies" line names** is answered.
 
 **1. Answer the gating six.** **D110** (does this supersede Voice D49?), **D111** (what may the app hold?), **D112** (direct database reads, or the CLI's read path — **and which transport carries it**), **D113** (the rules change, and the owner-run deploy), **D113b** (who writes the outbox and the heartbeat, and how that writer is authenticated), **D114** (the account model). **If D110 is answered "no", phases 1, 3 and 4 are not built**, and this plan reduces to the job list and the pure modules that survive. **If D113 is answered "no rules change", there is no mailbox**, because the phone has nothing to write to and nothing to read.
 
@@ -601,4 +761,4 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 
 ---
 
-*Status of this document: plan only; nothing is implemented. D110–D129 (twenty rows, plus D113b and D113c) were answered by the owner on 2026-10-17; three tensions remain open, and no task is approved. Checks 80–89 are reserved and none has been run. Related: [spec.md](spec.md) · [reconciliation.md](reconciliation.md) · [README.md](README.md).*
+*Status of this document: plan only; nothing is implemented. D110–D129 (twenty rows, plus D113b and D113c) were answered by the owner on 2026-10-17, and the three tensions between the answers were resolved the same day (reconciliation §4); no task is approved. Checks 80–89 are reserved and none has been run. Related: [spec.md](spec.md) · [reconciliation.md](reconciliation.md) · [README.md](README.md).*

@@ -438,8 +438,8 @@ func TestDBLimitsKeepOwnerValues(t *testing.T) {
 // the rules and the marker are left exactly as the newer installation left
 // them.
 //
-// RulesVersion is 1 today, so a marker above it needs a future release's
-// write; the boundary is what this test pins before that release exists.
+// A marker above this binary's RulesVersion needs a future release's write;
+// the boundary is what this test pins before that release exists.
 //
 // Hand mutation this fails on: dropping the refusal (or widening it to `>=`),
 // which plans the rules deploy over the newer document and the marker write

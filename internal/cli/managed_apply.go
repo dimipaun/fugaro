@@ -224,7 +224,7 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	}
 	bin, err := exec.LookPath("terraform")
 	if err != nil {
-		return userErr("fugaro managed apply needs terraform (>= 1.7, < 2) on PATH: %v", err)
+		return userErr("fugaro managed apply needs terraform (>= 1.9, < 2) on PATH: %v", err)
 	}
 	imp := deployerImpersonator{self: self, ts: ts, endpoint: impersonationEndpoint, hc: impersonationHTTPClient()}
 	res, err := managedmode.Apply(ctx, managedmode.Request{

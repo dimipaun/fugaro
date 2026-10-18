@@ -142,6 +142,39 @@ func TestRunRefusesBeforeLaunch(t *testing.T) {
 	}
 }
 
+// TestRunRefusesUnderAPolicyOfThePolicyGeneration: the allow-list gate applies
+// to a policy published under a marker *below* this binary's generation but at
+// or above the one that carries the policy nodes. Generation 1 is a real
+// installation: it deployed the config/policy nodes, `project policy publish`
+// wrote there and every run of it reads the policy — so a launcher that read
+// the marker as legacy skipped the gate and launched a repository the policy
+// does not admit. `launchPolicyGates` reads through projectpolicy.Read, which
+// gates on PolicyRulesVersion for exactly this reason (the review finding on
+// P2.1: the bump to 2 answered "no policy" for every installation on
+// generation 1, keeping its job-environment ceiling and skipping this refusal).
+//
+// Mutation (verified, run and restored): gate Read on `gen < RulesVersion` —
+// this test fails, the launch creating an execution under a policy that refuses
+// its repository.
+func TestRunRefusesUnderAPolicyOfThePolicyGeneration(t *testing.T) {
+	if projectpolicy.PolicyRulesVersion >= projectpolicy.RulesVersion {
+		t.Fatalf("PolicyRulesVersion = %d and RulesVersion = %d: this test is about a generation below this binary's, and the two have met", projectpolicy.PolicyRulesVersion, projectpolicy.RulesVersion)
+	}
+	f := newLaunchBudget(t, "enforce")
+	markRules(t, f, projectpolicy.PolicyRulesVersion)
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":1,"allow_repos":["github/other/*"]}`))
+	_, _, err := runBudget(t)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v (exit %d), want a user error: the policy of generation %d is read and its allow-list governs", err, ExitCode(err), projectpolicy.PolicyRulesVersion)
+	}
+	if !strings.Contains(err.Error(), "github/acme/app") || !strings.Contains(err.Error(), "allow_repos") {
+		t.Errorf("the refusal does not read as the allow-list gate's: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions were created for a refused launch", n)
+	}
+}
+
 // A best-of-N batch is refused by the same gate, and before its first attempt:
 // runAttempts launches every attempt through launchAttempt, which in production
 // is finishLaunch, so the gate is not a single-run path. The tests that swap
@@ -331,18 +364,21 @@ func TestSkewSentencesSplitByDirection(t *testing.T) {
 }
 
 // The round-6 correction: an installation whose rules predate the model — no
-// marker at all, or a marker below RulesVersion — has no policy for the gate
-// to compare, and when no node is published it has no allow-list either. The
-// launch creates the execution and refuses nothing, exactly as it did before
-// this phase. The marker is deliberately not part of the gate (plan task 1.5
-// step 4).
+// marker at all, or a marker below the generation that carries the policy nodes
+// — has no policy for the gate to compare, and when no node is published it has
+// no allow-list either. The launch creates the execution and refuses nothing,
+// exactly as it did before this phase. The marker is deliberately not part of
+// the gate (plan task 1.5 step 4), and neither is the generation *between* the
+// two constants: a marker at PolicyRulesVersion with no node is the same state
+// as one at RulesVersion with no node — the gate compares what is published.
 func TestRunLaunchesWithNoPolicyPublished(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		marker func(t *testing.T, f *launchBudgetFixture)
 	}{
 		{"no marker at all", func(*testing.T, *launchBudgetFixture) {}},
-		{"a marker below RulesVersion", func(t *testing.T, f *launchBudgetFixture) { markRules(t, f, projectpolicy.RulesVersion-1) }},
+		{"a marker below the policy generation", func(t *testing.T, f *launchBudgetFixture) { markRules(t, f, projectpolicy.PolicyRulesVersion-1) }},
+		{"the policy generation, no node", func(t *testing.T, f *launchBudgetFixture) { markRules(t, f, projectpolicy.PolicyRulesVersion) }},
 		{"the rules generation, no node", func(t *testing.T, f *launchBudgetFixture) { markRules(t, f, projectpolicy.RulesVersion) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

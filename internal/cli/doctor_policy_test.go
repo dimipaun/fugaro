@@ -479,18 +479,19 @@ func TestDoctorPolicyChecks(t *testing.T) {
 	})
 
 	t.Run("a marker below the generation a policy is read under", func(t *testing.T) {
-		// A marker that is present and below this generation's is not an absent
-		// one: it records rules that predate the policy nodes while claiming a
-		// generation, so `fugaro project policy publish` refuses (P3) and no run
-		// reads a policy — the check returned nothing for it.
+		// A marker that is present and below the generation carrying the policy
+		// nodes is not an absent one: it records rules that predate the policy
+		// nodes while claiming a generation, so `fugaro project policy publish`
+		// refuses (P3) and no run reads a policy — the check returned nothing
+		// for it.
 		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
-		db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion-1)
+		db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion-1)
 		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
 		c, ok := doctorChecksByID(t)["policy-rules-skew"]
 		if !ok || c.Severity != "warning" {
 			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
 		}
-		if !strings.Contains(c.Problem, fmt.Sprintf("generation %d", projectpolicy.RulesVersion-1)) {
+		if !strings.Contains(c.Problem, fmt.Sprintf("generation %d", projectpolicy.PolicyRulesVersion-1)) {
 			t.Errorf("the check does not name the generation the marker records: %+v", c)
 		}
 		if !strings.Contains(c.Problem, "below the generation") || !strings.Contains(c.Problem, "publishing one is refused") {
@@ -511,8 +512,48 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// wording of the same state: doctor reporting one text while the
 		// refusal prints another is how the two drifted apart in the first
 		// place.
-		if c.Problem != rulesMarkerBelowText(projectpolicy.RulesVersion-1) {
-			t.Errorf("the marker-below body is not the text requirePolicyRules refuses with:\n got %q\nwant %q", c.Problem, rulesMarkerBelowText(projectpolicy.RulesVersion-1))
+		if c.Problem != rulesMarkerPrePolicyText(projectpolicy.PolicyRulesVersion-1) {
+			t.Errorf("the marker-below body is not the text requirePolicyRules refuses with:\n got %q\nwant %q", c.Problem, rulesMarkerPrePolicyText(projectpolicy.PolicyRulesVersion-1))
+		}
+	})
+
+	t.Run("a marker below this binary's generation but with the policy nodes", func(t *testing.T) {
+		// Generation 1: the deployed rules *do* carry the policy nodes, so the
+		// policy this installation published is read and enforced by every run
+		// and `fugaro project policy publish` does not refuse — and the check
+		// that reported this state with the sentence above told the operator
+		// "no run reads a published policy" about rules that read one, on the
+		// generation the bump to 2 created for every existing installation (the
+		// review finding on P2.1). What is true is that the deployed document is
+		// not this binary's, so the mailbox grant the app reads is absent.
+		if projectpolicy.PolicyRulesVersion >= projectpolicy.RulesVersion {
+			t.Fatalf("PolicyRulesVersion = %d and RulesVersion = %d: this case is about a generation between them, and the two have met", projectpolicy.PolicyRulesVersion, projectpolicy.RulesVersion)
+		}
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		if !strings.Contains(c.Problem, fmt.Sprintf("generation %d", projectpolicy.PolicyRulesVersion)) {
+			t.Errorf("the check does not name the generation the marker records: %+v", c)
+		}
+		// The sentence must not say the policy is unread, which is what the
+		// state below says and what this state's rules contradict.
+		if strings.Contains(c.Problem, "no run reads a published policy") || strings.Contains(c.Problem, "publishing one is refused") {
+			t.Errorf("the between-generations body is the state-below sentence: it says a published policy is unread, which is false here: %+v", c)
+		}
+		if !strings.Contains(c.Problem, "a published policy is read and enforced") {
+			t.Errorf("the between-generations body does not say the policy still governs: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+			t.Errorf("the check does not name the owner's fix: %+v", c)
+		}
+		// And it is this state's one text: doctor is its only printer, and the
+		// publish refusal above is the other state's.
+		if c.Problem != rulesMarkerOlderText(projectpolicy.PolicyRulesVersion) {
+			t.Errorf("the between-generations body is not rulesMarkerOlderText:\n got %q\nwant %q", c.Problem, rulesMarkerOlderText(projectpolicy.PolicyRulesVersion))
 		}
 	})
 

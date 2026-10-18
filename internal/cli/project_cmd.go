@@ -224,6 +224,17 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 // bounds, and an installation whose rules predate the policy nodes has no
 // node for a run to read — so publishing one would be a policy that silently
 // never applies.
+//
+// The bar is PolicyRulesVersion, the generation that introduced the policy
+// nodes, and not RulesVersion: what the gate is about is whether the deployed
+// rules carry the node being written and grant the read a run makes of it, and
+// a marker between the two (generation 1, the policy generation, while this
+// binary deploys generation 2) does both. Reading the newer generation as a
+// bar would newly refuse a publish on an installation whose policy is read and
+// enforced today, and would refuse it with a sentence about a policy nothing
+// reads (rulesMarkerPrePolicyText) that is simply false there — the mirror of
+// Read's own gate, which is the same predicate on purpose (the review finding
+// on P2.1).
 func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) error {
 	var raw json.RawMessage
 	found, err := db.Get(ctx, projectpolicy.PathRulesMarker(), &raw)
@@ -252,10 +263,10 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 		// own text, then, from the one predicate (the review finding on this
 		// change).
 		return userErr("%v", &projectpolicy.MarkerError{Value: oneLine(string(raw))})
-	case gen >= projectpolicy.RulesVersion:
+	case gen >= projectpolicy.PolicyRulesVersion:
 		return nil
 	}
-	return userErr("%s", rulesMarkerBelowText(gen))
+	return userErr("%s", rulesMarkerPrePolicyText(gen))
 }
 
 // rulesSkewText is the one sentence for "the deployed rules are older than
@@ -271,11 +282,22 @@ func rulesSkewText() string {
 		projectpolicy.PathRulesMarker(), policySince)
 }
 
-// rulesMarkerBelowText is the one sentence for the marker-below state: the
-// marker is present and records a generation below this Fugaro's
-// RulesVersion. `fugaro project policy publish` refuses with it and doctor's
-// policy-rules-skew check prints it, so the state reads the same whether the
-// operator met it as a refusal or as a report.
+// The marker-below states have two sentences, one each, because they are two
+// states: below the *policy* generation, where the nodes a policy lives in do
+// not exist and nothing reads or writes one, and below *this binary's*
+// generation but at or above the policy generation, where the nodes exist, the
+// published policy is read and enforced, and what is missing is the document
+// this release deploys — the mailbox (mobile plan P2.1, design m9 §6.4).
+// Reading the second with the first's sentence says "no run reads a published
+// policy" about rules that carry the nodes, and sends the operator to redeploy
+// after a policy that in fact governs; it also stopped being the same predicate
+// as Read's gate on the day RulesVersion moved past PolicyRulesVersion, which
+// is the review finding this split answers.
+
+// rulesMarkerPrePolicyText is the sentence for a marker below the generation
+// that carries the policy nodes: `fugaro project policy publish` refuses with
+// it and doctor's policy-rules-skew prints it, so the state reads the same
+// whether the operator met it as a refusal or as a report.
 //
 // It cannot be rulesSkewText, which is the *other* state's sentence: that one
 // is about a *document* that disagrees with a marker ("the deployed rules are
@@ -284,9 +306,22 @@ func rulesSkewText() string {
 // them for this state, so the refusal told the operator about a comparison
 // nothing made (the review of PR #402 found the two texts disagreeing; this is
 // one text per state, shared by both readers).
-func rulesMarkerBelowText(gen int) string {
+func rulesMarkerPrePolicyText(gen int) string {
 	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro reads a project policy under: this installation's rules predate the policy nodes, so no run reads a published policy and publishing one is refused; re-run 'fugaro init --firebase' with fugaro >= %s first, which deploys the rules a policy is read under and records generation %d in the marker",
-		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, policySince, projectpolicy.RulesVersion)
+		projectpolicy.PathRulesMarker(), gen, projectpolicy.PolicyRulesVersion, policySince, projectpolicy.RulesVersion)
+}
+
+// rulesMarkerOlderText is the sentence for the state between the two
+// generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
+// refuses here — Read reads the policy the marker's rules carry and
+// requirePolicyRules publishes beside it — so this text has one printer,
+// doctor's policy-rules-skew, and it is worded as what is *absent* rather than
+// what is broken: these rules do carry the policy nodes, and what they predate
+// is this release's own document, whose mailbox the mobile app has no grant for
+// until the owner deploys it (mobile plan P2.3).
+func rulesMarkerOlderText(gen int) string {
+	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4); re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.PolicyRulesVersion, projectpolicy.RulesVersion)
 }
 
 // readPolicyNode reads the shared node with its ETag, the precondition the

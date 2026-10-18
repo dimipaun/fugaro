@@ -1,6 +1,10 @@
+<p align="center"><img src="brand/fugaro-logo.png" alt="Fugaro logo" width="200"></p>
+
 # Fugaro
 
 **Fleeting cloud workers for coding agents: one task, one container, one PR, then gone.**
+
+Website: [fugaro.dev](https://fugaro.dev)
 
 *Fugax* is Latin for "fleeting." Fugaro runs long, self-contained coding-agent loops (implement, test, review, fix, compile, open a pull request) in throwaway cloud containers instead of on your laptop. Each task gets its own Cloud Run job execution in your own Google Cloud project, runs Claude Code headless to completion, pushes its work, opens a pull request and disappears. Google Cloud is the first backend; AWS and Azure are wanted (see [Other clouds](#other-clouds-help-wanted)).
 

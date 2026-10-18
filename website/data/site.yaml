@@ -11,15 +11,20 @@
 # `repository` to go.mod's own module path (so every GitHub link W1.7 builds
 # points at this repository and at no other); `min_runs` to
 # internal/stats.MinRuns (D97's N is 20 and it is one number, not two);
-# `canonical_url` to a reserved placeholder origin whose host is on
-# `allowed_hosts`, which is the state W2.2 leaves behind when it writes the real
-# value; `secondary_domain` to empty, D92's answer being one domain and no
-# redirect domain; `analytics` to a state where the flag and the measurement id
-# agree, which holds whether or not W3.2 has turned it on -- that task sets the
-# property and the flag together, behind W1.12's consent gate; both `features`
-# to false, because the console is designed and not shipped and the explainer
-# video does not exist yet (W3.1 flips the first with the console's release, and
-# W2.4 the second); and every entry of `allowed_hosts` to a bare lowercase host.
+# `canonical_url` to an absolute https origin -- the origin alone, with no path,
+# no query and no trailing slash -- whose host is a real host and is on
+# `allowed_hosts` (W2.2 wrote the domain the owner registered and connected
+# hosting to, replacing the reserved placeholder W0.2 wrote while no domain
+# existed); the file to carry NO second domain, which W2.2 wrote for a domain the
+# owner then ruled does not exist (the owner's ruling of 2026-10-17, recorded in
+# the amendment under plan Task W2.2); `analytics` to a state where the flag and
+# the measurement id agree, which holds whether or not W3.2 has turned it on --
+# that task sets the property and the flag together, behind W1.12's consent
+# gate; both `features` to false, because the console is designed and not
+# shipped and the explainer video does not exist yet (W3.1 flips the first with
+# the console's release, and W2.4 the second); and every entry of `allowed_hosts`
+# to a bare lowercase host.
+#
 # Each of those pins names in its failure the task that changes the value, so a
 # later task meets a message that tells it what to do rather than one that
 # argues with it.
@@ -38,24 +43,27 @@ version: 1
 # The one absolute URL the site's canonical <link>, its sitemap, its OpenGraph
 # tag and every absolute link it prints are built from (W1.3).
 #
-# THIS IS A PLACEHOLDER, and it is a placeholder on purpose rather than an
-# oversight: no domain is registered, nothing is deployed, and the value below
-# is a reserved name (RFC 2606 / RFC 6761 -- `.example` can never resolve), so
-# the canonical tag, the sitemap, the OpenGraph tag and every absolute link the
-# site builds are wrong in a way a reader can see rather than wrong in a way
-# that looks real. W2.2 is the task that replaces it with the canonical URL
-# D92's answer names, once that domain exists and serves the site -- registering
-# it, adding it to the site's own Firebase project and writing the DNS records
-# are the owner's steps, and no agent registers a domain or touches DNS; a
-# domain change is this line, the `allowed_hosts` entry below and a rebuild.
-canonical_url: https://fugaro.example
-
-# There is no second domain, and that is D92's answer rather than an unfinished
-# value: one registered domain, no redirect domain, and therefore no redirect to
-# write. W2.2 writes the firebase.json redirect block only for a domain that
-# exists, and this value is where one would be named if the owner ever acquired
-# one.
-secondary_domain: ""
+# This is the real domain and not the placeholder W0.2 wrote: the owner
+# registered it and connected Firebase Hosting to it (owner ruling 2026-10-17),
+# and the site's own Firebase project is `fugaro-prod` -- which firebase.json
+# names nowhere and scripts/deploy-website.sh passes on the command line (D91).
+# The value is the ORIGIN alone: no path, no query, no trailing slash, because
+# every absolute link, the canonical tag, the sitemap and the OpenGraph tag are
+# built from it and a path here would be copied into all of them.
+#
+# A domain change is this line, the `allowed_hosts` entry below and a rebuild --
+# nothing else under website/ names the host, which
+# TestWebsiteCanonicalHostAppearsOnlyInSiteYaml holds. Registering a domain,
+# adding the custom domain and writing the DNS records stay the owner's steps
+# (no agent registers a domain or touches DNS), and the live result is what
+# check 69a of docs/gcp-live-checklist.md records.
+#
+# There is ONE domain, and no second one: the owner does not own a second
+# domain (ruling of 2026-10-17, recorded in the amendment under plan Task W2.2),
+# so nothing here names one and nothing redirects. TestWebsiteNamesNoSecondDomain
+# in internal/cli/docs_website_boundary_test.go scans every file under website/
+# for the name W2.2 wrote and refuses it coming back.
+canonical_url: https://fugaro.dev
 
 # The repository every GitHub link on the site is built from (W1.7): the docs
 # hub links the guides it renders, the community page links CONTRIBUTING.md and
@@ -110,9 +118,11 @@ min_runs: 20
 # here.
 #
 # The third entry is the canonical URL's own host, so it moves with
-# `canonical_url` above: W2.2 replaces both lines in the same commit, and the
-# test above fails until it does.
+# `canonical_url` above -- W2.2 replaced both lines in the same commit, which is
+# what the test above holds them to. It is the only entry that is the site's
+# own: every other entry is a host the site LINKS to, and a host the site does
+# not link to does not belong here.
 allowed_hosts:
   - github.com
   - raw.githubusercontent.com
-  - fugaro.example
+  - fugaro.dev

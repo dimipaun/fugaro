@@ -30,11 +30,12 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { linkNodeModules } from './lib/build.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -83,7 +84,10 @@ function copyOfTheRepository() {
       return true
     },
   })
-  symlinkSync(path.join(SITE, 'node_modules'), path.join(root, 'website', 'node_modules'), 'dir')
+  // Its own node_modules, every package linked but the build caches (.vite, .astro) its
+  // own: a symlink to the whole tree shared vite's cache between parallel builds, which is
+  // the ENOTEMPTY flake (website/test/lib/build.mjs).
+  linkNodeModules(path.join(root, 'website', 'node_modules'))
   mkdirSync(path.join(root, 'website', 'src', 'pages'), { recursive: true })
   writeFileSync(path.join(root, 'website', 'src', 'pages', 'probe.astro'), PROBE)
   return { dir, root, site: path.join(root, 'website') }
@@ -443,7 +447,7 @@ test('a comment that mentions the sitemap package does not make the head point a
   // comment (or a string) that names the package is not one.
   const built = buildWith(t, (copy) => {
     const file = path.join(copy.site, 'astro.config.mjs')
-    writeFileSync(file, `// @astrojs/sitemap arrives with W2.2.\n${readFileSync(file, 'utf8')}`)
+    writeFileSync(file, `// @astrojs/sitemap is not installed, and a comment saying its name is not an integration.\n${readFileSync(file, 'utf8')}`)
   })
 
   assert.ok(!builtPage(built).includes('rel="sitemap"'), 'the page points at a sitemap the build does not produce')
