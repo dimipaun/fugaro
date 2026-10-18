@@ -45,16 +45,19 @@ func runsBucketName(gcpProject string) string { return "fugaro-runs-" + gcpProje
 // bucket called fugaro-runs-<gcpProject> in a project of their own and put a
 // perfect marker in it. So the read takes the GCP project's own number from
 // Resource Manager, requires the bucket's own project number to be that
-// number, and requires the bucket to carry the installation's fugaro=managed
-// label; only then does it look at the object, and only then does it believe
-// it. (The number is read here rather than taken as a parameter because
+// number, requires the project itself to carry the fugaro_managed label the
+// creating run writes on it (Task 3.0), and requires the bucket to carry the
+// installation's fugaro=managed label; only then does it look at the object,
+// and only then does it believe it. (The number and the project's labels are
+// read here rather than taken as parameters because
 // IsManaged's interface is (project, gcpProject) — and this package must not
 // import internal/infra, whose ProjectNumber answers it; the six lines below
 // are that function's read.)
 //
 // It fails closed, and every way of not being managed is an answer rather
-// than a failure: no bucket, a bucket in another project, a bucket without
-// the label, an absent object, an object that cannot be read, an object this
+// than a failure: a project with no fugaro_managed label, a project whose
+// label says something else, no bucket, a bucket in another project, a bucket
+// without the label, an absent object, an object that cannot be read, an object this
 // build cannot parse, a gcp_project field that is not the one asked about, a
 // version this build does not know — all false, each with a one-line reason
 // (the shape initflow's Status.Detail uses) a person can act on. 404 and 403
@@ -182,7 +185,7 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	// The number first: without it there is nothing to check the bucket
 	// against, and a bucket of the right name in a stranger's project would
 	// be believed.
-	number, err := gcpProjectNumber(ctx, c, gcpProject)
+	number, labels, err := gcpProjectNumber(ctx, c, gcpProject)
 	if err != nil {
 		var ge *googleapi.Error
 		if errors.As(err, &ge) && (ge.Code == http.StatusForbidden || ge.Code == http.StatusNotFound) {
@@ -197,6 +200,21 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	// the same value for the same reason.
 	if number == 0 {
 		return Marker{}, false, fmt.Sprintf("GCP project %s came back with no number, so gs://%s cannot be proved to be its own runs bucket (%s is not managed)", gcpProject, bucket, project), nil
+	}
+
+	// The project's own label, the second half of the creation fact (Task
+	// 3.0), and the rule is that it can only narrow: it is required, and its
+	// absence and any other value are both answers about this project, never
+	// a managed verdict. It is checked here, with the number and before the
+	// bucket, because it is a property of the project the one call above
+	// already answered, and a project that does not carry it cannot be
+	// managed whatever the runs bucket holds — so nothing below is read for
+	// it. The two ways of disagreeing are told apart, and neither is a
+	// failure: a caller prints both.
+	if v, ok := labels[ProjectLabelKey]; !ok {
+		return Marker{}, false, fmt.Sprintf("GCP project %s carries no %s label, so %s is not managed: the label is written by the run that creates the project, and a project that has the creation fact without it is marked again by hand, on the account that owns it (docs/gcp-setup.md)", gcpProject, ProjectLabelKey, project), nil
+	} else if v != ProjectLabelValue {
+		return Marker{}, false, fmt.Sprintf("GCP project %s carries %s=%s, not %s, so %s is not managed", gcpProject, ProjectLabelKey, v, ProjectLabelValue, project), nil
 	}
 
 	b, err := s.Buckets.Get(bucket).Context(ctx).Do()
@@ -384,15 +402,23 @@ func checkObjectShape(dec *json.Decoder, allowed objectShape) error {
 	return nil
 }
 
-// gcpProjectNumber is the GCP project's own number, which its buckets carry.
+// gcpProjectNumber is the GCP project's own number, which its buckets carry,
+// and its labels, which Task 3.0's half of the fact lives in.
 // It is internal/infra.ProjectNumber's read, repeated because this package
 // knows nothing of internal/infra (see marker.go's WriteMarker, which takes
 // the number as a parameter for the same reason), and wrapped the same way so
 // a failure reads the same whichever side of the boundary it is reported on.
-func gcpProjectNumber(ctx context.Context, c *crm.Service, gcpProject string) (uint64, error) {
+//
+// Both come back from the one call, and that is the point of the signature
+// rather than an accident of it: the project label is a field of an object
+// this read already fetches for its number check, so the second half of what
+// "managed" means costs **no new call and no new permission** — which is the
+// first thing a reviewer of a new condition on this read should be able to
+// see. A nil map is a project with no labels.
+func gcpProjectNumber(ctx context.Context, c *crm.Service, gcpProject string) (uint64, map[string]string, error) {
 	p, err := c.Projects.Get(gcpProject).Context(ctx).Do()
 	if err != nil {
-		return 0, fmt.Errorf("reading project %s: %w", gcpProject, err)
+		return 0, nil, fmt.Errorf("reading project %s: %w", gcpProject, err)
 	}
-	return uint64(p.ProjectNumber), nil
+	return uint64(p.ProjectNumber), p.Labels, nil
 }

@@ -440,6 +440,9 @@ func noMarker(t *testing.T, g *gcpfake.GCS, bucket string) {
 func (r *initRig) managedRuns(t *testing.T, name, gcp string) {
 	t.Helper()
 	r.markedRuns(t, name, gcp)
+	// The project's own half of the fact (Task 3.0): a world with the object
+	// and no label is not managed, so a test that means "managed" needs both.
+	labelled(r.crm, gcp)
 	body := fmt.Sprintf(`{"version":1,"gcp_project":%q}`, gcp)
 	if err := r.gcs.Bucket(t, initRunsBucket).Bucket.WriteAll(context.Background(), managed.MarkerObject, []byte(body), nil); err != nil {
 		t.Fatal(err)

@@ -209,6 +209,7 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 	t.Run("read from the fact, and no state is read", func(t *testing.T) {
 		r := newInitRig(t)
 		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		labelled(r.crm, initProject)
 		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
 		r.stateBucket()
 		r.gcs.Put(initStateBucket, "fugaro/installation/default.tfstate", []byte(`{"serial":7}`))
@@ -247,6 +248,7 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 	t.Run("readable and managed: the flags win for the amount, and the fact is still read", func(t *testing.T) {
 		r := newInitRig(t)
 		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		labelled(r.crm, initProject)
 		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
 		lc, err := localcfg.Load(r.cfg)
 		if err != nil {
@@ -281,6 +283,7 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 				// The old project's own runs bucket, labelled, and no fact:
 				// an installation that was never managed.
 				r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+				labelled(r.crm, initProject)
 				lc, err := localcfg.Load(r.cfg)
 				if err != nil {
 					t.Fatal(err)
@@ -352,6 +355,7 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 		r := newInitRig(t)
 		// A version-1 fact: managed, from before Task 4.2, with no amount.
 		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		labelled(r.crm, initProject)
 		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":1,"gcp_project":"`+initProject+`"}`))
 		lc, err := localcfg.Load(r.cfg)
 		if err != nil {
@@ -380,6 +384,7 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 	t.Run("the billing account is required", func(t *testing.T) {
 		r := newInitRig(t)
 		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		labelled(r.crm, initProject)
 		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
 		lc, err := localcfg.Load(r.cfg)
 		if err != nil {
@@ -1075,10 +1080,15 @@ func restoreCheckout(t *testing.T) (checkout, root string) {
 	return checkout, root
 }
 
-// restoreManagedOld makes the old project read as managed, with an amount.
+// restoreManagedOld makes the old project read as managed, with an amount:
+// both halves of the fact, the object in the runs bucket and the
+// fugaro_managed label on the project itself (Task 3.0), because the read
+// requires both and a world with one of them is a not-managed world.
 func restoreManagedOld(r *projectRig) {
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+	labelled(r.crm, initProject)
 	r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":2,"gcp_project":"`+initProject+`","budget":{"amount":7,"currency":"USD"}}`))
+	r.crm.SetLabels(initProject, map[string]string{managed.ProjectLabelKey: managed.ProjectLabelValue})
 }
 
 // ttyLines is a terminal's stdin as a program sees it: one Read returns at
@@ -1315,6 +1325,12 @@ func TestRestoreVerifiesTheCreatedProjectIsManaged(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r, lc := newRestoreRig(t)
 			r.crm.AddProject(newProj, int64(gcpfake.FirstCreatedProjectNumber))
+			// The creating run writes both halves of the fact (Task 3.0), so
+			// the new project is labelled the way such a run leaves it; the
+			// rows below that expect a refusal expect it for their own
+			// reason, and a project without the label would refuse them all
+			// with the same one.
+			labelled(r.crm, newProj)
 			if tc.fact != "" {
 				r.gcs.Put("fugaro-runs-"+newProj, managed.MarkerObject, []byte(tc.fact))
 			}
@@ -1526,6 +1542,7 @@ func TestRestorePreflightRefusesEachBadInputWithoutASideEffect(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r, _ := newRestoreRig(t)
 			r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+			labelled(r.crm, initProject)
 			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":2,"gcp_project":"`+initProject+`","budget":{"amount":7,"currency":"USD"}}`))
 			checkout, root := restoreCheckout(t)
 			if tc.setup != nil {
@@ -1735,6 +1752,7 @@ func restoreBudgetOf(t *testing.T, r *initRig, o restoreOptions) (*managed.Budge
 func TestRestoreNotManagedReasonIsCut(t *testing.T) {
 	r := newInitRig(t)
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+	labelled(r.crm, initProject)
 	r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":1,"gcp_project":"`+strings.Repeat("a", 3900)+`"}`))
 	_, _, err := restoreBudgetOf(t, r, restoreOptions{billingAccount: billingAcc})
 	if err == nil || !strings.Contains(err.Error(), "is not managed") {
@@ -1759,6 +1777,7 @@ func TestRestoreRefusesAnInvalidOldBudget(t *testing.T) {
 		} {
 			r := newInitRig(t)
 			r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+			labelled(r.crm, initProject)
 			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
 			_, _, err := restoreBudgetOf(t, r, o)
 			if err == nil || !strings.Contains(err.Error(), "is invalid") || strings.Contains(err.Error(), "not managed") {
@@ -1780,6 +1799,7 @@ func TestRestoreSaysWhenTheFlagsDifferFromTheOldFact(t *testing.T) {
 	} {
 		r := newInitRig(t)
 		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		labelled(r.crm, initProject)
 		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":2,"gcp_project":"`+initProject+`","budget":{"amount":7,"currency":"USD"}}`))
 		b, errOut, err := restoreBudgetOf(t, r, tc.o)
 		if err != nil || b.Amount != tc.o.budget {

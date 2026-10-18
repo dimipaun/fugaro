@@ -9,8 +9,9 @@ import (
 	"testing"
 )
 
-// CRM is a fake of the Cloud Resource Manager v1 call Fugaro makes:
-// projects get, for the project's number.
+// CRM is a fake of the Cloud Resource Manager v1 calls Fugaro makes:
+// projects get, for the project's number and its labels, and projects update,
+// for the label the run that created a project writes on it.
 //
 // Like the real API, it answers a project it doesn't know with 403, not
 // 404, so a caller can't tell a missing project from one it may not read.
@@ -19,6 +20,7 @@ type CRM struct {
 
 	mu       sync.Mutex
 	projects map[string]int64
+	labels   map[string]map[string]string
 	policies map[string][]Binding
 	states   map[string]string
 	noGet    map[string]bool // projects whose plain read answers 403 (the policy stays readable)
@@ -69,7 +71,7 @@ var (
 // NewCRM starts a Resource Manager fake that lives until the test ends.
 func NewCRM(t *testing.T) *CRM {
 	t.Helper()
-	f := &CRM{projects: map[string]int64{}, policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
+	f := &CRM{projects: map[string]int64{}, labels: map[string]map[string]string{}, policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
 		noPolicy: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{},
 		nextProj: FirstCreatedProjectNumber - 1}
 	f.Server = newServer(t, f.handle)
@@ -81,6 +83,33 @@ func (f *CRM) AddProject(id string, number int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.projects[id] = number
+}
+
+// SetLabels makes project carry labels, as its own read answers them. It adds
+// to what is there rather than replacing it, so a test can set the label a
+// project was created with and the ones an update adds without one wiping the
+// other.
+func (f *CRM) SetLabels(project string, labels map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.labels[project] == nil {
+		f.labels[project] = map[string]string{}
+	}
+	for k, v := range labels {
+		f.labels[project][k] = v
+	}
+}
+
+// Labels is what project carries now, as a copy: a test reads it to see what
+// an update left behind.
+func (f *CRM) Labels(project string) map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[string]string, len(f.labels[project]))
+	for k, v := range f.labels[project] {
+		out[k] = v
+	}
+	return out
 }
 
 // SetPolicy sets the bindings of project's IAM policy.
@@ -251,7 +280,7 @@ func (f *CRM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 	}
 	m := crmProjectRE.FindStringSubmatch(r.URL.Path)
-	if r.Method != http.MethodGet || m == nil {
+	if m == nil || (r.Method != http.MethodGet && r.Method != http.MethodPut) {
 		f.unhandled(w, r)
 		return
 	}
@@ -260,9 +289,32 @@ func (f *CRM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"projectId": m[1], "projectNumber": strconv.FormatInt(n, 10), "lifecycleState": cmpOr(f.states[m[1]], "ACTIVE"), "name": m[1],
-	})
+	if r.Method == http.MethodPut {
+		var in struct {
+			Labels map[string]string `json:"labels"`
+		}
+		if err := json.Unmarshal(body, &in); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a project is required")
+			return
+		}
+		// The real API replaces the whole label map on an update, not just
+		// the keys the caller sent, which is what makes a writer that sends
+		// only its own key drop every other label.
+		f.labels[m[1]] = in.Labels
+	}
+	writeJSON(w, http.StatusOK, f.projectJSON(m[1], n))
+}
+
+// projectJSON is a project as the v1 API answers it: the number is a string,
+// and labels are there only when the project carries any.
+func (f *CRM) projectJSON(id string, n int64) map[string]any {
+	out := map[string]any{
+		"projectId": id, "projectNumber": strconv.FormatInt(n, 10), "lifecycleState": cmpOr(f.states[id], "ACTIVE"), "name": id,
+	}
+	if ls := f.labels[id]; len(ls) > 0 {
+		out["labels"] = ls
+	}
+	return out
 }
 
 func cmpOr(v, def string) string {

@@ -681,8 +681,17 @@ func runInit(r *initRun) error {
 //
 // The fact is the project this run created, and nothing else (D73: adding
 // Firebase to an existing project is not creating one, so init --firebase
-// writes nothing). The write itself refuses anything but that fact
-// (managed.WriteMarker); what is here is the rest: which bucket — the
+// writes nothing). It has two halves since Task 3.0 — the object above, and
+// the fugaro_managed label on the GCP project itself — and they are written
+// here together because they are one fact about one creation: the read
+// requires both (managed.readFact), so a run that wrote one and not the other
+// has marked nothing and says so rather than reporting a half-mark. This is
+// the only writer of either, and it is on the operator-run creating path, so
+// neither mark has a path from a coding agent's session or from a managed
+// apply.
+//
+// The write itself refuses anything but that fact
+// (managed.WriteMarker, managed.WriteManagedLabel); what is here is the rest: which bucket — the
 // project's own, under the name the read of Task 0.2 looks in and no other —
 // which project number, and what to say when it cannot be written.
 //
@@ -783,14 +792,27 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	if err == nil {
 		err = managed.WriteMarker(ctx, e.c.Storage, bucket, r.res.Created, r.gcpProject, number, budget)
 	}
+	// The other half of the same fact, in the same step and on the same
+	// values: the fugaro_managed label on the project itself (Task 3.0).
+	// Both or neither — a project with the object and no label is not
+	// managed to the read (managed.readFact requires both), so a run that
+	// wrote one and not the other has not marked the project and must not
+	// say it did. The two are one operator-run step, which is the whole
+	// reason they are here rather than spread across two: nothing but a run
+	// that created the project can write either (a coding agent's session
+	// cannot create a project at all — projectStage.Apply needs a terminal
+	// and a typed confirmation), and `fugaro managed apply` only reads.
+	if err == nil {
+		err = managed.WriteManagedLabel(ctx, e.c.CRM, r.res.Created, r.gcpProject)
+	}
 	if err != nil {
-		r.warn(fmt.Sprintf("project %s was created but not marked as managed in gs://%s (%v): the marker is written once, by the run that creates the project, so nothing is skipped for it until an owner-run command marks it", r.res.Created, bucket, err))
+		r.warn(fmt.Sprintf("project %s was created but not marked as managed (%v): the creation fact and the project label are written once, by the run that creates the project, so nothing is skipped for it until an owner-run command marks it", r.res.Created, err))
 		return
 	}
 	if c := r.o.created; c != nil {
 		c.Marked = true
 	}
-	fmt.Fprintf(r.w, "recorded that this run created project %s: it is Fugaro-managed (gs://%s/%s)\n", r.res.Created, bucket, managed.MarkerObject)
+	fmt.Fprintf(r.w, "recorded that this run created project %s: it is Fugaro-managed (gs://%s/%s, labelled %s=%s)\n", r.res.Created, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
 
 	// D77's state bucket, the other half of what a managed project needs
 	// before an apply can run under the deployer: the state of the

@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -88,6 +89,16 @@ registry: us-east5-docker.pkg.dev/proj-1234/fugaro
 build: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }
 user: test@example.com
 `
+
+// labelled marks project as the project of a managed installation: the
+// fugaro_managed label the run that created it writes on the project itself,
+// beside the creation fact (Task 3.0). A world that puts the object in a
+// bucket and means the read to believe it needs both halves — the read
+// requires the label and answers "not managed" for a project without it, so
+// a rig that forgot it would be testing the wrong refusal.
+func labelled(f *gcpfake.CRM, project string) {
+	f.SetLabels(project, map[string]string{managed.ProjectLabelKey: managed.ProjectLabelValue})
+}
 
 func newInitRig(t *testing.T) *initRig {
 	t.Helper()

@@ -69,6 +69,7 @@ func managedBudgetRig(t *testing.T) (*initRig, string) {
 		t.Fatal(err)
 	}
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
+	labelled(r.crm, initProject)
 	// The whole-project read these tests do not exercise: no Cloud Asset
 	// server is configured here, so the command would reach Google's own API.
 	// A read that cannot be made is the fallback (Task 4.5), which is the

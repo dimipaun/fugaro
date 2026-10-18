@@ -261,11 +261,17 @@ type managedWorldOpts struct {
 	noBucket     bool
 	bucketNumber uint64
 	noLabel      bool
-	object       []byte // nil: the right marker; use noObject for none
-	noObject     bool
-	refuseObject int // a status for the marker object's read, 0 for none
-	refuseGCS    int // a status for every storage call, 0 for none
-	refuseCRM    int // a status for every Resource Manager call, 0 for none
+	// projectLabels are the GCP project's own labels (Task 3.0), nil for the
+	// one the creating run writes: managed.ProjectLabelKey=ProjectLabelValue
+	// beside the fact. A row that sets it is a row about the project's half
+	// of the fact — its absence (the state of everything marked before Task
+	// 3.0) or a value that is not the one this build writes.
+	projectLabels map[string]string
+	object        []byte // nil: the right marker; use noObject for none
+	noObject      bool
+	refuseObject  int // a status for the marker object's read, 0 for none
+	refuseGCS     int // a status for every storage call, 0 for none
+	refuseCRM     int // a status for every Resource Manager call, 0 for none
 }
 
 func managedWorld(o managedWorldOpts) func(t *testing.T) (*storage.Service, *crm.Service) {
@@ -298,6 +304,11 @@ func managedWorld(o managedWorldOpts) func(t *testing.T) (*storage.Service, *crm
 		}
 		cf := gcpfake.NewCRM(t)
 		cf.AddProject(managedPropertyGCP, managedPropertyNumber)
+		labels := o.projectLabels
+		if labels == nil {
+			labels = map[string]string{managed.ProjectLabelKey: managed.ProjectLabelValue}
+		}
+		cf.SetLabels(managedPropertyGCP, labels)
 		if o.refuseCRM != 0 {
 			cf.Refuse(o.refuseCRM, "INTERNAL", "", "backend error")
 		}
@@ -309,8 +320,21 @@ func managedWorld(o managedWorldOpts) func(t *testing.T) (*storage.Service, *crm
 // one is managed.
 func managedPropertyWorlds() []managedPropertyWorld {
 	return []managedPropertyWorld{
-		{"the creation fact is there (marker, right project number, label)", true, managedWorld(managedWorldOpts{})},
-		{"the fugaro=managed label alone, no creation fact", false, managedWorld(managedWorldOpts{noObject: true})},
+		{"the creation fact is there (marker, right project number, both labels)", true, managedWorld(managedWorldOpts{})},
+		{"the runs bucket's fugaro=managed label alone, no creation fact", false, managedWorld(managedWorldOpts{noObject: true})},
+		// Task 3.0's two halves of the same fact, each alone: the project's
+		// own label with no object is not managed (the label comes off one
+		// project get and is a property of the project, not a second way in),
+		// and the object with the project's label taken away is not managed
+		// either — that is the state of every project marked before this
+		// task, and it fails closed until the owner-run backfill of
+		// docs/gcp-setup.md puts the label back.
+		{"the project's fugaro_managed label alone, no creation fact", false, managedWorld(managedWorldOpts{noObject: true,
+			projectLabels: map[string]string{managed.ProjectLabelKey: managed.ProjectLabelValue}})},
+		{"the creation fact with the project's label taken away", false, managedWorld(managedWorldOpts{
+			projectLabels: map[string]string{"environment": "prod"}})},
+		{"the creation fact with the project's label saying something else", false, managedWorld(managedWorldOpts{
+			projectLabels: map[string]string{managed.ProjectLabelKey: "no"}})},
 		{"a creation fact that cannot be read (403)", false, managedWorld(managedWorldOpts{refuseObject: http.StatusForbidden})},
 		{"a creation fact whose read fails (500)", false, managedWorld(managedWorldOpts{refuseObject: http.StatusInternalServerError})},
 		{"a malformed creation fact", false, managedWorld(managedWorldOpts{object: []byte(`{"version":1,"gcp_project":`)})},
