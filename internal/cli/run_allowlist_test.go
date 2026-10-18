@@ -214,7 +214,7 @@ func TestRunAttemptsRefusesBeforeAnyLaunch(t *testing.T) {
 // so what refuses is this gate.
 //
 // The release it names is the one that introduced the version on the node, and
-// this node's version (99) is in no row of policyVersionSince, so the refusal
+// this node's version (99) is in no row of projectpolicy.VersionSince, so the refusal
 // names no release at all — deliberately, and this is the assertion that pins
 // it: the sentence used to quote policySince, the release the policy *model*
 // ships in (0.8.0), and an operator running an 0.8.1 binary was told to upgrade
@@ -252,7 +252,7 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 	// exists to fix.
 	for _, bad := range []string{policySince, "policy model"} {
 		if strings.Contains(err.Error(), bad) {
-			t.Errorf("the refusal says %q, and version 99 is not %s's: the release a too-new refusal names is the one that introduced the version it found (policyVersionSince), never policySince, which names the release the model ships in — an operator told to upgrade to a release they already run: %v", bad, bad, err)
+			t.Errorf("the refusal says %q, and version 99 is not %s's: the release a too-new refusal names is the one that introduced the version it found (projectpolicy.VersionSince), never policySince, which names the release the model ships in — an operator told to upgrade to a release they already run: %v", bad, bad, err)
 		}
 	}
 	for _, bad := range []string{"re-run init", "init --firebase"} {
@@ -448,8 +448,8 @@ func TestPolicySkewRefusalNamesTheReleaseThatIntroducedTheVersion(t *testing.T) 
 	}
 	// The table's own answer for the version the refusal above names, so the
 	// two cannot drift: 2 is 0.8.5's, and it is not policySince.
-	if rel, ok := policyVersionSince[2]; !ok || rel != "0.8.5" {
-		t.Errorf("policyVersionSince[2] = %q (present %v), want 0.8.5: version 2 is the profile gate's, the release that ships in 0.8.5", rel, ok)
+	if rel, ok := projectpolicy.VersionSince[2]; !ok || rel != "0.8.5" {
+		t.Errorf("projectpolicy.VersionSince[2] = %q (present %v), want 0.8.5: version 2 is the profile gate's, the release that ships in 0.8.5", rel, ok)
 	}
 }
 

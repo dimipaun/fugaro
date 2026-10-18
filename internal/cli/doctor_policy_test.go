@@ -172,7 +172,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 	})
 
 	t.Run("a policy newer than the binary", func(t *testing.T) {
-		// The node is Version+1, a version policyVersionSince has no row for
+		// The node is Version+1, a version projectpolicy.VersionSince has no row for
 		// (the table stops at the version this binary writes): doctor can meet
 		// this version through its own read, and a version above every row is
 		// answered with the remedy alone rather than with a release that is
@@ -655,7 +655,7 @@ func TestDoctorNewerThanBinaryNamesTheReleaseThatIntroducedTheVersion(t *testing
 	if !strings.Contains(c.Fix, "upgrade Fugaro") || !strings.Contains(c.Fix, "version 99") {
 		t.Errorf("the fix for a version no release names does not say what to do: %+v", c)
 	}
-	for _, rel := range policyVersionSince {
+	for _, rel := range projectpolicy.VersionSince {
 		if strings.Contains(c.Fix, rel) {
 			t.Errorf("the fix names %s for a version no row holds: %+v", rel, c)
 		}
