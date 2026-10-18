@@ -160,25 +160,29 @@ func matchJobName(job string, p *projectpolicy.Policy, found bool, slug, workflo
 
 // projectJobCandidates is every (profile, provider, account) the published
 // policy defines a job for: each profile it defines, with the provider the
-// profile pins and the Claude account the profile's mounts name (Task 3.1 step
-// 2, plan task 3.2 step 1). The set is computed once per run, from the one
-// policy read, and its size is the cost note the plan makes: N profiles × M
-// accounts of string comparisons, no regex and no prefix test.
+// profile pins, and one entry per account the profile serves — its
+// no-account job and one per account it lists (config.ProjectJobAccounts,
+// the one function the deployer built the deployed jobs with and the
+// launcher picks the job it launches with). The set is computed once per run,
+// from the one policy read, and its size is the cost note the plan makes: N
+// profiles × M accounts of string comparisons, no regex and no prefix test.
 //
-// The account comes from the profile's own secret list through one function
-// (config.ClaudeAccountOfSecrets), which is the axis internal/infra computed
-// the deployed name with (projectJobSecrets): a name the runner would not
-// recompute is a job every run of that profile halts on, so the two must be
-// one rule. Phase 5's named accounts are already covered — a profile mounting
-// claude-oauth-token-<name> computes that account's job — and a policy that
-// later carries accounts of its own adds them here.
+// The account comes from the profile's own claude_accounts field and from
+// nothing else, because that is what internal/infra deployed the names from
+// (ProjectJobs): a name the runner would not recompute is a job every run of
+// that profile halts on, so the two must be one rule. It used to be read out
+// of the profile's secrets: (config.ClaudeAccountOfSecrets), which was the
+// same answer while no profile could mount a Claude token; a token in
+// secrets: is still refused (projectpolicy's isClaudeOAuthSecret), so the
+// field is now the only place the axis can come from.
 func projectJobCandidates(p *projectpolicy.Policy) []jobTriple {
 	names := p.ProfileNames()
 	out := make([]jobTriple, 0, len(names))
 	for _, name := range names {
 		pr := p.Profiles[name]
-		account, _ := config.ClaudeAccountOfSecrets(pr.Secrets)
-		out = append(out, jobTriple{Profile: name, Provider: pr.Provider, Account: account})
+		for _, account := range config.ProjectJobAccounts(pr.JobProfile) {
+			out = append(out, jobTriple{Profile: name, Provider: pr.Provider, Account: account})
+		}
 	}
 	return out
 }
