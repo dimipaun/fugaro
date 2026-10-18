@@ -2503,7 +2503,7 @@ func TestChecklistHasCheck53(t *testing.T) {
 		// Why the check runs from a GitHub checkout: the launcher reads the
 		// profile out of the working directory's fugaro.yaml, and elsewhere it
 		// silently keeps the per-repository job.
-		"`checkoutConfig`, `internal/cli/cloud.go:494`",
+		"`checkoutConfig`, `internal/cli/cloud.go`",
 		"keeps the per-repository job it has always had",
 		// The two repositories share an owner/name and are not the same
 		// repository: the Bitbucket sandbox is never this check's subject.
@@ -2544,7 +2544,7 @@ func TestChecklistHasCheck53(t *testing.T) {
 			"a **record of the owner's 2026-10-15 ruling, not a step with commands**",
 			// The release, and the flag that carries phase 3's clone workflow.
 			"0.9.0",
-			"`cloneShipped`, `internal/cli/recipes_skew.go:68`",
+			"`cloneShipped`, `internal/cli/recipes_skew.go`",
 			// The blast radius: the second repository is the owner's to create
 			// and delete.
 			"**two GitHub repositories**",
@@ -2601,6 +2601,19 @@ func TestChecklistHasCheck53(t *testing.T) {
 		"READ it, never compute it",
 		"can only narrow it, never widen it",
 		"github/<A: the canonical form of $A>",
+		// The profile's cpu is `config.JobProfile.CPU`, an int, and
+		// `localcfg.Parse` decodes strictly: a quoted `cpu: "2"` in the block the
+		// owner pastes into the operator's config fails the parse with
+		// "cannot unmarshal !!str `2` into int", so the publish in the same step
+		// refuses and steps 4 to 9 never run. Every profile in the tree writes
+		// it unquoted.
+		"cpu: 2",
+		// $B is launched from, in steps 6(a) and 8: it needs a checkout of its
+		// own on this machine, with the same three things $A's has, or the
+		// launcher answers for neither and step 6(a) produces nothing.
+		"**Clone it here too, beside `$A`'s checkout.**",
+		"keeps the per-repository job with no refusal at all",
+		"**Every guard block below is still re-run in `$A`'s checkout**",
 		// Step 4: the root that deploys the job, and the per-repository root
 		// that must not be applied.
 		"`deploy/terraform/gcp/roots/installation/`",
@@ -2635,7 +2648,18 @@ func TestChecklistHasCheck53(t *testing.T) {
 		"fugaro cancel <run B>",
 		"A run's objects may name only its own execution",
 		"`gcp.CheckRunExecution`, `internal/backend/gcp/run.go`",
-		// Step 9: the restore, and the second repository's deletion.
+		// Step 9: the restore, and the second repository's deletion. The
+		// Restore runs in a shell that has neither the guard block nor steps
+		// 5/6(a): without the instruction and the variables block below, the
+		// first command still aborts on `${SLUGB:?}` — after the config was
+		// copied back, the policy published and the enrollment removed, leaving
+		// a half-restored installation as the check's last word.
+		"**First re-run the guard block and the Restore's variables block, in that order**",
+		"read -r SLUG RUN  < /tmp/chk53-A-run.txt",
+		"read -r SLUGB RUNB < /tmp/chk53-B-run.txt",
+		`printf '%s %s\n' "${SLUG:?}" "${RUN:?}" > /tmp/chk53-A-run.txt`,
+		`printf '%s %s\n' "${SLUGB:?}" "${RUNB:?}" > /tmp/chk53-B-run.txt`,
+		"Check 53 Restore stopped:",
 		"cp \"$C.before-53\" \"$C\"",
 		"fugaro project repos rm \"github/${B:?}\" --project fugaro",
 		"the Bitbucket sandbox **is untouched**",
@@ -2657,6 +2681,68 @@ func TestChecklistHasCheck53(t *testing.T) {
 		"**FACT:** that **both** runs were placed on `$JOB`",
 		"**FACT:** the restored diffs",
 	})
+
+	// Every citation the section makes in full is resolved against the tree by
+	// the symbol it names, and the scan keeps the section on that form: a line
+	// number is true only until the next merge, and the review of this check
+	// found two of them already pointing at the wrong line — `gitops.go:231`,
+	// inside the environment-stripping helper rather than at `gitTo`, where the
+	// stderr buffer is dropped, and `run.go`'s `launchRun` "at :550" when the
+	// call is at :549. The table below is what makes the next drift fail here.
+	checkCitations(t, section, "Check 53 section", chk53Citations)
+	chkNoLineCites(t, section, "Check 53 section")
+
+	// Every variable the section's commands read is set by the one block every
+	// step re-runs, or is a step's own (the map below). This is the break the
+	// review found in the Restore: it read `${SLUG:?}` and `${SLUGB:?}`, which
+	// exist only in the shells that ran steps 5 and 6(a), so a Restore run in a
+	// later shell aborted after putting half the installation back.
+	block := chk49FencedBlocks(section)[0]
+	assigned := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^([A-Z][A-Z0-9_]*)=`).FindAllStringSubmatch(block, -1) {
+		assigned[m[1]] = true
+	}
+	for _, name := range []string{"P", "L", "A", "PROFILE", "JOB", "BASE", "C", "B", "TASK53", "TASKNO53"} {
+		if !assigned[name] {
+			t.Errorf("the Check 53 setup block does not set %s, and every step below runs in a shell that has only what the block sets: a step that reads it reads an empty string", name)
+		}
+	}
+	// The step-own variables, each set by the block of the step that reads it:
+	// SLUG and RUN by step 5's launch, SLUGB and RUNB by step 6(a)'s stored
+	// task, OTHER_JOB by step 6(e)'s override and OTHER_SLUG and SA by step 7.
+	// They are not in the re-run block on purpose — they are produced by the
+	// steps — so the Restore re-reads them from the record files steps 5 and
+	// 6(a) write, and the two pins above hold that instruction in place.
+	stepLocal := map[string]bool{
+		"SLUG": true, "RUN": true, "SLUGB": true, "RUNB": true,
+		"OTHER_JOB": true, "OTHER_SLUG": true, "SA": true,
+	}
+	// The shell's own, which no block has to set.
+	shellOwn := map[string]bool{"HOME": true}
+	// Command lines only: comment lines are prose, and a `${VAR:?}` in one is a
+	// sentence about the convention rather than a read.
+	ref := regexp.MustCompile(`\$\{?([A-Z][A-Z0-9_]*)`)
+	for _, b := range chk49FencedBlocks(section) {
+		for _, line := range strings.Split(b, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			for _, m := range ref.FindAllStringSubmatch(line, -1) {
+				if assigned[m[1]] || stepLocal[m[1]] || shellOwn[m[1]] {
+					continue
+				}
+				t.Errorf("the Check 53 section reads $%s in %q, and neither the setup block that every step re-runs nor a step's own assignment sets it: in the shell that runs this line it is empty", m[1], line)
+			}
+		}
+	}
+
+	// A `cpu: "2"` in the profile the owner pastes: `config.JobProfile.CPU` is
+	// an int and `localcfg.Parse` decodes strictly, so the quoted form fails the
+	// parse and the step's own publish refuses.
+	if strings.Contains(section, `cpu: "2"`) {
+		t.Error("the Check 53 section writes `cpu: \"2\"` into the operator's project config: `config.JobProfile.CPU` is an int, so `localcfg.Parse` refuses the file (cannot unmarshal !!str `2` into int) and every step after this one is unreachable")
+	}
 
 	// The Bitbucket probe stays dead: no command creates or reads a Bitbucket
 	// credential, and no Bitbucket repository or project is named at all. Every
@@ -2755,4 +2841,28 @@ func chk53MustContain(t *testing.T, got, part string, want []string) {
 			t.Errorf("the Check 53 section's %s is missing %q", part, w)
 		}
 	}
+}
+
+// chk53Citations are the code citations the Check 53 section makes in full,
+// resolved against the tree by checkCitations. Each anchor is the symbol the
+// sentence beside the citation names, which is what survives a merge that moves
+// the code; the section carries no `path.go:NNN` at all (chkNoLineCites).
+var chk53Citations = []chkCitation{
+	{"internal/backend/gcp/run.go", "CheckRunExecution"},
+	{"internal/cli/cloud.go", "checkoutConfig"},
+	{"internal/cli/doctor_launcher.go", "launcher-jobs"},
+	{"internal/cli/project_job.go", "launchProjectJobFor"},
+	{"internal/cli/recipes_skew.go", "cloneShipped"},
+	{"internal/cli/recipes_skew.go", "checkCloneImageSince"},
+	{"internal/cli/run.go", "createTask"},
+	{"internal/cli/run_allowlist.go", "profileAdmissionRefusal"},
+	{"internal/gitops/gitops.go", "gitTo"},
+	{"internal/infra/projectjobs.go", "projectJobGitHubAppID"},
+	{"internal/localcfg/select.go", "this checkout belongs to project"},
+	{"internal/projectpolicy/profiles.go", "AdmissionRefusal"},
+	{"internal/runner/project.go", "admissionCheck"},
+	{"internal/runner/projectjob.go", "checkProjectCheckoutOrigin"},
+	{"internal/runner/projectjob_test.go", "TestProjectJobRefusesACheckoutItDidNotMake"},
+	{"internal/runstore/launch.go", "launch.json"},
+	{"internal/watch/json.go", "Account"},
 }
