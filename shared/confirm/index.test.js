@@ -417,6 +417,9 @@ test('a verb handed an argument of the wrong kind is refused', () => {
   // A target of the right kind with no id at all is missing a field, which is
   // its own refusal: nothing can be resolved from it, so nothing is read back.
   refused(step(newMachine(), cancelEvent({ target: { kind: TARGET_KIND.RUN } })), REFUSAL.MISSING_FIELD, 'target.runId');
+  // And so is a target with no kind at all -- named as the kind's own field,
+  // not folded into the refusal for a target of the wrong kind.
+  refused(step(newMachine(), cancelEvent({ target: { runId: RUN.runId } })), REFUSAL.MISSING_FIELD, 'target.kind');
 });
 
 test('a repository that is not owner/name, a PR that is not a number, and a SHA that is not a SHA are refused', () => {
