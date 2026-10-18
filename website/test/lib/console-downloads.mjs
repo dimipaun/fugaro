@@ -135,8 +135,9 @@ export function publishedDownloads(data = downloadsData()) {
  *
  * Each part is asserted against the fact it comes from (`site.yaml`'s `repository`, the tag the
  * release is cut as, `console/README.md`'s name) rather than against a URL composed here, and
- * the raw string is read for the encoding: `new URL()` normalizes a space in a path to `%20`,
- * so a build that stopped encoding its asset names would look encoded once parsed.
+ * the encoding is read off the **raw** string: `new URL()` normalizes what it is handed — a
+ * space in a path becomes `%20` once parsed — so only the href as written says whether the build
+ * composed a URL or pasted a name into one.
  */
 export function assertReleaseURL(actual, name, data = downloadsData()) {
   let url
