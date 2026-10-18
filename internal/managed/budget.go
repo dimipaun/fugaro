@@ -156,16 +156,17 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 	default:
 		// Managed, and the creation fact records no amount: the marker's
 		// version 1, which is a creation before Task 4.2 or a creation that
-		// was not managed. The sentence says what is true in this release:
-		// fugaro init refuses --managed without --create-project, so no
-		// command in this build adds a budget to an existing project (that is
-		// the plan's Task 6.1, unscheduled), and the only managed project is
-		// one created with its budget.
+		// was not managed (an ordinary `fugaro init --create-project`, whose
+		// WriteMarker call passes no budget). The sentence says what is true
+		// in this release, and since Task 6.1 there IS a way for such a
+		// project to get an amount: the owner's own command, at their own
+		// terminal, which replaces this marker's version-1 fact with the one
+		// that records the amount the owner states (managed.WriteFlag).
 		reason := safetext.Field(r.Reason)
 		if reason == "" {
 			reason = "the creation fact records no amount"
 		}
-		return Enable{}, fmt.Errorf("%w: %s has no budget recorded (%s), and this release cannot add a budget to an existing project; a managed project must be created with `fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID`",
+		return Enable{}, fmt.Errorf("%w: %s has no budget recorded (%s), so the project's own owner can add one by flagging it managed — `fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC`, typed at their own terminal, which replaces this creation fact with the version that records the amount — or a managed project is created with one: `fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID`",
 			ErrNotEnabled, safetext.Field(r.Project), reason)
 	}
 }

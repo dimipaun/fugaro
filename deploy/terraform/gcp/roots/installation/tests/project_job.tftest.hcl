@@ -187,9 +187,151 @@ run "project_job" {
     error_message = "a github project job must carry FUGARO_GITHUB_APP_ID (owner ruling 2026-10-17)"
   }
   assert {
+    # A plain env entry is one with no value_source block at all: an empty
+    # value_source is a list, so it is neither null nor absent, and testing
+    # for null here would make this assertion true of every entry.
     condition = !anytrue([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
-    strcontains(lower(e.name), "key") && e.value_source == null && e.value != ""])
+    strcontains(lower(e.name), "key") && length(e.value_source) == 0 && e.value != ""])
     error_message = "no key material may travel in the job's plain environment: the App's key is a mounted secret"
+  }
+}
+
+# An account job's one secret, and the whole of it: CLAUDE_CODE_OAUTH_TOKEN
+# mounted from its own account's project-wide copy, the account's
+# secretAccessor member on that copy, and nothing else (design
+# project-named-oauth-tokens §4.3 and D2; plan task 2).
+#
+# This is the carrier the credentials service replaces, so what the review
+# reads here is the complete surface: one secret_env entry, one member, on
+# this job's own account. The three copies are in var.secrets, exactly as the
+# installation passes every project-wide container it holds — a neighbour's
+# token among them — so the assertions below are about what this job's account
+# may reach, not about what exists.
+#
+# Mutation (run, restore): add the other accounts' logical names to
+# job.secret_env (the plan's red step, one level up from the deployer's):
+# the member and the mount assertions both fail.
+run "account_job_reads_only_own_secret" {
+  command = plan
+
+  module {
+    source = "../../modules/project"
+  }
+
+  variables {
+    secrets = {
+      claude-oauth-token               = "fugaro-project-aurora-claude-oauth-token-b2904480b41a631b"
+      claude-oauth-token-acme-personal = "fugaro-project-aurora-claude-oauth-token-acme-personal-93bc900e5b996e65"
+      claude-oauth-token-acme-work     = "fugaro-project-aurora-claude-oauth-token-acme-work-ac0b8ecc6c56414f"
+    }
+    job = {
+      profile  = "standard"
+      provider = "github"
+      account  = "acme-personal"
+      job      = "fugaro-p-standard-github-acme-person-1c8f9d6ace37"
+      service_account = {
+        account_id   = "fugaro-p-standard-git-1c8f9d6a"
+        display_name = "Fugaro project job standard/github/acme-personal"
+      }
+      image          = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/base:0.9.0"
+      cpu            = "4"
+      memory         = "8Gi"
+      task_timeout_s = 2820
+      env = {
+        FUGARO_GITHUB_APP_ID = "123456789"
+        FUGARO_PROJECT       = "aurora"
+        FUGARO_GCP_PROJECT   = "proj-1234"
+        FUGARO_REGION        = "us-east5"
+      }
+      secret_env = {
+        CLAUDE_CODE_OAUTH_TOKEN = "claude-oauth-token-acme-personal"
+      }
+      bucket_condition = {
+        title = "fugaro-project-job-runs"
+        expression = join(" || ", [
+          "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")",
+          "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/cache/\")",
+          "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/locks/\")",
+        ])
+      }
+      token_condition = {
+        title      = "fugaro-project-tokens-fugaro-p-standard-git-1c8f9d6a"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
+      }
+      vertex = false
+    }
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-p-standard-git-1c8f9d6a@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-p-standard-git-1c8f9d6a@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  # Exactly one member, secretAccessor, on this account's copy, to this job's
+  # own account. One token, one job, one service account: the account's token
+  # is readable by the runs in that account's job and by no other job's.
+  assert {
+    condition = toset([for m in google_secret_manager_secret_iam_member.job :
+      "${m.role} ${m.secret_id} ${m.member}"]) == toset([
+      "roles/secretmanager.secretAccessor fugaro-project-aurora-claude-oauth-token-acme-personal-93bc900e5b996e65 serviceAccount:fugaro-p-standard-git-1c8f9d6a@proj-1234.iam.gserviceaccount.com",
+    ])
+    error_message = "an account job's account must hold secretAccessor on its own account's token and on nothing else"
+  }
+  # The neighbouring accounts' copies are in var.secrets and this job's
+  # account reaches none of them: a job that could read another account's
+  # token would make the account segment of its name a label rather than a
+  # boundary.
+  assert {
+    condition = !anytrue([for m in google_secret_manager_secret_iam_member.job :
+      contains([
+        "fugaro-project-aurora-claude-oauth-token-b2904480b41a631b",
+        "fugaro-project-aurora-claude-oauth-token-acme-work-ac0b8ecc6c56414f",
+    ], m.secret_id)])
+    error_message = "an account job's account must not reach another account's token, nor the default account's"
+  }
+
+  # The mount: one secret variable, CLAUDE_CODE_OAUTH_TOKEN, from this
+  # account's own copy at version latest — and no other secret variable at
+  # all, which is what makes the removal of this entry the whole of the swap.
+  assert {
+    condition = toset([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
+    e.name if length(e.value_source) > 0]) == toset(["CLAUDE_CODE_OAUTH_TOKEN"])
+    error_message = "an account job must mount exactly one secret variable: its own account's token"
+  }
+  assert {
+    condition = length([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
+      e if e.name == "CLAUDE_CODE_OAUTH_TOKEN" &&
+      e.value_source[0].secret_key_ref[0].secret == "fugaro-project-aurora-claude-oauth-token-acme-personal-93bc900e5b996e65" &&
+    e.value_source[0].secret_key_ref[0].version == "latest"]) == 1
+    error_message = "CLAUDE_CODE_OAUTH_TOKEN must be mounted from this account's own project-wide copy, at version latest"
+  }
+  # The token travels as a mounted secret and never as a plain value.
+  assert {
+    condition = !anytrue([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
+    strcontains(upper(e.name), "OAUTH") && length(e.value_source) == 0 && e.value != ""])
+    error_message = "no token may travel in the job's plain environment: the mount is the only carrier"
+  }
+
+  # The job is the account's own, name and account id together: the name is
+  # what the runner matches, and the account segment of it is what separates
+  # one account's job from another's.
+  assert {
+    condition     = google_cloud_run_v2_job.this.name == "fugaro-p-standard-github-acme-person-1c8f9d6ace37"
+    error_message = "an account job's name must be gcp.ProjectJobName of its (profile, provider, account)"
+  }
+  assert {
+    condition     = google_service_account.job.account_id == "fugaro-p-standard-git-1c8f9d6a"
+    error_message = "an account job's account must be gcp.ProjectServiceAccountID of the (profile, provider, account) it serves"
+  }
+  # The job says which account it serves, in the label the log sink and
+  # exclusion select on: an account's logs must be attributable to it.
+  assert {
+    condition     = google_cloud_run_v2_job.this.labels["fugaro_account"] == "acme-personal"
+    error_message = "an account job's fugaro_account label must name the account it serves"
   }
 }
 

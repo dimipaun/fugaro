@@ -54,9 +54,9 @@ type projectJob struct {
 }
 
 // projectJobOf is the fixture's own project job: the default profile, serving
-// github, running as no Claude account — the profile mounts no token, so its
-// job's account segment is empty (config.ClaudeAccountOfSecrets) — on the
-// fixture's repository.
+// github, running as no Claude account — the profile lists none, so the axis
+// config.ProjectJobAccounts computes for it is the empty account alone — on
+// the fixture's repository.
 func projectJobOf() projectJob {
 	return projectJob{profile: projectpolicy.DefaultProfileName, provider: "github", slugRepo: "acme/app"}
 }

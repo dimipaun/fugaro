@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
@@ -32,9 +34,9 @@ import (
 // — and never from the local config's profiles: a launcher that resolved the
 // profile from anywhere else could launch a job the runner would then refuse
 // to place, halting every run of it. The profile's own provider and the Claude
-// account its mounts name are part of that name (plan task 3.2), and
-// config.ClaudeAccountOfSecrets is the one function both sides compute the
-// account with.
+// account it serves are part of that name (plan task 3.2), and
+// config.ProjectJobAccounts is the one function the deployer, the runner and
+// this launcher compute the account with.
 
 // launchProjectJob is the shared project job a launch runs on, and the two
 // things about it a launch needs.
@@ -127,8 +129,15 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 	if err := profileAdmissionRefusal(p, profile, provider, spec.Repo); err != nil {
 		return nil, err
 	}
-	account, _ := config.ClaudeAccountOfSecrets(pr.Secrets)
-	if err := checkProjectJobAccount(profile, spec.OAuthToken, account); err != nil {
+	// The account axis of the job this launch targets: the profile's own job
+	// set decides whether the run's selection is one the profile serves, and
+	// the selected account is the job's (design §4.4). One function computes
+	// the set on all three sides — the deployer that built the jobs, the
+	// runner that matches CLOUD_RUN_JOB against their names, and this launcher
+	// (config.ProjectJobAccounts) — so a launch can only ever target a job the
+	// other two know.
+	account, err := projectJobAccountFor(profile, pr, spec.OAuthToken)
+	if err != nil {
 		return nil, err
 	}
 	// And a run whose own credential is an OAuth account cannot run here at
@@ -248,52 +257,72 @@ func checkProjectJobProvider(profile, provider string) error {
 		profile)
 }
 
+// projectJobAccountFor is the account axis of the job a launch on profile pr
+// targets: the run's own selection as the profile's job set spells it — a
+// named account is that account, and the default account and no selection at
+// all are both the empty account, which is the profile's no-account job
+// (projectJobAccount) — or a refusal when the profile serves no job for the
+// selection (checkProjectJobAccount).
+//
+// The set it picks from is config.ProjectJobAccounts, the one function the
+// deployer built the deployed jobs with and the runner recomputes the names it
+// matches against with: a launch can therefore only ever target a job those
+// two know, which is what keeps a run from being started on a name nothing
+// deployed (a 404 that would blame `fugaro init` for a job it was never asked
+// for) or on a job the runner would refuse to place.
+func projectJobAccountFor(profile string, pr projectpolicy.Profile, selected string) (string, error) {
+	account := projectJobAccount(selected)
+	if slices.Contains(config.ProjectJobAccounts(pr.JobProfile), account) {
+		return account, nil
+	}
+	return "", checkProjectJobAccount(profile, pr, selected)
+}
+
 // checkProjectJobAccount refuses a launch whose run selects a Claude account
-// the selected profile's job does not run as (plan task 3.4 step 1).
+// the selected profile serves no job for (plan task 3.4 step 1, design §4.4
+// row 5).
 //
 // On a per-repository job the account is part of the job's own name
 // (gcp.JobName with gcp.WorkflowVariant(workflow, token)), so a run that
 // selects an account is launched on the job that mounts that account's token.
 // A project job's account is fixed where the job is deployed: it is the
-// account segment of gcp.ProjectJobName, computed from the profile's secrets
-// (internal/infra's projectJobSecrets), and the container reads that account's
-// token, whatever the run's own task.json says. So a run that selects another
-// account would run — and be recorded, and be shown by `runs ls` — as an
-// account its own fugaro.yaml did not choose, and the credential the job holds
-// is not the one this launch's allow_data_to check was made for (that check
-// validates the selected name, agent.oauth_token or --token). The launch stops
-// instead, as the rest of this release's selections do: a repository that must
-// run as another account belongs on a profile that mounts it.
+// account segment of gcp.ProjectJobName, one job per (profile, provider,
+// account) (internal/infra's ProjectJobs), and that job's container holds that
+// account's token and no other, whatever the run's own task.json says. So a
+// run that selects an account the profile serves no job for would either run —
+// and be recorded, and be shown by `runs ls` — as an account its own
+// fugaro.yaml did not choose, or land on a job that holds no token at all; and
+// the credential the job holds is not the one this launch's allow_data_to
+// check was made for (that check validates the selected name,
+// agent.oauth_token or --token). The launch stops instead, as the rest of this
+// release's selections do: a repository that must run as another account
+// belongs on a profile that serves it.
 //
-// The two selections are compared the way the model spells them elsewhere: the
-// default account (config.DefaultClaudeAccount) and a profile that mounts no
-// Claude token at all are both the empty account — gcp.WorkflowVariant joins no
-// account segment for either, and the account axis of a job's name is empty for
-// both — so a run that selects nothing is not refused on an api-key or Vertex
-// installation for a token no job of it mounts.
-func checkProjectJobAccount(profile, selected, mounted string) error {
-	selected, mounted = projectJobAccount(selected), projectJobAccount(mounted)
-	if selected == mounted {
-		return nil
-	}
-	what := "mounts no Claude token, so its job runs as no account at all"
-	if mounted != "" {
-		what = fmt.Sprintf("mounts the Claude account %q, so its job runs as that account", mounted)
-	}
+// The selection is compared the way the model spells it everywhere: the
+// default account (config.DefaultClaudeAccount) and a profile that serves no
+// Claude account are both the empty account — the account axis of a job's name
+// is empty for both (config.ProjectJobAccounts) — so a run that selects
+// nothing is not refused on an api-key or Vertex installation for a token no
+// job of it mounts.
+func checkProjectJobAccount(profile string, pr projectpolicy.Profile, selected string) error {
 	chose := "the default Claude account"
 	if selected != "" {
 		chose = fmt.Sprintf("the Claude account %q", selected)
 	}
-	return userErr("this run selects %s, and the job profile %q %s: a project job's Claude account is fixed where the job is deployed — it is the account segment of the job's own name, computed from the profile's secrets — and its container reads that account's token, so a run on it cannot run as another account, and the credential the job holds is not the one this launch's allow_data_to check was made for. The launch stops rather than running this repository's work as an account its own fugaro.yaml did not choose: name the profile's account in the repository's fugaro.yaml (agent.oauth_token), or run the repository on a profile that mounts the account it selects",
-		chose, profile, what)
+	serves := "serves no Claude account"
+	if n := len(pr.ClaudeAccounts); n > 0 {
+		serves = fmt.Sprintf("serves the Claude accounts %s", strings.Join(pr.ClaudeAccounts, ", "))
+	}
+	return userErr("this run selects %s, and the job profile %q %s: a project job's Claude account is fixed where the job is deployed — one job per (profile, provider, account), the account segment of the job's own name, and its container holds that account's token and no other — so a launch cannot run this repository's work as an account the profile serves no job for, and the credential the job holds is not the one this launch's allow_data_to check was made for. The launch stops rather than running this repository's work as an account its own fugaro.yaml did not choose: name an account the profile serves in the repository's fugaro.yaml (agent.oauth_token), or run the repository on a profile that serves the account it selects",
+		chose, profile, serves)
 }
 
 // projectJobAccount is a Claude account name as a job's account axis spells it:
 // the default account and no account at all are both "". They are one selection
 // everywhere the axis is computed — gcp.WorkflowVariant joins no segment for
-// either, and internal/infra's projectJobSecrets reports "" for a profile that
-// mounts no Claude token — so a comparison of two accounts is a comparison of
-// what each names beyond the default.
+// either, and config.ProjectJobAccounts spells the default account as the empty
+// one because it rides the profile's no-account job — so a comparison of two
+// accounts is a comparison of what each names beyond the default.
 func projectJobAccount(name string) string {
 	if name == config.DefaultClaudeAccount {
 		return ""

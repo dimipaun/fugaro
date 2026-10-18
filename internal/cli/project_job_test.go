@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -44,8 +47,8 @@ type projectJobFixture struct {
 
 // projectJobPolicy is the policy the fixture publishes: the standard profile
 // serving github, and every repository of the fixture's owner admitted to it.
-// The profile mounts no secret, so its job runs as no Claude account and the
-// job's account segment is empty (config.ClaudeAccountOfSecrets).
+// The profile lists no Claude account, so its job runs as no account and the
+// job's account segment is empty (config.ProjectJobAccounts).
 const projectJobPolicy = `{"version":3,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
 
@@ -507,6 +510,59 @@ func TestLaunchRefusesAnAccountTheProfileDoesNotMount(t *testing.T) {
 	}
 	if tok := readToken(t, f.cloudFixture, run); tok != "" {
 		t.Errorf("the refused launch minted a budget token: %s", tok)
+	}
+}
+
+// TestLauncherAccountDerivationSharedFunction: the launcher's account axis is
+// the profile's own job set, config.ProjectJobAccounts — the function
+// internal/infra built the deployed jobs with and internal/runner recomputes
+// the names it matches CLOUD_RUN_JOB against — spelled the way a launch
+// selects from it. A launch can therefore only ever target a job those two
+// know: not a name nothing deployed, and not one the runner would refuse to
+// place.
+//
+// Mutation (run, restore): derive the account from the profile's secrets
+// (config.ClaudeAccountOfSecrets, the pre-task reading) — a profile serving
+// accounts by its claude_accounts field then refuses every account it serves,
+// and a launch naming one never reaches the job the deployer built.
+func TestLauncherAccountDerivationSharedFunction(t *testing.T) {
+	serving := projectpolicy.Profile{JobProfile: config.JobProfile{
+		Provider:       "github",
+		ClaudeAccounts: []string{"acme-personal", config.DefaultClaudeAccount},
+	}}
+	plain := projectpolicy.Profile{JobProfile: config.JobProfile{Provider: "github"}}
+	for _, tc := range []struct {
+		why      string
+		profile  projectpolicy.Profile
+		selected string
+		want     string
+	}{
+		{"no selection is the profile's no-account job", serving, "", ""},
+		{"the default account is the profile's no-account job", serving, config.DefaultClaudeAccount, ""},
+		{"a named account the profile serves is a job of its own", serving, "acme-personal", "acme-personal"},
+		{"a profile serving nothing still has its no-account job", plain, "", ""},
+		{"and the default account is that same job", plain, config.DefaultClaudeAccount, ""},
+	} {
+		got, err := projectJobAccountFor("standard", tc.profile, tc.selected)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.why, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: projectJobAccountFor(%q) = %q, want %q", tc.why, tc.selected, got, tc.want)
+		}
+		if !slices.Contains(config.ProjectJobAccounts(tc.profile.JobProfile), got) {
+			t.Errorf("%s: the launcher targets the account %q, which the profile's job set %v does not hold — the job it names is one nothing deployed",
+				tc.why, got, config.ProjectJobAccounts(tc.profile.JobProfile))
+		}
+	}
+	// An account the profile serves no job for is refused, naming the account
+	// and the profile. The launch's own gate, end to end, is
+	// TestLaunchRefusesAnAccountTheProfileDoesNotMount.
+	if _, err := projectJobAccountFor("standard", serving, "acme-work"); err == nil || !strings.Contains(err.Error(), "acme-work") || !strings.Contains(err.Error(), "standard") {
+		t.Errorf("a launch selecting acme-work on a profile serving acme-personal: %v", err)
+	}
+	if _, err := projectJobAccountFor("standard", plain, "acme-personal"); err == nil || !strings.Contains(err.Error(), "acme-personal") {
+		t.Errorf("a launch selecting an account on a profile serving none: %v", err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -238,5 +239,41 @@ func TestValidateClaudeAccountsRefusesWildcard(t *testing.T) {
 	ps := ValidateClaudeAccounts(map[string]ClaudeAccount{"acme-personal": {AllowDataTo: []string{"*"}}})
 	if len(ps) == 0 {
 		t.Fatal("the literal \"*\" was accepted as a repository slug for a claude account; only providers: gets the wildcard rule (design §3a)")
+	}
+}
+
+// TestProjectJobAccounts pins the account axis: the profile's own
+// claude_accounts field, the empty account first and always present, the
+// default account folded into it, and the rest sorted. It is the one rule the
+// deployer, the launcher and the runner compute a profile's job set with, so
+// every case here is a name one of the three would otherwise disagree about.
+//
+// Mutation (run, restore): drop the leading empty entry (a profile that lists
+// nothing then serves no job at all, and the deployer stops building the job
+// every existing installation has) or stop folding DefaultClaudeAccount into
+// it (a second job appears, named for "default", while the launcher and the
+// runner keep targeting the no-account one).
+func TestProjectJobAccounts(t *testing.T) {
+	for _, tc := range []struct {
+		why      string
+		accounts []string
+		want     []string
+	}{
+		{"a profile serving no account keeps its no-account job", nil, []string{""}},
+		{"the default account is the no-account job", []string{DefaultClaudeAccount}, []string{""}},
+		{"a named account is a job of its own beside the no-account one", []string{"acme-personal"}, []string{"", "acme-personal"}},
+		{"the axis is sorted, and the empty account sorts first", []string{"zulu", "acme-personal", DefaultClaudeAccount}, []string{"", "acme-personal", "zulu"}},
+		{"an account listed twice is one job", []string{"acme-personal", "acme-personal"}, []string{"", "acme-personal"}},
+	} {
+		if got := ProjectJobAccounts(JobProfile{ClaudeAccounts: tc.accounts}); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: ProjectJobAccounts(%v) = %v, want %v", tc.why, tc.accounts, got, tc.want)
+		}
+	}
+	// The profile's own list is never written to: it is the config's, and the
+	// deployer holds it for the whole job set.
+	list := []string{"acme-personal", DefaultClaudeAccount}
+	_ = ProjectJobAccounts(JobProfile{ClaudeAccounts: list})
+	if !slices.Equal(list, []string{"acme-personal", DefaultClaudeAccount}) {
+		t.Errorf("ProjectJobAccounts rewrote the profile's own list: %v", list)
 	}
 }

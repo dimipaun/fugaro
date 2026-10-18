@@ -2762,3 +2762,78 @@ func TestJobTokenGrantIsReadOnlyOnTokens(t *testing.T) {
 		t.Error("the project job's objectUser condition reaches tokens/")
 	}
 }
+
+// TestProjectJobSecretGrantFollowsTheMount pins the one property that makes a
+// project job's account axis a credential boundary rather than a label: the
+// module grants secretmanager.secretAccessor on each secret the job's *own*
+// secret_env names, to that job's own account, at the secret level — one
+// member per (job, mounted secret), never a project-wide role, never another
+// job's secret — and the container mounts exactly those entries through
+// secret_key_ref (design project-named-oauth-tokens §4.3 and D2, plan task 2).
+//
+// The grant and the mount are one list, which is what makes the credentials
+// service a clean swap (§4.6): removing an account's one secret_env entry
+// removes its member with it and moves nothing else — not the job's name, not
+// its account, not its profile.
+//
+// Mutation (run, restore): iterate anything but var.job.secret_env in the
+// member's for_each (a literal set, var.secrets, another variable) — the
+// member and the mount then describe different secrets, and this fails.
+func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
+	path := "gcp/modules/project/sa.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := resourceBlocks(t, path, b, "google_secret_manager_secret_iam_member")
+	if len(blocks) != 1 {
+		t.Fatalf("%s has %d secretAccessor resources, want the one the project job's mounts drive", path, len(blocks))
+	}
+	body := blocks[0].body
+	for _, want := range []string{
+		// One member per secret this job mounts, and none for a secret it
+		// does not: the list is the job's own secret_env, not the
+		// installation's secrets and not another job's.
+		"for_each = toset(values(var.job.secret_env))",
+		// The secret's own ID, at the secret level: never the project.
+		"secret_id = var.secrets[each.value]",
+		"role      = \"roles/secretmanager.secretAccessor\"",
+		// The job's own account and no other member, ever.
+		"member    = google_service_account.job.member",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s: google_secret_manager_secret_iam_member.job does not hold %q:\n%s", path, want, body)
+		}
+	}
+	if strings.Contains(body, "var.project_number") || strings.Contains(body, `"allUsers"`) || strings.Contains(body, `"allAuthenticatedUsers"`) {
+		t.Errorf("%s: the job's secret grant names something wider than the job's own account:\n%s", path, body)
+	}
+
+	// And the container mounts each of those entries, as a secret_key_ref to
+	// the same container: the mount is the carrier, so a secret_env entry the
+	// job does not mount would be a grant with no reader, and a mount with no
+	// entry would be a variable the job's account cannot read.
+	jobPath := "gcp/modules/project/job.tf"
+	jb, err := os.ReadFile(jobPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := resourceBlocks(t, jobPath, jb, "google_cloud_run_v2_job")
+	if len(jobs) != 1 {
+		t.Fatalf("%s has %d jobs, want the one shared project job", jobPath, len(jobs))
+	}
+	for _, want := range []string{
+		"for_each = var.job.secret_env",
+		"secret  = var.secrets[env.value]",
+		`version = "latest"`,
+	} {
+		if !strings.Contains(jobs[0].body, want) {
+			t.Errorf("%s: the job's container does not mount its secret_env through %q:\n%s", jobPath, want, jobs[0].body)
+		}
+	}
+	// The values never travel in the plain environment: every secret the job
+	// mounts is a value_source, and the plain env is the profile's own.
+	if strings.Contains(jobs[0].body, "value = var.secrets") {
+		t.Errorf("%s: a secret's value is written into the job's plain environment", jobPath)
+	}
+}
