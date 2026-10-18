@@ -884,12 +884,16 @@ func (i deployerImpersonator) call(ctx context.Context, account, method string, 
 	if err != nil {
 		return nil, fmt.Errorf("assuming the deployer account %s: %w", safetext.Field(account), safetext.FieldErr(err))
 	}
+	// resp.Status is the status line the far end answered with — the reason
+	// phrase included, which is the other program's own text and not a code —
+	// so it is one bounded field like the body under it. The account this
+	// command asked about is one as well, here as everywhere it is printed.
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
 		return nil, fmt.Errorf("%w: %s refused this run's credential (%s): the owner-run creating apply grants roles/iam.serviceAccountTokenCreator on %s to var.operators, so ask the owner to add you, or run this from the terminal you are an operator in",
-			managedmode.ErrNoImpersonationGrant, safetext.Field(account), resp.Status, safetext.Field(account))
+			managedmode.ErrNoImpersonationGrant, safetext.Field(account), safetext.Field(resp.Status), safetext.Field(account))
 	}
 	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("assuming the deployer account %s: %s: %s", account, resp.Status, safetext.Field(string(out)))
+		return nil, fmt.Errorf("assuming the deployer account %s: %s: %s", safetext.Field(account), safetext.Field(resp.Status), safetext.Field(string(out)))
 	}
 	return out, nil
 }

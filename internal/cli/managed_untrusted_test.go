@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -346,6 +348,37 @@ func TestTheImpersonationsOwnWordsAreBounded(t *testing.T) {
 				t.Fatal("a 5xx from the impersonation API produced a token")
 			}
 			noRawHostile(t, name+" in the impersonation API's refusal", err.Error(), 1)
+		})
+		t.Run(name+" in the status line", func(t *testing.T) {
+			// The reason phrase of a status line is the far end's own text:
+			// Go hands it to a caller as it arrived, so the refusal prints it
+			// bounded like the body. A raw listener answers with it, because
+			// no http.Handler can write a status line of its own.
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close()
+			go func() {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				defer c.Close()
+				if _, err := http.ReadRequest(bufio.NewReader(c)); err != nil {
+					return
+				}
+				fmt.Fprintf(c, "HTTP/1.1 403 %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", v)
+			}()
+			imp := deployerImpersonator{
+				self: "user:operator@example.com", endpoint: "http://" + ln.Addr().String(), hc: &http.Client{},
+				ts: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: fixtureToken("op-")}),
+			}
+			_, err = imp.accessToken(context.Background(), managedmode.DeployerAccount(initProject))
+			if err == nil {
+				t.Fatal("a 403 from the impersonation API produced a token")
+			}
+			noRawHostile(t, name+" in the status line's refusal", err.Error(), 1)
 		})
 	}
 }
