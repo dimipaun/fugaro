@@ -172,6 +172,7 @@ export function readKill(value) {
     });
   }
   if (value.on !== true) return Object.freeze({ ok: true, kill: null });
+  const atMs = epochMs(value.at);
   return Object.freeze({
     ok: true,
     kill: Object.freeze({
@@ -179,27 +180,74 @@ export function readKill(value) {
       by: typeof value.by === 'string' && value.by.length > 0 ? value.by : null,
       // `at` is epoch milliseconds on the wire (`budget.Kill`), and the
       // document carries RFC 3339 (`jsonKill`). A bad instant is a missing
-      // one, never the epoch.
-      at: epochMs(value.at) === null ? null : new Date(value.at).toISOString(),
+      // one, never the epoch. `killReadable` has already refused a node whose
+      // `at` is not renderable, so this call cannot throw -- which is the
+      // point of the check being there rather than here.
+      at: atMs === null ? null : new Date(atMs).toISOString(),
       reason: typeof value.reason === 'string' && value.reason.length > 0 ? value.reason : null,
     }),
   });
 }
 
-function epochMs(value) {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) return null;
+/**
+ * The last instant a JS `Date` can render: `new Date(MAX_INSTANT_MS)` is the
+ * ceiling, and one millisecond more makes `toISOString()` **throw** a
+ * `RangeError` rather than return something wrong.
+ *
+ * **Why this bound is not pedantry.** A wire instant is an `int64`
+ * (`budget.Kill.At`), and int64 reaches 9.22e18 -- a nanosecond timestamp
+ * (1.7e18) fits, and a sender that wrote one is a real thing. Go formats it and
+ * prints a wild year; this app cannot represent it at all. A reader that called
+ * `toISOString()` on one would throw *while assembling a document from a node
+ * it had already stored*, so every later assembly would throw too: the feed
+ * would be dead for the rest of the session, and the switch would read as off.
+ * Bounding the instant is what keeps a bad `at` a bad `at`.
+ */
+export const MAX_INSTANT_MS = 8_640_000_000_000_000;
+
+/**
+ * A wire instant in epoch milliseconds, or `null` when it is not one this app
+ * can render: not an integer, not positive, or past `MAX_INSTANT_MS`.
+ *
+ * A non-positive instant is Go's own "no instant": `budget.Kill.At` is a
+ * `time.Time`, and `jsonKill` omits `at` for its zero value, so a wire `0` and
+ * an absent field mean the same thing to the console. `null` is that absence --
+ * never the epoch, which would be a kill at a time nobody named.
+ */
+export function epochMs(value) {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return null;
+  if (value <= 0 || value > MAX_INSTANT_MS) return null;
   return value;
 }
 
 /** Is this kill node one a reader can believe? A field of the wrong type is a
  * node `budget.Decode` would have errored on, which is `State.kill`'s
- * unreadable case -- not an `on: false` this app invented. */
+ * unreadable case -- not an `on: false` this app invented. An `at` this app
+ * cannot render is that case too: a switch the phone cannot read fully is a
+ * switch it believes (`State.kill`), where one whose instant was silently
+ * dropped would be a switch the phone *claimed* to have read. */
 function killReadable(node) {
   if (node.on !== undefined && typeof node.on !== 'boolean') return false;
   if (node.by !== undefined && typeof node.by !== 'string') return false;
   if (node.reason !== undefined && typeof node.reason !== 'string') return false;
-  if (node.at !== undefined && (typeof node.at !== 'number' || !Number.isInteger(node.at))) return false;
+  if (node.at !== undefined && !isInstantField(node.at)) return false;
   return true;
+}
+
+/**
+ * Is `at` a value this reader can believe **as the field**?
+ *
+ * An integer is a field `budget.Decode` reads -- including a zero or a negative
+ * one, which `epochMs` reads as "no instant" rather than as a node that failed
+ * to decode. Anything else (a string, a fractional number, an array) is the
+ * decode error `State.kill` calls unreadable. An integer past `MAX_INSTANT_MS`
+ * is this app's own ceiling rather than Go's, and it is the one case where this
+ * app calls a node unreadable that Go would have read: Go prints a wild year,
+ * the phone cannot render the instant at all.
+ */
+function isInstantField(value) {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return false;
+  return Math.abs(value) <= MAX_INSTANT_MS;
 }
 
 /**

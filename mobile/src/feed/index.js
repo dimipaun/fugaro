@@ -53,11 +53,10 @@ export { BURN_WARMUP_MS, BURN_WINDOW_MS, DEFAULT_BURN_HOURS, BurnSampler, fast, 
 export {
   FIRST_FRAME_MS,
   LIVENESS,
-  LOST_AFTER_MS,
   REFUSED_NOTICE,
   SKIP_NOTICE,
   STALE_AFTER_MS,
   FeedView,
 } from './view.js';
 
-export { CONNECTION_REASONS, MAX_PATHS, READER_CODES, FeedReader, isPort } from './reader.js';
+export { CONNECTION_REASONS, MAX_PATHS, READER_CODES, FeedReader, isPermissionError, isPort } from './reader.js';

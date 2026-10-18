@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  MAX_INSTANT_MS,
   MICROS_PER_USD,
   NODE_CODES,
   capMicros,
@@ -119,6 +120,29 @@ test('a kill switch that is not there is off, and one that cannot be read is on'
   const bare = readKill({ on: true, at: 0 }).kill;
   assert.deepEqual(bare, { on: true, by: null, at: null, reason: null });
   assert.equal(readKill({ on: true, at: '1700000000000' }).kill.at, null);
+});
+
+test('an instant past what a JS Date can render is a node this app cannot read', () => {
+  // A nanosecond timestamp is a real thing to find in a tree, and an `int64`
+  // reaches 9.22e18: Go decodes it and prints a year far past any calendar,
+  // while `new Date(1.7e18).toISOString()` **throws** a RangeError. A reader
+  // that reached that call would throw while assembling a document from a node
+  // it had already stored -- so every later assembly would throw too.
+  assert.throws(() => new Date(1_700_000_000_000_000_000).toISOString(), RangeError, 'the call this guards');
+  const nanoseconds = readKill({ on: true, by: 'operator', at: 1_700_000_000_000_000_000, reason: 'cap' }).kill;
+  // The node is there and its switch is readable, but its instant is not, and a
+  // switch this app cannot read fully is a switch it believes: ON, with the
+  // reason saying why. What it must **not** do is claim to have read the node
+  // and quietly drop the instant.
+  assert.deepEqual(nanoseconds, { on: true, by: null, at: null, reason: UNREADABLE_KILL });
+  // The ceiling itself is fine, and one past it is not.
+  assert.equal(readKill({ on: true, at: MAX_INSTANT_MS }).kill.at, new Date(MAX_INSTANT_MS).toISOString());
+  assert.deepEqual(readKill({ on: true, at: MAX_INSTANT_MS + 1 }).kill, { on: true, by: null, at: null, reason: UNREADABLE_KILL });
+  assert.deepEqual(readKill({ on: true, at: -MAX_INSTANT_MS - 1 }).kill, { on: true, by: null, at: null, reason: UNREADABLE_KILL });
+  // ... and the same bound holds for a heartbeat's instant, which is read as a
+  // number and never rendered here.
+  assert.equal(readHeartbeat({ at: 1_700_000_000_000_000_000 }).heartbeat.at, null);
+  assert.equal(readHeartbeat({ at: 1_700_000_000_000 }).heartbeat.at, 1_700_000_000_000);
 });
 
 test('the heartbeat is read, and no presence verdict is drawn from it', () => {

@@ -124,7 +124,8 @@ export function gap() {
  * `{ ok: false, code }` from `AVAILABILITY_CODES`, and `isFigure` is this
  * function's `ok`. Every field is judged -- a figure with an extra key is a
  * figure somebody else made, and `state` is checked against the five before
- * `value` is trusted.
+ * `value` is trusted -- and **the state is returned as it was given**: a
+ * `notional` figure comes back `notional`, never re-labelled `measured`.
  */
 export function check(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -142,7 +143,11 @@ export function check(value) {
       return Object.freeze({ ok: false, code: AVAILABILITY_CODES.NOT_A_NUMBER });
     }
     if (value.value < 0) return Object.freeze({ ok: false, code: AVAILABILITY_CODES.NEGATIVE });
-    return Object.freeze({ ok: true, figure: measured(value.value) });
+    // The state comes back as it went in: `measured` is not a default, it is a
+    // claim about who read the number, and a notional or estimated figure
+    // returned as `measured` would be this module silently promoting a list
+    // price to a bill for every caller that reads `.figure`.
+    return Object.freeze({ ok: true, figure: figure(value.value, value.state) });
   }
   if (value.value !== null) return Object.freeze({ ok: false, code: AVAILABILITY_CODES.BAD_VALUE });
   return Object.freeze({ ok: true, figure: figure(null, value.state) });

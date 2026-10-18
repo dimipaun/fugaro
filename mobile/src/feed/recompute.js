@@ -10,15 +10,20 @@
 // CLI computes it**, from the same constants, so the phone and the console
 // cannot disagree about the same tree:
 //
-//   * **the cap fraction** is `internal/watch/build.go`'s `bar`: `used/cap*100`,
-//     and **100 when the cap is zero** (a cap of zero denies everything, so the
-//     bar is full, not empty). No cap set is no fraction at all -- `unavailable`
-//     -- never 0%.
+//   * **the cap fraction** is `internal/watch/build.go`'s `bar`: `used/cap*100`
+//     over the **counted** total ("Only counted feeds it; notional counts
+//     toward no cap"), and **100 when the cap is zero** (a cap of zero denies
+//     everything, so the bar is full, not empty). No cap set is no fraction at
+//     all -- `unavailable` -- never 0%.
 //   * **the burn rate** is `State.Burn` (`internal/watch/state.go`): the slope
-//     of the counted total over a **5-minute** window that needs a **60-second**
-//     span before it says anything, `perMin = (last - first) / span`, and it is
-//     unknown -- not zero -- when the window is empty, when the span is too
-//     short, or when the counter went **backwards** (a rollover, a reset).
+//     of **spent + notional** over a **5-minute** window that needs a
+//     **60-second** span before it says anything, `perMin = (last - first) /
+//     span`, and it is unknown -- not zero -- when the window is empty, when the
+//     span is too short, or when the counter went **backwards** (a rollover, a
+//     reset -- `State.record` clears the window there). The two figures are
+//     over two different totals on purpose: what a cap counts and what a rate
+//     measures are not the same number, and `State.observe` records
+//     `Spent+Notional` into the window while `bar` is fed `Counted`.
 //   * **`fast`** is `burnOf`: `perMin*60 > dailyCap/DefaultBurnHours`, with
 //     `DefaultBurnHours = 8`. No cap means no alert threshold and so no `fast`.
 //
@@ -59,14 +64,26 @@ export class BurnSampler {
     this.#warmupMs = warmupMs;
   }
 
-  /** Record one reading of a counter. A sample whose instant or value is not a
-   * usable number is dropped rather than stored: a window holding a bad sample
-   * would report a rate built from it. */
-  sample(key, atMs, countedUsd) {
+  /** Record one reading of a counter series. A sample whose instant or value is
+   * not a usable number is dropped rather than stored: a window holding a bad
+   * sample would report a rate built from it.
+   *
+   * **What a sample is.** `State.observe` records `Spent+Notional`, not
+   * `Counted`: the burn window is about what is being spent, and `counted` is
+   * the bar's number, not the slope's. The caller (`reader.js`) reads the two
+   * fields and passes their sum.
+   *
+   * **A counter that went back clears the window** (`State.record`: "a counter
+   * went back: a reset, not negative spend"). The window then holds this
+   * reading alone, so the rate is unknown until it spans the warmup -- exactly
+   * as the CLI has it. Keeping the earlier, higher sample instead would report
+   * the slope of a series that no longer exists. */
+  sample(key, atMs, spendUsd) {
     if (typeof atMs !== 'number' || !Number.isFinite(atMs)) return false;
-    if (typeof countedUsd !== 'number' || !Number.isFinite(countedUsd) || countedUsd < 0) return false;
-    const window = this.#windows.get(key) ?? [];
-    window.push({ at: atMs, v: countedUsd });
+    if (typeof spendUsd !== 'number' || !Number.isFinite(spendUsd) || spendUsd < 0) return false;
+    let window = this.#windows.get(key) ?? [];
+    if (window.length > 0 && spendUsd < window[window.length - 1].v) window = [];
+    window.push({ at: atMs, v: spendUsd });
     this.#windows.set(key, window);
     return true;
   }
@@ -132,9 +149,11 @@ export function fast(perMinUsd, dailyCapUsd) {
  * The two recomputed figures of one counters series, in the shape the document
  * carries them.
  *
- * `rate` is dollars per minute or `null`, `counted` and `cap` are dollars or
- * `null`; everything out is a number or `null`, so `document.js` can judge it
- * into figures and no `0` can appear that nobody measured.
+ * `rate` is dollars per minute or `null` -- the slope of **spent + notional**,
+ * as `State.observe` measures it -- while `counted` (what `bar` divides by the
+ * cap) and `cap` are dollars or `null`. Everything out is a number or `null`,
+ * so `document.js` can judge it into figures and no `0` can appear that nobody
+ * measured.
  */
 export function recompute({ counted, cap, rate } = {}) {
   const perMin = typeof rate === 'number' && Number.isFinite(rate) && rate >= 0 ? rate : null;

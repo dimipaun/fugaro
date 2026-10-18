@@ -108,4 +108,17 @@ test('the codes are the refusal vocabulary a caller matches on', () => {
   assert.equal(judged.ok, true);
   assert.ok(isFigure(judged.figure));
   assert.equal(shown(judged.figure), '3');
+  // **The state comes back as it went in.** `measured` is a claim about who
+  // read the number, not a default: a notional figure returned as `measured`
+  // would promote a subscription's list price to a bill for every caller that
+  // reads `.figure`, and `shown` would print it as a bare number.
+  for (const fig of [notional(12.5), estimated(2), measured(0), gap(), unavailable()]) {
+    const back = check(fig);
+    assert.equal(back.ok, true, JSON.stringify(fig));
+    assert.equal(back.figure.state, fig.state, JSON.stringify(fig));
+    assert.equal(shown(back.figure), shown(fig), JSON.stringify(fig));
+  }
+  assert.equal(shown(check(notional(12.5)).figure), 'NOTIONAL~12.5');
+  assert.equal(check({ state: STATE.NOTIONAL, value: -1 }).code, AVAILABILITY_CODES.NEGATIVE, 'the state is not a way past the value checks');
+  assert.equal(check({ state: STATE.ESTIMATED, value: '2' }).code, AVAILABILITY_CODES.NOT_A_NUMBER);
 });

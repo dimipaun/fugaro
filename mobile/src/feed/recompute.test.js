@@ -111,28 +111,34 @@ test('the slope is per minute, measured from the window\'s first sample', () => 
   assert.equal(sampler.rate('', t0 + 240_000), 0.01);
 });
 
-test('a counter that went backwards has no slope', () => {
+test('a counter that went backwards clears the window, as State.record does', () => {
   const sampler = new BurnSampler();
   const t0 = 1_700_000_000_000;
   sampler.sample('', t0, 5);
   sampler.sample('', t0 + 120_000, 4);
-  // A rollover, a reset, a counter that was rewritten: whatever it was, the
-  // difference is not a spend, and a negative rate is not a measurement of one.
+  // A rollover, a reset, a counter that was rewritten: `State.record` calls it
+  // "a counter went back: a reset, not negative spend" and starts the window
+  // again **from this reading**, so the series that ended contributes nothing
+  // to the next slope -- and the rate is unknown until the new window spans the
+  // warmup.
   assert.equal(sampler.rate('', t0 + 120_000), null);
   assert.notEqual(sampler.rate('', t0 + 120_000), 0);
-  // The slope stays unknown while the window still holds the higher reading:
-  // the same answer `State.Burn` gives, because the window reaches back five
-  // minutes and the reading it is comparing against is still inside it.
+  assert.equal(sampler.size(''), 1, 'the reading it went back from is gone, not kept beside it');
+  // The new series has a slope of its own, measured from the reading the
+  // counter went back to: 0.5 USD over the minute since.
   sampler.sample('', t0 + 180_000, 4.5);
-  assert.equal(sampler.rate('', t0 + 180_000), null);
-  // Once the window has slid past the old reading, the series has a slope
-  // again -- and it is the new one.
-  const recovered = new BurnSampler();
-  recovered.sample('', t0, 5);
-  recovered.sample('', t0 + 180_000, 4.5);
-  recovered.sample('', t0 + 420_000, 4.55);
-  // 0.05 USD over the four minutes from the 180-second reading to now.
-  assert.ok(Math.abs(recovered.rate('', t0 + 420_000) - 0.0125) < 1e-9);
+  assert.equal(sampler.rate('', t0 + 180_000), 0.5);
+  assert.equal(sampler.size(''), 2);
+
+  // The case this exists for: the day rollover. The new day's counter starts
+  // near zero, and the old day's readings must not make its slope negative --
+  // nor must they be what it is measured from.
+  const rollover = new BurnSampler();
+  rollover.sample('', t0, 50);
+  rollover.sample('', t0 + 60_000, 0.1);
+  assert.equal(rollover.rate('', t0 + 60_000), null);
+  rollover.sample('', t0 + 120_000, 0.2);
+  assert.ok(Math.abs(rollover.rate('', t0 + 120_000) - 0.1) < 1e-9);
 });
 
 test('the window reaches five minutes back and no further', () => {

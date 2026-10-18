@@ -23,17 +23,20 @@
 // staleness means is check 84 (P4.2)'s.
 //
 // **The connection is the phone's own.** The CLI's `State.conn` is "the worst
-// of the four streams": the oldest `lastEvent`, a permission error, and
-// `StaleAfter`. The phone's four streams are its granted paths, so the same
-// rule applies to them -- the oldest node that has delivered, and a refused
-// read -- and the `age_seconds` that comes out is what `view.js` reads as
-// silence. The reasons are static sentences: an error message from the database
-// is not something this app puts on a screen.
+// of the four streams": a permission error, any other error, a stream that has
+// not answered yet, and `StaleAfter`. The phone's four streams are its granted
+// paths, so the same rule applies to them in the same order -- a refusal, then
+// a read that failed, then the paths that have not answered, then the oldest
+// node that has -- and the `age_seconds` that comes out is what `view.js` reads
+// as silence. `State.conn` never leaves `stale` for a silence, and neither does
+// this: `watch.LostAfter` is a property of a **run**, and the phone has none.
+// The reasons are static sentences: an error message from the database is not
+// something this app puts on a screen.
 
-import { isAccountId } from '../accounts/account.js';
+import { isAccountId, validateAccount } from '../accounts/account.js';
 import { validateDocument } from './document.js';
 import { BurnSampler, recompute } from './recompute.js';
-import { readCaps, readCounters, readKill } from './nodes.js';
+import { MAX_INSTANT_MS, readCaps, readCounters, readKill } from './nodes.js';
 import {
   capsPaths,
   checkRepositories,
@@ -44,7 +47,7 @@ import {
   request,
   spendPaths,
 } from './paths.js';
-import { FeedView, LOST_AFTER_MS, STALE_AFTER_MS } from './view.js';
+import { FeedView, STALE_AFTER_MS } from './view.js';
 
 /** The reader's refusals. */
 export const READER_CODES = Object.freeze({
@@ -66,13 +69,46 @@ export const READER_CODES = Object.freeze({
 export const MAX_PATHS = 64;
 
 /** The static reasons a connection carries. Never a raw error: a database's
- * message is not this app's sentence. */
+ * message is not this app's sentence. `refused` and `failed` are the two ways
+ * a read can go wrong, and they are different facts: `State.conn` calls a
+ * **permission** error `refused` and every other error a connection that is
+ * not up, and a phone that called a dropped socket "access refused" would send
+ * its owner to look at a token that is fine. */
 export const CONNECTION_REASONS = Object.freeze({
   refused: 'access refused',
+  failed: 'the read failed',
   connecting: 'connecting',
   quiet: 'no update',
   polling: 'polling',
 });
+
+/**
+ * The error codes a Realtime Database client uses for a **rules** refusal. The
+ * Firebase SDK spells it `PERMISSION_DENIED`; the Admin SDK's `ErrPermission`
+ * is what `State.conn` matches with `errors.Is`, and this is the phone's side
+ * of the same distinction.
+ */
+const PERMISSION_CODES = Object.freeze(['permission-denied', 'permission_denied']);
+
+/**
+ * Is this port error a permission refusal -- the one error that means "this
+ * token may not read this node"?
+ *
+ * Everything else is a connection that is not up: a dropped socket, a timeout,
+ * a DNS failure, a client that has not authenticated yet. Those are not
+ * credential problems, and this app must not report them as one. The
+ * judgement is deliberately narrow -- an error object with a `code` that names
+ * permission and nothing else -- because the cost of the two mistakes is not
+ * symmetric: calling a network failure "access refused" sends the owner to
+ * check a token that is fine, and calling a refusal a network failure hides
+ * the one fact that says which node the token cannot read.
+ */
+export function isPermissionError(error) {
+  if (error === null || typeof error !== 'object') return false;
+  const code = error.code;
+  if (typeof code !== 'string') return false;
+  return PERMISSION_CODES.includes(code.trim().toLowerCase());
+}
 
 /**
  * A counter node's three figures, or three `null`s when the node is there but
@@ -114,7 +150,13 @@ function killOfDocument(kill) {
 }
 
 function isNow(nowMs) {
-  return typeof nowMs === 'number' && Number.isFinite(nowMs);
+  if (typeof nowMs !== 'number' || !Number.isFinite(nowMs)) return false;
+  // A finite number is not necessarily an instant: `new Date(1e300)` is an
+  // invalid date, and `toISOString()` on it **throws**. The document carries
+  // `now` as RFC 3339, so an instant this app cannot render is not an instant
+  // it can assemble a document from -- and refusing it here is what keeps a
+  // bad clock from being a feed that never assembles again.
+  return Math.abs(nowMs) <= MAX_INSTANT_MS;
 }
 
 /** The slug of a granted spend or cap path, or `null`: `spend/<day>/repos/<slug>`,
@@ -147,7 +189,11 @@ export class FeedReader {
   #nodes = new Map();
   #delivered = new Set();
   #lastEvent = new Map();
+  /** The paths whose read was **refused** (a permission error), and the paths
+   * whose read **failed** for any other reason. Two sets, because they are two
+   * facts with two sentences and two different things for the owner to do. */
   #refused = new Set();
+  #errored = new Set();
   #handles = new Map();
   #day = null;
   #paths = Object.freeze([]);
@@ -185,14 +231,18 @@ export class FeedReader {
    */
   plan(nowMs) {
     if (!isNow(nowMs)) return refuse(READER_CODES.BAD_NOW, 'nowMs');
-    // The account is judged first: its `authUid` is what names the mailbox, and
-    // a reader without one would compose `mailbox/undefined/…` -- a path the
-    // gate would refuse for the wrong reason, after a uid this app made up had
-    // been written into a string.
-    if (!isAccountId(this.accountId)) return refuse(READER_CODES.BAD_ACCOUNT, 'accountId');
+    // The account is judged **as the account module judges it**, and before a
+    // single path is composed: its `authUid` is what names the mailbox, and a
+    // reader that judged only the id would compose `mailbox/undefined/outbox`
+    // out of an account that has no uid -- a path the gate would then **grant**,
+    // because `undefined` has exactly the shape of a uid, and a node this
+    // reader would subscribe to. The refusal carries the field at fault, so a
+    // missing uid is named as one.
+    const account = validateAccount(this.#account);
+    if (!account.ok) return refuse(READER_CODES.BAD_ACCOUNT, account.field ?? 'accountId');
     const repositories = checkRepositories(this.#repositories);
     if (!repositories.ok) return refuse(READER_CODES.BAD_REPOSITORIES, 'repositories');
-    const uid = this.#account?.authUid;
+    const uid = account.account.authUid;
     const slugs = repositories.repositories;
     const paths = [
       ...capsPaths(slugs),
@@ -221,7 +271,7 @@ export class FeedReader {
     // The account, the port and the open account are judged **before** the
     // first subscription: a reader that subscribed and then discovered it could
     // not register the handle would have opened a socket nothing will ever
-    // close.
+    // close. The account itself is judged in `plan()`, which runs next.
     if (!isAccountId(this.accountId)) return refuse(READER_CODES.BAD_ACCOUNT, 'accountId');
     if (!isPort(this.#port)) return refuse(READER_CODES.BAD_PORT, 'port');
     if (this.#registry !== undefined && this.#registry !== null && !this.#openAccount()) {
@@ -282,16 +332,37 @@ export class FeedReader {
     this.#delivered.add(path);
     this.#lastEvent.set(path, nowMs);
     this.#refused.delete(path);
+    this.#errored.delete(path);
     this.#sample(path, value, nowMs);
     return this.#assemble(nowMs);
   }
 
-  /** A read the database refused. The connection says so until that path
-   * delivers a value again. */
+  /** A read the database **refused**: a permission error. The connection says
+   * so until that path delivers a value again. */
   refused(path, nowMs) {
+    return this.#broken(path, this.#refused, nowMs);
+  }
+
+  /**
+   * A read that failed for any other reason -- the port's own error, handed in
+   * as the port hands it in.
+   *
+   * `State.conn` calls a permission error `refused` and everything else a
+   * connection that is not up, and this is the phone's same split: only
+   * `isPermissionError` reaches `refused`. A dropped socket, a timeout and a
+   * client that is still authenticating are all "the read failed", which is a
+   * different sentence on the screen and a different thing for the owner to
+   * do about it.
+   */
+  failed(path, error, nowMs) {
+    if (isPermissionError(error)) return this.refused(path, nowMs);
+    return this.#broken(path, this.#errored, nowMs);
+  }
+
+  #broken(path, into, nowMs) {
     if (typeof path !== 'string') return refuse(READER_CODES.NOT_GRANTED, 'path');
     if (!this.#paths.includes(path)) return refuse(READER_CODES.NOT_GRANTED, path);
-    this.#refused.add(path);
+    into.add(path);
     return this.#assemble(isNow(nowMs) ? nowMs : this.#now());
   }
 
@@ -305,6 +376,10 @@ export class FeedReader {
    */
   refresh(nowMs) {
     if (!this.#started) return refuse(READER_CODES.NOT_STARTED, 'refresh');
+    // The clock is judged exactly as it is at every other entry point: a
+    // rollover decided from a `nowMs` that is not an instant would move the
+    // reader to a day nobody named.
+    if (!isNow(nowMs)) return refuse(READER_CODES.BAD_NOW, 'nowMs');
     const day = dayKey(nowMs);
     if (day === this.#day) return Object.freeze({ ok: true, dayChanged: false, day });
     for (const path of [...this.#nodes.keys()]) {
@@ -313,6 +388,7 @@ export class FeedReader {
         this.#delivered.delete(path);
         this.#lastEvent.delete(path);
         this.#refused.delete(path);
+        this.#errored.delete(path);
       }
     }
     this.#sampler.reset();
@@ -355,23 +431,42 @@ export class FeedReader {
     });
   }
 
-  /** Stop every listener this reader opened. The registry's close does this
-   * too; this is for a caller that wants it without closing the account. */
+  /** Stop every listener this reader opened, and forget everything they
+   * delivered. The registry's close does this too; this is for a caller that
+   * wants it without closing the account.
+   *
+   * **Nothing a session read survives it.** A stopped reader that kept its
+   * nodes and its delivery record would render the previous session's values
+   * as freshly delivered on a later `start()` -- a measurement from a session
+   * that has ended, presented as this one's, which is the exact confusion
+   * `#delivered` exists to prevent. The **view** is not cleared: it belongs to
+   * the account rather than to the session, and the screen keeps the last
+   * document it drew (silence is not death -- `view.js`). */
   stop() {
     for (const handle of this.#handles.values()) this.#stopOne(handle);
     this.#handles.clear();
+    this.#nodes.clear();
+    this.#delivered.clear();
+    this.#lastEvent.clear();
+    this.#refused.clear();
+    this.#errored.clear();
+    this.#sampler.reset();
     this.#paths = Object.freeze([]);
+    this.#day = null;
     this.#started = false;
     return Object.freeze({ ok: true });
   }
 
-  /** Subscribe one path, and deliver its values to `ingest`. Returns the
-   * handle, or `null` when the port cannot subscribe at all. */
+  /** Subscribe one path, and deliver its values and its errors to this reader.
+   * Returns the handle, or `null` when the port cannot subscribe at all. */
   #subscribe(path) {
     if (this.#port === null || typeof this.#port !== 'object' || typeof this.#port.subscribe !== 'function') return null;
     const handle = this.#port.subscribe(path, {
       onValue: (value) => this.ingest(path, value, this.#now()),
-      onError: () => this.refused(path, this.#now()),
+      // The port's error goes to `failed`, which is where the permission
+      // judgement is made: a port hands over the error it got, and this reader
+      // is the one that knows which errors mean "refused".
+      onError: (error) => this.failed(path, error, this.#now()),
     });
     if (handle === null || handle === undefined) return null;
     if (typeof handle !== 'function' && typeof handle.stop !== 'function') return null;
@@ -389,19 +484,40 @@ export class FeedReader {
     }
   }
 
-  /** One counter reading, into the burn window of its own series. */
+  /**
+   * One counter reading, into the burn window of its own series.
+   *
+   * **The sample is `spent + notional`, not `counted`.** `State.observe`
+   * records `g.Spent+g.Notional` and `c.Spent+c.Notional` -- the burn window is
+   * about what is being *spent*, and a subscription's list price is spend that
+   * no cap counts. `counted` is a different number for a different figure: it
+   * is what `bar()` divides by the cap, and it is the one the percent uses.
+   * Feeding the window `counted` would make the phone's rate and `fast` flag
+   * disagree with the console's for the very same tree, which is the one thing
+   * recomputing them here was meant not to do.
+   *
+   * A node whose `spent` or `notional` could not be read is **not sampled**:
+   * `null` is not zero, and a window holding a sum built from a missing half
+   * would report a slope nobody measured.
+   */
   #sample(path, value, nowMs) {
     if (!path.startsWith('spend/')) return;
-    const counters = readCounters(value);
-    if (!counters.ok) return;
+    const read = readCounters(value);
+    if (!read.ok) return;
+    const { spent, notional } = read.counters;
+    if (typeof spent !== 'number' || typeof notional !== 'number') return;
     const key = path.endsWith('/global') ? '' : (slugOf(path, 'spend') ?? path);
-    this.#sampler.sample(key, nowMs, counters.counters.counted);
+    this.#sampler.sample(key, nowMs, spent + notional);
   }
 
   /** The wire document the granted nodes add up to, judged. */
   #assemble(nowMs) {
     const day = this.#day;
     if (day === null) return refuse(READER_CODES.NOT_STARTED, 'assemble');
+    // The instant is judged here as well as at the entry points: the document
+    // carries `now` as RFC 3339, and a clock that cannot be rendered is not an
+    // instant this app can assemble one from.
+    if (!isNow(nowMs)) return refuse(READER_CODES.BAD_NOW, 'nowMs');
     const caps = this.#capsNodes();
     const project = readCaps(caps);
     const counters = countersOf(this.#nodes.get(`spend/${day}/global`));
@@ -468,12 +584,19 @@ export class FeedReader {
   }
 
   /**
-   * The connection as the granted paths have it: the worst of them, exactly as
-   * `State.conn` takes the worst of its four streams.
+   * The connection as the granted paths have it: the worst of them, in
+   * `State.conn`'s order -- a refusal, then a read that failed, then the paths
+   * that have not answered, then the oldest node that has. Silence reaches
+   * `stale` and stops there: `State.conn` has no threshold past `StaleAfter`,
+   * and `watch.LostAfter` is a property of a run, which the phone does not
+   * have.
    */
   #connection(nowMs) {
     if (this.#refused.size > 0) {
       return { state: 'refused', reason: CONNECTION_REASONS.refused, age_seconds: 0 };
+    }
+    if (this.#errored.size > 0) {
+      return { state: 'offline', reason: CONNECTION_REASONS.failed, age_seconds: 0 };
     }
     let oldest = null;
     for (const at of this.#lastEvent.values()) {
@@ -484,7 +607,6 @@ export class FeedReader {
     }
     const ageMs = oldest === null ? 0 : Math.max(nowMs - oldest, 0);
     const age_seconds = ageMs / 1000;
-    if (ageMs > LOST_AFTER_MS) return { state: 'offline', reason: CONNECTION_REASONS.quiet, age_seconds };
     if (ageMs > STALE_AFTER_MS) return { state: 'stale', reason: CONNECTION_REASONS.quiet, age_seconds };
     if (this.#port?.polling === true) return { state: 'polling', reason: CONNECTION_REASONS.polling, age_seconds };
     return { state: 'live', reason: null, age_seconds };

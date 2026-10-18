@@ -27,9 +27,9 @@
 //     document's `now`, its `connection.state`, its `connection.age_seconds`
 //     and **the phone's own clock**, exactly the four inputs the rule names.
 //     The vocabulary has **no word for a dead process**: a feed that has
-//     stopped arriving is `stale` and then `offline`, and the last document's
-//     numbers stay on screen -- they were measured, and a silence does not
-//     unmeasure them.
+//     stopped arriving goes `stale` after 45 seconds and stays `stale`, and the
+//     last document's numbers stay on screen -- they were measured, and a
+//     silence does not unmeasure them.
 //
 // Rules 1 and 5 are `document.js`'s (a line that is not an object is skipped;
 // a missing field is `unavailable`). Rule 6 is `--repo`, which the phone does
@@ -45,11 +45,21 @@ import { figures } from './document.js';
  * states below say how long it has been quiet. */
 export const LIVENESS = Object.freeze(['no-document', 'live', 'stale', 'offline', 'refused', 'polling', 'degraded']);
 
-/** `watch.StaleAfter` (§10.9): the silence after which a stream is `stale`. */
+/** `watch.StaleAfter` (§10.9): the silence after which a **stream** is `stale`.
+ * It is the only silence threshold the connection has: `State.conn` reads the
+ * oldest heard stream's age and never leaves `stale` for it. */
 export const STALE_AFTER_MS = 45_000;
 
-/** `watch.LostAfter` (§10.9): the silence after which it is `offline`. */
-export const LOST_AFTER_MS = 180_000;
+// **`watch.LostAfter` is deliberately not here.** §10.9 lists it beside
+// `StaleAfter`, but as a property of a **run**, not of the connection: it is
+// the silence after which `State.health` calls a run `lost` (and `SilentAfter`,
+// 60 s, the one before that). The phone has no run -- it is not subscribed to
+// `runs/**` or `agents/**`, and nothing it reads has a deadline or a stage --
+// so a 180-second threshold applied to this connection would be a rule about
+// runs dressed as a rule about streams, and it would say a feed was `offline`
+// while the CLI, reading the same tree at the same instant, said `stale`. The
+// app's `offline` is the reader's own: a port that errored, or a plan whose
+// paths have not all answered yet.
 
 /** `watchFirstFrame` (§10.9): the head start the CLI's four streams get before
  * its first document. Before it, a quiet feed is still starting up. */
@@ -204,13 +214,17 @@ function connectionAge(document) {
  * `refused` outranks silence: a refusal is a diagnosis ("this token may not
  * read this node") and the silence that follows it is its consequence, not a
  * separate fact. Everything else is the worse of the document's own state and
- * the phone's own silence, in `State.conn`'s order.
+ * the phone's own silence, in `State.conn`'s order -- and **silence only ever
+ * reaches `stale`**, because that is as far as `State.conn` goes: a stream that
+ * has gone quiet is `stale` at 45 seconds and stays `stale` at an hour. A feed
+ * whose numbers are still on screen and whose clock has run away has not
+ * become `offline`; `offline` is the reader's own news (a port error, a plan
+ * that has not answered), and it arrives on the document.
  */
 function livenessOf(document, silenceMs, degraded) {
-  if (degraded) return silenceMs > LOST_AFTER_MS ? 'offline' : silenceMs > STALE_AFTER_MS ? 'stale' : 'degraded';
+  if (degraded) return silenceMs > STALE_AFTER_MS ? 'stale' : 'degraded';
   const state = document.connection.state;
   if (state === 'refused') return 'refused';
-  if (silenceMs > LOST_AFTER_MS) return 'offline';
   if (state === 'offline') return 'offline';
   if (silenceMs > STALE_AFTER_MS) return 'stale';
   if (state === 'stale') return 'stale';

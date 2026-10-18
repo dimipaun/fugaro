@@ -23,10 +23,10 @@ import test from 'node:test';
 import { ResourceRegistry } from '../accounts/resources.js';
 import { FIXTURE_SLUG, FIXTURE_UID, recordedNodes, recordedPaths } from './fixtures/nodes.js';
 import { MICROS_PER_USD, UNREADABLE_KILL } from './nodes.js';
-import { FeedReader, MAX_PATHS, READER_CODES } from './reader.js';
+import { FeedReader, MAX_PATHS, READER_CODES, isPermissionError } from './reader.js';
 import { dayDate, dayKey } from './paths.js';
 import { BURN_WARMUP_MS } from './recompute.js';
-import { LOST_AFTER_MS, STALE_AFTER_MS } from './view.js';
+import { STALE_AFTER_MS } from './view.js';
 
 const UID = FIXTURE_UID;
 const SLUG = FIXTURE_SLUG;
@@ -253,23 +253,55 @@ test('a missing node is unavailable, never a zero, in what the phone assembles',
   assert.equal(total.burn.usdPerMin.value, null);
 });
 
-test('the rate is the phone\'s own, and it needs a window before it has one', () => {
+test('the burn window is fed spent + notional, exactly as State.observe feeds it', () => {
   const { reader: feed, port } = reader();
   feed.start(T0);
   port.flush(healthy);
-  // The first delivery is a sample and nothing more: the window has no span.
+  // The recording's global node is 12 USD spent and 40 USD notional, so the
+  // first sample is **52** -- not the 12.5 `counted` the bar divides by the cap.
   assert.equal(feed.snapshot({ nowMs: T0 }).document.total.burn.known, false);
 
-  // A second reading two minutes later: 0.04 USD over 120 s is 0.02 USD/min.
-  port.put(`spend/${DAY}/global`, { counted: 12_540_000, spent: 12_000_000 }, T0 + 120_000);
-  const total = feed.snapshot({ nowMs: T0 + 120_000 }).document.total;
-  assert.equal(total.burn.known, true);
-  assert.ok(Math.abs(total.burn.usdPerMin.value - 0.02) < 1e-9);
-  // 0.02*60 = 1.2 USD/h against 50/8 = 6.25, so not fast.
-  assert.equal(total.burn.fast, false);
-  // ... and a fast one: 5 USD in a minute against the same threshold.
-  port.put(`spend/${DAY}/global`, { counted: 17_540_000 }, T0 + 180_000);
-  assert.equal(feed.snapshot({ nowMs: T0 + 180_000 }).document.total.burn.fast, true);
+  // **The counted total moving on its own is not a rate.** `counted` jumps by
+  // 5 USD here while `spent + notional` is unchanged at 52: a window fed
+  // `counted` would report a slope and call it fast, and the console -- reading
+  // the same tree -- would report no slope at all. The bar, which *is* over
+  // counted, moves.
+  port.put(`spend/${DAY}/global`, { counted: 17_500_000, spent: 12_000_000, notional: 40 * MICROS_PER_USD }, T0 + 120_000);
+  const flat = feed.snapshot({ nowMs: T0 + 120_000 }).document.total;
+  assert.equal(flat.burn.known, true, 'the window spans the warmup, so the rate is known');
+  assert.equal(flat.burn.usdPerMin.value, 0, 'spent + notional is where it was');
+  assert.equal(flat.burn.fast, false);
+  assert.equal(flat.percent.value, 35, 'the bar is over counted, and counted did move');
+
+  // ... and the same reading with the spend moved: 15 USD over the window's
+  // 180 s is 5 USD/min, which is 300 USD/h against the 6.25 threshold.
+  port.put(`spend/${DAY}/global`, { counted: 17_500_000, spent: 27_000_000, notional: 40 * MICROS_PER_USD }, T0 + 180_000);
+  const fast = feed.snapshot({ nowMs: T0 + 180_000 }).document.total;
+  assert.ok(Math.abs(fast.burn.usdPerMin.value - 5) < 1e-9, String(fast.burn.usdPerMin.value));
+  assert.equal(fast.burn.fast, true);
+});
+
+test('a counter that goes backwards clears the window, as State.record does', () => {
+  const { reader: feed, port } = reader();
+  feed.start(T0);
+  port.flush(healthy);
+  // Two readings that give a slope...
+  port.put(`spend/${DAY}/global`, { spent: 12_040_000, notional: 40 * MICROS_PER_USD }, T0 + 120_000);
+  assert.equal(feed.snapshot({ nowMs: T0 + 120_000 }).document.total.burn.known, true);
+
+  // ... and then the counter goes **back**: a rollover or a reset. The window
+  // starts again from this reading, so the rate is unknown until it spans the
+  // warmup -- not the slope of the series that ended, and never negative.
+  port.put(`spend/${DAY}/global`, { spent: 1_000_000, notional: 0 }, T0 + 180_000);
+  const reset = feed.snapshot({ nowMs: T0 + 180_000 }).document.total;
+  assert.equal(reset.burn.known, false);
+  assert.equal(reset.burn.usdPerMin.value, null);
+  assert.equal(reset.burn.fast, false);
+  // ... and it comes back from the new reading, once the window has a span.
+  port.put(`spend/${DAY}/global`, { spent: 2_000_000, notional: 0 }, T0 + 180_000 + BURN_WARMUP_MS);
+  const warm = feed.snapshot({ nowMs: T0 + 180_000 + BURN_WARMUP_MS }).document.total;
+  assert.equal(warm.burn.known, true);
+  assert.equal(warm.burn.usdPerMin.value, 1, '1 USD over the 60 s warmup');
 });
 
 test('a changed day is a break, and the new day is re-subscribed', () => {
@@ -307,7 +339,7 @@ test('a changed day is a break, and the new day is re-subscribed', () => {
   // The new day's counter is heard: the series is real again, and the burn
   // window restarted with the day (`SetDay` empties it), so the rate is unknown
   // rather than zero for its warmup.
-  port.put(`spend/${nextDay}/global`, { counted: 250_000 }, tomorrow + 1_000);
+  port.put(`spend/${nextDay}/global`, { counted: 250_000, spent: 250_000 }, tomorrow + 1_000);
   const measured = feed.snapshot({ nowMs: tomorrow + 1_000 });
   assert.equal(measured.broken, false);
   assert.equal(measured.dayChanged, false);
@@ -315,7 +347,7 @@ test('a changed day is a break, and the new day is re-subscribed', () => {
   assert.equal(measured.document.total.burn.known, false);
   assert.equal(measured.document.total.burn.usdPerMin.value, null);
   // ... and it comes back once the new window has a span.
-  port.put(`spend/${nextDay}/global`, { counted: 310_000 }, tomorrow + BURN_WARMUP_MS + 1_000);
+  port.put(`spend/${nextDay}/global`, { counted: 310_000, spent: 310_000 }, tomorrow + BURN_WARMUP_MS + 1_000);
   const warm = feed.snapshot({ nowMs: tomorrow + BURN_WARMUP_MS + 1_000 }).document.total;
   assert.equal(warm.burn.known, true);
   assert.ok(Math.abs(warm.burn.usdPerMin.value - 0.06) < 1e-9);
@@ -340,12 +372,17 @@ test('the connection is the worst of the granted paths, and never says the feed 
   // The document's own `connection` is what the reader knew when it last
   // assembled one -- a quiet feed assembles nothing new, so the state on the
   // document stays where it was while the **view's** liveness, which is the
-  // phone's own reading of the clock, goes stale and then offline. That is the
-  // whole of "silence is not death": the numbers stay, and the app says how long
-  // it has been quiet.
+  // phone's own reading of the clock, goes stale. That is the whole of "silence
+  // is not death": the numbers stay, and the app says how long it has been
+  // quiet -- and it says `stale`, however long, because `State.conn` has no
+  // threshold past `StaleAfter` and `watch.LostAfter` is a *run*'s (the phone
+  // reads no run).
   assert.equal(feed.snapshot({ nowMs: T0 + STALE_AFTER_MS + 1 }).document.connection.state, 'live');
   assert.equal(feed.snapshot({ nowMs: T0 + STALE_AFTER_MS + 1 }).liveness, 'stale');
-  assert.equal(feed.snapshot({ nowMs: T0 + LOST_AFTER_MS + 1 }).liveness, 'offline');
+  assert.equal(feed.snapshot({ nowMs: T0 + 30 * 60_000 }).liveness, 'stale');
+  // The reader's own connection does not go `offline` for a silence either: it
+  // assembles nothing new, so the state it last wrote is still `live`.
+  assert.equal(feed.snapshot({ nowMs: T0 + 30 * 60_000 }).document.connection.state, 'live');
 
   // The oldest node is the one that decides: one node answering a minute later
   // does not make the feed fresh, because the day's counter is still a minute
@@ -357,7 +394,7 @@ test('the connection is the worst of the granted paths, and never says the feed 
 
   // A refused read is a diagnosis, and it outranks the silence it causes. The
   // reason is this app's own sentence, never the database's.
-  port.listeners.get(`spend/${DAY}/global`).onError(new Error('permission denied: /spend/20401/global'));
+  port.listeners.get(`spend/${DAY}/global`).onError({ code: 'PERMISSION_DENIED', message: 'Permission denied: /spend/20401/global' });
   const refused = feed.snapshot({ nowMs: T0 }).document.connection;
   assert.equal(refused.state, 'refused');
   assert.equal(refused.reason, 'access refused');
@@ -445,4 +482,148 @@ test('a reader that was never started refuses to refresh, and stop is final', ()
   assert.equal(feed.snapshot({ nowMs: T0 }).paths.length, 0);
   assert.equal(port.stopped.length, 9);
   assert.equal(feed.refresh(T0 + 86_400_000).code, READER_CODES.NOT_STARTED);
+});
+
+test('a permission error is refused, and a failure to connect is not', () => {
+  // The distinction `State.conn` makes, and the one a phone gets wrong: it
+  // matches `errors.Is(err, rtdb.ErrPermission)` for the refusal and treats
+  // **every** other error as a connection that is not up. A port hands over the
+  // error it got; this is where the judgement is made.
+  assert.equal(isPermissionError({ code: 'PERMISSION_DENIED' }), true);
+  assert.equal(isPermissionError({ code: 'permission-denied' }), true);
+  assert.equal(isPermissionError({ code: ' PERMISSION_DENIED ' }), true);
+  assert.equal(isPermissionError({ code: 'UNAVAILABLE' }), false);
+  assert.equal(isPermissionError(new Error('permission denied')), false, 'a message is not a code');
+  assert.equal(isPermissionError({ message: 'Permission denied' }), false);
+  assert.equal(isPermissionError(null), false);
+  assert.equal(isPermissionError('PERMISSION_DENIED'), false);
+
+  const { reader: feed, port } = reader();
+  feed.start(T0);
+  port.flush(healthy);
+  const path = `spend/${DAY}/global`;
+  const other = `spend/${DAY}/repos/${SLUG}`;
+
+  // A dropped socket: the feed is not up, and it is **not** an access problem.
+  port.listeners.get(path).onError({ code: 'UNAVAILABLE', message: 'network error' });
+  const failed = feed.snapshot({ nowMs: T0 }).document.connection;
+  assert.equal(failed.state, 'offline');
+  assert.equal(failed.reason, 'the read failed');
+  assert.equal(JSON.stringify(failed).includes('network'), false, 'the port\'s message is not this app\'s sentence');
+
+  // ... and a refusal is a different state, which is the whole point.
+  port.listeners.get(path).onError({ code: 'PERMISSION_DENIED' });
+  assert.equal(feed.snapshot({ nowMs: T0 }).document.connection.state, 'refused');
+  // A refusal outranks a failure when both are on the wire: `State.conn` asks
+  // for the permission error first.
+  port.listeners.get(other).onError({ code: 'UNAVAILABLE' });
+  assert.equal(feed.snapshot({ nowMs: T0 }).document.connection.state, 'refused');
+  // Each path clears its own when it delivers again.
+  port.put(path, { counted: 1 }, T0);
+  assert.equal(feed.snapshot({ nowMs: T0 }).document.connection.state, 'offline', 'the other path has still failed');
+  port.put(other, { counted: 1 }, T0);
+  assert.equal(feed.snapshot({ nowMs: T0 }).document.connection.state, 'live');
+  // A path the reader never asked for is not a stream it can break.
+  assert.equal(feed.failed('agents/example-one-0123456789abcdef/run-1', { code: 'PERMISSION_DENIED' }, T0).code, READER_CODES.NOT_GRANTED);
+  assert.equal(feed.failed('agents/example-one-0123456789abcdef/run-1', { code: 'UNAVAILABLE' }, T0).code, READER_CODES.NOT_GRANTED);
+});
+
+test('the account is judged as the account module judges it, so no uid is ever made up', () => {
+  // The reader composes `mailbox/<uid>/outbox` out of the account, and a uid it
+  // never judged is a path it made up: `mailbox/undefined/outbox` has exactly
+  // the shape the gate grants, so a reader that judged only the account id
+  // would **subscribe to it** -- the request the plan's own case forbids.
+  const variants = [
+    { id: 'acct-1', firebaseProjectId: 'fugaro-dev', fugaroProject: 'fugaro' },
+    { id: 'acct-1', firebaseProjectId: 'fugaro-dev', authUid: undefined, fugaroProject: 'fugaro' },
+    { id: 'acct-1', firebaseProjectId: 'fugaro-dev', authUid: 42, fugaroProject: 'fugaro' },
+    { id: 'acct-1', firebaseProjectId: 'fugaro-dev', authUid: 'a uid with spaces', fugaroProject: 'fugaro' },
+    { id: 'acct-1', firebaseProjectId: 'fugaro-dev', authUid: '', fugaroProject: 'fugaro' },
+  ];
+  for (const account of variants) {
+    const { reader: feed, port } = reader({ account });
+    const planned = feed.plan(T0);
+    assert.equal(planned.ok, false, JSON.stringify(account));
+    assert.equal(planned.code, READER_CODES.BAD_ACCOUNT);
+    assert.equal(planned.field, 'authUid', JSON.stringify(account));
+    assert.equal(feed.start(T0).code, READER_CODES.BAD_ACCOUNT);
+    assert.deepEqual(port.requests, [], 'nothing is asked for an account that was never judged');
+  }
+  // The same account with a uid the module accepts is planned, so the refusal
+  // above is about the uid and not about the shape of the test's account.
+  assert.equal(reader().reader.plan(T0).ok, true);
+});
+
+test('a clock that is not an instant is refused at every entry point', () => {
+  const { reader: feed, port } = reader();
+  // `new Date(1e300).toISOString()` **throws**: a finite number is not
+  // necessarily an instant, and a clock that cannot be rendered cannot be a
+  // document's `now`.
+  for (const bad of [undefined, null, 'now', NaN, Infinity, 1e300, -1e300]) {
+    assert.equal(feed.plan(bad).code, READER_CODES.BAD_NOW, String(bad));
+  }
+  assert.equal(feed.start(1e300).code, READER_CODES.BAD_NOW);
+  assert.deepEqual(port.requests, [], 'a clock that is not an instant asks for nothing');
+
+  assert.equal(feed.start(T0).ok, true);
+  // Every entry point judges it the same way, so there is no door left for an
+  // unrenderable instant to reach an assembly through.
+  assert.equal(feed.ingest(`spend/${DAY}/global`, { counted: 1 }, 1e300).code, READER_CODES.BAD_NOW);
+  assert.equal(feed.refresh(1e300).code, READER_CODES.BAD_NOW);
+  assert.equal(feed.refresh(undefined).code, READER_CODES.BAD_NOW);
+  // ... and a clock that is one still works.
+  assert.equal(feed.refresh(T0).ok, true);
+  assert.equal(feed.ingest(`spend/${DAY}/global`, { counted: 1 }, T0).ok, true);
+});
+
+test('stop forgets the session, and a restart does not inherit it', () => {
+  const { reader: feed, port } = reader();
+  feed.start(T0);
+  port.flush(healthy);
+  assert.equal(feed.snapshot({ nowMs: T0 }).drawable.total.counted.value, 12.5);
+  assert.equal(feed.day(), dayDate(DAY));
+
+  feed.stop();
+  assert.equal(feed.day(), null, 'a stopped reader is subscribed to no day');
+  assert.equal(feed.snapshot({ nowMs: T0 }).paths.length, 0);
+
+  // A restart re-plans and re-subscribes, and it starts from **nothing**: the
+  // previous session's nodes are not this session's deliveries, so the day is
+  // not measured until the new listeners have answered -- §10.7's gap, and not
+  // a measurement from a session that has ended.
+  assert.equal(feed.start(T0).ok, true);
+  assert.deepEqual(port.requests.slice(-9), [...recordedPaths({ day: DAY })], 'the whole plan is asked for again');
+  const fresh = feed.snapshot({ nowMs: T0 });
+  assert.equal(fresh.broken, true, 'the old session\'s counters are not freshly delivered');
+  assert.equal(fresh.drawable, null);
+  assert.equal(fresh.document.total.counted.value, 0, 'the node is not there, and an absent counter is a measured zero');
+  assert.equal(fresh.document.total.burn.known, false, 'the burn window went with the session');
+
+  // ... and the new listeners make it real again.
+  port.flush(healthy);
+  const again = feed.snapshot({ nowMs: T0 });
+  assert.equal(again.broken, false);
+  assert.equal(again.drawable.total.counted.value, 12.5);
+});
+
+test('a kill switch whose instant this app cannot render does not kill the feed', () => {
+  const { reader: feed, port } = reader();
+  feed.start(T0);
+  port.flush(healthy);
+  // A nanosecond timestamp: an `int64` Go reads happily (and prints as a year
+  // far past any calendar), and an instant `new Date(...).toISOString()`
+  // **throws** on. A reader that let it through would throw while assembling a
+  // document from a node it had already stored, so every later assembly would
+  // throw too: the feed would be dead for the rest of the session, and a
+  // switch that is ON would read as off.
+  port.put('config/kill/global', { on: true, by: 'operator', at: 1_700_000_000_000_000_000, reason: 'cap' }, T0);
+  const killed = feed.snapshot({ nowMs: T0 });
+  assert.deepEqual(killed.document.total.kill, { on: true, by: null, at: null, reason: UNREADABLE_KILL });
+
+  // The feed is alive: the next delivery still assembles, and the switch is
+  // still believed.
+  port.put(`spend/${DAY}/global`, { counted: 2_000_000 }, T0 + 1_000);
+  const next = feed.snapshot({ nowMs: T0 + 1_000 });
+  assert.equal(next.drawable.total.counted.value, 2);
+  assert.equal(next.document.total.kill.on, true, 'a switch this app cannot read is a switch that is on');
 });

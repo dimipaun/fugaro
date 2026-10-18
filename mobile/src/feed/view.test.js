@@ -20,9 +20,13 @@ import test from 'node:test';
 
 import { STATE, isFigure, shown } from './availability.js';
 import { decode, validateDocument } from './document.js';
-import { FIRST_FRAME_MS, LIVENESS, LOST_AFTER_MS, SKIP_NOTICE, STALE_AFTER_MS, FeedView } from './view.js';
+import { FIRST_FRAME_MS, LIVENESS, SKIP_NOTICE, STALE_AFTER_MS, FeedView } from './view.js';
+import * as viewModule from './view.js';
 
 const T0 = Date.parse('2025-11-09T12:00:00Z');
+
+/** Long enough to be past every threshold this app has, and then some. */
+const VERY_QUIET_MS = 30 * 60_000;
 
 /** A wire total, so a case can change one number of it. */
 function total(overrides = {}) {
@@ -65,12 +69,17 @@ function shown_(judged, { nowMs = T0, measured = true } = {}) {
   return view;
 }
 
-test('the thresholds are the CLI\'s own', () => {
+test('the thresholds are the CLI\'s own, and the run\'s is not one of them', () => {
   // §10.9's table. A test that only used the imported constants could not catch
   // a constant that had drifted from the console's.
   assert.equal(STALE_AFTER_MS, 45_000);
-  assert.equal(LOST_AFTER_MS, 180_000);
   assert.equal(FIRST_FRAME_MS, 5_000);
+  // `watch.LostAfter` (180 s) is §10.9's too, and it is **not** this module's:
+  // the table calls it a property of a *run* (`State.health`), and the phone is
+  // subscribed to no run. A connection that used it would say a quiet feed was
+  // `offline` while `State.conn`, reading the same tree, still said `stale`.
+  assert.equal('LOST_AFTER_MS' in viewModule, false);
+  assert.equal('SILENT_AFTER_MS' in viewModule, false);
 });
 
 test('the newest document replaces the last one, and nothing is accumulated', () => {
@@ -166,15 +175,17 @@ test('the degraded shape renders as degraded, never as a zero spend', () => {
   // have to be invented, which is the bug §2 (iii) names.
   assert.equal(snapshot.drawable, null);
   assert.equal(snapshot.day, null, 'the degraded document carries no day to place a series on');
-  // The state survives a silence too, and it is a silence, not a death.
+  // The state survives a silence too, and it is a silence, not a death: past
+  // `StaleAfter` the app says `stale`, and it keeps saying it however long the
+  // quiet lasts, because that is as far as `State.conn` goes for a stream.
   assert.equal(view.snapshot({ nowMs: T0 + STALE_AFTER_MS + 1 }).liveness, 'stale');
-  assert.equal(view.snapshot({ nowMs: T0 + LOST_AFTER_MS + 1 }).liveness, 'offline');
+  assert.equal(view.snapshot({ nowMs: T0 + VERY_QUIET_MS }).liveness, 'stale');
 
   // A real document after a degraded one is rendered as a real one: the view
   // holds the newest document, whatever shape it has. It describes the instant
   // it arrived at, so it is not a document about an old reading.
-  view.ingest(document({ now: new Date(T0 + LOST_AFTER_MS + 2).toISOString() }), { nowMs: T0 + LOST_AFTER_MS + 2 });
-  const recovered = view.snapshot({ nowMs: T0 + LOST_AFTER_MS + 2 });
+  view.ingest(document({ now: new Date(T0 + VERY_QUIET_MS + 2).toISOString() }), { nowMs: T0 + VERY_QUIET_MS + 2 });
+  const recovered = view.snapshot({ nowMs: T0 + VERY_QUIET_MS + 2 });
   assert.equal(recovered.degraded, false);
   assert.equal(recovered.liveness, 'live');
   assert.equal(shown(recovered.drawable.total.counted), '12.5');
@@ -184,11 +195,21 @@ test('a feed that stops arriving is a silence, not a death', () => {
   const view = shown_(document(), { nowMs: T0 });
   assert.equal(view.snapshot({ nowMs: T0 }).liveness, 'live');
   assert.equal(view.snapshot({ nowMs: T0 + 1_000 }).liveness, 'live');
-  // `watch.StaleAfter` and `watch.LostAfter`, on the phone's own clock.
+  // `watch.StaleAfter`, on the phone's own clock -- and the only threshold a
+  // *stream* has (§10.9). The document's own state stays `live`, because the
+  // document is what the reader knew when it last assembled one; the view's
+  // liveness is the phone's own reading of the clock, and it is the worse of
+  // the two.
   assert.equal(view.snapshot({ nowMs: T0 + STALE_AFTER_MS }).liveness, 'live', 'the boundary itself is not stale');
   assert.equal(view.snapshot({ nowMs: T0 + STALE_AFTER_MS + 1 }).liveness, 'stale');
-  assert.equal(view.snapshot({ nowMs: T0 + LOST_AFTER_MS }).liveness, 'stale');
-  assert.equal(view.snapshot({ nowMs: T0 + LOST_AFTER_MS + 1 }).liveness, 'offline');
+  // ... and it stays `stale`: silence is not a state that keeps getting worse.
+  // `State.conn` has no second threshold, and `watch.LostAfter` -- 180 s in
+  // §10.9's table -- is a property of a *run* (`State.health` calls a run
+  // `lost`), not of a connection. The phone reads no run, so a feed that has
+  // been quiet for half an hour is still a feed that has been quiet.
+  assert.equal(view.snapshot({ nowMs: T0 + 3 * 60_000 }).liveness, 'stale');
+  assert.equal(view.snapshot({ nowMs: T0 + VERY_QUIET_MS }).liveness, 'stale');
+  assert.equal(view.snapshot({ nowMs: T0 + VERY_QUIET_MS }).document.connection.state, 'live', 'the document is not re-assembled by a silence');
 
   // The last document's numbers are still there, and still measured: a silence
   // does not unmeasure a reading, it only says how long ago it was.
@@ -223,15 +244,17 @@ test('the document\'s own state is the floor, and the phone\'s clock can only lo
   assert.equal(view.snapshot({ nowMs: T0 }).silenceMs, 50_000);
 
   // A document that arrived promptly but describes an old instant is quiet too:
-  // the rule names `now` as one of its four inputs.
+  // the rule names `now` as one of its four inputs. Old enough to be past
+  // `StaleAfter` and not past anything else -- there is nothing else.
   const old = document({ now: new Date(T0 - 10 * 60_000).toISOString() });
   const late = shown_(old, { nowMs: T0 });
-  assert.equal(late.snapshot({ nowMs: T0 }).liveness, 'offline');
+  assert.equal(late.snapshot({ nowMs: T0 }).liveness, 'stale');
+  assert.equal(late.snapshot({ nowMs: T0 }).silenceMs, 10 * 60_000);
 
   // A refusal outranks the silence it caused: it is the diagnosis.
   const refused = shown_(document({ connection: { state: 'refused', reason: 'access refused', age_seconds: 0 } }), { nowMs: T0 });
   assert.equal(refused.snapshot({ nowMs: T0 }).liveness, 'refused');
-  assert.equal(refused.snapshot({ nowMs: T0 + LOST_AFTER_MS + 1 }).liveness, 'refused');
+  assert.equal(refused.snapshot({ nowMs: T0 + VERY_QUIET_MS }).liveness, 'refused');
 
   // Polling is a healthy way to read, not a fault (`render.go` treats it as
   // live), and it is reported as itself.
