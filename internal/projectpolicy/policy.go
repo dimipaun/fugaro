@@ -538,7 +538,21 @@ func sortedStringKeys[V any](m map[string]V) []string {
 // newer Fugaro's field does not brick an older runner (P8); inside this block
 // the same tolerance fails open, and a newer profile field bumps Version,
 // which is what refuses a node this binary cannot read.
+//
+// A name written twice is refused (checkNoDuplicateNames, the same rule
+// validProviders applies to the providers block): profiles are looked up by
+// their exact spelling — Policy.ProfileFor, and every reader of a selection
+// through it — so encoding/json keeping the last of the two silently drops the
+// first profile whole, and which profile a run lands on would depend on the
+// order the keys were written in.
 func decodeProfileBlock(raw json.RawMessage) (map[string]Profile, error) {
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return nil, fmt.Errorf("projectpolicy: profiles: %w", err)
+	}
+	if err := checkNoDuplicateNames("profiles", names); err != nil {
+		return nil, fmt.Errorf("projectpolicy: %w", err)
+	}
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return nil, fmt.Errorf("projectpolicy: profiles: %w", err)
@@ -974,9 +988,9 @@ func checkMemberNames(prefix string, names, known []string) error {
 
 // checkNoDuplicateNames refuses a block that names one of its keys twice, for
 // the blocks this package reads by looking a key up rather than by decoding
-// into a struct: the top level of the node, the providers block and the
-// model_prices block, whose keys are looked up (or unescaped and stored) by
-// their exact spelling. encoding/json keeps the last of a repeated key when it
+// into a struct: the top level of the node, the providers block, the profiles
+// block and the model_prices block, whose keys are looked up (or unescaped and
+// stored) by their exact spelling. encoding/json keeps the last of a repeated key when it
 // builds the map, so the first one is a value the document wrote and this
 // reader drops — and where the key holds a whole block, what is dropped is the
 // block.

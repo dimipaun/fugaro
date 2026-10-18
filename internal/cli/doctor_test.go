@@ -371,6 +371,74 @@ func TestDoctorOpenProvidersIsInformational(t *testing.T) {
 	}
 }
 
+// TestDoctorProviderSecretNameIsInformational: doctor names every provider
+// whose key is not stored under the name the convention gives it
+// (<provider>-api-key), as an informational finding, and says the two halves
+// that make it information rather than a failure: nothing is renamed, and the
+// conventional name is reserved for that provider either way. The owner ruled
+// the off-convention state valid (2026-10-18), so it never fails doctor, with
+// --strict or without, and an on-convention installation reports nothing at
+// all.
+func TestDoctorProviderSecretNameIsInformational(t *testing.T) {
+	r := newDoctorRig(t)
+	// The rig has failures of its own (no checkout for plugin-pin, no base
+	// image), so strictness is compared rather than expected to pass: the set
+	// of checks that fail under --strict must be the same one as before the
+	// provider existed.
+	failing := func(t *testing.T) map[string]string {
+		t.Helper()
+		out, _, _ := execute(t, "doctor", "--strict", "--json", "--dir", t.TempDir())
+		var o doctorOutput
+		if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+			t.Fatalf("json: %v\n%s", jerr, out)
+		}
+		m := map[string]string{}
+		for _, c := range o.Checks {
+			if !c.OK && c.Severity != "info" {
+				m[c.ID] = c.Severity
+			}
+		}
+		return m
+	}
+	before := failing(t)
+	// On convention: openrouter's key IS openrouter-api-key, and deepseek's
+	// entry spells the algorithm it means, so nothing is reported -- the
+	// warning is about a name, not about a provider existing.
+	addLocalLines(t, r, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n"+
+		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n")
+	if _, ok := doctorCheckByID(doctorJSON(t).Checks, "provider-secret-name"); ok {
+		t.Fatal("an on-convention key was reported")
+	}
+	// Off convention: the finding names the entry, the name it uses and the
+	// name the convention gives it.
+	addLocalLines(t, r, "  deepseek:\n    kind: anthropic-compat\n    base_url: https://api.deepseek.com/anthropic\n"+
+		"    auth: bearer\n    secret: ds-key\n    models: [\"deepseek-chat\"]\n")
+	o := doctorJSON(t)
+	c, ok := doctorCheckByID(o.Checks, "provider-secret-name")
+	if !ok || c.OK || c.Severity != "info" {
+		t.Fatalf("provider-secret-name = %+v", c)
+	}
+	for _, want := range []string{"deepseek", "ds-key", "deepseek-api-key"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("the problem does not say %q: %s", want, c.Problem)
+		}
+	}
+	if strings.Contains(c.Problem, "openrouter") {
+		t.Errorf("an on-convention provider is named: %s", c.Problem)
+	}
+	for _, want := range []string{"rename nothing", "reserved"} {
+		if !strings.Contains(c.Fix, want) {
+			t.Errorf("the fix does not say %q: %s", want, c.Fix)
+		}
+	}
+	if !o.OK {
+		t.Fatalf("an informational state failed doctor: %+v", o)
+	}
+	if after := failing(t); !maps.Equal(before, after) {
+		t.Fatalf("--strict: the finding changed the verdict: before %v, after %v", before, after)
+	}
+}
+
 // TestDoctorNotInstalledIsInformational: a correctly pinned plugin nobody
 // has installed yet is informational, under --strict or not: a teammate who
 // hasn't opened the folder in Claude Code is not a CI failure.

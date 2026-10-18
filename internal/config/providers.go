@@ -370,9 +370,30 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 			add(at+".secret", "starts with %q: that is the beginning of an API key, not a secret's name; .secret is the NAME of the secret in Secret Manager that holds the key", keyPrefix)
 		case reservedSecretName(p.Secret):
 			add(at+".secret", "%q is a secret Fugaro already uses: give the provider key its own name", p.Secret)
+		case HarnessOAuthSecret(p.Secret):
+			// A harness's OAuth credential name, bare or in a named
+			// namespace: a person's subscription token belongs there
+			// (ClaudeOAuthToken, CodexOAuthToken), and a provider's key
+			// stored under one would be read as that credential. The Codex
+			// half is reserved ahead of the harness (owner ruling of
+			// 2026-10-18), and the Claude half closes the same hole on the
+			// side that is live: without this case a provider could claim
+			// claude-oauth-token-acme, which `fugaro secrets set` refuses to
+			// store for anything but a configured, allowed account — so the
+			// key could never be written, and every repository the provider
+			// allows would mount a secret that does not exist.
+			add(at+".secret", "%q is a harness's OAuth credential name (claude-oauth-token or codex-oauth-token, and the names in their -<name> namespaces): that is a person's subscription token, never a provider's key", p.Secret)
 		default:
 			if other, dup := secrets[p.Secret]; dup {
 				add(at+".secret", "%q is already the secret of provider %s: each provider has its own key", p.Secret, other)
+			} else if other, ok := ReservedProviderSecret(providers, p.Secret); ok && other != name {
+				// The conventional name of a *different* provider's key. A
+				// provider's own conventional name is fine (other == name);
+				// this is a second provider claiming it, which is the same
+				// collision as two providers sharing one secret with the
+				// capture delayed to the day the first entry's key is
+				// renamed to the convention.
+				add(at+".secret", "%q is the conventional name of provider %s's key (%s): each provider's key is its own, and the convention reserves that name for it", p.Secret, other, ProviderSecretConvention(other))
 			}
 			secrets[p.Secret] = name
 		}
@@ -470,6 +491,97 @@ func ProviderBySecret(providers map[string]ModelProvider, secret string) (name s
 }
 
 func reservedSecretName(s string) bool { _, ok := ReservedSecrets[s]; return ok }
+
+// APIKeySuffix ends a provider key's conventional secret name: a provider
+// entry names its key after itself, so the entry `openrouter` stores
+// openrouter-api-key and `deepseek` stores deepseek-api-key — the spelling
+// docs/multi-model.md §2 writes in its examples, and the one the owner ruled
+// for on 2026-10-18.
+//
+// It is a convention and not a rule, in both directions. A key stored under
+// any other name keeps working: nothing is renamed and nothing is migrated,
+// and `fugaro validate` and `fugaro doctor` only *warn* about the difference
+// (ProviderSecretWarnings). And the conventional name is reserved for that
+// provider whatever its .secret is written as (ReservedProviderSecret), so
+// nothing else may store a value under it.
+const APIKeySuffix = "-api-key"
+
+// ProviderSecretConvention is the secret name the convention gives the
+// provider entry named name: name + APIKeySuffix.
+func ProviderSecretConvention(name string) string { return name + APIKeySuffix }
+
+// ReservedProviderSecret reports whether secret is the conventional key name
+// of one of providers, and which provider that is: the name <p>-api-key
+// belongs to p's key, whether or not p's .secret is written that way.
+//
+// The reason it is reserved rather than merely preferred: a value another
+// document stored under it — a workflow's own secret, a profile's mount —
+// would become p's key the day p's key is renamed to the convention, so the
+// rename would hand the provider a credential somebody else wrote. The
+// provider itself is not refused its own name (ProviderBySecret finds it
+// first, and ValidateModelProviders holds a provider's .secret to this rule
+// only when the name belongs to a *different* entry).
+//
+// A conventional name the platform already owns is never reserved for a
+// provider (conventionUsable): the entry `anthropic` gives anthropic-api-key,
+// the direct Anthropic key, and an entry named after a harness family gives a
+// name in that family. Neither can ever be the provider's key
+// (ValidateModelProviders refuses both as a .secret), and reserving one would
+// take the platform's own name away from `secrets set` and init.
+func ReservedProviderSecret(providers map[string]ModelProvider, secret string) (name string, ok bool) {
+	for _, n := range sortedKeys(providers) {
+		if conventionUsable(n) && ProviderSecretConvention(n) == secret {
+			return n, true
+		}
+	}
+	return "", false
+}
+
+// SecretNameOffConvention says why p's key is not stored under the name the
+// convention gives it, as a clause for a message whose subject is the
+// provider entry's name (validate's Problem.Path, doctor's check), or "" when
+// it is on convention. It is the one wording the two surfaces share, so they
+// cannot drift apart about one provider.
+//
+// It never echoes anything but names: p.Secret is a secret's name, and the
+// one thing it must never be is a value (CheckSecretName's rule, which
+// ValidateModelProviders applies before this text is ever built).
+//
+// An entry whose conventional name the provider may not use
+// (conventionUsable) is never warned about: the advice would name a secret
+// ValidateModelProviders refuses.
+func SecretNameOffConvention(name string, p ModelProvider) string {
+	want := ProviderSecretConvention(name)
+	if p.Secret == want || !conventionUsable(name) {
+		return ""
+	}
+	return fmt.Sprintf("its key is stored under the name %s; the convention names a provider's key after its entry in the local config, so this one's is %s. The key keeps working as it is — nothing is renamed and nothing is migrated — and %s stays reserved for it either way, so a key stored from now on should be %s",
+		p.Secret, want, want, want)
+}
+
+// conventionUsable reports whether the conventional name of the provider
+// entry named name is one a provider's key may have: not a secret the
+// platform reserves for itself (ReservedSecrets — the entry `anthropic` gives
+// anthropic-api-key) and not a harness's OAuth credential name.
+func conventionUsable(name string) bool {
+	c := ProviderSecretConvention(name)
+	return !reservedSecretName(c) && !HarnessOAuthSecret(c)
+}
+
+// ProviderSecretWarnings are the providers whose key is stored under a name
+// the convention does not give it, one Problem per provider, in name order.
+// They are warnings and never refusals (the owner's ruling of 2026-10-18):
+// the config is valid, the key works, and the entry says what the convention
+// would have said differently.
+func ProviderSecretWarnings(providers map[string]ModelProvider) []Problem {
+	var ps []Problem
+	for _, name := range sortedKeys(providers) {
+		if msg := SecretNameOffConvention(name, providers[name]); msg != "" {
+			ps = append(ps, Problem{Path: "providers." + name + ".secret", Message: msg})
+		}
+	}
+	return ps
+}
 
 // ClaudePatterns are the model patterns no provider may claim: Claude goes
 // direct to Anthropic, also under the "anthropic/" vendor prefix. One

@@ -165,6 +165,22 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 		return nil, fmt.Errorf("launching %s: %w", full, err)
 	}
 	for _, kv := range extra {
+		if kv.Secret {
+			// A secret entry is the budget seal key (D15): the only place this
+			// backend could put it is the job definition's plain variables,
+			// which every launcher (roles/batch.jobsEditor on the Fugaro job
+			// prefix, compute/iam.tf) and the reaper (batch.jobs.get) can read
+			// back with `gcloud batch jobs describe`, for as long as the job is
+			// kept, and which may reach the CreateJob audit record — not a peer
+			// run (its account holds only agentReporter and logWriter), but a
+			// standing copy rather than the Cloud Run override the design prices
+			// (docs/design/budget-token-channel.md §7.1 and its Slice B note).
+			// Refused rather than carried, and the value is not quoted, until
+			// a carrier the design allows exists for Batch (an open owner
+			// question; secretVariables would need a per-run secret, which is
+			// the design's rejected C2).
+			return nil, fmt.Errorf("launching %s: the launch carries %s as a secret (the budget token's seal key), and a Batch job has no per-execution override: its variables are the job's definition, which a job reader can see, so the key is not put there and nothing was created; a sealed budget run cannot run on Batch yet", full, kv.Name)
+		}
 		vars[kv.Name] = kv.Value
 	}
 	// The other fast start, and the one a Docker run cannot have: with

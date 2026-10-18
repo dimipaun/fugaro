@@ -322,21 +322,31 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		// minted one: nothing to read.
 		return nil, nil
 	case errors.Is(err, token.ErrNoToken):
-		// A budget-on run with no token object in the bucket is the shipped
+		// A budget-on run whose token object cannot be read is the shipped
 		// refusal (B1, budget_session.go's startBudgetBackend said the same
 		// before this read existed). So is a job whose environment carries
 		// the launcher's marker (M2): the launcher mints whenever it can see
-		// a policy, whatever the mode, so a marker means this run HAD a token
-		// and it is gone — another run of the repository can delete a queued
-		// run's object. Reading that as "no policy here" would run a mode-off
-		// job of a policy-enforcing project with no session, no cap and no
-		// kill switch. The marker is a fact about this launch, so it is the
-		// one the run trusts.
+		// a policy, whatever the mode, so a marker means this run HAD a token.
+		// Reading its absence as "no policy here" would run a mode-off job of
+		// a policy-enforcing project with no session, no cap and no kill
+		// switch. The marker is a fact about this launch, so it is the one
+		// the run trusts.
+		//
+		// What the absence means changed with the seal (D16): the take is
+		// read-only and no run can delete a queued run's object, so "already
+		// taken" is never the cause. The job account's grant on tokens/ is
+		// conditioned and has no list, so GCS answers a refused read and a
+		// missing object alike with 403, and gocloud reports both as
+		// NotFound (token.ErrNoToken): the run cannot tell them apart. The
+		// likely cause after an upgrade is the grant — a job not re-applied
+		// since the token moved to tokens/ has none — so the refusal names it
+		// and its cure first. It names no object, and no key.
+		const grant = "this job's service account lacks its read grant on the repository's token objects under tokens/ (a job not re-applied since the upgrade that moved the budget token there: an operator runs fugaro init --repo for this repository in its checkout"
 		if r.d.Backend.TokenMarked {
-			c.err = errors.New("the run's budget token is not in the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment): it was already taken, or deleted; launch the run again")
+			c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment); the run cannot tell a refused read from a missing object. Either %s, then start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it), or the object is gone (a launch that failed and was cleaned up, or the bucket's day-long lifecycle rule): launch the run again", grant)
 			return nil, c.err
 		}
-		c.err = errors.New("the run's budget token is not in the runs bucket (already taken, or the run was not launched with one): launch the run again")
+		c.err = fmt.Errorf("the run's budget token could not be read from the runs bucket: the run was not launched with one, or %s, then start a new run (fugaro run with the same task): this run has launched, and retrying its run id only reports it); launch the run again", grant)
 		return nil, c.err
 	default:
 		c.err = err
@@ -356,7 +366,14 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 	return db, nil
 }
 
-// takeBudgetToken reads and deletes the run's token object, once per run. Its
+// errLauncherPredatesSeal is the mixed-fleet refusal (D19): the job's marker
+// is "1", which only a launcher from before the seal writes, so the token it
+// minted is unsealed and under runs/, and this runner reads neither.
+func errLauncherPredatesSeal(runID string) error {
+	return fmt.Errorf("%s is 1, so the fugaro that launched this run predates the seal of the budget token: it wrote the token unsealed, where this runner never reads one, and handed this execution no key; nothing was read. Upgrade the launching fugaro (fugaro upgrade), then start a new run (fugaro run with the same task): run %s has launched, and retrying its run id would only report it", BudgetTokenEnv, runID)
+}
+
+// takeBudgetToken reads the run's sealed token object, once per run. Its
 // refusals are the shipped ones (plan R10, B1): a job whose environment says
 // the budget is on but carries no Firebase API key, or no runs bucket, or a
 // slug or run id that cannot be a database key, is damage to the job, and the
@@ -373,7 +390,21 @@ func (r *run) takeBudgetToken(ctx context.Context) (string, error) {
 	if budget.Key(slug) != slug || budget.Key(runID) != runID || slug == "" || runID == "" {
 		return "", fmt.Errorf("the repository slug %q or run id %q cannot be used as keys of the budget database", slug, runID)
 	}
-	custom, err := token.TakeObject(ctx, r.d.Bucket, slug, runID)
+	// A marker of "1" is a launcher from before the seal (D19): it wrote the
+	// token unsealed under runs/, which this runner never reads, and handed
+	// no key. The run refuses here, before the bucket, with the side that is
+	// old named — never by reading a plaintext object instead.
+	if b.TokenMarked && len(b.TokenKey) == 0 {
+		return "", errLauncherPredatesSeal(runID)
+	}
+	// The take carries the launch's seal key (Backend.TokenKey, from the
+	// marker's value) and unseals the object under tokens/ with it; a
+	// plaintext object, and any object with no key, is refused rather than
+	// read (token.TakeObject). The take is read-only — the job's grant on
+	// tokens/ has no delete (D16) — so it removes nothing. The key itself is
+	// registered with the redactor at the top of Run, before this call, so
+	// nothing here may print it.
+	custom, err := token.TakeObject(ctx, r.d.Bucket, slug, runID, r.d.Backend.TokenKey)
 	switch {
 	case errors.Is(err, token.ErrNoToken):
 		return "", err // the caller says what an absent token means for this run

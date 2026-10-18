@@ -239,7 +239,9 @@ func bucket(t *testing.T) (*gcpfake.GCS, *blobx.Bucket) {
 }
 
 func TestTokenObjectKey(t *testing.T) {
-	if got := token.ObjectKey("aurora-app", "r1"); got != "runs/aurora-app/r1/budget-token" {
+	// tokens/, out of runs/ (§7.2, D16): one constant, the prefix the grants
+	// name. A key back under runs/ is a key the job may delete.
+	if got := token.ObjectKey("aurora-app", "r1"); got != "tokens/aurora-app/r1/budget-token" || token.ObjectPrefix != "tokens" {
 		t.Fatal(got)
 	}
 }
@@ -250,83 +252,130 @@ func TestTokenObjectCreateIfAbsent(t *testing.T) {
 	_, b := bucket(t)
 	c := claims()
 	first := e.mint(t, c, t0)
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, first); err != nil {
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, first, sealKey(1)); err != nil {
 		t.Fatal(err)
 	}
 	second := e.mint(t, c, t0.Add(time.Minute))
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, second); !errors.Is(err, token.ErrObjectExists) {
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, second, sealKey(2)); !errors.Is(err, token.ErrObjectExists) {
 		t.Fatalf("second put: %v", err)
 	}
-	got, _, err := b.Read(ctx, token.ObjectKey(c.Slug, c.Run))
-	if err != nil || string(got) != first {
+	if got, err := token.TakeObject(ctx, b, c.Slug, c.Run, sealKey(1)); err != nil || got != first {
 		t.Fatalf("the object was replaced (err %v)", err)
 	}
 	// A token that names another run never goes into this run's object.
 	other := c
 	other.Run = "someone-elses"
 	foreign := e.mint(t, other, t0)
-	if err := token.PutObject(ctx, b, "aurora-app", "fresh-run", foreign); !errors.Is(err, token.ErrTokenMismatch) {
+	if err := token.PutObject(ctx, b, "aurora-app", "fresh-run", foreign, sealKey(3)); !errors.Is(err, token.ErrTokenMismatch) {
 		t.Fatalf("foreign token: %v", err)
 	}
 }
 
-func TestTokenObjectDeletedAfterRead(t *testing.T) {
+// TestPutObjectNeverWritesPlaintext: the launcher seals every token object;
+// a missing or short key writes nothing at all, rather than the token in the
+// clear (§7.4: a plaintext object is the exposure the seal closes).
+//
+// Mutation (run, restored): let PutObject write the token plaintext when the
+// key is empty — this test fails on "wrote".
+func TestPutObjectNeverWritesPlaintext(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, b := bucket(t)
+	c := claims()
+	tok := e.mint(t, c, t0)
+	for _, key := range [][]byte{nil, {}, sealKey(4)[:16]} {
+		if err := token.PutObject(ctx, b, c.Slug, c.Run, tok, key); !errors.Is(err, token.ErrSealKey) {
+			t.Fatalf("PutObject with a %d-byte key = %v, want ErrSealKey", len(key), err)
+		}
+		if _, _, err := b.Read(ctx, token.ObjectKey(c.Slug, c.Run)); !errors.Is(err, blobx.ErrNotExist) {
+			t.Fatalf("PutObject with a %d-byte key wrote an object: %v", len(key), err)
+		}
+	}
+}
+
+// TestTakeObjectNeverDeletes is §7.2's read-only take (D16): the job's grant
+// on tokens/ has no delete, so the take issues none — a delete that fails
+// cannot fail the take, the object stays for the lifecycle rule, and a second
+// take with the same key reads the same token (consume-once rests on the key).
+//
+// Mutation (run, restored): put the delete back into TakeObject — the take
+// fails under the refused deletes and this test fails.
+func TestTakeObjectNeverDeletes(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	g, b := bucket(t)
 	c := claims()
 	tok := e.mint(t, c, t0)
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, tok); err != nil {
-		t.Fatal(err)
-	}
-	got, err := token.TakeObject(ctx, b, c.Slug, c.Run)
-	if err != nil || got != tok {
-		t.Fatalf("take: %v", err)
-	}
-	if _, err := token.TakeObject(ctx, b, c.Slug, c.Run); !errors.Is(err, token.ErrNoToken) {
-		t.Fatalf("second take: %v", err)
-	}
-	if _, _, err := b.Read(ctx, token.ObjectKey(c.Slug, c.Run)); !errors.Is(err, blobx.ErrNotExist) {
-		t.Fatalf("object still there: %v", err)
-	}
-
-	// A failed delete fails the take and the token is not handed out.
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, tok); err != nil {
+	key := sealKey(5)
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, tok, key); err != nil {
 		t.Fatal(err)
 	}
 	g.FailObjectDeletes(1000)
-	cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	got, err = token.TakeObject(cctx, b, c.Slug, c.Run)
-	if err == nil || got != "" {
-		t.Fatalf("a failed delete returned a token (%v, %v)", got != "", err)
+	for i := range 2 {
+		got, err := token.TakeObject(ctx, b, c.Slug, c.Run, key)
+		if err != nil || got != tok {
+			t.Fatalf("take %d: %v", i, err)
+		}
 	}
-	if strings.Contains(err.Error(), tok) {
-		t.Fatal("the error carries the token")
+	if _, _, err := b.Read(ctx, token.ObjectKey(c.Slug, c.Run)); err != nil {
+		t.Fatalf("the object is gone after a read-only take: %v", err)
 	}
 }
 
-func TestTakeObjectDeletesAMismatchedToken(t *testing.T) {
+// TestTakeObjectWithNoKeyReadsNothing: a run with no seal key reads no token
+// at all, whatever the object holds — a plaintext token (which Fugaro never
+// writes) included — and a missing object is ErrNoToken, the one answer the
+// caller words for itself.
+//
+// Mutation (run, restored): let openToken return a plaintext object's bytes
+// when no key is presented — this test fails on the plaintext row.
+func TestTakeObjectWithNoKeyReadsNothing(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	_, b := bucket(t)
+	c := claims()
+	if _, err := token.TakeObject(ctx, b, c.Slug, c.Run, nil); !errors.Is(err, token.ErrNoToken) {
+		t.Fatalf("no object: %v", err)
+	}
+	tok := e.mint(t, c, t0)
+	if _, err := b.Create(ctx, token.ObjectKey(c.Slug, c.Run), []byte(tok), "text/plain"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := token.TakeObject(ctx, b, c.Slug, c.Run, nil)
+	if !errors.Is(err, token.ErrNotSealed) || got != "" {
+		t.Fatalf("a plaintext object with no key = (%v, %v), want ErrNotSealed and no token", got != "", err)
+	}
+	if strings.Contains(err.Error(), tok) {
+		t.Fatal("the refusal carries the token")
+	}
+}
+
+func TestTakeObjectRefusesAMismatchedToken(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	_, b := bucket(t)
 	other := claims()
 	other.Run = "other-run"
-	foreign := e.mint(t, other, t0)
-	// Written straight to the victim's path (a bypass of PutObject).
-	if _, err := b.Create(ctx, token.ObjectKey("aurora-app", "victim"), []byte(foreign), "text/plain"); err != nil {
+	key := sealKey(6)
+	// Sealed for the victim's name (a bypass of PutObject's own check).
+	env, err := token.Seal(key, token.ObjectKey("aurora-app", "victim"), []byte(e.mint(t, other, t0)))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := token.TakeObject(ctx, b, "aurora-app", "victim"); !errors.Is(err, token.ErrTokenMismatch) {
+	if _, err := b.Create(ctx, token.ObjectKey("aurora-app", "victim"), env, "application/octet-stream"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := token.TakeObject(ctx, b, "aurora-app", "victim", key); !errors.Is(err, token.ErrTokenMismatch) {
 		t.Fatalf("err = %v", err)
 	}
-	if _, _, err := b.Read(ctx, token.ObjectKey("aurora-app", "victim")); !errors.Is(err, blobx.ErrNotExist) {
-		t.Fatal("the mismatched token stayed readable")
-	}
-	if _, err := b.Create(ctx, token.ObjectKey("aurora-app", "junk"), []byte("not a jwt"), "text/plain"); err != nil {
+	junk, err := token.Seal(key, token.ObjectKey("aurora-app", "junk"), []byte("not a jwt"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := token.TakeObject(ctx, b, "aurora-app", "junk"); !errors.Is(err, token.ErrTokenInvalid) {
+	if _, err := b.Create(ctx, token.ObjectKey("aurora-app", "junk"), junk, "application/octet-stream"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := token.TakeObject(ctx, b, "aurora-app", "junk", key); !errors.Is(err, token.ErrTokenInvalid) {
 		t.Fatalf("junk: %v", err)
 	}
 }
@@ -339,13 +388,13 @@ func TestDeleteObject(t *testing.T) {
 	if err := token.DeleteObject(ctx, b, c.Slug, c.Run); err != nil {
 		t.Fatalf("a missing object: %v", err)
 	}
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0)); err != nil {
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0), sealKey(7)); err != nil {
 		t.Fatal(err)
 	}
 	if err := token.DeleteObject(ctx, b, c.Slug, c.Run); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := token.TakeObject(ctx, b, c.Slug, c.Run); !errors.Is(err, token.ErrNoToken) {
+	if _, err := token.TakeObject(ctx, b, c.Slug, c.Run, sealKey(7)); !errors.Is(err, token.ErrNoToken) {
 		t.Fatal(err)
 	}
 }
@@ -359,7 +408,7 @@ func TestDeleteObjectForbiddenIsNotSilentSuccess(t *testing.T) {
 	ctx := context.Background()
 	g, b := bucket(t)
 	c := claims()
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0)); err != nil {
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0), sealKey(8)); err != nil {
 		t.Fatal(err)
 	}
 	g.DenyWrites("runs", token.ObjectKey(c.Slug, c.Run))

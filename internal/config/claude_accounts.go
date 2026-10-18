@@ -54,7 +54,7 @@ const MaxClaudeAccountNameLen = 31
 // configured account, must be refused wherever a secret name is accepted
 // (internal/cli/secrets.go, internal/cli/initsecrets.go), not only when it
 // happens to collide with a real one.
-const ClaudeOAuthTokenPrefix = "claude-oauth-token-"
+const ClaudeOAuthTokenPrefix = ClaudeOAuthToken + "-"
 
 // ClaudeAccount is one named Claude OAuth credential the owner has
 // configured in the local config (never fugaro.yaml or the project layer:
@@ -79,7 +79,7 @@ func (a ClaudeAccount) AllowsData(repo string) bool {
 // default account, which is how backward compatibility holds (design §5).
 func ClaudeAccountSecret(name string) string {
 	if name == "" || name == DefaultClaudeAccount {
-		return "claude-oauth-token"
+		return ClaudeOAuthToken
 	}
 	return ClaudeOAuthTokenPrefix + name
 }

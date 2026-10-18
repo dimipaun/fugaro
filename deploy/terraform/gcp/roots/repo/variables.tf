@@ -84,6 +84,10 @@ variable "repo" {
         title      = string
         expression = string
       })
+      token_condition = object({
+        title      = string
+        expression = string
+      })
       vertex     = bool
       deploy_job = bool
     }))

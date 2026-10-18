@@ -35,6 +35,7 @@ func TestCoverBucketConditions(t *testing.T) {
 	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{cbBucket}, Listed: []string{cbPerson}}
 	launcher := cond(gcp.LauncherBucketConditionTitle, gcp.LauncherBucketCondition(cbBucket))
 	job := cond("fugaro-x", gcp.BucketCondition(cbBucket, gcp.JobBucketPrefixes, "acme-web-0123456789abcdef"))
+	tokens := cond("fugaro-tokens-x", gcp.TokenBucketCondition(cbBucket, "acme-web-0123456789abcdef"))
 	for _, tc := range []struct {
 		name          string
 		member, role  string
@@ -42,7 +43,27 @@ func TestCoverBucketConditions(t *testing.T) {
 		covered       bool
 		wantInProblem string
 	}{
-		{"launcher writes runs/", cbPerson, "roles/storage.objectUser", launcher, true, ""},
+		{"launcher writes runs/ and tokens/", cbPerson, "roles/storage.objectUser", launcher, true, ""},
+		// The budget token's move (docs/design/budget-token-channel.md §7.2,
+		// D16): the job account reads its own repository's tokens/<slug>/ and
+		// nothing else, and may never write it.
+		{"job account reads its tokens/<slug>/", cbJobSA, "roles/storage.objectViewer", tokens, true, ""},
+		{"job account writes tokens/<slug>/", cbJobSA, "roles/storage.objectUser", tokens, false, "condition"},
+		{"job account's objectUser condition reaching tokens/", cbJobSA, "roles/storage.objectUser",
+			cond("t", gcp.BucketCondition(cbBucket, []string{"runs", "tokens"}, "acme-web-0123456789abcdef")), false, "condition"},
+		{"job account reads every repository's tokens/", cbJobSA, "roles/storage.objectViewer",
+			cond("t", `resource.name.startsWith("projects/_/buckets/`+cbBucket+`/objects/tokens/")`), false, "condition"},
+		{"job account reads tokens/ and runs/", cbJobSA, "roles/storage.objectViewer",
+			cond("t", gcp.TokenBucketCondition(cbBucket, "s")+" || "+gcp.BucketCondition(cbBucket, []string{"runs"}, "s")), false, "condition"},
+		{"job account reads another bucket's tokens/", cbJobSA, "roles/storage.objectViewer",
+			cond("t", gcp.TokenBucketCondition("fugaro-runs-other", "s")), false, "condition"},
+		{"a person reads tokens/<slug>/ under a condition", cbPerson, "roles/storage.objectViewer", tokens, false, "condition"},
+		{"job account reads tokens/ with a description", cbJobSA, "roles/storage.objectViewer",
+			map[string]any{"title": "t", "expression": gcp.TokenBucketCondition(cbBucket, "s"), "description": "x"}, false, "description"},
+		{"launcher's pre-seal runs/-only condition", cbPerson, "roles/storage.objectUser",
+			cond("fugaro-launchers-runs", `resource.name.startsWith("projects/_/buckets/`+cbBucket+`/objects/runs/")`), false, "condition"},
+		{"launcher condition widened past tokens/", cbPerson, "roles/storage.objectUser",
+			cond(gcp.LauncherBucketConditionTitle, gcp.LauncherBucketCondition(cbBucket)+` || resource.name.startsWith("projects/_/buckets/`+cbBucket+`/objects/fugaro/")`), false, "condition"},
 		{"launcher reads, unconditioned", cbPerson, "roles/storage.objectViewer", nil, true, ""},
 		{"operator objectAdmin, unconditioned", cbPerson, "roles/storage.objectAdmin", nil, true, ""},
 		{"job account under its prefixes", cbJobSA, "roles/storage.objectUser", job, true, ""},

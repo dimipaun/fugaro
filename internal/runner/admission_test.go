@@ -11,11 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/oauth2"
-
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
-	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
@@ -98,17 +95,7 @@ func admissionRunCfg(t *testing.T, kind, slugRepo, mode, capUSD, cfg, policy str
 // run compares it with its own.
 func mintUnder(t *testing.T, b *bk, slug string, at time.Time) {
 	t.Helper()
-	signer, err := token.NewIAMSigner(bkSignerEmail, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "ya29.launcher"}), token.WithIAMEndpoint(b.iam.URL))
-	if err != nil {
-		t.Fatal(err)
-	}
-	tok, err := token.MintAt(context.Background(), signer, token.Claims{Slug: slug, Run: runID, FX: token.ExpiryFX(at, 3*time.Hour), FP: "aurora", RB: bkRB}, at)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := token.PutObject(context.Background(), b.bucket, slug, runID, tok); err != nil {
-		t.Fatal(err)
-	}
+	b.mintSealed(slug, runID, at)
 }
 
 // refusedAdmission fails unless the run stopped at the admission check: an
