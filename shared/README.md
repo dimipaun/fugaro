@@ -43,6 +43,8 @@ the schema and not
 `internal/budget/rules`' template, which is P6.4's task and is asserted as a known gap in
 `TestMailboxRulesAgreeWithTheSharedSchema`.
 
+`command/` (P6.1) is the wake-word router and the app-command grammar: built, with its own tests and its own mutation proof; see `command/README.md`.
+
 ## The runner, and the glob
 
 `npm test` runs `node --test "**/*.test.js"` — Node's own test runner, so the package has
