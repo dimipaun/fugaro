@@ -9,9 +9,9 @@
 // cannot be shipped by a component that happens to render correctly today.
 //
 // It is deliberately the *source* that is read and not a copy of it (Review Focus: "the
-// test must read the source, not the generator's own output"). The three palette files are
+// test must read the source, not the generator's own output"). The palette files are
 // the values; `tokens.css` is the vocabulary; and the cases below hold the two together —
-// one palette imported, the same ten colour tokens in all three files, no colour in the
+// one palette imported, the same ten colour tokens in all four files, no colour in the
 // semantic layer, and every designed pair above its ratio.
 //
 // The red step this file was written against, and which its last case keeps: run the check
@@ -39,16 +39,22 @@ import { fileURLToPath } from 'node:url'
 const STYLES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'styles')
 const TOKENS_FILE = 'tokens.css'
 
-// The three candidates D104 put to the owner, and the one the owner chose on 2026-10-16.
-// The files are named here rather than discovered by a glob on purpose: a fourth palette
-// nobody asked for, or a palette file that lost its name, has to fail this check rather
-// than be read as one more candidate.
-export const PALETTE_FILES = ['palette-violet.css', 'palette-orange.css', 'palette-split.css']
-export const PALETTE_IN_FORCE = 'palette-split.css'
+// The palette files this check reads: D104's three candidates, which the owner chose
+// between on 2026-10-16, and `palette-logo.css`, the fourth, which D180 made the palette in
+// force on 2026-10-18. The files are named here rather than discovered by a glob on purpose:
+// a palette nobody asked for, or a palette file that lost its name, has to fail this check
+// rather than be read as one more candidate.
+export const PALETTE_FILES = [
+  'palette-violet.css',
+  'palette-orange.css',
+  'palette-split.css',
+  'palette-logo.css',
+]
+export const PALETTE_IN_FORCE = 'palette-logo.css'
 
 // The colour vocabulary every palette is a value set for, and the roles the contrast pairs
 // below depend on. A palette that dropped one of these would make a pair in this file
-// unreadable rather than merely unset, so the case that holds the three files together
+// unreadable rather than merely unset, so the case that holds the four files together
 // requires every one of them.
 const COLOUR_TOKENS = [
   'ground',
@@ -228,7 +234,7 @@ export const PAIRS = [
 ]
 
 // The pairs `base.css` paints — the page chrome and the element defaults every page gets.
-// Each one is also in PAIRS (a case below holds that), so each is computed for all three
+// Each one is also in PAIRS (a case below holds that), so each is computed for all four
 // palettes by the per-palette cases; this list is the record of which pairs the base layer
 // depends on, and the cases at the end of this file hold base.css to it in both directions:
 // a rule that sets a colour and a background names a pair listed here, and every colour
@@ -271,7 +277,7 @@ export function contrastFailures(tokens, pairs = PAIRS) {
 
 // ---- the palette in force --------------------------------------------------------------
 
-test('tokens.css imports exactly one palette, and it is the one D104 chose', () => {
+test('tokens.css imports exactly one palette, and it is the one D180 made the palette in force', () => {
   const css = tokensCss()
   const imports = importedFiles(css)
 
@@ -284,12 +290,12 @@ test('tokens.css imports exactly one palette, and it is the one D104 chose', () 
   const imported = path.basename(imports[0])
   assert.ok(
     PALETTE_FILES.includes(imported),
-    `tokens.css imports ${imports[0]}, which is not one of D104's three candidates (${PALETTE_FILES.join(', ')})`,
+    `tokens.css imports ${imports[0]}, which is not one of the four palette files this check reads (${PALETTE_FILES.join(', ')})`,
   )
   assert.equal(
     imported,
     PALETTE_IN_FORCE,
-    `tokens.css imports ${imported}, but the palette in force is ${PALETTE_IN_FORCE}: the owner answered D104 on 2026-10-16 with palette C — violet for structure and links, orange for warnings and cost. The other two palettes ship as the documented alternatives; changing the palette in force is this one line`,
+    `tokens.css imports ${imported}, but the palette in force is ${PALETTE_IN_FORCE}: the owner ruled on 2026-10-18 (D180) that the accent is the logo's own hue, sampled from brand/fugaro-logo.png, so palette-logo.css is the one in force. The other three ship as the record of D104's choice; changing the palette in force is this one line`,
   )
 
   // A CSS `@import` after the first rule is dropped by the browser, so the palette would
@@ -316,8 +322,8 @@ test('tokens.css is the semantic layer, and shares no name with the palette', ()
   }
 
   // The two layers are disjoint, and that is the whole of "one source of truth per fact": a
-  // colour belongs in a palette, where the contrast check can read it for all three
-  // candidates at once, and a semantic token belongs here, where it is a step rather than a
+  // colour belongs in a palette, where the contrast check can read it for all four palette
+  // files at once, and a semantic token belongs here, where it is a step rather than a
   // value. A name in both would be a second place a colour could be set.
   for (const name of semantic.keys()) {
     assert.ok(
@@ -329,7 +335,7 @@ test('tokens.css is the semantic layer, and shares no name with the palette', ()
   assertColourFree(semantic)
 })
 
-test('the three palettes are one vocabulary in three value sets', () => {
+test('the four palettes are one vocabulary in four value sets', () => {
   const sets = new Map()
   for (const file of PALETTE_FILES) {
     sets.set(file, new Set(paletteTokens(file).keys()))
@@ -340,7 +346,7 @@ test('the three palettes are one vocabulary in three value sets', () => {
     for (const name of sets.get(first)) {
       assert.ok(
         sets.get(file).has(name),
-        `${file} does not define --${name}, which ${first} does: every palette is a complete value set for the same vocabulary, so a token added to one of them is added to all three (and to the pair set in this file if a page paints it)`,
+        `${file} does not define --${name}, which ${first} does: every palette is a complete value set for the same vocabulary, so a token added to one of them is added to all four (and to the pair set in this file if a page paints it)`,
       )
     }
     for (const name of sets.get(file)) {
@@ -368,9 +374,9 @@ test('the three palettes are one vocabulary in three value sets', () => {
 
 // ---- contrast, per palette -------------------------------------------------------------
 
-// One case per palette rather than one case over all three, so that a failure names the
-// file the reader has to open. All three run whether or not one of them fails, because the
-// question the owner is entitled to an answer to is "do all three pass", not "does the
+// One case per palette rather than one case over all four, so that a failure names the
+// file the reader has to open. All four run whether or not one of them fails, because the
+// question the owner is entitled to an answer to is "do all four pass", not "does the
 // first one".
 for (const file of PALETTE_FILES) {
   test(`${file}: every pair the site paints meets its WCAG ratio`, () => {
@@ -475,7 +481,7 @@ test('the colour literal scan refuses a hex, a colour function and a named colou
   }
 })
 
-test('every pair base.css paints is in the contrast set, for all three palettes', () => {
+test('every pair base.css paints is in the contrast set, for all four palettes', () => {
   for (const pair of BASE_PAIRS) {
     assert.ok(
       PAIRS.some((p) => sameAs(p, pair)),
