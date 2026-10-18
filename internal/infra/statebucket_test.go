@@ -154,3 +154,109 @@ func TestRepoStates(t *testing.T) {
 		t.Fatalf("repo states = %q, %v", got, err)
 	}
 }
+
+// The whole-project inventory reads every root's state, so the listing it
+// takes is the whole bucket's *.tfstate objects — the installation's, the
+// Firebase project's and every repository's — and nothing else: a lock is not
+// state, and neither is anything that is not a state object.
+func TestStateObjectsListsEveryRootsState(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	f.gcs.AddBucket(testStateBucket, testProjectNumber, tfstate)
+	b := f.gcs.Bucket(t, testStateBucket)
+	for _, k := range []string{
+		"fugaro/installation/default.tfstate",
+		"fugaro/firebase/default.tfstate",
+		"fugaro/repos/bitbucket-acme-sandbox/default.tfstate",
+		"fugaro/repos/bitbucket-acme-sandbox/default.tflock",
+		"fugaro/repos/bitbucket-acme-sandbox/notes.txt",
+		"fugaro/allow-delete.json",
+	} {
+		if err := b.WriteAll(ctx, k, []byte("{}"), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := StateObjects(ctx, f.c, testStateBucket, "")
+	want := []string{
+		"fugaro/firebase/default.tfstate",
+		"fugaro/installation/default.tfstate",
+		"fugaro/repos/bitbucket-acme-sandbox/default.tfstate",
+	}
+	if err != nil || !slices.Equal(got, want) {
+		t.Fatalf("state objects = %q, %v, want %q", got, err, want)
+	}
+	// A prefix is the same read narrowed to one root, and the empty prefix of
+	// the state bucket is not the whole installation: the managed root's state
+	// lives in D77's own bucket (StatePrefixManaged).
+	if got, err := StateObjects(ctx, f.c, testStateBucket, StatePrefixInstallation); err != nil ||
+		!slices.Equal(got, []string{"fugaro/installation/default.tfstate"}) {
+		t.Fatalf("installation states = %q, %v", got, err)
+	}
+	if got, err := StateObjects(ctx, f.c, testStateBucket, StatePrefixManaged); err != nil || len(got) != 0 {
+		t.Fatalf("managed states in the installation's bucket = %q, %v, want none", got, err)
+	}
+}
+
+// A bucket with no state at all — an installation that has applied nothing —
+// is an empty list and not an error, which is the honest answer the accounting
+// reads as "the state accounts for nothing". The listing's own failures are
+// the caller's: a caller that could not list the states must fall back
+// (Global Constraint 3), which is why the error is returned and not swallowed.
+func TestStateObjectsOfABucketWithNothing(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	f.gcs.AddBucket(testStateBucket, testProjectNumber, tfstate)
+	got, err := StateObjects(ctx, f.c, testStateBucket, "")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("an empty state bucket listed %q, %v, want nothing", got, err)
+	}
+}
+
+// Reading one state object is the other half of the accounting, and a read
+// that fails is an error for the same reason a listing is.
+func TestReadStateObject(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	f.gcs.AddBucket(testStateBucket, testProjectNumber, tfstate)
+	b := f.gcs.Bucket(t, testStateBucket)
+	state := []byte(`{"version":4,"resources":[]}`)
+	if err := b.WriteAll(ctx, "fugaro/installation/default.tfstate", state, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadStateObject(ctx, f.c, testStateBucket, "fugaro/installation/default.tfstate")
+	if err != nil || !slices.Equal(got, state) {
+		t.Fatalf("state = %q, %v, want %q", got, err, state)
+	}
+	if _, err := ReadStateObject(ctx, f.c, testStateBucket, "fugaro/installation/gone.tfstate"); err == nil {
+		t.Error("reading an object that is not there answered no error")
+	}
+}
+
+// An object too large to be a state this program writes is refused rather
+// than read into memory: what a bucket holds must not decide this program's
+// memory. The limit is a variable here only so the test can hold a small
+// object against it.
+func TestReadStateObjectRefusesSomethingTooLarge(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	f.gcs.AddBucket(testStateBucket, testProjectNumber, tfstate)
+	b := f.gcs.Bucket(t, testStateBucket)
+	if err := b.WriteAll(ctx, "fugaro/installation/default.tfstate", []byte(strings.Repeat("x", 2048)), nil); err != nil {
+		t.Fatal(err)
+	}
+	defer func(n int) { maxStateObject = n }(maxStateObject)
+	maxStateObject = 1024
+	got, err := ReadStateObject(ctx, f.c, testStateBucket, "fugaro/installation/default.tfstate")
+	if err == nil {
+		t.Fatalf("an object larger than the limit answered %d bytes and no error", len(got))
+	}
+	if !strings.Contains(err.Error(), "larger than") {
+		t.Errorf("the error does not say the object is too large: %v", err)
+	}
+	// Exactly at the limit is a state this build reads: the check is on what
+	// is over it, not on what reaches it.
+	maxStateObject = 2048
+	if got, err := ReadStateObject(ctx, f.c, testStateBucket, "fugaro/installation/default.tfstate"); err != nil || len(got) != 2048 {
+		t.Fatalf("an object of exactly the limit read %d bytes, %v", len(got), err)
+	}
+}
