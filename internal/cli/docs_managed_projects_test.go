@@ -61,6 +61,7 @@ var check67bGuard = []string{
 	"F=fugaro-managed             # this check's throwaway managed installation, created by Check 67a's step 1",
 	"M=fugaro-chk67               # the managed project Check 67a created: the OLD project, destroyed in step 1 here",
 	"N=fugaro-chk67b              # the NEW project ID this restore creates: it MUST NOT exist before step 3",
+	"E=                           # an EXISTING GCP project ID you may read and this check does NOT own: not $P, not $M, not $N. Step 2 presents it to watch the restore refuse to ADOPT a project (any other scratch project of your own will do)",
 	"L=us-east5                   # the installation's region",
 	"R=edgeappinc/fugarosandbox   # the sandbox repository, owner/name: the only repository this check touches",
 	"ACCOUNT_ID=                  # the SANDBOX installation's billing account ID, no BILLING_ prefix: the new project is created under it",
@@ -70,9 +71,11 @@ var check67bGuard = []string{
 	"# ${VAR:?} everywhere: an empty variable is a hard error, never an empty",
 	"# argument that gcloud would resolve from its ambient configuration. No",
 	"# apostrophe inside a ${VAR:?...} message (bash reads it as an unclosed quote).",
-	"# TERRAFORM_ADDRESS comes out of a plan you read, exactly as in 67a.",
-	"[ \"$P\" = fugaro-dev ] && [ -n \"$L\" ] && [ -n \"$R\" ] && [ -n \"$F\" ] && [ -n \"$M\" ] && [ -n \"$N\" ] && [ -n \"$ACCOUNT_ID\" ] && [ -n \"$AMOUNT\" ] && [ -n \"$TERRAFORM_ADDRESS\" ] \\",
-	"  || { echo \"Check 67b stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R F=$F M=$M N=$N ACCOUNT_ID=$ACCOUNT_ID AMOUNT=$AMOUNT TERRAFORM_ADDRESS=$TERRAFORM_ADDRESS must not be empty)\" >&2; exit 1; }",
+	"# TERRAFORM_ADDRESS comes out of a plan you read, exactly as in 67a, and E is",
+	"# refused unless it names a project of its own: a restore pointed at the",
+	"# sandbox project is the one creating command this check never runs.",
+	"[ \"$P\" = fugaro-dev ] && [ -n \"$L\" ] && [ -n \"$R\" ] && [ -n \"$F\" ] && [ -n \"$M\" ] && [ -n \"$N\" ] && [ -n \"$E\" ] && [ \"$E\" != \"$P\" ] && [ \"$E\" != \"$M\" ] && [ \"$E\" != \"$N\" ] && [ -n \"$ACCOUNT_ID\" ] && [ -n \"$AMOUNT\" ] && [ -n \"$TERRAFORM_ADDRESS\" ] \\",
+	"  || { echo \"Check 67b stopped: re-run the whole setup block (P=$P must be fugaro-dev; E=$E must differ from P, M and N, and L=$L R=$R F=$F M=$M N=$N ACCOUNT_ID=$ACCOUNT_ID AMOUNT=$AMOUNT TERRAFORM_ADDRESS=$TERRAFORM_ADDRESS must not be empty)\" >&2; exit 1; }",
 	"fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \\",
 	"  || { echo \"Check 67b stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)\" >&2; exit 1; }",
 	"git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\\.git)?$' \\",
@@ -415,7 +418,7 @@ func TestChecklistHasCheck67a(t *testing.T) {
 		`grep -c 'objects/fugaro/' /tmp/chk67-runs-policy.json`,
 		"fugaro_deployer_token_creator",
 		"deploy/terraform/gcp/modules/installation/deployer.tf",
-		"deploy/terraform/gcp/modules/repo/workflow/sa.tf",
+		"deploy/terraform/gcp/modules/workflow/sa.tf:12",
 		"the **write-level** denial itself",
 	} {
 		if !strings.Contains(section, want) {
@@ -438,6 +441,7 @@ func TestChecklistHasCheck67a(t *testing.T) {
 		"JOB_SA=",
 		`--impersonate-service-account="$JOB_SA"`,
 		"the run's job credential failed to write both objects",
+		"repo/workflow",
 	} {
 		if strings.Contains(section, bad) {
 			t.Errorf("Check 67a still carries the dead end %q", bad)
@@ -502,7 +506,7 @@ func TestChecklistHasCheck67b(t *testing.T) {
 
 	for _, tag := range []string{
 		"**(1) Destroy the managed project** — **once per installation.**",
-		"**(2) Present an existing project ID, and watch it be refused** — **once per repo checkout.**",
+		"**(2) Two existing project IDs, and the two different refusals they earn** — **once per repo checkout.**",
 		"**(3) The restore itself** — **once per installation.**",
 		"**(4) The new project is managed, and the delete list is genuinely gone** — **once per repo checkout.**",
 		"**(5) No state read happened** — **once per repo checkout.**",
@@ -529,6 +533,17 @@ func TestChecklistHasCheck67b(t *testing.T) {
 		"fugaro/allow-delete.json",
 		"`fugaro allow-delete`",
 		"every delete and replace in the new project is refused",
+		// step 2: TWO existing IDs, and the two code paths that refuse them.
+		// The ID of the lost installation never reaches the existence check —
+		// `restoreNewProjectID` refuses it first, before any cloud call — so
+		// the "already exists … never adopts a project" sentence that the FACT
+		// used to pin to ${M:?} needs a project of its own (${E:?}).
+		`fugaro restore "${M:?}" ./managed-root --project "${F:?}" --billing-account ${ACCOUNT_ID:?} --budget ${AMOUNT:?} --budget-currency USD`,
+		`fugaro restore "${E:?}" ./managed-root --project "${F:?}" --billing-account ${ACCOUNT_ID:?} --budget ${AMOUNT:?} --budget-currency USD`,
+		"is the ID of the installation that was lost",
+		"`restoreNewProjectID`",
+		"`restoreRun.refuseExisting`",
+		`"nothing was restored: GCP project ${E:?} already exists`,
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 67b does not carry %q", want)
@@ -663,12 +678,27 @@ func TestChecklistHasCheck68(t *testing.T) {
 		"add-iam-policy-binding",
 		"fugaro-tfstate-",
 		"PERMISSION_DENIED",
+		// The account whose token the deployer must not be able to mint: a
+		// DELEGATION CHAIN, the deployer as the link before the last, because
+		// `gcloud iam service-accounts get-access-token` is not a gcloud
+		// subcommand at all (SDK 588.0.0 answers `Invalid choice:`) and a
+		// command that fails that way measures nothing about actAs.
+		`gcloud auth print-access-token --impersonate-service-account="${D:?}"`,
 		// The positive half of the same sentence: the one bucket it CAN write.
 		"fugaro-managed-tfstate-",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 68 does not carry %q", want)
 		}
+	}
+	// And the dead end that pin replaced: `fugaro`-style shorthand for
+	// minting a token as an account is `gcloud iam service-accounts
+	// get-access-token`, which gcloud does not have (the beta component
+	// carries a variant and is not installed), so the command answers
+	// `Invalid choice:` and the "the deployer cannot act as the compute
+	// account" negative would be recorded as a pass for the wrong reason.
+	if strings.Contains(section, "iam service-accounts get-access-token") {
+		t.Error("Check 68 mints a token with a gcloud subcommand that does not exist: the negative would fail for the wrong reason")
 	}
 	// The permissions the roles are known to LACK, each measured as its own
 	// PERMISSION_DENIED before anything is added — and never added without the

@@ -4435,7 +4435,7 @@ grep -o 'objects/[a-z]*/' /tmp/chk67-runs-policy.json | sort -u         # FACT: 
 
 **What this step measures, and what it deliberately does not run.** The property is that the account a **run** holds cannot write `fugaro/managed.json` or `fugaro/allow-delete.json`. The grant that carries it is bucket-level: the job account holds `roles/storage.objectUser` on the runs bucket **under a condition** whose clauses admit only the repository's own `runs/`, `cache/` and `locks/` prefixes (`internal/backend/gcp/names.go`, `JobBucketPrefixes` and `BucketCondition`; a project job's grant is the same three with no slug, `ProjectBucketCondition` — which of the two forms your installation has is a phase-3 object on the integration branch, `docs/design/project-centric.md` §4.1, and the read above is what says which). So the FACT above is the measurement: **no clause admits `objects/fugaro/`**, and such a condition is the whole of the fence, because object permissions cannot be scoped by name prefix in a project-level role.
 
-**The probe this step must NOT run, and why an earlier draft was wrong to.** `gcloud storage cp` with `--impersonate-service-account` pointed at the job account looks like the direct measurement and is not one: impersonation needs `roles/iam.serviceAccountTokenCreator` **on that account for the caller**, and in this installation the only such grant is on D75's deployer account, to the operators (`deploy/terraform/gcp/modules/installation/deployer.tf`, `google_service_account_iam_member.fugaro_deployer_token_creator`). What an operator holds on the **job** account is `roles/iam.serviceAccountUser` (`deploy/terraform/gcp/modules/repo/workflow/sa.tf`, `google_service_account_iam_member.operator`), which is the grant to *deploy a job as* that account, not to mint a token for it. So that command is refused **to you**, and its `PERMISSION_DENIED` would prove nothing at all about what the job account may write. It is not run here.
+**The probe this step must NOT run, and why an earlier draft was wrong to.** `gcloud storage cp` with `--impersonate-service-account` pointed at the job account looks like the direct measurement and is not one: impersonation needs `roles/iam.serviceAccountTokenCreator` **on that account for the caller**, and in this installation the only such grant is on D75's deployer account, to the operators (`deploy/terraform/gcp/modules/installation/deployer.tf`, `google_service_account_iam_member.fugaro_deployer_token_creator`). What an operator holds on the **job** account is `roles/iam.serviceAccountUser` (`deploy/terraform/gcp/modules/workflow/sa.tf:12`, `google_service_account_iam_member.operator`), which is the grant to *deploy a job as* that account, not to mint a token for it. So that command is refused **to you**, and its `PERMISSION_DENIED` would prove nothing at all about what the job account may write. It is not run here.
 
 **FACT lines:** the policy read above — the job account's binding with its condition's `expression` byte for byte, the `0` from the `fugaro/` grep, and the prefixes the condition does admit; or, if the read is refused, the refusal verbatim and the note that the read needs an identity holding the project's Owner. **UNVERIFIED, and recorded rather than guessed:** the **write-level** denial itself — a run's own credential actually attempting the two objects and being refused — is **not measured by this step**, and cannot be measured through `gcloud` with the grants this installation has. Three things carry it instead, in order of strength: (i) the fixture tests that assert it, Tasks 0.1, 1.4 and 3.0 (`internal/managed`), and Check 68's step 3, which is the same probe one identity over — as D75's deployer, **where the grant to impersonate does exist**; (ii) the only live way for the job account, an **execution** of the job whose container runs as that account attempting the write, which needs an image that does so and is not part of this check; (iii) for one probe, an owner-made temporary `roles/iam.serviceAccountTokenCreator` for your account on the job account — record when you added it and take it away immediately, because it is exactly the grant a managed project's creating apply does **not** make, and leaving it behind would be a change to the installation this check is not allowed to make. A grant that let the write through would make every other assertion on this page decorative: if any of the three finds one, that is a **finding**, not a line to soften, and neither this step's read nor its UNVERIFIED half may be written up as a pass for the write itself.
 
@@ -4479,7 +4479,7 @@ Check 67a and this one **cannot run at the same moment, and that is why the numb
 
 **What it settles.** D66's answer of 2026-10-16 is that a restore promises a **from-zero apply of the repository's configuration into a NEW project ID**, not a state restore — the Terraform state lives in the project that was lost (`fugaro-tfstate-<gcp-project>`), its noncurrent versions die with it, and there is no other copy anywhere in the tree (design finding 31). `fugaro restore NEW_PROJECT_ID ROOT` is D68's top-level verb, and what makes it a real check rather than a convenience is the **not-restored list** it prints and the **no state read** it promises.
 
-**Method.** As in 67a: your terminal, your credentials, the sandbox only, no step run by an agent. The guard block is re-run before every step; the variables gain the new project ID.
+**Method.** As in 67a: your terminal, your credentials, the sandbox only, no step run by an agent. The guard block is re-run before every step; the variables gain the new project ID (step 3's creation) and, for step 2's second refusal, one existing project ID of your own that this check does not own.
 
 ```bash
 # === Check 67b: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
@@ -4489,6 +4489,7 @@ P=fugaro-dev                 # HARD-CODED, and never read from gcloud: the sandb
 F=fugaro-managed             # this check's throwaway managed installation, created by Check 67a's step 1
 M=fugaro-chk67               # the managed project Check 67a created: the OLD project, destroyed in step 1 here
 N=fugaro-chk67b              # the NEW project ID this restore creates: it MUST NOT exist before step 3
+E=                           # an EXISTING GCP project ID you may read and this check does NOT own: not $P, not $M, not $N. Step 2 presents it to watch the restore refuse to ADOPT a project (any other scratch project of your own will do)
 L=us-east5                   # the installation's region
 R=edgeappinc/fugarosandbox   # the sandbox repository, owner/name: the only repository this check touches
 ACCOUNT_ID=                  # the SANDBOX installation's billing account ID, no BILLING_ prefix: the new project is created under it
@@ -4498,9 +4499,11 @@ TERRAFORM_ADDRESS=           # ONE resource address out of a real plan, in terra
 # ${VAR:?} everywhere: an empty variable is a hard error, never an empty
 # argument that gcloud would resolve from its ambient configuration. No
 # apostrophe inside a ${VAR:?...} message (bash reads it as an unclosed quote).
-# TERRAFORM_ADDRESS comes out of a plan you read, exactly as in 67a.
-[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$F" ] && [ -n "$M" ] && [ -n "$N" ] && [ -n "$ACCOUNT_ID" ] && [ -n "$AMOUNT" ] && [ -n "$TERRAFORM_ADDRESS" ] \
-  || { echo "Check 67b stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R F=$F M=$M N=$N ACCOUNT_ID=$ACCOUNT_ID AMOUNT=$AMOUNT TERRAFORM_ADDRESS=$TERRAFORM_ADDRESS must not be empty)" >&2; exit 1; }
+# TERRAFORM_ADDRESS comes out of a plan you read, exactly as in 67a, and E is
+# refused unless it names a project of its own: a restore pointed at the
+# sandbox project is the one creating command this check never runs.
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$F" ] && [ -n "$M" ] && [ -n "$N" ] && [ -n "$E" ] && [ "$E" != "$P" ] && [ "$E" != "$M" ] && [ "$E" != "$N" ] && [ -n "$ACCOUNT_ID" ] && [ -n "$AMOUNT" ] && [ -n "$TERRAFORM_ADDRESS" ] \
+  || { echo "Check 67b stopped: re-run the whole setup block (P=$P must be fugaro-dev; E=$E must differ from P, M and N, and L=$L R=$R F=$F M=$M N=$N ACCOUNT_ID=$ACCOUNT_ID AMOUNT=$AMOUNT TERRAFORM_ADDRESS=$TERRAFORM_ADDRESS must not be empty)" >&2; exit 1; }
 fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 67b stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
@@ -4516,14 +4519,19 @@ gcloud projects describe "${M:?}" --project="${M:?}" >/dev/null 2>&1 && echo "st
 
 **FACT lines:** that `${M:?}` no longer answers Resource Manager, and — because Google has not yet deleted the underlying resources — what `fugaro restore` says about the old project when it tries to read its creation fact. The two cases the command distinguishes (the old project **cannot be read** → the restore proceeds only on `--budget` and `--budget-currency`; the old project **can be read and is not managed** → refused whatever the flags say) are both worth observing if you can arrange them; record which one you got.
 
-**(2) Present an existing project ID, and watch it be refused** — **once per repo checkout.** The ID presented is `${M:?}`, the project step 1 destroyed: Resource Manager still answers for it while it is pending deletion, which is exactly the "somebody else holds this ID" case, and **no step of this check ever names the sandbox installation's project in a creating command.**
+**(2) Two existing project IDs, and the two different refusals they earn** — **once per repo checkout.** A restore is asked for an ID that is already taken twice, and the two are refused by **different** code, before the creation and before any confirmation. **No step of this check ever names the sandbox installation's project in a creating command:** the two IDs are `${M:?}`, the project step 1 destroyed, and `${E:?}`, an existing project of your own that this check does not own.
 
 ```bash
 cd /tmp/chk67-managed
+# a. the ID of the installation that was lost: refused by the restore's own ID rule, before any cloud call
 fugaro restore "${M:?}" ./managed-root --project "${F:?}" --billing-account ${ACCOUNT_ID:?} --budget ${AMOUNT:?} --budget-currency USD
+# expect: refused — "${M:?} is the ID of the installation that was lost: a deleted project's ID stays reserved about thirty days, so a restore always creates a new one and updates the repository's gcp_project: line to it"
+# b. an ID somebody else holds: refused by the existence check, which is the one that says a restore never adopts a project
+fugaro restore "${E:?}" ./managed-root --project "${F:?}" --billing-account ${ACCOUNT_ID:?} --budget ${AMOUNT:?} --budget-currency USD
+# expect: refused — "nothing was restored: GCP project ${E:?} already exists (...), and a restore never adopts a project — it creates a new one, which is what makes it managed"
 ```
 
-**FACT lines:** the refusal — `GCP project ${M:?} already exists (...), and a restore never adopts a project — it creates a new one, which is what makes it managed` (`restoreRun.refuseExisting`, `internal/cli/restore.go`), with the lifecycle state it read. Also record the case where the read does **not** answer: an unanswered existence check is a refusal too, and never a reason to carry on. This step is what keeps the round trip honest; nothing is created, no config is moved and the checkout is untouched.
+**FACT lines:** two refusals, named by the code that prints each. (a) comes from `restoreNewProjectID` (`internal/cli/restore.go`), which runs before the config is read and before any cloud call: it refuses the ID of the installation being restored **whatever** `--budget` says, because a deleted project's ID is reserved about thirty days and a restore always creates a new one. (b) comes from `restoreRun.refuseExisting`, which runs later, after the budget is read — and it is the sentence this step is for: `GCP project <the ID> already exists (<lifecycle state>), and a restore never adopts a project — it creates a new one, which is what makes it managed`. Note that `${M:?}` in (b)'s place would **not** have reached it: `restoreNewProjectID` refuses `${M:?}` at (a)'s rule first, so the "already exists" sentence needs a third project. Record the lifecycle state (b) read, and record it as a FACT if the read does **not** answer for `${E:?}` — an unanswered existence check is a refusal too, and never a reason to carry on. Nothing is created, no config is moved and the checkout is untouched by either.
 
 **(3) The restore itself** — **once per installation.** Every step of it is money or permanent, so every step carries a typed confirmation, and there is no `--yes` and no `--non-interactive`.
 
@@ -4664,8 +4672,10 @@ NUM=$(gcloud projects describe "${M:?}" --project="${M:?}" --format='value(proje
 gcloud projects add-iam-policy-binding "${M:?}" --project="${M:?}" \
   --member="serviceAccount:${NUM}-compute@developer.gserviceaccount.com" --role=roles/viewer \
   --impersonate-service-account="${D:?}"                             # expect: FAILED (no project-level setIamPolicy)
-gcloud iam service-accounts get-access-token "${NUM}-compute@developer.gserviceaccount.com" --project="${M:?}" \
-  --impersonate-service-account="${D:?}"                             # expect: FAILED (actAs outside the prefix)
+# the delegation chain's LAST link is the account the token would belong to; the link before it is the
+# deployer, which is the credential that has to reach it. One flag per link, in the order of the chain:
+gcloud auth print-access-token --impersonate-service-account="${D:?}" \
+  --impersonate-service-account="${NUM}-compute@developer.gserviceaccount.com"   # expect: FAILED (the deployer cannot act as the default compute account: actAs outside the prefix)
 
 # c. create a Cloud Run job whose SERVICE ACCOUNT is that account
 gcloud run jobs create chk68-foreign --project="${M:?}" --region="${L:?}" --image=us-docker.pkg.dev/cloudrun/container/hello \
