@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -581,6 +582,64 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 	})
 }
 
+// TestRunsStatsHelpAndContractStateThePrivateViewsThreeWays is the prose half
+// of the ruling. The code has three states here, and both texts a reader
+// learns them from must have them too: an identity the CLI cannot resolve at
+// all -- the local config's user: empty and git config user.email answering
+// nothing -- is refused (no document at all, an error naming --all-users), an
+// identity with nothing printable left in it is shown an empty table, and so
+// is one whose own text reads as the unattributed key. Folding the refusal in
+// with the empty table is the mistake this pins: a reader told "no row at all"
+// about a case the command will not run for them has been told the wrong thing
+// about the one output they read first.
+func TestRunsStatsHelpAndContractStateThePrivateViewsThreeWays(t *testing.T) {
+	help := newRunsStatsCmd().Long
+	for _, want := range []string{
+		"the local config names nobody",
+		"is refused, never quietly widened",
+		"names --all-users",
+		"nothing printable is left of it",
+		"the table is empty",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("the help does not say %q:\n%s", want, help)
+		}
+	}
+
+	// The contract's own paragraph, from its heading to the shape table that
+	// follows it.
+	doc := readDoc(t, "console/docs/json-contract.md")
+	start := strings.Index(doc, "**The `\"own\"` view filters a read that is not its own.**")
+	end := strings.Index(doc, "`userstats.Row`")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatal("console/docs/json-contract.md's own-view paragraph was renamed or reordered; update this test's markers")
+	}
+	para := doc[start:end]
+	if !strings.Contains(para, "`rows: []`") {
+		t.Fatalf("the contract's own-view paragraph no longer names the empty table:\n%s", para)
+	}
+	for _, want := range []string{
+		"nothing printable in it",
+		"**refused**",
+		"`--all-users`",
+	} {
+		if !strings.Contains(para, want) {
+			t.Errorf("the contract's own-view paragraph does not say %q:\n%s", want, para)
+		}
+	}
+
+	// The code's own answer to that case, so the words above are read against
+	// it rather than against each other.
+	f := newCloudFixture(t)
+	userStatsPlace(t, f, "", nil, nil)
+	testutil.IsolateGit(t)
+	t.Setenv("GIT_DIR", t.TempDir())
+	out, _, err := execute(t, "runs", "stats", "--json")
+	if err == nil || !strings.Contains(err.Error(), "--all-users") {
+		t.Fatalf("no identity: err = %v, want the refusal the help and the contract describe (out: %s)", err, out)
+	}
+}
+
 // TestRunsStatsReadIsBoundedAndAdmitsIt is the read rule: the window is read
 // newest first up to --max-runs, and a window holding more says so in both
 // outputs rather than publishing figures over a part of itself quietly.
@@ -627,6 +686,58 @@ func TestRunsStatsReadIsBoundedAndAdmitsIt(t *testing.T) {
 	full := runsStats(t)
 	if full.Truncated || len(full.Rows) != 3 {
 		t.Fatalf("an untruncated read = %+v", full)
+	}
+}
+
+// TestRunsStatsMaxRunsBoundaryIsExact is the bound's own edge: truncation is
+// "the window holds MORE than --max-runs", not "as many as". A window holding
+// exactly the bound is read whole, so a reader is told nothing was left out --
+// the flag, the notes and the window line all stay quiet -- and one run more
+// cuts the read to the newest max, which is the oldest run dropped.
+func TestRunsStatsMaxRunsBoundaryIsExact(t *testing.T) {
+	f := newCloudFixture(t)
+	userStatsPlace(t, f, "someone@example.com", nil, []string{"user:someone@example.com"})
+	day := time.Now().UTC()
+	for i, who := range []string{"dana@example.com", "sam@example.com", "pat@example.com"} {
+		seedUserRun(t, f, userStatsID(day, i), who, userRec(runstore.StatusSucceeded, 1.00, runstore.BasisAPIList))
+	}
+
+	exact := runsStats(t, "--max-runs", "3")
+	if exact.Truncated || exact.MaxRuns != 3 {
+		t.Fatalf("a window holding exactly --max-runs runs: truncated = %v over max_runs = %d, "+
+			"want false and 3 -- the read left nothing out", exact.Truncated, exact.MaxRuns)
+	}
+	if len(exact.Rows) != 3 || len(exact.Totals) != 1 || exact.Totals[0].Runs != 3 {
+		t.Errorf("rows = %+v / totals = %+v, want all three runs", exact.Rows, exact.Totals)
+	}
+	if notes := strings.Join(exact.Notes, "\n"); strings.Contains(notes, "holds more runs than") {
+		t.Errorf("an untruncated read's notes admit a cut: %+v", exact.Notes)
+	}
+	human, _, err := execute(t, "runs", "stats", "--max-runs", "3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(human, "truncated") {
+		t.Errorf("the table of an exact read says it was cut:\n%s", human)
+	}
+
+	// One run past the bound: cut to the newest three, so the oldest run's
+	// launcher is in no figure and the newest one's is.
+	seedUserRun(t, f, userStatsID(day, 3), "kim@example.com", userRec(runstore.StatusSucceeded, 4.00, runstore.BasisAPIList))
+	over := runsStats(t, "--max-runs", "3")
+	if !over.Truncated {
+		t.Fatalf("a window holding one run more than --max-runs = %+v, want it truncated", over)
+	}
+	if len(over.Totals) != 1 || over.Totals[0].Runs != 3 {
+		t.Errorf("the cut read is over %+v, want three runs", over.Totals)
+	}
+	if got := userStatsRow(t, over, "kim@example.com").CountedUSD; got != 4.00 {
+		t.Errorf("the newest run's launcher has %v, want 4.00: the read is over the newest runs", got)
+	}
+	for _, r := range over.Rows {
+		if r.User == "dana@example.com" {
+			t.Errorf("the oldest run is in a read cut to three: %+v", over.Rows)
+		}
 	}
 }
 
@@ -819,6 +930,160 @@ func TestWriteUserStatsNamesEachCurrencyWhenSeveral(t *testing.T) {
 	if out := b.String(); !strings.Contains(out, "USER") || strings.Contains(out, "CUR") || strings.Contains(out, "TOTAL USD") {
 		t.Errorf("a one-currency table = \n%s", out)
 	}
+}
+
+// userStatsTable is a rendered table's header and its rows, each split into
+// cells the way the tabwriter's own padding delimits them. The command's
+// table pads every column with at least two spaces, and no value it prints
+// holds a run of two.
+func userStatsTable(t *testing.T, out string) (header []string, rows [][]string) {
+	t.Helper()
+	cell := func(line string) []string {
+		return regexp.MustCompile(`  +`).Split(strings.TrimRight(line, " "), -1)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if header == nil {
+			if strings.HasPrefix(line, "USER") {
+				header = cell(line)
+			}
+			continue
+		}
+		rows = append(rows, cell(line))
+	}
+	if header == nil {
+		t.Fatalf("no table in:\n%s", out)
+	}
+	return header, rows
+}
+
+// userStatsCellsPinned holds every cell of a rendered table to the value it
+// must carry, by its own column's position. The table is this command's
+// default output, and a "contains" assertion cannot hold it: swapping two
+// columns in the row format leaves every figure present in the output and
+// every per-figure assertion green, with the numbers under the wrong
+// headings. So both the header and each row are compared cell by cell, and
+// each row of the fixture carries a different value in every column.
+func userStatsCellsPinned(t *testing.T, out string, wantHeader []string, wantRows [][]string) {
+	t.Helper()
+	header, rows := userStatsTable(t, out)
+	if !slices.Equal(header, wantHeader) {
+		t.Fatalf("the table's columns = %q, want %q", header, wantHeader)
+	}
+	if len(rows) != len(wantRows) {
+		t.Fatalf("the table has %d rows, want %d:\n%s", len(rows), len(wantRows), out)
+	}
+	for i, want := range wantRows {
+		if len(rows[i]) != len(header) {
+			t.Fatalf("row %d = %q has %d cells, the header has %d:\n%s", i, rows[i], len(rows[i]), len(header), out)
+		}
+		for j := range want {
+			if rows[i][j] != want[j] {
+				t.Errorf("row %d, column %q = %q, want %q (the whole row: %q)",
+					i, header[j], rows[i][j], want[j], rows[i])
+			}
+		}
+	}
+}
+
+// TestWriteUserStatsPinsEveryColumn is the table's own contract: each figure
+// sits under its own heading. TestWriteUserStatsNamesEachCurrencyWhenSeveral
+// holds the currency column and the totals' names, and every other test reads
+// the table with a "contains", so until this one nothing pinned the mapping
+// from columns to values -- SUCCEEDED and FAILED, or COUNTED $ and NOTIONAL $,
+// could have been swapped in the row format with every test green.
+func TestWriteUserStatsPinsEveryColumn(t *testing.T) {
+	doc := userStatsDoc{
+		Project: "aurora", By: userStatsByUser, View: userStatsViewAll,
+		You: "someone@example.com", Operator: true, Since: "2026-10-11", Until: "2026-10-18",
+		MaxRuns: userStatsMaxRuns,
+		Rows: []userstats.Row{
+			// Every column of this row is a different figure, and its counts add
+			// up (1+2+3+4+5+6 = 21) with $8.89 over 7 counted runs at $1.27 each.
+			{User: "dana@example.com", Currency: userstats.CurrencyUSD,
+				Counts:     userstats.Counts{Runs: 21, Succeeded: 1, Failed: 2, Halted: 3, InfraError: 4, Other: 5, NoRecord: 6},
+				CountedUSD: 8.89, NotionalUSD: 2.22, CountedRuns: 7, AvgCountedUSD: 1.27},
+			{User: "sam@example.com", Currency: userstats.CurrencyUSD,
+				Counts:     userstats.Counts{Runs: 10, Succeeded: 0, Failed: 1, Halted: 2, InfraError: 3, Other: 4, NoRecord: 0},
+				CountedUSD: 1.00, NotionalUSD: 0.50, CountedRuns: 2, AvgCountedUSD: 0.50},
+		},
+		Totals: []userstats.Row{
+			{Currency: userstats.CurrencyUSD,
+				Counts:     userstats.Counts{Runs: 31, Succeeded: 1, Failed: 3, Halted: 5, InfraError: 7, Other: 9, NoRecord: 6},
+				CountedUSD: 9.89, NotionalUSD: 2.72, CountedRuns: 9, AvgCountedUSD: 1.10},
+		},
+	}
+	var b strings.Builder
+	if err := writeUserStats(&b, doc, "7d", false); err != nil {
+		t.Fatal(err)
+	}
+	userStatsCellsPinned(t, b.String(),
+		[]string{"USER", "RUNS", "SUCCEEDED", "FAILED", "HALTED", "INFRA ERROR", "OTHER", "NO RECORD",
+			"COUNTED $", "NOTIONAL $", "COUNTED RUNS", "AVG $/RUN"},
+		[][]string{
+			{"dana@example.com", "21", "1", "2", "3", "4", "5", "6", "$8.89", "$2.22", "7", "$1.27"},
+			{"sam@example.com", "10", "0", "1", "2", "3", "4", "0", "$1.00", "$0.50", "2", "$0.50"},
+			{"TOTAL", "31", "1", "3", "5", "7", "9", "6", "$9.89", "$2.72", "9", "$1.10"},
+		})
+}
+
+// TestWriteUserStatsAverageIsDashWithoutACountedRun pins the one cell the
+// document cannot carry: a group with runs but no run that settled a
+// real-dollar cost has no average, and the table says "-" rather than "$0.00
+// a run" -- the reading the help, the field's own comment and the contract
+// all call unavailable rather than a figure.
+func TestWriteUserStatsAverageIsDashWithoutACountedRun(t *testing.T) {
+	head := []string{"USER", "RUNS", "SUCCEEDED", "FAILED", "HALTED", "INFRA ERROR", "OTHER", "NO RECORD",
+		"COUNTED $", "NOTIONAL $", "COUNTED RUNS", "AVG $/RUN"}
+	notional := userstats.Row{User: "ci@example.com", Currency: userstats.CurrencyUSD,
+		Counts:      userstats.Counts{Runs: 2, Succeeded: 2},
+		NotionalUSD: 5.00, CountedRuns: 0, AvgCountedUSD: 0}
+	counted := userstats.Row{User: "dana@example.com", Currency: userstats.CurrencyUSD,
+		Counts:     userstats.Counts{Runs: 1, Succeeded: 1},
+		CountedUSD: 4.00, CountedRuns: 2, AvgCountedUSD: 2.00}
+	doc := userStatsDoc{
+		Project: "aurora", By: userStatsByUser, View: userStatsViewAll,
+		You: "someone@example.com", Operator: true, Since: "2026-10-11", Until: "2026-10-18",
+		MaxRuns: userStatsMaxRuns,
+		Rows:    []userstats.Row{notional, counted},
+		Totals: []userstats.Row{{Currency: userstats.CurrencyUSD,
+			Counts:     userstats.Counts{Runs: 3, Succeeded: 3},
+			CountedUSD: 4.00, NotionalUSD: 5.00, CountedRuns: 2, AvgCountedUSD: 2.00}},
+	}
+	var b strings.Builder
+	if err := writeUserStats(&b, doc, "7d", false); err != nil {
+		t.Fatal(err)
+	}
+	userStatsCellsPinned(t, b.String(), head, [][]string{
+		// The notional run cost the plan's limits, not a bill: no counted run,
+		// no average to state.
+		{"ci@example.com", "2", "2", "0", "0", "0", "0", "0", "$0.00", "$5.00", "0", "-"},
+		{"dana@example.com", "1", "1", "0", "0", "0", "0", "0", "$4.00", "$0.00", "2", "$2.00"},
+		// The total's average is over its own counted runs, so it is a figure
+		// even though one of the rows above has none.
+		{"TOTAL", "3", "3", "0", "0", "0", "0", "0", "$4.00", "$5.00", "2", "$2.00"},
+	})
+
+	// A window whose whole table is notional has no figure on any line, the
+	// total's included: "-" is not a per-row quirk.
+	single := userStatsDoc{
+		Project: "aurora", By: userStatsByUser, View: userStatsViewAll,
+		You: "someone@example.com", Operator: true, Since: "2026-10-11", Until: "2026-10-18",
+		MaxRuns: userStatsMaxRuns,
+		Rows:    []userstats.Row{notional},
+		Totals: []userstats.Row{{Currency: userstats.CurrencyUSD,
+			Counts: userstats.Counts{Runs: 2, Succeeded: 2}, NotionalUSD: 5.00, CountedRuns: 0, AvgCountedUSD: 0}},
+	}
+	b.Reset()
+	if err := writeUserStats(&b, single, "7d", false); err != nil {
+		t.Fatal(err)
+	}
+	userStatsCellsPinned(t, b.String(), head, [][]string{
+		{"ci@example.com", "2", "2", "0", "0", "0", "0", "0", "$0.00", "$5.00", "0", "-"},
+		{"TOTAL", "2", "2", "0", "0", "0", "0", "0", "$0.00", "$5.00", "0", "-"},
+	})
 }
 
 // TestRunsStatsRefusesWhatItDoesNotPublish holds --by to the one value the
