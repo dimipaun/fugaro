@@ -102,7 +102,7 @@ Ask, with your evidence and a recommended answer for each, **one topic at a time
 9. `agent.recipe`: its own question, after review rounds: which task loop runs after implement. Open with the 0.5.0 requirement: every CLI, CI pin and job image older than 0.5.0 refuses the key: tell the user before it goes into the file. Then recommend `default` (no key). Offer `standard` or `solo` only if asked; never write `agent.recipe` without their explicit decision, and never guess a recipe from the repository's domain or language.
 10. `rebuild`: usually the defaults.
 11. Workflow names, when there are several, and anything the user wants kept off Fugaro.
-12. `checkout`: **it is not shipped yet**, so say so and leave the key out: today's gate refuses `clone`, and `baked`, the default, loses nothing. The topic is for the day it ships: `clone` is for a workflow that needs no per-repository image, and only when the evidence rules out everything a build gives it (the keys `fugaro validate` refuses under clone, and a service arrives through one of those). It is the user's decision (`reference/decisions.md`; [docs/checkout.md](https://github.com/dimipaun/fugaro/blob/main/docs/checkout.md)).
+12. `checkout`: **it is shipped** (fugaro 0.9.0), so offer it on the evidence: `clone` is for a workflow that needs no per-repository image, and only when the evidence rules out everything a build gives it (the keys `fugaro validate` refuses under clone, and a service arrives through one of those). It is the user's decision (`reference/decisions.md`; [docs/checkout.md](https://github.com/dimipaun/fugaro/blob/main/docs/checkout.md)).
 
 ## 6. Show what will execute, then get the go-ahead
 

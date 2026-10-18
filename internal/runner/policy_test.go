@@ -257,7 +257,7 @@ func TestModelOutsideAllowListInfraError(t *testing.T) {
 	// labels (the review's low finding on internal/config/pins.go).
 	t.Run("the policy's own list is not repeated as the project's", func(t *testing.T) {
 		b := policyRun(t, gwConfig(t, ""), "off", "",
-			`{"version":2,"budget":{"mode":"off","allowed_models":["`+haiku+`"]}}`, capScript(3)...)
+			`{"version":3,"budget":{"mode":"off","allowed_models":["`+haiku+`"]}}`, capScript(3)...)
 		b.deps.Spend = ceilingOf(t, runner.AllowedModelsEnv, both)
 		withBucket(b.harness)
 		rec, err := b.run(t) // no agent step may run

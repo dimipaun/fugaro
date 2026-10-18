@@ -2760,14 +2760,16 @@ func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, 
 // plan, whose notes are shown.
 //
 // Before any of that (review finding, 0.7.0 safety fix round 2): a
-// checkout: clone workflow's job must never come to exist while
-// cloneShipped is false (no fugaro release can run one yet), so this
-// refuses outright, before any cloud call, rather than letting Terraform
-// create a job checkCloneImageSince would only catch later, at launch, and
-// only if the launch still decides clone from this same checkout (run.go's
-// checkoutConfig does not, once the job is already deployed). --plan-only
-// skips the refusal so the plan can still be shown; --print-vars never
-// reaches planRepo at all.
+// checkout: clone workflow's job must never come to exist while the gate
+// is shut, because then no fugaro release could run one — so this refused
+// outright, before any cloud call, rather than letting Terraform create a
+// job checkCloneImageSince would only catch later, at launch, and only if
+// the launch still decides clone from this same checkout (run.go's
+// checkoutConfig does not, once the job is already deployed). cloneShipped
+// has been true since 0.9.0 shipped the flip, so the call below is a no-op
+// on every spec today; it and its reason stay for the flip-back the
+// constant's comment describes. --plan-only skipped the refusal so the
+// plan could still be shown; --print-vars never reaches planRepo at all.
 func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, lc *localcfg.Config, opts infra.RepoRootOptions, first bool) (infra.RepoSpec, []infra.Missing, error) {
 	if !r.o.planOnly {
 		if err := refuseClonesNotShipped(spec.Name, "fugaro init --repo", "deploy", cloneWorkflowNames(spec.Workflows)); err != nil {
