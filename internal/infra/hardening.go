@@ -294,12 +294,20 @@ func HardeningAllowDelete(p *tf.Plan, launchers, operators []string) []string {
 
 // HardeningBanner names the launchers whose old grant the plan deletes, ""
 // when there are none.
+//
+// It describes the grant that replaces the deleted one, because that is what
+// the operator is approving: gcp.LauncherBucketCondition, which is runs/ and
+// tokens/ — the second prefix added when the sealed budget token moved to
+// tokens/ (budget-token-channel.md §7.2, D16), so a banner naming only runs/
+// would understate the privilege the plan grants to every repository's token
+// objects. It is the same widening the findings above state ("write runs/ and
+// tokens/").
 func HardeningBanner(allowed []string) string {
 	if len(allowed) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("bucket access (0.7.0): these launchers keep reading the runs bucket and writing runs/, and lose write access to fugaro/, builds/, cache/ and locks/:\n")
+	b.WriteString("bucket access (0.7.0): these launchers keep reading the runs bucket and writing runs/ and tokens/ (the sealed budget token moved to tokens/), and lose write access to fugaro/, builds/, cache/ and locks/:\n")
 	for _, a := range allowed {
 		m, _ := grantMember(a, "runs")
 		b.WriteString("  " + pluginwire.Printable(m) + "\n")
