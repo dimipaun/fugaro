@@ -179,6 +179,118 @@ func ValidateClaudeAccounts(accounts map[string]ClaudeAccount) []Problem {
 	return ps
 }
 
+// ValidClaudeAccountRef checks a name written where an account is REFERENCED
+// rather than defined — a profile's claude_accounts entry (JobProfile) — and
+// returns "" for a valid one, else the sentence saying what is wrong with it.
+//
+// It is the shape half of ValidateClaudeAccounts' rule, spelled once so the
+// reference and the definition cannot disagree: the reserved DefaultClaudeAccount
+// is valid here and only here (claude_accounts itself refuses to define it, the
+// account being the unsuffixed claude-oauth-token every repository already
+// has), every other name is a named account's (ClaudeAccountNameRE and
+// MaxClaudeAccountNameLen). The message never echoes the name: a value that
+// fails this check reached it exactly because it is untrusted text, and the
+// sentence is printed to a terminal (the same treatment ValidateClaudeAccounts
+// gives one).
+func ValidClaudeAccountRef(name string) string {
+	switch {
+	case name == "":
+		return `an account name must not be empty: name the account whose token this profile's runs use, or remove the entry`
+	case name == DefaultClaudeAccount:
+		return ""
+	case len(name) > MaxClaudeAccountNameLen:
+		return fmt.Sprintf("account name must be at most %d characters", MaxClaudeAccountNameLen)
+	case !ClaudeAccountNameRE.MatchString(name):
+		return fmt.Sprintf("account name must match %s, or be %q for the default account", ClaudeAccountNameRE, DefaultClaudeAccount)
+	}
+	return ""
+}
+
+// MountsAnthropicKey reports whether a profile's secrets: entry is an
+// Anthropic API key, in either of the two spellings a profile can hold one in:
+// the reserved secret name anthropic-api-key (AnthropicSecret, mounted as
+// ANTHROPIC_API_KEY), or the variable name ANTHROPIC_API_KEY itself — an
+// operator who writes the variable where the name goes means the same
+// credential.
+//
+// It is the predicate of D4's rule that a profile listing Claude accounts may
+// not also carry an API key (design project-named-oauth-tokens §4.1): an
+// account job's container would then hold a key no OAuth run of it can use,
+// and "which credential does this job serve" would stop being answerable from
+// the profile. The design words the same rule as "a provider whose key
+// variable is ANTHROPIC_API_KEY"; this release cannot reach that case through
+// a profile, and refusing the variable's own spelling is what covers it: a
+// provider's key is mounted as FUGARO_PROVIDER_KEY_<SECRET>
+// (ProviderKeyEnv), never as the bare ANTHROPIC_API_KEY, a secrets: entry is
+// held to CheckSecretName, and a provider's secret may never be a reserved
+// secret's name (reservedSecretName) — so the two spellings below are the
+// ones a profile can be written with, and neither a provider entry nor any
+// other secrets: entry can spell an Anthropic key in a third way.
+func MountsAnthropicKey(secret string) bool {
+	return secret == AnthropicSecret || secret == ReservedSecrets[AnthropicSecret]
+}
+
+// ValidateProfileClaudeAccounts reports every rule the local config's
+// profiles break in their claude_accounts entries, the same shape as
+// ValidateClaudeAccounts and ValidateModelProviders.
+//
+// It resolves each entry against the two blocks an account can be defined in,
+// because that is the question this document alone can answer: "default" is
+// the unsuffixed claude-oauth-token, whose project-wide copy exists only when
+// project_secrets carries the entry that says so (ProjectScopeByDefault
+// refuses the bare name as a swept-in reserved secret, deliberately), and any
+// other name must be a claude_accounts entry — an account's token is derived
+// from its name (ClaudeAccountSecret) and its repositories are the account's
+// own allow_data_to, so a profile that names one the file does not define
+// names no credential at all. The refusal names the entry, the account and
+// where it belongs (design §4.4 row 1).
+//
+// A name that is not a name is reported by ValidClaudeAccountRef and not
+// resolved: the resolution's question is about a name, and asking it about
+// arbitrary text would answer with a sentence about the wrong thing.
+func ValidateProfileClaudeAccounts(profiles map[string]JobProfile, accounts map[string]ClaudeAccount, projectSecrets map[string]ProjectSecret) []Problem {
+	var ps []Problem
+	for _, name := range profileNames(profiles) {
+		seen := map[string]bool{}
+		for i, ref := range profiles[name].ClaudeAccounts {
+			at := fmt.Sprintf("profiles.%s.claude_accounts[%d]", pluginwire.Printable(name), i)
+			if msg := ValidClaudeAccountRef(ref); msg != "" {
+				ps = append(ps, Problem{Path: at, Message: msg})
+				continue
+			}
+			if seen[ref] {
+				ps = append(ps, Problem{Path: at, Message: "an account is listed twice; list each account once"})
+				continue
+			}
+			seen[ref] = true
+			if ref == DefaultClaudeAccount {
+				if _, ok := projectSecrets[ClaudeAccountSecret(DefaultClaudeAccount)]; !ok {
+					ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("the default account is not stored project-wide here: its token is %s, and a project job mounts it only when project_secrets carries a %s entry with the repositories that may use it — add project_secrets: {%s: {allow_data_to: [owner/name]}} to this file, or drop the entry from the profile",
+						ClaudeAccountSecret(DefaultClaudeAccount), ClaudeAccountSecret(DefaultClaudeAccount), ClaudeAccountSecret(DefaultClaudeAccount))})
+				}
+				continue
+			}
+			if _, ok := accounts[ref]; !ok {
+				ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("the account %q is not defined here: a profile may serve only an account of this file's claude_accounts block, where the account's own allow_data_to decides which repositories may use its token — define it as claude_accounts: {%s: {allow_data_to: [owner/name]}}, or drop the entry from the profile", pluginwire.Printable(ref), pluginwire.Printable(ref))})
+			}
+		}
+	}
+	return ps
+}
+
+// profileNames is a stable order for error messages (a map's range is random,
+// so a file with two bad entries would otherwise name a different one on each
+// read). localcfg keeps its own copy for its own messages; this one is here so
+// the validation above is deterministic on its own.
+func profileNames(profiles map[string]JobProfile) []string {
+	names := make([]string, 0, len(profiles))
+	for name := range profiles {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
 // hasDotSegment reports whether repo's owner or name half is "." or "..":
 // repoSlugRE's charset allows both (it permits '.', for a dotted owner or
 // repository name), so "../.." and "./." pass it but name no repository.
