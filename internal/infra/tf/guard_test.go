@@ -2,13 +2,10 @@ package tf
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // loadPlan reads a fixture captured from real `terraform show -json` output
@@ -305,60 +302,6 @@ func TestGuardBoundsEveryValueOfThePlansItPrints(t *testing.T) {
 			}
 			assertBounded(t, name+" at "+site, err.Error(), 2)
 		}
-	}
-}
-
-// Guard's listing of what it refused is capped as well as bounded. How many
-// resources a plan refuses is the plan's to choose — a root is written by
-// whoever wrote it, and one with ten thousand deletes in it is ten thousand
-// lines of refusal — so the refusal names at most safetext.FieldListMax of
-// them and counts the rest in its own words. The count in its head is the
-// whole list's, so the truncation is flagged and never read as a short list.
-func TestGuardCapsTheListingAndSaysWhatItLeftOut(t *testing.T) {
-	plan := func(n int) *Plan {
-		p := &Plan{}
-		for i := 0; i < n; i++ {
-			p.ResourceChanges = append(p.ResourceChanges, ResourceChange{
-				Address: fmt.Sprintf("terraform_data.r%02d", i),
-				Change:  Change{Actions: []string{"delete"}},
-			})
-		}
-		return p
-	}
-	over := safetext.FieldListMax + 5
-	err := Guard(plan(over), nil)
-	if err == nil {
-		t.Fatal("the guard let a plan of deletes through")
-	}
-	got := err.Error()
-	if !strings.Contains(got, fmt.Sprintf("%d resource(s)", over)) {
-		t.Errorf("the refusal does not count the whole list:\n%s", got)
-	}
-	if !strings.Contains(got, "("+safetext.FieldListNote(5)+")") {
-		t.Errorf("the refusal does not say how many it left out:\n%s", got)
-	}
-	if !strings.Contains(got, "terraform_data.r19") {
-		t.Errorf("the refusal left out an address inside the cap:\n%s", got)
-	}
-	if strings.Contains(got, "terraform_data.r20") {
-		t.Errorf("the refusal carries an address past the cap:\n%s", got)
-	}
-	if lines := strings.Split(got, "\n"); len(lines) != safetext.FieldListMax+2 {
-		t.Errorf("the refusal is %d lines, want a head, %d addresses and the note:\n%s",
-			len(lines), safetext.FieldListMax, got)
-	}
-
-	// At the cap exactly, nothing was left out and nothing says otherwise.
-	at := Guard(plan(safetext.FieldListMax), nil)
-	if at == nil {
-		t.Fatal("the guard let a plan of deletes through")
-	}
-	if strings.Contains(at.Error(), safetext.FieldListNote(1)) || strings.Contains(at.Error(), "more") {
-		t.Errorf("a refusal with nothing left out still counts something:\n%s", at.Error())
-	}
-	if lines := strings.Split(at.Error(), "\n"); len(lines) != safetext.FieldListMax+1 {
-		t.Errorf("a refusal at the cap is %d lines, want a head and %d addresses:\n%s",
-			len(lines), safetext.FieldListMax, at.Error())
 	}
 }
 

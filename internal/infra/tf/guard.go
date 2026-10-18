@@ -28,10 +28,8 @@ const AllowDeleteAdvice = "Name an address with --allow-delete only if deleting 
 // address's own: a delete or replace moved there from another address (a
 // moved block) is refused whatever the list says (removesUnderAnotherAddress).
 // forget, from a removed block, destroys nothing and is allowed. A change with
-// no actions, or one it doesn't know, is refused. The error counts every
-// refused resource, lists each refused address with its actions up to
-// safetext.FieldListMax of them (the rest counted, never silently dropped) and
-// ends with AllowDeleteAdvice.
+// no actions, or one it doesn't know, is refused. The error lists every
+// refused address with its actions and ends with AllowDeleteAdvice.
 func Guard(p *Plan, allowDelete []string) error {
 	return GuardWith(p, allowDelete, AllowDeleteAdvice)
 }
@@ -86,30 +84,9 @@ func GuardWith(p *Plan, allowDelete []string, advice string) error {
 	}
 	head := fmt.Sprintf("the plan would delete or replace %d resource(s), or do something the guard doesn't know; nothing was applied", len(refused))
 	if advice == "" {
-		return fmt.Errorf("%s:\n  %s", head, listed(refused))
+		return fmt.Errorf("%s:\n  %s", head, strings.Join(refused, "\n  "))
 	}
-	return fmt.Errorf("%s. %s:\n  %s", head, advice, listed(refused))
-}
-
-// listed is the refused addresses as the lines of the refusal prints them:
-// every one of them up to safetext.FieldListMax, and, past that, this
-// program's own count of the rest rather than the rest.
-//
-// Each entry is already bounded (every value in it went through
-// safetext.Field above), so what the cap bounds is the count: a plan is read
-// out of a root this program's reader may not have written, and how many
-// resources it refuses is whoever wrote that root's to choose, so a listing
-// that grew with its input would push the refusal's own head — the count, the
-// advice, and the fact that nothing was applied — off the screen of the person
-// deciding what to do about it. The count in the head is the whole list's, and
-// the note here says how many lines were left out, so a truncated listing is
-// never read as a short one.
-func listed(refused []string) string {
-	if len(refused) <= safetext.FieldListMax {
-		return strings.Join(refused, "\n  ")
-	}
-	shown := strings.Join(refused[:safetext.FieldListMax], "\n  ")
-	return fmt.Sprintf("%s\n  (%s)", shown, safetext.FieldListNote(len(refused)-safetext.FieldListMax))
+	return fmt.Errorf("%s. %s:\n  %s", head, advice, strings.Join(refused, "\n  "))
 }
 
 // Listable is the addresses Guard refuses only because allowDelete does not

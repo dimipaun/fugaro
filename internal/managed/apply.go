@@ -247,9 +247,11 @@ type RefusedError struct {
 	Advice  string
 }
 
-// Error is the refusal as a person reads it: one line per refused change, each
-// with the gate that refused it and the address and rule's own words, and then
-// the mode's advice when there is one.
+// Error is the refusal as a person reads it: one line per refused change — at
+// most safetext.FieldListMax of them, with the rest counted in this program's
+// own words — each with the gate that refused it and the address and rule's
+// own words, and then the mode's advice when there is one. The count in the
+// first line is every refusal, listed or not.
 //
 // Every part of it that can come from somewhere else is one bounded field
 // first (safetext.Field): an address and a rule's own words are read out of a
@@ -261,7 +263,11 @@ type RefusedError struct {
 func (e *RefusedError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s, so nothing is applied (%d refusal(s))", ErrRefused, len(e.Verdict.Refusals))
-	for _, r := range e.Verdict.Refusals {
+	listed := e.Verdict.Refusals
+	if len(listed) > safetext.FieldListMax {
+		listed = listed[:safetext.FieldListMax]
+	}
+	for _, r := range listed {
 		b.WriteString("\n  ")
 		// The gate's name is this program's own, but it is rendered the way
 		// the rest is: the shape of the line is the same whatever any of its
@@ -276,6 +282,15 @@ func (e *RefusedError) Error() string {
 	}
 	if len(e.Verdict.Refusals) == 0 {
 		b.WriteString(": the verdict refused and listed nothing, which is a refusal all the same")
+	}
+	// The listing stops at the cap and says how many it did not print, in this
+	// program's own words: how many changes a plan refuses is the plan's to
+	// choose, and the count in the line above is the whole list's, so a
+	// truncated listing is flagged and never read as a short one.
+	if n := len(e.Verdict.Refusals) - len(listed); n > 0 {
+		b.WriteString("\n  (")
+		b.WriteString(safetext.FieldListNote(n))
+		b.WriteString(")")
 	}
 	if e.Advice != "" {
 		b.WriteString("\n")

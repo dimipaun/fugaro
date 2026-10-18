@@ -338,3 +338,57 @@ func TestTheRefusalsListingIsCappedAndSaysWhatItLeftOut(t *testing.T) {
 		t.Errorf("the refusal carries %s, past the cap, so the listing is not capped:\n%q", last, msg)
 	}
 }
+
+// TestTheVerdictsRefusalListingIsCappedAndSaysWhatItLeftOut: how many changes
+// a plan refuses is the plan's to choose, so how many lines this refusal
+// prints is whoever wrote the root's to choose. It names at most
+// safetext.FieldListMax of them, says how many it did not, and its first line
+// still counts every one of them — a listing that stopped at the cap without
+// saying so would read as a plan that refuses twenty changes.
+func TestTheVerdictsRefusalListingIsCappedAndSaysWhatItLeftOut(t *testing.T) {
+	refusalsOf := func(n int) []Refusal {
+		out := make([]Refusal, 0, n)
+		for i := 0; i < n; i++ {
+			out = append(out, Refusal{
+				Gate:    guardGate,
+				Address: fmt.Sprintf("google_storage_bucket.a%02d", i),
+				Why:     "a delete nobody approved",
+			})
+		}
+		return out
+	}
+	over := safetext.FieldListMax + 5
+	msg := (&RefusedError{Verdict: Verdict{Refusals: refusalsOf(over)}}).Error()
+	if want := fmt.Sprintf("(%d refusal(s))", over); !strings.Contains(msg, want) {
+		t.Errorf("the refusal does not count the whole list (%q):\n%s", want, msg)
+	}
+	if note := "(" + safetext.FieldListNote(5) + ")"; !strings.Contains(msg, note) {
+		t.Errorf("the refusal does not say it left five out (%q):\n%s", note, msg)
+	}
+	if !strings.Contains(msg, fmt.Sprintf("google_storage_bucket.a%02d", safetext.FieldListMax-1)) {
+		t.Errorf("the refusal does not carry the entries inside the cap:\n%s", msg)
+	}
+	if last := fmt.Sprintf("google_storage_bucket.a%02d", safetext.FieldListMax); strings.Contains(msg, last) {
+		t.Errorf("the refusal carries %s, past the cap:\n%s", last, msg)
+	}
+	if lines := strings.Split(msg, "\n"); len(lines) != safetext.FieldListMax+2 {
+		t.Errorf("the refusal is %d lines, want a head, %d refusals and the note:\n%s",
+			len(lines), safetext.FieldListMax, msg)
+	}
+	bounded(t, "the capped refusal", msg, safetext.FieldListMax+2)
+
+	// At the cap exactly and at one, nothing was left out and nothing says it
+	// was; the empty verdict keeps its own sentence.
+	for _, n := range []int{1, safetext.FieldListMax} {
+		at := (&RefusedError{Verdict: Verdict{Refusals: refusalsOf(n)}}).Error()
+		if strings.Contains(at, "not listed here") {
+			t.Errorf("a refusal of %d, with nothing left out, still counts something:\n%s", n, at)
+		}
+		if lines := strings.Split(at, "\n"); len(lines) != n+1 {
+			t.Errorf("a refusal of %d is %d lines, want a head and %d refusals:\n%s", n, len(lines), n, at)
+		}
+	}
+	if empty := (&RefusedError{}).Error(); !strings.Contains(empty, "listed nothing, which is a refusal all the same") {
+		t.Errorf("an empty verdict lost its own sentence: %q", empty)
+	}
+}
