@@ -2241,6 +2241,13 @@ do not place the caller -- an installation from before the 0.7.0 hardening, or a
 machine whose identity cannot be told -- the view stays private: the default is
 never the wider one. Whose numbers a table shows is printed above it.
 
+A private view is the caller's own row, and no row at all when their identity has
+no key of its own: an identity the local config leaves empty, or one nothing
+printable is left of (a pasted zero-width character, say), is nobody. A row keyed
+'unknown' is every run of the window that recorded no launcher -- never one
+person's -- so it is not shown as the caller's own either, and the table says
+which of the two it is.
+
 The launcher text is what a launcher wrote and is read for nothing else: it is
 sanitised and size-capped before it is printed, and nothing is authorised,
 admitted or filtered by it. Two identities that differ only past the cap are one
@@ -2249,9 +2256,12 @@ row.
 A window can hold every run of every repository in the bucket, so the read is
 bounded: at most --max-runs records are read per call, newest first, and a window
 holding more says so in the output rather than publishing figures over a part of
-itself silently. A run with neither a launch nor a record -- never launched,
-cancelled before launch, or a stale claim -- never started and is counted in no
-figure; the count of them is printed.
+itself silently. The bound is on the read, not on a person: the newest --max-runs
+runs are taken before any view is applied, so a private view can be over fewer of
+the caller's own runs than --max-runs suggests. A run with neither a launch nor a
+record -- never launched, cancelled before launch, or a stale claim -- never
+started and is counted in no figure. The count of those is the window's, over
+everyone's runs, and is no more the caller's own than the truncation is.
 
 --json prints {project, by, view, you, operator, since, until, max_runs,
 truncated, rows[], totals[], unlaunched, notes}; rows and totals carry {user,

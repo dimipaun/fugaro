@@ -144,6 +144,12 @@ func newRunsStatsCmd() *cobra.Command {
 			"do not place the caller -- an installation from before the 0.7.0 hardening, or a\n" +
 			"machine whose identity cannot be told -- the view stays private: the default is\n" +
 			"never the wider one. Whose numbers a table shows is printed above it.\n\n" +
+			"A private view is the caller's own row, and no row at all when their identity has\n" +
+			"no key of its own: an identity the local config leaves empty, or one nothing\n" +
+			"printable is left of (a pasted zero-width character, say), is nobody. A row keyed\n" +
+			"'unknown' is every run of the window that recorded no launcher -- never one\n" +
+			"person's -- so it is not shown as the caller's own either, and the table says\n" +
+			"which of the two it is.\n\n" +
 			"The launcher text is what a launcher wrote and is read for nothing else: it is\n" +
 			"sanitised and size-capped before it is printed, and nothing is authorised,\n" +
 			"admitted or filtered by it. Two identities that differ only past the cap are one\n" +
@@ -151,9 +157,12 @@ func newRunsStatsCmd() *cobra.Command {
 			"A window can hold every run of every repository in the bucket, so the read is\n" +
 			"bounded: at most --max-runs records are read per call, newest first, and a window\n" +
 			"holding more says so in the output rather than publishing figures over a part of\n" +
-			"itself silently. A run with neither a launch nor a record -- never launched,\n" +
-			"cancelled before launch, or a stale claim -- never started and is counted in no\n" +
-			"figure; the count of them is printed.\n\n" +
+			"itself silently. The bound is on the read, not on a person: the newest --max-runs\n" +
+			"runs are taken before any view is applied, so a private view can be over fewer of\n" +
+			"the caller's own runs than --max-runs suggests. A run with neither a launch nor a\n" +
+			"record -- never launched, cancelled before launch, or a stale claim -- never\n" +
+			"started and is counted in no figure. The count of those is the window's, over\n" +
+			"everyone's runs, and is no more the caller's own than the truncation is.\n\n" +
 			"--json prints {project, by, view, you, operator, since, until, max_runs,\n" +
 			"truncated, rows[], totals[], unlaunched, notes}; rows and totals carry {user,\n" +
 			"currency, runs, succeeded, failed, halted, infra_error, other, no_record,\n" +
