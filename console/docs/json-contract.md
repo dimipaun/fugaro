@@ -59,14 +59,14 @@ The columns below say which field needs which state. The recurring shapes:
 **Command:** `internal/cli/watch.go` `newWatchCmd` / `runWatch` /
 `watchStream` / `WatchDeps.emit`.
 **Document:** `internal/watch/json.go` `JSONDoc`, built by
-`BuildJSON(project string, v View) JSONDoc` (`json.go:148`).
+`BuildJSON(project string, v View) JSONDoc`.
 
 Emitted **compact, one object per line** (`json.NewEncoder(d.Out).Encode(...)`,
 `WatchDeps.emit`, `internal/cli/watch.go`), which is what makes the feed
 line-delimited JSON — one of exactly two line-delimited documents the console
 reads, the other being `logs RUN --json` (§6.2, §9).
 
-### `JSONDoc` (`internal/watch/json.go:97`)
+### `JSONDoc` (`internal/watch/json.go`)
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
@@ -95,11 +95,11 @@ A console that treated `watch --json`'s `mode` as possibly `""` would carry a
 comparison the feed never needs; a console that treated `budget show`'s as
 never `""` would miss the warning.
 
-### `JSONConn` (`internal/watch/json.go:24`) — the connectivity state
+### `JSONConn` (`internal/watch/json.go`) — the connectivity state
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
-| `state` | string | — | no | `live`, `stale`, `offline`, `refused` or `polling` (`connNames`, `json.go:145`; the constants are `ConnLive`… in `internal/watch`) |
+| `state` | string | — | no | `live`, `stale`, `offline`, `refused` or `polling` (`connNames`, `internal/watch/json.go`; the constants are `ConnLive`… in `internal/watch`) |
 | `reason` | string | — | **yes** | why, when there is one |
 | `age_seconds` | float64 | seconds | no | measured |
 
@@ -107,7 +107,7 @@ never `""` would miss the warning.
 permission refusal, which `watchStream` emits once and then returns `dbErr`
 (`internal/cli/watch.go`).
 
-### `JSONTotal` (`internal/watch/json.go:30`)
+### `JSONTotal` (`internal/watch/json.go`)
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
@@ -115,13 +115,13 @@ permission refusal, which `watchStream` emits once and then returns `dbErr`
 | `spent_usd` | float64 | USD | no | measured |
 | `notional_usd` | float64 | USD | no | **notional** — never billed, never capped, never summed into a real total |
 | `daily_cap_usd` | `*float64` | USD | no | **null = unavailable** (no cap set) |
-| `percent` | `*float64` | 0–100 | no | **null = unavailable**, together with `daily_cap_usd` (`usdPtr`, `json.go:122`) |
+| `percent` | `*float64` | 0–100 | no | **null = unavailable**, together with `daily_cap_usd` (`usdPtr`, `internal/watch/json.go`) |
 | `burn` | `JSONBurn` | — | no | see below |
 | `kill` | `*JSONKill` | — | no | **null = not killed** |
 | `runs` | int | count | no | measured |
 | `run_hours` | float64 | hours | no | measured |
 
-### `JSONBurn` (`internal/watch/json.go:18`)
+### `JSONBurn` (`internal/watch/json.go`)
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
@@ -133,15 +133,15 @@ The window is `watch.BurnWindow` (**5 minutes**, `internal/watch/state.go:31`),
 the design's §6.2 screen-1 rule; Task 2.1 asserts the console's constant cannot
 drift from it.
 
-### `JSONKill` (`internal/watch/json.go:12`)
+### `JSONKill` (`internal/watch/json.go`)
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
 | `by` | string | — | **yes** | who, when known |
-| `at` | string | RFC 3339 | **yes** | when, when known (`jsonKill`, `json.go:134`) |
+| `at` | string | RFC 3339 | **yes** | when, when known (`jsonKill`, `internal/watch/json.go`) |
 | `reason` | string | — | **yes** | why |
 
-### `JSONRepo` (`internal/watch/json.go:42`)
+### `JSONRepo` (`internal/watch/json.go`)
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
@@ -153,7 +153,7 @@ drift from it.
 | `burn` | `JSONBurn` | — | no | as above |
 | `kill` | `*JSONKill` | — | no | **null = not killed** |
 
-### `JSONRun` (`internal/watch/json.go:54`) — a live or queued run
+### `JSONRun` (`internal/watch/json.go`) — a live or queued run
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
@@ -186,7 +186,7 @@ drift from it.
 row; the run-detail screen reads `diagnose RUN --json` for the one run whose
 detail is open.
 
-### `JSONFinished` (`internal/watch/json.go:83`) — a finished run
+### `JSONFinished` (`internal/watch/json.go`) — a finished run
 
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
@@ -222,7 +222,7 @@ one of the two compact, one-line-per-document commands in the console's set
 **(ii) `--repo` narrows the JSON too.** `WatchDeps.emit` calls
 `watch.FilterRepo(v, d.RepoKey)` **before** encoding (`internal/cli/watch.go:260`),
 so `watch --json --repo R` carries only `R`'s repository block and runs;
-`FilterRepo` is `internal/watch/json.go:192`. What *is* unfiltered is the other
+`FilterRepo` is `internal/watch/json.go`'s own. What *is* unfiltered is the other
 axis: `finished[]` and `ready[]` ignore `--all`/`--keep`/`--keep-count`. The
 cobra help text still says "--json is always unfiltered" (it means the
 finished-run axis), so **the code is the authority here, not the help string**,
@@ -366,7 +366,7 @@ int64, none `omitempty`.
 | `totals` | `runview.Totals` | no | below |
 | `warnings` | `[]string` | no | the lines a human listing prints before its table |
 
-`runview.Row` (`internal/runview/runview.go:57`) is the run shape behind
+`runview.Row` (`internal/runview/runview.go`) is the run shape behind
 **both** `runs ls --json` and `diagnose --json`'s `row`. The fields the console
 reads:
 
@@ -427,9 +427,9 @@ paths kept, and sets `truncated` when the record said so or when `paths` is
 short of `total`. A tampered record therefore reaches the console bounded and
 with its truncation flagged, never larger or dressed as whole.
 
-`runview.Totals` (`runview.go:436`): `runs` int, `model_usd` float64,
+`runview.Totals` (`internal/runview/runview.go`): `runs` int, `model_usd` float64,
 `model_notional_usd` float64 (**notional** — kept apart from `model_usd` by
-`Sum`, `runview.go:448`), `compute_usd` float64 (**estimated**),
+`Sum`), `compute_usd` float64 (**estimated**),
 `total_usd` float64, `compute_not_estimated` int (**the count of rows whose
 compute is unknown: their `compute_usd` 0 means "not estimated", so the sums
 are a lower bound** — the console renders that, it does not hide it).
@@ -787,10 +787,10 @@ the closing here.
 | 1 | The degraded path prints a **plain sentence to stdout** on the same stream as the documents | `runWatchDegraded`, `internal/cli/watch.go` (`"%s\nrun records unavailable (retrying): %s\n"`) | Skip any line that is not a JSON object; show it as a header warning (§2, fact (iii)) |
 | 2 | `version` has **no `--json`** and no flags at all | `newVersionCmd`, `internal/cli/root.go` — `cobra.NoArgs`, no `Flags()` | Parse the human line, pinned by a test |
 | 3 | **`project show --json` does not exist on this tree** — there is no `fugaro project` command at all | no `newProjectCmd` in `internal/cli`; `docs/plans/2026-10-14-project-centric.md` phase 1 (PR #390) ships `project show`, `project policy publish` and `project repos add` — and only that one verb of the `repos` group comes with phase 1: the plan's phase 4 (Enrollment and migration, Task 4.1) is where `project repos ls`, `rm` and `sync` ship — **and no `project ls`** | The Projects screen renders the caps, kill state and repositories it can see, and says the policy object is not readable yet |
-| 4 | **No schema version in the `watch --json` document** | `JSONDoc`, `internal/watch/json.go:97` — no version field | Infer from the CLI version and from which shape arrived (the `degraded` key) |
+| 4 | **No schema version in the `watch --json` document** | `JSONDoc`, `internal/watch/json.go` — no version field | Infer from the CLI version and from which shape arrived (the `degraded` key) |
 | 5 | **Nothing enumerates installations** | `fugaro config` is `example\|show\|layer\|init\|publish` (`internal/cli/configcmd.go`); no `fugaro project` command exists; that phase's commands describe the *selected* project's policy and repositories, not the machine's installations | The operator adds each installation by hand (D13): binary picker, typed project name, optional checkout directory. **Closed 2026-10-18: `fugaro config list --json` exists (§6.8), so the typed name becomes a pick from the list of names the CLI prints — the field stays for an installation the operator adds before the CLI is updated** |
-| 6 | **No PR field on a run that has not finished** | `JSONRun` (`json.go:54`) carries `repo` and no `pr_url`/`pr_number`; they exist only on `JSONFinished` (`json.go:91-92`); `runview.Row` (`runview.go:57`) spells the pair `pr_url` + `pr` (`runview.go:109`) | A live row shows no link; the detail screen takes it from `diagnose RUN --json`'s `row` |
-| 7 | **No provider a console can build a link from** | `runview.Row` (`runview.go:57`) and `diagnose`'s row carry no provider, and `doctor --json`'s `doctorOutput` reports none. `JSONRun` and `JSONFinished` now do carry `provider` (phase 3, Task 3.5), and it is the right answer for the runs that have one — a shared project job's profile pins the provider its runs clone from — but it is **absent on every per-repository job**, which in phase 3 is every Bitbucket repository and every baked workflow. The kinds are `github`/`bitbucket`/`fake` (`internal/task/task.go`'s `Slug`, which hashes provider and repository together **one way**, so a slug cannot be inverted) | **No PR link at all** (design §5.1 rule 2): repository, number and `pr_url` shown as text, never handed to `openExternal`. A GitHub-shaped guess is wrong for `edgeappinc/fugarosandbox`, which is Bitbucket — and that run is exactly one of the runs whose `provider` is absent |
+| 6 | **No PR field on a run that has not finished** | `JSONRun` (`internal/watch/json.go`) carries `repo` and no `pr_url`/`pr_number`; they exist only on `JSONFinished` (`internal/watch/json.go`); `runview.Row` (`internal/runview/runview.go`) spells the pair `pr_url` + `pr` | A live row shows no link; the detail screen takes it from `diagnose RUN --json`'s `row` |
+| 7 | **No provider a console can build a link from** | `runview.Row` (`internal/runview/runview.go`) and `diagnose`'s row carry no provider, and `doctor --json`'s `doctorOutput` reports none. `JSONRun` and `JSONFinished` now do carry `provider` (phase 3, Task 3.5), and it is the right answer for the runs that have one — a shared project job's profile pins the provider its runs clone from — but it is **absent on every per-repository job**, which in phase 3 is every Bitbucket repository and every baked workflow. The kinds are `github`/`bitbucket`/`fake` (`internal/task/task.go`'s `Slug`, which hashes provider and repository together **one way**, so a slug cannot be inverted) | **No PR link at all** (design §5.1 rule 2): repository, number and `pr_url` shown as text, never handed to `openExternal`. A GitHub-shaped guess is wrong for `edgeappinc/fugarosandbox`, which is Bitbucket — and that run is exactly one of the runs whose `provider` is absent |
 
 **And no shape anywhere has a `repository` field** — the repository is `repo`
 on every one of them. **`watch --json`'s run and finished rows carry a

@@ -4747,6 +4747,61 @@ func TestDocsDesktopConsoleContractCitesRunsStatsBySymbol(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleContractCitesTheWatchAndRunShapesBySymbol: the same
+// rule as the runs stats section's, applied to the two files the contract's
+// live-feed and runs sections describe. A PR that added a run's
+// job/profile/provider/account/launched_by fields to internal/watch/json.go
+// inserted them ahead of JSONFinished and left every `json.go:NNN` pointer
+// behind — `json.go:83` still claimed to name JSONFinished while it named a
+// field of JSONRun, and runview.Row's `runview.go:57` had moved with two
+// imports — and a console author who follows a line number that lands on an
+// unrelated statement reads the wrong shape off it. The symbols are what the
+// console reads the document for, so both files are cited by symbol and a
+// line number cannot come back.
+//
+// Mutation (verified, run and restored): put `internal/watch/json.go:116` back
+// beside JSONFinished's heading — this fails naming the citation.
+func TestDocsDesktopConsoleContractCitesTheWatchAndRunShapesBySymbol(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	// Every symbol the two sections name, with the file that declares it —
+	// read from the source, so a rename cannot leave the contract pointing at
+	// something that is gone.
+	for _, want := range []struct{ file, sym string }{
+		{"internal/watch/json.go", "JSONDoc"},
+		{"internal/watch/json.go", "JSONConn"},
+		{"internal/watch/json.go", "JSONTotal"},
+		{"internal/watch/json.go", "JSONBurn"},
+		{"internal/watch/json.go", "JSONKill"},
+		{"internal/watch/json.go", "JSONRepo"},
+		{"internal/watch/json.go", "JSONRun"},
+		{"internal/watch/json.go", "JSONFinished"},
+		{"internal/watch/json.go", "BuildJSON"},
+		{"internal/watch/json.go", "FilterRepo"},
+		{"internal/runview/runview.go", "runview.Row"},
+		{"internal/runview/runview.go", "runview.Totals"},
+	} {
+		// The name in backticks, or the head of a backticked signature
+		// (`BuildJSON(project string, v View) JSONDoc`).
+		if !strings.Contains(doc, "`"+want.sym+"`") && !strings.Contains(doc, "`"+want.sym+"(") {
+			t.Errorf("%s does not name `%s`: the console reads this document to learn the shape, and a symbol is what stays true", path, want.sym)
+		}
+		src := readDoc(t, want.file)
+		short := want.sym[strings.LastIndex(want.sym, ".")+1:]
+		if !strings.Contains(src, "func "+short+"(") && !strings.Contains(src, "type "+short+" ") {
+			t.Errorf("%s names `%s`, and %s no longer declares it", path, want.sym, want.file)
+		}
+	}
+	// No line citation to either file, anywhere in the document: one that is
+	// right today is wrong at the next insertion above it, and a console
+	// cannot tell the two apart.
+	for _, re := range []string{`json\.go:\d+`, `runview\.go:\d+`} {
+		if m := regexp.MustCompile(re).FindString(doc); m != "" {
+			t.Errorf("%s cites %s instead of a symbol: a line number rots the moment anything is inserted above the symbol it means", path, m)
+		}
+	}
+}
+
 // TestDocsDesktopConsoleContractStatesTheAccountAxis: the `account` row of both
 // run shapes used to say the field could not appear on a project job at all —
 // "in phase 3 **never**, because a profile may not mount a Claude OAuth token"
