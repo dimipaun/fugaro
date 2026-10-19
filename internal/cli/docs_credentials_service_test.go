@@ -1112,7 +1112,7 @@ func TestChecklistCheck47IsSupersededNotHeld(t *testing.T) {
 func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	const path = "docs/credentials-service/implementation-plan.md"
 	doc := readDoc(t, path)
-	gc1 := docTail(t, path, doc, "1. **This pull request changes ten files")
+	gc1 := docTail(t, path, doc, "1. **This pull request changes seventeen files")
 	if i := strings.Index(gc1, "\n2. **"); i != -1 {
 		gc1 = gc1[:i]
 	}
@@ -1157,12 +1157,15 @@ func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	}
 	// ... and it has to name them: the constraint's "the documents" was four
 	// credential documents, and the pull request's diff
-	// (`git diff origin/integration-0.9.0 --name-status`) is the ten paths
-	// below. `spec.md` is the one document under docs/credentials-service/ that
-	// is not among them — it is already on the base, added by #512 — so a
-	// constraint that claims to add it describes someone else's change, and one
-	// that names four documents leaves the register and the four superseded
-	// design documents out.
+	// (`git diff origin/integration-0.9.0 --name-status`) is the seventeen
+	// paths below — the eight of the credentials service, the register, the
+	// four D130 and D131 supersede or amend, the four documents this run
+	// corrected where they contradicted the tree, and the five test files.
+	// `spec.md` is the one document under docs/credentials-service/ that is not
+	// among them — it is already on the base, added by #512 — so a constraint
+	// that claims to add it describes someone else's change, and one that
+	// names four documents leaves the register and the four superseded design
+	// documents out.
 	for _, file := range []string{
 		"docs/credentials-service/implementation-plan.md",
 		"docs/credentials-service/README.md",
@@ -1172,7 +1175,14 @@ func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 		"docs/design/project-centric.md",
 		"docs/design/m9-budget-and-dashboard.md",
 		"docs/plans/2026-10-14-oauth-reviewer-stage.md",
+		"docs/git-providers.md",
+		"docs/project-layer.md",
+		"docs/design/bucket-iam.md",
+		"docs/checkout.md",
 		cliGuard,
+		"internal/cli/docs_project_layer_test.go",
+		"internal/cli/docs_bucket_iam_test.go",
+		"internal/cli/docs_checkout_test.go",
 		rulesGuard,
 	} {
 		if !strings.Contains(gc1, file) {
@@ -1186,8 +1196,8 @@ func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	if strings.Contains(gc1, "it adds and edits `spec.md`") {
 		t.Error("Global Constraint 1 still says this pull request adds spec.md, which the base already carries")
 	}
-	if !strings.Contains(doc, "the eight documents and the two test files that pin them") {
-		t.Error("the plan's review focus does not say what this pull request is: the eight documents and the two test files that pin them")
+	if !strings.Contains(doc, "the twelve documents and the five test files that pin them") {
+		t.Error("the plan's review focus does not say what this pull request is: the twelve documents and the five test files that pin them")
 	}
 	if strings.Contains(doc, "the four documents and the two test files") {
 		t.Error("the plan's review focus still counts four documents, but the pull request changes eight")

@@ -142,3 +142,44 @@ func TestDocsCheckoutSaysWhetherCloneIsShipped(t *testing.T) {
 		t.Error("docs/checkout.md still says checkout: clone is not shipped yet")
 	}
 }
+
+// TestCheckoutDocDoesNotClaimCheck38sFactsAreRecorded: docs/checkout.md told
+// readers that Check 38's FACT lines are "the record of both, in the checklist
+// section" — and no FACT line was ever written there. The checklist's Check 38
+// row still reads USER-RUN, NOT RUN and its section still opens "No step below
+// has been run", because writing that record is the owner's step; the pass
+// itself is the owner's ruling of 2026-10-17, which is what the shipped gate
+// rests on. The lag is documented (this file, docs/release.md:64, and the
+// checklist's own row), so the fix is not to invent the record but to stop
+// pointing at evidence that is not there: the sentence now names the ruling as
+// what the gate rests on and the sibling paragraph as where the lag is
+// written down. The checklist's own state is read here too, so the day the
+// owner writes the run's FACT lines this fails and the sentence moves with
+// them, rather than staying behind and describing a state that is gone.
+//
+// Mutation (run, restore): put the old pointer back, or drop
+// "No step below has been run" from the Check 38 section — the test fails on
+// either, which is the point: the doc and the checklist have to move together.
+func TestCheckoutDocDoesNotClaimCheck38sFactsAreRecorded(t *testing.T) {
+	const path = "docs/checkout.md"
+	doc := readDoc(t, path)
+	if strings.Contains(doc, "Its FACT lines are the record of both, in the checklist section.") {
+		t.Errorf("%s still points at Check 38's FACT lines in the checklist, where none were recorded", path)
+	}
+	for _, want := range []string{
+		"the owner's ruling of 2026-10-17",
+		"still reads **USER-RUN, NOT RUN**",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s does not say where Check 38's pass is recorded: it lacks %q", path, want)
+		}
+	}
+
+	checklist := readDoc(t, checklistPath)
+	section := docSection(t, checklistPath, checklist, "## Check 38")
+	for _, want := range []string{"USER-RUN, NOT RUN", "No step below has been run"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%s now says the checklist has not written Check 38's record, but its section no longer says %q: the record has been written, so the sentence has to move with it", path, want)
+		}
+	}
+}

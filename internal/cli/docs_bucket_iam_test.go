@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
 // Since 0.7.0 launchers hold objectViewer and a runs/-conditioned objectUser
@@ -85,5 +87,56 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 				t.Errorf("%s lacks %q", file, want)
 			}
 		}
+	}
+}
+
+// TestBucketIamDocNamesTheWidenedLauncherCondition: the launchers' objectUser
+// grant on the runs bucket is conditioned to runs/ **and** tokens/, under the
+// title gcp.LauncherBucketConditionTitle ("fugaro-launchers-runs-tokens"), and
+// the widening is where this document says it is (design
+// budget-token-channel.md §7.5, decisions D16 and D19). A condition that
+// differs by one byte is a different binding (names.go, H5's own convention),
+// which is why the widening took a new title rather than a new expression
+// under the old one. Three places in this file still named the runs/-only
+// condition — H5's two bullets, the install guard's exact-match row and H5's
+// decision row — while the end-state table above them already carried the
+// widened pair, and this is the document an operator reads the binding out
+// of. The title is read from the constant, and the expression is compared
+// against the one gcp.LauncherBucketCondition builds, so a doc and a tree that
+// disagree fail here instead of only the doc.
+//
+// Mutation (run, restore): rename the title back to `fugaro-launchers-runs`,
+// or drop either `tokens/` clause from the bullet — the test fails on each.
+func TestBucketIamDocNamesTheWidenedLauncherCondition(t *testing.T) {
+	const path = "../../docs/design/bucket-iam.md"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+
+	if want := "fugaro-launchers-runs-tokens"; gcp.LauncherBucketConditionTitle != want {
+		t.Fatalf("gcp.LauncherBucketConditionTitle is %q; this guard pins the title %s must carry, so the two have to be updated together", gcp.LauncherBucketConditionTitle, path)
+	}
+	if strings.Contains(doc, "`fugaro-launchers-runs`") {
+		t.Errorf("%s still names the runs/-only launcher condition title `fugaro-launchers-runs`: a binding under that title is not the one every launcher carries", path)
+	}
+	// Every place this file names it: the end-state table's launcher row, H5's
+	// two bullets, and the install guard's condition row.
+	if n := strings.Count(doc, gcp.LauncherBucketConditionTitle); n < 4 {
+		t.Errorf("%s names %s %d times: the end-state table, H5's bullets and the guard's condition row all carry it", path, gcp.LauncherBucketConditionTitle, n)
+	}
+	// The expression H5 describes has to be the one the code builds, both
+	// clauses of it, with the bucket left as the placeholder H5 writes (the
+	// bucket a real call takes is validated, so the doc's placeholder is put
+	// back over a real name rather than passed to it).
+	const bucket = "fugaro-runs"
+	wantExpr := `resource.name.startsWith("projects/_/buckets/` + bucket + `/objects/runs/") || resource.name.startsWith("projects/_/buckets/` + bucket + `/objects/tokens/")`
+	if got := gcp.LauncherBucketCondition(bucket); got != wantExpr {
+		t.Fatalf("gcp.LauncherBucketCondition(%q) is %q; this guard pins the expression %s must carry", bucket, got, path)
+	}
+	docExpr := strings.ReplaceAll(wantExpr, bucket, "<bucket>")
+	if !strings.Contains(doc, docExpr) {
+		t.Errorf("%s does not spell the widened condition H5 is about: %q", path, docExpr)
 	}
 }

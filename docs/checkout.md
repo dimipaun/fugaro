@@ -68,7 +68,7 @@ Check 38 of [gcp-live-checklist.md](gcp-live-checklist.md) is the option's live 
 - whether a Cloud Run job's service agent may pull the installation's base image for a workflow job — a `checkout: clone` job pulls `base_images.base` under the run job's own service account, where before only image builds and the daily check job pulled it;
 - what `mise install` costs at every start-up, which is the price of `clone` over `baked`.
 
-Its FACT lines are the record of both, in the checklist section. `clone` is still the newer of the two options: `baked` is what every workflow existing before it, the setup skill and `fugaro image refresh`'s rebuild path assume.
+What the run established is the owner's ruling of 2026-10-17, which the shipped gate rests on (`internal/cli/recipes_skew.go`'s comment cites it). Its FACT lines are **not** recorded there: none has been written into the checklist section, whose Check 38 row still reads **USER-RUN, NOT RUN** (the lag the `clone` section above describes). `clone` is still the newer of the two options: `baked` is what every workflow existing before it, the setup skill and `fugaro image refresh`'s rebuild path assume.
 
 ## Known gaps
 

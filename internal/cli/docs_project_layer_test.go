@@ -452,3 +452,72 @@ func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
 		t.Fatalf("scanned only %d files: the tree has moved, so this check saw nothing", scanned)
 	}
 }
+
+// TestSharedJobDocsCarryTheGitHubAppID: a shared project job on the github
+// provider carries the App's ID in the job's environment
+// (`env[providers.EnvGitHubAppID] = appID`, internal/infra/projectjobs.go,
+// set for every github-provider profile) and the App's key as the mounted
+// `github-app-key` secret, so a GitHub run on a shared job does reach its
+// provider. That is the shape the owner ruled on 2026-10-17, and it landed in
+// 21e67bb8 (2026-10-18) with the project module's own precondition
+// (deploy/terraform/gcp/modules/project/job.tf) and coverage in
+// internal/infra — a commit that touched no document. So docs/git-providers.md
+// kept "It is not in the tree yet" and "a GitHub run on a shared job is
+// refused when it opens its provider", and docs/project-layer.md's
+// shared-job list kept a "GitHub repositories stop at the provider" bullet
+// (unchanged from the base, where it was still true); neither sentence had a
+// guard. These do, and they read the code the sentences describe as well, so
+// a doc that drifts from the tree fails here and not only in the doc.
+//
+// Mutation (run, restore): put either old sentence back, or drop
+// `env[providers.EnvGitHubAppID] = appID` from projectjobs.go — the test
+// fails on each, which is the point: the two have to move together.
+func TestSharedJobDocsCarryTheGitHubAppID(t *testing.T) {
+	const gpPath = "docs/git-providers.md"
+	gp := readDoc(t, gpPath)
+	for _, stale := range []string{
+		"It is not in the tree yet",
+		"a GitHub run on a shared job is refused when it opens its provider",
+	} {
+		if strings.Contains(gp, stale) {
+			t.Errorf("%s still says the shared job carries no GitHub App ID: %q", gpPath, stale)
+		}
+	}
+	for _, want := range []string{
+		"**it is in the tree.**",
+		"`FUGARO_GITHUB_APP_ID` for **every profile whose provider is GitHub**",
+		"the key as the mounted secret",
+		"`deploy/terraform/gcp/modules/project/job.tf`",
+		"So a GitHub run on a shared job reaches its provider",
+	} {
+		if !strings.Contains(gp, want) {
+			t.Errorf("%s does not record that a shared job carries the App's ID in its env and the key as the mounted secret: it lacks %q", gpPath, want)
+		}
+	}
+
+	const plPath = "docs/project-layer.md"
+	pl := readDoc(t, plPath)
+	if strings.Contains(pl, "GitHub repositories stop at the provider") || strings.Contains(pl, "**not** `FUGARO_GITHUB_APP_ID`") {
+		t.Errorf("%s still says a GitHub repository stops at the provider on a shared job", plPath)
+	}
+	for _, want := range []string{
+		"**GitHub repositories reach their provider.**",
+		"`projectJobEnv`",
+		"`FUGARO_GITHUB_APP_ID`",
+	} {
+		if !strings.Contains(pl, want) {
+			t.Errorf("%s does not record that a GitHub run on a shared job reaches its provider: it lacks %q", plPath, want)
+		}
+	}
+
+	// ... and the tree agrees with both, so the docs cannot be right while the
+	// deployer is not: the variable is set on a github profile's job, the
+	// resolver refuses a project that records no ID or two, and the module
+	// pins the pair as a precondition.
+	if src := readDoc(t, "internal/infra/projectjobs.go"); !strings.Contains(src, "env[providers.EnvGitHubAppID] = appID") {
+		t.Error("internal/infra/projectjobs.go no longer sets FUGARO_GITHUB_APP_ID on a github profile's job, which both docs now say it does")
+	}
+	if tf := readDoc(t, "deploy/terraform/gcp/modules/project/job.tf"); !strings.Contains(tf, "FUGARO_GITHUB_APP_ID") {
+		t.Error("deploy/terraform/gcp/modules/project/job.tf no longer carries the FUGARO_GITHUB_APP_ID precondition both docs now say it does")
+	}
+}

@@ -140,9 +140,9 @@ A one-person installation (both of the owner's installations) then plans **no ch
 Veto alternative: give the launcher grants to every launcher, operators included. That is redundant, and it would plan creates even on a one-person installation.
 
 **H5: The condition is defined once, in Go, and passed byte for byte (recommended).**
-- `gcp.LauncherBucketCondition(bucket)` returns `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/")`.
-- `gcp.LauncherBucketConditionTitle` is `fugaro-launchers-runs`, with no description, as for the job grants.
-- The installation spec carries them as `launcher_bucket_condition = {title, expression}`. A module variable validation requires the expression to begin with the runs bucket's own `runs/` path.
+- `gcp.LauncherBucketCondition(bucket)` returns `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/") || resource.name.startsWith("projects/_/buckets/<bucket>/objects/tokens/")` — the `tokens/` clause is §7.5's widening of the seal (`budget-token-channel.md`; D16 and D19), where the launchers' objectUser had to reach the sealed budget tokens the launcher writes and `dropBudgetToken` deletes.
+- `gcp.LauncherBucketConditionTitle` is `fugaro-launchers-runs-tokens` — a new title, not the old expression under the old one, because a condition that differs by one byte is another binding — with no description, as for the job grants.
+- The installation spec carries them as `launcher_bucket_condition = {title, expression}`. The module's variable validation requires a title and an expression that starts with a bucket's `resource.name.startsWith(`, and the launchers' member pins both halves byte for byte — title, and the expression over `var.runs_bucket` — in `google_storage_bucket_iam_member.runs_launcher`'s own precondition, whose error message names them.
 
 This is the convention of the job and build conditions ("a condition that differs in one byte is another binding", `names.go`). It lets the guard and doctor compare against the same string.
 
@@ -158,7 +158,7 @@ Veto alternative: build the expression in HCL from `var.runs_bucket`. That gives
 |---|---|---|
 | `objectAdmin` | person | no condition |
 | `objectViewer` | person | no condition |
-| `objectUser` | person | the condition is exactly `{title: fugaro-launchers-runs, expression: LauncherBucketCondition(b)}` for a bucket `b` in `Cover.Buckets` |
+| `objectUser` | person | the condition is exactly `{title: fugaro-launchers-runs-tokens, expression: LauncherBucketCondition(b)}` for a bucket `b` in `Cover.Buckets` |
 | `objectUser` | Fugaro account in a repository's workflow module | a condition whose every `||` clause is `resource.name.startsWith("projects/_/buckets/<b>/objects/<p>/<slug>/")`, with `<b>` in `Cover.Buckets`, `<p>` in `runs`, `cache`, `locks` or `builds`, and a non-empty `<slug>` |
 | `objectUser` | Fugaro job account in the project module (`module.project["<job>"]`, phase 3) | a condition whose every `||` clause is `resource.name.startsWith("projects/_/buckets/<b>/objects/<p>/")` — the widened form, with no `<slug>` at all — with `<b>` and `<p>` as above |
 | `objectViewer` | Fugaro account | no condition (the history account) |
@@ -389,7 +389,7 @@ An operator's own coding agent with the operator's ADC can also write `fugaro/` 
 | H2 | Launcher write scope | all of `runs/` | leaf names only (`task.json`, `launching`, `launch.json`, `cancel`, `budget-token`) |
 | H3 | Launcher read scope | whole bucket, unconditioned | `fugaro/`, `builds/`, `runs/`, `locks/` with a list-prefix condition |
 | H4 | Operators and overlap | operators keep `objectAdmin`; launcher grants for launchers who are not operators | launcher grants for every launcher |
-| H5 | Where the condition lives | Go (`gcp.LauncherBucketCondition`), passed as a tfvar, title `fugaro-launchers-runs` | HCL-computed |
+| H5 | Where the condition lives | Go (`gcp.LauncherBucketCondition`), passed as a tfvar, title `fugaro-launchers-runs-tokens` | HCL-computed |
 | H6 | Guard | checks every bucket grant's condition (launchers exact; accounts by shape) | launcher condition only, accounts as today |
 | H7 | Migration deletes | allowed exactly by `HardeningAllowDelete`, behind the step's own typed confirmation and a banner | `--allow-delete` per launcher |
 | H8 | Refusal | `blobx.ErrForbidden` plus one operator-role message, exit 1, no pre-check | pre-flight `testIamPermissions` |
