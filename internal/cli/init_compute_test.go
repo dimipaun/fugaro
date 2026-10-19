@@ -32,6 +32,13 @@ import (
 // root to have anything to build from.
 const computePin = "us-east5-docker.pkg.dev/proj-1234/" + infra.GhcrRegistry + "/acme/fugaro-base:1.2.3"
 
+// computeSocketGIDLabel is the label name the stage reads back through the
+// root's outputs (infra.ComputeOutputs.PreloadSocketGIDLabel). It is spelled
+// here rather than imported because it is the module's string and not this
+// package's: the module publishes it and
+// TestComputeModuleRecordsTheSocketGID holds the three files together.
+const computeSocketGIDLabel = "socket-gid"
+
 // computeRig is the ordinary init rig with a state bucket, a base pin, a run
 // account and the preload rebuild's job, ready for --provision-batch.
 func computeRig(t *testing.T) *initRig {
@@ -60,13 +67,18 @@ func computeRig(t *testing.T) *initRig {
 func computeOutputsJSON(t *testing.T) string {
 	t.Helper()
 	vals := map[string]string{
-		"preload_image":         infra.PreloadedImage(computePin),
-		"reaper_account":        infra.ReaperAccountID + "@" + initProject + ".iam.gserviceaccount.com",
-		"reaper_role":           "projects/" + initProject + "/roles/" + infra.ReaperRoleID,
-		"preload_account":       infra.PreloadAccountID + "@" + initProject + ".iam.gserviceaccount.com",
-		"preload_scheduler_job": infra.PreloadSchedulerJob,
-		"network":               infra.DefaultNetwork(initProject),
-		"subnetwork":            infra.DefaultSubnetwork(initProject, "us-east5"),
+		"preload_image": infra.PreloadedImage(computePin),
+		// The label each generation records its socket gid under. A name and
+		// not a value: the gid is read off the builder VM by the build and
+		// written onto the image it makes (preload.sh), so no root output can
+		// carry it and this root's answer is the key the read-back needs.
+		"preload_socket_gid_label": computeSocketGIDLabel,
+		"reaper_account":           infra.ReaperAccountID + "@" + initProject + ".iam.gserviceaccount.com",
+		"reaper_role":              "projects/" + initProject + "/roles/" + infra.ReaperRoleID,
+		"preload_account":          infra.PreloadAccountID + "@" + initProject + ".iam.gserviceaccount.com",
+		"preload_scheduler_job":    infra.PreloadSchedulerJob,
+		"network":                  infra.DefaultNetwork(initProject),
+		"subnetwork":               infra.DefaultSubnetwork(initProject, "us-east5"),
 	}
 	out := map[string]any{}
 	for k, v := range vals {
@@ -173,6 +185,14 @@ func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
 	}
 	if !strings.Contains(out, infra.PreloadedImage(computePin)) {
 		t.Errorf("the preloaded image's name was not reported:\n%s", out)
+	}
+	// The socket gid's label travels with the image's name, and the stage says
+	// so on the screen that reports the provisioning: a run's `--group-add`
+	// needs the gid the image records under that label, and a stage that
+	// dropped the key would leave the read-back (Check 57b, `doctor`) with the
+	// family alone. The value itself is the build's, never the stage's.
+	if !strings.Contains(out, computeSocketGIDLabel) {
+		t.Errorf("the socket gid's label was not reported:\n%s", out)
 	}
 	// The tfvars are the installation's own readings, not the defaults: the
 	// run accounts come from the project, the repository and the roles from

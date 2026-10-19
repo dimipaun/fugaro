@@ -1504,6 +1504,97 @@ var quotedPerm = regexp.MustCompile(`"([^"]+)"`)
 // what condition -- are what a reviewer has to read, and a plan assertion
 // only ever sees the inputs a test hands it.
 
+// The socket gid's round trip, file by file (design §2.2, C2; the plan's
+// Task 9 step 3). A run reaches the VM's Docker socket through
+// `--group-add <gid>` and the gid belongs to the boot image, so the one place
+// it can come from is the image itself: the build reads it off the builder VM
+// and labels every generation it makes with it, and the module publishes the
+// label's name for whatever reads it back (Check 57b today, `doctor` later).
+//
+// It is a text test because no plan can see it: the image is built out of
+// band by a script, so terraform's refresh covers none of it and no resource
+// holds the value. What the test can hold is that the three files agree on the
+// chain rather than merely each looking right -- and that no gid is a literal
+// anywhere in this tree, because a gid written here would be a guess about
+// whatever boot image an installation runs. The value the fake in
+// internal/cli/init_compute_test.go uses stands in for one: `testSocketGID`
+// (998) is internal/backend/batch's, and 412 -- the gid Check 57a-6 measured
+// on the COS image it used -- appears in no file this test reads.
+func TestComputeModuleRecordsTheSocketGID(t *testing.T) {
+	const (
+		script  = "gcp/modules/compute/preload.sh"
+		preload = "gcp/modules/compute/preload.tf"
+		outputs = "gcp/modules/compute/outputs.tf"
+	)
+	read := func(path string) string {
+		t.Helper()
+		b, err := fs.ReadFile(FS, path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		return string(b)
+	}
+	sh := read(script)
+	for _, want := range []struct{ what, text string }{
+		{"the read off the builder VM", "stat -c %g /var/run/docker.sock"},
+		{"the marker the build parses it back out of", "GID_MARKER="},
+		{"the label written onto the image the build creates", `"${SOCKET_GID_LABEL}=${SOCKET_GID}"`},
+		{"the refusal of a gid that is not one", "*[!0-9]*"},
+		{"the refusal of gid 0, which no container can be added to", "socket gid is 0"},
+		{"the label's name taken from the build rather than spelled here", "${SOCKET_GID_LABEL:?}"},
+	} {
+		if !strings.Contains(sh, want.text) {
+			t.Errorf("%s no longer carries %s (%q): the gid is read off the VM, recorded on the image the build makes, and the label it is recorded under is the build's to name", script, want.what, want.text)
+		}
+	}
+	// The read has to happen ON the VM (the build step cannot reach the
+	// socket), so it sits in the builder's own startup script, and the label
+	// has to be written by the create that makes the generation (an image
+	// labelled afterwards is an image a run can reach a socket through with a
+	// gid nothing recorded).
+	// LastIndex, not Index: the header comment above quotes the same command,
+	// and a check that read the comment would pass on a file whose script no
+	// longer reads the socket at all.
+	if i, j := strings.LastIndex(sh, "stat -c %g /var/run/docker.sock"), strings.Index(sh, "--metadata=startup-script="); i < 0 || j < 0 || i < j {
+		t.Errorf("%s reads the gid outside the builder VM's startup script: the build step runs in Cloud Build and has no socket to stat", script)
+	}
+	if i, j := strings.Index(sh, `"${SOCKET_GID_LABEL}=${SOCKET_GID}"`), strings.Index(sh, "gcloud compute images create"); i < 0 || j < 0 || i < j {
+		t.Errorf("%s writes the gid's label before the image it belongs to is created", script)
+	}
+	tf := read(preload)
+	// One name for the label, and both ends of the chain reading it: the
+	// build's substitution carries it into the step, and the output publishes
+	// the same local.
+	for _, want := range []struct{ what, text string }{
+		{"the single local the label's name is written in", `socket_gid_label = "socket-gid"`},
+		{"the build substitution the step reads it from", "_SOCKET_GID_LABEL = local.socket_gid_label"},
+		// `$${` is the escape terraform needs: `${` alone is terraform reading
+		// a variable, and the build config is what has to carry the
+		// substitution's name (terraform validate refuses the unescaped form).
+		{"the step's own environment", "SOCKET_GID_LABEL=$${_SOCKET_GID_LABEL}"},
+	} {
+		if !strings.Contains(tf, want.text) {
+			t.Errorf("%s no longer carries %s (%q): the writer and the reader would then be two spellings of one name", preload, want.what, want.text)
+		}
+	}
+	if n := strings.Count(tf, `"socket-gid"`); n != 1 {
+		t.Errorf("%s spells the label's name %d times, want once (in the local): a second literal is a name that can drift from the output below", preload, n)
+	}
+	if !strings.Contains(read(outputs), "preload_socket_gid_label") {
+		t.Errorf("%s publishes no preload_socket_gid_label: the stage and a later doctor check read the label's name from the root's outputs, together with the image's family (infra.ComputeOutputs)", outputs)
+	}
+	// And no gid is a literal in any of the three, in the root the stage reads
+	// back, or in the Go struct that decodes it.
+	for _, path := range []string{script, preload, outputs,
+		"gcp/roots/compute/outputs.tf", "gcp/roots/compute/main.tf"} {
+		for _, gid := range []string{"412", "998"} {
+			if strings.Contains(read(path), gid) {
+				t.Errorf("%s carries the literal %s: a gid written into this tree is a guess about whatever boot image an installation runs -- the build reads it off the VM it builds the image on", path, gid)
+			}
+		}
+	}
+}
+
 // permissionsOf returns the literal permissions a custom role block holds.
 func permissionsOf(t *testing.T, path string, blk block) []string {
 	t.Helper()
@@ -1948,8 +2039,12 @@ func TestComputePreloadRebuildsAStaleImage(t *testing.T) {
 	}
 	sh := string(b)
 	for _, want := range []string{
-		`--format='csv[no-heading](name,labels.fugaro,labels.base-release,creationTimestamp)'`, // the four answers the decision reads
-		"IFS=, read -r",                         // and read as four columns, not one joined line
+		// The five answers the decision reads: the release it was built from,
+		// its age, and the socket gid it recorded (Task 9 -- a generation with
+		// no gid recorded is replaced whatever its age, so a run's
+		// `--group-add` is never a guess).
+		"csv[no-heading](name,labels.fugaro,labels.base-release,creationTimestamp,labels.${SOCKET_GID_LABEL})",
+		"IFS=, read -r",                         // and read as columns, not one joined line
 		"REFRESH_DAYS:?",                        // the window is an input, not a literal
 		`--labels=fugaro=managed,base-release=`, // what the generation was built from is recorded on it
 		`--family="$IMAGE_FAMILY"`,              // the new generation joins the family the runs boot
@@ -2489,6 +2584,9 @@ func preloadFixture(t *testing.T, env map[string]string) (out string, err error,
 		"NETWORK=projects/proj-1234/global/networks/default",
 		"SUBNETWORK=projects/proj-1234/regions/us-east5/subnetworks/default",
 		"REFRESH_DAYS=30",
+		// The socket gid's label, as the build's substitution carries it
+		// (preload.tf). preload.sh refuses to run without it.
+		"SOCKET_GID_LABEL=socket-gid",
 	)
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
@@ -2530,7 +2628,13 @@ case "$args" in
       esac
       exit 0;;
   *"instances create "*) exit 0;;
-  *"instances get-serial-port-output "*) printf '%s\n' "$MARKER"; exit 0;;
+  *"instances get-serial-port-output "*)
+      # The builder VM's serial output, as its startup script writes it: the
+      # gid it read off its own socket, then the marker the build waits for.
+      # NO_SOCKET_GID drops the first line, which is a build whose VM never
+      # printed a gid.
+      if [ -z "$NO_SOCKET_GID" ]; then printf '%s\n' "${SOCKET_GID_LINE:-fugaro-preload-socket-gid=998}"; fi
+      printf '%s\n' "$MARKER"; exit 0;;
   *"instances stop "*) exit 0;;
   *"instances delete "*)
       # A delete that will not go: step 7 tolerates it, and the flag it reads
@@ -2577,9 +2681,16 @@ func gcloudCalls(t *testing.T, calls []string, sub string) [][]string {
 
 // staleRow and currentRow are the API's answers about the family's newest
 // generation, as csv[no-heading]: name, the ownership label, the release it was
-// built from, its creation stamp. The release is the fixture's, and the stamps
-// are computed here rather than by the host's date, so the age the script reads
-// is the age this test means.
+// built from, its creation stamp, and the socket gid the generation recorded.
+// The release is the fixture's, and the stamps are computed here rather than by
+// the host's date, so the age the script reads is the age this test means.
+//
+// The gid column is preloadSocketGID and never 412: 412 is what Check 57a-6
+// measured on the COS image it used, and a gid written into this tree would be
+// a guess about whatever boot image an installation runs
+// (TestComputeModuleRecordsTheSocketGID refuses both numbers in the module's
+// files). A row without it stands for a generation built before the label
+// existed, which the build replaces rather than keeps.
 func preloadRow(t *testing.T, release string, age time.Duration) string {
 	t.Helper()
 	return preloadRowOwned(t, "managed", release, age)
@@ -2590,9 +2701,21 @@ func preloadRow(t *testing.T, release string, age time.Duration) string {
 // before the label existed.
 func preloadRowOwned(t *testing.T, owner, release string, age time.Duration) string {
 	t.Helper()
+	return preloadRowGID(t, owner, release, age, preloadSocketGID)
+}
+
+// preloadSocketGID is the gid the fake VM's socket reports, and the one a
+// generation's label carries back: any positive integer but 412, which is the
+// measurement's and not an installation's (see preloadRow).
+const preloadSocketGID = "998"
+
+// preloadRowGID is preloadRowOwned with the gid column spelled out, for a row
+// that records none.
+func preloadRowGID(t *testing.T, owner, release string, age time.Duration, gid string) string {
+	t.Helper()
 	now := time.Now().UTC()
-	return fmt.Sprintf("%s-%s,%s,%s,%s", "fugaro-preload-a0b6aca0",
-		now.Add(-age).Format("20060102T150405"), owner, release, now.Add(-age).Format(time.RFC3339))
+	return fmt.Sprintf("%s-%s,%s,%s,%s,%s", "fugaro-preload-a0b6aca0",
+		now.Add(-age).Format("20060102T150405"), owner, release, now.Add(-age).Format(time.RFC3339), gid)
 }
 
 // imageListCall is the one `gcloud compute images list` the sweep makes, as
@@ -2689,6 +2812,73 @@ func TestComputePreloadShellDecidesAndReplaces(t *testing.T) {
 		il := len(gcloudCalls(t, calls, "instances delete"))
 		if il == 0 {
 			t.Error("the rebuild left its builder VM behind")
+		}
+	})
+
+	t.Run("a generation that records no socket gid is replaced", func(t *testing.T) {
+		// Current by release and by age, and still replaced: an image built
+		// before this label existed records no gid, and a run's `--group-add`
+		// against it would be a guess. This is the half of "every rebuild
+		// re-reads it" that a build deciding from the age alone would miss.
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":  preloadRowGID(t, "managed", baseRelease, 48*time.Hour, ""),
+			"IMAGE_LIST": "fugaro-preload-a0b6aca0-20200101T030000,fugaro-preload-a0b6aca0\n",
+			"MARKER":     "fugaro-preload-built",
+		})
+		if err != nil {
+			t.Fatalf("preload.sh exited %v:\n%s", err, out)
+		}
+		if !strings.Contains(out, "records no socket-gid label") {
+			t.Errorf("preload.sh did not say why a current generation is being replaced:\n%s", out)
+		}
+		created := gcloudCalls(t, calls, "images create")
+		if len(created) != 1 {
+			t.Fatalf("the rebuild made %d generations, want 1: an image with no recorded gid is not one to keep\n%s", len(created), strings.Join(calls, "\n"))
+		}
+		// And the generation it makes carries the gid the VM reported, under
+		// the label the build was given.
+		if !slices.Contains(created[0], "--labels=fugaro=managed,base-release="+baseRelease+",socket-gid="+preloadSocketGID) {
+			t.Errorf("the new generation does not record the socket gid it read: %s", strings.Join(created[0], " "))
+		}
+	})
+
+	t.Run("a builder VM that prints no gid makes no image", func(t *testing.T) {
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":     preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST":    "",
+			"MARKER":        "fugaro-preload-built",
+			"NO_SOCKET_GID": "1",
+		})
+		if err == nil {
+			t.Fatalf("preload.sh succeeded with no socket gid to record:\n%s", out)
+		}
+		if !strings.Contains(out, "printed no usable socket gid") {
+			t.Errorf("the refusal was not reported:\n%s", out)
+		}
+		if c := gcloudCalls(t, calls, "images create"); len(c) != 0 {
+			t.Errorf("an image was created with no gid recorded on it:\n%s", strings.Join(calls, "\n"))
+		}
+		// The family keeps serving the generation it has, and the builder VM
+		// still goes: the build failed, and a failed build is not a leak.
+		if d := gcloudCalls(t, calls, "instances delete"); len(d) == 0 {
+			t.Errorf("the builder VM was left behind by a build that made no image:\n%s", strings.Join(calls, "\n"))
+		}
+	})
+
+	t.Run("a builder VM that prints a gid that is not one makes no image", func(t *testing.T) {
+		for _, gid := range []string{"socket-gid: no such file", "0"} {
+			out, err, calls := preloadFixture(t, map[string]string{
+				"IMAGE_ROW":       preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+				"IMAGE_LIST":      "",
+				"MARKER":          "fugaro-preload-built",
+				"SOCKET_GID_LINE": "fugaro-preload-socket-gid=" + gid,
+			})
+			if err == nil {
+				t.Fatalf("preload.sh accepted the socket gid %q:\n%s", gid, out)
+			}
+			if c := gcloudCalls(t, calls, "images create"); len(c) != 0 {
+				t.Errorf("an image was created for the socket gid %q:\n%s", gid, strings.Join(calls, "\n"))
+			}
 		}
 	})
 

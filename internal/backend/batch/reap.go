@@ -307,7 +307,7 @@ type Reaper struct {
 // NewReaper connects to Cloud Batch and the Compute Engine API with
 // Application Default Credentials unless NoAuth. The account it runs as is
 // the dedicated project-wide reaper account (design §3.7, C22): see this
-// file's header for the exact six permissions it needs and nothing else.
+// file's header for the exact five permissions it needs and nothing else.
 func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 	switch {
 	case o.GCPProject == "" || o.Region == "":

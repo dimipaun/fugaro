@@ -116,9 +116,11 @@ run "root_passes_inputs" {
   }
 }
 
-# The reaper's role is the six permissions the sweeper's code uses, and the
-# reaper holds it and nothing else (design §3.7).
-run "TestReaperIsExactlySix" {
+# The reaper's role is the FIVE permissions the sweeper's code uses, and the
+# reaper holds it and nothing else (design §3.7; the sixth was batch.jobs.cancel
+# until Task 9, which is not a permission Google defines and made the role
+# uncreatable).
+run "TestReaperIsExactlyFive" {
   command = plan
 
   module {
@@ -145,12 +147,11 @@ run "TestReaperIsExactlySix" {
     condition = google_project_iam_custom_role.reaper.permissions == toset([
       "batch.jobs.list",
       "batch.jobs.get",
-      "batch.jobs.cancel",
       "batch.jobs.delete",
       "compute.instances.list",
       "compute.instances.delete",
     ])
-    error_message = "fugaroReaper must hold exactly the sweeper's six permissions, never batch.jobsEditor or compute.instanceAdmin.v1"
+    error_message = "fugaroReaper must hold exactly the sweeper's five permissions, never batch.jobsEditor or compute.instanceAdmin.v1, and never batch.jobs.cancel, which Google does not define"
   }
   assert {
     condition     = google_project_iam_custom_role.reaper.role_id == "fugaroReaper" && google_project_iam_custom_role.reaper.title == "Fugaro reaper"

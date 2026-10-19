@@ -739,7 +739,7 @@ What `fugaro init` would create for the VM backend, and how heavy that is:
   retry, not an error.
 
   **What a destroy leaves behind, for a week.** The stage's two **custom
-  roles** (the reaper's six permissions and the preload builder's) do not go
+  roles** (the reaper's five permissions and the preload builder's) do not go
   when the root does: a deleted custom role has "7 days to undelete", and
   until it is permanently deleted it "still counts toward the custom role
   limit"
@@ -1646,25 +1646,37 @@ What follows, plainly:
   different claim from project-centric D10's "launchers are trusted" — D10
   trusted them with their own repositories' runs, and this trusts them with
   everyone's plus arbitrary compute under a job account.
-- **The reaper's identity** needs the six permissions of the Built note below
-  on the project — `batch.jobs.list`, `batch.jobs.get`, `batch.jobs.cancel`
-  and `batch.jobs.delete`, and `compute.instances.list` and
+- **The reaper's identity** needs the five permissions of the Built note below
+  on the project — `batch.jobs.list`, `batch.jobs.get` and
+  `batch.jobs.delete`, and `compute.instances.list` and
   `compute.instances.delete` — carrying the most destructive grants in the
   whole design, and **not** `roles/batch.jobsEditor` and not
-  `roles/compute.instanceAdmin.v1`, which are far wider than those six (the
+  `roles/compute.instanceAdmin.v1`, which are far wider than those five (the
   Built note below says why). It should be a **dedicated
   service account** used only by the scheduled sweeper, not the launcher's and
   not the job's.
 
-  **Built** (Task 5) as **six** permissions, and no others: `batch.jobs.list`
+  **Built** (Task 5) as **five** permissions, and no others: `batch.jobs.list`
   and `batch.jobs.get` (every decision comes from a job's own state),
-  `batch.jobs.cancel` (the queue deadline — not optional, since a job stuck
-  `QUEUED` past it counts against `max_parallel`), `batch.jobs.delete` (the
-  destructive one, for a stuck job and a stuck `DELETION_IN_PROGRESS` only),
+  `batch.jobs.delete` (the destructive one, for a stuck job and a stuck
+  `DELETION_IN_PROGRESS` only),
   `compute.instances.list` (the project-wide aggregated list, the one call
   that finds a labelled VM in any of the region's zones) and
   `compute.instances.delete`.
-  **The grant is a custom role carrying exactly those six — `fugaroReaper`,
+  **An earlier shape of this note named a sixth — `batch.jobs.cancel` — and it
+  was wrong**: Google defines `batch.jobs.create`, `delete`, `get` and `list`
+  and no cancel at all, so a role naming it is a role GCP refuses to create,
+  which is why the provisioning stage's apply could not complete and why
+  `--provision-batch` was refused from 0.8.6 until **Task 9**. That task
+  renames the queue deadline's action: **a job that never left `QUEUED` past the
+  queue deadline is *deleted*, not cancelled** (`jobs.delete`), which is the
+  strictly more destructive verb the reaper already held — a job that never left
+  `QUEUED` never ran a task, so there is no execution record to keep, and the
+  run's own `launch.json`/`result.json` in the runs bucket are the authority for
+  what happened. `internal/backend/batch/reap.go` carries no cancel action at
+  all now, and `deploy/terraform/terraform_test.go`'s `knownInvalid` map is
+  empty because the entry it held for that permission is gone.
+  **The grant is a custom role carrying exactly those five — `fugaroReaper`,
   the naming `fugaroLauncher`, `fugaroJobRunner` and `fugaroHistory` already
   use, which is `internal/infra/tf/cover.go`'s `FugaroRoles` list and the
   `RolePermissions` table beside it (four of the six are also constants:
@@ -1675,8 +1687,8 @@ What follows, plainly:
   `deploy/terraform/gcp/modules/installation/history.tf`)** — and not
   `roles/batch.jobsEditor` plus `roles/compute.instanceAdmin.v1`, which is
   what Google's own pages name for the same calls (`batch.googleapis.com`
-  create/cancel/delete, `compute.instances.delete`). Those two built-in roles
-  are far wider than the six: `jobsEditor` also carries `batch.jobs.create`,
+  create/delete, `compute.instances.delete`). Those two built-in roles
+  are far wider than the five: `jobsEditor` also carries `batch.jobs.create`,
   i.e. exactly the launcher-shaped power to run any container in the project
   that the bullet above spends its length distinguishing, and
   `instanceAdmin.v1` carries `compute.instances.create` and the rest of the
@@ -1685,21 +1697,23 @@ What follows, plainly:
   Google's and was **NOT re-read for this task: UNVERIFIED**). A reaper
   account that can create jobs and VMs is a second launcher, not a janitor.
   An IAM Condition (Check 57a step 9) matches resource names and types, not
-  labels: **IAM cannot express "only `fugaro=managed`"**, so none of the six
+  labels: **IAM cannot express "only `fugaro=managed`"**, so none of the five
   confines the reaper to this installation's resources — the code does, and
-  only the code. `internal/backend/batch/reap.go`'s header states the same six
+  only the code. `internal/backend/batch/reap.go`'s header states the same five
   and the same caveat, which is where a reviewer checks them against the code.
   The reaper reads no secret and needs no Secret Manager, storage or logging
   grant. Task 6 creates the role and grants it; nothing selects the backend
   before the enable task (9), so none of this is reachable in an installation
   today. **Built** (Task 6,
   `deploy/terraform/gcp/modules/compute/iam.tf`): the custom role is exactly
-  the six permissions above, in a `google_project_iam_custom_role` the reaper
+  the five permissions above, in a `google_project_iam_custom_role` the reaper
   account and nobody else holds — never `roles/batch.jobsEditor`, never
-  `roles/compute.instanceAdmin.v1`. `TestComputeReaperRoleIsExactlySix`
-  (`deploy/terraform/terraform_test.go`) holds the list to those six and
+  `roles/compute.instanceAdmin.v1`. `TestComputeReaperRoleIsExactlyFive`
+  (`deploy/terraform/terraform_test.go`) holds the list to those five and
   refuses both built-ins, so widening it is a test failure rather than a
-  silent grant.
+  silent grant — and `TestCustomRolePermissionsAreAllowedByGoogle` holds every
+  permission of every Fugaro role against the list of what Google defines, with
+  an empty `knownInvalid` map since Task 9 removed the one entry it carried.
 
 **Recommendation (C22): give the launcher `batch.jobsEditor`,
 `serviceAccountUser` scoped to the run-class accounts, and nothing else; if
@@ -4117,7 +4131,7 @@ reasoning lives; this table is the checklist.
 | C19 | The preloaded image | **Yes — C4's measurement says so (66 s against 97 s streamed and 145 s plain)**: a committed script (`preload.sh`) run by Cloud Build as a narrow account and started by a Cloud Scheduler job, one image **family** per base version whose generations a rebuild replaces **creating before deleting** (so the family always serves one), **rebuilt on a schedule** (the 60-day supported-lifetime caveat), with the base family read from Google's `batch-custom-image` project and the AR reader granted on the repository the pin names | Rely on image streaming alone (no image build, but depends on Artifact Registry + containerd, and it cannot carry the socket) — the alternative C4's measurement rejected, and 57a-3b is the build that decided it |
 | C20 | Phase order | Independent of the project-centric phases; profiles (§4.3) adopted when phase 3 lands | Wait for phase 3 (cleaner, but delays a capability the owner needs) |
 | C21 | The service account's granularity | Keep the (`profile`, `account`) account and accept project-centric D4's cross-repository loss **unchanged** on the VM backend too (§3.1) | A per-repository account, expressible on Batch because every job names its own `allocationPolicy.serviceAccount`: it buys back 0.7.0's bucket and secret boundary for the repositories that opt in, at the per-repository weight project-centric removed, and it makes "which backend" a decision with a security consequence |
-| C22 | Launcher and reaper IAM | The launcher gets `batch.jobsEditor` **narrowed by an IAM Condition to Fugaro-shaped job names** (measured to be accepted and returned as written, 57a-9) plus `serviceAccountUser` on the run-class accounts and nothing else, in its own account if the project can carry one; the reaper gets a **separate** account carrying the six permissions §3.7 lists — the destructive, project-wide `batch.jobs.delete` and `compute.instances.delete` among them, and not the two built-in roles Google names for the same calls, which are far wider (§3.7) | One account for everything (simpler to provision, and it makes the reaper's destructive power ambient — rejected); a project-wide `batch.jobsEditor` for the launcher (simplest to provision, and it lets the launcher edit any job in the project — rejected now that the Condition is known to be accepted, 57a-9; its reach is inferred, §3.7/§9) |
+| C22 | Launcher and reaper IAM | The launcher gets `batch.jobsEditor` **narrowed by an IAM Condition to Fugaro-shaped job names** (measured to be accepted and returned as written, 57a-9) plus `serviceAccountUser` on the run-class accounts and nothing else, in its own account if the project can carry one; the reaper gets a **separate** account carrying the five permissions §3.7 lists — the destructive, project-wide `batch.jobs.delete` and `compute.instances.delete` among them, and not the two built-in roles Google names for the same calls, which are far wider (§3.7) | One account for everything (simpler to provision, and it makes the reaper's destructive power ambient — rejected); a project-wide `batch.jobsEditor` for the launcher (simplest to provision, and it lets the launcher edit any job in the project — rejected now that the Condition is known to be accepted, 57a-9; its reach is inferred, §3.7/§9) |
 
 ## 9. Verified and unverified
 
