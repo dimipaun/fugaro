@@ -796,15 +796,18 @@ project, repos, slugs, titles, amounts and verify lines are the ones they were.
 
 **The vocabularies are derived from the Go source, and a Go test holds them
 there.** Every list in `scrub.ts` names the writer it came from, and
-`TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource`
-(`internal/cli/docs_desktop_console_scrub_test.go`) reads the lists back out of
-the file and compares them with the constants the source writes them from — the
-runner's stage names, the config's allowed `agent.auth`, the budget's modes, the
-three verify kinds, and the connection, health, deadline, status and outcome
-tables. The list that was too *short* is the failure that review found: a stage
-the runner writes and the scrub does not know is not a leak, it is a recorder
-that throws on an ordinary run. `bootstrap`, `provision`, `review_first` and
-`finalize` were missing from `stage`, `vertex` from `auth`, and `warn` was a mode
+`TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource` — in
+`internal/cli/docs_desktop_console_test.go`, the one Go file Task 0.3's boundary
+test allows to mention a `console/` path, reading this file as bytes and
+importing nothing from it, so the allow-list keeps its single entry — reads the
+lists back out of the file and compares them with the constants the source writes
+them from: the runner's stage names, the config's allowed `agent.auth`, the
+budget's modes, the three verify kinds, and the connection, health, deadline,
+status and outcome tables. The list that was too *short* is the failure that
+review found: a stage the runner writes and the scrub does not know is not a
+leak, it is a recorder that throws on an ordinary run. `bootstrap`, `provision`,
+`review_first` and `finalize` were missing from `stage`, `vertex` from `auth`,
+and `warn` was a mode
 no CLI writes.
 
 **Not recorded, and stay invented**: `silent-then-lost`, `kill-mid-feed` and
