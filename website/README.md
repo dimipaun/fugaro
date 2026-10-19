@@ -17,10 +17,12 @@ first page.
 
 **Node 22 LTS**, pinned in `package.json`'s `engines`: `>=22.22.0 <23`. The floor is
 Astro's own requirement rather than a preference, and the ceiling is the major line this
-site is built and checked on — the engines range is the supported toolchain. What was
-verified is narrower: `npm run check` passed on **Node 26.x** (the version the author of
-this change runs, installed with `--engine-strict=false`), and the engines floor is the one
-Astro states. The lockfile was not regenerated on Node 22 here, and no check was run on it.
+site is built and checked on — the engines range is the supported toolchain, and it is the
+line `ci.yml` installs. `npm run check` passes on **Node 22.22.0**, which is what the whole
+of the suite — the build and every `test/*.mjs` — was last run on, and it is the version this
+document's figures were measured under. An earlier revision of this paragraph recorded a run
+on Node 26.x instead, with the engines check disabled: that is not the supported toolchain,
+and nothing here is measured on it any more.
 
 The dependency tree is pinned exactly: `package.json` names `astro` at one version, and
 `package-lock.json` is **committed**, so `npm ci` installs the tree this site was checked
@@ -107,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Seven checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Eight checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -130,55 +132,84 @@ added or removed without this sentence moving fails there:
   palette in force.
 - `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes). **They are
   deliberately loose, by the owner's ruling of 2026-10-17: size is not a concern yet, so
-  each is three times what the build of 2026-10-19 needs — the build that ships the site's one
-  script and its menu (P6, P3), the homepage's run animation (P7), the How It Works flow (P8),
-  W3.2's consent gate, the menu's hover-open on a pointer that hovers (the owner's brief of
-  2026-10-18, item 1), and the two corrections of 2026-10-19 to that behaviour: the event
-  decides which pointer arrived and the device's answer is watched rather than sampled once,
-  and the focus a click or a tap moves opens nothing while a close the browser makes hands the
-  reader's focus back — and a later optimisation pass tightens them.** The gate itself is not
-  loose: a page or a site over the number fails, and the test keeps a case that proves it. The
-  derivation (that build plus 25 %, D192) is in the test's header, and a task that moves the
-  bytes re-derives the numbers here, in the commit that moves them — which is why all three
-  were re-derived in the commit that taught the script the hover behaviour, again in the one
-  that taught it to read the pointer out of the event rather than out of the device's one
-  answer, again in the one that taught it to tell a pointer's focus from the keyboard's, and
-  again in the one that taught it that a close the reader asks for from outside the menu hands
-  nothing back, again in the one that taught the pointer's close to wait for the keyboard, and
-  again in the one that gave the keyboard its own binding —
-  and why the page and the site move with the script (a script every page loads is a page's
-  weight as well as its JavaScript):
-  - **JavaScript per page:** 149,610 bytes. Three times 49,870: the one script the site ships,
-    `public/scripts/site.js` (39,896 bytes), plus 25 %. What the file carries is the copy
-    control of P6 and D183; the menu's Escape/outside-click close of P3; W3.2's consent banner
-    and analytics gate, which moved out of the markup and into this one file, with the cookie
-    deletion the owner's ruling of 2026-10-18 added to a withdrawal; and, from the same
-    ruling's brief, its item 1: a group's submenu opens when the pointer arrives at it on a
-    device whose pointer hovers. That behaviour is bound only where `matchMedia` says the
-    device's pointer hovers and only for a pointer that says it is a mouse or a pen — a tap
-    sends a pointer of its own, and a finger never hovers, so a touch screen keeps the tap it
-    has always had — and the answer is watched rather than sampled once, so a pointer plugged
-    in or taken away after the page has loaded is answered too. The keyboard's focus opens a
-    group so Tab reaches the links inside a closed one; the focus a click or a tap moves opens
-    nothing, because the click that brought it is the `<summary>`'s own toggle and would close
-    what the focus had opened; and a group the browser closes because its sibling in the
-    `name` set opened hands the reader's focus back to its trigger — while a close the reader
-    asks for from outside the menu hands nothing back, because a press on the page's own text
-    moves the focus to the body without a `focusin` to hear, and the trigger of the menu just
-    dismissed is not where the reader is. A group has two readers, and the pointer is only one
-    of them: the close a pointer's departure owes is owed when nobody is left reading, so a
-    keyboard reader standing in the group holds it open and the close lands when the focus
-    goes — and a focus that arrives inside the `CLOSE_AFTER_MS` the close waits cancels it.
-    That keyboard half is bound whatever the device answers, because the keyboard is the
-    device's and not the pointer's: a phone or a tablet with a keyboard attached answers the
-    hover query no, and the menu still has a second level Tab has to be able to enter.
-    Every page loads the file
-    once, so it is the whole of a page's JavaScript, and the test keeps a case that says so
-    over the built artifact.
-  - **Page weight per page:** 1,001,316 bytes. Three times 333,772: the heaviest page, the
-    docs hub, at 267,017 bytes (its HTML — the whole generated CLI reference — plus the
+  each is three times what the build of 2026-10-19 needs, and a later optimisation pass
+  tightens them.** The gate itself is not loose: a page or a site over the number fails, and
+  the test keeps a case that proves it. The derivation (that build plus 25 %, D192) is in the
+  test's header, and a task that moves the bytes re-derives the numbers here, in the commit
+  that moves them; the gate refuses a derivation that names a build other than the one it can
+  measure, so the figures cannot drift down as pages grow.
+
+  **The build of 2026-10-19 is the merged one, and this is one account of it.** The redesign
+  branch merged `main` into it, so the artifact carries both halves at once — `main`'s site,
+  which is the one script the site ships and the behaviour it holds, and this branch's
+  redesigned pages on top of it — and neither half's own account of the figures is the whole
+  story any more. What carries those numbers is, in one list:
+
+  - `main`'s script: the copy control of P6 and D183; the menu's Escape/outside-click close
+    of P3; W3.2's consent banner and analytics gate, which moved out of the markup and into
+    this one file, with the cookie deletion the owner's ruling of 2026-10-18 added to a
+    withdrawal; and, from the same ruling's brief, its item 1 — a group's submenu opens when
+    the pointer arrives at it on a device whose pointer hovers — together with the
+    corrections of 2026-10-19 to that behaviour: the event decides which pointer arrived and
+    the device's answer is watched rather than sampled once; the focus a click or a tap moves
+    opens nothing, while a close the browser makes hands the reader's focus back; a close the
+    reader asks for from outside the menu hands nothing back; the pointer's close waits while
+    a keyboard reader stands in the group; and the keyboard's way into a group is bound
+    whatever the device answers.
+  - this branch's pages: the homepage's order (the promise and its calls to action, the chat,
+    the diagram, the install paths — changes spec item 4), the run animation (P7), the How It
+    Works flow (P8) and the long-page cuts (P4), with the changes spec's items 2 and 3 over
+    all of it.
+
+  Each half moved these figures in its own commits and re-derived them there — the script's
+  six corrections in `main`'s, the redesign's five fix rounds in this branch's — and they are
+  re-derived once more here, because the merge is where the two halves first weigh together.
+  **The figures below are the build this branch ships** (2026-10-19), derived over the merged
+  tree: the fix round after the merge moved the chat above the diagram, drew its turns as
+  alternating bubbles, took three of the four cyan edges off the flow's cards and shortened
+  the footer's link label, and every one of those was measured over the build in the same
+  commit that moved it. The review of that round's changes then took the install section's own
+  top padding off — the flow above it already carries the gap between the two blocks — which
+  is the whole-site figure 54 bytes lower and the page weight where it was, the heaviest page
+  being the docs hub, which renders neither block. The round after that moved both figures
+  **up**: the two declarations that make a command wrap (`white-space: pre-wrap; overflow-wrap:
+  anywhere`) moved from the homepage's own `.home-install-command` onto `base.css`'s
+  `.command-block > pre`, because the copy control now shares the command's row and every
+  command on the site gives up the control's width, and the base stylesheet is inlined into
+  every page — ten of the eleven grew by those 44 bytes and the homepage did not, the
+  declarations having left one of its own rules for the base one. That is the whole-site figure
+  440 bytes higher, and the page weight 44, because the page it is derived from — the heaviest
+  one, the docs hub — carries the same inlined rule. That is the same rule every time (D192),
+  and it is also why **the page and the site move with the script**: a script every page
+  loads is a page's weight as well as its JavaScript.
+
+  - **JavaScript per page:** 149,172 bytes. Three times 49,724: the one script the site ships,
+    `public/scripts/site.js` (39,779 bytes), plus 25 %. What the file carries is the copy
+    control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
+    to: the hover behaviour is bound only where `matchMedia` says the device's pointer hovers
+    and only for a pointer that says it is a mouse or a pen — a tap sends a pointer of its
+    own, and a finger never hovers, so a touch screen keeps the tap it has always had — and
+    the answer is watched rather than sampled once, so a pointer plugged in or taken away
+    after the page has loaded is answered too. The keyboard's focus opens a group so Tab
+    reaches the links inside a closed one; the focus a click or a tap moves opens nothing,
+    because the click that brought it is the `<summary>`'s own toggle and would close what the
+    focus had opened; and a group the browser closes because its sibling in the `name` set
+    opened hands the reader's focus back to its trigger — while a close the reader asks for
+    from outside the menu hands nothing back, because a press on the page's own text moves the
+    focus to the body without a `focusin` to hear, and the trigger of the menu just dismissed
+    is not where the reader is. A group has two readers, and the pointer is only one of them:
+    the close a pointer's departure owes is owed when nobody is left reading, so a keyboard
+    reader standing in the group holds it open and the close lands when the focus goes — and a
+    focus that arrives inside the `CLOSE_AFTER_MS` the close waits cancels it. That keyboard
+    half is bound whatever the device answers, because the keyboard is the device's and not
+    the pointer's: a phone or a tablet with a keyboard attached answers the hover query no,
+    and the menu still has a second level Tab has to be able to enter. Every page loads the
+    file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
+    so over the built artifact.
+  - **Page weight per page:** 1,001,607 bytes. Three times 333,869: the heaviest page, the
+    docs hub, at 267,095 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,106,374 bytes. Three times 1,035,458 (every file in `dist/`, 828,366
+  - **Whole site:** 3,163,455 bytes. Three times 1,054,485 (every file in `dist/`, 843,588
     bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
@@ -191,13 +222,16 @@ added or removed without this sentence moving fails there:
     section — and it is a lead and not an introduction: 40 words at most, on every page,
     the three reference pages included, because a lead is the page's own whichever page it
     is. **The region between the two headings is the whole of the definition, wherever each
-    heading sits** (P5; P4's reviewer read the homepage's lead two ways, 24 words from the
-    `h1`'s own container and 134 from the plan's region, and the stricter one is the one
-    enforced). A page that carries blocks between its `h1` and its first `h2` is a page
-    whose lead those blocks are part of — which is why the homepage opens its install
-    section with the `h2` above the commands rather than putting the commands under the
-    promise — so the fix for a long lead is a shorter lead or an earlier first `h2`, never
-    a reader that looks somewhere else. A page
+    heading sits** (P5; P4's reviewer read the homepage's lead two ways, and the two
+    readings are the same number only while the blocks between the `h1` and the first `h2`
+    are inside the `h1`'s own container — on the homepage as it was, with its install
+    commands and its chat between the hero and the flow's first step heading, they were 24
+    words from that container and 134 from the plan's region, and the stricter one is the
+    one enforced). On the homepage today the first `h2` is the chat's own *Through your
+    agent* — the chat is the first block under the promise — and the region is the promise
+    and its two calls to action: 14 words. A page that carries blocks between its `h1` and
+    its first `h2` is a page whose lead those blocks are part of, so the fix for a long lead
+    is a shorter lead or an earlier first `h2`, never a reader that looks somewhere else. A page
     with no `h2` at all has no such region, and its lead is the paragraphs that follow its
     `h1`. A page whose `h1` is followed straight by its first `h2` has no lead region
     either, and 0 words is inside the ceiling: `/security/` is shaped that way (its `h1` is
@@ -224,8 +258,12 @@ added or removed without this sentence moving fails there:
   the first command fit a real 390 × 844 first screen is the owner's live check (70b) and the
   word ceilings' business, and no test here sees a viewport (D187). The ordering underneath it
   is a statement about the built pages, though, and it is this file's rules: the homepage's lead
-  region holds one element and it is the promise, so the install block and the terminal are the
-  section the heading opens; Getting Started's install section opens with its commands, with the
+  region holds four elements — the promise, the row of links under it, and the two links in that
+  row — and the `h2` it stops at is the chat's own *Through your agent*: the illustration the
+  page puts directly under the promise is that heading's own block, sitting between the `h1` and
+  the `h2` that opens it, so the gate takes those elements out of the region before reading it.
+  The chat, the diagram and the install block are the sections that open after the lead region;
+  Getting Started's install section opens with its commands, with the
   sentence about them still there after the paths; and on every route that prints a command —
   three of the eleven today, and the other eight are skipped rather than asserted about — the
   first `h2` precedes the first `pre`. The whole gate is one function over one `dist`, so its
@@ -250,6 +288,20 @@ added or removed without this sentence moving fails there:
   `<!-- generated by go run ./internal/clidoc; do not edit -->` above the reference's title.
   The gate refuses the escaped banner and ignores a comment node, which is the difference
   between a line a reader reads and a note in the markup.
+- `test/wording.mjs` — the retired word (changes spec of 2026-10-18, item 2): `worker` and
+  `workers` are refused in three places — every built page's text and head, the site's own
+  sources (`src/`, `data/`, `public/`), and `README.md`. A run's unit of work is a **job** in
+  the product's own vocabulary, so the word is retired rather than replaced one sentence at a
+  time, and the gate is the reason no page can quietly reintroduce the old tagline. Three
+  pages are exempt — `/docs/`, `/security/` and `/changelog/`, D188's own list — because each
+  renders a document of this repository rather than a page of the site. The list is written
+  once, in `test/lib/exempt.mjs`: this gate skips those pages, `budget.mjs` exempts them from
+  the whole-page word ceiling, and `wording.mjs` holds the set equal to the pages D188's row in
+  `docs/website/redesign/reconciliation.md` names, so the exemption cannot widen without
+  failing a case. **The generated CLI reference still carries the old wording**, and that is
+  the item's ruling rather than a miss: the tagline change reaches the CLI's help, the
+  generated reference and the three plugin skills that carry it (`routing`, `working` and
+  `parallelism`) in 0.9.0, not here.
 - `test/nav-hover.mjs` — the menu's hover behaviour (the owner's brief of 2026-10-18, item 1).
   A `<details>` hides its own closed content in a way author CSS cannot portably override, so
   opening a group on hover is the script's work and not the stylesheet's: the gate runs the
@@ -446,6 +498,30 @@ and the feature flags from `site.yaml` — each one rendered, each one held to i
 a test, in this repository, in the commit that changes it. A page that paraphrases a
 document is the copy that drifts first, which is the failure this whole arrangement exists
 to prevent (F37, Global Constraint 6).
+
+**The sources are not all inside this directory.** The arrangement above is a rule about
+provenance rather than about where a file lives (the changes spec of 2026-10-18, item 3):
+five of the documents the site renders sit elsewhere in the repository, and the build reads
+them there.
+
+- **The changes spec**, `docs/website/redesign/changes-spec-2026-10-18.md` — the reader's
+  own request in the hero's chat is item 3's example of one, quoted from the ruling that
+  asked for the chat (`src/components/AgentChat.astro`).
+- **The two skills the agent reads**, `plugin/skills/parallelism/SKILL.md` and
+  `plugin/skills/working/SKILL.md` — the agent's two answers in that chat, the launch it
+  runs, and the line about what the watch screen shows. Item 3's acceptance is that the
+  agent's lines "show the real shape of the skills' behaviour", and every line a turn of the
+  illustration *speaks* is a line of the document it cites, so the build reads those files and
+  stops, naming the file, when a line is not in one of them. (The three `Pull request n of 3`
+  labels are the illustration's own rather than a document's lines — a run that has not
+  happened has no numbers to quote — and the caption labels the figure an illustration rather
+  than claiming its lines are quotations.) **This is why a test build's copy of the
+  repository carries `plugin/skills/`**: `test/lib/build.mjs` and the five test files that
+  stage their own copy skip only the parts of `plugin/` a build does not read
+  (`READ_UNDER_PLUGIN`).
+- **The four steps' captions and the run's detail** come from `README.md` and
+  `docs/design/v1.md`, cited by the component that quotes each line
+  (`src/components/ArchitectureDiagram.astro`, `src/components/RunDetail.astro`).
 
 ## Layout
 

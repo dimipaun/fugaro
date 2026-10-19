@@ -2,7 +2,9 @@
 
 # Fugaro
 
-**Fleeting cloud workers for coding agents: one task, one container, one PR, then gone.**
+**Lambdas for coding agents**
+
+Ephemeral cloud jobs that turn tasks into pull requests.
 
 Website: [fugaro.dev](https://fugaro.dev)
 

@@ -358,16 +358,63 @@ a.skip-link:focus {
 
 /* ---- 2b. the copy control (redesign part P6, D183) --------------------------------------- */
 
-/* Every command the site prints — the hero's install blocks, the getting-started page's, the
- * terminal's own line, the usage lines on the caps guide and every code block of the rendered
- * CLI reference — carries one of these, and the markup is written once in
+/* Every command the site prints — the hero's install blocks and its chat's `fugaro watch`
+ * snippet, the getting-started page's, the usage lines on the caps guide and every code block
+ * of the rendered CLI reference — carries one of these, and the markup is written once in
  * `src/lib/copy-control.mjs`. The control is emitted `hidden` and `public/scripts/site.js`
  * reveals it, so a reader whose browser runs no script sees the command and no button rather
  * than a button that copies nothing.
  *
- * The control is a row above the block it belongs to and right-aligned on it: it is in the
- * flow, so it can never overlap the command, and the confirmation has room beside the button.
- * With no script the row holds nothing and is therefore no taller than nothing. */
+ * **A command block is one row, and the control sits beside the command at its top right.**
+ * That is the whole placement, and it is one rule here rather than a shape each component
+ * invents, because the two placements the site shipped — a control row *above* the command in
+ * the install cards, the control *beside* it in the chat's watch bar — read as two different
+ * components doing the same thing (review round 3, item 3c). The control comes first in the
+ * markup and this component does not get to reorder it, so the row is reversed: the main axis
+ * starts at the right, the control lands at the main-start end — the right — and the command
+ * takes the rest of the row. It is in the flow, so it can never overlap the command, and the
+ * confirmation has room beside the button. `site.js` reveals the control after load, so with
+ * no script the row holds nothing and is no taller than nothing.
+ *
+ * `website/test/base-styles.mjs` reads every `[data-copy]` block on the built pages whose
+ * control and command share a row — that is every command block on the site — and refuses one
+ * that draws the control first, which is what a plain row does. A block whose command does
+ * *not* share the row is not this rule's business, but it would be a second placement and the
+ * case that reads the blocks is what says the site does not have one. */
+.command-block {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2xs);
+}
+
+/* The command takes the width the control leaves, and breaks inside itself rather than
+ * pushing the control out of the block: a `pre`'s content box is as wide as its longest line,
+ * and `min-width: 0` is what lets it shrink below that.
+ *
+ * **And it wraps, at every width and on every page.** The control sits in the command's own row
+ * now, so the `pre` gives up the control's width — about 45 px, the button plus the row's gap —
+ * and a `pre` that only scrolls (the `pre` default, `white-space: pre` with `overflow-x: auto`)
+ * hides the end of a long command instead of showing it: `go install
+ * github.com/dimipaun/fugaro/cmd/fugaro@latest` is 55 characters on one line, which is 495 px
+ * at 15 px in the install cards — wider than the 468 px box Getting Started gives it — and the
+ * reader sees `…@late`. `pre-wrap` keeps the command's own line structure; `overflow-wrap:
+ * anywhere` gives a token with no break opportunity somewhere to break. The two declarations
+ * used to live on the homepage's own `.home-install-command`, which is why the defect came back
+ * on the pages this rule is the only one to reach (review of this branch, again): every command
+ * block on the site is held by this one, and `website/test/base-styles.mjs`'s
+ * `installCommandFailures` reads this selector as well as the homepage's class. */
+.command-block > pre {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The control's own box: its button, its confirmation and nothing else. It is the first item
+ * of the reversed row above, so its `justify-content` only settles where a confirmation sits
+ * within the box it shares with the button. */
 .command-controls {
   display: flex;
   flex-wrap: wrap;
