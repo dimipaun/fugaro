@@ -594,3 +594,270 @@ func TestCheckJobProfileHoldsTheRunToTheJobItIsIn(t *testing.T) {
 		})
 	}
 }
+
+// accountsOf is a policy's accounts block as a value: each account with the
+// repositories its token may be used by (projectpolicy.Account). Built rather
+// than decoded for the reason policyOf is: what the node's own decoder accepts
+// is task 1's tests, and what these tests are about is the pair (profile,
+// accounts) the credential check reads.
+func accountsOf(repos map[string][]string) map[string]projectpolicy.Account {
+	out := make(map[string]projectpolicy.Account, len(repos))
+	for name, list := range repos {
+		out[name] = projectpolicy.Account{AllowRepos: list}
+	}
+	return out
+}
+
+// servingPolicy is a published policy whose standard profile serves the named
+// Claude accounts, under an accounts block giving each of them its
+// repositories. The profile and the block are built together on purpose: what
+// a run of an account's job is bounded by is decided between the two
+// (projectpolicy's validProfileAccounts), so a fixture that wrote them apart
+// could state a pair no publish would.
+func servingPolicy(accounts []string, repos map[string][]string) *projectpolicy.Policy {
+	p := policyOf(map[string]config.JobProfile{"standard": profileOf("github", accounts...)})
+	p.Accounts = accountsOf(repos)
+	return p
+}
+
+// accountRun is a run whose job identity is real and whose own task.json is
+// the caller's: the platform reports an execution of the job's computed name,
+// the policy is filled in as the memoized read leaves it, and the identity is
+// matched the way admissionCheck matches it. It fails the test rather than
+// returning an error if the name is one the policy does not define — every
+// name a test passes here is gcp.ProjectJobName of a triple the policy states.
+func accountRun(t *testing.T, job, slug string, spec *task.Spec, p *projectpolicy.Policy) *run {
+	t.Helper()
+	r := identityRun(t, job, slug, spec, p, true)
+	if _, _, _, err := r.jobIdentity(context.Background()); err != nil {
+		t.Fatalf("jobIdentity(%s) = %v: the fixture's job name must be one the policy defines", job, err)
+	}
+	return r
+}
+
+// TestRunnerRefusesUncoveredAccount is the runner's own half of D3 and D4
+// (plan task 3, design §4.4 rows 8 to 10): a run of an account's job holds
+// that account's token for the whole of its run, and the published policy's
+// accounts block is the only thing that says which repositories may hold it.
+//
+// It calls the check on values rather than through a whole run, and
+// deliberately: the two rules it pins are unreachable through a decoded node.
+// projectpolicy's validProfileAccounts refuses a profile that admits a
+// repository its accounts do not cover, and refuses a profile naming an
+// account the block does not define, so no published node can state either
+// — the refusals here are the fail-closed backstop for a node that reaches a
+// run by another road (a hand-written node, a policy written by a newer
+// Fugaro, a decoder whose rules are later relaxed), and a backstop nobody can
+// reach through the front door is one only a values-level test can hold.
+//
+// The launcher refuses every one of these before the claim and before the
+// budget token (internal/cli's projectJobAccountFor, and its own test), and
+// this is the second, independent door: a task.json is a bucket object anybody
+// with write access can edit, so what a run holds must be re-decided from the
+// policy the run read itself, not from the selection it was handed.
+//
+// Mutation (run, restored): drop the AdmitRepo arm (admit once the account's
+// list has been read). The first case is admitted with a token its account's
+// list does not cover. Mutation (run, restored): return nil for a run that is
+// not an OAuth one once the job's account matches (skip the list for the runs
+// that hold the token without asking for it). The default-account case is
+// admitted — a non-OAuth run in a job carrying the default account's token,
+// for a repository the token's own list does not cover — and it is the only
+// case that fails, which is what makes it the one that pins the rule for the
+// runs whose own credential never selects an account.
+// Mutation (run, restored): drop the serves arm for an
+// OAuth run (admit a job that holds no token at all). The last case is
+// admitted as a credential-less OAuth run. Mutation (run, restored): compare
+// nothing but the job's account against the profile (drop the
+// selection/account comparison). The "another account" case passes the check
+// it exists for, and a non-OAuth run in an account job does too.
+func TestRunnerRefusesUncoveredAccount(t *testing.T) {
+	slug := identitySlug(t, "github", "acme/app")
+	const (
+		personal = "acme-personal"
+		work     = "acme-work"
+	)
+	// The fixture pair most cases share: the standard profile serves both
+	// accounts, each covering the fixture's repository — the state a publish
+	// leaves when both accounts' allow_data_to list acme/app.
+	serving := servingPolicy([]string{personal, work}, map[string][]string{
+		personal: {"github/acme/app"},
+		work:     {"github/acme/app"},
+	})
+	// A note on the job's name: it is gcp.ProjectJobName of the triple, so it
+	// carries the account axis the tests below disagree with the run's own
+	// selection. gcp.ProjectJobName spells the default account as "" and so
+	// does the policy's profile; the accounts block spells it "default".
+	job := func(account string) string { return gcp.ProjectJobName("standard", "github", account) }
+	for _, tc := range []struct {
+		name    string
+		policy  *projectpolicy.Policy
+		account string // the account axis of the job's name
+		selects string // spec.OAuthToken: the account the run's own task chose
+		auth    string // the run's resolved agent.auth
+		want    []string
+	}{
+		{
+			name: "the account's list does not cover this repository",
+			policy: servingPolicy([]string{personal}, map[string][]string{
+				personal: {"github/acme/other"},
+			}),
+			account: personal, selects: personal, auth: "oauth",
+			want: []string{job(personal), "claude-oauth-token-" + personal, "accounts." + personal + ".allow_repos",
+				"github/acme/other", "github/acme/app", "claude_accounts." + personal + ".allow_data_to"},
+		},
+		{
+			// The default account's token rides the no-account job (D5), so a
+			// profile listing it hands that token to every run of that job —
+			// including one that is not an OAuth run at all. The list is the
+			// token's bound whatever the run's own credential is, which is why
+			// the coverage rule is asked of the job's token account and not of
+			// the run's selection (and why this case is the one a check that
+			// skips non-OAuth runs leaves unrefused).
+			name: "a run that is not an OAuth run in the no-account job of a profile whose default list does not cover this repository",
+			policy: servingPolicy([]string{personal, config.DefaultClaudeAccount}, map[string][]string{
+				personal:                    {"github/acme/app"},
+				config.DefaultClaudeAccount: {"github/acme/other"},
+			}),
+			account: "", selects: "", auth: "api-key",
+			want: []string{job(""), config.ClaudeAccountSecret(config.DefaultClaudeAccount),
+				"accounts." + config.DefaultClaudeAccount + ".allow_repos", "github/acme/other", "github/acme/app",
+				"project_secrets." + config.ClaudeAccountSecret(config.DefaultClaudeAccount) + ".allow_data_to"},
+		},
+		{
+			name: "the policy defines no list for the job's account",
+			policy: servingPolicy([]string{personal}, map[string][]string{
+				work: {"github/acme/app"},
+			}),
+			account: personal, selects: personal, auth: "oauth",
+			want: []string{job(personal), "claude-oauth-token-" + personal, "accounts." + personal, "bounded"},
+		},
+		{
+			name:   "the run's own credential is another account",
+			policy: serving, account: personal, selects: work, auth: "oauth",
+			want: []string{job(personal), "claude-oauth-token-" + personal, `"acme-personal"`, `"acme-work"`, "oauth"},
+		},
+		{
+			name: "the run's own credential is the default account",
+			policy: servingPolicy([]string{personal}, map[string][]string{
+				personal:  {"github/acme/app"},
+				"default": {"github/acme/app"},
+			}),
+			account: personal, selects: "default", auth: "oauth",
+			want: []string{job(personal), "claude-oauth-token-" + personal, `"default"`, "oauth"},
+		},
+		{
+			name:   "a run that is not an OAuth run in an account job",
+			policy: serving, account: personal, selects: "", auth: "api-key",
+			want: []string{job(personal), "claude-oauth-token-" + personal, `"acme-personal"`, `"api-key"`},
+		},
+		{
+			name: "an OAuth run in a job that holds no token at all",
+			policy: servingPolicy([]string{personal}, map[string][]string{
+				personal: {"github/acme/app"},
+			}),
+			account: "", selects: personal, auth: "oauth",
+			want: []string{job(""), "no Claude token", `"acme-personal"`, `"default"`, "agent.BuildEnv"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := &task.Spec{Version: 1, RunID: "20261018-101010-abcd", Repo: "acme/app", Ref: "main",
+				Workflow: identityWorkflow, OAuthToken: tc.selects, Task: "Add a feature"}
+			r := accountRun(t, job(tc.account), slug, spec, tc.policy)
+			err := r.checkProjectJobAccount(context.Background(), tc.auth)
+			if err == nil {
+				t.Fatalf("a run of %s with auth %q selecting %q was admitted", job(tc.account), tc.auth, tc.selects)
+			}
+			for _, want := range append(tc.want, "The run stops") {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal %q lacks %q", err, want)
+				}
+			}
+			if strings.Contains(err.Error(), "\n") {
+				t.Errorf("the refusal is not one line: %q", err)
+			}
+		})
+	}
+}
+
+// TestRunnerAdmitsTheAccountJobItsOwnConfigSelects is the other half of the
+// check: every state a publish can leave must go on running. It is what keeps
+// the refusals above from being a blanket refusal of shared jobs — a check
+// that admitted nothing would pass every one of them.
+//
+// The third case is a decision the design makes rather than one this check
+// takes (design §4.3, D5): a profile that lists "default" mounts that token
+// into its no-account job, and a non-OAuth run of that job is a run the design
+// calls legitimate — "such a profile's runs are OAuth or Vertex runs, never
+// API-key ones" — so it is documented (SECURITY.md, fugaro doctor) and not
+// refused here. It is pinned as a test so the behaviour is a decision and not
+// an accident, and so a later change that DOES refuse it has to come back to
+// this case and to the documents.
+//
+// Mutation (run, restored): refuse every job whose profile lists any account
+// (the blanket refusal). The first case fails. Mutation (run, restored): drop
+// the selection comparison's default-account arm (treat a "default" selection
+// as a named account). The second case fails.
+func TestRunnerAdmitsTheAccountJobItsOwnConfigSelects(t *testing.T) {
+	slug := identitySlug(t, "github", "acme/app")
+	serving := servingPolicy([]string{"acme-personal"}, map[string][]string{
+		"acme-personal": {"github/acme/app"},
+	})
+	withDefault := servingPolicy([]string{"acme-personal", "default"}, map[string][]string{
+		"acme-personal": {"github/acme/app"},
+		"default":       {"github/acme/app"},
+	})
+	for _, tc := range []struct {
+		name    string
+		policy  *projectpolicy.Policy
+		account string
+		selects string
+		auth    string
+	}{
+		{"an OAuth run in its own account's job", serving, "acme-personal", "acme-personal", "oauth"},
+		{"an OAuth run whose own credential is the default account, in the profile's no-account job", withDefault, "", "", "oauth"},
+		{"the same, with the default account spelled out", withDefault, "", "default", "oauth"},
+		{"a run that is not an OAuth run in the no-account job of a profile that serves no token there", serving, "", "", "api-key"},
+		{"a run that is not an OAuth run in the no-account job of a profile that lists the default account", withDefault, "", "", "api-key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := &task.Spec{Version: 1, RunID: "20261018-101010-abcd", Repo: "acme/app", Ref: "main",
+				Workflow: identityWorkflow, OAuthToken: tc.selects, Task: "Add a feature"}
+			job := gcp.ProjectJobName("standard", "github", tc.account)
+			r := accountRun(t, job, slug, spec, tc.policy)
+			if err := r.checkProjectJobAccount(context.Background(), tc.auth); err != nil {
+				t.Fatalf("a run of %s with auth %q selecting %q was refused: %v", job, tc.auth, tc.selects, err)
+			}
+		})
+	}
+}
+
+// A run in a per-repository job is not this check's business (the legacy path,
+// plan task 3.3): there the account is part of the job's own name
+// (gcp.WorkflowVariant), the job mounts exactly the selected account's token,
+// and the per-repository rules hold unchanged. The check must leave such a run
+// alone whatever the policy's accounts block says — a profile's jobs and a
+// per-repository job are two different things, and the second must not start
+// depending on the first.
+//
+// Mutation (run, restored): make the check look the profile up for a run with
+// no project identity (match the slug's own job name against the policy's
+// profiles instead of returning early). The run below is refused.
+func TestRunnerLeavesAPerRepositoryJobToTheOldRules(t *testing.T) {
+	slug := identitySlug(t, "github", "acme/app")
+	serving := servingPolicy([]string{"acme-personal"}, map[string][]string{
+		"acme-personal": {"github/acme/other"},
+	})
+	spec := &task.Spec{Version: 1, RunID: "20261018-101010-abcd", Repo: "acme/app", Ref: "main",
+		Workflow: identityWorkflow, OAuthToken: "acme-personal", Task: "Add a feature"}
+	r := identityRun(t, gcp.JobName(slug, gcp.WorkflowVariant(identityWorkflow, "acme-personal")), slug, spec, serving, true)
+	if _, _, _, err := r.jobIdentity(context.Background()); err != nil {
+		t.Fatalf("jobIdentity = %v: a named per-repository job must still match its own name", err)
+	}
+	if _, project := r.projectJob(); project {
+		t.Fatal("the run adopted a project job identity from a per-repository job's name")
+	}
+	if err := r.checkProjectJobAccount(context.Background(), "oauth"); err != nil {
+		t.Fatalf("checkProjectJobAccount = %v, want a per-repository job to be left alone", err)
+	}
+}
