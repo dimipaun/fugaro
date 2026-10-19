@@ -478,6 +478,56 @@ func TestDocsMobilePushHasOneWritersTable(t *testing.T) {
 	}
 }
 
+// TestDocsMobilePushLedgerHasOneHome: the dedupe/cap ledger was stated three
+// incompatible ways — §3.6 said "under config/admin ... or in Firestore under
+// its roles/datastore.user", while §7 and Q10(i) pinned it to the push node
+// revoke deletes, §3.4's node diagram omitted it, and §3.4's writers table
+// listed the sender's only writes as deletions. A reader could not tell whether
+// Q10(i)'s "deleted with the push node on revoke" was true. The home is now
+// config/admin/push/$uid/ledger and every section has to say so.
+func TestDocsMobilePushLedgerHasOneHome(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	doc := readDoc(t, docPath)
+
+	// The withdrawn alternative: a second store would make Q10(i) false.
+	for _, bad := range []string{
+		"or in Firestore under its `roles/datastore.user`",
+		"(`config/admin` or Firestore)",
+		"(`config/admin` or\n  Firestore)",
+	} {
+		if strings.Contains(doc, bad) {
+			t.Errorf("%s still offers %q as the ledger's home; the ledger lives in config/admin/push/$uid/ledger and nowhere else", docPath, bad)
+		}
+	}
+
+	for _, want := range []string{
+		// The node diagram carries it (§3.4).
+		"ledger/                             #   §3.6/§3.7: THE SENDER'S OWN STATE",
+		// The writers table carries the sender's only write.
+		"| `config/admin/push/$uid/ledger` | **the sender**",
+		"**The ledger's home is the push node and nowhere else.**",
+		// The three sections that used to disagree now name the same place.
+		"in **`config/admin/push/$uid/ledger`**",                                      // §3.6
+		"`config/admin/push/$uid/ledger` (§3.4, §3.6 — the ledger's one home)",        // §3.7
+		"the ledger\n  in its `ledger` child (§3.4, §3.6: one home, no second store)", // §7
+		"the dedupe ledger (the push node's `ledger` child, §3.4/§3.6)",               // Q10(i)
+		// §6's two rows: the no-send row is a §3.6/§3.7 property, not §3.4's,
+		// and the queued intent lives in the same node.
+		"the sender writes no ledger entry",
+		"a pending row in the same device's `config/admin/push/$uid/ledger`",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s lacks %q: the ledger's home must be stated once and cited by every section that mentions it", docPath, want)
+		}
+	}
+
+	// §6's first row used to attribute "records nothing" to §3.4, which says
+	// only that the sender sends when both nodes exist.
+	if strings.Contains(doc, "the sender records nothing (§3.4)") {
+		t.Errorf("%s's §6 still cites §3.4 for %q, a §3.6/§3.7 property", docPath, "records nothing")
+	}
+}
+
 // TestDocsMobilePushCategorySetIncludesCapNear: §3.1 enumerated the reconciled
 // set as "D160's three plus the prompt" and dropped cap-near, which §1, Q4(i)
 // and §3.8 all carry (D160: "available, off by default"). A category present in

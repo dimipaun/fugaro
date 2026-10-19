@@ -363,6 +363,10 @@ config/admin/push/$uid/               # THIS design's node — a SIBLING, never 
   platform                            #   "ios" | "android"
   updated_at                          #   epoch ms, server-written
   prefs/                              #   §3.8's per-category switches and quiet hours
+  ledger/                             #   §3.6/§3.7: THE SENDER'S OWN STATE, and its only home —
+                                      #   the dedupe keys, the cap window's timestamps and the
+                                      #   pending intents §6's "stays queued" retries. Written
+                                      #   and read by the sender over IAM; no content (§3.6)
 ```
 
 **The two rules that make it safe:**
@@ -386,7 +390,7 @@ There are two deletion paths, and they are not alternatives:
   (D166's deletion, which is what stops the reads) **and** the sibling
   `config/admin/push/$uid`. That is what makes the *data's* lifetime bounded by the pairing
   rather than by a timer (§7, Q10(i)): revoke is the one act, and it takes the token, the
-  platform, the prefs and the quiet-hours zone with it. The pairing command is **one of the
+  platform, the prefs, the quiet-hours zone and the sender's `ledger` (§3.6) with it. The pairing command is **one of the
   writers** of the push node — it writes it at pairing (§3.5 (a)) — and it is the same admin
   act that removes it; the writers table below states the whole set, because "the pairing
   command is the only writer" was the first draft's claim and it is false: Q3's recommended
@@ -416,15 +420,29 @@ preferences writer (which is (b) again), and the sender (§3.6) — and they all
 | `config/admin/push/$uid` (token, platform, updated_at) | **`fugaro pair`** | the registration the pairing session itself has (§3.5 (a)) | never writes `devices/**` |
 | `config/admin/push/$uid` (token, platform, updated_at) | **the registration principal** — §3.5 (b), Q3's recommendation: the principal that applies the app's mailbox re-registration message, holding `roles/firebasedatabase.admin` (the consumer beside the orchestrator where the operator holds the role) | the token and platform from that message | **never creates the node when `devices/$uid` is absent**; never writes a MAC-less or unvalidated token; never writes `devices/**` |
 | `config/admin/push/$uid/prefs` | **the same registration principal** (§3.8: the controls are written the same way, through the mailbox and (b)) | the per-category switches and the quiet-hours zone name and window | never writes a switch the app did not ask for, and never `devices/**` |
+| `config/admin/push/$uid/ledger` | **the sender** (§3.6, §3.7) — its **only** write to either node | the dedupe key of an event it has sent, the cap window's timestamps, and the pending intent it will retry (§6) | never writes a token, a platform or a pref, never writes **content** (§3.6: a device, a category, a timestamp, a state-change key), never `devices/**`, and never **creates** a node whose `devices/$uid` is absent |
 | `config/admin/push/$uid` | **the sender** (§3.6) | **deletes** a stale token entry, and deletes the whole node when it is empty or orphaned | never writes a marker, never writes a token, never **creates** a node (§3.4 "reaping deletes; it never marks") |
 | `config/admin/push/$uid` | **`fugaro pair revoke`** | **deletes** the whole node in the same act as `devices/$uid` | — |
 | **both nodes** | **no client, no run account, no app** | — | any write at all: the rules deny `config/admin` to every client token (§3.4 rule 1, `rules.json.tmpl`) |
 
 **Read off the table, the three sentences every section has to agree with:** *the device node is
 written by `fugaro pair` and deleted by `fugaro pair revoke`, and by nothing else*; *the push node
-is written by pairing, the registration principal and the preferences writer, and deleted by
-revoke and by the sender's reaping*; *no client, run account or app writes either*. §3.5 (a)/(b),
-§3.6, §3.8 and §6 each state their own row of it.
+is written by pairing, the registration principal, the preferences writer and the sender's ledger,
+and deleted by revoke and by the sender's reaping*; *no client, run account or app writes either*.
+§3.5 (a)/(b), §3.6, §3.7, §3.8 and §6 each state their own row of it.
+
+**The ledger's home is the push node and nowhere else.** The sender's dedupe and cap state is
+per device (§3.7 keys it on `(device, category, state-change key)`, and the cap is per device per
+hour), it must be unreadable to every client, and its lifetime should be the pairing's — and
+`config/admin/push/$uid/ledger` is the one place that is all three at once: inside the
+client-denied `config/admin` (§3.4 rule 1), in the node `fugaro pair revoke` deletes in the same
+act (§7, Q10(i)), and with **no second store, no second grant and no Firestore
+`roles/datastore.user`** for the sender to hold. §6's *pending intent* lives there too, for the
+same reason: it is the sender's own state about a device, and it should die with the pairing
+rather than outlive it. **This is stated once, here, and §3.6, §3.7, §7 and Q10 cite it** — the
+earlier drafts put the ledger "under `config/admin` **or in Firestore**", which made §7's and
+Q10(i)'s "deleted with the push node on revoke" false in one of the two readings and left the
+table above silent about the only write the sender ever makes.
 
 **Reaping deletes; it never marks.** A stale token (`UNREGISTERED`) or an orphaned `push/$uid`
 whose `devices/$uid` is gone is **deleted** — the token child, or the whole push node. The
@@ -586,12 +604,18 @@ exactly one
     no **run** and no **operator's machine** gains anything, and the installation's send
     permission is a custom role on one service account.
   - *Where the sender's own state lives*: a **dedupe and cap ledger**, written **by the
-    sender's own admin identity** and read by it, under `config/admin` (`rules.json.tmpl`'s
-    `"admin": { ".read": false, ".write": false }` — no client write, ever) or in Firestore
-    under its `roles/datastore.user`. **No run and no phone writes it**, so this design
-    widens no run account; and the rows carry **no content** — a device, a category, a
+    sender's own admin identity** and read by it, in **`config/admin/push/$uid/ledger`** — the
+    push node of the device the entry is about, §3.4's node diagram and writers table carrying
+    it. It is inside `config/admin`, which `rules.json.tmpl` denies to every client
+    (`"admin": { ".read": false, ".write": false }` — no client read or write, ever), it needs
+    **no second store and no second grant** (the sender's existing
+    `roles/firebasedatabase.admin` covers it, §3.4 "Who can read the push node"), and it is
+    deleted with the node on revoke (§7, Q10(i)). **No run and no phone writes it**, so this
+    design widens no run account; and the rows carry **no content** — a device, a category, a
     timestamp and the state-change key, §3.1's rules applying to the ledger as much as to the
-    payload.
+    payload. *(The earlier draft's "under `config/admin` **or in Firestore**" alternative is
+    withdrawn: a second store would have made Q10(i)'s "deleted with the push node on revoke"
+    false and left the ledger outside the one place §3.4's table accounts for.)*
   - *Latency*: the 15-minute sweep is the floor, and for "needs your answer" it is tolerable
     but not always — a prompt expires at D118's 72 hours. **The only way to beat the sweep is
     to let a run-side producer poke the sender**, and the honest price is that this needs
@@ -632,12 +656,15 @@ paragraph above says. Q1 records the latency/grant trade and (D).
   sends one "needs answer", not one per outbox re-delivery (the consumer already re-delivers
   until the ack, `shared/mailbox/index.js`'s dedupe ledger `state.seen`). The sender
   dedupes on `(device, category, state-change key)` over a window, so a re-derived event
-  is not a second notification.
+  is not a second notification. The window and the keys are rows in the device's own
+  `config/admin/push/$uid/ledger` (§3.4, §3.6 — the ledger's one home), written by the sender
+  and by nothing else.
 - **A storm cap.** At most **N notifications per device per hour** (N is small — the design
   suggests **6**, and Q4 asks), and at most **one per category per run per hour**. A repository
   that fails ten runs in a minute produces one alert and a quiet count, not ten buzzes. The
   cap is enforced **at the sender**, because the sender is the single writer and the phone
-  cannot enforce anything about its own buzz.
+  cannot enforce anything about its own buzz — the window's timestamps are the same
+  `ledger` rows, so the cap and the dedupe share one store and one lifetime (Q10(ii)).
 - **The cap is a floor on nuisance, not a loss of information.** Everything a push would have
   carried is in the mailbox regardless — the push is a doorbell (§3.2) — so a suppressed
   notification costs nothing but a buzz.
@@ -991,9 +1018,9 @@ against.
 
 | failure | behaviour | what the user sees |
 | --- | --- | --- |
-| the device node is missing, or the push node is missing, or the push node holds no token | **no send**; the sender records nothing (§3.4) | nothing — the app still shows everything on open |
+| the device node is missing, or the push node is missing, or the push node holds no token | **no send**; the sender writes no ledger entry — there is no event to dedupe and nothing to cap (§3.4 rule 2 for the send condition, §3.6/§3.7 for the ledger) | nothing — the app still shows everything on open |
 | the token is stale (FCM `UNREGISTERED`) | the sender drops the token and **deletes the entry in `config/admin/push/$uid`** — it never writes a marker, and it never touches `config/admin/devices/$uid` (§3.4, §3.5). If that leaves the push node empty the sender **deletes the push node**; it does not retry. *(This is the same deletion `fugaro pair revoke` performs in its one act — §3.4 states the two paths; the sender's is the net for an orphaned node, not the mechanism)* | nothing until the app re-registers (§3.5 (b)) |
-| FCM or APNs is down, or the send fails | the intent **stays queued** and the sweep retries; after the retry window it is dropped, never escalated | a delayed or missing buzz; the mailbox is unaffected |
+| FCM or APNs is down, or the send fails | the intent **stays queued** — a pending row in the same device's `config/admin/push/$uid/ledger` (§3.4, §3.6) — and the sweep retries; after the retry window it is dropped, never escalated | a delayed or missing buzz; the mailbox is unaffected |
 | a duplicate event is derived | deduped on `(device, category, key)` (§3.7) | one buzz |
 | a storm (many runs fail at once) | the sender's cap suppresses beyond N/hour (§3.7) | one buzz, and the mailbox has the rest |
 | the sender job itself is down | alerts stop; **nothing else does** | the mailbox still fills; the heartbeat still shows liveness (D117) |
@@ -1032,7 +1059,8 @@ false action, a lost message, or a blocked run.
   own words are that the push store has "its own retention question"; this document does not
   answer it, because the answer is the owner's, but it must at least **ask** it, and **Q10**
   does. What is stored and for how long: the **registration token, the platform, the
-  preference flags and the dedupe ledger** in `config/admin/push/$uid`; what happens to them
+  preference flags and the dedupe ledger** — all of it in `config/admin/push/$uid`, the ledger
+  in its `ledger` child (§3.4, §3.6: one home, no second store); what happens to them
   on **revoke** (§3.4 deletes the push node — so the data's lifetime is bounded by the
   pairing, not by a timer); and what **FCM itself keeps** on Google's side, which this project
   cannot delete and which §5 attacker 3 enumerates. **Q10 names all three.**
@@ -1116,7 +1144,7 @@ the token is
 stored in the installation's own Firebase project and deletable by revoking the device; **the
 quiet-hours zone name is stored** where a user sets quiet hours (§3.8, Q5); **retention is
 stated as Q10 answers it** — the push data lives only as long as the pairing, the dedupe ledger
-is windowed, and **what Google and Apple keep on their side is not this project's to delete**,
+(the push node's `ledger` child, deleted with the node) is windowed, and **what Google and Apple keep on their side is not this project's to delete**,
 so the statement must not imply the provider forgets. **On the channel, the statement must not
 claim a settled path, because there no longer is exactly one**: §3.3 and Q7 make the choice
 conditional — **FCM direct where every installation's project is the owner's**, and **a relay
@@ -1190,8 +1218,8 @@ D160–D179 are not this document's to take.
   a run that can send can name a repository in a title — which collapses §5 attacker 2's whole
   argument. **Recommended against.**
 - *(B) one cloud sender — the history job — that derives the events itself and calls FCM*,
-  with its own dedupe and cap ledger written under its own admin identity (`config/admin` or
-  Firestore): **recommended, sweep-only.** Exactly one account **gains** the permission, it
+  with its own dedupe and cap ledger written under its own admin identity, in the per-device
+  push node — `config/admin/push/$uid/ledger` (§3.4, §3.6): **recommended, sweep-only.** Exactly one account **gains** the permission, it
   uses its ambient identity, and **no producer write** — so no run account is widened and §4
   rule 6 holds literally. The ledger's writer and its grant are the sender's own
   (`roles/firebasedatabase.admin` on the installation's database, which
@@ -1383,12 +1411,19 @@ project?**
 - **What D121 already says**: the push store has "its own retention question" — and the design
   did not ask it. It does now, with the three parts the reviewer named.
 - *(i) **Lifetime bounded by the pairing** — the token, platform, prefs, quiet-hours zone and
-  dedupe ledger live in `config/admin/push/$uid` and are **deleted with the push node on
+  the dedupe ledger (the push node's `ledger` child, §3.4/§3.6) all live in
+  `config/admin/push/$uid` and are **deleted with the push node on
   revoke** (§3.4); a re-pair starts empty*: **recommended.** It needs no timer, no sweeper and
-  no second rule, and it is the property revocation already gives.
+  no second rule, and it is the property revocation already gives. **This is true of the
+  ledger only because §3.6 puts it in the node** — a ledger in Firestore would need an answer
+  of its own here, and there is not one.
 - *(ii) A time bound too* (drop a dedupe entry after N hours, a token unused for N days):
   **also needed for one part** — the **dedupe ledger** is per-event and has no reason to
-  outlive its window, so (i) plus a ledger window is the concrete answer.
+  outlive its window, so (i) plus a ledger window is the concrete answer. Concretely: the
+  sender prunes `config/admin/push/$uid/ledger` rows older than the dedupe window (and any
+  pending intent past the retry window, §6) on its own sweep, so the node holds state about
+  the last window only — the cap's per-hour timestamps and the pending intents are the same
+  rows and go with them.
 - *(iii) What FCM itself keeps*: **not this project's to delete.** Google retains the
   registration token and delivery metadata on its side under its own policies (§5 attacker 3
   enumerates what is visible); the app's **`deleteToken`** on revoke, and asking for the
