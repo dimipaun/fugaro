@@ -1401,7 +1401,7 @@ they are visible only once the stylesheet is bundled, served and linked — befo
 file is one nothing reads, and Task 6.2 is the ordering the phase's own header calls "before
 any visible change".
 
-**Commit:** `console: the document, the bands and the focus rules`
+**Commit:** `console: the document, the installation rail and the focus rules`
 
 **Reviewer tier:** ordinary.
 
@@ -1535,7 +1535,7 @@ phase: this task's own run skips the goldens, and the re-recording is the phase'
 task — which is a sequence, not a dependency: the last task's assertion waits on the
 stylesheets, not on this task's theme choice (design §6.2).
 
-**Commit:** `console: the window paints its ground first, and the nav takes the keyboard` —
+**Commit:** `console: the window paints its ground first, and the nav and the rail take the keyboard` —
 what this task commits under the ruling: one background literal and the nav's tablist
 behaviour. *The message as written for the two-set design was `console: the OS chooses the
 theme, and the window paints its ground first`*, and the switch that half of it names is
