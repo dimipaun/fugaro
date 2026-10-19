@@ -54,6 +54,12 @@ func TestDocsMobilePushDesignIsWritten(t *testing.T) {
 		"not an authenticated surface",
 		"only a doorbell",
 		"data-only",
+		// D165's two tokens kept apart in the one sentence whose job is to keep
+		// them apart: the one-shot pairing token the QR carries, and the durable
+		// device token minted only after the operator's code matches. Neither is
+		// a push token, and "device token" is a name two different things use.
+		"p~<random>",
+		"m~<random>",
 		// The check it names and deliberately does not write.
 		"Check 88",
 		"does not write it",
@@ -149,6 +155,42 @@ func TestDocsMobilePushCitationsExist(t *testing.T) {
 		if strings.Contains(checklist, written) {
 			t.Errorf("docs/gcp-live-checklist.md now carries %q: P4.2 has written Check 88 into the register, so %s's §8 must say the check is written (the number is allocated and is never renumbered) and record the owner's run", written, path)
 		}
+	}
+}
+
+// TestDocsMobilePushDoesNotInventAMailboxDisclosureInSecurityMD: §9 argues,
+// correctly and from a grep, that SECURITY.md says nothing about the phone, the
+// mailbox or notifications — 0 occurrences of "mailbox" in that file, which this
+// test re-checks rather than trusting. §9 and Q8 must therefore not turn round
+// three lines later and claim the trust model already carries the mailbox's
+// disclosures, or point a future writer at "the mailbox residual it already
+// carries": that is a contradiction with both the file and the paragraph above
+// it, and it sends the writer to a paragraph that does not exist. The red state
+// is exactly those two sentences.
+func TestDocsMobilePushDoesNotInventAMailboxDisclosureInSecurityMD(t *testing.T) {
+	const path = "docs/mobile/design/push-notifications.md"
+	doc := readDoc(t, path)
+
+	// The fact §9 relies on, checked here rather than asserted in the design's
+	// own prose: no occurrence of "mailbox" (any case) in SECURITY.md.
+	security := readDoc(t, "SECURITY.md")
+	if strings.Contains(strings.ToLower(security), "mailbox") {
+		t.Errorf("SECURITY.md now carries \"mailbox\": the design's §9 sentence that the trust model says nothing about the mailbox is now false and must be corrected rather than left standing")
+	}
+
+	// Fragments, not whole sentences: the document wraps its prose, so a
+	// whole-sentence needle can hide behind a newline as well as a wording
+	// change, and both would leave this guard green.
+	for _, invented := range []string{
+		"residual it already carries",
+		"the mailbox's disclosures",
+	} {
+		if strings.Contains(doc, invented) {
+			t.Errorf("%s claims %q, but SECURITY.md has no occurrence of \"mailbox\": §9 states that absence itself three lines earlier, so the claim contradicts the file and the paragraph it sits in", path, invented)
+		}
+	}
+	if !strings.Contains(doc, "carries no mailbox disclosure") {
+		t.Errorf("%s lines neither a true claim nor a corrected one: §9/Q8 must say plainly that SECURITY.md carries no mailbox disclosure to sit the statement beside", path)
 	}
 }
 

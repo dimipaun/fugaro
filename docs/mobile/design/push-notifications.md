@@ -73,10 +73,19 @@ answered.
   declares **no runtime dependency at all** (the manifest is deliberately empty until the
   Expo toolchain is pinned, and `mobile/src/skeleton/index.test.js` keeps it so). Every
   occurrence of the phrase "push token" in the tree is the **git** credential
-  (`internal/runner/provision.go`'s `provisionGitToken`), and every "device token" is the
-  **pairing** token of D165 — a one-time Firebase custom token — not a notification
-  registration token. They are different objects with confusingly similar names, and this
-  document uses "push token" for the FCM/APNs registration token only.
+  (`internal/runner/provision.go`'s `provisionGitToken`), and **D165's pairing mints two
+  Firebase custom tokens, neither of which is a push token**: the **pairing** token
+  (`p~<random>`, `exp` ≤ 5 minutes) that the QR carries and that may write only its own
+  pairing-request node, and the **device** token (`m~<random>`, `mu = uid`, never `r~`) that
+  `fugaro pair` mints **only after** the operator types the code confirming the phone's key
+  (D165; plan P6.6, which calls the delivered token the "device token"). They are different
+  objects with confusingly similar names, and this document uses **"push token" for the
+  FCM/APNs registration token only** — a thing that exists nowhere yet. **It does not merge
+  the other two senses either:** "device token" in `docs/mobile/`'s plan is that durable
+  custom token of D165/P6.6, while D121's own words, "its own device-token store", are about
+  the *push* store this design is a proposal for. Both readings are real, they name different
+  objects, and a reader who takes one for the other will look for a token the rules' `USER`
+  macro has nothing to do with.
 - **No always-on server.** `grep` for `google_cloud_run_v2_service` under `deploy/terraform/`
   finds nothing: this repository deploys **Cloud Run jobs**, never Cloud Run services. The one
   per-run network process, `internal/gateway`'s `Server` (started by `internal/runner/gateway.go`'s
@@ -666,8 +675,12 @@ privacy page would be the page claiming something that is not its subject.
   push to it", "pushes only to", "can push") and never the notification sense — so the
   absence this design relies on is of the *subject*, not of the word. That is a gap this
   design surfaces but does not close: the natural home for "what the phone sends, what the
-  provider sees" is the trust model, beside the budget-token paragraph and the mailbox
-  residual it already carries.
+  provider sees" is the trust model, **and what it would sit beside there is the budget-adjacent
+  material — the launcher's budget identity, the budget token left in the runs bucket, the
+  shared job's bucket reach. It is a new section, not an extension of an existing one: the
+  file carries no mailbox disclosure to extend**, and neither this document nor a later task
+  may point at one, because the sentence above is this document's own evidence that there is
+  none.
 - **An app-facing statement** in the app or on the install page, if one exists when the app
   ships (D120's store listings are owner-run and are the other natural home).
 
@@ -820,8 +833,12 @@ write `config/admin`?**
   convenience is speculative until the app exists.
 
 **Q8. Where does the push privacy statement live?**
-- *(i) `SECURITY.md`* — **recommended**, because the trust model already carries the budget
-  token's and the mailbox's disclosures and currently says **nothing** about the phone.
+- *(i) `SECURITY.md`* — **recommended**, because the trust model is where this installation's
+  credential-and-reach disclosures already live (the budget identity a launcher can mint, the
+  budget token left in the runs bucket, the shared job's bucket reach) and it currently says
+  **nothing at all** about the phone, the mailbox or notifications (§9). **Stated as what it
+  is: the phone's disclosure would be a new section, not an addition to an existing mailbox
+  one — SECURITY.md carries no mailbox disclosure today**, and §9's grep is the evidence.
 - *(ii) the website's privacy page*: rejected — that page is about **the site**, and it says so
   itself; push is not a site behaviour.
 - *(iii) an app-facing statement at ship time* (D120's store listings, owner-run): also
