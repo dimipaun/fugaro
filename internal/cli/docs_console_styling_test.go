@@ -73,6 +73,51 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 			t.Errorf("%s lacks %q", path, want)
 		}
 	}
+
+	// And §2's vocabulary cells, which are the hook list a stylesheet is written
+	// against: a cell that is nothing but a comma-separated list of code spans
+	// is a list of hooks, and one of them appearing twice is a typo an
+	// implementer cannot tell from an intent — the replay row listed
+	// `run-replay-count` at both ends, and reading the code leaves eleven
+	// distinct `run-replay-*` classes, not twelve.
+	for _, line := range strings.Split(mdBetween(t, path, doc, "## 2. Screen inventory", "## 3. "), "\n") {
+		if !strings.HasPrefix(line, "| ") {
+			continue
+		}
+		for _, cell := range strings.Split(strings.Trim(line, "|"), "|") {
+			hooks := mdCodeSpans(cell)
+			if len(hooks) < 3 || strings.Trim(mdWithoutCodeSpans(cell), " ,\t") != "" {
+				continue
+			}
+			seen := map[string]bool{}
+			for _, hook := range hooks {
+				if seen[hook] {
+					t.Errorf("%s: the vocabulary cell %q lists %s twice; a hook list is the set a rule may select, and a repeat cannot be told from a typo", path, strings.TrimSpace(cell), hook)
+				}
+				seen[hook] = true
+			}
+		}
+	}
+}
+
+// mdCodeSpanRE matches one code span and captures its contents.
+var mdCodeSpanRE = regexp.MustCompile("`([^`]+)`")
+
+// mdCodeSpans returns the contents of every code span in a fragment of
+// Markdown, in order.
+func mdCodeSpans(s string) []string {
+	var out []string
+	for _, m := range mdCodeSpanRE.FindAllStringSubmatch(s, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// mdWithoutCodeSpans strips the code spans from a fragment, so a caller can ask
+// whether the fragment is *only* code spans and commas — which is the shape of
+// a hook list, and not of a sentence that mentions a hook.
+func mdWithoutCodeSpans(s string) string {
+	return mdCodeSpanRE.ReplaceAllString(s, "")
 }
 
 // TestDocsConsoleStylingCitationsExist: the design's citations are paths a
@@ -127,6 +172,85 @@ func TestDocsConsoleStylingCitationsExist(t *testing.T) {
 			t.Errorf("%s cites %s, which is not in the tree: %v", path, cited, err)
 		}
 	}
+
+	// And the two citations that carry a line number, because a line number is
+	// the citation that rots fastest: `os.Stat` says the file is there and says
+	// nothing about what line 118 has become. The check is the sentence's own
+	// claim — the design names the file whose tree line it is pointing at, and
+	// that name has to be on the line it points at. This is the failure the
+	// previous round shipped: the styling tasks added two rows to the plan's
+	// tree, `tokens.css` moved from 118 to 120, and both citations went on
+	// naming 118, which by then was the picker's line.
+	for _, m := range mdLineCitationRE.FindAllStringSubmatch(doc, -1) {
+		file, lineNo := m[1], m[2]
+		n, err := strconv.Atoi(lineNo)
+		if err != nil {
+			t.Errorf("%s: %q is not a line number: %v", path, m[0], err)
+			continue
+		}
+		body, err := os.ReadFile("../../" + file)
+		if err != nil {
+			t.Errorf("%s cites %s:%s, and that file cannot be read: %v", path, file, lineNo, err)
+			continue
+		}
+		lines := strings.Split(string(body), "\n")
+		if n < 1 || n > len(lines) {
+			t.Errorf("%s cites %s:%d and the file has %d lines", path, file, n, len(lines))
+			continue
+		}
+		cited := strings.TrimSpace(lines[n-1])
+		if cited == "" {
+			t.Errorf("%s cites %s:%d, which is a blank line; a citation to nothing is a citation a reader cannot follow", path, file, n)
+			continue
+		}
+		// The nearest path the sentence named before the citation is the thing it
+		// says is on that line. When there is none the line only has to be there,
+		// which the checks above have said.
+		if subject := mdCitedSubject(doc, m[0]); subject != "" && !strings.Contains(cited, subject) {
+			t.Errorf("%s cites %s:%d for %s, and that line names something else (%q); a line number is the citation a reader follows by hand, so it has to point at what the sentence says it does", path, file, n, subject, truncate(cited, 60))
+		}
+	}
+}
+
+// mdLineCitationRE finds a citation of the `path/to/file.md:118` form, which is
+// how the design points at one line of the plan.
+var mdLineCitationRE = regexp.MustCompile(`([\w./-]+\.(?:md|go|ts|css|mjs|json|yml)):(\d+)`)
+
+// mdCitedSubject returns the path a sentence names before it cites a line —
+// "the plan's tree names `src/renderer/theme/tokens.css` (…:120)" — or "" when
+// the sentence names none. The nearest backticked path before the citation is
+// the subject; the cited file itself is skipped, since naming it is not a claim
+// about what is on the line.
+func mdCitedSubject(doc, citation string) string {
+	i := strings.Index(doc, citation)
+	if i < 0 {
+		return ""
+	}
+	start := i - 400
+	if start < 0 {
+		start = 0
+	}
+	before := doc[start:i]
+	subject := ""
+	for _, m := range mdBacktickPathRE.FindAllStringSubmatch(before, -1) {
+		if m[1] != strings.SplitN(citation, ":", 2)[0] {
+			subject = m[1]
+		}
+	}
+	return subject
+}
+
+// mdBacktickPathRE finds a path in a code span, which is how both documents
+// write the files they talk about.
+var mdBacktickPathRE = regexp.MustCompile("`([\\w./{}-]+\\.(?:md|go|ts|css|mjs|json|yml))`")
+
+// truncate shortens a string for a failure message, so a cited line that turned
+// out to be a paragraph does not print all of it.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // TestDocsConsoleStylingAnchorsResolve: every in-page link in the design
@@ -172,13 +296,14 @@ func TestDocsConsoleStylingAnchorsResolve(t *testing.T) {
 		}
 	}
 
+	// A link to another document's section is that document's business, and this
+	// test does not read it — not because of a case here, but because
+	// mdAnchorLink requires the `](#` form and `](../plans/x.md#y)` does not
+	// have it. That is the whole of the exception, and it is stated here rather
+	// than as a branch, since a branch the pattern can never reach reads as a
+	// check that is doing something.
 	for _, m := range mdAnchorLink.FindAllStringSubmatch(doc, -1) {
 		target := m[1]
-		// An anchor to another document's section (`../plans/x.md#y`) is that
-		// document's business, and this test does not read it.
-		if strings.Contains(m[0], ".md#") {
-			continue
-		}
 		if _, ok := slugs[target]; !ok {
 			t.Errorf("%s: `%s` resolves to no heading: the link goes nowhere, and no citation test can see it because a fragment is not a file", path, m[0])
 		}
@@ -281,7 +406,7 @@ func TestDocsConsoleStylingPlanTasksAreUnapproved(t *testing.T) {
 	}
 	prRows := mdTableRows(plan, mdPRRowRE)
 	if len(prRows) != 5 {
-		t.Errorf("%s: the PR groups table holds %d rows for phase 6 (J to J5); the phase is six tasks split into five PRs, and this count is the number the design's §7 states", path, len(prRows))
+		t.Errorf("%s: the PR groups table holds %d rows for phase 6 (J to J5); the phase is six tasks across five PR groups — J3 is the two PRs of Tasks 6.3 and 6.4 — and this count is the number the design's §7 states", path, len(prRows))
 	}
 	for _, row := range prRows {
 		if !strings.Contains(row, "UNAPPROVED") {
@@ -1308,15 +1433,19 @@ func TestDocsConsoleStylingAccentOnALightGround(t *testing.T) {
 		}
 	}
 
+	// The sentences are searched in the flattened document, so a rewrap is not a
+	// failure: the claim is the figure beside its background, and the figures
+	// themselves are recomputed just above. Pinning the wrap would tie this case
+	// to a column width, which is not what it is about.
 	for _, want := range []string{
 		// Each figure beside the background it belongs to.
-		"`#17A8E6` on **white** is\n**2.70:1**",
+		"`#17A8E6` on **white** is **2.70:1**",
 		"`#F2F6FA` the same value is **2.49:1**",
 		// And the token the light set names for accent text, since the accent
 		// itself cannot be it.
 		"**`--accent-ink` `#085A82`** is nevertheless the tone for accent text",
 	} {
-		if !strings.Contains(doc, want) {
+		if !strings.Contains(mdFlat(doc), want) {
 			t.Errorf("%s lacks %q", path, want)
 		}
 	}

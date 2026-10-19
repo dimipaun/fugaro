@@ -120,7 +120,7 @@ What was never decided, and is what this document decides or puts to the owner:
 3. the layout, the focus rules and the forced-colors behaviour;
 4. **the wiring: the stylesheet does not exist, is not bundled, is not served, and no
    document links one.** The plan's File Structure tree names `src/renderer/theme/tokens.css`
-   (`docs/plans/2026-10-15-desktop-console.md:118`) and **no task's Files line names it** —
+   (`docs/plans/2026-10-15-desktop-console.md:120`) and **no task's Files line names it** —
    it is a file the tree promises and the tasks never create;
 5. the tests that keep all of it honest.
 
@@ -361,7 +361,7 @@ request → logs → diagnosis → replay → warnings.
 | Pull request | `run-pr`, `run-pr-repo`, `run-pr-number`, `run-pr-url`, `run-pr-reason` |
 | Logs | `run-logs`, `run-log-list`, `run-log-line`, `run-log-time`, `run-log-severity`, `run-log-stage`, `run-log-message`, `run-log-note`, `run-log-dropped`, `run-log-of`, `run-log-total`, `run-log-refused`, `run-log-refused-count`, `run-log-link`, `run-log-link-note`, `run-log-tail`, `run-log-tail-line` |
 | Diagnosis | `run-diagnosis`, `run-failed`, `run-failed-word`, `run-failed-test`, `run-flaky`, `run-flaky-word`, `run-flaky-test`, `run-finding`, `run-finding-severity`, `run-finding-file`, `run-finding-summary`, `run-agent-message`, `run-agent-word`, `run-agent-text`, `run-report-path`, `run-report-word`, `run-report-value`, `run-comments-word`, `run-comments-path`, `run-comments-value`, `run-draft-note`, `run-follow-up-word`, `run-follow-up-pr`, `run-follow-up-comments-word`, `run-follow-up-comments`, `run-follow-up-session`, `run-reported`, `run-reported-usd`, `run-charged-word`, `run-charge-usd`, `run-reported-warning`, `run-pin-warning`, `run-route`, `run-route-name`, `run-route-usd`, `run-model`, `run-model-name`, `run-model-usd` |
-| Replay | `run-replay`, `run-replay-records`, `run-replay-count`, `run-replay-window-word`, `run-replay-window`, `run-replay-span`, `run-replay-from`, `run-replay-to`, `run-replay-scrubbed`, `run-replay-at`, `run-replay-note`, `run-replay-count` |
+| Replay | `run-replay`, `run-replay-records`, `run-replay-count`, `run-replay-window-word`, `run-replay-window`, `run-replay-span`, `run-replay-from`, `run-replay-to`, `run-replay-scrubbed`, `run-replay-at`, `run-replay-note` |
 | Warnings | `run-warning` |
 
 `data-*`: `data-theme`, and `data-href` on a log link (written by `putLink`, never the
@@ -500,7 +500,7 @@ a value set for a fixed vocabulary rather than a second copy of it" — the cons
 | `console/src/renderer/theme/screens.css` | the per-screen rules, in the order §2 lists the screens | colour literals |
 
 The plan's tree already names `src/renderer/theme/tokens.css`
-(`docs/plans/2026-10-15-desktop-console.md:118`); this design fills it in and adds three
+(`docs/plans/2026-10-15-desktop-console.md:120`); this design fills it in and adds three
 siblings, and Task 6.1 extends the plan's tree with them.
 
 **The vocabulary** (a 4 px base, mirroring the website so a reader of one knows the other):
@@ -1321,12 +1321,19 @@ in `base.css` and the rows' and badges' is in `screens.css`.
    alone`, `KILLED by`, `NOTIONAL~`, `(partial)`, `tabular-nums`, `prefers-color-scheme`,
    `light-dark(`, `forced-colors`, "is already the directive a stylesheet needs",
    `mediaTypeFor`, `text/css; charset=utf-8`, `console.css`, `adoptedStyleSheets`,
-   `Task 6.2`, "No D-number is allocated";
+   `Task 6.2`, "No D-number is allocated" — and over §2's vocabulary rows, failing when a
+   cell that is nothing but a comma-separated list of code spans repeats one of its hooks:
+   a hook list is the set a rule may select, and a repeat cannot be told from a typo (the
+   Replay row listed `run-replay-count` at both ends, while the code emits eleven distinct
+   `run-replay-*` classes);
 2. a **citation test** that `os.Stat`s the paths this document cites **outside the console
    directory** — `website/src/styles/{tokens,palette-logo}.css`, `website/test/a11y.mjs`,
    `docs/design/desktop-console{,-v2}.md`, `docs/plans/2026-10-15-desktop-console.md`,
    `docs/website/redesign/reconciliation.md` — so a citation that moves is a failing test
-   rather than a dead link;
+   rather than a dead link; and that follows each `path:line` citation to that line and
+   fails when the line does not name what the sentence around it says it does, because a
+   line number is the citation a reader follows by hand — the two citations into the plan
+   pointed at the tree line above the one this revision's added rows moved;
 3. an **anchor test** that every in-page link in this document — the `#fragment` form —
    resolves to a heading in it, using GitHub's slug rule — lowercase, drop everything that
    is not a
@@ -1369,14 +1376,16 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    this set's own `--ground`, and that the light set's accent clears 4.5:1 on all three
    surfaces — the finding that the right figure was in the wrong place, made runnable;
 9. a **separation-arms test** of the two arms of the rule in 6 on their own, over synthetic
-   hue gaps and contrasts rather than over this document's colours. Every state colour has
-   to clear 4.5:1 as text on all three surfaces, which holds the five in one narrow
-   luminance band — the widest luminance gap between any two of them is 1.47 — so **no pair
-   of the five present colours can take the fallback**, and no edit to this document alone
-   can reach that branch. The case in 6 is proved against a self-consistent document that
-   does take it; 9 is what keeps the branch itself tested rather than dead code. It also
-   pins both thresholds as inclusive, which is how §3.4 writes them ("at least 50°", "at
-   least 3:1").
+   hue gaps and contrasts rather than over this document's colours — and the reason it is
+   synthetic is that **this document's colours cannot reach the fallback at all**: every
+   state colour has to clear 4.5:1 as text on all three surfaces, which holds the five in
+   one narrow luminance band (the widest luminance gap between any two of them is 1.47), so
+   no pair of the five present colours is 3:1 apart in luminance and **no pair in either of
+   6's tables takes the second arm**. Item 6 therefore accepts the fallback wherever the
+   literals justify it but never meets one, and no edit to this document alone can exercise
+   that branch; the synthetic table here is what keeps the branch itself tested rather than
+   dead code. It also pins both thresholds as inclusive, which is how §3.4 writes them ("at
+   least 50°", "at least 3:1").
 10. a **phase-ordering test**, the tenth and the only case of the eleven that is neither about
    this document's shape nor about its numbers — it reads
    [§7](#7-the-build-plan-phase-6-unapproved) and the plan together: it cuts the plan's
@@ -1435,7 +1444,8 @@ named with the change ([§7.7](#77-the-red-steps)).
 Added to [the plan](../plans/2026-10-15-desktop-console.md) as a new **Phase 6** in the
 file's own numbering, in the five places that file carries a phase: one section
 `## Phase 6 — …`; **six** `### Task 6.n:` headings; **one** row in the Phase summary table;
-**five** rows in the PR groups table (`J` to `J5`, one per PR the phase is split into); and
+**five** rows in the PR groups table (`J` to `J5`, one row per PR *group* — the phase is six
+tasks across five groups, since `J3` is the two PRs of Tasks 6.3 and 6.4); and
 **four** lines in the File Structure tree, one per `theme/*.css` file. **Nothing here is approved**: the plan's OWNER APPROVAL GATE stands, and these tasks
 carry `UNAPPROVED` until the owner answers [§8](#8-open-for-the-owner). Task 6.2's heading
 carries `SECURITY-SENSITIVE, independent opus review`, and Global Constraints rule 9's list
