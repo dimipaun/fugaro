@@ -514,6 +514,42 @@ func TestDocsComputeBackendNamesEveryChecklistTest(t *testing.T) {
 	}
 }
 
+// TestDocsComputeBackendCIReachMatchesTheTree: Global Constraint 3 rests on a
+// fact about CI — the compute root is already in the terraform job's root loop,
+// so the design's staged `docs/pending-workflows/ci.yml` request is satisfied
+// and this plan re-stages nothing — and on a disagreement it records rather
+// than edits: `CONTRIBUTING.md` still tells a contributor the compute root is
+// the one CI does not reach until that staged file is copied in.
+//
+// All three are checkable, and each is the kind of fact that moves silently:
+// the loop can lose the name, the staged file can appear, and the contributor
+// rule can be corrected. The plan is held to the tree in whichever direction
+// the tree moves, because Global Constraint 3 is what a reviewer of every task
+// in this plan reads before deciding that no workflow change is needed.
+func TestDocsComputeBackendCIReachMatchesTheTree(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	if !strings.Contains(doc, "for r in installation firebase repo compute; do") {
+		t.Errorf("%s no longer quotes the terraform job's root loop as naming compute, which is its whole reason for saying no workflow change is needed", computeBackendPlan)
+	}
+	if !strings.Contains(doc, "`CONTRIBUTING.md:25` and `:32`") {
+		t.Errorf("%s no longer records where CONTRIBUTING.md says the compute root is out of CI's reach", computeBackendPlan)
+	}
+	ci := readDoc(t, ".github/workflows/ci.yml")
+	if !strings.Contains(ci, "for r in installation firebase repo compute; do") {
+		t.Errorf(".github/workflows/ci.yml's terraform job no longer names compute in its root loop: %s's Global Constraint 3 says it does, and the plan's answer to the design's staged-workflow request rests on it", computeBackendPlan)
+	}
+	// The staged file the design asked for is not here because the loop has the
+	// name: if it ever appears, one of the two claims in Constraint 3 is wrong.
+	if _, err := os.Stat("../../docs/pending-workflows/ci.yml"); err == nil {
+		t.Errorf("docs/pending-workflows/ci.yml now exists: %s's Global Constraint 3 says the staged request was applied to the workflow instead, so either the plan or that file has to go", computeBackendPlan)
+	}
+	contributing := readDoc(t, "CONTRIBUTING.md")
+	const stale = "is the one CI does not reach until the staged `docs/pending-workflows/ci.yml` is copied in"
+	if !strings.Contains(contributing, stale) {
+		t.Errorf("CONTRIBUTING.md no longer says the compute root %q: the contributor rule has been corrected, so %s's Global Constraint 3 (and this assertion) have to change with it", stale, computeBackendPlan)
+	}
+}
+
 // TestDocsComputeBackendSaysWhatTheTreeDisagreesWith: the two places the plan
 // was written against a brief that the tree does not carry — the release, and
 // the Spot result — are stated in the plan's own text rather than smoothed
