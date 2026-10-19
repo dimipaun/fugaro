@@ -2,8 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
@@ -336,9 +336,10 @@ func checkProjectJobOAuth(profile, auth, selected string) error {
 }
 
 // projectJobAgentAuth is the agent.auth a launch on a shared project job runs
-// under: the launcher's own checkout's fugaro.yaml resolved over
-// spec.ProjectLayer — the project layer the task carries into task.json —
-// through config.Resolve, the runner's own function, so the two documents are
+// under: the fugaro.yaml at spec.Ref — the ref the run checks out, read out of
+// the launcher's checkout's object database — resolved over spec.ProjectLayer,
+// the project layer the task carries into task.json, through
+// runner.ResolveConfig, the runner's own function, so the two documents are
 // composed exactly as the run composes them.
 //
 // It is deliberately not the checkout's own resolution (co.Agent.Auth), which
@@ -361,18 +362,22 @@ func checkProjectJobOAuth(profile, auth, selected string) error {
 //     now says api-key — the exact launch task 3.4a exists to refuse, and one
 //     this check would let through if it read co.
 //
-// The two documents are not both the run's, and the difference is the file.
-// The layer is the run's: the task carries the bytes the run applies. The
-// fugaro.yaml is the *working tree* of the checkout this command runs in,
-// while the run resolves the file at the ref it clones (runner.go's blobless
-// checkout of spec.Ref). The checkout is at least the launched repository's —
-// checkoutRoot refuses one whose origin is not spec.Repo's — so the file is
-// that repository's, at possibly another ref and with whatever uncommitted
-// edits the working tree carries. Reading spec.Ref's own copy here would mean
-// fetching that ref into the operator's checkout, a network write into a
-// repository this command does not own, so it does not; instead the refusal
-// names the copy it judged, and an operator whose working tree is not what
-// this launch is to be judged on checks out or commits the file first.
+// Both documents are the run's. The layer is: the task carries the bytes the
+// run applies. And so is the fugaro.yaml, read at the ref the run checks out —
+// spec.Ref, out of this checkout's own object database
+// (checkoutFugaroYAMLAtRef), never the working tree. The run resolves that
+// file after cloning spec.Ref (runner.go's blobless checkout of origin/
+// spec.Ref) and it resolves the layer over it, so a launcher that judged its
+// own working tree instead would judge a document the run never reads: a
+// checkout left on another branch, or carrying an uncommitted edit, can say
+// api-key where the ref the run clones says oauth, and the launch this check
+// exists to refuse would go through. Even the plain-ref fallback is a fact
+// about the repository rather than about the working tree.
+//
+// Nothing is fetched to make the read: a fetch is a network write into a
+// repository this command does not own. A checkout that does not hold the ref
+// at all is therefore refused with the message naming it (an operator can
+// fetch or check it out), never launched on a guess at another document.
 //
 // A resolution that cannot be made is refused rather than guessed at: an
 // unknown credential is one the job may not be able to serve, and the run would
@@ -406,9 +411,9 @@ func (e *cloudEnv) projectJobAgentAuth(ctx context.Context, spec *task.Spec) (st
 		// that checkout having gone away between the two reads.
 		return "", checkProjectJobAuthUnknown(spec.Repo, "the repository's own checkout could not be found")
 	}
-	data, err := readCheckoutFugaroYAML(filepath.Join(root, "fugaro.yaml"))
+	data, err := readFugaroYAMLAtRef(ctx, root, spec.Ref)
 	if err != nil {
-		return "", checkProjectJobAuthUnknown(spec.Repo, "the fugaro.yaml it resolves against could not be read ("+oneLineCLI(err.Error())+")")
+		return "", checkProjectJobAuthUnknown(spec.Repo, "the fugaro.yaml at the ref the run checks out ("+oneLineCLI(spec.Ref)+") could not be read out of this checkout ("+oneLineCLI(err.Error())+")")
 	}
 	out := runner.ResolveConfig(data, spec.ProjectLayer, e.lc.Name)
 	if out.LayerErr != nil {
@@ -418,6 +423,48 @@ func (e *cloudEnv) projectJobAgentAuth(ctx context.Context, spec *task.Spec) (st
 		return "", checkProjectJobAuthUnknown(spec.Repo, "its fugaro.yaml and the project layer its task carries do not resolve ("+oneLineCLI(layerProblemsText(out.Problems))+")")
 	}
 	return out.Cfg.Agent.Auth, nil
+}
+
+// readFugaroYAMLAtRef is checkoutFugaroYAMLAtRef; a test seam, like
+// readCheckoutFugaroYAML, so a read failure's exact text can be controlled
+// without a repository.
+var readFugaroYAMLAtRef = checkoutFugaroYAMLAtRef
+
+// checkoutFugaroYAMLAtRef reads ref's fugaro.yaml out of the checkout's own
+// object database — git cat-file, never the network and never the working
+// tree — or returns an error when this checkout does not hold that ref.
+//
+// ref is tried as the remote-tracking ref first, refs/remotes/origin/<ref>,
+// because that is the ref the run itself checks out: the runner clones the
+// repository blobless and does CheckoutNewBranch over origin/<ref>
+// (internal/runner/runner.go), so origin/<ref> as this checkout last fetched
+// it is the ref whose fugaro.yaml the run resolves agent.auth from. The plain
+// ref is the fallback for a checkout that has the branch but no
+// remote-tracking ref of it (a freshly made repository, or a branch never
+// fetched): git resolves it through refs/heads, refs/tags and a commit id in
+// turn. Nothing is fetched here — a fetch is a network write into a repository
+// this command does not own — so a ref this checkout does not hold is an
+// error rather than a guess at another document.
+func checkoutFugaroYAMLAtRef(ctx context.Context, root, ref string) ([]byte, error) {
+	if ref == "" {
+		return nil, errors.New("the launch names no ref")
+	}
+	at := ""
+	for _, candidate := range []string{"refs/remotes/origin/" + ref, ref} {
+		sha, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", "--end-of-options", candidate+"^{commit}")
+		if err == nil && sha != "" {
+			at = candidate
+			break
+		}
+	}
+	if at == "" {
+		return nil, fmt.Errorf("this checkout holds no %s ref (fetch it, or check it out)", ref)
+	}
+	data, err := gitCmd(ctx, root, "cat-file", "blob", at+":fugaro.yaml").Output()
+	if err != nil {
+		return nil, fmt.Errorf("%s has no fugaro.yaml at it", at)
+	}
+	return data, nil
 }
 
 // checkProjectJobAuthUnknown refuses a launch onto a shared project job whose
@@ -438,6 +485,6 @@ func (e *cloudEnv) projectJobAgentAuth(ctx context.Context, spec *task.Spec) (st
 // not `checkout: clone` keeps the per-repository job it has always had
 // (design §4.4).
 func checkProjectJobAuthUnknown(repo, why string) error {
-	return userErr("cannot tell which Claude credential a run of %s would use on the shared project job its workflow selects, so nothing was launched: %s. A run resolves agent.auth from the fugaro.yaml at the ref it checks out, over the project layer its own task carries (project_layer in task.json), and this launch is judged on that layer with the fugaro.yaml of your own checkout's working tree — the same repository, but not necessarily the ref the run will clone — rather than on a guess: a shared job holds the credential its profile was deployed with — the account segment of its own name — so a launch whose credential cannot be resolved is refused instead of started on a job that may not be able to serve it. Fix what the message names, or keep this repository on its own per-repository job (a workflow that is not `checkout: clone` keeps the job it has always had). Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called",
+	return userErr("cannot tell which Claude credential a run of %s would use on the shared project job its workflow selects, so nothing was launched: %s. A run resolves agent.auth from the fugaro.yaml at the ref it checks out, over the project layer its own task carries (project_layer in task.json), and this launch is judged on that same layer with that same fugaro.yaml — read at that ref out of your checkout's git objects, never out of the working tree — rather than on a guess: a shared job holds the credential its profile was deployed with — the account segment of its own name — so a launch whose credential cannot be resolved is refused instead of started on a job that may not be able to serve it. Fix what the message names, or keep this repository on its own per-repository job (a workflow that is not `checkout: clone` keeps the job it has always had). Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called",
 		repo, why)
 }

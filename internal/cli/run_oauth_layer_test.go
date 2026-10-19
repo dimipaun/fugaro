@@ -149,10 +149,9 @@ func TestSharedJobRefusalUsesTheLayerTheRunCarries(t *testing.T) {
 // OAuth one, and the job it would land on holds no account's token to serve it
 // with; a run that cannot be judged must not be launched on a guess.
 //
-// The credential here is the checkout's fugaro.yaml, read again for the
-// launch's own resolution (embedProjectLayer's read is the command's first):
-// the second read fails, so the launcher cannot tell what auth the run
-// resolves to.
+// The credential here is the fugaro.yaml at the ref the run checks out, which
+// the launcher reads for its own resolution: the read fails, so it cannot tell
+// what auth the run resolves to.
 //
 // Mutation (run, restore): return "" from projectJobAgentAuth's read failure
 // instead of refusing — the launch takes the claim, mints a budget token and
@@ -164,15 +163,10 @@ func TestSharedJobRefusalWhenTheCredentialCannotBeResolved(t *testing.T) {
 	publishedLayer(t, f.cloudFixture, strings.Replace(projectJobOAuthLayer, "auth: oauth", "auth: api-key", 1))
 	projectJobCheckoutYAML(t, projectJobAnchoredRepoYAML)
 
-	read := readCheckoutFugaroYAML
-	t.Cleanup(func() { readCheckoutFugaroYAML = read })
-	calls := 0
-	readCheckoutFugaroYAML = func(path string) ([]byte, error) {
-		calls++
-		if calls > 1 {
-			return nil, errors.New("permission denied")
-		}
-		return read(path)
+	read := readFugaroYAMLAtRef
+	t.Cleanup(func() { readFugaroYAMLAtRef = read })
+	readFugaroYAMLAtRef = func(context.Context, string, string) ([]byte, error) {
+		return nil, errors.New("permission denied")
 	}
 
 	claimed := false
