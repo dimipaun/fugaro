@@ -241,7 +241,9 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 
 	// The BY column: the notes say watch and runs ls name each run's launcher
 	// under it, and watch's own plain frame is where the column's name is
-	// written — the header a reader sees, not a word in these notes.
+	// written — the header a reader sees, not a word in these notes. runs ls'
+	// own header is a literal in internal/cli (runs_test.go's header check), so
+	// watch's rendered frame is the half a test can read without restating it.
 	if !names("BY column") {
 		t.Errorf("%s no longer says the launcher is shown in a BY column", releaseNotesV090)
 	}
