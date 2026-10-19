@@ -146,9 +146,10 @@ func releaseNotesStepPlace(step string) bool {
 // projectpolicy.VersionSince; delete the sealed token's object name from the
 // first bullet; drop a step's `**Per installation**` label; add two bullets so
 // the file carries eight; write a section as `## Known limits`; rename Check 60
-// in the limits; drop the `fugaro managed flag` sentence; and rewrite the
-// project-export limit into a description of the command, each of which fails
-// here.
+// in the limits; drop the `fugaro managed flag` sentence; rewrite the
+// project-export, provision-batch and scoped-role limits into descriptions of
+// the commands; and replace the base image's pin with the copy it stopped being
+// — each of which fails here.
 func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 	notes := readReleaseNotesV090(t)
 
@@ -202,6 +203,23 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		}
 	}
 
+	// The images: this release's base is pinned, not copied, and the sentence
+	// that said otherwise is one an earlier draft of these notes carried. The
+	// base image stopped being copied before 0.9.0 — docs/release.md states it
+	// in bold ("The base image is not copied any more") and internal/cli's
+	// refresh resolves the release's `-pinned` tag, verifies the cosign
+	// signature and pins the digest the installation's own remote repository
+	// serves — so an operator step that describes a copy sends the reader to a
+	// billable build that no longer happens.
+	if !strings.Contains(notes, "`-pinned` tag") || !strings.Contains(notes, "nothing is copied") {
+		t.Errorf("%s does not describe what `fugaro image refresh` does with the base image: it resolves this release's `-pinned` tag, verifies the cosign signature and pins the digest the installation's remote repository serves (nothing is copied, and nothing is pushed)", releaseNotesV090)
+	}
+	for _, absent := range []string{"copies this release's base image", "copies the base image", "copy of the base image"} {
+		if strings.Contains(notes, absent) {
+			t.Errorf("%s says %q: the base image is not copied any more (docs/release.md, internal/cli/image_refresh.go), so the notes may not describe a copy", releaseNotesV090, absent)
+		}
+	}
+
 	// The known limits: the checks this release cannot run, and the three
 	// things it deliberately does not claim. Each is a sentence a reader
 	// relies on, so the wording that says it is pinned rather than the shape:
@@ -234,5 +252,56 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 				t.Errorf("%s carries %q in a bullet: docs/releases/README.md asks for what a user can do now, not the commit titles the changelog already holds", releaseNotesV090, prefix)
 			}
 		}
+	}
+}
+
+// releaseFilesDir is the directory of Highlights files whose format
+// docs/releases/README.md states, and which the website's changelog page reads.
+const releaseFilesDir = "../../docs/releases"
+
+// TestReleaseFilesCarryNoMarkdownLinks holds every release file to the
+// renderer's contract: `website/src/components/Changelog.astro`'s inline()
+// renders “ `code` “ and `**bold**` and nothing else — "The files carry no
+// link, no image and no other construct — the generator hands the lines over as
+// written" — so a markdown link in a release file is printed as its own literal
+// text on the changelog page, and the repository-relative path it carries
+// resolves nowhere in the GitHub release body either. No gate catches it: the
+// site's link checker scans built HTML for hrefs (raw markdown produces none)
+// and its changelog check asserts only that a rendered line is the file's own
+// text verbatim. The rule is over the directory rather than over v0.9.0.md
+// because the property is the format's — v0.9.0.md was the first release file to
+// carry a link, and it is the only one that has. `README.md` is skipped by name,
+// the way the site's own check skips it: the format document is where the
+// documents a release may name are linked.
+//
+// Mutation (verified, planted and reverted): put
+// `[docs/project-layer.md](../project-layer.md)` back into the 0.9.0 notes'
+// known limits — the link this test was written for.
+func TestReleaseFilesCarryNoMarkdownLinks(t *testing.T) {
+	entries, err := os.ReadDir(releaseFilesDir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", releaseFilesDir, err)
+	}
+	files := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".md") || name == "README.md" {
+			continue
+		}
+		files++
+		data, err := os.ReadFile(releaseFilesDir + "/" + name)
+		if err != nil {
+			t.Fatalf("reading %s/%s: %v", releaseFilesDir, name, err)
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			if !strings.Contains(line, "](") && !strings.Contains(line, "![") {
+				continue
+			}
+			t.Errorf("%s/%s:%d carries a markdown link or image (%q): the changelog page renders a release file's lines as they are written — `code` and **bold** only, per website/src/components/Changelog.astro's inline() — so a link is printed as its literal text there and resolves nowhere in the release body; name the document in prose or in a `code` span instead",
+				releaseFilesDir, name, i+1, strings.TrimSpace(line))
+		}
+	}
+	if files == 0 {
+		t.Errorf("%s holds no release file: the enumeration is broken, and a rule over no files is not a rule", releaseFilesDir)
 	}
 }
