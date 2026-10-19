@@ -180,6 +180,45 @@ func TestDocsCheck82PlanLineNumbersPointAtTheActLines(t *testing.T) {
 	}
 }
 
+// TestDocsCheck82RulesDeployComesBeforeTheMarker: check 82's preamble said the
+// generated document is put on the database "as the last write of its database
+// step", and that is the reverse of what the step does. `DB.Plan` appends the
+// rules action and then the marker's `PutIfMatch` (internal/infra/firebasedb.go),
+// and `Apply` writes them in that order -- which is what makes the marker's
+// presence a statement about the document underneath it, the property step 3
+// and the "what a step failed before the deploy leaves behind" paragraph are
+// both written against. The review of PR #580 found the preamble teaching the
+// reverse. The order is read out of the file here, so a plan that changed it
+// fails this test until the sentence is rewritten with it.
+func TestDocsCheck82RulesDeployComesBeforeTheMarker(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 82:")
+
+	if strings.Contains(section, "last write of its database step") {
+		t.Errorf("## Check 82: the preamble still says the rules deploy is the last write of the database step: the marker is, and the sentence would have the owner read a missing marker as a deploy that landed")
+	}
+	for _, want := range []string{
+		"the write **immediately before the generation marker**",
+		"the marker is written **after** the rules",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("## Check 82: the preamble does not say %q: `DB.Plan` appends the rules action and then the marker's `PutIfMatch`, and the marker being last is what makes its presence a statement about the deployed document", want)
+		}
+	}
+
+	// The order the sentence describes, read out of the file it names.
+	src := readSrc(t, "../infra/firebasedb.go")
+	rules := strings.Index(src, `Path: "rules"`)
+	marker := strings.Index(src, "d.put(projectpolicy.PathRulesMarker()")
+	if rules < 0 || marker < 0 {
+		t.Fatalf("internal/infra/firebasedb.go no longer plans the rules action and the marker (got %d and %d): check 82's account of the deploy order is written against them", rules, marker)
+	}
+	if rules > marker {
+		t.Errorf("DB.Plan plans the marker write (%d) before the rules action (%d): check 82's preamble says the marker is written after the rules, and this test holds the sentence to the code -- if the order really changed, rewrite the sentence with it", marker, rules)
+	}
+}
+
 // TestDocsCheck82PrintVarsKeys: check 82 step 2 tells the owner to read the
 // resolved Firebase project and the region out of `init --firebase
 // --print-vars`. That output is one JSON object, `{"installation": ...,
@@ -660,7 +699,11 @@ func TestDocsCheck81RestoreUsesTheFirebaseProject(t *testing.T) {
 // review of PR #580 found that its FACT line asks for bodies too ("the first
 // thirteen are 200, with the body being whatever that node holds ... and the
 // second twenty-one are 401 with `Permission denied`"): the two columns are
-// read through TOK as well, and no form of the helper discards a body.
+// read through TOK as well, and no form of the helper discards a body. The
+// same review found step 2's positive write -- a bare `curl -sS -X PUT` whose
+// FACT line asks for "the response body ... and the status, 200" -- so step 2
+// goes through TOK and the test holds every `?auth=` call in the section to
+// it, not only the steps whose FACT lines it reads.
 func TestDocsCheck81TokKeepsTheBody(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
@@ -684,6 +727,7 @@ func TestDocsCheck81TokKeepsTheBody(t *testing.T) {
 	}
 
 	steps := []struct{ from, to string }{
+		{"2. **The fence's positive half", "3. **The fence's negative half"},
 		{"3. **The fence's negative half", "4. **The user reads"},
 		{"4. **The user reads", "5. **The user's second write"},
 		{"5. **The user's second write", "6. **The granted read nodes"},
@@ -712,6 +756,33 @@ func TestDocsCheck81TokKeepsTheBody(t *testing.T) {
 			t.Errorf("check 81 %s: its FACT lines ask for the bodies and the step calls no `TOK`: the bodies cannot be recorded", st.from)
 		}
 	}
+	// Every rules-facing call in the section goes through TOK, not only the
+	// steps whose FACT lines were read above: a call carrying `?auth=` is
+	// answered by the deployed rules, and the check reads each of them as a
+	// status **with** the body it answered with. Step 2's first write was a
+	// bare `curl -sS -X PUT` -- the body, no status -- while its FACT line
+	// asks for "the response body ... and the status, 200"; the review of
+	// PR #580 found it, and the loop above could not see it, because step 2's
+	// later lines are TOK calls and the step therefore did call TOK. The
+	// helper block's own comment states the rule ("Every call this check
+	// makes with `?auth=` ... goes through it").
+	for _, st := range steps {
+		fenced := false
+		for _, line := range strings.Split(stepText(t, section, st.from, st.to), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "```") {
+				fenced = !fenced
+				continue
+			}
+			if !fenced || !strings.Contains(line, "?auth=$") {
+				continue
+			}
+			if strings.HasPrefix(strings.TrimSpace(line), "TOK ") || strings.Contains(line, "$(TOK ") {
+				continue
+			}
+			t.Errorf("check 81 %s: this rules-facing call does not go through `TOK`:\n%s\nits status is not printed, and the step's FACT lines read every one of these calls as a status with the body it answered with", st.from, strings.TrimSpace(line))
+		}
+	}
+
 	// No form of the helper may throw a body away: step 6's FACT asks for the
 	// bodies its two columns answer with (the node's value, or `null`), so a
 	// status-only helper here is a FACT line the owner cannot fill in.

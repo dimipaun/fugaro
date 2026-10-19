@@ -4373,12 +4373,13 @@ p += '=' * (-len(p) % 4)
 print(json.dumps(json.loads(base64.urlsafe_b64decode(p)), indent=2, sort_keys=True))
 PY
 }
-# TOK keeps the body and puts the status on a line of its own. Every step whose
-# FACT line asks for a body goes through it: steps 3, 4, 5 and 7, whose
-# refusals are read as the status **with** the refused body ("Permission
-# denied"), and step 6, whose columns are the status of each read **and** the
-# body it answered with (the node's own value, or `null` for an absent one).
-# There is one helper, and no form of it throws the body away.
+# TOK keeps the body and puts the status on a line of its own. Every call this
+# check makes with `?auth=` -- the rules-facing ones -- goes through it,
+# because every one of them is read as a status **with** the body it answered
+# with: step 2's write (200 and the message it holds), the refusals of steps
+# 3, 4, 5 and 7 (`Permission denied`), and step 6's columns (the node's own
+# value, or `null` for an absent one). There is one helper, and no form of it
+# throws the body away.
 TOK() { curl -sS -w '\nHTTP %{http_code}\n' "$@"; }
 ```
 
@@ -4394,7 +4395,7 @@ TOK() { curl -sS -w '\nHTTP %{http_code}\n' "$@"; }
 
    ```bash
    MSG=$(printf 'chk81-%s' "$(date +%s)")
-   curl -sS -X PUT "https://$DB/mailbox/$ALICE/inbox/$MSG.json?auth=$AL" -H 'Content-Type: application/json' \
+   TOK -X PUT "https://$DB/mailbox/$ALICE/inbox/$MSG.json?auth=$AL" -H 'Content-Type: application/json' \
      -d "{\"id\":\"$MSG\",\"sender\":\"$ALICE\",\"text\":\"check 81 step 2\",\"at\":$(date +%s000)}"
    # The same PUT again: the write is once-only (`!data.exists()`) -- 401.
    TOK -X PUT "https://$DB/mailbox/$ALICE/inbox/$MSG.json?auth=$AL" -H 'Content-Type: application/json' \
@@ -4568,11 +4569,11 @@ rmdir "$W" 2>/dev/null || true   # and the 700 directory itself goes
 
 ## Check 82: the rules deploy and the marker — `config/limits/policyRules` reads back this release's `RulesVersion` (`fugaro-dev` only, never `belong`; run by you; NOT RUN)
 
-The rules are a **generated artifact** of the CLI, not a file anyone edits: `internal/budget/rules`'s `Generate()` renders `rules.json.tmpl` with `rules.go`'s macros, `internal/budget/rules/testdata/rules.golden.json` (42687 bytes) pins the output, and `TestRulesParity`/`TestRulesGolden`/`TestGeneratedRulesParse` keep the three from drifting. The only path that puts that document on a database is **`fugaro init --firebase`**, as the last write of its database step (`internal/infra`'s `DB.Plan` and `Apply`; docs/gcp-setup.md, "Deploying the rules is an owner step, and it comes after the CLI"). This check is that deploy and the generation it records: `internal/projectpolicy`'s `RulesVersion` (**2** on this release — generation 1 is the policy nodes, generation 2 adds the mailbox), recorded at `projectpolicy.PathRulesMarker()` = `config/limits/policyRules`, which is the generation **check 81's denial cases and P2.2's emulator cases are written against**. A binary whose `RulesVersion` is not 2 would deploy a different document; `internal/cli`'s test for this section ties the number written here to that constant, so a bump breaks the test and the check is rewritten with it.
+The rules are a **generated artifact** of the CLI, not a file anyone edits: `internal/budget/rules`'s `Generate()` renders `rules.json.tmpl` with `rules.go`'s macros, `internal/budget/rules/testdata/rules.golden.json` (42687 bytes) pins the output, and `TestRulesParity`/`TestRulesGolden`/`TestGeneratedRulesParse` keep the three from drifting. The only path that puts that document on a database is **`fugaro init --firebase`**, and the deploy is the write **immediately before the generation marker**: the marker is written **after** the rules, never before (`internal/infra`'s `DB.Plan` and `Apply` — `firebasedb.go` appends the `PutRules` action and then the marker's `PutIfMatch`; docs/gcp-setup.md, "Deploying the rules is an owner step, and it comes after the CLI"). This check is that deploy and the generation it records: `internal/projectpolicy`'s `RulesVersion` (**2** on this release — generation 1 is the policy nodes, generation 2 adds the mailbox), recorded at `projectpolicy.PathRulesMarker()` = `config/limits/policyRules`, which is the generation **check 81's denial cases and P2.2's emulator cases are written against**. A binary whose `RulesVersion` is not 2 would deploy a different document; `internal/cli`'s test for this section ties the number written here to that constant, so a bump breaks the test and the check is rewritten with it.
 
 **No agent applies rules.** The database step asks for the project's name typed at a real terminal, and a coding-agent session cannot confirm it whatever flags it passes (`internal/cli`'s `askOrdinary`: an agent session raises `initflow.AgentError` before anything is shown), so this step is yours alone; nothing here is a CI job and no agent's session is one. **`--yes` is the owner's own shortcut, not an agent's**: `ask` does take it for an ordinary step (the step prints `confirmed by --yes`), which is why this check says what to do — read the plan and type the name — rather than claiming the CLI refuses it.
 
-**What changes in the project, and its cost.** One `fugaro init --firebase` run: **one rules deploy** of about 42 KB and, at most, the marker write beside it. The database step lists every write before it makes any, and
+**What changes in the project, and its cost.** One `fugaro init --firebase` run: **one rules deploy** of about 42 KB and, at most, the marker write after it. The database step lists every write before it makes any, and
 - on an installation whose rules already match this binary's document, it plans **no** rules write and prints `The database already has the rules, mark, project name and mode.` (the database step's own line for a settled database — not a Terraform root's `No changes`, which is `applyRoot`'s for an empty plan) — but it **still writes the marker** when the node is absent or holds another generation (`DB.Plan`: the marker write is planned whenever `!markerFound || markerGen != projectpolicy.RulesVersion`, because a database whose rules were deployed before this code existed still has to record which generation it runs), and
 - the rest of the database step (the Fugaro mark, `fugaro/project`, `config/mode`, `config/limits/maxReserveMicros`) is planned only for the fields that are absent or different, so on a settled installation the run is the marker alone under one confirmation.
 
