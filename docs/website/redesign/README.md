@@ -76,7 +76,7 @@ deliberately, with their tests, as the owner's ruling of 2026-10-18 requires.
 The owner accepted every recommendation of D180 to D192, as written in `reconciliation.md`:
 
 - **D180** the accent is the logo's hue, `#17A8E6`, as a fourth palette file; **D181** the warning colour moves to amber `#F5A524`.
-- **D182** the menu is three groups of three (Product, Reference, Project), a drawer on mobile.
+- **D182** the menu is three groups of three (Product, Reference, Project), a drawer on mobile — **amended on 2026-10-19 by the owner's brief (item 1): the three group labels ARE the menu on a phone, and the drawer and its one toggle are retired** (see "The 2026-10-19 brief" below). What D182 decided about the *groups* stands: three groups of three, Home as the wordmark, Privacy in the footer.
 - **D183** the JavaScript is one first-party file, `website/public/scripts/site.js`; no inline script, no CSP edit.
 - **D184** the homepage animation shows the README's documented sequence, held to the file at build time, captioned as the documented sequence.
 - **D185** How It Works uses the brief's four steps, each captioned by a quoted line.
@@ -503,3 +503,89 @@ here goes stale the way the byte budgets did before D192.
   heaviest page renders neither the flow nor the install section. Whether the page then *looks*
   right is the owner's check (70a–70c, D190), and
   no screenshot is committed here: this run cannot see one either.
+
+## The 2026-10-19 brief: the phone's menu and the console in the call to action
+
+The owner's brief of **2026-10-19** asks for two changes to the built site — its item 1 and
+its item 6 — and they are implemented in this branch's pull request, one commit each. Every
+reading the brief does not spell out is recorded here, the way items 2, 3 and 4's readings
+are recorded above, so that a later reader of the site does not have to guess them from the
+markup. **The list is not counted**: each round adds bullets to it, and a number written here
+goes stale the way the byte budgets did before D192.
+
+- **The three group labels ARE the menu on a phone (item 1), and D182's drawer is retired.**
+  Below the width where the nav collapsed, the whole menu sat behind one `Menu` toggle: the
+  three groups were two taps away, and the first tap told a reader nothing about what was in
+  them. The toggle, the panel it opened and the sibling combinator that showed it are gone.
+  The three group labels stand in the header's row at **every** width, each one a
+  `<details>`/`<summary>` that opens its own list of links — a panel across the header's own
+  width on a phone, and the same list as a dropdown under its label from 48 rem up. The
+  `name` attribute is shared by the three, so the browser keeps the set exclusive: opening a
+  group closes its siblings, which is the one-menu-at-a-time behaviour the toggle used to
+  provide by hand. **D182's group decision is untouched** — three groups of three, Home as
+  the wordmark, Privacy in the footer — and what changed is only what a phone *does* with
+  them. `site.js` loses the branch it kept for the panel (`holds()` no longer looks for a
+  sibling), and with it the only reason the script had to know where the panel was.
+- **The wordmark's text leaves the header row below 390 px, and the mark stays (item 1).**
+  The owner's ruling is "hide the wordmark TEXT below about 380px (keep the logo mark)", and
+  the number is **390 px** because the row is measured rather than estimated: at 381 px the
+  wordmark's text plus the three labels is a few pixels wider than the header's content box
+  in the font the built site actually falls back to, and the row that does not fit is a row
+  that scrolls sideways. The text is hidden the way a visually-hidden label is — absolutely
+  positioned, one pixel, clipped — and **not** with `display: none` or `visibility: hidden`:
+  the wordmark is the link home, and a link whose accessible name is thrown away is a link a
+  screen reader announces as nothing. `website/test/base-styles.mjs` refuses a rule that
+  removes the text any other way, and refuses one that takes the mark out with it.
+- **A label and every link in a panel are at least 44 px tall, at every width.** The brief
+  asks the menu to be measured against a 44 px tap target, and the labels and the wide
+  dropdown's links were both shorter than that, so the rule is on the two of them and on
+  every width rather than on the phone alone. **The header grew with it, 65 px → 77 px**, and
+  a wide dropdown 114 px → 150 px: that is a change the brief's acceptance asks for and not a
+  side effect nobody noticed, and it is why the row's fit is measured again at every width
+  rather than assumed from the widths the header used to need.
+- **The console is the call to action's third link, and the flag is what renders it (item
+  6).** The homepage's hero action row carries a quiet link to `/console/`, labelled `Desktop
+  console` — the name Getting Started's console option already gives it — and it renders
+  **only** while `site.yaml`'s `features.console_downloads` is true. Nothing about the
+  console renders while it is false: no link, no sentence, no placeholder. That is item 6's
+  "findable" read the way the rest of the console's offering is read (structural rather than
+  editorial): the way *to* the console is what the hero names, and the URL a reader downloads
+  from stays derived from the release in one reader
+  (`src/lib/console-downloads.mjs`, Global Constraint 9) — a download URL typed into the hero
+  would be the second spelling of a URL that boundary test exists to refuse. The link points
+  at `/console/` rather than at a release asset because the console page is where the
+  downloads are *and* where the console is explained, and a reader who does not know what the
+  console is needs the second thing first.
+- **What the two changes cost, and what they do not.** The menu's removal takes 278 bytes off
+  the base stylesheet every page inlines and 181 off `site.js` — so 459 off the page figure
+  and 3,239 off the site's — and those three figures are re-derived in the commit that ships
+  them (D192, above). **The console's link moves no byte figure and no word ceiling**: while
+  the flag is false it renders nothing, so the build the figures are derived from is the same
+  build; and the flag-on state it produces is held by the budget gate run over that build
+  (`console-option.mjs`'s `FUGARO_GATES_DIST` run), which is where the homepage's two extra
+  words meet D188's ceilings. No new origin, no CSP change, no inline script and no second
+  script file (D183): the menu's script work shrank.
+- **The gates, and their proofs.** `website/test/base-styles.mjs`'s two nav gates are
+  rewritten for the menu that is (`navLayoutFailures`: the three labels in one row at both
+  widths, the header one row with the list out of its flow, a phone's row fitting, and an
+  open that moves nothing; `navFailures`: the markup's own shape, with the toggle, the panel
+  and the drawer refused by name), and each rule keeps a case that plants the defect and reads
+  the refusal back. `website/test/nav-hover.mjs`'s phone case is rewritten to the behaviour
+  that replaced the toggle — the labels are drawn with nothing in front of them, a pointer
+  that does not hover opens nothing, and a tap opens the group — and `website/test/copy.mjs`'s
+  stub DOM loses the panel and the drawer branch it carried for the old markup.
+  `website/test/home.mjs` holds the flag-off half of item 6 — the hero's row is exactly the
+  two links it carried before, and it mentions the console nowhere — and
+  `website/test/console-option.mjs` holds the flag-on half over its flipped copy: the row
+  gains `Desktop console` → `/console/` and the two links a reader met before the release are
+  the two they meet after it. **Every one was mutation-proved by hand**: the flag gate removed
+  from the hero, the console link deleted, a `display: none` on the wordmark's text, a label
+  with no `min-height`, a panel left in front of the labels, and a group's list hidden by a
+  rule, each planted, seen to fail the case that names it, and removed.
+- **The measurements, and the check that is still the owner's.** The built site was rendered
+  in a headless Chromium at **1280, 768, 375 and 320 px**: the header is one row at each, 77
+  px tall, the three labels and every link in a panel are 44 px tall, nothing scrolls
+  sideways, every group opens by tap and by keyboard, and at 375 px the three labels are 65,
+  83.5 and 59.3 px wide beside the 47 px mark. That is a measurement of the built artifact,
+  not a look at it: **whether the page then looks right is the owner's check (70a–70c, D190)**,
+  and no screenshot is committed here — this run cannot see one either.

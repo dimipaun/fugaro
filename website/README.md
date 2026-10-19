@@ -478,15 +478,20 @@ file therefore carries the release's *published names* rather than a URL: `relea
 (`console-vX.Y.Z`, cut from the CLI's own `vX.Y.Z` tag) and from `site.yaml`'s `repository` —
 that module is the one reader of the file, and each page renders what it returns.
 
-Two pages offer the console from those facts: the console page's own Downloads section (W1.6)
-and Getting Started's console option, beside the CLI (the owner's changes spec of 2026-10-18,
-item 6). In both, the unreleased state is **structural rather than editorial**: the download
-list is rendered from `available`'s branch and nothing else, so an unreleased console has no
-link to follow even though its assets' names are already in the data file — and the option's
-only link is the way to `/console/`. `website/test/console.mjs` holds the console page to that,
-and `website/test/console-option.mjs` holds Getting Started to it in **both** states: the
-shipped one, read off the built page, and the released one, read off a build of a copy with the
-flag flipped. That second case also runs the budget gate over the flag-on build
+Three places offer the console from those facts: the console page's own Downloads section
+(W1.6), Getting Started's console option beside the CLI (the owner's changes spec of
+2026-10-18, item 6), and the homepage's call to action (the owner's brief of 2026-10-19, item
+6: the hero action row carries a `Desktop console` link to `/console/`, and nothing about the
+console at all, rendered from `features.console_downloads`). In all three, the unreleased state
+is **structural rather than editorial**: the download list is rendered from `available`'s
+branch and nothing else, and the hero's link is rendered from the flag, so an unreleased
+console has no link to follow even though its assets' names are already in the data file — and
+the option's only link is the way to `/console/`, which is where the hero's link goes too.
+`website/test/console.mjs` holds the console page to that, `website/test/home.mjs` holds the
+homepage's call to action to the flag-off half (the row is exactly the two links it carried
+before, and mentions the console nowhere), and `website/test/console-option.mjs` holds Getting
+Started to it in **both** states: the shipped one, read off the built page, and the released
+one, read off a build of a copy with the flag flipped. That second case also runs the budget gate over the flag-on build
 (`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started sits at
 D188's 250-word ceiling — the owner's flip has to be the whole change and may not be the change
 that breaks the ceiling. A data file that says the console has shipped while the flag says it
