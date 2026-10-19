@@ -64,13 +64,28 @@ package cli
 //	| the keyless claim dropped from the release.yml sentence | TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape |
 //	| "not staged and not created" softened to "it is planned" | TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape |
 //	| "Exactly one protected environment exists in this repository today" broadened to a plural | TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape |
+//	| `console-release` dropped from the environment table | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
+//	| the derived count sentence changed from "two" to "one" | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
+//	| the derived ordinal changed from "third" to "second" | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
+//	| a third workflow given `environment: mobile-release` | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
+//	| the environment reader changed from a YAML parse to a text scan | TestRepositoryEnvironmentsComeFromJobsNotComments |
+//	| the shared-package reader made to return nothing | TestCISharedPackageJobsFindsAPlantedJob |
+//	| "approved on 2026-10-18" dropped from the Phase 6 sentence | TestDocsMobileEasRunbookKeepsPhase6Approved |
+//	| "proposed and NOT APPROVED" planted again | TestDocsMobileEasRunbookKeepsPhase6Approved |
+//	| P4.3's job put back in the present tense | TestDocsMobileEasRunbookSaysP4Dot3IsStagedNotRunning |
 
 import (
+	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const mobileEasRunbook = "docs/mobile/eas-signing-runbook.md"
@@ -222,34 +237,386 @@ func TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape(t *t
 			t.Errorf("%s says %q: the build must not run on a pull request", mobileEasRunbook, banned)
 		}
 	}
-	// The precedent claim, and the two corrections it now carries. An earlier
-	// revision said this repository already runs a signing workflow that reads
-	// its secrets from a protected environment and called the console's signing
-	// file a second instance of it: neither is true of the tree. Exactly one
-	// environment exists (website-live, in website-promote.yml, holding
-	// variables and no secret), release.yml signs keyless with no environment at
-	// all, and console-release.yml is planned and not staged.
-	for _, want := range []string{
-		"Exactly one protected environment exists in this repository today",
-		"not staged and not created",
-		"keyless",
-	} {
-		if !strings.Contains(doc, want) {
-			t.Errorf("%s does not say %q: the repository-side precedent has to be what the tree has, not what a plan proposes", mobileEasRunbook, want)
-		}
-	}
+	// The precedent claim, read off the tree rather than written from memory.
+	// An earlier revision of this page said exactly one protected environment
+	// existed, that `release.yml` was the repository's signing workflow reading
+	// its secrets through one, and that the console's `console-release.yml` was
+	// "not staged and not created" -- all three false once the console's
+	// signing pipeline landed. The environment set is now *derived* from the
+	// workflow files by TestDocsMobileEasRunbookNamesEveryProtectedEnvironment,
+	// so this test only has to refuse the stale sentences.
 	for _, banned := range []string{
 		"the signing workflow it does have takes its secrets through a protected environment",
 		"the same mechanism the other two owner-only paths",
+		"Exactly one protected environment exists in this repository today",
+		"is not staged and not created",
 	} {
 		if strings.Contains(doc, banned) {
-			t.Errorf("%s says %q: this repository has one deployed environment and no signing workflow that reads one", mobileEasRunbook, banned)
+			t.Errorf("%s says %q: the precedent has to be the tree's, and the environment names are derived by TestDocsMobileEasRunbookNamesEveryProtectedEnvironment", mobileEasRunbook, banned)
 		}
 	}
 	// §9's deployment-branch policy and §10's trigger are one decision: an
 	// environment restricted to tags is unreachable from a dispatch on main.
 	if !strings.Contains(doc, "the policy must name `main` as well") {
 		t.Errorf("%s does not tie the deployment-branch policy to the trigger: a `v*`-only environment cannot be reached by a workflow dispatched from main", mobileEasRunbook)
+	}
+}
+
+// workflowEnvironmentDirs are the directories a protected environment can be
+// declared in: the workflows GitHub runs, and docs/pending-workflows/, where a
+// staged file is the real file's own twin (the console's two keep theirs after
+// the copy-in). Both are read, so a staged copy cannot hide an environment.
+var workflowEnvironmentDirs = []string{".github/workflows", "docs/pending-workflows"}
+
+// environmentsInDirs reads every `*.yml` under dirs and returns, per
+// environment name, the files whose **jobs** declare it: `environment: name`,
+// or the long form `environment: {name: ...}`. It reads the parsed YAML, not
+// the text, so a mention inside a comment -- and both workflows here document
+// their environments in their headers -- is not an environment. The parse is
+// what makes the assertion below evidence about the repository rather than a
+// second copy of a sentence.
+func environmentsInDirs(t *testing.T, dirs []string) map[string][]string {
+	t.Helper()
+	found := map[string][]string{}
+	files := 0
+	for _, dir := range dirs {
+		base := dir
+		if !filepath.IsAbs(dir) {
+			base = filepath.Join("..", "..", dir)
+		}
+		entries, err := os.ReadDir(base)
+		if err != nil {
+			t.Fatalf("%s cannot be read: %v -- this test reads the workflow files, not a comment about them", dir, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yml") {
+				continue
+			}
+			rel := filepath.Join(dir, entry.Name())
+			text, err := os.ReadFile(filepath.Join(base, entry.Name()))
+			if err != nil {
+				t.Fatalf("%s cannot be read: %v", rel, err)
+			}
+			files++
+			var wf struct {
+				Jobs map[string]struct {
+					Environment any `yaml:"environment"`
+				} `yaml:"jobs"`
+			}
+			if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
+				t.Fatalf("%s is not valid YAML: %v", rel, err)
+			}
+			for _, job := range wf.Jobs {
+				var name string
+				switch v := job.Environment.(type) {
+				case string:
+					name = v
+				case map[string]any:
+					name, _ = v["name"].(string)
+				}
+				if name != "" {
+					found[name] = append(found[name], rel)
+				}
+			}
+		}
+	}
+	if files == 0 {
+		t.Fatalf("no workflow file was read under %v: a green run would prove nothing", dirs)
+	}
+	return found
+}
+
+func repositoryEnvironments(t *testing.T) map[string][]string {
+	t.Helper()
+	return environmentsInDirs(t, workflowEnvironmentDirs)
+}
+
+// tableRow returns the line of doc that begins with prefix, or "" if there is
+// none. §9's environment table is one row per environment, so the row's own
+// text is the unit a claim about an environment is held to.
+func tableRow(doc, prefix string) string {
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return line
+		}
+	}
+	return ""
+}
+
+// protectedEnvironmentSentence is the page's own sentence about how many
+// protected environments this repository has, written from the count the files
+// give. The page must carry this exact sentence, so an environment added or
+// removed later breaks the test until the page is corrected -- which is the
+// whole point of deriving it rather than asserting a number.
+func protectedEnvironmentSentence(n int) string {
+	if n == 1 {
+		return "**There is one protected environment in this repository today:**"
+	}
+	return fmt.Sprintf("**There are %s protected environments in this repository today:**", numberWord(n))
+}
+
+var numberWords = []string{"no", "one", "two", "three", "four", "five", "six", "seven", "eight"}
+
+func numberWord(n int) string {
+	if n >= 0 && n < len(numberWords) {
+		return numberWords[n]
+	}
+	return strconv.Itoa(n)
+}
+
+// ordinalWord is the word the page uses for the environment it proposes: the
+// one after the environments that exist.
+var ordinalWords = []string{"", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"}
+
+func ordinalWord(n int) string {
+	if n >= 0 && n < len(ordinalWords) {
+		return ordinalWords[n]
+	}
+	return strconv.Itoa(n) + "th"
+}
+
+// TestDocsMobileEasRunbookNamesEveryProtectedEnvironment derives the protected
+// environments from the repository's own workflow files and requires the
+// runbook to name each one, to state the count the files give, and to say which
+// environment it is *adding* -- the one after them. The claim cannot rot: a
+// workflow added with an `environment:` fails this test until the page names it,
+// and so does the deletion of one.
+func TestDocsMobileEasRunbookNamesEveryProtectedEnvironment(t *testing.T) {
+	doc := runbook(t)
+	// The table's rows are read raw: the normalised text above is one line, and a
+	// claim about "the row that names this environment" needs the rows.
+	raw := readDoc(t, mobileEasRunbook)
+	envs := repositoryEnvironments(t)
+	if len(envs) == 0 {
+		t.Fatal("no workflow on this tree declares an environment: the runbook's precedent claim is about these files, so this test has nothing to hold it to")
+	}
+	names := make([]string, 0, len(envs))
+	for name := range envs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		// The name has to appear as the row this page's table gives it, and the
+		// workflow that declares it has to be named **in that row**: naming the
+		// string anywhere would be satisfied by a sentence that mentions it in
+		// passing, which is how the earlier revision's claim stayed wrong while
+		// looking checked.
+		row := tableRow(raw, fmt.Sprintf("| **`%s`** |", name))
+		if row == "" {
+			t.Errorf("%s has no %q row in §9's table: every environment this repository declares gets one", mobileEasRunbook, name)
+			continue
+		}
+		for _, file := range envs[name] {
+			if !strings.Contains(row, filepath.Base(file)) {
+				t.Errorf("%s's %q row does not name %s, the file that declares it: the page's precedent is about these workflows", mobileEasRunbook, name, filepath.Base(file))
+			}
+		}
+	}
+	if want := protectedEnvironmentSentence(len(envs)); !strings.Contains(doc, want) {
+		t.Errorf("%s does not say %q (%d environments declared by %v): the count is derived from the files, not written twice",
+			mobileEasRunbook, want, len(envs), names)
+	}
+	// The environment this runbook proposes is the one after them all -- and it
+	// must not exist yet: §10 says no mobile workflow is written, so a
+	// `mobile-release` on the tree would mean this page is describing something
+	// already built.
+	if files, exists := envs["mobile-release"]; exists {
+		t.Errorf("mobile-release is declared by %s: the mobile build workflow §10 describes as not written does exist, and this page has to be rewritten as a description of it", strings.Join(files, " and "))
+	}
+	want := fmt.Sprintf("this repository's %s protected environment", ordinalWord(len(envs)+1))
+	if !strings.Contains(doc, want) {
+		t.Errorf("%s does not call mobile-release %q: the page has to say which environment it is adding, and that is derived from how many exist", mobileEasRunbook, want)
+	}
+	// What each of them gates, so naming them is not decoration.
+	for _, want := range []string{"website-promote.yml", "console-release.yml", "release.yml"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s does not name %s: the precedent is a statement about this repository's workflows, and each one it rests on has to be named", mobileEasRunbook, want)
+		}
+	}
+	if !strings.Contains(doc, "keyless") {
+		t.Errorf("%s does not say release.yml signs keyless: it is the workflow an owner would otherwise assume reads a signing secret through an environment, and it does not", mobileEasRunbook)
+	}
+}
+
+// TestRepositoryEnvironmentsComeFromJobsNotComments pins the reader above
+// against temp files, so its evidence is its own parse rather than today's
+// repository: a workflow that only *mentions* an environment in its header (as
+// both of this repository's do) declares none, the long form counts, and a job
+// with no `environment:` adds nothing.
+func TestRepositoryEnvironmentsComeFromJobsNotComments(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("documented.yml", `# This job reads its secrets from environment: commented-out
+name: documented
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'echo "# environment: also-only-a-comment"'
+`)
+	write("declaring.yml", `name: declaring
+on:
+  workflow_dispatch:
+jobs:
+  sign:
+    environment: alpha
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+  deploy:
+    environment:
+      name: beta
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+  plain:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+`)
+	found := environmentsInDirs(t, []string{dir})
+	want := map[string][]string{"alpha": {filepath.Join(dir, "declaring.yml")}, "beta": {filepath.Join(dir, "declaring.yml")}}
+	if len(found) != len(want) {
+		t.Fatalf("the reader found %v, want %v: a comment is not an environment, and neither is a job without one", found, want)
+	}
+	for name, files := range want {
+		got := found[name]
+		if len(got) != 1 || filepath.Base(got[0]) != filepath.Base(files[0]) {
+			t.Errorf("the reader found %q in %v, want %v", name, got, files)
+		}
+	}
+	for _, name := range []string{"commented-out", "also-only-a-comment"} {
+		if _, exists := found[name]; exists {
+			t.Errorf("the reader counted %q, which is only ever mentioned in a comment: a claim about this repository built that way would be a claim about its prose", name)
+		}
+	}
+}
+
+// ciSharedPackageJobs reports the jobs in a workflow that install or test the
+// shared package: a step whose `run` names `shared/`, or whose
+// `working-directory` is under it. P4.3 is the owner's task that adds one to
+// `.github/workflows/ci.yml`, and the plan's open item 4 says what its absence
+// means -- *"Until it exists, the shared package's tests run only where someone
+// runs them"*.
+func ciSharedPackageJobs(text string) []string {
+	var wf struct {
+		Jobs map[string]struct {
+			Defaults struct {
+				Run struct {
+					WorkingDirectory string `yaml:"working-directory"`
+				} `yaml:"run"`
+			} `yaml:"defaults"`
+			Steps []struct {
+				Run              string `yaml:"run"`
+				WorkingDirectory string `yaml:"working-directory"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
+		return nil
+	}
+	var jobs []string
+	namesSharedPackage := func(s string) bool {
+		trimmed := strings.TrimSpace(s)
+		return strings.Contains(trimmed, "shared/") || trimmed == "shared"
+	}
+	for name, job := range wf.Jobs {
+		if namesSharedPackage(job.Defaults.Run.WorkingDirectory) {
+			jobs = append(jobs, name)
+			continue
+		}
+		for _, step := range job.Steps {
+			if namesSharedPackage(step.Run) || namesSharedPackage(step.WorkingDirectory) {
+				jobs = append(jobs, name)
+				break
+			}
+		}
+	}
+	sort.Strings(jobs)
+	return jobs
+}
+
+// TestDocsMobileEasRunbookSaysP4Dot3IsStagedNotRunning holds the page's claim
+// about P4.3 to the file P4.3 changes: the shared package's CI job is staged
+// for the owner to copy in (PR #582) and is not running, and if
+// `.github/workflows/ci.yml` ever gains such a job this test says so rather than
+// leaving the page to say "runs only where someone runs them" about a job that
+// exists.
+func TestDocsMobileEasRunbookSaysP4Dot3IsStagedNotRunning(t *testing.T) {
+	doc := runbook(t)
+	for _, want := range []string{
+		"staged for the owner to copy in",
+		"not yet running",
+		"P4.3",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s does not say %q about P4.3's CI job", mobileEasRunbook, want)
+		}
+	}
+	for _, banned := range []string{"P4.3's job (owner-made) is the shared package's tests"} {
+		if strings.Contains(doc, banned) {
+			t.Errorf("%s says %q in the present tense: that job does not exist yet", mobileEasRunbook, banned)
+		}
+	}
+	if jobs := ciSharedPackageJobs(readDoc(t, ".github/workflows/ci.yml")); len(jobs) != 0 {
+		t.Errorf(".github/workflows/ci.yml now runs the shared package's tests in job(s) %v: P4.3 has landed, and this page's 'staged, not yet running' sentence is stale", jobs)
+	}
+}
+
+// TestDocsMobileEasRunbookKeepsPhase6Approved holds the page's status for the
+// block check 102 lives in to the plan's own: the owner approved all of Phase 6
+// on 2026-10-18 and checks 100-109 with it, so a page that still calls them
+// "proposed and NOT APPROVED" is telling the owner a task is barred that is not.
+// The plan is read here rather than trusted, so the two cannot drift apart in
+// either direction.
+func TestDocsMobileEasRunbookKeepsPhase6Approved(t *testing.T) {
+	doc := runbook(t)
+	plan := readDoc(t, "docs/mobile/implementation-plan.md")
+	if !strings.Contains(plan, "APPROVED by the owner on 2026-10-18") {
+		t.Fatalf("docs/mobile/implementation-plan.md no longer says Phase 6 was approved by the owner on 2026-10-18: this page follows the plan's status, and one of the two has moved")
+	}
+	if !strings.Contains(doc, "approved on 2026-10-18") {
+		t.Errorf("%s does not say Phase 6 was approved on 2026-10-18: check 102's block is approved (the plan's Phase 6 heading and its checks 100-109 note)", mobileEasRunbook)
+	}
+	for _, banned := range []string{"proposed and NOT APPROVED", "NOT APPROVED"} {
+		if strings.Contains(doc, banned) {
+			t.Errorf("%s says %q: the plan approved Phase 6 and checks 100-109 on 2026-10-18, and TestDocsMobilePlanPhase6IsApproved pins that", mobileEasRunbook, banned)
+		}
+	}
+}
+
+// TestCISharedPackageJobsFindsAPlantedJob is the control for the reader above:// the repository's ci.yml has no such job today, and a reader that never finds
+// one would report that whatever a later file said.
+func TestCISharedPackageJobsFindsAPlantedJob(t *testing.T) {
+	planted := `name: ci
+on:
+  push:
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - run: go test ./...
+  shared:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shared
+    steps:
+      - run: npm test
+`
+	got := ciSharedPackageJobs(planted)
+	if len(got) != 1 || got[0] != "shared" {
+		t.Errorf("the reader found %v in a workflow whose `shared` job runs npm in shared/, want [shared]", got)
+	}
+	if clean := ciSharedPackageJobs("name: ci\non:\n  push:\njobs:\n  go:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n"); len(clean) != 0 {
+		t.Errorf("the reader found %v in a Go-only workflow, want none", clean)
 	}
 }
 

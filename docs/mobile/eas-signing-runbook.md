@@ -79,12 +79,14 @@ register):**
   proved: **C8**;
 - what the app may hold, which is **not** a store credential: **D111** (exactly
   two items per account, in platform secure storage);
-- the repository-side precedent, read off the tree rather than off a plan:
-  `.github/workflows/website-promote.yml` is the **only** workflow in this
-  repository carrying an `environment:` (line 70, `website-live`), it reads
-  repository variables and no secret, and `.github/workflows/release.yml` signs
-  the CLI keyless with no environment — so a `mobile-release` environment would
-  be this repository's second, and §9 says so.
+- the repository-side precedent, read off the tree's own workflow files rather
+  than off a plan: **`.github/workflows/website-promote.yml`** carries
+  `environment: website-live` (line 70) and **`.github/workflows/console-release.yml`**
+  carries `environment: console-release` (line 203) — the two protected
+  environments this repository has, both installed and both declared on a
+  **job**, not in a comment (`.github/workflows/release.yml` signs the CLI
+  **keyless**, with no environment at all). §9 names them, says what each one
+  gates, and says which one `mobile-release` would be.
 
 **Not verified here, and to be checked at run time against the vendor's current
 documentation** (each step below names the page): every exact console **label
@@ -287,19 +289,27 @@ a stylistic preference:
   every paste.** The repository has a rule against credential-shaped literals in
   source (see §15's files), and Check 89's step 5 reads the tracked file list
   under `mobile/` for exactly the names a key file would have.
-- **A key in CI is a key any later workflow change can read.** **No workflow in
-  this repository holds a signing credential today, and none ever has.**
-  `release.yml` signs the CLI's own artifacts **keyless**: the publish job takes
-  `id-token: write` and cosign asks GitHub's OIDC issuer for a short-lived
-  certificate, so there is no signing secret anywhere in that job
-  (`.github/workflows/release.yml`; the app is outside that gate anyway, D125).
-  The one protected environment any workflow reads is **`website-live`**, in
-  `website-promote.yml`, and it holds repository **variables** — a project id, a
-  provider name, a service-account address — not secrets
-  (`.github/workflows/website-promote.yml:70`). So a store credential in a
-  mobile workflow would be **the first one this repository has ever held**, in
-  any workflow, which is why §10 puts none there and D120's ceiling is a build
-  with no store credential at all.
+- **A key in CI is a key any later workflow change can read.** This repository
+  **does** run one signing job that reads signing secrets, and it is worth
+  copying its shape and its refusals even though the mobile path needs neither:
+  `.github/workflows/console-release.yml` — the console's signing,
+  notarisation and stapling job — reaches all six Apple secrets **only** through
+  `environment: console-release` (line 203), only as `${{ secrets.NAME }}` in the
+  `env:` of the single step that signs, never at workflow or job level, never
+  on a command line, never in an action's `with:`, and with the key material
+  removed on that step's own exit. The rest of the repository's CI holds no
+  signing credential at all: `.github/workflows/release.yml` signs the CLI's own
+  artifacts **keyless** (cosign asks GitHub's OIDC issuer for a short-lived
+  certificate, so there is no signing secret anywhere in that job; the app is
+  outside that gate anyway, D125), and `.github/workflows/website-promote.yml`'s
+  `website-live` holds repository **variables** — a project id, a provider name,
+  a service-account address — and no secret, because the site's deploy
+  authenticates by Workload Identity Federation. **A store credential in a mobile
+  workflow would still be the first this repository has ever held**: Apple's six
+  are the console's own signing material, not a store credential, and no
+  workflow holds an App Store Connect **or** Play submission credential. That
+  is why §10 puts none there and D120's ceiling is a build with no store
+  credential at all.
 - **A key in an agent's environment is the thing D120 was answered against.**
   A Fugaro run's container is not a safe place for a store credential: the
   agent's egress is not restricted and it can read the token from the runner's
@@ -333,8 +343,11 @@ defect. The names, and whether CI may hold each:
 That step lists the repository's secret **names** — *the names only, never a
 value* — and asks you to record any whose name suggests a store or signing key
 and to say what it is for. EAS needs **no** credential in this repository's CI for
-Check 89: nothing here builds the app in CI, P4.3's owner-made job is the shared
-package's tests, and it holds no store credential either.
+Check 89: nothing here builds the app in CI, P4.3's CI job — **the shared
+package's tests, staged for the owner to copy in (PR #582) and not yet running**
+— holds no store credential either, and the one signing job this repository does
+run (`console-release.yml`) reads the console's own Apple material and no store
+credential at all.
 
 **FACT for §7 (owner):** whether each credential is EAS-managed or owner-held —
 which is the same question Check 89's step 2 records as the build's **credentials
@@ -384,28 +397,39 @@ files the profiles reference (`serviceAccountKeyPath`). **Never their contents.*
 ## 9. The repository settings: the protected environment
 
 The environment is the repository-side lock, and it is the owner's to create.
-**Exactly one protected environment exists in this repository today:**
-`website-live`, read by the promote job of
-`.github/workflows/website-promote.yml` (`environment: website-live`, line 70),
-whose only required reviewer is the owner and whose one-time setup is worked
-through in [../website/preview-promote.md](../website/preview-promote.md). It is
-the shape to copy, and it is **also worth reading for what it does not do**: it
-holds repository **variables**, not secrets, because the site's deploy
-authenticates by Workload Identity Federation and needs no key at all.
+**There are two protected environments in this repository today:** both are
+**declared on a job of an installed workflow** — not in a comment, not in a plan
+and not staged — and this page's precedent claim is about them and not about a
+plan:
 
-**The console's signing job is not a second one, and this page must not be read
-as though it were.** `console-release.yml` — a signing job reading a protected
-environment — is **designed and planned**
-([../design/desktop-console.md](../design/desktop-console.md) §7 and §9.4, and
-plan Task 4.2 of [../plans/2026-10-15-desktop-console.md](../plans/2026-10-15-desktop-console.md))
-but **it is not staged and not created**: `docs/pending-workflows/` holds no file
-today, and [its own README](../pending-workflows/README.md) says so in its first
-line. So `mobile-release` would be the **second** environment in this
-repository's history, not the third, and the only working precedent to copy is
-`website-live`'s. The console's plan is still the better description of *why* a
-signing job wants an environment, and §10 borrows its trigger reasoning from
-there by name — but "the console does it this way" is a statement about a plan,
-not about a running workflow.
+| Environment | The workflow that reads it | What it gates |
+|---|---|---|
+| **`website-live`** | `.github/workflows/website-promote.yml` (`environment: website-live`, line 70) | the site's **live promotion**: the job copies an already-reviewed preview channel onto the live channel. `workflow_dispatch`-only, the actor is guarded to you, and its deployment branch policy is **`main`**. It holds repository **variables** — a project id, a provider name, a service-account address — and no secret, because the deploy authenticates by Workload Identity Federation. Its one-time setup is [../website/preview-promote.md](../website/preview-promote.md). |
+| **`console-release`** | `.github/workflows/console-release.yml` (`environment: console-release`, line 203) | the desktop console's **signing, notarisation and stapling job**, on a `v*` tag push, publishing `console-vX.Y.Z`. **This is the closer precedent**: it is a signing job, and it reads its six Apple secrets only through the environment, only as `secrets.NAME` in the one step that signs. |
+
+**And two things that are not environments, because a reader will expect them to
+be.** `.github/workflows/release.yml` — the CLI's own release — declares **no**
+`environment:` at all and signs **keyless**; and `console-tests.yml`, the
+console's test workflow, holds no environment and no secret, which is why the
+console's two files are two files: the job that reads the signing material must
+never sit in the file that runs on every pull request.
+
+**So `mobile-release` would be this repository's third protected environment**,
+and the shape to copy is `console-release`'s for the lock and `website-live`'s
+for the branch policy — §10 pins which refs each trigger offers, and the policy
+has to admit them. What the EAS signing runbook itself adds is **nothing yet**:
+no mobile workflow exists (§10), the store path is owner-run at your terminal
+(§7, D120), and this section records the setting so that a staged file would
+have somewhere to read from **before** it is written rather than after.
+
+**One difference from `console-release` is deliberate and should not be lost.**
+The console's job holds Apple signing material in a protected environment
+because a console release is signed in CI. The mobile path does the opposite:
+Check 89's build and submission are yours, at your terminal, and the only
+credential a mobile workflow may ever read is `EXPO_TOKEN` for a build profile
+with **no** store credential (§10, D120's ceiling). If a store credential ever
+appears in this repository's settings, that is the finding Check 89's step 5
+exists to produce.
 
 **The name this runbook uses is `mobile-release`.** It is a proposal, and the
 owner may name it otherwise — but the name a staged workflow carries in its
@@ -466,7 +490,7 @@ have, and the reasons each line is what it is:
 
 | | |
 |---|---|
-| **Trigger** | the **`push` of a `v*` tag, and nothing else** — the app is versioned with the CLI's tag (C6), and a tag is the one ref that means "this commit is a release". If you prefer to build on demand, the alternative is **`workflow_dispatch` from `main`** with the same locks — **except for one setting: §9's deployment-branch policy must then name `main` as well as `v*`**, or GitHub refuses the deployment from a ref the environment excludes and the run never reaches the build. What the alternative costs is that a build is then not tied to a tag, so its `gitCommitHash` has to be compared to the tag by hand. **Refused either way: `pull_request`, `pull_request_target`, `workflow_run` and every scheduled trigger** — a signing job that runs on a pull request from any branch of this repository is the defect the console's plan splits its two files to prevent ([../plans/2026-10-15-desktop-console.md](../plans/2026-10-15-desktop-console.md), Task 4.2: tests and signing never share a file, because one holds a secret and one runs on every pull request), and a fork's pull request is not the only way in. |
+| **Trigger** | the **`push` of a `v*` tag, and nothing else** — the app is versioned with the CLI's tag (C6), and a tag is the one ref that means "this commit is a release". If you prefer to build on demand, the alternative is **`workflow_dispatch` from `main`** with the same locks — **except for one setting: §9's deployment-branch policy must then name `main` as well as `v*`**, or GitHub refuses the deployment from a ref the environment excludes and the run never reaches the build. What the alternative costs is that a build is then not tied to a tag, so its `gitCommitHash` has to be compared to the tag by hand. **Refused either way: `pull_request`, `pull_request_target`, `workflow_run` and every scheduled trigger** — a signing job that runs on a pull request from any branch of this repository is the defect the console's two files exist to prevent, and those two files are **installed**: `.github/workflows/console-tests.yml` runs unconditionally on every pull request and push to `main` and holds no secret, while `.github/workflows/console-release.yml` holds the signing material and runs only on a `v*` tag push. One file carrying both would put the signing job on every pull-request run, and a fork's pull request is not the only way in. |
 | **Locks** | **two**, as the website's promote job has: `environment: mobile-release` (its only required reviewer is you, §9 — and its deployment-branch policy has to admit the trigger's own ref, which the row above pins down) **and** a guard on the actor, `if: github.actor == 'dimipaun'`, so a dispatch by anybody else is skipped before a runner or an approval request exists. |
 | **What it may do** | build a **test artifact** — the store-credential-free profile of §8 — and nothing else. **Never `eas submit`.** D120's answer is explicit that *"CI at most builds a **test** artifact with no store credential"*, and that sentence is the ceiling: not a store build, not a submission, not a store credential. |
 | **Permissions** | declared explicitly and minimally, at the workflow level **and** on the job: **`permissions:`** with **`contents: read`** and nothing else — no `id-token: write`, no `packages: write`, and never `permissions: write-all`. A build job needs the checkout and a token, not a write scope over the repository. |
@@ -574,7 +598,7 @@ copy of it, which is why §7's rule is "never", not "not yet".
   multi-account switching is check **87**; and the on-device STT/TTS bake-off is
   check **85** (the plan's checks table, which is where these numbers are
   allocated). **The wake word is not in that block at all** — it is check
-  **102**, in Phase 6, which is **proposed and NOT APPROVED**. Every one of them
+  **102**, in Phase 6, which the owner **approved on 2026-10-18**. Every one of them
   needs hardware this check does not use. The register's Check 89 step 4 folds
   the wake word into "checks 85, 86 and 87", which is the same mismatch; the fix
   belongs to P4.2a in the register's own text, and until it is made this page
@@ -583,8 +607,12 @@ copy of it, which is why §7's rule is "never", not "not yet".
 - **The public release.** Not made, not attempted, not implied (C8). Nothing
   here proves a production release would work, and Google's own production-access
   rules are not exercised.
-- **CI.** **P4.3**'s job (owner-made) is the shared package's tests and holds no
-  store credential. §10's workflow is **described and does not exist**; if it is
+- **CI.** **P4.3**'s CI job — the shared package's tests — is **staged for the
+  owner to copy in** (**PR #582**) and is **not yet running**: `.github/workflows/ci.yml`
+  has no shared-package job, and the plan's open item 4 says what that means —
+  *"Until it exists, the shared package's tests run only where someone runs
+  them, and that is a real gap in this plan's coverage."* When it lands it holds
+  no store credential. §10's workflow is **described and does not exist**; if it is
   ever staged and copied in, its first tag run is what would verify it, and
   nothing before that does.
 - **The CLI's release gate.** The app is outside it (D125), and no part of this
@@ -680,9 +708,14 @@ here because **§13 must not repeat it and the register should not keep it eithe
   **86** to hands-free audio (the background mode, the microphone ask, Bluetooth
   and barge-in), and **87** to multi-account switching.
 - **The wake word is check 102** — the plan's 100–109 block, Phase 6, written as
-  *"the wake word's recognition rate on the oldest supported device"*, and that
-  whole block is **proposed and NOT APPROVED** (P6.11 is what would write it into
-  the register).
+  *"the wake word's recognition rate on the oldest supported device"*. **That
+  block is approved**: the plan's Phase 6 heading reads *"APPROVED by the owner
+  on 2026-10-18"*, its checks note reads *"Checks 100–109 (approved
+  2026-10-18)"*, and **P6.11** is the task that writes 100–104 into the
+  register. An earlier revision of this page carried the status the plan held
+  before that date — the block proposed and awaiting the owner — which was true
+  then and is not true now; the correction is dated here rather than silently
+  dropped.
 - **Check 89's step 4** (P4.2a, **PR #580**) says instead that *"the microphone
   ask, the wake word, the hands-free audio, multi-account switching"* belong to
   *"checks 85, 86 and 87"* — folding the wake word into the 80–89 block, where
@@ -690,8 +723,9 @@ here because **§13 must not repeat it and the register should not keep it eithe
 
 The plan's table is the allocation, so this runbook uses its numbers (§13), and
 **the amendment is P4.2a's, in the register's text**: the fix is to drop the wake
-word from step 4's sentence and point it at check 102 with its Phase 6 status,
-and to let the microphone ask and barge-in rest on 86. **FACT for §14 (owner):**
+word from step 4's sentence and point it at check 102 — **approved on
+2026-10-18**, and still not run — and to let the microphone ask and barge-in rest
+on 86. **FACT for §14 (owner):**
 that the register's step 4 was amended, and the commit that did it.
 
 ---
@@ -708,6 +742,7 @@ what it says, and this page paraphrases none of them as certain):
 | [reconciliation.md](reconciliation.md) | **D111**, **D120**, **D125** and the findings behind them (F24, U6) |
 | [../../mobile/app.json](../../mobile/app.json) and [../../mobile/package.json](../../mobile/package.json) | the app's Expo config and its `engines` (**P3.1**) |
 | [../../mobile/README.md](../../mobile/README.md) | what the app is, where its two secrets live, and what is not verified |
+| [../../.github/workflows/website-promote.yml](../../.github/workflows/website-promote.yml) and [../../.github/workflows/console-release.yml](../../.github/workflows/console-release.yml) | the two protected environments this repository has, read off the files themselves: `environment: website-live` (line 70) and `environment: console-release` (line 203), each declared on a job. [../../.github/workflows/release.yml](../../.github/workflows/release.yml) is there too, as the counter-example: no environment, keyless signing (§2, §9) |
 | [../pending-workflows/README.md](../pending-workflows/README.md) | how a staged workflow is copied in, and why an agent may not copy it |
 | [../website/preview-promote.md](../website/preview-promote.md) | the same owner-only shape worked through end to end for `website-live` |
 | [../../SECURITY.md](../../SECURITY.md) | the trust model and its known limits — the reason a credential does not go in an agent's environment |
