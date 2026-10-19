@@ -295,6 +295,46 @@ test('a callback that returns the material is refused as a leak', async () => {
   assert.equal(ok.ok, true);
 });
 
+test('the fence catches the material coming out, not its characters coinciding', async () => {
+  // A substring test cannot tell "the callback handed the key back" from "the
+  // callback handed back a value that happens to contain the key's characters",
+  // and a SHORT key makes the second the common case: the value P3.6's client
+  // returns from `use` is the 64-hex tag it made with that key, and a
+  // two-character key is inside such a tag more often than not. Refusing that as
+  // a leak refuses the phone's every send over a coincidence.
+  const { store } = makeStore();
+  const SHORT = 'ab';
+  await store.put('laptop', 'macKey', secret('macKey', SHORT).secret);
+  const tag = '790f123b35ca84d80b4e7517b0940b1dd1f203dcf8abfebae5952599ac90b1b6';
+  assert.equal(tag.includes(SHORT), true, 'the coincidence this test is about');
+  assert.deepEqual(await store.use('laptop', 'macKey', () => tag), { ok: true, result: tag });
+  assert.deepEqual(await store.use('laptop', 'macKey', () => ({ tag, n: 1 })), {
+    ok: true,
+    result: { tag, n: 1 },
+  });
+  // ... and the leak a short key really can have is still refused: the material
+  // itself, in a string that is not a longer word around it, in a list, under a
+  // value, and as a name.
+  for (const result of [
+    (material) => material,
+    (material) => `key: ${material}`,
+    (material) => [material],
+    (material) => ({ key: material }),
+    (material) => ({ [material]: 'the key as a name' }),
+  ]) {
+    const refused = await store.use('laptop', 'macKey', result);
+    assert.equal(refused.code, SECURE_STORE_CODES.LEAKED, String(result));
+    assert.equal(JSON.stringify(refused).includes(SHORT), false, 'the refusal carries no material');
+  }
+  // The rule for a secret long enough to be searched for is untouched: material
+  // embedded in a longer value is still a leak, whatever is around it.
+  const { store: long } = makeStore();
+  await long.put('laptop', 'macKey', secret('macKey', MAC_KEY).secret);
+  for (const value of [`key: ${MAC_KEY}`, `x${MAC_KEY}y`, `${MAC_KEY}${MAC_KEY}`]) {
+    assert.equal((await long.use('laptop', 'macKey', () => value)).code, SECURE_STORE_CODES.LEAKED);
+  }
+});
+
 test('use refuses a callback that is not a function, and reaches one item', async () => {
   const { store } = makeStore();
   await store.put('laptop', 'macKey', secret('macKey', MAC_KEY).secret);

@@ -33,7 +33,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { KIND, OUTCOME, REFUSAL, initialState, step } from '../../../shared/mailbox/index.js';
-import { REFUSALS as SCHEMA_REFUSALS, validateMessage } from '../../../shared/mailbox-schema/index.js';
+import { REFUSALS as SCHEMA_REFUSALS, validateHeartbeat, validateMessage } from '../../../shared/mailbox-schema/index.js';
 import { REASON, STATE, evaluatePresence } from '../../../shared/presence/index.js';
 import { MemorySecureStore, SecretStore, secret } from '../accounts/index.js';
 import { CLIENT_CODES, MAILBOX_TTL_MS, PRESENCE_REASON, createMailboxClient, toPresenceHeartbeat } from './client.js';
@@ -424,6 +424,31 @@ test('no unsigned write is ever attempted: without a key the store is not called
   assert.equal(JSON.stringify(await unreadable.client.send('x')).includes(MAC_KEY), false);
 });
 
+test('a pairing key short enough to turn up inside its own tag still speaks', async () => {
+  // The leak fence in P3.1's `SecretStore.use` walks what the callback returned,
+  // and this client's callback returns the tag it made with the key. A short key
+  // is inside a 64-hex tag by chance -- `ab` is, in this very record -- and a
+  // fence that read that coincidence as "the material came back out" would
+  // refuse EVERY send as `key-unreadable`, which is the store's word for a key
+  // that cannot be used at all. The fence's own test is
+  // `accounts/secure-store.test.js`'s; this is the same fact at the boundary
+  // the owner meets, where the cost of getting it wrong is a phone that cannot
+  // speak.
+  const SHORT_KEY = 'ab';
+  const h = await harness({ key: SHORT_KEY });
+  const tag = macOf({ id: 'm-1', sender: UID, text: 'run 42 finished', at: T0 }, SHORT_KEY, 'inbox');
+  assert.equal(tag.includes(SHORT_KEY), true, 'the coincidence this test is about');
+  assert.deepEqual(await h.client.send('run 42 finished'), { ok: true, id: 'm-1', at: T0 });
+  assert.equal(h.valueAt(`${INBOX}/m-1`).mac, tag, 'and the tag is the tag that key makes');
+  assertD113WriteSet(h.store, h.paths);
+  // A poll reads the consumer's reply with the same short key, so the fence
+  // cannot refuse one direction and not the other.
+  await plantOutbox(h, 'r-1', {}, { key: SHORT_KEY });
+  const report = await h.client.poll();
+  assert.deepEqual(report.spoken, ['r-1']);
+  assert.equal(report.presence.state, STATE.OFFLINE, 'an empty heartbeat node, and nothing more is claimed');
+});
+
 test('the tag is over the REDACTED text, so a secret is in neither the bytes nor the tag', async () => {
   // D118's ordering, which is why redaction is a step in `send` and not
   // something the database adapter does: what is signed is what is written.
@@ -648,12 +673,14 @@ test('the phone retries inside D118\'s 72 h, and the consumer accepts a command 
   // code rather than the prose.** `MAILBOX_TTL_MS` is D118's mailbox TTL -- the
   // owner's O5 number, 72 h -- and it is the RETENTION window the phone's retry
   // lives inside. What the consumer ACCEPTS is P1.1's per-kind window (D173): a
-  // prompt inside the prompt TTL (also 72 h, which is why this module's TTL
-  // carries `promptTtlMs`), and a command inside `windowMs` -- the 6-hour
-  // replay window, P1.1's default. The records this client writes carry no
-  // `kind`, so the consumer reads them as commands, and a retry between the two
-  // windows is still made by the phone and refused at the other end as a
-  // replay.
+  // prompt inside `promptTtlMs`, and a command inside `windowMs` -- the 6-hour
+  // replay window, P1.1's default. (The two are no relation: the prompt TTL is
+  // the CONSUMER's setting and this module has no `promptTtlMs` option at all --
+  // the client writes records with no `kind`. The `promptTtlMs` handed to P1.1
+  // below is this test's, there only to show the two numbers are not one.) The
+  // records this client writes carry no `kind`, so the consumer reads them as
+  // commands, and a retry between the two windows is still made by the phone and
+  // refused at the other end as a replay.
   const h = await harness();
   h.store.db.setFailures({ failWrites: true });
   await h.client.send('run 42 finished');
@@ -894,6 +921,27 @@ test('a message in a node named `__proto__` is read, spoken and acked like any o
   assertD113WriteSet(h.store, h.paths);
 });
 
+test('a message whose id is `acked` is a message in both directions', async () => {
+  // The template's `acked` rule is scoped to `outbox/$msg/acked`, and `$msg` is
+  // any database key -- so `acked` is a legal id for an inbox message this phone
+  // writes and for an outbox message it reads. A double that classified by
+  // suffix answered about neither, and this is that difference at the client's
+  // own boundary: the same id, written and spoken, with D113's write set intact.
+  const sent = await harness({ newId: () => 'acked' });
+  assert.deepEqual(await sent.client.send('run 42 finished'), { ok: true, id: 'acked', at: T0 });
+  assert.equal(sent.valueAt(`${INBOX}/acked`).id, 'acked', 'the message lands under its own id');
+  assertD113WriteSet(sent.store, sent.paths);
+
+  const read = await harness();
+  await plantOutbox(read, 'acked');
+  const report = await read.client.poll();
+  assert.deepEqual(report.dropped, []);
+  assert.deepEqual(report.spoken, ['acked']);
+  assert.deepEqual(read.speaker.spoken(), ['run 42 finished']);
+  assert.equal(read.valueAt(`${OUTBOX}/acked/acked`), true, 'and it is acked on its own child');
+  assertD113WriteSet(read.store, read.paths);
+});
+
 test('a tampered text, id or timestamp is dropped, never spoken and never acked', async () => {
   // The plan's tension (b) resolution: the phone verifies the tag over each
   // outbox message before it speaks a word or acks. Each tamper happens AFTER
@@ -1117,6 +1165,46 @@ test('an empty heartbeat node is offline, and garbage is offline too', async () 
   assert.equal(garbageReport.presence.reason, PRESENCE_REASON.INVALID);
   assert.equal(garbageReport.presence.state, STATE.OFFLINE);
   assert.equal(garbageReport.presence.verified, false);
+});
+
+test('a signed heartbeat P1.4 will not judge is offline for this module\'s own reason', async () => {
+  // The branch `presenceOf` called unreachable, which IS reachable -- and this
+  // is the case that reaches it. `at: 0` is **schema-legal** (`timestampField`
+  // refuses a negative integer and not zero) and P1.4 refuses it as the shape
+  // of an *unset counter*, so a heartbeat this client has already validated and
+  // verified is still a refusal one call further on.
+  //
+  // The refusal is P1.4's (`invalid-heartbeat-timestamp`) and P1.4's own README
+  // says a refusal is never coerced into a state -- neither is it one of this
+  // module's presence reasons, so handing the raw code out as `reason` answers a
+  // caller with a string neither `REASON` nor `PRESENCE_REASON` contains, which
+  // is exactly what the presence contract at the top of `client.js` promises
+  // cannot happen.
+  const h = await harness();
+  await plantHeartbeat(h, { at: 0 });
+  // The premise, held to the two modules' own code rather than to this comment.
+  assert.equal(
+    validateHeartbeat({ at: 0, boot: 'boot-0001', mac: 'a'.repeat(64) }).ok,
+    true,
+    'the schema accepts `at: 0`',
+  );
+  const judged = evaluatePresence({ heartbeat: { at: 0, bootId: 'boot-0001' }, now: h.now(), intervalMs: INTERVAL_MS });
+  assert.equal(judged.ok, false, 'P1.4 refuses it');
+  assert.equal(judged.code, 'invalid-heartbeat-timestamp');
+  // The tag verified, so the record is the orchestrator's and `verified` stays
+  // true; the state is `offline` and never `live` (fail closed).
+  assert.deepEqual((await h.client.poll()).presence, {
+    state: STATE.OFFLINE,
+    verified: true,
+    reason: PRESENCE_REASON.REFUSED,
+    agents: null,
+    ageMs: null,
+  });
+  // The reason is this module's, and every reason it can answer with is one of
+  // the two lists its contract names.
+  const reasons = new Set([...Object.values(REASON), ...Object.values(PRESENCE_REASON)]);
+  assert.equal(reasons.has(PRESENCE_REASON.REFUSED), true);
+  assert.equal(reasons.has('invalid-heartbeat-timestamp'), false, 'P1.4\'s codes are not reasons');
 });
 
 test('an unreadable heartbeat does not stop the replies, and is never live', async () => {

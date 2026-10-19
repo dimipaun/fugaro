@@ -66,6 +66,19 @@ function refuse(code, field) {
   return Object.freeze({ ok: false, code, field });
 }
 
+// isAck says whether a path is the ack node the template's rule is about. The
+// rule sits at `mailbox/$mb/outbox/$msg/acked` and NOWHERE ELSE, and `$msg` is
+// any database key -- `acked` included. So the name alone is not the question:
+// `inbox/acked` and `outbox/acked` are legal MESSAGE nodes, and a double that
+// classified by suffix would refuse a legal message write (`bad-value`) and
+// refuse to plant a legal outbox message (`no-parent`), answering about a
+// database the rules do not describe. The position is checked with the name.
+function isAck(path) {
+  const parts = path.split('/');
+  const last = parts.length - 1;
+  return parts.length >= 3 && parts[last] === 'acked' && parts[last - 2] === 'outbox';
+}
+
 // own defines a child on a container as an OWN data property, which plain
 // assignment cannot do for every legal key. `__proto__` is a legal Realtime
 // Database key -- the schema's `keyField` and this port's `isDatabaseKey` both
@@ -126,15 +139,17 @@ export class MemoryMailboxStore {
   /**
    * Write one node.
    *
-   * A write to a `.../acked` node must be exactly `true` (the template
-   * validates `newData.isBoolean() && newData.val() == true`) and must have a
-   * parent. Every other path is written as given.
+   * A write to the ack node -- `.../outbox/<msg>/acked`, the one position the
+   * template has a rule for (`isAck` above) -- must be exactly `true` (the
+   * template validates `newData.isBoolean() && newData.val() == true`) and
+   * must have a parent. Every other path is written as given, including a
+   * message whose id happens to be `acked`.
    */
   async write(path, value) {
     if (typeof path !== 'string' || path === '') return refuse(STORE_CODES.WRITE_FAILED, 'path');
     this.#writes.push(Object.freeze({ path, value }));
     if (this.#failWrites) return refuse(STORE_CODES.WRITE_FAILED, 'path');
-    if (path.endsWith('/acked')) {
+    if (isAck(path)) {
       const parent = path.slice(0, -'/acked'.length);
       if (value !== true) return refuse(STORE_CODES.BAD_VALUE, 'value');
       if (!this.#nodes.has(parent)) return refuse(STORE_CODES.NO_PARENT, 'path');

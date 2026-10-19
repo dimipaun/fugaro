@@ -101,6 +101,7 @@ require_clean() { # file
 require_clean "$F"
 require_clean mobile/src/mailbox/mac.js
 require_clean mobile/src/mailbox/store.js
+require_clean mobile/src/accounts/secure-store.js
 require_clean mobile/src/app/root.js
 
 last_outcome=""
@@ -304,6 +305,29 @@ run "an outbox record the schema refuses is dropped, not verified" \
 run "the heartbeat mapping demands the fields it maps" \
   "  if (typeof heartbeat.at !== 'number' || typeof heartbeat.boot !== 'string') {" \
   "  if (false) {"
+# 9. The three guards this round's review found: the presence reason for a
+#    heartbeat P1.4 will not judge, the double's ack at the one position the
+#    rules have a rule for, and P3.1's leak fence told apart from a coincidence.
+run "a heartbeat P1.4 refuses is reported with this module's reason" \
+  "        reason: PRESENCE_REASON.REFUSED," \
+  "        reason: state.code,"
+run "the store's ack is the one the rules have a rule for" \
+  "  return parts.length >= 3 && parts[last] === 'acked' && parts[last - 2] === 'outbox';" \
+  "  return parts[last] === 'acked';" \
+  mobile/src/mailbox/store.js src/mailbox/store.test.js
+run "the store's ack is the one the rules have a rule for (the client's own suite)" \
+  "  return parts.length >= 3 && parts[last] === 'acked' && parts[last - 2] === 'outbox';" \
+  "  return parts[last] === 'acked';" \
+  mobile/src/mailbox/store.js src/mailbox/client.test.js
+run "the leak fence searches only for material a match is evidence about" \
+  "  return material.length >= LEAK_SEARCH_MIN || delimited(text, material);" \
+  "  return true;" \
+  mobile/src/accounts/secure-store.js src/accounts/secure-store.test.js
+run "the leak fence searches only for material a match is evidence about (the client's own suite)" \
+  "  return material.length >= LEAK_SEARCH_MIN || delimited(text, material);" \
+  "  return true;" \
+  mobile/src/accounts/secure-store.js src/mailbox/client.test.js
+
 run "the store is written in one file only (the scan)" \
   "export function createRoot({ React, store, View, Text }) {" \
   "export async function aSecondWritePath(store) { return store.write('mailbox/u/inbox/x', 1); }

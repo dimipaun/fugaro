@@ -146,6 +146,16 @@ node** is `offline` with `verified: false` and **no agent list** -- which is why
 the tag covers `agents` too: an orchestrator that could announce itself without
 a tag could announce itself as the agent the owner talks to.
 
+Every `reason` is either P1.4's own or one of `PRESENCE_REASON`, and **P1.4's
+refusal codes are neither** -- a caller that switches on `reason` never meets a
+string the two lists do not contain. That is not a formality: `at: 0` is
+schema-legal (`timestampField` refuses a *negative* timestamp and not zero) and
+P1.4 refuses it as the shape of an unset counter, so a heartbeat this client has
+validated and verified can still be one P1.4 will not judge. It is `offline`
+(never `live`, and `verified: true`, because the tag is the orchestrator's) with
+the reason `heartbeat-refused`. The last review round found the branch doing
+that commented "unreachable" and handing out P1.4's `state.code`.
+
 **The mapping is named and tested.** P1.4's rule reads `{ at, bootId }` and
 refuses any other field; P6.3's schema writes `{ at, boot, agents?, mac }`.
 `shared/mailbox-schema/README.md` records the difference as a **conflict for the
@@ -265,10 +275,21 @@ alternative -- the material is handed over for the duration of one callback and
 a result that carries it is refused (`leaked`), with seven tests of its own.
 P3.6 is the task that needed it; the PR says so.
 
+**What that fence counts as a leak was fixed in the last review round.** It
+searched every result for the material as a substring, and the value this
+directory's callback returns is the 64-hex tag it made *with* the key -- so a
+short key's characters turn up inside it by chance and every send was refused
+as `leaked`, which `keyRefusal` reports to the owner as `key-unreadable`. The
+fence now searches for material of at least 16 characters anywhere and, below
+that, only for an occurrence that stands on its own rather than inside a longer
+word: a coincidence is always inside the run the value is made of. Both halves
+are tested there, and the coincidence case again in `client.test.js`, where the
+cost of the false refusal is a phone that cannot speak.
+
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 29 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 34 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
@@ -315,6 +336,9 @@ than a claim.
 | the `exists`-as-landed guard drops in `flushMutating` | `a message that is already there is a landed write, not a failure` (its planted-value half is what shows the re-write landed) |
 | the read's `validateMessage` drops (a record the schema refuses is verified anyway) | `a message with no tag, and a tag of the wrong shape, are dropped` |
 | the heartbeat mapping's field guard drops | `the one mapping between the schema's heartbeat and P1.4's rule is named and tested` |
+| a P1.4 refusal is handed out as the reason (`state.code`) | `a signed heartbeat P1.4 will not judge is offline for this module's own reason` |
+| the double's ack is classified by suffix alone (in `store.js`) | `only a message's own `acked` child is an ack: an id of `acked` is a message` -- and, run against `client.test.js`, `a message whose id is `acked` is a message in both directions` |
+| the leak fence treats any occurrence as a leak (in `secure-store.js`) | `the fence catches the material coming out, not its characters coinciding` -- and, run against `client.test.js`, `a pairing key short enough to turn up inside its own tag still speaks` |
 
 Two of those mutations **survived** when the proof was first run, and both were
 fixed rather than argued away -- the two guards had no test that could tell them
@@ -334,7 +358,9 @@ from their absence:
 
 * **No real database and no deployed rules.** Everything runs against the port's
   double (`store.js`), which models the two rules that a re-send meets
-  (`!data.exists()` on a message, `data.parent().exists()` on the ack) and
+  (`!data.exists()` on a message, `data.parent().exists()` on the ack, at the
+  one position the template has that rule -- `outbox/$msg/acked`, so an id of
+  `acked` is an ordinary message) and
   nothing else -- no auth, no durability, no listeners, no quota. The deployed
   rules are checks **81/82**, owner-run, and none of them is run here.
 * **The template does not accept `mac` yet, and that is P6.4's task.** This

@@ -189,6 +189,16 @@ export class SecretStore {
    * four levels deep is not caught. A caller that wants to smuggle the key out
    * can still do it; what it cannot do is do it by accident.
    *
+   * **What is a leak and what is a coincidence.** The fence answers "did the
+   * material come out", not "do its characters occur", because the two are not
+   * the same question for a short key: P3.6's client returns the 64-hex tag it
+   * made with the key, and a two-character key is inside such a tag more often
+   * than not. Material of at least `LEAK_SEARCH_MIN` characters is searched for
+   * anywhere; a shorter one is only a leak when it comes back as a run of its
+   * own rather than inside a longer word (`leakIn`). Both halves are tested,
+   * the second one in `secure-store.test.js` and again at the client's own
+   * boundary, where the false refusal would be a phone that cannot speak.
+   *
    * A callback that throws is `callback-failed`, and what it threw is not
    * carried: an exception from code that held the material may quote it.
    *
@@ -302,6 +312,58 @@ export { SECRET_VALUE_MAX };
 /** How deep `use` walks a callback's result looking for the material. */
 const LEAK_DEPTH = 4;
 
+/**
+ * The shortest material the fence searches for inside a longer string.
+ *
+ * A substring test cannot tell "the callback handed the key back" from "the
+ * callback handed back a value that happens to contain the key's characters",
+ * and for short material the second is what it mostly finds: the value P3.6's
+ * client returns from `use` is the 64-hex tag **it made with that key**, and a
+ * two-character key is inside such a tag more often than not (the tag of a
+ * fixed record with the key `ab` contains `ab`). Reading that coincidence as a
+ * leak refuses every send the phone will ever make, over a value that tells the
+ * caller nothing about the key.
+ *
+ * So: at or above this length an occurrence anywhere is evidence of a leak;
+ * below it, only an occurrence that stands on its own is (see `delimited`),
+ * because a coincidence is always *inside* the longer run of characters the
+ * value is made of, and material handed back deliberately is not.
+ *
+ * The floor is the fence's own and not D111's: `secret()` sets no minimum on a
+ * value's length (empty, unprintable and over the platform's ceiling are what
+ * it refuses), and this module does not invent a rule about the credentials
+ * `fugaro pair` mints. Both of D111's items -- a JWT and a 32-byte per-pairing
+ * key -- are far above the line; the rule exists so that a shorter one is still
+ * usable rather than refused as a leak.
+ */
+const LEAK_SEARCH_MIN = 16;
+
+/** What counts as part of a longer word: the characters secrets and tags share. */
+const WORD_CHAR_RE = /[A-Za-z0-9]/;
+
+// delimited reports whether `material` occurs in `text` as a run of its own: at
+// the start or preceded by something that is not a word character, and at the
+// end or followed by one that is not. `key: ab` and `ab` are; the `ab` inside
+// `...f8abfeba...` is not.
+function delimited(text, material) {
+  let from = 0;
+  for (;;) {
+    const at = text.indexOf(material, from);
+    if (at === -1) return false;
+    const before = at === 0 ? '' : text[at - 1];
+    const after = text[at + material.length] ?? '';
+    if (!WORD_CHAR_RE.test(before) && !WORD_CHAR_RE.test(after)) return true;
+    from = at + 1;
+  }
+}
+
+// leakIn is the string half of the fence: is `material` in `text` because the
+// material came out, rather than because its characters coincide?
+function leakIn(text, material) {
+  if (!text.includes(material)) return false;
+  return material.length >= LEAK_SEARCH_MIN || delimited(text, material);
+}
+
 // carries reports whether the material appears anywhere in a value a callback
 // returned: in a string, in an array's items, in a plain object's own
 // enumerable keys and values, four levels deep. It is the fence that keeps
@@ -309,7 +371,7 @@ const LEAK_DEPTH = 4;
 // `use`), and its limit is named there: a Map, a Set, a class instance and
 // anything deeper are not walked.
 function carries(value, material, depth = 0) {
-  if (typeof value === 'string') return value.includes(material);
+  if (typeof value === 'string') return leakIn(value, material);
   if (value === null || typeof value !== 'object') return false;
   // The depth bound is also what stops a self-referencing result (`a.self =
   // a`) from recursing for ever.
@@ -318,7 +380,7 @@ function carries(value, material, depth = 0) {
   const proto = Object.getPrototypeOf(value);
   if (proto !== Object.prototype && proto !== null) return false;
   for (const key of Object.keys(value)) {
-    if (key.includes(material)) return true;
+    if (leakIn(key, material)) return true;
     if (carries(value[key], material, depth + 1)) return true;
   }
   return false;

@@ -127,10 +127,17 @@ export const CLIENT_CODES = Object.freeze({
 });
 
 /**
- * Why presence is not a verified state. When the heartbeat verified, `reason`
- * is P1.4's own (`REASON`: fresh, missed-intervals, long-silence, future-skew
- * or no-heartbeat); when it did not, it is one of these, because "we could not
- * trust the heartbeat" is not one of P1.4's answers.
+ * Why presence is not a verified state. When the heartbeat verified and P1.4
+ * would judge it, `reason` is P1.4's own (`REASON`: fresh, missed-intervals,
+ * long-silence, future-skew or no-heartbeat); in every other case it is one of
+ * these, because none of them is one of P1.4's answers -- "we could not trust
+ * the heartbeat" and "P1.4 would not read it" are not states P1.4 has.
+ *
+ * **P1.4's refusal codes never leave this module as a `reason`.** A refusal is
+ * not a reason on either side of the boundary: P1.4's own README says a refusal
+ * is never coerced into a state, and a caller of `poll` reads `reason` as one of
+ * the two lists above (see `PRESENCE_REASON.REFUSED` for the case that made
+ * this explicit).
  */
 export const PRESENCE_REASON = Object.freeze({
   /** Nothing is stored at the heartbeat node. */
@@ -141,6 +148,16 @@ export const PRESENCE_REASON = Object.freeze({
   INVALID: 'heartbeat-invalid',
   /** The heartbeat's tag did not verify under this pairing's key. */
   UNSIGNED: 'heartbeat-unsigned',
+  /**
+   * The heartbeat is signed and schema-legal, and P1.4 refused it as its own
+   * input -- `at: 0` is the case that reaches this: the schema's
+   * `timestampField` refuses a *negative* timestamp and not zero, and P1.4
+   * reads zero as the shape of an unset counter and refuses it
+   * (`invalid-heartbeat-timestamp`). `verified` is still true (the tag is the
+   * orchestrator's) and the state is `offline`: a heartbeat P1.4 will not judge
+   * is not evidence that anything is running.
+   */
+  REFUSED: 'heartbeat-refused',
 });
 
 /** The expired retry's code, in the report's `expired` list. */
@@ -655,13 +672,18 @@ export function createMailboxClient(options = {}) {
       intervalMs,
     });
     if (!state.ok) {
-      // Unreachable with a validated heartbeat and a checked interval, and
-      // answered as `offline` rather than as a state if it ever is reached:
-      // fail closed, and never as `live`.
+      // REACHABLE, and not only in theory: `at: 0` is schema-legal and P1.4
+      // refuses it as an unset counter, so a heartbeat that passed every check
+      // this module makes can still be something P1.4 will not read. The state
+      // is `offline` and never `live` -- fail closed -- and the reason is this
+      // module's own code, NOT `state.code`: P1.4's refusal codes are not
+      // reasons, and a caller that switches on `reason` over the two lists
+      // `PRESENCE_REASON` and P1.4's `REASON` would otherwise meet a string
+      // neither of them contains.
       return Object.freeze({
         state: STATE.OFFLINE,
         verified: true,
-        reason: state.code,
+        reason: PRESENCE_REASON.REFUSED,
         agents: null,
         ageMs: null,
       });
