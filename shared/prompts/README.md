@@ -178,6 +178,11 @@ phone-local state, which is why a queued prompt is trusted for its *shape* on ev
 Every way an input can fail to be this module's input has its own code, exported as `REFUSAL`; the
 codes P6.3's validator raises are propagated with a `prompt.` or `answer.` prefix, because a stored
 prompt is re-validated by that validator and the two must not disagree about what a prompt is.
+**The prefix is on a field the schema itself defines** — the schema's `FIELDS`, imported rather than
+restated, exactly as P1.1 uses it (`shared/mailbox/index.js:712`) — so an *unknown* field is reported
+as `prompt`/`answer` as a whole. An unknown field's name is the writer's, not this module's: echoing
+`prompt.<whatever the caller typed>` would put a name this module never read into an answer that
+travels back to whoever wrote it.
 
 **And an input that makes this module raise is one of those ways.** Every exported function is
 wrapped in `guarded`: a hostile value — a revoked `Proxy`, or one whose traps throw — is answered as
@@ -188,16 +193,21 @@ never echoed**, and nothing of the exception is read: it may carry whatever the 
 which on these inputs could be a name out of a key or a document; `field` is therefore `null`,
 because which field was at fault is exactly what could not be determined. `index.test.js` asserts
 this against every entry point, `guarded` is mutation-proved both ways (the `try` deleted, the
-caught value echoed), and the predicates are covered too: `isExpired` answers the refusal rather
-than `false` for a value that is not a number, because `false` means "still alive" and would hand
-the user a question the TTL has already ended.
+caught value echoed), and the predicates are covered too: `isExpired` checks all three of its
+arguments before it subtracts anything, and answers a refusal rather than `false` for a value that
+is not a positive integer in the bound that argument has everywhere else in this module (`invalid-at`,
+`invalid-now`, `invalid-ttl`). `false` means "still alive" — subtraction gives it freely for
+`undefined`, `'x'` and `NaN`, and `true` for `null` — and either would hand the user a question whose
+TTL has already ended, or drop one that is still open.
 
 | Code | When |
 |---|---|
 | `input-not-an-object` | a queue, an event or the policy's input is not a plain object |
 | `unknown-field` | a value carries a field this module does not read — a value is never a bag |
+| `missing-field` | a field this module requires was not carried at all: `now`, or the installation's `account` on `initialQueue` (P1.1's and P6.2's code, spelled the same). A queued prompt's own missing fields come from the schema, under `prompt.` |
 | `accessor-property` | a field this module does read is an accessor, so it is refused without ever being called (P1.1's code, spelled the same) — including `digest.severity`, the one field this module reads out of P1.3's result |
 | `invalid-now` | `now` is not a positive safe integer |
+| `invalid-at` | (`isExpired`) `at` is not a positive safe integer — the predicate's argument is checked, never coerced, so it cannot answer `false` by arithmetic on a value that is not a time |
 | `now-went-backwards` | `now` is earlier than the queue's own, so expiry would run in reverse |
 | `invalid-account` | the installation id is not 1..64 characters |
 | `invalid-ttl` | the TTL is outside P1.1's `MIN_WINDOW_MS`..`MAX_PROMPT_TTL_MS` |
@@ -246,7 +256,11 @@ expiry at D118's TTL with the answer it yields — asserted against P1.1's own `
 replay and accepts as a prompt), the refusal code an over-age answer takes following P1.1's kind
 mapping, the reminder schedule and a pause's three behaviours (speak, stay quiet, escalate), a
 redelivery that cannot clear an announcement beside the answer that leaves the queue (the two
-halves of one honest limit), the cap at its boundary, and the interrupt table exhaustively. Three
+halves of one honest limit), the cap at its boundary, and the interrupt table exhaustively. Two
+tests pin the two lines a *code* can draw for the same field — a schema refusal names a field the
+schema defines and never one the writer invented, and a field that is not carried at all is
+`missing-field` rather than `unknown-field` — and one pins `isExpired`'s arguments, argument by
+argument, against the coercion that would answer `false`. Three
 tests pin the rules that were *removed* rather than kept: `reminderStage` is monotone in `at` (which
 is why the listing needs no stage rule of its own), an expiry list comes back oldest-first (which is
 why `expire` needs no sort), and `digest.severity` is read through its own descriptor (which is why
@@ -261,7 +275,7 @@ function of the prompt's `at`, the TTL and the consumer's clock", written agains
 that never expires anything and failing on it. It is `mutation-proof.sh`'s first guard, so it stays
 re-runnable rather than living only in a pull-request transcript.
 
-`mutation-proof.sh` plants 58 one-line bugs in `index.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 66 one-line bugs in `index.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. It

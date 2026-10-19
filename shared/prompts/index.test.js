@@ -44,6 +44,7 @@ import {
   isExpired,
   MAX_TTL_MS,
   MAX_MAX_PENDING,
+  MIN_TTL_MS,
   OUTCOME,
   pending,
   pendingAcross,
@@ -144,8 +145,11 @@ test('a queue refuses what it cannot read, one code per fault', () => {
     [{ now: T0, account: 7 }, REFUSAL.INVALID_ACCOUNT, 'account'],
     [{ now: 0, account: 'a' }, REFUSAL.INVALID_NOW, 'now'],
     [{ now: T0, account: 'a', prompts: [] }, REFUSAL.UNKNOWN_FIELD, 'options'],
-    [{ account: 'a' }, REFUSAL.UNKNOWN_FIELD, 'now'],
-    [{ now: T0 }, REFUSAL.UNKNOWN_FIELD, 'account'],
+    // A field that is not carried at all is not an unknown field: the two are
+    // different faults with different fixes, and P1.1 and P6.2 both draw the
+    // line here (`MISSING_FIELD`, spelled the same in all three).
+    [{ account: 'a' }, REFUSAL.MISSING_FIELD, 'now'],
+    [{ now: T0 }, REFUSAL.MISSING_FIELD, 'account'],
   ];
   for (const [options, code, field] of cases) {
     const result = initialQueue(options);
@@ -158,7 +162,8 @@ test('a queue refuses what it cannot read, one code per fault', () => {
   assert.equal(initialQueue({ now: T0, account: 'a', ttl: 1 }).code, REFUSAL.UNKNOWN_FIELD);
   assert.equal(initialQueue(null).code, REFUSAL.INPUT_NOT_AN_OBJECT);
   assert.equal(initialQueue([]).code, REFUSAL.INPUT_NOT_AN_OBJECT);
-  assert.equal(initialQueue().code, REFUSAL.UNKNOWN_FIELD);
+  assert.equal(initialQueue().code, REFUSAL.MISSING_FIELD);
+  assert.equal(initialQueue().field, 'now', 'the first field a queue needs is the clock');
 });
 
 test('a queue is not a bag: an accessor is refused without being called', () => {
@@ -225,6 +230,54 @@ test('isExpired is strictly-greater, and agrees with P1.1 at the boundary', () =
   }
 });
 
+test('isExpired refuses an argument it cannot read, rather than answering false', () => {
+  // The README and the docstring both promise this, and the promise is the
+  // reason the predicate is guarded at all: `false` means "still alive", so a
+  // predicate that cannot run must not give it -- the user would be handed a
+  // question whose TTL has ended. Coercion gives exactly that answer
+  // (`now - at > ttl` is false for `undefined`, `'x'` and `NaN`, and TRUE for
+  // `null`, which is not a number either), so each of the three arguments is
+  // checked as the argument it is, and the refusal names the one at fault with
+  // the code this module already uses for that argument elsewhere.
+  const ttl = 6 * HOUR;
+  const cases = [
+    [undefined, T0, ttl, REFUSAL.INVALID_AT, 'at'],
+    [null, T0, ttl, REFUSAL.INVALID_AT, 'at'],
+    ['x', T0, ttl, REFUSAL.INVALID_AT, 'at'],
+    [NaN, T0, ttl, REFUSAL.INVALID_AT, 'at'],
+    [-0, T0, ttl, REFUSAL.INVALID_AT, 'at'],
+    [0, T0, ttl, REFUSAL.INVALID_AT, 'at'],
+    [T0 + 0.5, T0, ttl, REFUSAL.INVALID_AT, 'at'],
+    [T0, undefined, ttl, REFUSAL.INVALID_NOW, 'now'],
+    [T0, null, ttl, REFUSAL.INVALID_NOW, 'now'],
+    [T0, '', ttl, REFUSAL.INVALID_NOW, 'now'],
+    [T0, 0, ttl, REFUSAL.INVALID_NOW, 'now'],
+    [T0, T0, undefined, REFUSAL.INVALID_TTL, 'promptTtlMs'],
+    [T0, T0, null, REFUSAL.INVALID_TTL, 'promptTtlMs'],
+    [T0, T0, 'x', REFUSAL.INVALID_TTL, 'promptTtlMs'],
+    [T0, T0, 0, REFUSAL.INVALID_TTL, 'promptTtlMs'],
+    [T0, T0, MAX_TTL_MS + 1, REFUSAL.INVALID_TTL, 'promptTtlMs'],
+  ];
+  for (const [at, now, given, code, field] of cases) {
+    const result = isExpired(at, now, given);
+    const what = `isExpired(${String(at)}, ${String(now)}, ${String(given)})`;
+    assert.equal(result.ok, false, `${what} must refuse, not answer ${String(result)}`);
+    assert.equal(result.code, code, what);
+    assert.equal(result.field, field, what);
+    assert.ok(Object.isFrozen(result), what);
+  }
+  // A hostile value in a position one of the three arguments belongs in is
+  // refused like any other value that is not a number: the check is a type test,
+  // so it answers rather than throwing, and the answer is never `false`.
+  assert.equal(isExpired(hostile(), T0, ttl).code, REFUSAL.INVALID_AT);
+  assert.equal(isExpired(T0, revoked(), ttl).code, REFUSAL.INVALID_NOW);
+  assert.equal(isExpired(T0, T0, hostile()).code, REFUSAL.INVALID_TTL);
+  // And the arguments that ARE arguments still answer the rule, including at
+  // the shortest TTL the module accepts.
+  assert.equal(isExpired(T0, T0 + ttl + 1, ttl), true);
+  assert.equal(isExpired(T0, T0 + MIN_TTL_MS + 1, MIN_TTL_MS), true);
+});
+
 // ---------------------------------------------------------------------------
 // Queueing by default
 // ---------------------------------------------------------------------------
@@ -284,10 +337,19 @@ test('enqueue refuses what it cannot read, with the schema\'s own codes', () => 
 
   assert.equal(enqueue(queue, { now, prompt: promptMessage({ kind: 'message' }) }).code, REFUSAL.NOT_A_PROMPT);
   assert.equal(enqueue(queue, { now, prompt: promptMessage({ text: '' }) }).code, 'empty-string');
-  assert.equal(
-    enqueue(queue, { now, prompt: promptMessage({ nonsense: true }) }).code,
-    'unknown-field',
-  );
+  const unknown = enqueue(queue, { now, prompt: promptMessage({ nonsense: true }) });
+  assert.equal(unknown.code, 'unknown-field');
+  // The schema names an unknown field by its KEY, and that key is the writer's:
+  // it is not a name this module knows, so it is not echoed back -- whatever it
+  // holds (a key's name, a path) would then travel out of this module in an
+  // answer it never read. A field the schema does define IS named. P1.1's rule,
+  // spelled the same way and imported from the same list (`FIELDS`).
+  assert.equal(unknown.field, 'prompt');
+  const unreadable = promptMessage();
+  delete unreadable.mac;
+  const schemaField = enqueue(queue, { now, prompt: unreadable });
+  assert.equal(schemaField.code, 'missing-field');
+  assert.equal(schemaField.field, 'prompt.mac', 'a field the schema defines is named, prefixed');
   // The schema names the field at fault, and the code is the schema's: this
   // module does not re-decide what a prompt is.
   assert.equal(
@@ -327,7 +389,13 @@ test('enqueue refuses what it cannot read, with the schema\'s own codes', () => 
   );
   assert.equal(enqueue(queue, { now: T0 - 1, prompt: promptMessage() }).code, REFUSAL.NOW_WENT_BACKWARDS);
   assert.equal(enqueue(queue, { now, prompt: promptMessage(), extra: 1 }).code, REFUSAL.UNKNOWN_FIELD);
-  assert.equal(enqueue(queue, { prompt: promptMessage() }).code, REFUSAL.UNKNOWN_FIELD);
+  assert.equal(enqueue(queue, { prompt: promptMessage() }).code, REFUSAL.MISSING_FIELD);
+  assert.equal(enqueue(queue, { prompt: promptMessage() }).field, 'now');
+  // Every operation that needs the clock says so the same way, because they all
+  // open the queue the same way.
+  assert.equal(expire(queue, {}).code, REFUSAL.MISSING_FIELD);
+  assert.equal(pending(queue, {}).code, REFUSAL.MISSING_FIELD);
+  assert.equal(announce(queue, {}).code, REFUSAL.MISSING_FIELD);
 });
 
 test('the same id under another sender or time is a conflict, not a duplicate', () => {
@@ -444,7 +512,7 @@ test('when the sweeper runs decides nothing: the consumer\'s own clock does', ()
 test('expire refuses a clock that went backwards and an unreadable queue', () => {
   const queue = enqueueOne(makeQueue()).queue;
   assert.equal(expire(queue, { now: T0 - 1 }).code, REFUSAL.NOW_WENT_BACKWARDS);
-  assert.equal(expire(queue, {}).code, REFUSAL.UNKNOWN_FIELD);
+  assert.equal(expire(queue, {}).code, REFUSAL.MISSING_FIELD);
   assert.equal(expire(queue, { now: T0, x: 1 }).code, REFUSAL.UNKNOWN_FIELD);
 });
 
@@ -631,6 +699,16 @@ test('answer refuses an unreadable answer and an unknown prompt', () => {
   );
   assert.equal(answer(queue, { now: T0 - 1, answer: answerMessage() }).code, REFUSAL.NOW_WENT_BACKWARDS);
   assert.equal(answer(queue, { now: T0, answer: answerMessage(), reply: 'x' }).code, REFUSAL.UNKNOWN_FIELD);
+  // The same line as `enqueue` draws for a prompt: an unknown key is the
+  // writer's name and is not echoed; a field the schema defines is named.
+  const unknown = answer(queue, { now: T0, answer: answerMessage({ nonsense: true }) });
+  assert.equal(unknown.code, 'unknown-field');
+  assert.equal(unknown.field, 'answer');
+  const unreadable = answerMessage();
+  delete unreadable.reply_to;
+  const schemaField = answer(queue, { now: T0, answer: unreadable });
+  assert.equal(schemaField.code, 'missing-field');
+  assert.equal(schemaField.field, 'answer.reply_to');
 });
 
 test('an answer removes exactly the prompt it answers', () => {
@@ -1178,10 +1256,12 @@ test('an exception from a hostile input is a refusal, and what was thrown is nev
     // A queue whose own entries are hostile: the throw happens deeper in, in
     // the reader that re-validates each held prompt.
     ['pending(a hostile entry)', () => pending({ ...queue, prompts: [hostile()] }, { now: T0 })],
-    // The two predicates do arithmetic on their values, so a value in place of
-    // a number can throw inside them: they answer the same refusal rather than
-    // throwing, and `false` is NOT the answer -- false means "still alive".
-    ['isExpired(hostile)', () => isExpired(revoked(), T0, HOUR)],
+    // `reminderStage` does arithmetic on its values, so a value in place of a
+    // number throws inside it: it answers the same refusal rather than throwing,
+    // and `false` is NOT the answer -- false means "still alive". `isExpired`
+    // does not reach the arithmetic with a hostile value: it checks all three
+    // arguments first (`invalid-at`/`invalid-now`/`invalid-ttl`, its own test),
+    // which is the same fail-closed answer reached one step earlier.
     ['reminderStage(hostile)', () => reminderStage(revoked(), T0)],
   ];
 

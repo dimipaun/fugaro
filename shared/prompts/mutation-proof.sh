@@ -326,6 +326,22 @@ run "an accessor property is refused without being called" \
   "    if (descriptor === undefined || !Object.hasOwn(descriptor, 'value')) {" \
   "    if (false) {"
 
+# A field that is not carried at all is a different fault from one that is
+# carried and unknown: `unknown-field` would tell the caller to look for a key
+# it never wrote. P1.1 and P6.2 answer `missing-field` here, and so does this
+# module -- on the queue's own required fields and on every operation's event.
+run "a missing \`now\` is missing-field, not unknown-field" \
+  "  if (now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');" \
+  "  if (now === undefined) return refuse(REFUSAL.UNKNOWN_FIELD, 'now');"
+
+run "a missing \`account\` is missing-field, not unknown-field" \
+  "  if (account === undefined) return refuse(REFUSAL.MISSING_FIELD, 'account');" \
+  "  if (account === undefined) return refuse(REFUSAL.UNKNOWN_FIELD, 'account');"
+
+run "an event with no \`now\` is missing-field, not unknown-field" \
+  "  if (read.values.now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');" \
+  "  if (read.values.now === undefined) return refuse(REFUSAL.UNKNOWN_FIELD, 'now');"
+
 run "a handed-back queue may not hold an id twice" \
   "    if (ids.has(id)) return refuse(REFUSAL.DUPLICATE_ENTRY, 'prompts');" \
   "    if (false) return refuse(REFUSAL.DUPLICATE_ENTRY, 'prompts');"
@@ -546,6 +562,40 @@ run "the digest's severity is read through its own descriptor" \
   }
   const severity = descriptor === undefined ? undefined : descriptor.value;" \
   "  const severity = digest.severity;"
+
+# A schema refusal names a field by its key, and an UNKNOWN field's key is the
+# writer's: echoing it would carry a name this module never read back out to
+# whoever wrote it. Only a field the schema itself defines is named -- P1.1's
+# rule, from the schema's own `FIELDS` -- and the prompt is otherwise reported
+# as a whole.
+run "an unknown prompt field is not echoed back" \
+  "      MESSAGE_FIELDS.includes(validated.field) ? \`prompt.\${validated.field}\` : 'prompt'," \
+  "      validated.field === null ? 'prompt' : \`prompt.\${validated.field}\`,"
+
+run "an unknown answer field is not echoed back" \
+  "      MESSAGE_FIELDS.includes(validated.field) ? \`answer.\${validated.field}\` : 'answer'," \
+  "      validated.field === null ? 'answer' : \`answer.\${validated.field}\`,"
+
+# `isExpired` checks each of its three arguments before it subtracts anything:
+# arithmetic on a value that is not a number answers `false` ("still alive") for
+# `undefined`, `'x'` and `NaN` and `true` for `null`, and both would hand the
+# user the wrong question. Each check is its own guard.
+run "isExpired checks \`at\` rather than coercing it" \
+  "  if (!isIntegerInRange(at, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_AT, 'at');
+  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');" \
+  "  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');"
+
+run "isExpired checks \`now\` rather than coercing it" \
+  "  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+  if (!isIntegerInRange(promptTtlMs, MIN_TTL_MS, MAX_TTL_MS)) {" \
+  "  if (!isIntegerInRange(promptTtlMs, MIN_TTL_MS, MAX_TTL_MS)) {"
+
+run "isExpired checks the TTL rather than coercing it" \
+  "  if (!isIntegerInRange(promptTtlMs, MIN_TTL_MS, MAX_TTL_MS)) {
+    return refuse(REFUSAL.INVALID_TTL, 'promptTtlMs');
+  }
+  return expiredBy(at, now, promptTtlMs);" \
+  "  return expiredBy(at, now, promptTtlMs);"
 
 git checkout -- "$F"
 echo "--- control killed; $guards guards: $killed killed, $survivors survived, $unapplied not applied"

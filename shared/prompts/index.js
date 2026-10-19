@@ -118,7 +118,7 @@ import {
   MIN_WINDOW_MS,
   TIME_MAX,
 } from '../mailbox/index.js';
-import { OPTION_MAX, validateMessage } from '../mailbox-schema/index.js';
+import { FIELDS as MESSAGE_FIELDS, OPTION_MAX, validateMessage } from '../mailbox-schema/index.js';
 import { STATE as PRESENCE } from '../presence/index.js';
 
 /**
@@ -230,9 +230,13 @@ export const OUTCOME = Object.freeze({
 export const REFUSAL = Object.freeze({
   INPUT_NOT_AN_OBJECT: 'input-not-an-object',
   UNKNOWN_FIELD: 'unknown-field',
+  // A field that is carried and not read, and a field that is not carried at
+  // all: two faults with two fixes, spelled as P1.1 and P6.2 spell them.
+  MISSING_FIELD: 'missing-field',
   ACCESSOR_PROPERTY: 'accessor-property',
   INTERNAL_ERROR: 'internal-error',
 
+  INVALID_AT: 'invalid-at',
   INVALID_NOW: 'invalid-now',
   NOW_WENT_BACKWARDS: 'now-went-backwards',
   INVALID_ACCOUNT: 'invalid-account',
@@ -404,15 +408,41 @@ function readFields(value, names, where) {
  * Strictly greater: a prompt of age exactly the TTL is still alive, which is
  * exactly where P1.1's `deliver` stops accepting it (`now - at > window`).
  *
- * Guarded like every entry point (see `guarded`): three values that are not
- * numbers -- a hostile Proxy in place of one -- answer the `internal-error`
- * refusal rather than raising. `false` would be the other possible answer, and
- * it is the one a predicate that cannot run must not give: `false` says "still
- * alive", which would hand the user a question the TTL has already ended.
+ * Every argument is checked before any arithmetic happens, and a value that is
+ * not the argument it belongs in is refused rather than coerced -- `invalid-at`
+ * for `at`, `invalid-now` for `now`, `invalid-ttl` for the TTL, the codes this
+ * module's queue-level entry points already answer for those three arguments.
+ * `false` would be the other possible answer, and it is the one a predicate
+ * that cannot run must not give: `false` says "still alive", which would hand
+ * the user a question the TTL has already ended. Subtraction gives it freely --
+ * `now - at > ttl` is false for `undefined`, `'x'` and `NaN`, and TRUE for
+ * `null`, which is not a number either -- so the check is what makes the
+ * promise hold, and a hostile Proxy in a number's place is refused with the
+ * same code rather than being read as one.
+ *
+ * Guarded like every other entry point (see `guarded`) as well: the checks are
+ * a type test and so cannot raise on any value, and the guard is there for the
+ * reason it is everywhere -- a caller may hold this function and a value from
+ * anywhere.
  */
 export const isExpired = guarded(isExpiredUnguarded);
 
 function isExpiredUnguarded(at, now, promptTtlMs) {
+  if (!isIntegerInRange(at, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_AT, 'at');
+  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
+  if (!isIntegerInRange(promptTtlMs, MIN_TTL_MS, MAX_TTL_MS)) {
+    return refuse(REFUSAL.INVALID_TTL, 'promptTtlMs');
+  }
+  return expiredBy(at, now, promptTtlMs);
+}
+
+/**
+ * The rule itself, over three values a caller has already validated: the walk
+ * over a queue's own prompts calls this rather than `isExpired`, because a
+ * refusal is a truthy object and `if (isExpired(...))` would read one as "this
+ * prompt is dead". `readQueue` is what makes the three values this function's.
+ */
+function expiredBy(at, now, promptTtlMs) {
   return now - at > promptTtlMs;
 }
 
@@ -498,11 +528,11 @@ function initialQueueUnguarded(options = {}) {
   const values = read.values;
 
   const now = values.now;
-  if (now === undefined) return refuse(REFUSAL.UNKNOWN_FIELD, 'now');
+  if (now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');
   if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
 
   const account = values.account;
-  if (account === undefined) return refuse(REFUSAL.UNKNOWN_FIELD, 'account');
+  if (account === undefined) return refuse(REFUSAL.MISSING_FIELD, 'account');
   if (typeof account !== 'string' || account === '' || account.length > 64) {
     return refuse(REFUSAL.INVALID_ACCOUNT, 'account');
   }
@@ -730,7 +760,7 @@ function open(queue, event, names, where) {
   if (!current.ok) return current;
   const read = readFields(event, names, where);
   if (!read.ok) return read;
-  if (read.values.now === undefined) return refuse(REFUSAL.UNKNOWN_FIELD, 'now');
+  if (read.values.now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');
   if (!isIntegerInRange(read.values.now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
   if (read.values.now < current.queue.now) return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');
   return { ok: true, queue: current.queue, values: read.values };
@@ -761,7 +791,10 @@ function open(queue, event, names, where) {
  * Refusals: `queue-full` at the cap (the one refusal that carries a defined
  * answer to the orchestrator), `id-conflict` for a held id under a different
  * sender or time, `not-a-prompt`, `safe-not-an-option`, the future and zero
- * timestamp bounds, and every code P6.3's validator raises, prefixed `prompt.`.
+ * timestamp bounds, and every code P6.3's validator raises, with the field it
+ * names prefixed `prompt.` when the schema defines that field, and the prompt
+ * reported as a whole when it does not -- an unknown key is the writer's name,
+ * not this module's (P1.1's rule, from the schema's own `FIELDS`).
  *
  * @param {object} queue a queue, as returned by initialQueue or an operation
  * @param {{ now: number, prompt: object, destructive?: boolean, safe?: string }} event
@@ -776,10 +809,16 @@ function enqueueUnguarded(queue, event) {
 
   const validated = validateMessage(values.prompt);
   if (!validated.ok) {
-    // The schema names an unknown field by its key, which the writer chose:
-    // only a field the schema itself defines is echoed, anything else is
-    // reported as the prompt as a whole. P1.1's rule, for the same reason.
-    return refuse(validated.code, validated.field === null ? 'prompt' : `prompt.${validated.field}`);
+    // The schema names a field by its key, and an UNKNOWN field's key is the
+    // writer's: it is not a name this module knows, and echoing it would carry
+    // whatever it holds out of here in an answer nothing read it into. Only a
+    // field the schema itself defines is named, and anything else is reported
+    // as the prompt as a whole -- P1.1's rule, from P1.1's own import
+    // (`FIELDS`), for the same reason.
+    return refuse(
+      validated.code,
+      MESSAGE_FIELDS.includes(validated.field) ? `prompt.${validated.field}` : 'prompt',
+    );
   }
   const prompt = validated.message;
   if (prompt.kind !== KIND_OF_PROMPT) return refuse(REFUSAL.NOT_A_PROMPT, 'prompt.kind');
@@ -807,7 +846,7 @@ function enqueueUnguarded(queue, event) {
     return refuse(REFUSAL.ID_CONFLICT, 'prompt.id');
   }
 
-  if (isExpired(prompt.at, values.now, current.promptTtlMs)) {
+  if (expiredBy(prompt.at, values.now, current.promptTtlMs)) {
     // The answer the orchestrator is owed, handed back with the outcome: the
     // caller (P6.7) delivers it once and records that it did.
     return Object.freeze({
@@ -893,7 +932,7 @@ function expireUnguarded(queue, event = {}) {
   const expired = [];
   const kept = [];
   for (const entry of current.prompts) {
-    if (isExpired(entry.prompt.at, values.now, current.promptTtlMs)) {
+    if (expiredBy(entry.prompt.at, values.now, current.promptTtlMs)) {
       expired.push(expiryOf(entry));
     } else {
       kept.push(entry);
@@ -951,9 +990,11 @@ function answerUnguarded(queue, event = {}) {
 
   const validated = validateMessage(values.answer);
   if (!validated.ok) {
+    // The same line as `enqueue` draws: the schema defines which keys may be
+    // echoed, and an unknown key is the writer's rather than this module's.
     return refuse(
       validated.code,
-      validated.field === null ? 'answer' : `answer.${validated.field}`,
+      MESSAGE_FIELDS.includes(validated.field) ? `answer.${validated.field}` : 'answer',
     );
   }
   const reply = validated.message;
@@ -974,7 +1015,7 @@ function answerUnguarded(queue, event = {}) {
     return refuse(REFUSAL.FUTURE_TIMESTAMP, 'answer.at');
   }
 
-  if (isExpired(entry.prompt.at, values.now, current.promptTtlMs)) {
+  if (expiredBy(entry.prompt.at, values.now, current.promptTtlMs)) {
     // The prompt died before the answer arrived. The user's late answer is NOT
     // handed over, and the expiry's is: D168's default is the non-destructive
     // option, and an answer to a question that expired is an answer to a
@@ -1130,13 +1171,17 @@ function pendingUnguarded(queue, event = {}) {
  *
  *     announce(queue, { now })
  *
- * Two things are answered together, because the pause is one event: the COUNT
- * of everything waiting (the spec's "Two questions waiting") and the entries
- * whose question should actually be read this time -- never announced, or
- * re-announced because an hour has passed, then a day (§3.4). Marking them
- * announced is the only mutation this module performs on a queue, and it is the
- * phone's state: whether the user has HEARD a question is not something a
- * database may know (D127) and not something a clock function can decide.
+ * This answers the entries whose question should be read at THIS pause --
+ * never announced, or re-announced because an hour has passed, then a day
+ * (§3.4) -- together with the queue they were read from. The pause's other
+ * half, the COUNT of everything waiting across installations (the spec's "Two
+ * questions waiting"), is `announcement`'s: it is the sentence that is spoken,
+ * and this operation is about the active installation's own list rather than
+ * about the count, so the count is not repeated in its answer. Marking the
+ * spoken entries announced is the only mutation this module performs on a
+ * queue, and it is the phone's state: whether the user has HEARD a question is
+ * not something a database may know (D127) and not something a clock function
+ * can decide.
  *
  * @returns `{ ok: true, queue, spoken: [...] }` or a refusal
  */
