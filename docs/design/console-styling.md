@@ -29,7 +29,7 @@ could carry one:
 
 | Claim | Read from |
 |---|---|
-| `console/src/renderer/index.html` is script-only: its `<head>` holds one `<script src="./console.js" defer>` and nothing else. There is no `<link rel="stylesheet">` and no `<style>` element. | the file, 61 lines, read whole |
+| `console/src/renderer/index.html` is script-only: its `<head>` holds one `<script src="./console.js" defer>`, beside `<meta charset="utf-8">`, the CSP `<meta http-equiv>` copy and `<title>`, and holds **no stylesheet at all** — there is no `<link rel="stylesheet">` and no `<style>` element. | the file, 61 lines, read whole |
 | The body of `index.html` is **empty on purpose**, and `console/test/unit/csp-document.test.ts` holds it empty (`expect(bodyMarkup(served('index.html'))).toBe('')`). | the file; the test |
 | `console/src/renderer/installations.html` and `console/src/renderer/refusal.html` carry the same CSP `<meta>` and no stylesheet either; `refusal.html` is script-free as well (`expect(scriptElements(served('refusal.html'))).toEqual([])`). | the two documents; `csp-document.test.ts` |
 | There is **no `.css` file anywhere under `console/`**: `find console -name '*.css'` returns nothing. | the tree |

@@ -183,6 +183,37 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	if !strings.Contains(mdBetween(t, path, doc, "### 1.1 ", "### 1.2 "), "61 lines") {
 		t.Errorf("%s: §1.1 does not give the served document's real length (61 lines)", path)
 	}
+	// §1.1's row on the served document: it may say the head holds one script,
+	// and it may not say the head holds the script and nothing else — the head
+	// also holds `<meta charset="utf-8">`, the CSP `<meta http-equiv>` copy and
+	// `<title>`, and a reader who trusts the stronger sentence counts the
+	// elements wrong. The check is the row naming the other three, not the
+	// absence of one phrasing. The row is found by "is script-only", which is how
+	// it opens, because §1.1 has four rows that name the served document; and it
+	// is not found by its table prefix, because that prefix begins with a path
+	// under the console directory and the boundary case's allow-list is a
+	// one-entry exception this file is not on.
+	indexRow := ""
+	for _, line := range strings.Split(mdBetween(t, path, doc, "### 1.1 ", "### 1.2 "), "\n") {
+		if !strings.HasPrefix(line, "| ") || !strings.Contains(line, "is script-only") {
+			continue
+		}
+		if indexRow != "" {
+			t.Fatalf("%s: §1.1 has two rows opening \"is script-only\"; this case reads one", path)
+		}
+		indexRow = line
+	}
+	if indexRow == "" {
+		t.Fatalf("%s: §1.1 no longer has a row opening \"is script-only\"; that row is the evidence the section opens with", path)
+	}
+	for _, element := range []string{"`<meta charset", "http-equiv", "`<title>`"} {
+		if !strings.Contains(indexRow, element) {
+			t.Errorf("%s: §1.1's row on the served document does not name %s among the head's elements; the head holds one script and those, and a row that names only the script reads as though the head held nothing else", path, element)
+		}
+	}
+	if strings.Contains(indexRow, "and nothing else") {
+		t.Errorf("%s: §1.1's row on the served document says the head holds one script \"and nothing else\"; the head also holds `<meta charset=\"utf-8\">`, the CSP `<meta http-equiv>` copy and `<title>`", path)
+	}
 }
 
 // mdCodeSpanRE matches one code span and captures its contents.
@@ -288,11 +319,12 @@ func TestDocsConsoleStylingCitationsExist(t *testing.T) {
 	// previous round shipped: the styling tasks added two rows to the plan's
 	// tree, `tokens.css` moved from 118 to 120, and both citations went on
 	// naming 118, which by then was the picker's line.
-	for _, m := range mdLineCitationRE.FindAllStringSubmatch(doc, -1) {
-		file, lineNo := m[1], m[2]
+	for _, m := range mdLineCitationRE.FindAllStringSubmatchIndex(doc, -1) {
+		file, lineNo := doc[m[2]:m[3]], doc[m[4]:m[5]]
+		citation := doc[m[0]:m[1]]
 		n, err := strconv.Atoi(lineNo)
 		if err != nil {
-			t.Errorf("%s: %q is not a line number: %v", path, m[0], err)
+			t.Errorf("%s: %q is not a line number: %v", path, citation, err)
 			continue
 		}
 		body, err := os.ReadFile("../../" + file)
@@ -312,8 +344,12 @@ func TestDocsConsoleStylingCitationsExist(t *testing.T) {
 		}
 		// The nearest path the sentence named before the citation is the thing it
 		// says is on that line. When there is none the line only has to be there,
-		// which the checks above have said.
-		if subject := mdCitedSubject(doc, m[0]); subject != "" && !strings.Contains(cited, subject) {
+		// which the checks above have said. The subject is read at THIS
+		// occurrence's offset and not from the first one: the document cites
+		// `docs/plans/2026-10-15-desktop-console.md:120` twice, and a lookup by
+		// string would check both sentences against the first sentence's subject,
+		// leaving the second claim unchecked.
+		if subject := mdCitedSubject(doc, m[0], citation); subject != "" && !strings.Contains(cited, subject) {
 			t.Errorf("%s cites %s:%d for %s, and that line names something else (%q); a line number is the citation a reader follows by hand, so it has to point at what the sentence says it does", path, file, n, subject, truncate(cited, 60))
 		}
 	}
@@ -328,16 +364,30 @@ var mdLineCitationRE = regexp.MustCompile(`([\w./-]+\.(?:md|go|ts|css|mjs|json|y
 // the sentence names none. The nearest backticked path before the citation is
 // the subject; the cited file itself is skipped, since naming it is not a claim
 // about what is on the line.
-func mdCitedSubject(doc, citation string) string {
-	i := strings.Index(doc, citation)
-	if i < 0 {
+//
+// at is the byte offset of this occurrence of the citation, and it is why the
+// caller passes an index rather than the citation's text: the document cites
+// `docs/plans/2026-10-15-desktop-console.md:120` twice, and `strings.Index`
+// would return the first offset both times, checking the second sentence
+// against the first sentence's subject and never against its own.
+//
+// The lookback stops at the paragraph break, so a path in the table above a
+// sentence is not mistaken for the path the sentence names: §3.1 cites the
+// plan's tree line from a paragraph that names no single file (it names the
+// `src/renderer/theme/*.css` glob), and the row above it names `screens.css`,
+// which is not what that line holds.
+func mdCitedSubject(doc string, at int, citation string) string {
+	if at < 0 || at > len(doc) {
 		return ""
 	}
-	start := i - 400
+	start := at - 400
 	if start < 0 {
 		start = 0
 	}
-	before := doc[start:i]
+	before := doc[start:at]
+	if i := strings.LastIndex(before, "\n\n"); i >= 0 {
+		before = before[i+2:]
+	}
 	subject := ""
 	for _, m := range mdBacktickPathRE.FindAllStringSubmatch(before, -1) {
 		if m[1] != strings.SplitN(citation, ":", 2)[0] {
