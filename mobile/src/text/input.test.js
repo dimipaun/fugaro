@@ -213,6 +213,22 @@ test('a typed message the client refuses carries the client\'s own code', async 
   assert.equal(answer.code, 'write-failed', 'P3.6\'s code, not a new one');
 });
 
+test('an utterance the router itself refuses carries the router\'s code, and is not sent', async () => {
+  const h = await harness();
+  // 4097 code units is past P6.1's own bound (P0.2's TEXT_MAX, which is also
+  // what a forwarded message can carry), so the router refuses it rather than
+  // truncating: the code is the router's, carried unchanged.
+  const answer = await h.input.submit('a'.repeat(4097));
+  assert.equal(answer.ok, false);
+  assert.equal(answer.code, 'utterance-too-long');
+  assert.equal(h.inbox().length, 0);
+  // And a control character is the other refusal a typed line can carry in.
+  const control = await h.input.submit('ship it\u0007');
+  assert.equal(control.ok, false);
+  assert.equal(control.code, 'utterance-control-character');
+  assert.equal(h.inbox().length, 0);
+});
+
 test('an empty or non-text utterance is refused before anything is routed or sent', async () => {
   const h = await harness();
   for (const value of ['', null, undefined, 42, {}, ['a']]) {
@@ -381,6 +397,17 @@ test('"cancel that" drops the read-backs, and says so when there were none', asy
   // Dropped means gone: the phrase now has nothing to authorise.
   const answer = await h.input.submit('Fugaro, confirm');
   assert.equal(answer.code, CONFIRM_REFUSAL.NO_PENDING_ACTION);
+});
+
+test('two read-backs outstanding are the machine\'s ambiguity, not a guess between them', async () => {
+  const h = await harness();
+  const cancel = await h.input.propose({ text: 'cancel run 42', verb: 'cancel', target: RUN_TARGET });
+  await h.input.propose({ text: 'merge PR 7', verb: 'merge', target: MERGE_TARGET });
+  assert.equal((await h.input.awaiting()).actions.length, 2);
+  const answer = await h.input.submit('Fugaro, confirm', { actionId: cancel.actionId, target: RUN_TARGET });
+  assert.equal(answer.ok, false);
+  assert.equal(answer.code, 'ambiguous-pending', 'P6.2\'s code: nothing is authorised');
+  assert.equal(h.inbox().length, 0);
 });
 
 test('awaiting() reports what the typed phrase would confirm, in the machine\'s words', async () => {
