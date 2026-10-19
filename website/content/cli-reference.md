@@ -2348,8 +2348,9 @@ sanitised and size-capped before it is printed, and it authorises and admits
 nothing. Two identities that differ only in what the sanitising drops -- an
 invisible character a paste left in one of them, say -- or only past the cap are
 one key and one row: the row is the key, not the person. A private view is not
-read off that key. It holds the runs whose launch recorded your identity itself,
-compared as runs ls --mine compares it, so someone whose identity merely
+read off that key. It holds the runs whose launch recorded your identity itself --
+the identity fugaro run writes to launch.json at launch, not the requested_by that
+runs ls --mine compares -- so someone whose identity merely
 sanitises to the same text is never counted in it and your own row can be
 smaller than that key's row in the full table.
 
