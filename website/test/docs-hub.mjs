@@ -364,11 +364,27 @@ const RENDERED_TAGS = new Set([
   'ul', 'ol', 'li', 'a', 'em', 'strong', 'blockquote', 'hr', 'br',
 ])
 
-/** The section of a built page that holds the rendered reference. */
+/**
+ * The section of a built page that holds the rendered reference.
+ *
+ * The page's own copy control is in there too — one per code block, written by
+ * `website/src/lib/copy-control.mjs` (P6) — and the cases below are about the tags the
+ * *renderer* emits, so the control's markup is taken back out here. `website/test/copy.mjs`
+ * is the file that holds the control to its own shape, on every built page.
+ */
 function referenceSection(page) {
   const start = page.indexOf('<section id="cli-reference"')
   assert.ok(start >= 0, 'the built page has no cli-reference section')
-  return page.slice(start, page.indexOf('</section>', start))
+  const section = page.slice(start, page.indexOf('</section>', start))
+  assert.match(
+    section,
+    /<div class="command-controls">/,
+    'the reference section carries no copy control, and every command the site prints has one (P6, D183)',
+  )
+  return section
+    .replace(/<div class="command-controls">[\s\S]*?<\/div>/g, '')
+    .replace(/<div class="command-block" data-copy[^>]*>/g, '')
+    .replace(/<\/pre><\/div>/g, '</pre>')
 }
 
 /** The tag names a fragment of HTML opens or closes. */

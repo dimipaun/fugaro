@@ -6,7 +6,8 @@
 // its tag exists, and a shallow checkout has no tags to read at all.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -18,7 +19,44 @@ const RELEASES_DIR = path.join(REPO_ROOT, 'docs', 'releases')
 // `docs/releases/README.md` explains the format; it is skipped by name, not by pattern.
 const NON_RELEASE = 'README.md'
 
-const OPERATORS_HEADING = '### For operators'
+// The headings `docs/releases/README.md` names as the sections a release file may carry
+// after its Highlights, in full: a `###` heading, its words a title and its block of lines
+// the section's own. There are exactly two, both optional, and the file may hold them in
+// either order — the entry carries the file's order, not this list's.
+//
+// They are `###` and not `##` on purpose: GoReleaser puts the file under its own
+// `## Highlights` in the release body, so a `##` inside the file would be a second
+// top-level heading beside it. The generator recognises these two lines and no other
+// heading: anything else the file writes is its own text, and it is rendered as written.
+const SECTION_TITLES = ['For operators', 'Known limits']
+
+/** The file line that opens a section, from its title: `For operators` -> `### For operators`. */
+function headingLine(title) {
+  return `### ${title}`
+}
+
+/**
+ * A file's lines, split the way `docs/releases/README.md` describes: the Highlights bullets
+ * first, then each section heading with the lines under it, in the order the file writes
+ * them. Every assertion about the generator's split is made against this and never against
+ * the generator's own rule, so a change in the format fails here rather than being followed
+ * silently.
+ */
+function splitSections(lines) {
+  const highlights = []
+  const sections = []
+  for (const line of lines) {
+    const title = SECTION_TITLES.find((candidate) => line === headingLine(candidate))
+    if (title !== undefined) {
+      sections.push({ title, lines: [] })
+      continue
+    }
+    const section = sections[sections.length - 1]
+    if (section === undefined) highlights.push(line)
+    else section.lines.push(line)
+  }
+  return { highlights, sections }
+}
 
 // The release files' names, read here rather than asked of the generator: the point of
 // these cases is to compare the generator's answer against the directory itself.
@@ -70,7 +108,7 @@ test('changelog builds from docs/releases', () => {
     // newest file has no tag yet (D100).
     assert.deepEqual(
       Object.keys(entry).sort(),
-      ['for_operators', 'highlights', 'released', 'tag', 'version'],
+      ['highlights', 'released', 'sections', 'tag', 'version'],
       `${entry.tag}: the entry carries exactly the five designed fields`,
     )
     assert.equal('date' in entry, false, `${entry.tag}: no date field`)
@@ -78,8 +116,16 @@ test('changelog builds from docs/releases', () => {
     assert.equal(entry.tag.slice(1), entry.version, `${entry.tag}: version is the tag without the v`)
     assert.equal(typeof entry.released, 'boolean', `${entry.tag}: released is a boolean`)
     assert.ok(Array.isArray(entry.highlights) && entry.highlights.length > 0, `${entry.tag}: highlights is a non-empty array`)
-    assert.ok(Array.isArray(entry.for_operators), `${entry.tag}: for_operators is an array`)
-    for (const line of [...entry.highlights, ...entry.for_operators]) {
+    assert.ok(Array.isArray(entry.sections), `${entry.tag}: sections is an array`)
+    for (const section of entry.sections) {
+      // Both headings are the same kind of thing, so they are the same shape: a title the
+      // file writes and the lines under it. The title is one of the two the format names —
+      // never a heading the generator invented, and never a third section.
+      assert.deepEqual(Object.keys(section).sort(), ['lines', 'title'], `${entry.tag}: a section carries a title and its lines`)
+      assert.ok(SECTION_TITLES.includes(section.title), `${entry.tag}: ${section.title} is not a section docs/releases/README.md names`)
+      assert.ok(Array.isArray(section.lines), `${entry.tag}: a section's lines are an array`)
+    }
+    for (const line of [...entry.highlights, ...entry.sections.flatMap((section) => section.lines)]) {
       assert.equal(typeof line, 'string', `${entry.tag}: every line is a string`)
       assert.ok(line.trim().length > 0, `${entry.tag}: no blank line is rendered`)
     }
@@ -129,7 +175,7 @@ test('changelog adds no sentence of its own', () => {
   for (const entry of buildChangelog()) {
     const fileName = `${entry.tag}.md`
     const raw = readFileSync(path.join(RELEASES_DIR, fileName), 'utf8')
-    const written = [...entry.highlights, ...entry.for_operators]
+    const written = [...entry.highlights, ...entry.sections.flatMap((section) => section.lines)]
 
     // Every rendered line is the file's own text, verbatim (the same no-invention rule
     // W0.5's page holds to).
@@ -138,13 +184,118 @@ test('changelog adds no sentence of its own', () => {
     }
 
     // And nothing the file says is dropped, so a change in the files' shape fails here
-    // rather than silently shrinking the page.
-    const fromFile = contentLines(fileName)
-    const heading = fromFile.findIndex((line) => line === OPERATORS_HEADING)
-    const highlights = heading === -1 ? fromFile : fromFile.slice(0, heading)
-    const forOperators = heading === -1 ? [] : fromFile.slice(heading + 1)
-    assert.deepEqual(entry.highlights, highlights, `${entry.tag}: every highlight line is rendered`)
-    assert.deepEqual(entry.for_operators, forOperators, `${entry.tag}: every operator line is rendered`)
+    // rather than silently shrinking the page: each section's lines are the file's, and
+    // its title is the file's own heading word for word.
+    const fromFile = splitSections(contentLines(fileName))
+    assert.deepEqual(entry.highlights, fromFile.highlights, `${entry.tag}: every highlight line is rendered`)
+    assert.deepEqual(entry.sections, fromFile.sections, `${entry.tag}: every section, and every line in it, is rendered`)
+
+    // The section titles are read off the file rather than typed here: a title the file
+    // does not carry would be a heading the generator invented.
+    for (const section of entry.sections) {
+      assert.ok(
+        raw.split('\n').some((line) => line.trim() === headingLine(section.title)),
+        `${entry.tag}: the file carries no ${headingLine(section.title)} heading for the section ${section.title}`,
+      )
+    }
+  }
+})
+
+test('the generator splits a file at both section headings, in the file’s own order', () => {
+  // The corpus on `main` gives the generator one file with a `### Known limits` section
+  // (v0.8.5) and twelve with none, which is enough to catch a heading that leaks into the
+  // page and not enough to hold the split itself. These files do: every shape the format
+  // allows — both sections, each one alone, neither — and one that writes the two in the
+  // reverse order, which is what makes "the entry carries the file's order" an assertion
+  // rather than a property of the one file that has both.
+  const dir = mkdtempSync(path.join(tmpdir(), 'fugaro-changelog-releases-'))
+  try {
+    const files = {
+      'v1.2.0.md': ['- a release with no section at all', '- and its second bullet'].join('\n'),
+      'v1.2.1.md': [
+        '- a release with the operators block only',
+        '',
+        headingLine('For operators'),
+        '',
+        '1. upgrade the CLI',
+        '2. rebuild the images',
+      ].join('\n'),
+      'v1.2.2.md': [
+        '- a release with the known limits only',
+        '',
+        headingLine('Known limits'),
+        '',
+        '- a limit with `code` in it',
+        '- a second limit',
+      ].join('\n'),
+      'v1.2.3.md': [
+        '- a release with both sections',
+        '- and a second Highlights bullet',
+        '',
+        headingLine('For operators'),
+        '',
+        '1. upgrade the CLI',
+        '',
+        headingLine('Known limits'),
+        '',
+        '- a limit with `code` in it',
+        '- a second limit',
+      ].join('\n'),
+      'v1.2.4.md': [
+        '- a release whose sections are the other way round',
+        '',
+        headingLine('Known limits'),
+        '',
+        '- a limit first',
+        '',
+        headingLine('For operators'),
+        '',
+        '1. upgrade the CLI',
+      ].join('\n'),
+    }
+    for (const [fileName, text] of Object.entries(files)) writeFileSync(path.join(dir, fileName), `${text}\n`)
+
+    const entries = buildChangelog({ releasesDir: dir, cwd: dir })
+
+    // Newest first, so the fixture's version tells the case which file it is looking at.
+    assert.deepEqual(
+      entries.map((entry) => entry.tag),
+      ['v1.2.4', 'v1.2.3', 'v1.2.2', 'v1.2.1', 'v1.2.0'],
+      'the entries are the fixture files, newest first',
+    )
+
+    // The fixture's own lines, read the way `contentLines` reads the real files: trimmed,
+    // blank lines dropped. The file the entry names is the fixture's, never the corpus on
+    // `main` — the tags here are versions no release file carries on purpose.
+    const linesOf = (text) => text.split('\n').map((line) => line.trim()).filter((line) => line.length > 0)
+    for (const entry of entries) {
+      const fromFile = splitSections(linesOf(files[`${entry.tag}.md`]))
+      assert.deepEqual(entry.highlights, fromFile.highlights, `${entry.tag}: the Highlights are the lines before the first section heading`)
+      assert.deepEqual(entry.sections, fromFile.sections, `${entry.tag}: the sections are the file's own, in the file's own order`)
+    }
+
+    // The two named shapes, said out loud, so a generator that recognised only one heading
+    // — or only the order the one file on `main` writes them in — fails on a line that
+    // names what it got wrong.
+    const both = entries.find((entry) => entry.tag === 'v1.2.3')
+    assert.deepEqual(
+      both.sections.map((section) => section.title),
+      ['For operators', 'Known limits'],
+      'a file with both sections is split at both',
+    )
+    const reversed = entries.find((entry) => entry.tag === 'v1.2.4')
+    assert.deepEqual(
+      reversed.sections.map((section) => section.title),
+      ['Known limits', 'For operators'],
+      'a file that writes the two sections in the other order keeps the file’s order',
+    )
+    assert.deepEqual(
+      entries.find((entry) => entry.tag === 'v1.2.0').sections,
+      [],
+      'a file with no section heading has no sections',
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 

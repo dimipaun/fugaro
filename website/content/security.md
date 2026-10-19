@@ -3,6 +3,15 @@
 
 # Security policy
 
+## In short
+
+- Report a vulnerability through GitHub's private vulnerability reporting, never in a public issue ([Reporting a vulnerability](#reporting-a-vulnerability)).
+- The design assumes you trust the repository and the source of the task: anyone who can push to it, launch a run, or is listed in `followup.trusted` can steer an agent that holds the credentials below, and this is not a sandbox for code you would not run on a developer's laptop ([The assumption](#the-assumption)).
+- What limits the blast radius today: one container per run, per-repository identities, and narrow git credentials — a project-wide credential is not narrow ([What limits the blast radius today](#what-limits-the-blast-radius-today)).
+- What is not on by default: the budget gateway, so with no `budget:` block the real model key sits in the agent's environment, and Vertex has no dollar cap in any mode ([What is not on by default](#what-is-not-on-by-default)).
+- What no boundary stops: network egress is unrestricted, the agent shares the container with the runner and can read its `/proc`, and the caps are the gateway's — set a credit limit on every key you give Fugaro ([Known limits](#known-limits), [Money](#money)).
+- Out of scope: an agent doing harmful things inside its own container with the credentials that job's service account is allowed to hold ([Scope](#scope)).
+
 ## Reporting a vulnerability
 
 Please do not open a public issue for a vulnerability. Use GitHub's private vulnerability reporting: open the repository's **Security** tab, then **Report a vulnerability**. Include what you found, how to reproduce it, and the version (`fugaro version`) or commit.

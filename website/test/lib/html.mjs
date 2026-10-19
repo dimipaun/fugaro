@@ -1,8 +1,8 @@
 // website/test/lib/html.mjs — the reader the site's gates stand on (website plan, W1.11).
 //
-// The four gates (`linkcheck.mjs`, `a11y.mjs`, `origins.mjs`, `budget.mjs`) all read the
-// built artifact, and they read it with this one module so that what counts as "a link", "a
-// script" or "a heading" cannot differ between them. It lives under `test/lib/` rather than
+// The gates (`linkcheck.mjs`, `a11y.mjs`, `origins.mjs`, `budget.mjs` and the redesign's
+// `meta.mjs`) all read the built artifact, and they read it with this one module so that what
+// counts as "a link", "a script" or "a heading" cannot differ between them. It lives under `test/lib/` rather than
 // beside them because `npm run check` runs `node --test test/*.mjs`: a helper at the top level
 // would be run as a test file of its own, and a test file imported by another registers its
 // cases twice. Its own cases are in `origins.mjs` (the scanner section), which is the gate
@@ -379,10 +379,28 @@ export function servedFile(dist, pathname) {
 
 // ---- site.yaml, the part the gates need --------------------------------------------------
 
+/** The Content-Security-Policy `firebase.json` serves, as one string (W3.2). */
+export function deployedCSP(repo = REPO) {
+  const config = JSON.parse(readFileSync(path.join(repo, 'firebase.json'), 'utf8'))
+  const headers = config.hosting.headers.flatMap((entry) => entry.headers)
+  const csp = headers.find((header) => header.key.toLowerCase() === 'content-security-policy')
+  if (!csp) throw new Error('firebase.json carries no Content-Security-Policy header')
+  return csp.value
+}
+
 /**
- * `allowed_hosts`, `canonical_url` and `analytics.enabled` from site.yaml. A strict reader
- * of exactly those three keys: the Go boundary test pins their shape (bare lowercase hosts,
- * a quoted-or-bare URL, a boolean), and anything else in their place is refused.
+ * The four facts the gates need from site.yaml: `canonical_url` (and the host it names),
+ * `allowed_hosts`, `analytics.enabled` and `analytics.measurement_id`. A strict reader of
+ * exactly those keys — the Go boundary test pins their shape (bare lowercase hosts, a
+ * quoted-or-bare URL, a boolean, a quoted id) and anything else in their place is refused
+ * here rather than read as something it is not.
+ *
+ * `analyticsMeasurementID` is the property the site reports to, and it is **empty while the
+ * flag is off**: the two move together (the boundary test holds them to it), and it requires
+ * a **quoted** `measurement_id` — the id is a string a browser would stringify anyway, and an
+ * unquoted one is refused rather than turned into a number or a boolean by a YAML reader.
+ * A test that reads the built page's own configuration compares it with this rather than with
+ * a literal of its own, so the value lives in site.yaml alone (W3.2).
  */
 export function siteFacts(siteYAML = readFileSync(path.join(SITE, 'data', 'site.yaml'), 'utf8')) {
   const lines = siteYAML.split('\n')
@@ -401,14 +419,17 @@ export function siteFacts(siteYAML = readFileSync(path.join(SITE, 'data', 'site.
     hosts.push(m[1])
   }
   const a = lines.findIndex((l) => /^analytics:\s*$/.test(l))
-  const enabledLine = a === -1 ? null : lines.slice(a + 1).find((l) => /^  enabled:/.test(l))
-  const enabled = /^  enabled:\s*(true|false)\s*(#.*)?$/.exec(enabledLine ?? '')
+  const block = a === -1 ? [] : lines.slice(a + 1, a + 4)
+  const enabled = /^  enabled:\s*(true|false)\s*(#.*)?$/.exec(block.find((l) => /^  enabled:/.test(l)) ?? '')
   if (!enabled) throw new Error('site.yaml analytics.enabled is not a plain true/false')
+  const id = /^  measurement_id:\s*"([^"]*)"\s*(#.*)?$/.exec(block.find((l) => /^  measurement_id:/.test(l)) ?? '')
+  if (!id) throw new Error('site.yaml analytics.measurement_id is not a quoted value')
   const canonicalURL = new URL(canonical[1])
   return {
     canonicalURL,
     canonicalHost: canonicalURL.host,
     allowedHosts: new Set(hosts),
     analyticsEnabled: enabled[1] === 'true',
+    analyticsMeasurementID: id[1],
   }
 }

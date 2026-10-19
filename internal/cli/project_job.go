@@ -8,7 +8,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -90,30 +90,26 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 		// jobs exactly as it did.
 		return nil, nil
 	}
-	// A profile whose provider is Bitbucket has no shared job at all, and its
-	// selection cannot be honoured anywhere: internal/infra's ProjectJobs
-	// refuses to deploy one (a Bitbucket credential cannot be scoped to one
-	// project's repositories — the owner's ruling of 2026-10-15, D5 as
-	// amended), while projectpolicy accepts the profile and the publisher
-	// copies the local config's profiles as they are spelled. Computing the
-	// job's name from it anyway would launch the run at a job nothing
-	// deployed, and the 404 that comes back blames `fugaro init` for a
-	// refusal it made on purpose. Refused here instead — before the claim,
-	// before the token and before any Cloud Run call — because the
-	// per-repository fallback below would silently drop the profile the
-	// workflow selected, and the provider comparison that would take it is
-	// exactly what a Bitbucket repository does not fail.
-	if err := checkProjectJobProvider(profile, pr.Provider); err != nil {
-		return nil, err
-	}
 	// A project job serves exactly its profile's provider: the provider is an
 	// axis of the job's name, and the runner binds the run's slug — computed
 	// with the repository's own provider — against the job it runs on. A
-	// repository on another provider (design §4.5, D5 as amended, and
-	// internal/infra's ProjectJobs) stays on its per-repository job, decided
+	// repository on another provider stays on its per-repository job, decided
 	// here before any claim is taken or budget token minted.
+	//
+	// And a profile of a provider no shared job serves is no job at all, so a
+	// repository that selects one — its provider agrees with the profile's, and
+	// the runner is content because the policy defines the profile — stays on
+	// its per-repository job too. In phase 3 that is every Bitbucket profile:
+	// internal/infra's ProjectJobs skips one (a Bitbucket credential cannot be
+	// scoped to one project's repositories, the owner's ruling of 2026-10-15,
+	// so no shared job holds one), and infra.SharedJobProvider is the one place
+	// both sides read that fact. Without it this launch computed the name of a
+	// job no installation has, spent the claim and the budget token, and had
+	// Cloud Run answer 404 — the backend's missing job — for a repository that
+	// is supposed to keep the job it has always had (design §4.5, D5 as
+	// amended; docs/project-layer.md).
 	provider := e.repoProvider(spec.Repo, co)
-	if provider != pr.Provider {
+	if provider != pr.Provider || !infra.SharedJobProvider(pr.Provider) {
 		return nil, nil
 	}
 	// The repository must be admitted to the profile, not only to the
@@ -218,34 +214,6 @@ func (e *cloudEnv) repoProvider(repo string, co *config.Config) string {
 		return r.Provider
 	}
 	return co.Git.Provider
-}
-
-// checkProjectJobProvider refuses a launch whose workflow selects a profile
-// whose provider is Bitbucket: such a profile is one `fugaro init` never
-// deploys, so a launch on it can only reach a job that does not exist.
-//
-// The rule is the deployer's (internal/infra's ProjectJobs: "a shared job never
-// serves bitbucket in phase 3"), and it is not the launcher's to restate: what
-// this checks is the one provider whose selection can never be honoured
-// anywhere, which the deployer's refusal and the profile's own provider axis
-// together make a fact about the document. A profile of any *other* provider
-// the repository disagrees with is kept on the repository's per-repository job
-// by the comparison beside this call; Bitbucket is the case that comparison
-// cannot catch, because a Bitbucket repository selecting a Bitbucket profile
-// has no mismatch to see.
-//
-// The alternative — falling back to the per-repository job — would run the
-// workflow while dropping the profile it selected, on the jobs the profile's
-// cpu, memory, timeout and secrets were meant to replace: the failure the
-// publisher's default-profile check refuses for a selection nobody defined
-// (internal/cli's buildProjectPolicy). The launch stops, before the claim and
-// before the token, as the account and OAuth refusals beside it do.
-func checkProjectJobProvider(profile, provider string) error {
-	if provider != gitprov.KindBitbucket {
-		return nil
-	}
-	return userErr("the workflow selects the job profile %q, whose provider is bitbucket, and no shared project job can serve it: a Bitbucket credential cannot be scoped to one project's repositories (the owner's ruling of 2026-10-15, design §4.1, D5 as amended), so `fugaro init` refuses to deploy such a profile and Bitbucket repositories stay on their per-repository jobs. Make the profile a github one, or select no profile in this workflow",
-		profile)
 }
 
 // checkProjectJobAccount refuses a launch whose run selects a Claude account

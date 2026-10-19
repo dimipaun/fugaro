@@ -1,0 +1,160 @@
+# website-promote -- copy to .github/workflows/website-promote.yml
+# (docs/pending-workflows/README.md has the copy procedure, and
+# docs/website/preview-promote.md the owner-only one-time setup this file
+# needs before it can run.)
+#
+# WHAT THIS IS. A MANUAL (workflow_dispatch) workflow that promotes an
+# existing Firebase Hosting PREVIEW channel of the website's own project to the
+# live channel: the bytes an owner has already looked at on a preview URL are
+# what goes live, and the run itself builds nothing. It is the only path that
+# moves the live site, and it is the owner's alone.
+#
+# WHO MAY RUN IT, and the two locks that make that true. The job carries
+# `environment: website-live`, an environment whose ONLY required reviewer is
+# the owner, so GitHub holds the job until that reviewer approves it -- and the
+# job also refuses to start for any actor other than the repository's owner
+# (the `if:` below), so a stray dispatch by anyone else never even queues an
+# approval request. The sign-off is a person's click; the federation below
+# authenticates the *workflow*, not the person, which is why the person's part
+# is this gate rather than a credential.
+#
+# THE CREDENTIAL, AND WHY A PREVIEW PROMOTION IS NOT A CREDENTIAL HAND-OFF.
+# As in website-preview.yml there is no credential in this file: the job
+# authenticates to Google through Workload Identity Federation, exchanging the
+# run's own OIDC token for a short-lived access token for the deployer service
+# account, which holds only Firebase Hosting roles on the site's project. No
+# key file, no service account key, no FIREBASE_TOKEN, and no `secrets.`
+# reference: the only values read here are repository *variables*. The deployer
+# account is never an installation's and no credential a Fugaro run holds is
+# used: this workflow runs no Fugaro command and is invoked by no Fugaro
+# command.
+name: website-promote
+
+on:
+  # The one and only trigger. No push, no schedule, no pull_request, no
+  # pull_request_target, no repository_dispatch: nothing here can be started by
+  # an event, only by the owner, by hand.
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "the preview channel to promote to live (letters, digits, - and _, up to 63 characters)"
+        required: true
+        type: string
+
+# Least privilege, declared rather than inherited from the repository's
+# default. The promotion reads nothing from this repository, so its job needs
+# no `contents` scope at all: the only scope it holds is the one the federation
+# exchange requires.
+permissions:
+  contents: read
+
+# The live site moves one promotion at a time and a running promotion is never
+# cancelled: two promotions in flight could interleave, and there is no version
+# of that which is better than waiting.
+concurrency:
+  group: website-live
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    # The owner alone. The login is the owner of the repository website/data/
+    # site.yaml names, and internal/cli/docs_website_deploy_test.go holds this
+    # literal to that file's own owner, so neither can drift alone.
+    if: github.actor == 'dimipaun'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The environment: the owner is its only required reviewer, so the job
+    # waits for that approval however it was started. Its deployment branch
+    # policy also restricts the job to main (docs/website/preview-promote.md),
+    # as does the WIF provider's own condition on the dispatch ref.
+    environment: website-live
+    permissions:
+      # Nothing is checked out, so there is no contents scope to either grant
+      # or withhold; the federation exchange is the job's only need.
+      id-token: write
+    env:
+      CHANNEL: ${{ inputs.channel }}
+      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+    steps:
+      # The actor check again, as a step: the job's own `if:` is what keeps a
+      # non-owner dispatch from ever requesting an approval, and this is the
+      # belt to that pair of braces -- if the `if:` were ever weakened or lost,
+      # the run stops here with a message naming what happened instead of
+      # asking the reviewer to approve a promotion they did not start.
+      - name: only the owner may promote
+        run: |
+          set -euo pipefail
+          [[ $GITHUB_ACTOR == "dimipaun" ]] || { echo "website-promote: only the repository's owner may promote; this run was started by $GITHUB_ACTOR" >&2; exit 1; }
+
+      - name: validate the inputs
+        run: |
+          set -euo pipefail
+          die() { echo "website-promote: $*" >&2; exit 1; }
+          [[ -n ${CHANNEL:-} ]] || die "no channel was given"
+          # THE CHANNEL PATTERN IS scripts/deploy-website.sh's OWN, exactly as
+          # in website-preview.yml: 1 to 63 characters, letters, digits, hyphen
+          # and underscore, starting with a letter or a digit.
+          [[ $CHANNEL =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$ ]] || die "not a valid channel name: $CHANNEL"
+          # Promoting live to live is not a promotion, and it is the one
+          # channel name this workflow must never be pointed at: `live` is what
+          # it writes, never what it reads.
+          [[ $CHANNEL != live ]] || die "live is not a preview channel: there is nothing to promote from it"
+          [[ -n ${FIREBASE_PROJECT_ID:-} ]] || die "the repository variable FIREBASE_PROJECT_ID is not set (docs/website/preview-promote.md)"
+          [[ -n ${GCP_WORKLOAD_IDENTITY_PROVIDER:-} ]] || die "the repository variable GCP_WORKLOAD_IDENTITY_PROVIDER is not set (docs/website/preview-promote.md)"
+          [[ -n ${GCP_DEPLOYER_SERVICE_ACCOUNT:-} ]] || die "the repository variable GCP_DEPLOYER_SERVICE_ACCOUNT is not set (docs/website/preview-promote.md)"
+
+      # The firebase CLI is a Node program, and the runner image's own Node is
+      # not a pinned one: the same setup-node pin website-preview.yml uses, so
+      # both workflows run the CLI on the same major. No dependency tree is
+      # installed: nothing here reads this repository.
+      - name: set up Node for the firebase CLI
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      # The federation exchange, identical to the preview workflow's: a
+      # short-lived credential file from the run's OIDC token, no key file.
+      - name: authenticate to Google through Workload Identity Federation
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          project_id: ${{ vars.FIREBASE_PROJECT_ID }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: install the pinned firebase CLI
+        run: npm install --global --no-audit --no-fund firebase-tools@15.19.0
+
+      - name: promote the channel to live
+        run: |
+          set -euo pipefail
+          # `hosting:clone` copies one channel's current version -- the exact
+          # bytes the owner reviewed on the preview URL -- into the live
+          # channel. Nothing is rebuilt here, so the promoted bytes are the
+          # deployed preview's and not a fresh build of a moving ref. It is
+          # also the check that the channel exists: the CLI refuses a source
+          # channel this project has not got ("Could not find the channel
+          # <name> for site <site>") and one that carries no version, so a typo
+          # fails the run rather than promoting something else. Both the source
+          # and the target name the project as their site id: the project's
+          # default Hosting site's id IS the project id (a project with more
+          # than one Hosting site would name a site id here instead), and the
+          # project is never named by a committed .firebaserc.
+          firebase hosting:clone "${FIREBASE_PROJECT_ID}:${CHANNEL}" "${FIREBASE_PROJECT_ID}:live" --project "$FIREBASE_PROJECT_ID"
+          {
+            echo "## Website promoted to live"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| project | \`$FIREBASE_PROJECT_ID\` |"
+            echo "| channel promoted | \`$CHANNEL\` |"
+            echo "| promoted by | \`$GITHUB_ACTOR\` |"
+            echo ""
+            echo "The live channel now serves the version that channel held, with"
+            echo "no rebuild. Owner-run live checks 69a and 69b are in"
+            echo "docs/gcp-live-checklist.md."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "website-promote: $FIREBASE_PROJECT_ID:$CHANNEL -> live"

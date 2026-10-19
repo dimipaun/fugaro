@@ -120,3 +120,50 @@ func TestDecodeRefusesBadCloneURLs(t *testing.T) {
 		})
 	}
 }
+
+// One repository may be named once, in either spelling. The escape is only what
+// this package writes (unescKey returns a key with no escape in it unchanged),
+// so a hand-written node can carry the canonical spelling of a repository
+// beside the escaped one, and both fold onto one canonical name in the decoded
+// map. Which URL survived was then whichever member the map's iteration saw
+// last, and both answers are visible: the surviving URL is what the run clones
+// from, and it is the entry validCloneURLs validates, so the same bytes were
+// accepted on one read of the node and refused on the next — 355 of 400 decodes
+// of one node accepted and 45 refused, from Go's map order alone. model_prices
+// refuses the analogous pair explicitly (Prices.UnmarshalJSON), and this block
+// reads the same way.
+//
+// Mutation (verified, run and restored): drop the `spelled` check (and the
+// sort) — the first case below is accepted, with one of the two URLs in the
+// map. Mutation: drop checkNoDuplicateNames — the second case is accepted.
+func TestDecodeRefusesOneRepositoryNamedTwice(t *testing.T) {
+	for _, tc := range []struct{ name, block, want string }{
+		{"the escaped and the literal spelling, two URLs this repository answers to", `{"github%2Facme%2Fapp":"https://github.com/acme/app.git","github/acme/app":"https://github.com/acme/app"}`, "are both the repository"},
+		{"the escaped and the literal spelling, one of them another repository's URL", `{"github%2Facme%2Fapp":"https://github.com/acme/app.git","github/acme/app":"https://github.com/evil/app.git"}`, "are both the repository"},
+		{"one spelling, written twice", `{"github%2Facme%2Fapp":"https://github.com/acme/app.git","github%2Facme%2Fapp":"https://github.com/evil/app.git"}`, "names \"github%2Facme%2Fapp\" twice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for i := 0; i < 20; i++ { // the answer must not move with the map's order
+				p, found, err := Decode([]byte(`{"version":2,"clone_urls":` + tc.block + `}`))
+				if err == nil {
+					t.Fatalf("Decode(%s) = (%v, %v, nil), want a refusal: a repository named twice is one whose clone URL depends on the order the keys were read in", tc.block, p, found)
+				}
+				if !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("Decode(%s) = %v, want it to name %q", tc.block, err, tc.want)
+				}
+			}
+		})
+	}
+	// One repository under one spelling is what this package writes and what a
+	// hand-written node writes, and neither is the pair above: both stay
+	// readable, which is what the refusal has to leave alone.
+	for _, block := range []string{
+		`{"github%2Facme%2Fapp":"https://github.com/acme/app.git"}`,
+		`{"github/acme/app":"https://github.com/acme/app.git"}`,
+		`{"github%2Facme%2Fapp":"https://github.com/acme/app.git","github%2Facme%2Fother":"https://github.com/acme/other.git"}`,
+	} {
+		if _, _, err := Decode([]byte(`{"version":2,"clone_urls":` + block + `}`)); err != nil {
+			t.Errorf("Decode(%s) = %v, want it read", block, err)
+		}
+	}
+}

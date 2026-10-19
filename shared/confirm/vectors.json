@@ -1,0 +1,318 @@
+{
+  "about": "The spoken-confirmation state machine's accept/refuse cases as data (mobile plan Task P6.2). Replayed by shared/confirm/index.test.js today, and by P6.7's Go parity test (TestConfirmParityWithShared) so the Go consumer and the app cannot disagree about what a confirmation authorises. Each case starts from initialState({now, timeoutMs, maxPending, maxLedger}) and feeds `events` in order; `expect[i]` is what step answers for events[i]. A refusal carries no state, so the next event is judged against the same machine. A confirmation's text is P6.1's `confirm` app command (\"Fugaro, confirm\"); a bare \"confirm\" is agent text and confirms nothing. Every `record` is P6.3's action record verbatim (shared/mailbox-schema validates it). Written by hand from the rules in docs/mobile/implementation-plan.md (D128 as amended 2026-10-17, D169, D162) -- not generated from the module.",
+  "now": 1700000000000,
+  "timeoutMs": 60000,
+  "maxPending": 4,
+  "maxLedger": 64,
+  "runId": "run_9f3c",
+  "repo": "dimipaun/fugaro",
+  "pr": 568,
+  "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "cancelReadBack": "Cancel run run_9f3c. Say \"Fugaro, confirm\" to confirm.",
+  "mergeReadBack": "Merge dimipaun/fugaro#568 at head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa. Say \"Fugaro, confirm\" to confirm.",
+  "confirmReadBack": "Confirm dimipaun/fugaro#568. Say \"Fugaro, confirm\" to confirm.",
+  "confirmText": "Fugaro, confirm",
+  "cases": [
+    {
+      "name": "a cancel is read back by the resolved run id, then confirmed by a separate utterance",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending", "readBack": "Cancel run run_9f3c. Say \"Fugaro, confirm\" to confirm.", "actionId": "act_1" },
+        { "ok": true, "outcome": "confirmed", "phase": "idle", "actionId": "act_1", "confirmationId": "cnf_1", "readBack": "Cancel run run_9f3c. Say \"Fugaro, confirm\" to confirm.", "record": { "id": "act_1", "verb": "cancel", "target": { "run": "run_9f3c" }, "confirmation": { "id": "cnf_1", "at": 1700000002000 } } }
+      ]
+    },
+    {
+      "name": "a misrecognised \"confirm\" does not confirm, and spends nothing",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "yes", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } },
+        { "type": "confirm", "now": 1700000003000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": false, "code": "not-a-confirmation", "field": "text" },
+        { "ok": true, "outcome": "confirmed", "phase": "idle" }
+      ]
+    },
+    {
+      "name": "\"conform\" is not the phrase either",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "conform", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "confirmed it", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": false, "code": "not-a-confirmation", "field": "text" },
+        { "ok": false, "code": "not-a-confirmation", "field": "text" }
+      ]
+    },
+    {
+      "name": "the utterance that issued the command can never confirm it",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_1", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": false, "code": "same-utterance", "field": "utteranceId" }
+      ]
+    },
+    {
+      "name": "a replayed confirm authorises nothing the second time",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } },
+        { "type": "confirm", "now": 1700000003000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": true, "outcome": "confirmed", "phase": "idle" },
+        { "ok": false, "code": "no-pending-action", "field": "actionId" }
+      ]
+    },
+    {
+      "name": "a confirmation id is spent against every later action, and a fresh one works",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } },
+        { "type": "command", "now": 1700000003000, "utteranceId": "utt_3", "text": "cancel the other job", "verb": "cancel", "target": { "kind": "run", "runId": "run_0a11" }, "actionId": "act_2" },
+        { "type": "confirm", "now": 1700000004000, "utteranceId": "utt_4", "text": "Fugaro, confirm", "actionId": "act_2", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_0a11" } },
+        { "type": "confirm", "now": 1700000004000, "utteranceId": "utt_4", "text": "Fugaro, confirm", "actionId": "act_2", "confirmationId": "cnf_2", "target": { "kind": "run", "runId": "run_0a11" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": true, "outcome": "confirmed", "phase": "idle" },
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": false, "code": "replayed-confirmation", "field": "confirmationId" },
+        { "ok": true, "outcome": "confirmed", "phase": "idle" }
+      ]
+    },
+    {
+      "name": "a replayed utterance id is refused",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "command", "now": 1700000002000, "utteranceId": "utt_1", "text": "cancel the other job", "verb": "cancel", "target": { "kind": "run", "runId": "run_0a11" }, "actionId": "act_2" }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": false, "code": "replayed-utterance", "field": "utteranceId" }
+      ]
+    },
+    {
+      "name": "a reused action id is refused",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "command", "now": 1700000002000, "utteranceId": "utt_2", "text": "cancel the other job", "verb": "cancel", "target": { "kind": "run", "runId": "run_0a11" }, "actionId": "act_1" }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": false, "code": "replayed-action", "field": "actionId" }
+      ]
+    },
+    {
+      "name": "a confirm for a different target is refused",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_0a11" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": false, "code": "different-target", "field": "target" }
+      ]
+    },
+    {
+      "name": "a merge whose head moved since the read-back is refused",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "merge it", "verb": "merge", "target": { "kind": "merge", "repo": "dimipaun/fugaro", "pr": 568, "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "merge", "repo": "dimipaun/fugaro", "pr": 568, "headSha": "cccccccccccccccccccccccccccccccccccccccc" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending", "readBack": "Merge dimipaun/fugaro#568 at head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa. Say \"Fugaro, confirm\" to confirm." },
+        { "ok": false, "code": "different-target", "field": "target" }
+      ]
+    },
+    {
+      "name": "the merge record carries the head read back at confirmation time",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "merge it", "verb": "merge", "target": { "kind": "merge", "repo": "dimipaun/fugaro", "pr": 568, "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "merge", "repo": "dimipaun/fugaro", "pr": 568, "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": true, "outcome": "confirmed", "phase": "idle", "record": { "id": "act_1", "verb": "merge", "target": { "repo": "dimipaun/fugaro", "pr": 568 }, "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "confirmation": { "id": "cnf_1", "at": 1700000002000 } } }
+      ]
+    },
+    {
+      "name": "confirming an action names the repository and PR it confirms",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "approve the deploy", "verb": "confirm", "target": { "kind": "pr", "repo": "dimipaun/fugaro", "pr": 568 }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "pr", "repo": "dimipaun/fugaro", "pr": 568 } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending", "readBack": "Confirm dimipaun/fugaro#568. Say \"Fugaro, confirm\" to confirm." },
+        { "ok": true, "outcome": "confirmed", "phase": "idle", "readBack": "Confirm dimipaun/fugaro#568. Say \"Fugaro, confirm\" to confirm.", "record": { "id": "act_1", "verb": "confirm", "target": { "repo": "dimipaun/fugaro", "pr": 568 }, "confirmation": { "id": "cnf_1", "at": 1700000002000 } } }
+      ]
+    },
+    {
+      "name": "a confirm one millisecond past the deadline is refused",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000061001, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": false, "code": "confirmation-expired", "field": "now" }
+      ]
+    },
+    {
+      "name": "a confirm at the deadline exactly is inside the timeout",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000061000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": true, "outcome": "confirmed", "phase": "idle" }
+      ]
+    },
+    {
+      "name": "a command and \"confirm\" in one utterance is refused",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel run 42, confirm", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" }
+      ],
+      "expect": [{ "ok": false, "code": "command-and-confirm", "field": "text" }]
+    },
+    {
+      "name": "the kill switch is refused outright, whatever the target",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "kill everything", "verb": "kill-switch", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "command", "now": 1700000002000, "utteranceId": "utt_2", "text": "set the budget to 500", "verb": "budget-set" },
+        { "type": "command", "now": 1700000003000, "utteranceId": "utt_3", "text": "delete the account", "verb": "delete-account" }
+      ],
+      "expect": [
+        { "ok": false, "code": "refused-verb", "field": "verb" },
+        { "ok": false, "code": "refused-verb", "field": "verb" },
+        { "ok": false, "code": "refused-verb", "field": "verb" }
+      ]
+    },
+    {
+      "name": "a verb outside the closed set is refused",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "defenestrate the run", "verb": "defenestrate", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" }
+      ],
+      "expect": [{ "ok": false, "code": "unknown-verb", "field": "verb" }]
+    },
+    {
+      "name": "an unresolved target cannot be read back, so it can never be confirmed",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel that thing", "verb": "cancel", "target": null, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } }
+      ],
+      "expect": [
+        { "ok": false, "code": "unresolved-target", "field": "target" },
+        { "ok": false, "code": "no-pending-action", "field": "actionId" }
+      ]
+    },
+    {
+      "name": "a launch passes through without a confirmation (D162)",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "kick off the docs job", "verb": "launch" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "pass-through", "phase": "idle" },
+        { "ok": false, "code": "no-pending-action", "field": "actionId" }
+      ]
+    },
+    {
+      "name": "a second pending action makes a confirm ambiguous, and \"cancel that\" clears both",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "command", "now": 1700000001500, "utteranceId": "utt_2", "text": "cancel the other job", "verb": "cancel", "target": { "kind": "run", "runId": "run_0a11" }, "actionId": "act_2" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_3", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } },
+        { "type": "abort", "now": 1700000003000, "utteranceId": "utt_4", "text": "cancel that" },
+        { "type": "confirm", "now": 1700000004000, "utteranceId": "utt_5", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": true, "outcome": "read-back", "phase": "crowded" },
+        { "ok": false, "code": "ambiguous-pending", "field": "pending" },
+        { "ok": true, "outcome": "discarded", "phase": "idle" },
+        { "ok": false, "code": "no-pending-action", "field": "actionId" }
+      ]
+    },
+    {
+      "name": "\"cancel that\" with nothing outstanding is a fact, not a refusal",
+      "events": [
+        { "type": "abort", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel that" }
+      ],
+      "expect": [{ "ok": true, "outcome": "nothing-pending", "phase": "idle" }]
+    },
+    {
+      "name": "an unknown event is refused",
+      "events": [
+        { "type": "forget", "now": 1700000001000, "utteranceId": "utt_1" }
+      ],
+      "expect": [{ "ok": false, "code": "unknown-event", "field": "type" }]
+    },
+    {
+      "name": "a now that goes backwards is refused",
+      "events": [
+        { "type": "command", "now": 1700000000000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1699999999000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": false, "code": "now-went-backwards", "field": "now" }
+      ]
+    },
+    {
+      "name": "a bare \"confirm\" is agent text under P6.1, so it confirms nothing; the wake-word form does, punctuation and alias included",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Confirm.", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Figaro, confirm.", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": false, "code": "not-a-confirmation", "field": "text" },
+        { "ok": false, "code": "not-a-confirmation", "field": "text" },
+        { "ok": true, "outcome": "confirmed", "phase": "idle", "record": { "id": "act_1", "verb": "cancel", "target": { "run": "run_9f3c" }, "confirmation": { "id": "cnf_1", "at": 1700000002000 } } }
+      ]
+    },
+    {
+      "name": "an invisible character inside the phrase is refused, not read past",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Fugaro, con\u200bfirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "run_9f3c" } }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": false, "code": "bad-character", "field": "text" }
+      ]
+    },
+    {
+      "name": "a command ending in a punctuated \"confirm\" carries the phrase and is refused",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor, confirm.", "verb": "cancel", "target": { "kind": "run", "runId": "run_9f3c" }, "actionId": "act_1" }
+      ],
+      "expect": [{ "ok": false, "code": "command-and-confirm", "field": "text" }]
+    },
+    {
+      "name": "a run id that would be a flag on the consumer's command line is refused before any read-back",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "cancel the docs refactor", "verb": "cancel", "target": { "kind": "run", "runId": "-rf" }, "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "run", "runId": "-rf" } }
+      ],
+      "expect": [
+        { "ok": false, "code": "bad-key", "field": "target.runId" },
+        { "ok": false, "code": "no-pending-action", "field": "actionId" }
+      ]
+    }
+  ]
+}

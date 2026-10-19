@@ -490,6 +490,12 @@ func absent[T any](v *T, err error) (*T, error) {
 	return v, err
 }
 
+// maxSinceDays is the largest day count whose duration fits in int64
+// nanoseconds: time.Duration(days)*24*time.Hour silently wraps to a negative
+// window past it, so a larger count is refused rather than read as "no runs".
+// The desktop console's runs-window schema holds the same bound.
+const maxSinceDays = 106751
+
 // parseSince parses --since: a positive number of days (7d), a positive Go
 // duration (36h, 90m), or 0 for no bound.
 func parseSince(s string) (time.Duration, error) {
@@ -498,7 +504,7 @@ func parseSince(s string) (time.Duration, error) {
 	}
 	if n, ok := strings.CutSuffix(s, "d"); ok {
 		days, err := strconv.Atoi(n)
-		if err != nil || days < 1 {
+		if err != nil || days < 1 || days > maxSinceDays {
 			return 0, fmt.Errorf("--since %q: use a positive number of days (7d) or a Go duration (36h)", s)
 		}
 		return time.Duration(days) * 24 * time.Hour, nil
@@ -539,6 +545,11 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	// every run that opens a pull request has none, and its columns do not
 	// change (design artifact-runs.md §9).
 	showArtifacts := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ArtifactCount > 0 })
+	// The changed-files column appears only when some listed run's record
+	// carries the set (design D27): a run from before the field, or one that
+	// never reached finalize, has none and does not widen every other run's
+	// columns for it.
+	showFiles := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ChangedFiles != nil })
 	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR"
 	if showRecipe {
 		header += "\tRECIPE"
@@ -551,6 +562,9 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	}
 	if showArtifacts {
 		header += "\tARTIFACTS"
+	}
+	if showFiles {
+		header += "\tFILES"
 	}
 	fmt.Fprintln(tw, header)
 	for _, r := range rows {
@@ -582,6 +596,9 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 		if showArtifacts {
 			line += "\t" + artifactCell(r)
 		}
+		if showFiles {
+			line += "\t" + changedFilesCell(r)
+		}
 		fmt.Fprintln(tw, line)
 	}
 	if err := tw.Flush(); err != nil {
@@ -612,6 +629,21 @@ func statusCell(r runview.Row) string {
 		return r.Status + " (" + string(r.Halt.Reason) + ")"
 	}
 	return r.Status
+}
+
+// changedFilesCell is a row's recorded changed-path count (design D27): the
+// count of paths the record holds, and "N/M" when the record was truncated at
+// M paths, so a reader can see that the set it holds is not the whole set.
+// "-" for a run that recorded none — an unknown answer, never a zero.
+func changedFilesCell(r runview.Row) string {
+	cf := r.ChangedFiles
+	if cf == nil {
+		return "-"
+	}
+	if cf.Truncated {
+		return fmt.Sprintf("%d/%d", len(cf.Paths), cf.Total)
+	}
+	return strconv.Itoa(len(cf.Paths))
 }
 
 // validSHA256 reports whether s is a sha256 hex digest: exactly 64 lowercase

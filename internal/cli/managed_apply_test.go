@@ -564,17 +564,31 @@ func TestManagedApplyRootMustBeInTheProjectsCheckout(t *testing.T) {
 }
 
 // TestManagedCoverIsTheConfigsOwnAllowlist: the members a managed plan may
-// grant a role to are the config's own launchers and operators — the list
-// init's review screen shows — and the two fields this command deliberately
-// leaves empty decide against admitting rather than for it: no billing account
-// may be named, and the buckets are the project's own runs bucket alone.
+// grant a role to are the config's own launchers, operators and budget admins
+// — every list of people the config records, and the lists init's review
+// screen prints — and the two fields this command deliberately leaves empty
+// decide against admitting rather than for it: no billing account may be
+// named, and the buckets are the project's own runs bucket alone.
+//
+// The budget admins are the half that was missing: init's review admits a plan
+// that grants a role to a budget admin (init_review's accessLists prints them,
+// and its cover lists them), while this command passed only the launchers and
+// operators, so a plan init's own gate had admitted was refused here forever
+// with a sentence about a review screen this command does not have.
+//
+// Mutation (verified, run and restored): drop lc.Terraform.BudgetAdmins from
+// managedCover's slices.Concat — Cover.Listed loses user:budget@example.com
+// and this test fails.
 func TestManagedCoverIsTheConfigsOwnAllowlist(t *testing.T) {
 	noAgentSession(t)
 	r := newInitRig(t)
-	r.appendConfig(t, "image_source: ghcr.io/acme\nterraform:\n  launchers: [user:launcher@example.com, user:other@example.com]\n  operators: [user:operator@example.com]\n")
+	r.appendConfig(t, "image_source: ghcr.io/acme\nterraform:\n  launchers: [user:launcher@example.com, user:other@example.com]\n  operators: [user:operator@example.com]\n  budget_admins: [user:budget@example.com]\n")
 	lc, err := localcfg.Load(r.cfg)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(lc.Terraform.BudgetAdmins) != 1 {
+		t.Fatalf("the fixture's budget_admins did not load: %v", lc.Terraform.BudgetAdmins)
 	}
 	c := managedCover(lc, initRunsBucket)
 	if !slicesEqual(c.Projects, []string{initProject}) {
@@ -586,9 +600,9 @@ func TestManagedCoverIsTheConfigsOwnAllowlist(t *testing.T) {
 	if !slicesEqual(c.Buckets, []string{initRunsBucket}) {
 		t.Errorf("Cover.Buckets = %v, want the project's own runs bucket", c.Buckets)
 	}
-	want := []string{"user:launcher@example.com", "user:other@example.com", "user:operator@example.com"}
+	want := []string{"user:launcher@example.com", "user:other@example.com", "user:operator@example.com", "user:budget@example.com"}
 	if !slicesEqual(sorted(c.Listed), sorted(want)) {
-		t.Errorf("Cover.Listed = %v, want the config's own launchers and operators %v", c.Listed, want)
+		t.Errorf("Cover.Listed = %v, want the config's own launchers, operators and budget admins %v", c.Listed, want)
 	}
 	if len(c.Billing) != 0 {
 		t.Errorf("Cover.Billing = %v, want none: this command has no review screen to show a billing account on, so a plan that names one is refused", c.Billing)

@@ -231,23 +231,24 @@ func finishedResult(in runview.Input, finishedSince, now time.Time) scanResult {
 	}
 	row := runview.Join(in, noComputePrices, now)
 	return scanResult{IsFinished: true, Finished: watch.FinishedRun{
-		Run: in.RunID, Slug: in.Slug, Title: finishedTitle(in.Task), Workflow: row.Workflow,
+		Run: in.RunID, Slug: in.Slug, Title: runTitle(in.Task), Workflow: row.Workflow,
 		Status: row.Status, Outcome: row.Outcome, PRNumber: row.PR, PRURL: row.PRURL,
 		FinishedAt: finishedAt,
 	}}
 }
 
-// finishedTitle is a finished run's one-line title: the first line of its
-// task prompt, clipped as the runner's own registry entry titles a live
-// run (budget_session.go's registryEntry). Unlike that entry, it is not
-// redacted against the run's own secrets, which this reader never holds;
-// watch.clean sanitises it for display like every other bucket-derived
-// field here.
-func finishedTitle(t *task.Spec) string {
-	if t == nil {
-		return ""
-	}
-	title, _, _ := strings.Cut(strings.TrimSpace(t.Task), "\n")
+// runTitle is a run's one-line title while it is queued and once it has
+// finished: both rows name a run the same way, from the ONE place the text
+// comes from (task.Spec.TitleLine) — the title its launcher stored (fugaro
+// run --title), else its task prompt's first line. A queued --batch or
+// --attempts launch would otherwise fall back to its workflow and read alike
+// on every row, the very problem --title exists to fix. It is clipped as the
+// runner's own registry entry titles a live run (budget_session.go's
+// registryEntry). Unlike that entry, it is not redacted against the run's
+// own secrets, which this reader never holds; watch.clean sanitises it for
+// display like every other bucket-derived field here.
+func runTitle(t *task.Spec) string {
+	title := t.TitleLine()
 	if runes := []rune(title); len(runes) > 80 {
 		title = string(runes[:80])
 	}
@@ -279,8 +280,8 @@ func queuedResult(in runview.Input, queuedSince, queuedMinted, now time.Time) sc
 		return scanResult{}
 	}
 	return scanResult{IsQueued: true, Queued: watch.QueuedRun{
-		Run: in.RunID, Slug: in.Slug, Workflow: row.Workflow, Recipe: row.Recipe, RequestedBy: row.RequestedBy,
-		LaunchedAt: at, Stale: stale,
+		Run: in.RunID, Slug: in.Slug, Title: runTitle(in.Task), Workflow: row.Workflow, Recipe: row.Recipe,
+		RequestedBy: row.RequestedBy, LaunchedAt: at, Stale: stale,
 	}}
 }
 

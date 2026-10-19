@@ -37,6 +37,7 @@ Subcommands:
 - `fugaro init` -- Stand up or adopt the installation's, or a repository's, cloud resources through Terraform
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
+- `fugaro plan` -- Read a plan's graph artifact
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
 - `fugaro recipes` -- List, show, validate and publish recipes, the task loop a run follows after implement
 - `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model or person
@@ -737,6 +738,7 @@ Subcommands:
 - `fugaro config example` -- Print an annotated fugaro.yaml template
 - `fugaro config init` -- Write the minimal fugaro.yaml of a repository whose project publishes a project layer
 - `fugaro config layer` -- Print the project layer published for this checkout's project
+- `fugaro config list` -- List the Fugaro installations this machine has
 - `fugaro config publish` -- Publish the project layer: defaults and profiles for every repository of the project (fugaro/project-layer.yaml in the runs bucket)
 - `fugaro config show` -- Print the checkout's fugaro.yaml resolved over the project layer, with where each value comes from
 
@@ -796,6 +798,30 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for layer |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro config list`
+
+List the Fugaro installations this machine has
+
+List the project configs under $XDG_CONFIG_HOME/fugaro/projects (else
+~/.config/fugaro/projects), with the GCP project and region of each and what
+is known about its published shared config.
+
+This is a local read: it opens no bucket and needs no project selected, so it
+works outside a checkout and with no config at all (an empty list).
+
+Usage: `fugaro config list`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for list |
 | `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:
@@ -1540,6 +1566,50 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro plan`
+
+Read a plan's graph artifact
+
+Usage: `fugaro plan`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for plan |
+
+Subcommands:
+
+- `fugaro plan graph` -- Print a plan's graph: its tasks, their dependencies and their footprints
+
+## `fugaro plan graph`
+
+Print a plan's graph: its tasks, their dependencies and their footprints
+
+Print the graph artifact written beside a plan.
+
+The artifact is `<plan>.graph.json` — for docs/plans/foo.md it is
+docs/plans/foo.graph.json. With no --plan, the one graph artifact under
+docs/plans/ is read; more than one is refused rather than guessed at.
+
+A graph this build does not understand is refused rather than rendered: a
+future schema version, a malformed document, an edge to a node that is not
+there, or a cycle. This is a local read and it writes nothing.
+
+Usage: `fugaro plan graph`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for graph |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--plan` | string | "" | no | the plan document the graph sits beside (default: the one graph artifact under docs/plans) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro project`
 
 The project's policy, its allow-list and the repositories enrolled
@@ -2037,6 +2107,14 @@ batch, under one batch label (bestof-<first run id> unless --batch is given); on
 they have all opened a pull request, compare them with fugaro run --recipe pick.
 It takes no --pr, --run-id or --retry.
 
+--title TEXT names the run: one line, at most 100 characters. It is what
+fugaro watch and runs ls list the run by, and the title (with the body's first
+heading) of the pull request the run opens when the agent writes no pr.md of
+its own. Without it the run is named by the task's first line, so briefs that
+start with the same preamble all read alike. A follow-up (--pr) keeps its run's
+title unless --title is given, and --retry takes none (the stored task keeps its
+own).
+
 Usage: `fugaro run [TEXT]`
 
 Flags:
@@ -2060,6 +2138,7 @@ Flags:
 | `--retry` | string | "" | no | launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
+| `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given |
 | `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's) |
 | `--total-timeout` | string | "" | no | override the workflow's timeouts.total for this run, such as 45m |
 | `--workflow` | string | "" | no | workflow to run (default: the repo's only workflow) |

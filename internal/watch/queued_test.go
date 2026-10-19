@@ -47,6 +47,61 @@ func TestMergeQueuedAddsRowToExistingRepo(t *testing.T) {
 	}
 }
 
+// A queued run shows its own job title when fugaro run --title gave it one,
+// not its workflow: a --batch or --attempts launch would otherwise read
+// alike on every row while it queues, and only come apart once each run
+// goes live (design docs/design/watch-queued.md's one rule, and the same
+// one finished rows use: task.Spec.TitleLine).
+//
+// Mutation (queuedRow trusting q.Workflow as the title again): the row shows
+// "web" and this test fails.
+func TestMergeQueuedRowShowsTheRunsOwnTitle(t *testing.T) {
+	v := fixture()
+	q := []QueuedRun{{Run: "r-titled1", Slug: "acme__app", Title: "Ship the flaky-test fix", Workflow: "web", RequestedBy: "a@b.c", LaunchedAt: t0.Add(-2 * time.Minute)}}
+	got := MergeQueued(v, Config{}, q, "", t0)
+	var row RunRow
+	for _, b := range got.Repos {
+		for _, r := range b.Runs {
+			if r.Run == "r-titled1" {
+				row = r
+			}
+		}
+	}
+	if row.Title != "Ship the flaky-test fix" {
+		t.Fatalf("title = %q, want the run's own title", row.Title)
+	}
+	// The workflow is still its own field, so nothing is lost by preferring
+	// the title.
+	if row.Workflow != "web" {
+		t.Fatalf("workflow = %q, want it kept", row.Workflow)
+	}
+	// No title: exactly what a queued row always showed. (A fresh view and a
+	// fresh row: MergeQueued appends into the view it is given.)
+	untitled := MergeQueued(fixture(), Config{}, []QueuedRun{{Run: "r-titled1", Slug: "acme__app", Workflow: "web", RequestedBy: "a@b.c", LaunchedAt: t0.Add(-2 * time.Minute)}}, "", t0)
+	for _, b := range untitled.Repos {
+		for _, r := range b.Runs {
+			if r.Run == "r-titled1" && r.Title != "web" {
+				t.Fatalf("title = %q, want the workflow", r.Title)
+			}
+		}
+	}
+}
+
+// A queued run's title comes from task.json, so it is sanitised like every
+// other bucket-derived field: no escape sequence, no bidi override, reaches
+// the plain, TUI or JSON output.
+func TestMergeQueuedSanitisesTheTitle(t *testing.T) {
+	q := []QueuedRun{{Run: "r-esc0002", Slug: "acme__app", Title: "pwned\x1b]0;x\x07\u202eevil", Workflow: "w", LaunchedAt: t0.Add(-time.Minute)}}
+	v := MergeQueued(fixture(), Config{}, q, "", t0)
+	var plain strings.Builder
+	if err := RenderPlain(&plain, "aurora", v, nil, PlainOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain.String(), "\x1b") || strings.Contains(plain.String(), "\u202e") {
+		t.Fatalf("hostile bytes reached the plain output: %q", plain.String())
+	}
+}
+
 func TestMergeQueuedCreatesRepoBlock(t *testing.T) {
 	v := fixture()
 	q := []QueuedRun{{Run: "r-new1", Slug: "acme__new", Workflow: "web", LaunchedAt: t0.Add(-time.Minute)}}

@@ -1,0 +1,68 @@
+{
+  "name": "fugaro-console",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The Fugaro desktop console: the Electron application under console/, never published to npm and never importable by the Go module. Every specifier here is an EXACT version (desktop-console plan Task 1.0, design section 5.2), enforced by test/unit/pinning.test.ts; Electron in particular is pinned on purpose and bumped on purpose, with the toolchain task, exactly as internal/budget/rules/emulator/package.json pins firebase-tools.",
+  "engines": {
+    "node": "22.23.3"
+  },
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.bundle-renderer.json && node .bundle-renderer/index.js",
+    "test:unit": "vitest run --dir test/unit",
+    "test:e2e": "npm run build && playwright test --pass-with-no-tests",
+    "typecheck": "tsc --noEmit",
+    "record-fixture": "tsc -p tsconfig.record-fixture.json && node .record-fixture/tools/record-fixture/index.js",
+    "package": "npm run build && electron-builder --mac --universal --publish never",
+    "package:targets": "electron-builder --mac --universal --publish never"
+  },
+  "build": {
+    "appId": "io.github.dimipaun.fugaro-console",
+    "productName": "Fugaro Console",
+    "directories": {
+      "output": "release"
+    },
+    "asar": true,
+    "files": [
+      "dist/main/**/*.js",
+      "!dist/main/fuses.js",
+      "dist/preload/index.js",
+      "dist/preload/installations.js",
+      "dist/shared/**/*.js",
+      "dist/source/**/*.js",
+      "!dist/source/fixture.js",
+      "dist/bundle/console.js",
+      "dist/bundle/index.html",
+      "dist/bundle/installations.html",
+      "dist/bundle/installations.js",
+      "dist/bundle/refusal.html"
+    ],
+    "afterPack": "dist/main/fuses.js",
+    "publish": null,
+    "npmRebuild": false,
+    "electronDownload": {
+      "checksums": {
+        "electron-v44.7.2-darwin-arm64.zip": "07d73d3d6dd0b8679c2f1849e30df179ea50c1d6b17630fcc398ae05221f0bd2",
+        "electron-v44.7.2-darwin-x64.zip": "915cb638692e3595926fa64903ee0562c3c0c5a1febb84724175756ca2f0f3b7"
+      }
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist"
+    }
+  },
+  "devDependencies": {
+    "@electron/fuses": "2.0.0",
+    "@playwright/test": "1.64.1",
+    "@types/node": "22.20.5",
+    "electron": "44.7.2",
+    "electron-builder": "26.17.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}

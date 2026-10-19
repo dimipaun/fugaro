@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -187,6 +188,12 @@ type restoreRun struct {
 // checkout and the apply — and every refusal before the creation is a hard
 // return.
 func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) error {
+	// A restore creates a managed project and applies as its deployer, and
+	// neither is possible in this release (managedDeployerShipped): refused
+	// before anything else, and before any cloud call.
+	if err := refuseManagedNotShipped(); err != nil {
+		return err
+	}
 	// A credential leak first, before anything opens the cloud (refuseHTTP2Debug).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
@@ -674,6 +681,19 @@ func restoreOldReadable(ctx context.Context, c *infra.Clients, gcpProject string
 //     token ceiling, the grace — stay. Where the new backend lives is the
 //     operator's decision (fugaro init --firebase), not the restore's, and it
 //     is named in what is returned.
+//   - Every base_images entry whose reference names the old project's
+//     registry goes, and the kinds it dropped are named in what is returned.
+//     The reference is <region>-docker.pkg.dev/<old project>/…, so it is not
+//     cleared by the creating apply: init reads base_images as the operator's
+//     own choice (basePlanItem's isManaged), and a reference that is not a pin
+//     this installation wrote is used as it is with a note — so the
+//     installation would keep building FROM a registry in a project that no
+//     longer exists, and nothing else would move it. Emptying the entry is
+//     what makes the creating run pin this release's base image again (the
+//     empty case is basePlanItem's pin), and an entry pointing anywhere else —
+//     an image of the operator's own — is kept untouched: it names no project
+//     of this installation's, and clearing it would replace a deliberate
+//     choice with this release's base.
 //
 // What is refused rather than moved, because the restore cannot know the
 // answer: a runs_bucket that is not the installation's default name, and a
@@ -688,6 +708,7 @@ func restoreConfig(lc *localcfg.Config, newID string) (*localcfg.Config, []strin
 	if s := lc.Terraform.StateBucket; s != "" && s != "fugaro-tfstate-"+lc.GCPProject {
 		return nil, nil, userErr("the project config names terraform.state_bucket %s, which is a bucket of its own rather than %s's default: a restore cannot know where that bucket's successor should be. Remove terraform.state_bucket from the config (fugaro init derives fugaro-tfstate-%s) or move it yourself", s, lc.GCPProject, newID)
 	}
+	var strandedBases []string
 	next := *lc
 	next.GCPProject = newID
 	next.RunsBucket = "fugaro-runs-" + newID
@@ -698,8 +719,12 @@ func restoreConfig(lc *localcfg.Config, newID string) (*localcfg.Config, []strin
 	next.Build.ServiceAccount = ""
 	next.Terraform = lc.Terraform
 	next.Terraform.StateBucket = ""
+	next.BaseImages, strandedBases = restoreBaseImages(lc)
 
 	var left []string
+	if len(strandedBases) > 0 {
+		left = append(left, fmt.Sprintf("the base images of %s's registry (kinds: %s) did not come across: each reference named the registry of the project that was lost, and the creating run pins this release's base images again (fugaro init --base, or --base-image KIND=IMAGE to point a kind at an image of your own)", lc.GCPProject, strings.Join(strandedBases, ", ")))
+	}
 	if b := lc.Budget; b != nil {
 		nb := *b
 		if nb.RTDBURL != "" || nb.FirebaseProject != "" || nb.FirebaseAPIKey != "" || nb.TokenSigner != "" {
@@ -709,6 +734,47 @@ func restoreConfig(lc *localcfg.Config, newID string) (*localcfg.Config, []strin
 		next.Budget = &nb
 	}
 	return &next, left, nil
+}
+
+// restoreBaseImages is the base_images block as the new project may have it,
+// beside the kinds it dropped (sorted, so the sentence the restore prints names
+// them in one order). It drops exactly the entries whose reference is under the
+// OLD installation's registry host — <region>-docker.pkg.dev/<old project>,
+// which is where every ref this tool writes lives, both the pin through the
+// remote repository and a copy in the installation's own fugaro-base — and
+// keeps every other entry as it is.
+//
+// The host comes from infra.RegistryHost, the one derivation of it: the
+// config's own registry_host when it records one, else <region>-docker.pkg.dev/
+// <gcp_project>. It is read before the caller clears registry_host, and it is
+// read through the config the operator's file holds, so a config whose
+// registry_host names another project is refused by every other reader anyway
+// (localcfg's checkRegistryHostProject, infra.registryHost) and nothing here
+// has to decide what that would mean. A config that cannot name a host at all
+// has no entry this installation's own registry served, and drops nothing.
+func restoreBaseImages(lc *localcfg.Config) (kept map[string]string, dropped []string) {
+	if len(lc.BaseImages) == 0 {
+		return lc.BaseImages, nil
+	}
+	host, err := infra.RegistryHost(lc)
+	if err != nil || host == "" {
+		return maps.Clone(lc.BaseImages), nil
+	}
+	kept = make(map[string]string, len(lc.BaseImages))
+	for kind, ref := range lc.BaseImages {
+		if strings.HasPrefix(ref, host+"/") {
+			dropped = append(dropped, kind)
+			continue
+		}
+		kept[kind] = ref
+	}
+	if len(kept) == 0 {
+		// No entry left is the same config as none written: the creating run
+		// pins this release's base images for the kinds it needs.
+		kept = nil
+	}
+	slices.Sort(dropped)
+	return kept, dropped
 }
 
 // readConfirmLine reads one line from in, one byte at a time.

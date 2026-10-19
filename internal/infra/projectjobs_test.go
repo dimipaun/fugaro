@@ -470,20 +470,89 @@ profiles:
 // project's repositories; plan Task 3.0 step 2, D5 amended). So a shared job
 // never serves Bitbucket and never mounts the Bitbucket token, whatever
 // provider the profile names.
-func TestProjectJobsRefuseBitbucket(t *testing.T) {
-	for _, c := range []struct{ name, lc, want string }{
-		{"a Bitbucket profile", `profiles:
+//
+// A Bitbucket profile is skipped and not refused, which is the whole of this
+// test: the policy layer admits such a profile (projectpolicy.validProfiles,
+// and TestProfileAdmitsOnlyItsOwnProvider), a Bitbucket repository's workflow
+// may select it, and the runner only requires a selected profile to be
+// defined — so an installation whose local config names one must deploy, and
+// the profile simply gets no job. Refusing the installation whole, as this
+// function used to, made `fugaro init` fail on a document `fugaro project
+// policy publish` accepts.
+//
+// Mutation (verified, run and restored): put the refusal back (return nil,
+// userErr(...) for !SharedJobProvider) — the first case below stops with an
+// error instead of deploying the GitHub profile. Mutation: drop the
+// SharedJobProvider skip — the first case deploys a job for the Bitbucket
+// profile, which no credential may serve.
+func TestProjectJobsSkipBitbucketProfiles(t *testing.T) {
+	// A project with repositories on both providers defines both profiles
+	// (the plan's own example, standard and standard-bitbucket): the GitHub
+	// one is deployed, the Bitbucket one is not, and the call succeeds.
+	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+`profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h }
+  standard-bitbucket: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }
+`)
+	if got := slices.Sorted(maps.Keys(jobs)); !slices.Equal(got, []string{gcp.ProjectJobName("standard", "github", "")}) {
+		t.Errorf("jobs = %v, want the GitHub profile's alone: a shared job never serves Bitbucket", got)
+	}
+	// The Bitbucket profile is still held to the policy's rules — CheckProfiles
+	// runs over every profile before any of them is skipped, so a skip is not
+	// a way to deploy an installation around a profile the policy would refuse.
+	// The Bitbucket profile here is valid, so nothing is refused; the
+	// assertion is that the GitHub one beside it is deployed in full.
+	for _, j := range jobs {
+		if j.Provider != "github" {
+			t.Errorf("a job was deployed for the %s provider: %+v", j.Provider, j)
+		}
+	}
+	// A local config naming the Bitbucket profile alone deploys nothing at all,
+	// rather than refusing: the map is empty, the tfvars key is left out and
+	// the root creates nothing, exactly as for an installation with no
+	// profiles.
+	if jobs := projectJobsFor(t, m4LocalConfig+m5Additions+`profiles:
   standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }
-`, "profiles.standard.provider: a shared job never serves bitbucket"},
-		{"the Bitbucket token on a GitHub profile", `project_secrets:
+`); len(jobs) != 0 {
+		t.Errorf("jobs = %v, want none: no shared job serves Bitbucket", slices.Sorted(maps.Keys(jobs)))
+	}
+	// The token is the other half of the ruling and is still refused: a shared
+	// job that serves GitHub may not mount a credential that reaches every
+	// repository of a Bitbucket workspace (ProjectJobs' own check, which a
+	// skip does not reach).
+	if _, err := ProjectJobs(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+`project_secrets:
   bitbucket-token: { allow_data_to: [acme/sandbox] }
 profiles:
   standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [bitbucket-token] }
-`, "profiles.standard.secrets[0]: \"bitbucket-token\" is the Bitbucket credential"},
-	} {
-		_, err := ProjectJobs(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+c.lc), "fugaro-runs-proj-1234", false)
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("%s: err = %v, want one naming %q", c.name, err, c.want)
+`), "fugaro-runs-proj-1234", false); err == nil ||
+		!strings.Contains(err.Error(), `profiles.standard.secrets[0]: "bitbucket-token" is the Bitbucket credential`) {
+		t.Errorf("err = %v, want the Bitbucket token refused on a GitHub profile", err)
+	}
+}
+
+// TestSharedJobProviderIsTheProvidersList: SharedJobProvider is the one place
+// "a shared project job serves this provider" is decided, and both sides of it
+// ask — the deployer skips a profile it does not serve and the launcher keeps
+// such a repository on its per-repository job — so the two can never disagree
+// about which jobs exist. Every kind a repository may use is answered, and the
+// served list holds kinds of config.Providers: a provider added to that list is
+// not silently given a shared job by a forgotten line here, which is the
+// mutation this test is for.
+func TestSharedJobProviderIsTheProvidersList(t *testing.T) {
+	for _, kind := range config.Providers {
+		want := kind == "github"
+		if got := SharedJobProvider(kind); got != want {
+			t.Errorf("SharedJobProvider(%q) = %v, want %v", kind, got, want)
+		}
+	}
+	if SharedJobProvider("") || SharedJobProvider("fake") || SharedJobProvider("gitlab") {
+		t.Error("SharedJobProvider answers true for a kind that is not a provider: a run with no provider, the tests' fake kind and a host nobody serves must all keep their per-repository job")
+	}
+	if len(sharedJobProviders) == 0 {
+		t.Fatal("no provider is served, so every profile is skipped and no project job is ever deployed")
+	}
+	for _, kind := range sharedJobProviders {
+		if !slices.Contains(config.Providers, kind) {
+			t.Errorf("sharedJobProviders names %q, which is not a provider kind of config.Providers (%v)", kind, config.Providers)
 		}
 	}
 }

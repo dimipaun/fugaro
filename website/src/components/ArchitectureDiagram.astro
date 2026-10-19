@@ -1,32 +1,97 @@
 ---
 /**
- * website/src/components/ArchitectureDiagram.astro — the architecture diagram (website
- * plan, Task W1.4 step 3).
+ * website/src/components/ArchitectureDiagram.astro — the flow (website plan, Task W1.4
+ * step 3; redesign part P8, findings RF12, RF20 and RF21; decision D185, superseded in part
+ * by the changes spec of 2026-10-18, item 4).
  *
- * Five stages, in the order `docs/website/spec.md` names them, and each stage's caption is
- * a line the repository already writes: README.md's `## How it works` (its ASCII diagram
- * and its numbered steps) or `docs/design/v1.md`. Nothing here is written for the page —
- * every caption goes through `comparable()` below at build time and the build stops naming
- * the file when one of them is not in the document it cites, and `website/test/home.mjs`
- * makes the same check against the built page from outside.
+ * **The four steps the changes spec names.** The owner's second brief draws the run as
+ * `1 Your agent` -> `2 Fugaro` -> `3 Ephemeral cloud job` -> `4 Pull request`, one short
+ * line each, and this component is that picture. It supersedes D185's step names (which
+ * drew the flow as `task submitted -> ephemeral Cloud Run job -> agent runs -> pull
+ * request`): the spec's item 4 is the later ruling, and its four steps say what the site is
+ * for — a reader's agent is where a task starts, and Fugaro is what carries it to the
+ * cloud, rather than a `fugaro run` invocation the reader is asked to type. `fugaro run`
+ * stays in the documentation as the manual option; `website/test/home.mjs` reads the four
+ * names out of the spec's own item 4 rather than out of a copy of them here.
  *
- * **The two names the README does not use.** The spec's `security boundary` and `PR or
- * artifact collected back` are this page's map onto the README's steps — the README says
- * "the trust boundary is the container" and "Push and open the pull request" — so they are
- * labels on the diagram and never quotations. The test asserts exactly that: it refuses a
- * build in which the page attributes either name to the README's `## How it works`.
+ * **Every caption is a line the repository already writes.** A caption goes through
+ * `comparable()` below at build time and the build stops, naming the file, when it is not in
+ * the section it cites; `website/test/home.mjs` makes the same check against the built page
+ * from outside. Nothing here is written for the page.
  *
- * **The diagram is a list, and its picture is decoration.** The stages are an `<ol>` of
- * headings and captions, which is the whole content: the rail above them is an SVG marked
- * `aria-hidden`, because a picture of five boxes is not a thing a screen reader should have
- * to describe when the five boxes are right there as text. Nothing about the diagram depends
- * on the SVG having been drawn.
+ * **Why a caption cites a section rather than the whole file.** All four captions are lines
+ * of README.md, so held to the file alone they could be shuffled among the steps and each
+ * would still be a quotation — while the page then said Fugaro is where the pull request
+ * opens. Each cites the section it belongs to (the agent's line is from `## Getting
+ * started`, Fugaro's from `## Why Fugaro`, the job's and the pull request's from `## How it
+ * works`), and inside one section the lines must appear in the order the section writes
+ * them, which is the rule `website/test/home.mjs` holds this page to: of the two steps that
+ * share a section, the job's line comes first in the README and must come first here.
  *
- * **The animation.** The stages fade in as the reader scrolls to them, using a scroll-driven
- * animation (`animation-timeline: view()`), which costs no JavaScript at all (D105's budget
- * is W1.11's to enforce). It is inside a feature query and a preference query: a browser
- * that cannot run scroll-driven animations, and a reader whose system asks for less motion,
- * both get the diagram as it stands — every stage visible, nothing moving (W1.4 step 3).
+ * **The flow is a list, and its picture is decoration.** The steps are an `<ol>` of
+ * headings and captions, which is the whole content, and each step's arrow is an SVG marked
+ * `aria-hidden`, because a picture of four boxes and three arrows is not a thing a screen
+ * reader should have to describe when the four boxes are right there as text. Nothing about
+ * the flow depends on the arrows having been drawn.
+ *
+ * **One picture, three widths.** A phone reads the run top to bottom, one card under the
+ * other, with an arrow between each pair (below 35 rem); a tablet or a laptop reads it as a
+ * two-by-two — `1 2` over `4 3`, the run going right, then down, then right again along the
+ * bottom row — which is the
+ * shape a 768 px screen wants, where four stacked cards are over 400 px of picture and four
+ * across is not yet possible (35 rem to 72 rem); and at the page's own maximum width the
+ * four cards stand in the one row the run travels along, left to right (72 rem up).
+ *
+ * **The two-by-two's bottom row is `4 3` and not `3 4`.** Reading the grid row-major would
+ * put step 3 in the cell under step 2, where the down arrow is drawn — and that arrow leaves
+ * step 2, so the cell it lands in has to be step 3's: with `3 4` it landed on step 4, and the
+ * picture read `1 -> 2 -> 4` with step 3 pointing at nothing. The two bottom steps are placed
+ * by hand for that reason, and step 3's arrow turns back along the row to step 4. The DOM
+ * order is untouched — `1 2 3 4` is the run's order and what a screen reader reads; only the
+ * drawing snakes. `website/test/base-styles.mjs` reads the cells the four steps occupy and
+ * holds each arrow to the side its successor's cell is on, so the two cannot disagree again.
+ *
+ * **Why 72 rem, and not the chrome's 48 rem or the 64 rem this used to be.** Four cards
+ * share the row, so a card is a quarter of the column less the gaps between them, and the
+ * **longest step name has to fit one line** — `Ephemeral cloud job` is the spec's own third
+ * step and it may not be printed as `Ephemeral cloud / job` on a desktop while the three
+ * names beside it are one line each: a card that wraps is a card taller than its neighbours,
+ * which is the ragged row the review of this branch measured. The arithmetic that says
+ * where that is true is `website/test/base-styles.mjs`'s: it computes the card's content
+ * box from the built stylesheet — the page's column, the four cards, the three gaps and the
+ * card's own padding and border, every number read rather than typed — and refuses a row
+ * where the longest name (or the longest word of any name, which is what a wrapped name
+ * cannot break) does not fit. At 72 rem, which is also where the page stops growing, that
+ * box is 232 px against the longest name's estimated 225. So the row is drawn exactly where
+ * the page has its full column and nowhere below it.
+ *
+ * **The arrow is absolutely positioned, so it costs the card nothing.** The arrow used to
+ * sit in the row's flow, 32 px wide inside each step, which took that 32 px out of three of
+ * the four cards — the fourth step's card was a quarter of the row wider than the other
+ * three, and the least the third card could be was 32 px narrower than the name it had to
+ * print. It now sits *in the gap* between two cards, `left: 100%` from the step before it,
+ * and the gap is what it is drawn in. It is still the same SVG, still turned by `transform`
+ * alone (the transformation the arrow-direction check reads), and the step is
+ * `position: relative` so the arrow is placed against it.
+ *
+ * **The cards are one height, and their content starts at the top.** A row of cards whose
+ * bottoms do not line up reads as a broken row, so the steps stretch to the row's height,
+ * the cards stretch to their step's, and the card's own content — the number, the name and
+ * the caption — is packed from the card's top rather than spread down it.
+ *
+ * **The name may wrap, and the number does not take its room.** A step name is a heading and
+ * not a label, so it wraps rather than running out of its card — `white-space: nowrap` here
+ * was the bug the arithmetic above was written for. The number sits beside the name only in
+ * the phone's one-column stack, where a card has the page's whole width; from 35 rem up —
+ * the two-by-two and the row alike — it sits *above* the name, because it is `flex: none`
+ * and 32 px plus the head's gap is 44 px of a quarter-width card's content box, which is the
+ * difference between `Ephemeral cloud job` on one line and on two.
+ *
+ * **The animation.** The steps fade in as the reader scrolls to them, using a scroll-driven
+ * animation (`animation-timeline: view()`), which costs no JavaScript at all. It is inside a
+ * feature query and a preference query: a browser that cannot run scroll-driven animations,
+ * and a reader whose system asks for less motion, both get the flow as it stands — every
+ * step visible, nothing moving (W1.4 step 3, changes spec item 4's reduced-motion rule).
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -34,7 +99,7 @@ import { REPO_ROOT } from '../content.ts'
 
 /**
  * A string with its markdown markers and its whitespace removed: how a caption and the
- * document it claims to come from are compared. Emphasis and code spans are markers rather
+ * section it claims to come from are compared. Emphasis and code spans are markers rather
  * than text, and where a document breaks a line or pads a column is its layout rather than
  * its words — most of the README's ASCII diagram is padding, so a caption quoted from it is
  * compared with the drawing taken out.
@@ -43,13 +108,18 @@ function comparable(document: string): string {
   return document.replace(/[`*]/g, '').replace(/\s+/g, '')
 }
 
-/** README.md's `## How it works` section: its heading to the next `## `. */
-function readmeHowItWorks(): string {
+/**
+ * One `## <heading>` section of README.md, up to the next `## ` — the same reader
+ * `website/test/home.mjs` uses, so the build and the check resolve a section the same way.
+ * A heading the README does not carry is a defect in this file rather than in the README:
+ * the steps cite sections by name, and a renamed heading has to fail here, naming itself.
+ */
+function readmeSection(heading: string): string {
   const readme = readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8')
-  const start = readme.indexOf('\n## How it works\n')
+  const start = readme.indexOf(`\n## ${heading}\n`)
   if (start === -1) {
     throw new Error(
-      'website/src/components/ArchitectureDiagram.astro: README.md carries no "## How it works" section, and the diagram\'s captions are the lines that section writes (W1.4 step 3).',
+      `website/src/components/ArchitectureDiagram.astro: README.md carries no "## ${heading}" section, and a step's caption is quoted from it (changes spec 2026-10-18, item 4). Either the section was renamed or the caption moved.`,
     )
   }
   const rest = readme.slice(start + 1)
@@ -57,123 +127,100 @@ function readmeHowItWorks(): string {
   return next === -1 ? rest : rest.slice(0, next)
 }
 
-/** The documents a caption may come from, by the path each stage cites. */
-const SOURCES: { [file: string]: string } = {
-  'README.md': readmeHowItWorks(),
-  'docs/design/v1.md': readFileSync(path.join(REPO_ROOT, 'docs/design/v1.md'), 'utf8'),
+/**
+ * The sections a caption may come from, by the name each step cites. Sections of README.md
+ * rather than whole files: the four captions are all lines of the README, so held to the file
+ * alone they could be shuffled among the steps with every one of them still a quotation.
+ */
+const SOURCES: { [name: string]: string } = {
+  'README.md#Getting started': readmeSection('Getting started'),
+  'README.md#Why Fugaro': readmeSection('Why Fugaro'),
+  'README.md#How it works': readmeSection('How it works'),
 }
 
 /**
- * The five stages, in the spec's order. `source` is the file the caption is a line of, and
- * it is checked below rather than trusted: a caption that is a paraphrase of the design
- * fails the build instead of shipping as a quotation (Global Constraint 6).
+ * The spec's four steps, in its order, each with the section its caption is a line of. The
+ * names are the spec's own, spelled as it spells them; the captions are the repository's own
+ * sentences, shortened to one line where a step is longer than a line wants to be.
  */
-const STAGES = [
+const STEPS = [
   {
-    name: 'local dispatch',
-    source: 'README.md',
-    // README.md's ASCII diagram: the CLI on your machine handing the task to the cloud.
-    caption: 'fugaro CLI ---- run ------------->',
+    name: 'Your agent',
+    source: 'README.md#Getting started',
+    // README.md's own sentence about who starts a run: the plugin's skill, in the reader's
+    // agent, is where a task goes in.
+    caption: "the plugin's working skill launches, watches and diagnoses runs",
   },
   {
-    name: 'cloud job',
-    source: 'README.md',
-    // The end of the same arrow in the same diagram, in its own words: what is at the other
-    // end of a dispatch. The line above it in the drawing ("Cloud Run job per repository
-    // workflow,") is the same stage's other half, and it stays in the README rather than
-    // being joined to this one here — a caption is a line of the document, not a splice.
+    name: 'Fugaro',
+    source: 'README.md#Why Fugaro',
+    // The sentence that says what Fugaro is not: there is no Fugaro service in between, and
+    // what it uses is the reader's own project and credentials.
+    caption: 'it uses your Google Cloud project and your model credentials',
+  },
+  {
+    name: 'Ephemeral cloud job',
+    source: 'README.md#How it works',
+    // README.md's ASCII diagram, the far end of the CLI's arrow in its own words.
     caption: 'one execution per task, then gone',
   },
   {
-    name: 'cache',
-    source: 'README.md',
-    // Step 2 of the README's numbered steps, which is the stage the spec calls "cache".
-    caption: 'Sync to the exact target commit and restore the dependency caches.',
-  },
-  {
-    name: 'security boundary',
-    source: 'docs/design/v1.md',
-    // v1.md §6.1, opening sentence: the sentence the stage is named after.
-    caption: 'The trust boundary is the container, not the process.',
-  },
-  {
-    name: 'PR or artifact collected back',
-    source: 'README.md',
-    // Step 4's first sentence: what a reader gets back at the end of a run.
-    caption:
-      'Push and open the pull request: each commit is pushed within about a minute while the agent works, a draft opens at the first push (marked not verified), and it is marked ready only when the run passes.',
+    name: 'Pull request',
+    source: 'README.md#How it works',
+    // Step 4 of the README's numbered steps, its own words about the push. A fragment and
+    // not the step's heading ("Push and open the pull request"): the other three captions
+    // are lowercase fragments of the sentence they come from, and a capitalised sentence
+    // among them read as a different kind of line.
+    caption: 'each commit is pushed within about a minute while the agent works',
   },
 ]
 
-// Hold every caption to the document it cites, here, so a paraphrase stops the build with the
-// file's name in the message rather than reaching a reader as the repository's words.
-for (const stage of STAGES) {
-  const source = SOURCES[stage.source]
-  if (!source || !comparable(source).includes(comparable(stage.caption))) {
-    throw new Error(
-      `website/src/components/ArchitectureDiagram.astro: the ${stage.name} caption ${JSON.stringify(stage.caption)} is not a line of ${stage.source}, and every caption on the diagram is the repository's own words rather than one written for the page (W1.4 step 3).`,
-    )
+// Hold every caption to the section it cites, in that section's order, here, so a
+// paraphrase — or a caption that moved to the step above — stops the build naming the file
+// rather than reaching a reader as the repository's own words. `cursor` walks forward
+// through a section, so two steps citing the same one can only quote it in the order it
+// writes them.
+{
+  const cursors: { [name: string]: number } = {}
+  for (const [index, step] of STEPS.entries()) {
+    const section = SOURCES[step.source]
+    const line = comparable(step.caption)
+    const from = cursors[step.source] ?? 0
+    const at = section ? comparable(section).indexOf(line, from) : -1
+    if (at === -1) {
+      throw new Error(
+        `website/src/components/ArchitectureDiagram.astro: step ${index + 1}'s caption ${JSON.stringify(step.caption)} is not a line of ${step.source} at or after the step before it, and every caption in the flow is the repository's own words in the order their document writes them (changes spec 2026-10-18, item 4; Global Constraint 6).`,
+      )
+    }
+    cursors[step.source] = at + line.length
   }
 }
-
-// The rail's geometry: five evenly spaced nodes and the arrows between them. Computed here
-// rather than written out five times, so adding a stage cannot leave the picture behind.
-const NODES = STAGES.map((_, index) => 80 + index * 210)
-const RAIL_Y = 36
 ---
 
-<figure class="diagram" data-source="docs/website/spec.md">
-  <svg class="diagram-rail" viewBox="0 0 1000 72" aria-hidden="true" focusable="false">
-    {/* The arrowhead, defined before the lines that point at it. */}
-    <defs>
-      <marker
-        id="diagram-arrowhead"
-        viewBox="0 0 10 10"
-        refX="9"
-        refY="5"
-        markerWidth="6"
-        markerHeight="6"
-        orient="auto-start-reverse"
-      >
-        <path class="rail-arrowhead" d="M 0 0 L 10 5 L 0 10 z" />
-      </marker>
-    </defs>
-    <line class="rail-line" x1={NODES[0]} y1={RAIL_Y} x2={NODES[NODES.length - 1]} y2={RAIL_Y} />
+<figure class="flow" aria-label="How a task becomes a pull request" data-source="docs/website/redesign/changes-spec-2026-10-18.md">
+  <ol class="flow-steps">
     {
-      NODES.slice(0, -1).map((x, index) => (
-        <line
-          class="rail-arrow"
-          x1={x + 30}
-          y1={RAIL_Y}
-          x2={NODES[index + 1] - 30}
-          y2={RAIL_Y}
-          marker-end="url(#diagram-arrowhead)"
-        />
-      ))
-    }
-    {
-      NODES.map((x, index) => (
-        <g class="rail-node">
-          <circle cx={x} cy={RAIL_Y} r="18" />
-          <text class="rail-number" x={x} y={RAIL_Y + 5} text-anchor="middle">
-            {index + 1}
-          </text>
-        </g>
-      ))
-    }
-  </svg>
-
-  <figcaption class="diagram-note">
-    Every caption below is the repository's own words: a line from README.md's "How it
-    works", or from docs/design/v1.md.
-  </figcaption>
-
-  <ol class="stages">
-    {
-      STAGES.map((stage) => (
-        <li class="stage" data-stage={stage.name} data-source={stage.source}>
-          <h2 class="stage-name">{stage.name}</h2>
-          <p class="stage-caption">{stage.caption}</p>
+      STEPS.map((step, index) => (
+        <li class="flow-step" data-step={step.name.toLowerCase()} data-source={step.source}>
+          <div class="step-card">
+            <div class="step-head">
+              {/* The step's place in the flow, as a number: the list carries the order, so
+                  this is decoration and a screen reader reads the `<ol>` instead. */}
+              <span class="step-number" aria-hidden="true">{index + 1}</span>
+              <h2 class="step-name">{step.name}</h2>
+            </div>
+            <p class="step-caption">{step.caption}</p>
+          </div>
+          {/* The arrow between this step and the next: decoration, and the last step has
+              none. It is inside the step rather than between two of them because a list of
+              steps may not carry anything but steps. It points down the column and right
+              along the row, which is the layout's business rather than the markup's. */}
+          {index < STEPS.length - 1 && (
+            <svg class="step-arrow" viewBox="0 0 24 32" aria-hidden="true" focusable="false">
+              <path class="arrow-line" d="M12 1 V 25" />
+              <path class="arrow-head" d="M4 19 L12 29 L20 19" />
+            </svg>
+          )}
         </li>
       ))
     }
@@ -181,95 +228,315 @@ const RAIL_Y = 36
 </figure>
 
 <style>
-  /* Tokens only (W1.2): the rail's line, its nodes and its numbers are named through the
-     palette rather than given colours of their own. */
-  .diagram {
+  /* Tokens only (W1.2): the flow's cards, its numbers and its arrows are named through the
+     palette rather than given colours of their own. The accent is what marks the picture out
+     in its section — the filled step numbers, the rail along the top of each card and the
+     arrows are `--accent`, on the ground or on a card (`--accent` against `--ground` and
+     against `--surface` are pairs `a11y.mjs` computes at 3:1, and `--ground` on the filled
+     number is the 4.5:1 pair for text on the accent) — and what the picture is *made* of is
+     the card's size, the surface and the numbers rather than an outline around them (review
+     round 5, below). */
+  .flow {
     margin: 0;
     max-width: var(--page-max);
   }
 
-  .diagram-rail {
-    display: block;
-    width: 100%;
-    height: auto;
-    margin-bottom: var(--space-lg);
-  }
-
-  .rail-line {
-    stroke: var(--border);
-    stroke-width: 2;
-  }
-
-  .rail-arrow {
-    stroke: var(--border);
-    stroke-width: 2;
-  }
-
-  .rail-arrowhead {
-    fill: var(--border);
-  }
-
-  .rail-node circle {
-    fill: var(--ground);
-    stroke: var(--border);
-    stroke-width: 2;
-  }
-
-  .rail-number {
-    fill: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 16px;
-  }
-
-  .diagram-note {
-    max-width: var(--measure);
-    margin-bottom: var(--space-lg);
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-    line-height: var(--leading-normal);
-  }
-
-  .stages {
-    display: grid;
-    gap: var(--space-md);
+  /* `max-width: none` is not decoration: `base.css` holds prose to the measure
+     (`:where(p, ul, ol, dl, blockquote, figcaption) { max-width: var(--measure) }`), and the
+     flow's steps are an `<ol>`. The cap is 68 ch — about 578 px at the body's 17 px — and the
+     four cards with their three arrows want about 720 px, so the list drew the whole picture
+     inside a 578 px box: cards about 143 px wide, `Ephemeral cloud job` breaking as
+     `Ephemera / l cloud job`, and the flow the narrowest thing in the section it is the
+     subject of. The list is not prose; it is the picture, and it is as wide as the page's
+     column. `website/test/base-styles.mjs` resolves the cascade for this element's own
+     `max-width` and refuses any cap narrower than the row needs, so this line cannot be
+     dropped quietly. */
+  .flow-steps {
+    max-width: none;
+    display: flex;
+    flex-direction: column;
     margin: 0;
     padding: 0;
     list-style: none;
-    counter-reset: stage;
   }
 
-  .stage {
-    max-width: var(--measure);
+  /* The step, and the card that fills it. `position: relative` is what the arrow is placed
+     against at the three widths it sits in a gap; `align-items: stretch` and the card's
+     `flex: 1 1 auto` are what make the four cards one height — the row container stretches
+     the steps, and each card stretches to its own step (see the row block below, where the
+     defect this replaces is named). */
+  .flow-step {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    min-width: 0;
+  }
+
+  /* The centrepiece's card (changes spec item 4's acceptance: the picture is the most
+     visually prominent element in its section). **The accent is the top rail and nothing
+     else.** Every edge used to carry it — 2 px of cyan down both sides and along the bottom,
+     6 px along the top — and the review of round 5 found what four cyan boxes in a row do to
+     the thing they are meant to frame: the borders competed with the names inside them, and
+     the flow read as a grid of boxes rather than as four steps of one run. So the sides and
+     the bottom are the site's separator (`--border`, one pixel) and the top is the accent at
+     4 px, which is the mark the eye follows across the row, left to right. The prominence
+     item 4 asks for is the section's and the card's size, the surface and the number, not the
+     loudness of an outline. `--accent` on `--surface` is still a pair `a11y.mjs` computes at
+     3:1 for a UI edge, and it is still an edge of every card. */
+  .step-card {
+    display: grid;
+    align-content: start;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: var(--space-xs);
     padding: var(--space-md);
     border: var(--border-width) solid var(--border);
-    border-left-width: calc(var(--border-width) * 4);
-    border-radius: var(--radius-md);
-    background: var(--ground);
+    border-top: calc(var(--border-width) * 4) solid var(--accent);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
   }
 
-  .stage-name {
-    margin: 0 0 var(--space-2xs);
+  /* The step's heading row: the number and the name on one line, which is what the phone's
+     full-width card has room for. The number is a fixed box beside the name; every layout
+     where the cards share the width — the two-by-two and the row — turns this into a column
+     instead (see the 35 rem block below), because there the name needs the box. */
+  .step-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    flex-wrap: nowrap;
+  }
+
+  .step-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 2rem;
+    height: 2rem;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    color: var(--ground);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-base);
+    /* The heaviest weight the token layer names: `--weight-semibold` (600) is the top of the
+       scale, so "bold" on this site is this, and a number set in a weight outside the tokens
+       would be a second type scale. `--ground` on the filled accent is the 4.5:1 pair
+       `a11y.mjs` computes for text on the accent. */
+    font-weight: var(--weight-semibold);
+  }
+
+  /* The name wraps, at every width it has to: it is a heading, and a heading that cannot fit
+     its card runs out of it. What it may not do is wrap in the row, where the four names
+     stand beside each other — `Ephemeral cloud job` on two lines while the other three are
+     one line each is a card taller than its neighbours, which is the ragged row the review
+     of this branch measured. So the row's breakpoint is set where the *name* fits, and
+     `website/test/base-styles.mjs` computes that box from the built stylesheet and refuses a
+     row that starts before a card can print its longest name on one line. */
+  .step-name {
+    margin: 0;
     font-family: var(--font-sans);
+    /* 20 px (`--font-size-lg`) and `--weight-semibold`: the largest step of the type scale at
+       which the longest of item 4's four names — `Ephemeral cloud job`, spelled as the spec
+       spells it — is one line inside a quarter of the page's column. The test estimates that
+       name's width per character at the size this rule declares and requires a margin on top
+       of it, so a larger size here fails the build rather than wrapping on a desktop; and the
+       names are still the largest thing in the card below the number, which is what item 4's
+       acceptance ("the most visually prominent element in its section") rests on. */
     font-size: var(--font-size-lg);
     font-weight: var(--weight-semibold);
     letter-spacing: var(--tracking-tight);
     color: var(--text);
+    /* A name longer than its card — a future step the spec words in one long word — breaks
+       rather than running out of the card, the same guard the caption below carries. */
+    overflow-wrap: anywhere;
   }
 
-  .stage-caption {
+  /* The step's one short line, at the body's own size rather than a step below it: the
+     caption is what the name is a name for, and at `--font-size-sm` it read as a footnote to
+     a heading. `--text-muted` on `--surface` is a pair `a11y.mjs` computes at 4.5:1 in all
+     four palettes — the same requirement as body text, not a decorative grey. */
+  .step-caption {
     margin: 0;
     color: var(--text-muted);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-base);
     line-height: var(--leading-normal);
+    /* A caption is a sentence with a code span in it, and a long unbroken token would push
+       the card wider than the page on a phone: it breaks rather than does that. */
+    overflow-wrap: anywhere;
   }
 
-  /* The reveal, as the reader scrolls to each stage: a scroll-driven animation, which is a
+  .step-arrow {
+    display: block;
+    width: 1.5rem;
+    height: 2rem;
+    margin: var(--space-2xs) auto;
+  }
+
+  .arrow-line,
+  .arrow-head {
+    fill: none;
+    stroke: var(--accent);
+    /* A thick stroke in the accent: the arrows are what says the four boxes are a run rather
+       than four facts, so they are drawn at the weight of a rule rather than of a hairline. */
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* Wherever the cards are narrower than the page's own column — the two-by-two and the row,
+     everything from 35 rem up — the number sits above the name rather than beside it: it is
+     `flex: none` and 32 px plus the head's gap, which is 44 px of a card's content box that
+     the name needs to print itself on one line. Above the name it costs a row and nothing
+     horizontal — and a row is a thing a card can afford, a name that does not fit is not. */
+  @media (min-width: 35rem) {
+    .step-head {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
+
+  /* The two-by-two: `1 2` over `4 3`, at the widths between a phone's stack and the page's
+     own column. Four stacked cards are over 400 px of picture at 768 px, which is what a
+     reader scrolls past to reach the chat, and four across is not possible yet (see the row
+     below): two rows of two are the shape the run has there, and the arrows follow it —
+     `1 -> 2` along the top row, `2 -> 3` down its right-hand side, `3 -> 4` back along the
+     bottom row. The arrows are absolutely positioned in the gaps for the same reason they
+     are in the row: in the flow they would make the two cards of a row different heights,
+     because the last step of the flow carries no arrow at all.
+
+     **The bottom row is `4 3` and not `3 4`, which is what makes the down arrow true.** The
+     grid used to be `1 2` over `3 4` with step 2's arrow drawn below it: step 2 is above step
+     *4* in that grid, so the arrow that leaves step 2 landed on step 4 — the picture read
+     `1 -> 2 -> 4`, step 3 had no arrow pointing into it and step 4 had two (review round 4).
+     With step 3 under step 2 the arrow lands on its successor, and step 3's own arrow turns
+     to point left at step 4, which is now beside it on the other side. The DOM order is
+     untouched — it is the run's order, and it is what a screen reader reads; only the
+     drawing is a snake. `website/test/base-styles.mjs` reads the grid's own placements, works
+     out which cell each step's successor is in, and refuses an arrow drawn on a side of its
+     card where the next step does not sit. */
+  @media (min-width: 35rem) and (max-width: 71.98rem) {
+    .flow-steps {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-lg) var(--space-md);
+    }
+
+    /* Steps 3 and 4, placed rather than left to the grid's own row-major order, because the
+       run wraps here: step 3 sits under step 2 (the arrow down the right-hand side) and step
+       4 to its left, at the end of the run. */
+    .flow-step:nth-child(3) {
+      grid-column: 2;
+      grid-row: 2;
+    }
+
+    .flow-step:nth-child(4) {
+      grid-column: 1;
+      grid-row: 2;
+    }
+
+    .step-card {
+      padding: var(--space-md) var(--space-sm);
+    }
+
+    .step-arrow {
+      position: absolute;
+      width: 1rem;
+      height: 1rem;
+      margin: 0;
+    }
+
+    /* A turn of `-90deg` points the drawn-down arrow along the row it travels: a positive
+       angle in CSS turns clockwise, so `90deg` would send it back at the step before it. The
+       margin is what centres the arrow's box in the gap it is drawn in — half the gap less
+       half the box. */
+    .flow-step:nth-child(odd) .step-arrow {
+      top: 50%;
+      left: 100%;
+      margin: calc(-1 * var(--space-2xs)) 0 0 calc(var(--space-md) / 2 - var(--space-2xs));
+      transform: rotate(-90deg);
+    }
+
+    /* The one arrow that goes down the two-by-two: step 2's, from the top row to the step
+       below it. `transform` is left alone, which is the direction the drawing is drawn in. */
+    .flow-step:nth-child(2) .step-arrow {
+      top: 100%;
+      left: 50%;
+      margin: calc(var(--space-lg) / 2 - var(--space-2xs)) 0 0 calc(-1 * var(--space-2xs));
+    }
+
+    /* And the one that turns back along the bottom row: step 3's, at its left edge, pointing
+       left at step 4. `90deg` is a quarter turn clockwise, which takes the drawn-down arrow
+       to the left — the mirror of the odd rule above, which is the same turn the other way
+       for the arrows that travel rightwards. The margin centres the box in the gap on that
+       side of the card, and it is negative because the box starts at the card's own edge. */
+    .flow-step:nth-child(3) .step-arrow {
+      top: 50%;
+      left: 0;
+      margin-left: calc(-1 * var(--space-md) / 2 - var(--space-2xs));
+      transform: rotate(90deg);
+    }
+  }
+
+  /* The row: four cards side by side, which is the run travelling left to right. The steps
+     share the width, the cards are one height, and the arrows sit in the gaps between the
+     cards, turned to point along the row. **The turn is `-90deg`, and the sign is the
+     direction of the run:** the path below is drawn pointing down, and a positive angle in
+     CSS turns clockwise, so `90deg` would send the arrow leftwards — from each step back at
+     the one before it, against the order item 4 draws. `website/test/base-styles.mjs` reads
+     the drawn direction out of the markup and the angle out of this stylesheet — for the
+     arrow of *each* step, at the widths of each of the three layouts — and refuses an arrow
+     that points the way the run does not travel.
+
+     72 rem: the width the page's column reaches its maximum at, and the width the four
+     names need to stand one line each inside a quarter of it. `website/test/base-styles.mjs`
+     computes that box and fails if the row starts before a card can print its name.
+
+     `align-items: stretch` on the list and on the step, with the card's `flex: 1 1 auto`,
+     is the whole of "the four cards are one height": the row takes the height of its
+     tallest card and every card fills its step. What this replaces is a row whose steps were
+     `align-items: center`, which gives each card its own content's height — card 4 was about
+     30 px shorter than card 3 and the row's bottom edge was ragged. */
+  @media (min-width: 72rem) {
+    .flow-steps {
+      flex-direction: row;
+      align-items: stretch;
+      gap: var(--space-sm);
+    }
+
+    .flow-step {
+      flex: 1 1 0;
+    }
+
+    /* The card's own padding, tightened on the sides: four cards and three gaps share the
+       page's column, and the name has to fit one line inside a quarter of it. The block
+       padding is the reader's breathing room and does not cost the name anything. */
+    .step-card {
+      padding: var(--space-md) var(--space-2xs);
+    }
+
+    /* The arrow, out of the flow and into the gap: `left: 100%` is the step's right edge,
+       which is where the gap begins, and the box is the gap's own width — so the arrow is
+       drawn exactly between two cards and takes no width from either. */
+    .step-arrow {
+      position: absolute;
+      top: 50%;
+      left: 100%;
+      width: var(--space-sm);
+      height: var(--space-sm);
+      margin: calc(-1 * var(--space-2xs)) 0 0 calc(var(--space-sm) / 2 - var(--space-2xs));
+      transform: rotate(-90deg);
+    }
+  }
+
+  /* The reveal, as the reader scrolls to each step: a scroll-driven animation, which is a
      timeline the browser drives and not a script the page ships. Guarded twice — once for a
      browser that cannot run it, once for a reader who asked for less motion — so that in
-     both of those cases the diagram is simply there, in full, with nothing moving. */
+     both of those cases the flow is simply there, in full, with nothing moving. */
   @supports (animation-timeline: view()) {
     @media (prefers-reduced-motion: no-preference) {
-      @keyframes stage-in {
+      @keyframes step-in {
         from {
           opacity: 0;
           transform: translateY(var(--space-xs));
@@ -280,8 +547,8 @@ const RAIL_Y = 36
         }
       }
 
-      .stage {
-        animation: stage-in linear both;
+      .flow-step {
+        animation: step-in linear both;
         animation-timeline: view();
         animation-range: entry 10% cover 40%;
       }

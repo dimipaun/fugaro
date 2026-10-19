@@ -154,6 +154,11 @@ the reason printed first. Nothing is halted and nothing is deleted.`,
 // hard return.
 func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	ctx := cmd.Context()
+	// No deployer to apply as in this release (managedDeployerShipped):
+	// refused before the project is read or the cloud opened.
+	if err := refuseManagedNotShipped(); err != nil {
+		return err
+	}
 	// A credential leak first, before anything opens the cloud: GODEBUG is
 	// read before main runs, so it cannot be unset in time (refuseHTTP2Debug).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
@@ -393,10 +398,22 @@ func managedRoot(ctx context.Context, lc *localcfg.Config, rootArg string) (stri
 // rather than a permission:
 //
 //   - Listed is the members a plan may grant a role to. A managed apply has no
-//     review screen, so the members it lists are the config's own launchers and
-//     operators — the people this installation's config says may act on the
-//     project, and the same list the review screen shows (init_review's
-//     accessLists). A member outside it is refused.
+//     review screen, so the members it lists are the config's own — the
+//     launchers, the operators and the budget admins (terraform.budget_admins),
+//     the people this installation's config says may act on the project. It is
+//     the config's side of what init's review prints (init_review's
+//     accessLists) and deliberately not all of it: the review's list also
+//     carries the GCP project's owners and editors, which it reads from IAM
+//     live, and this command reads no IAM — so a plan granting a role to one of
+//     them is refused here (the deployer's credential holds no project-level
+//     IAM permission at all, D75 (iii)). The review's budget viewers are the
+//     launchers and operators again, so they widen nothing. A member outside
+//     the config's own lists is refused.
+//
+// The budget admins are the half that was missing, and the direction of the
+// bug was the wrong one: a plan init's own gate admits — a role for a
+// configured budget admin — was refused by this command, forever, with a
+// sentence about a review screen it does not have.
 //   - Billing is the billing account a resource may name. The config records
 //     none, and a managed plan that creates a billing budget is refused by the
 //     managed type list anyway (D75 (iv)), so an empty list refuses every
@@ -413,7 +430,7 @@ func managedCover(lc *localcfg.Config, bucket string) tf.ManagedCover {
 	if host, err := infra.RegistryHost(lc); err == nil {
 		c.Registry, _, _ = strings.Cut(host, "/")
 	}
-	c.Listed = slices.Concat(lc.Terraform.Launchers, lc.Terraform.Operators)
+	c.Listed = slices.Concat(lc.Terraform.Launchers, lc.Terraform.Operators, lc.Terraform.BudgetAdmins)
 	return tf.ManagedCover{Cover: c}
 }
 

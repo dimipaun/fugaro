@@ -92,7 +92,12 @@ func TestParseSince(t *testing.T) {
 			t.Errorf("parseSince(%q) = %v, %v", in, got, err)
 		}
 	}
-	for _, bad := range []string{"", "d", "-1d", "7w"} {
+	// maxSinceDays is the last day count whose duration fits int64 nanoseconds;
+	// one more used to wrap to a negative window instead of being refused.
+	if got, err := parseSince("106751d"); err != nil || got != 106751*24*time.Hour || got <= 0 {
+		t.Errorf("parseSince(106751d) = %v, %v", got, err)
+	}
+	for _, bad := range []string{"", "d", "-1d", "7w", "106752d", "9223372036854775807d"} {
 		if _, err := parseSince(bad); err == nil {
 			t.Errorf("parseSince(%q) accepted", bad)
 		}
