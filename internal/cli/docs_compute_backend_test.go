@@ -35,6 +35,11 @@ func TestDocsComputeBackendCitationsExist(t *testing.T) {
 		// The design and the documents it is read against.
 		"docs/design/compute-backend.md",
 		"docs/design/budget-token-channel.md",
+		// The boundary that keeps an artifact-producing run on Cloud Run:
+		// the plan's Global Constraint 13 and Task 8's fourth refusal are
+		// written from it, and it is the one design this plan must not
+		// contradict.
+		"docs/design/artifact-runs.md",
 		"docs/gcp-live-checklist.md",
 		"docs/plans/2026-10-16-managed-projects.md",
 		"docs/plans/2026-10-14-project-centric.md",
@@ -402,6 +407,41 @@ func TestDocsComputeBackendTasksCarryTheirAnatomy(t *testing.T) {
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s's §8.1 mapping table no longer records %q", computeBackendPlan, want)
+		}
+	}
+}
+
+// TestDocsComputeBackendKeepsTheArtifactBoundary: the Batch backend's account
+// is not per-repository, so docs/design/artifact-runs.md §8.5 and its D11 keep
+// an artifact-producing run on the plain per-repository Cloud Run backend until
+// a per-run prefix condition or a per-run account exists — and that design says
+// in its own words that no code enforces it today and that the plan which
+// enables artifact runs on another backend must bring the per-run boundary with
+// it. This plan is that plan's neighbour, so the boundary is asserted twice:
+// that the design really says it (the citation is not invented), and that the
+// plan refuses the combination in both the task that adds the checks and the
+// task that lifts the refusal.
+func TestDocsComputeBackendKeepsTheArtifactBoundary(t *testing.T) {
+	const design = "docs/design/artifact-runs.md"
+	artifacts := readDoc(t, design)
+	for _, want := range []string{
+		"an artifact-producing run stays on the plain per-repository Cloud Run backend until a per-run prefix condition or a per-run account exists",
+		"**No code in this slice enforces that, and this document does not claim it does**",
+		"must bring the per-run boundary with it",
+	} {
+		if !strings.Contains(artifacts, want) {
+			t.Errorf("%s no longer says %q: %s's Global Constraint 13 quotes that sentence as the boundary its enable must not cross", design, want, computeBackendPlan)
+		}
+	}
+	doc := readDoc(t, computeBackendPlan)
+	for _, want := range []string{
+		"docs/design/artifact-runs.md",
+		"13. **An artifact-producing run is never launched on the Batch backend by this plan",
+		"`artifacts:` with `backend: cloud-batch` is an error",
+		"**the artifact boundary asserted to survive the enable**",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer carries %q, which is the artifact boundary it must leave standing", computeBackendPlan, want)
 		}
 	}
 }
