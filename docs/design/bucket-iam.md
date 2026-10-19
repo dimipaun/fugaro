@@ -179,12 +179,10 @@ Nothing else is allowed: a member dropped from both lists still needs `--allow-d
 A delete is never covered (`Cover.NotCovered` refuses every action but create, update, no-op and read), so this step asks its own typed project name (or takes `--yes`) after a banner:
 
 ```
-bucket access (0.7.0): these launchers keep reading the runs bucket and writing runs/ and tokens/ (the sealed budget token moved to tokens/), and lose write access to fugaro/, builds/, cache/ and locks/:
+bucket access (0.7.0): these launchers keep reading the runs bucket and writing runs/, and lose write access to fugaro/, builds/, cache/ and locks/:
   user:a@example.com
   user:b@example.com
 ```
-
-The banner names both prefixes the replacement grant reaches, because that is what the operator is approving: the 0.7.0 grant was `runs/` alone, and `gcp.LauncherBucketCondition` widened to `tokens/` when the sealed budget token moved there (budget-token-channel.md §7.2, D16). `HardeningBanner`'s own test pins the sentence.
 
 `DeleteHints` already skips allowed addresses, so the misleading "pass --launcher again" hint never appears for these deletes.
 

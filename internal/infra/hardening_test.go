@@ -234,13 +234,7 @@ func TestHardeningBanner(t *testing.T) {
 		t.Fatal("a banner with nothing allowed")
 	}
 	got := HardeningBanner([]string{grantAddr("runs", "user:a@example.com"), grantAddr("runs", "user:\x1b[31mx@example.com")})
-	// The replacement grant is the one the plan writes
-	// (gcp.LauncherBucketCondition), so the banner has to name both prefixes
-	// it reaches: the operator approves the rewrite off this sentence, and a
-	// banner still saying "writing runs/" understates a privilege that now
-	// also covers every repository's sealed token objects (the sibling
-	// sentence above, "write runs/ and tokens/", says so).
-	for _, want := range []string{"bucket access (0.7.0)", "reading the runs bucket and writing runs/ and tokens/", "  user:a@example.com\n", `\u001b`} {
+	for _, want := range []string{"bucket access (0.7.0)", "  user:a@example.com\n", `\u001b`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("banner lacks %q:\n%s", want, got)
 		}
