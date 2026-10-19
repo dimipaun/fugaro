@@ -16,7 +16,7 @@
 Two corrections to the brief, recorded in the reconciliation itself and repeated here because they change how its findings read:
 
 - **There is no `CLAUDE.md` and no `.claude/rules/` in this repository.** `.claude/` holds only `skills/new-release/SKILL.md`. The **Rule** class therefore means a conflict with [SECURITY.md](../../SECURITY.md), a design or plan document, or a rule the code enforces, and each Rule finding names which.
-- **"Agents never force-push" is not what the repository says.** The runner force-pushes **with a lease** on its own `fugaro/<run-id>` branch (`internal/gitops/gitops.go` `Push`, `PushExisting`, guarded by `checkRunBranch` and `tipBelongsToRun`); checkpoint pushes are fast-forward only (`gitops.PushFastForward`); the base branch is never pushed at all. The consequence matters for §8 of the spec and is reasoned out in the reconciliation §1.2 and finding #28.
+- **"Agents never force-push" is not what the repository says.** The runner pushes with `--force-with-lease` on its own `fugaro/<run-id>` branch (`internal/gitops/gitops.go` `Push`, `PushExisting`, guarded by `checkRunBranch` and `tipBelongsToRun`); checkpoint pushes are fast-forward only (`gitops.PushFastForward`, which resolves `ErrNotFastForward`); the base branch is never pushed at all. The consequence matters for §8 of the spec and is reasoned out in the reconciliation §1.2 and finding #28 — and it is why §8 is a question for the owner rather than an assumption either way.
 
 ## The numbers this work holds
 
