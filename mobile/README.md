@@ -839,7 +839,7 @@ node** rather than assuming one (this repository's base image keeps node off
 the pristine suite must pass first, with a test count, because `node --test`
 exits 0 over a glob that matched nothing, and then a mutation that *must* be
 caught is planted before any real one is trusted. `npm test` --
-`node --test "src/**/*.test.js"`, the app's whole suite, **427 tests, all
+`node --test "src/**/*.test.js"`, the app's whole suite, **430 tests, all
 passing** -- is what the pull request reports as the module's verification.
 
 **The column names the tests that went red; it does not count them**, for the
