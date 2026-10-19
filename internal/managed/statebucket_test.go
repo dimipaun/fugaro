@@ -59,6 +59,25 @@ func (s *fakeState) SetPolicy(_ context.Context, bucket string, p *storage.Polic
 // deployerMember is the one member this step is about.
 func deployerMember(project string) string { return "serviceAccount:" + DeployerAccount(project) }
 
+// operatorOne and operatorTwo are the installation's operators as the managed
+// creation passes them: IAM members, in the two shapes var.operators admits
+// beside serviceAccount:.
+const (
+	operatorOne = "user:owner@example.com"
+	operatorTwo = "group:engineers@example.com"
+)
+
+// operators are the members of the operators' binding of a policy this step
+// wrote, or nil when it wrote none.
+func operators(p *storage.Policy) []string {
+	for _, b := range p.Bindings {
+		if b.Role == OperatorStateRole && b.Condition == nil {
+			return b.Members
+		}
+	}
+	return nil
+}
+
 // The bucket is the project's own and nothing else's: not the installation's
 // state bucket (whose prefixes carry the owner-run roots' state), not the runs
 // bucket (where the marker and the owner's delete list live), and not under
@@ -85,10 +104,15 @@ func TestManagedStateBucketNameIsDedicatedAndTheProjects(t *testing.T) {
 }
 
 // The step itself: a project with no bucket gets one, in the region the
-// installation was created in, and the deployer gets its one binding on it.
+// installation was created in, and it carries the two bindings — the
+// deployer's read and write, and the operators' read, which is what makes the
+// whole-project inventory readable with the operator's own credential
+// (Task 4.5). An operator who cannot read this bucket reads the state as
+// denied, and a managed apply by anyone who is not a project owner keeps its
+// confirmations forever.
 func TestEnsureManagedStateBucketCreatesAndBinds(t *testing.T) {
 	s := &fakeState{}
-	if err := EnsureManagedStateBucket(context.Background(), s, gcpProject, "us-east5"); err != nil {
+	if err := EnsureManagedStateBucket(context.Background(), s, gcpProject, "us-east5", []string{operatorOne, operatorTwo}); err != nil {
 		t.Fatalf("EnsureManagedStateBucket: %v", err)
 	}
 	bucket := ManagedStateBucketName(gcpProject)
@@ -98,8 +122,8 @@ func TestEnsureManagedStateBucketCreatesAndBinds(t *testing.T) {
 	if s.written == nil {
 		t.Fatal("the deployer's binding was never written")
 	}
-	if len(s.written.Bindings) != 1 {
-		t.Fatalf("wrote %d bindings, want the deployer's one", len(s.written.Bindings))
+	if len(s.written.Bindings) != 2 {
+		t.Fatalf("wrote %d bindings, want the deployer's and the operators'", len(s.written.Bindings))
 	}
 	b := s.written.Bindings[0]
 	if b.Role != DeployerStateRole || b.Condition != nil {
@@ -107,6 +131,15 @@ func TestEnsureManagedStateBucketCreatesAndBinds(t *testing.T) {
 	}
 	if len(b.Members) != 1 || b.Members[0] != deployerMember(gcpProject) {
 		t.Errorf("bound %v, want %s alone", b.Members, deployerMember(gcpProject))
+	}
+	// The operators' read is a binding of its own, unconditioned, with each
+	// operator once and nothing else in it.
+	got := s.written.Bindings[1]
+	if got.Role != OperatorStateRole || got.Condition != nil {
+		t.Errorf("operators bound %q (condition %v), want %q with no condition", got.Role, got.Condition, OperatorStateRole)
+	}
+	if !slices.Equal(got.Members, []string{operatorOne, operatorTwo}) {
+		t.Errorf("operators bound %v, want %v", got.Members, []string{operatorOne, operatorTwo})
 	}
 	// Every call was about the dedicated bucket: the installation's state
 	// bucket and the runs bucket were never named.
@@ -119,12 +152,13 @@ func TestEnsureManagedStateBucketCreatesAndBinds(t *testing.T) {
 }
 
 // A second managed creation on the same project changes nothing: the bucket is
-// there and the binding is there, and neither is written again.
+// there and both bindings are there, and neither is written again.
 func TestEnsureManagedStateBucketIsIdempotent(t *testing.T) {
 	s := &fakeState{exists: true, policy: &storage.Policy{Bindings: []*storage.PolicyBindings{
 		{Role: DeployerStateRole, Members: []string{deployerMember(gcpProject)}},
+		{Role: OperatorStateRole, Members: []string{operatorOne, operatorTwo}},
 	}}}
-	if err := EnsureManagedStateBucket(context.Background(), s, gcpProject, "us-east5"); err != nil {
+	if err := EnsureManagedStateBucket(context.Background(), s, gcpProject, "us-east5", []string{operatorOne, operatorTwo}); err != nil {
 		t.Fatalf("EnsureManagedStateBucket: %v", err)
 	}
 	if s.createdBucket != "" {
@@ -138,10 +172,12 @@ func TestEnsureManagedStateBucketIsIdempotent(t *testing.T) {
 	}
 }
 
-// The step adds one member to one role and removes nothing: every other
-// binding, and every condition on them, comes through untouched. A policy
-// rewritten from scratch would drop the operator's own access, and the state
-// of the root would be unreachable by the run that has to apply it.
+// The step adds members to two roles and removes nothing: every other binding,
+// and every condition on them, comes through untouched. A policy rewritten
+// from scratch would drop someone else's access — and a conditioned binding of
+// the operators' own role is somebody else's grant, so this step adds its own
+// unconditioned binding beside it rather than joining it, which would grant
+// the operators their read only under that stranger's condition.
 func TestEnsureManagedStateBucketKeepsEveryOtherBinding(t *testing.T) {
 	launchers := &storage.PolicyBindings{
 		Role: "roles/storage.objectViewer", Members: []string{"serviceAccount:fugaro-scheduler@" + gcpProject + ".iam.gserviceaccount.com"},
@@ -152,7 +188,7 @@ func TestEnsureManagedStateBucketKeepsEveryOtherBinding(t *testing.T) {
 		Condition: &storage.Expr{Title: "somebody-elses", Expression: "resource.name.startsWith(\"projects/_/buckets/y\")"}}
 	s := &fakeState{exists: true, policy: &storage.Policy{Etag: "etag-7", Version: 3,
 		Bindings: []*storage.PolicyBindings{launchers, admin, conditioned}}}
-	if err := EnsureManagedStateBucket(context.Background(), s, gcpProject, "us-east5"); err != nil {
+	if err := EnsureManagedStateBucket(context.Background(), s, gcpProject, "us-east5", []string{operatorOne}); err != nil {
 		t.Fatalf("EnsureManagedStateBucket: %v", err)
 	}
 	got := s.written
@@ -162,8 +198,11 @@ func TestEnsureManagedStateBucketKeepsEveryOtherBinding(t *testing.T) {
 	if got.Etag != "etag-7" || got.Version != 3 {
 		t.Errorf("wrote etag %q version %d, want the read policy's etag-7 version 3", got.Etag, got.Version)
 	}
-	if len(got.Bindings) != 3 {
-		t.Fatalf("wrote %d bindings, want the three read", len(got.Bindings))
+	// The three read bindings and the operators' one, which is added: the
+	// read policy's objectViewer binding is conditioned, and this step's is
+	// not.
+	if len(got.Bindings) != 4 {
+		t.Fatalf("wrote %d bindings, want the three read and the operators' one", len(got.Bindings))
 	}
 	// The deployer joins the unconditioned binding of its role, and the
 	// conditioned one of the same role is left exactly as it was.
@@ -176,6 +215,12 @@ func TestEnsureManagedStateBucketKeepsEveryOtherBinding(t *testing.T) {
 	if got.Bindings[0].Condition == nil || got.Bindings[0].Condition.Title != launchers.Condition.Title {
 		t.Errorf("a condition on another role's binding was dropped: %v", got.Bindings[0])
 	}
+	if !slices.Equal(got.Bindings[0].Members, launchers.Members) {
+		t.Errorf("the conditioned objectViewer binding took the operators: %v", got.Bindings[0].Members)
+	}
+	if b := got.Bindings[3]; b.Role != OperatorStateRole || b.Condition != nil || !slices.Equal(b.Members, []string{operatorOne}) {
+		t.Errorf("the operators' binding is %+v, want an unconditioned %s of %s", b, OperatorStateRole, operatorOne)
+	}
 }
 
 // A bucket that is there but is not this project's own state bucket is
@@ -184,7 +229,7 @@ func TestEnsureManagedStateBucketKeepsEveryOtherBinding(t *testing.T) {
 func TestEnsureManagedStateBucketRefusesAForeignBucket(t *testing.T) {
 	foreign := errors.New("state bucket gs://x is project number 999, want project " + gcpProject)
 	s := &fakeState{checkErr: foreign}
-	err := EnsureManagedStateBucket(context.Background(), s, gcpProject, "us-east5")
+	err := EnsureManagedStateBucket(context.Background(), s, gcpProject, "us-east5", nil)
 	if !errors.Is(err, foreign) {
 		t.Fatalf("a foreign bucket got %v, want the check's own refusal", err)
 	}
@@ -207,7 +252,7 @@ func TestEnsureManagedStateBucketFailsClosed(t *testing.T) {
 		"policy write fails": {&fakeState{exists: true, setErr: boom}, boom},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := EnsureManagedStateBucket(context.Background(), tc.s, gcpProject, "us-east5"); !errors.Is(err, tc.err) {
+			if err := EnsureManagedStateBucket(context.Background(), tc.s, gcpProject, "us-east5", nil); !errors.Is(err, tc.err) {
 				t.Fatalf("err = %v, want %v", err, tc.err)
 			}
 		})
@@ -219,9 +264,9 @@ func TestEnsureManagedStateBucketFailsClosed(t *testing.T) {
 // keep its state.
 func TestEnsureManagedStateBucketRefusesWithNothingToWorkWith(t *testing.T) {
 	for name, tc := range map[string]func() error{
-		"no store":   func() error { return EnsureManagedStateBucket(context.Background(), nil, gcpProject, "us-east5") },
-		"no project": func() error { return EnsureManagedStateBucket(context.Background(), &fakeState{}, "", "us-east5") },
-		"no region":  func() error { return EnsureManagedStateBucket(context.Background(), &fakeState{}, gcpProject, "") },
+		"no store":   func() error { return EnsureManagedStateBucket(context.Background(), nil, gcpProject, "us-east5", nil) },
+		"no project": func() error { return EnsureManagedStateBucket(context.Background(), &fakeState{}, "", "us-east5", nil) },
+		"no region":  func() error { return EnsureManagedStateBucket(context.Background(), &fakeState{}, gcpProject, "", nil) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := tc(); err == nil {
@@ -313,5 +358,77 @@ func TestWithDeployerGrantSkipsConditionedBindings(t *testing.T) {
 	}
 	if !changed || len(got) != 2 || got[1].Condition != nil {
 		t.Errorf("a conditioned membership counted as the grant: %v, %v", got, changed)
+	}
+}
+
+// The operators' role is read and nothing else: the state of the
+// agent-authored root is written by the deployer through Terraform, and the
+// inventory that reads it (Task 4.5) writes nothing. objectViewer is also what
+// the launchers hold on the runs bucket, so nothing here grants a role the
+// installation does not already use elsewhere.
+func TestOperatorStateRoleIsObjectViewer(t *testing.T) {
+	if OperatorStateRole != "roles/storage.objectViewer" {
+		t.Errorf("OperatorStateRole = %q, want roles/storage.objectViewer", OperatorStateRole)
+	}
+	if OperatorStateRole == DeployerStateRole {
+		t.Error("the operators and the deployer hold the same role on the bucket: the operators would be able to write the agent's state")
+	}
+}
+
+// An operator is an IAM member of the four shapes var.operators admits, and
+// one that names nobody is an error rather than a binding: withMember's false
+// means "already bound", the caller reports the step done, and a managed
+// project whose operators hold no read is one whose every managed apply falls
+// back to its confirmations without saying why.
+func TestWithOperatorGrantRefusesAMemberThatNamesNobody(t *testing.T) {
+	for _, member := range []string{"", "owner@example.com", "user:", "user:owner name@example.com", "robot:owner@example.com", "domain:"} {
+		got, changed, err := withOperatorGrant(nil, member)
+		if err == nil {
+			t.Errorf("bound %q: %v, %v", member, got, changed)
+		}
+		if changed || got != nil {
+			t.Errorf("refusing %q still returned a policy: %v, %v", member, got, changed)
+		}
+	}
+	got, changed, err := withOperatorGrant(nil, operatorOne)
+	if err != nil {
+		t.Fatalf("withOperatorGrant(%q) = %v", operatorOne, err)
+	}
+	if !changed || len(got) != 1 || got[0].Role != OperatorStateRole || !slices.Equal(got[0].Members, []string{operatorOne}) {
+		t.Errorf("withOperatorGrant = %v, %v", got, changed)
+	}
+	if got, changed, err := withOperatorGrant(got, operatorOne); err != nil || changed || len(got) != 1 {
+		t.Errorf("binding the same operator twice changed the policy: %v, %v, %v", got, changed, err)
+	}
+}
+
+// The operators' binding is written once per member: a config that names the
+// same identity twice (the config's operators and --operators are unioned)
+// must not append it twice, which the IAM API refuses for the whole write.
+func TestEnsureManagedStateBucketBindsAnOperatorOnce(t *testing.T) {
+	s := &fakeState{}
+	if err := EnsureManagedStateBucket(context.Background(), s, gcpProject, "us-east5",
+		[]string{operatorOne, operatorTwo, operatorOne}); err != nil {
+		t.Fatalf("EnsureManagedStateBucket: %v", err)
+	}
+	if got := operators(s.written); !slices.Equal(got, []string{operatorOne, operatorTwo}) {
+		t.Errorf("bound %v, want each operator once", got)
+	}
+}
+
+// A creation with no operators binds none: the deployer still gets its
+// binding, and no empty member is written. Nothing is invented here — the
+// operators are the identities the installation's own Terraform binds, and a
+// project that names none has none to bind.
+func TestEnsureManagedStateBucketWithoutOperators(t *testing.T) {
+	s := &fakeState{}
+	if err := EnsureManagedStateBucket(context.Background(), s, gcpProject, "us-east5", nil); err != nil {
+		t.Fatalf("EnsureManagedStateBucket: %v", err)
+	}
+	if s.written == nil {
+		t.Fatal("the deployer's binding was never written")
+	}
+	if len(s.written.Bindings) != 1 || s.written.Bindings[0].Role != DeployerStateRole {
+		t.Errorf("wrote %v, want the deployer's binding alone", s.written.Bindings)
 	}
 }
