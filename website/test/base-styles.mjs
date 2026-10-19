@@ -28,6 +28,15 @@
 // counts elements: `home.mjs` counts the flow's three arrows and `copy.mjs` clicks the
 // control, and neither of them says which way the one points or where the other is drawn.
 //
+// **And the run under the picture is one vertical timeline** (the owner's feedback of
+// 2026-10-19: "The run, step by step section does not look good"). Five steps laid out as a
+// `repeat(auto-fit, minmax(18rem, 1fr))` grid read three beside two with a hole in the last
+// row on a desktop and two-by-two on a tablet, with nothing joining one step to the next — a
+// list of facts rather than a run. `runTimelineFailures` reads the shape the timeline claims:
+// one column in force at 360, 768 and 1280 px, a connector on the steps that have one below
+// them and none on the last, and no width or `nowrap` in the section wider than the phone's
+// content box, which is the overflow a browser would show at 360 px.
+//
 // The pages are read from `dist/`, which `npm run check` builds before it runs this file.
 // No browser, no network: the checks are over the HTML and CSS a browser would receive.
 
@@ -453,7 +462,12 @@ function appliesAt(width) {
   }
 }
 
-/** A CSS length as pixels: a token, a `rem`/`px` length, or `calc(var(--x) * n)`. */
+/**
+ * A CSS length as pixels: a token, a `rem`/`px` length, or a `calc(var(--x) * n)` — and a
+ * `calc(var(--x) / n)`, which is how a length that is half of a token is written (the run's
+ * connector is placed at half the marker's width, `left: calc(var(--space-lg) / 2)`), so that a
+ * value the stylesheet writes in the reading's own vocabulary is one the reading can measure.
+ */
 function toPx(value, tokens) {
   if (value === undefined) return NaN
   // A bare zero is zero pixels, and it is the one length CSS lets a rule write without a unit:
@@ -464,6 +478,8 @@ function toPx(value, tokens) {
   if (variable) return tokens.get(variable[1]) ?? NaN
   const calc = /^calc\(\s*var\(--([a-z0-9-]+)\)\s*\*\s*([\d.]+)\s*\)$/.exec(value)
   if (calc) return (tokens.get(calc[1]) ?? NaN) * Number(calc[2])
+  const divide = /^calc\(\s*var\(--([a-z0-9-]+)\)\s*\/\s*([\d.]+)\s*\)$/.exec(value)
+  if (divide) return (tokens.get(divide[1]) ?? NaN) / Number(divide[2])
   const rem = /^([\d.]+)rem$/.exec(value)
   if (rem) return Number(rem[1]) * 16
   const px = /^([\d.]+)px$/.exec(value)
@@ -1491,6 +1507,348 @@ test('every run-detail refusal fires on the defect it names', () => {
       `${what}: the refusal did not fire, and this is what it said instead`,
     )
   }
+})
+
+// ---- How It Works: the run is one vertical timeline (owner's feedback, 2026-10-19) --------
+//
+// The owner read the detail under the picture on 2026-10-19: "The run, step by step section
+// does not look good". What it was: the five steps were a `repeat(auto-fit, minmax(18rem,
+// 1fr))` grid, so a desktop read three blocks beside two with a hole in the last row, a tablet
+// read them two-by-two, and nothing in the section joined one step to the next — five short
+// paragraphs in boxes, which is a list of facts rather than a run. What replaces it: one
+// column at every width, each step a numbered marker on a rail with a one-pixel line drawn
+// from it down to the marker below, and the step's name and its line in the column beside it.
+//
+// Three claims of that shape are read here, because each is a defect a reader would see rather
+// than a preference:
+//
+//   - **the steps are one column, at every width.** A sequence that puts one of its steps
+//     beside another reads as a choice between them, and the run has an order: the grid the
+//     owner measured is refused at the widths a reader is most likely to meet (a 360 px phone,
+//     a 768 px tablet, the 1280 px desktop the page's own column maxes out at), and so is
+//     every `repeat(…)` — see `runLayoutAt`, which is where the definite repeat that used to
+//     read as one track is dealt with.
+//   - **the line joins the steps and stops at the last one.** The links in the chain are what
+//     make five blocks one run, so a stylesheet with no line is refused; so is a line that is
+//     not thin (the owner asked for a thin connecting line, and a 4 px rule is a rail); and so
+//     is one drawn by every step, which would hang off the end of the run with no step below
+//     it to point at.
+//   - **nothing in the section is wider than a phone.** `width`, `min-width` and
+//     `white-space: nowrap` are the three declarations that give a phone a sideways scroll
+//     when they are wrong: a box as wide as a desktop column, or a line that cannot break, is
+//     content the page cannot fit. Both are read against the phone's **content box**, which is
+//     360 px less `main`'s own inline padding — read out of the same stylesheet rather than
+//     typed, so the arithmetic cannot drift from the gutter the page is drawn with.
+
+/** The widths the run's shape is read at: a phone, a tablet, and the width the page stops growing at. */
+export const TIMELINE_WIDTHS = [360, 768, 1280]
+
+/** The phone whose content box nothing in the section may exceed. */
+const PHONE = 360
+
+/**
+ * The run's own layout at one width, as a description of it, or `null` when the steps are in
+ * one column. A grid whose track list is one track is the timeline; a row-direction flex, a
+ * grid with more than one track and anything written with a `repeat(…)` are each a run laid
+ * out across the page.
+ *
+ * **Every `repeat` is refused, counted or not** — the same reading the chat's own one-column
+ * case takes (`chatConversationFailures`). Two of them cannot be counted at all: an
+ * `auto-fit`/`auto-fill` repeat fits as many tracks as the width allows, which is a fact about
+ * the viewport rather than about the declaration. And a definite one hides its tracks in
+ * parentheses that `splitTop` deliberately does not split — `repeat(5, 1fr)` is the five steps
+ * in one row, and the top-level split read it as **one track**, so the grid the owner measured
+ * walked back in through the shape this reading was written for. The refusal names the
+ * declaration rather than a count, because a count is what it got wrong.
+ */
+function runLayoutAt(declaredAt, width) {
+  const display = declaredAt('run-steps', 'display', width)
+  const columns = declaredAt('run-steps', 'grid-template-columns', width)
+  const direction = declaredAt('run-steps', 'flex-direction', width)
+  if (display === 'flex' && (direction === undefined || direction === 'row')) return 'a row, one column per step'
+  if (columns === undefined) return null
+  if (/repeat\(/.test(columns)) return `a grid declared \`${columns}\``
+  const tracks = splitTop(columns, ' ').length
+  return tracks > 1 ? `a grid of ${tracks} columns` : null
+}
+
+/** Every way the run's timeline is not the shape the owner's feedback asked for, as the lines a reader gets. */
+export function runTimelineFailures(css) {
+  const out = []
+  const rules = allRules(css)
+  const tokens = lengthTokens(css)
+  const named = (klass) => new RegExp(`\\.${klass}(?![\\w-])`)
+  const declaredAt = (klass, property, width) =>
+    rules
+      .filter((r) => named(klass).test(r.selector) && appliesAt(width)(r))
+      .map((r) => declarations(r)[property])
+      .filter((value) => value !== undefined)
+      .pop()
+  // The `main` rule itself, which is an element rather than a class: `main:has(> .hero)` is a
+  // different rule on a different page and is not this page's container.
+  const mainPadding = rules
+    .filter((r) => r.selector === 'main' && appliesAt(PHONE)(r))
+    .map((r) => declarations(r).padding)
+    .filter((value) => value !== undefined)
+    .pop()
+
+  // The phone's content box: the viewport less the gutter `main` gives the page at it. A
+  // `main` this stylesheet does not describe is one nothing here can measure, and the reading
+  // says so rather than comparing against a number it invented.
+  const gutter = toPx(inlineToken(mainPadding ?? ''), tokens)
+  const phoneBox = PHONE - 2 * gutter
+  if (Number.isNaN(gutter) || phoneBox <= 0) {
+    out.push(
+      `\`main\`'s inline padding cannot be read from the built stylesheet at ${PHONE} px, so the box this check holds the run's own widths to is unknown: nothing in the section can be shown to fit a phone without it (owner's feedback, 2026-10-19)`,
+    )
+  }
+
+  for (const width of TIMELINE_WIDTHS) {
+    const layout = runLayoutAt(declaredAt, width)
+    if (layout !== null) {
+      out.push(
+        `at ${width} px the run's five steps are laid out as ${layout}, and the run is one vertical timeline: a step beside another step reads as an alternative to it, and the run has an order (owner's feedback, 2026-10-19)`,
+      )
+    }
+  }
+
+  // The line between two steps. It is the step's own `::before`, and every declaration that
+  // makes it exist, takes it out of the flow and lands it on the rail is read — because each of
+  // them alone is enough to leave the rule reading correctly and the line invisible or in the
+  // wrong place: a pseudo-element with no `content` is not generated at all, a connector left
+  // in the flow is a one-pixel box in the step's own grid cell rather than a line down the
+  // rail, the step's own `position: relative` is what the connector's offsets are measured
+  // against, a line with no `left` sits at the step's edge, and a line with no `background` is
+  // painted in nothing. The geometry is read too: no `top` or no `bottom` is a line drawn from
+  // nowhere to nowhere rather than the segment between two markers.
+  const connectors = rules.filter((r) => named('run-step').test(r.selector) && /::?before/.test(r.selector))
+  if (connectors.length === 0) {
+    out.push(
+      "the run's steps carry no line between them (no `.run-step` `::before` draws one), and the line is what makes five steps one run: without it the section is five paragraphs a reader has to join up themselves (owner's feedback, 2026-10-19)",
+    )
+  }
+  // The rail's own width, read from the marker the line is drawn through: the step's number is
+  // one square and the line's `left` is half of it. Read at the phone's width, which is where
+  // the run's shape is read (`runLayoutAt`): the timeline has no breakpoint, so the marker is
+  // one width.
+  const markerWidth = toPx(declaredAt('run-step-number', 'width', PHONE), tokens)
+  // The step's own `position`, from the rules that style the step and not its pseudo-element.
+  const stepPosition = rules
+    .filter((r) => named('run-step').test(r.selector) && !/::?before/.test(r.selector) && appliesAt(PHONE)(r))
+    .map((r) => declarations(r).position)
+    .filter((value) => value !== undefined)
+    .pop()
+  if (connectors.length > 0 && stepPosition !== 'relative') {
+    out.push(
+      `\`.run-step\` is \`position: ${stepPosition ?? '(nothing declared)'}\`, and the connector's offsets are measured from the step it belongs to: without a positioned step the line is placed against whatever ancestor is positioned, which is not the step the line joins (owner's feedback, 2026-10-19)`,
+    )
+  }
+  for (const rule of connectors) {
+    const decls = declarations(rule)
+    if (decls.content === undefined || decls.content === 'none' || decls.content === 'normal') {
+      out.push(
+        `the run's line is \`content: ${decls.content ?? '(nothing declared)'}\`, and a pseudo-element with no content is not generated: the rule is here and the line is not (owner's feedback, 2026-10-19)`,
+      )
+    }
+    if (decls.position !== 'absolute') {
+      out.push(
+        `the run's line is \`position: ${decls.position ?? '(nothing declared)'}\`, and a connector left in the flow is a one-pixel box in the step's own grid cell: the line is drawn down the rail by taking it out of the flow (owner's feedback, 2026-10-19)`,
+      )
+    }
+    const left = toPx(decls.left, tokens)
+    if (Number.isNaN(left)) {
+      out.push(
+        `the run's line is \`left: ${decls.left ?? '(nothing declared)'}\`, which this check cannot turn into pixels, and a place it cannot read is a place nothing checked — \`NaN\` passes the comparison below (owner's feedback, 2026-10-19)`,
+      )
+    } else if (Number.isNaN(markerWidth)) {
+      out.push(
+        `the step's number declares \`width: ${declaredAt('run-step-number', 'width', PHONE) ?? '(nothing)'}\`, which this check cannot read, and the marker is the rail the line is measured against: where the line has to land is unknown (owner's feedback, 2026-10-19)`,
+      )
+    } else if (Math.abs(left - markerWidth / 2) > tokens.get('border-width') / 2) {
+      out.push(
+        `the run's line starts ${Math.round(left)} px from the step's edge, and the marker's centre is ${Math.round(markerWidth / 2)} px from it (the step's number is ${Math.round(markerWidth)} px wide): a line that misses the marker is drawn beside the run rather than through it (owner's feedback, 2026-10-19)`,
+      )
+    }
+    if (!/:not\(:(last-child|last-of-type)\)/.test(rule.selector)) {
+      out.push(
+        `the run's line is drawn by \`${rule.selector}\` on every step including the last, and a line with no step below it is the run continuing past its own end: the connector belongs to the step that has a next one (owner's feedback, 2026-10-19)`,
+      )
+    }
+    const thin = toPx(decls.width, tokens)
+    if (Number.isNaN(thin)) {
+      out.push(
+        `the run's line is \`width: ${decls.width ?? '(nothing declared)'}\`, which this check cannot turn into pixels, and a width it cannot read is one nothing checked (\`NaN\` passes the comparison below) — write the line's width in a shape \`website/test/base-styles.mjs\` reads (owner's feedback, 2026-10-19)`,
+      )
+    } else if (thin > tokens.get('border-width')) {
+      out.push(
+        `the run's line is ${Math.round(thin)} px wide and the run's line is thin: \`--border-width\` is ${tokens.get('border-width')} px, and the connector joins the steps rather than framing them (owner's feedback, 2026-10-19)`,
+      )
+    }
+    if (decls.top === undefined || decls.bottom === undefined) {
+      out.push(
+        `the run's line declares \`top: ${decls.top ?? '(nothing)'}\` and \`bottom: ${decls.bottom ?? '(nothing)'}\`, and a segment between two steps is one that starts at the marker above it and ends at the step's own edge: a line placed anywhere else is drawn across a step or off the end of the run (owner's feedback, 2026-10-19)`,
+      )
+    }
+    if (decls.background === undefined) {
+      out.push(
+        "the run's line declares no `background`, and an unpainted box is a line no reader sees: the connector is drawn in `var(--border)`, the site's separator (owner's feedback, 2026-10-19)",
+      )
+    } else if (!/^var\(--[a-z0-9-]+\)$/.test(decls.background.trim())) {
+      out.push(
+        `the run's line is drawn in \`background: ${decls.background}\`, and every colour on the site is a palette token (\`var(--…)\`): a literal is a colour no palette moves (W1.2, owner's feedback, 2026-10-19)`,
+      )
+    }
+  }
+
+  // What a phone cannot fit: a fixed width, a floor under one, or a line that cannot break.
+  for (const rule of rules) {
+    if (!/\.run-(detail|steps|step|note)\b/.test(rule.selector)) continue
+    const decls = declarations(rule)
+    for (const property of ['width', 'min-width']) {
+      if (decls[property] === undefined) continue
+      const px = toPx(decls[property], tokens)
+      if (Number.isNaN(px)) {
+        out.push(
+          `\`${rule.selector}\` is \`${property}: ${decls[property]}\`, which this check cannot turn into pixels, and a width it cannot read is one nothing checked — \`NaN\` passes the comparison below (owner's feedback, 2026-10-19)`,
+        )
+      } else if (px > phoneBox) {
+        out.push(
+          `\`${rule.selector}\` is \`${property}: ${decls[property]}\` — ${Math.round(px)} px, and a ${PHONE} px phone's content box is ${Math.round(phoneBox)} px (\`main\`'s gutter is ${Math.round(gutter)} px a side): a box wider than the phone is a page the phone scrolls sideways (owner's feedback, 2026-10-19)`,
+        )
+      }
+    }
+    if (decls['white-space'] === 'nowrap') {
+      out.push(
+        `\`${rule.selector}\` sets \`white-space: nowrap\`, and a step's text that cannot break is text that runs past the page on a phone: every line of the run wraps (owner's feedback, 2026-10-19)`,
+      )
+    }
+  }
+  return out
+}
+
+test('the run under the picture is one vertical timeline a phone can read', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    if (!html.includes('run-steps')) continue
+    checked += 1
+    failures.push(...runTimelineFailures(pageCss(html)).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page carries the run, and item 4 puts the detail of the picture on How It Works')
+  assert.deepEqual(failures, [], `the run is not one vertical timeline:\n  ${failures.join('\n  ')}`)
+})
+
+test('every timeline refusal fires on the defect it names', () => {
+  const page = readFileSync(path.join(DIST, 'how-it-works', 'index.html'), 'utf8')
+  const css = pageCss(page)
+  /** The How It Works stylesheet with one fragment replaced, as the run-detail cases above. */
+  const change = (from, to) => {
+    assert.ok(css.includes(from), `this fixture replaces ${JSON.stringify(from)}, and How It Works' stylesheet no longer carries it`)
+    return css.replace(from, to)
+  }
+  const cases = [
+    // The defect the owner measured: the five steps as a grid of their own, which is three
+    // columns beside a hole in the last row on a desktop and two-by-two on a tablet.
+    [
+      'the five steps as a grid of their own',
+      change('grid-template-columns:minmax(0,1fr)', 'grid-template-columns:repeat(auto-fit,minmax(18rem,1fr))'),
+      /a grid declared `repeat\(auto-fit/,
+    ],
+    // The same grid written as a repeat of five, which is the shape `splitTop` cannot see into:
+    // its five tracks are inside parentheses, so the top-level split read the whole declaration
+    // as one track and the five steps in one row passed a check whose claim is that they are
+    // one column.
+    [
+      'the five steps as one repeat of five',
+      change('grid-template-columns:minmax(0,1fr)', 'grid-template-columns:repeat(5,1fr)'),
+      /a grid declared/,
+    ],
+    // The picture without the line: five blocks a reader joins up themselves.
+    ['the steps with no line between them', css.replace(/\.run-step\[[^\]]+\]:not\(:last-child\):before\{[^}]*\}/, ''), /carry no line between them/],
+    // A line that is never generated: a pseudo-element's `content` is what makes the box exist.
+    ['a line with no content', change('content:"";top:var(--space-lg)', 'top:var(--space-lg)'), /is `content: \(nothing declared\)`/],
+    // A line left in the flow: one pixel in the step's own cell rather than a line on the rail.
+    ['a line left in the flow', change('background:var(--border);position:absolute}', 'background:var(--border)}'), /a connector left in the flow/],
+    // A step nothing is positioned against: the connector's offsets then land somewhere else.
+    ['a step with no positioned context', change(';display:grid;position:relative}', ';display:grid}'), /without a positioned step/],
+    // A line drawn at the step's edge rather than through the marker in the rail.
+    ['a line beside the rail', change('left:calc(var(--space-lg) / 2)', 'left:0'), /misses the marker/],
+    // A line with no paint: the rule is here and a reader sees nothing.
+    ['a line with no paint', change('background:var(--border);position:absolute}', 'position:absolute}'), /declares no `background`/],
+    // A line painted in a colour no palette moves: the one declaration on the connector that is
+    // not geometry, and the reason the colour rule is read at all.
+    ['a line drawn in a literal', change('background:var(--border)', 'background:#fff'), /is drawn in `background: #fff`/],
+    // A place on the rail the check cannot measure: `NaN` would pass every comparison below it,
+    // so an unreadable `left` is refused rather than assumed to be somewhere.
+    ['a line placed in a shape nothing reads', change('left:calc(var(--space-lg) / 2)', 'left:half'), /cannot turn into pixels/],
+    // A rail with no width to land on: the marker's own box is what the line's `left` is half
+    // of, and without it where the line has to land is unknown.
+    [
+      'a rail with no declared width',
+      change('width:var(--space-lg);height:var(--space-lg)', 'height:var(--space-lg)'),
+      /the step's number declares `width: \(nothing\)`/,
+    ],
+    // The line drawn by every step, which hangs off the end of the run.
+    [
+      'a line drawn by the last step too',
+      change(':not(:last-child):before', ':before'),
+      /on every step including the last/,
+    ],
+    // A rail rather than a line: the owner asked for a thin connecting line.
+    ['a four-pixel line', change('width:var(--border-width);margin-left:', 'width:calc(var(--border-width) * 4);margin-left:'), /wide and the run's line is thin/],
+    // A line placed by nothing: no `top` or `bottom` is a line drawn across whatever it lands on.
+    ['a line with no extent', change('content:"";top:var(--space-lg);bottom:0;', 'content:"";'), /declares `top: \(nothing\)` and `bottom: \(nothing\)`/],
+    // The one text run in the section that cannot break: a phone has to scroll sideways for it.
+    [
+      'a line of the run that cannot break',
+      change(
+        'color:var(--text-muted);font-size:var(--font-size-sm);line-height:var(--leading-normal);overflow-wrap:anywhere;margin:0}',
+        'color:var(--text-muted);font-size:var(--font-size-sm);line-height:var(--leading-normal);overflow-wrap:anywhere;white-space:nowrap;margin:0}',
+      ),
+      /white-space: nowrap/,
+    ],
+    // And a box as wide as a desktop column, on a page whose gutter leaves a phone 328 px.
+    [
+      'a step as wide as a desktop column',
+      change(
+        'color:var(--text-muted);font-size:var(--font-size-sm);line-height:var(--leading-normal);overflow-wrap:anywhere;margin:0}',
+        'width:40rem;color:var(--text-muted);font-size:var(--font-size-sm);line-height:var(--leading-normal);overflow-wrap:anywhere;margin:0}',
+      ),
+      /a 360 px phone's content box is 328 px/,
+    ],
+  ]
+  for (const [what, stylesheet, expected] of cases) {
+    const lines = runTimelineFailures(stylesheet)
+    // Deduplicated: a layout defect is a defect at each width it is read at, and the three
+    // widths say the same thing about the same declaration. What no case may do is say
+    // something *else* beyond the refusal it names, which is what the set holds.
+    assert.deepEqual(
+      [...new Set(lines.map((line) => (expected.test(line) ? 'fired' : line)))],
+      ['fired'],
+      `${what}: the refusal did not fire, and this is what it said instead`,
+    )
+  }
+
+  // The connector's own width, which cannot go in the list above: an unreadable width is
+  // refused by **two** readers of the same declaration — the connector's own and the phone's,
+  // which reads every `width` in the section — so the set-shaped assertion in the loop cannot
+  // tell "both refused it" from "one of them did", and the line this case is about is the one
+  // that has to be named. Read by name, both: the connector's guard is `thin > …`'s other half,
+  // and `NaN` passes that comparison.
+  const unreadableWidth = runTimelineFailures(change('width:var(--border-width);margin-left:', 'width:thin;margin-left:'))
+  assert.equal(
+    unreadableWidth.filter((line) => /the run's line is `width: thin`, which this check cannot turn into pixels/.test(line)).length,
+    1,
+    'a connector width this check cannot measure passes: the rule is read, its width is `NaN`, and `NaN` is smaller than every ceiling the check compares it to',
+  )
+  assert.deepEqual(
+    unreadableWidth.filter((line) => /is `width: thin`, which this check cannot turn into pixels/.test(line) && !/the run's line is/.test(line)).length,
+    1,
+    'the phone-side reading of the same unreadable width did not fire: the two are one edit apart and only one of them is the connector\'s',
+  )
+
+  // The control: the page as it is built passes every one of them.
+  assert.deepEqual(runTimelineFailures(css), [], 'the built run does not pass the shape its own cases are drawn from')
 })
 
 // ---- the homepage's vertical rhythm: one gap, not two (review round 5) ---------------------

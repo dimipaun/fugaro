@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,025,701 bytes in a checkout with no tags** and to **1,025,701 bytes with the
+  commit builds to **1,026,750 bytes in a checkout with no tags** and to **1,026,750 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -256,11 +256,12 @@ added or removed without this sentence moving fails there:
     script and the stylesheet both, 267,095 → **266,926**: the docs hub inlines the stylesheet
     (−278) and fetches the script (+109). Nothing else in the artifact moved in that round —
     the console's link was behind a flag that build had off.
-  - **The console's release turned the flag on** (W3.1), and moved the site figure alone,
-    976,349 → **977,921**, by the **1,572 bytes** the list above names: the console page's
-    downloads section, Getting Started's console option and the hero's link to the console.
-    The page weight and the script did not move: the heaviest page is the docs hub, which
-    renders none of the three.
+  - **The console's release turned the flag on** (W3.1), and moved the site figure alone: the
+    console page's downloads section, Getting Started's console option and the hero's link to
+    the console. The page weight and the script did not move: the heaviest page is the docs hub,
+    which renders none of the three. The bytes are the ones the three figures below are derived
+    from, and `test/budget.mjs` measures them; the rule is what this list carries.
+
   - **Getting Started's three bands** (the owner's feedback of 2026-10-19) moved the site
     figure alone, 977,921 → **979,575**, by the **1,654 bytes** the rework costs: the install
     section shows the quick path above the fold with the console option beside it, the page
@@ -289,8 +290,21 @@ added or removed without this sentence moving fails there:
     page is not the heaviest page, and the slider ships no script at all. The clone figure
     moved by the same bytes.
 
+  - **The run under the picture became one vertical timeline** (the owner's feedback of
+    2026-10-19), and moved the site figure alone, 1,020,942 → **1,021,991**, by **1,049
+    bytes**. The five steps were a `repeat(auto-fit, minmax(18rem, 1fr))` grid of cards — three beside two on a desktop,
+    two-by-two on a tablet — and the owner read the section and said it "does not look good".
+    They are now one column at every width, each step a numbered marker on a rail joined by a
+    one-pixel line, with the step's name and its line beside it: the page that renders them
+    grows by the rail, the connector, the rule that stops it at the last step and the markup
+    that places them, and the other ten pages, which render no run, are unmoved. The page weight
+    and the script did not move either: the heaviest page is still the docs hub. The shape is
+    held by `test/base-styles.mjs`'s `runTimelineFailures`, which reads the layout in force at
+    360, 768 and 1280, the connector's own extent and width, and every width or `nowrap` in the
+    section against the phone's content box. The clone figure moved by the same bytes.
+
   - **The changelog's own round** (the owner's brief of 2026-10-19) moved the site figure
-    alone, 1,020,942 → **1,025,701**, by **4,759 bytes** net, and its causes are the page's own:
+    alone, 1,021,991 → **1,026,750**, by **4,759 bytes** net, and its causes are the page's own:
     each release now carries its product summary line and wraps the release file's own
     Highlights in a `<details>` block, so a summary and a notes label per release arrive, and
     the page no longer prints a "not yet released" label for every release in the checkout with
@@ -325,7 +339,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,265 bytes. Three times 350,755: the heaviest page, the
     docs hub, at 280,604 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,846,381 bytes. Three times 1,282,127 (every file in `dist/`, 1,025,701
+  - **Whole site:** 3,850,314 bytes. Three times 1,283,438 (every file in `dist/`, 1,026,750
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
