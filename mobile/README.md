@@ -4,14 +4,21 @@ The Expo (React Native) app for the phone. It is **its own artifact**: outside
 the Go module, with its own release path, and it merges without touching the
 CLI (mobile plan D125, Phase 3).
 
-**Status.** Phase 3, tasks **P3.1** (the app skeleton and the account store) and
-**P3.2** (the feed reader and the contract's document rules)
-([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)
-line 455). P3.3 (the job list), P3.4 (the audio interfaces), P3.5 (the voice
-screen) and P3.6 (the mailbox client) are not here. What exists is the shell,
-the account model, the two device ports, the fences around them, and the feed:
-the four granted families read directly from the Realtime Database, the
-document they add up to, and the screen's rules over it.
+**Status.** Phase 3: tasks **P3.1** (the app skeleton and the account store), **P3.2**
+(the feed reader and the contract's document rules) and **P3.6** (the mailbox
+client) are here ([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)).
+P3.3 (the job list), P3.4 (the audio interfaces) and P3.5 (the voice screen) are
+not. What exists is the shell, the account model, the two device ports, the
+fences around them, the feed (the four granted families read directly from the
+Realtime Database, the document they add up to, and the screen's rules over it),
+and the phone's mailbox client -- which is the only place in the app that writes
+to the database.
+
+**P3.4 is not merged, so P3.6 defines the one audio seam it needs** —
+`src/mailbox/speaker.js`, `speak(text)` answering whether the utterance was
+spoken, which is what the ack's rule is written against. The secure store is
+**not** stubbed: P3.1's `SecretStore` is reused, and it gained one method
+(`use`) for the reason `src/mailbox/README.md` gives.
 
 ## Running the tests
 
@@ -41,9 +48,38 @@ module plugged in by `index.js` at the bottom of the tree.
 | `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from. |
+| `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
 | `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
 | `src/skeleton/` | The trivial module and test that proved the runner runs (P3.1's red step). |
+
+## The mailbox client, and the app's write set
+
+`src/mailbox/` is where the app talks to the database, and it is the only place
+that does (`src/mailbox/README.md` has the rule sheet). Three things about it
+belong in this file:
+
+* **The app's write set is exactly two paths** (D113): its own inbox message
+  node, one per utterance with a fresh id, and the `acked` child of an outbox
+  message it has already spoken. The heartbeat belongs to the orchestrator
+  (D113b) and is only read. Every record it writes is signed with the
+  per-pairing MAC key, and every record it reads -- outbox messages and the
+  heartbeat -- is verified against that key before a word is spoken or an ack
+  is written.
+* **The one-write-path claim is enforced by a scan.** `src/mailbox/write-path.test.js`
+  (P3.1's `src/boundary.test.js` shape) fails if any file but
+  `src/mailbox/client.js` calls the store's `write`, if any file but `index.js`
+  imports a `firebase` module or names a path through `.ref(` — so P3.2 and
+  P3.3 cannot bring a second write set in with the real adapter.
+* **One pass at a time.** `send`, `flush` and `poll` share a queue: an ack is
+  written only after the message was spoken, so two passes in flight together
+  would both speak it, and a screen that polls on a timer and on a reconnect
+  would do that without meaning to.
+* **The key is reached through `SecretStore.use`**: the material is handed to a
+  callback for the duration of one call and never returned (a result that
+  carries it is refused as `leaked`). No module under `src/mailbox/` can read
+  the key itself -- `reveal(`'s allow-list in the boundary scan stays two files
+  -- and that is the reason `use` exists at all.
 
 ## Where the phone's secrets live, and what is not stored
 
@@ -466,6 +502,25 @@ a class rather than as an incident:**
   is a statement about this code, not about a phone. No iOS bundle identifier or
   Android package is committed: those are the owner's, and they differ per
   installation (D125).
+* **The two limits the module names.** `src/mailbox/README.md` records them with
+  their decisions: the phone does not check how old an outbox message is (a
+  signed one with an old `at` is spoken; a replay needs the consumer's identity,
+  which the rules require), and `acked` is outside the tag (P6.3/D171), so a
+  token minted for this uid could pre-ack a genuine message -- which hides a
+  message and cannot make anything act.
+* **The mailbox against a real database, and its deployed rules.** P3.6's client
+  is tested against the port's double, which models the two rules a re-send
+  meets and nothing else: no auth, no listeners, no quota, no project. Checks
+  **81** and **82** (the deployed rules' fence and the rules deploy) are
+  owner-run and have not been run, so *what the deployed rules do with a
+  re-write* is asserted here only as the double's model of them.
+* **Metro, and the `shared/` imports.** `src/mailbox/` imports
+  `../../../shared/mailbox-schema/index.js`, `../../../shared/presence/index.js`
+  and `../../../shared/digest/redact.js`; node resolves them (the tests run) and
+  the D119 boundary rule allows them, but **bundling `mobile/` and `shared/`
+  together needs a Metro `watchFolders` entry that no task has added yet.**
+  There has been no `expo start` here, so that wiring is unverified — see
+  `src/mailbox/README.md`.
 * **The Realtime Database itself (P3.2).** No database client is installed: the
   reader takes a port — `{ subscribe(path, { onValue, onError }) }` — and every
   test hands it a fake that records the paths it is asked for. So **no listener
