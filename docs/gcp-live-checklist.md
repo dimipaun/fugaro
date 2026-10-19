@@ -311,7 +311,7 @@ and a reserved number is never reused or renumbered.
 **Check 70 is the website redesign's, proposed as 70a–70c**
 (`docs/website/redesign/implementation-plan.md` §4 and §8, written by its parts P3,
 P5 and P6), in the same sub-lettering convention. **70a** (the mobile header on one
-row, the drawer by keyboard) is written below by **P3** and **70c** (the copy
+row, the three group labels by keyboard) is written below by **P3** and **70c** (the copy
 control in a real browser, with a real clipboard) by **P6**; **70b** (the gist above
 the fold) is **P5**'s and is not in this file yet, so its absence is not a gap in
 the numbering — the shape 69a–69c arrived in. The number was free when P3 and P6
@@ -483,7 +483,7 @@ probe account carries predefined grants only).
 | 58 | Artifact runs (design `artifact-runs.md` §3–§9 and §11; plan `2026-10-15-artifact-runs.md`): a `mode: artifact` recipe rendered on a real image (ffmpeg through `image.apt`, one Cloud Build), three attached PNGs in and a video out, the `render` record and the model-against-compute counters, **no branch pushed and no pull request opened**, the probe's verdict through `commands.probe` beside an independent local `ffprobe`, the recorded content type against the object's own (U5), retrieval with a sha256 match and the upload's wall clock inside `finalize_reserve` — at the set's own size, and in 6b for two files written at exactly `outputs.max_bytes` (U6) — and the failure direction in three halves — a probe that demands an impossible duration and must fail the run with nothing uploaded, a set over `outputs.max_total_bytes` that must refuse with the cap named and the container alive, and a render driven past the job's memory, whose FACT is what was seen (U3) | See "Check 58" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs one hard-coded project guard (`P` hard-coded and never read from `gcloud`, `${VAR:?}` on every argument, the three hard stops, the workflow name checked against the checkout), every launch is guarded per step and records its run id, its commit and the image and base HEAD step 1 found in a per-attempt record file (`/tmp/chk58-records/<batch>.env`), and the Restore reverts only the commits that record holds and that are not already reverted — it refuses to guess at one it does not. | One Cloud Build (the image that carries ffmpeg) and five tiny sandbox runs — two of them carrying the same three attached PNGs (step 2 and 7a; 7b may too), one render-only and therefore at model $0, and one driven past its memory limit. **USER-RUN, NOT RUN.** |
 | 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no console download link (`features.console_downloads` is false) and no video player (`features.video` is false) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; and the greps for a download link, a player and an unshipped platform printing nothing. **USER-RUN, NOT RUN.** |
 | 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Google Analytics behind the consent banner and **W3.2 has turned it on** — the measurement id is `website/data/site.yaml`'s, the gate is the site's own file, and the pass is therefore a pass about the post-consent request, not about analytics being absent) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
-| 70a | The mobile header fits one row (website redesign plan `docs/website/redesign/implementation-plan.md` §3, part P3; D182, RF3): at **390 × 844** the header is **one row** — the wordmark and the menu toggle, with nothing wrapped under them and no sideways scroll — the drawer opens and closes **by keyboard**, Escape and a click outside close it, the focus goes back to the control that opened it, the menu reaches every link with **JavaScript disabled**, and on a device whose **pointer hovers** a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it (the owner's brief of 2026-10-18, item 1) | See "Check 70a" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | The header's measured height at 390 × 844 is one row's (about 56 px, not the 177 px of three rows RF3 measured), `document.documentElement.scrollWidth` is not wider than 390, the toggle is focusable and opens the panel, Escape closes it and returns the focus, every link in the three groups is reachable and follows with JavaScript off, **and on a device whose pointer hovers a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it** (the owner's brief of 2026-10-18, item 1), and at 1280 × 900 the menu is **visible**: the three groups in the header's one row as the three dropdowns D182 asks for, with no `Menu` toggle and no overlay panel, and opening a group showing its links **without changing the header's height**. **USER-RUN, NOT RUN.** |
+| 70a | The mobile header fits one row, and the three group labels are the phone's menu (website redesign plan `docs/website/redesign/implementation-plan.md` §3, part P3; D182 and the amendment of 2026-10-19, RF3): at **390 × 844** — and at 375, 320 and 391 — the header is **one row** of about 77 px, with the wordmark's mark kept and its text out of the row below the breakpoint, nothing wrapped under them and no sideways scroll; the three labels are the whole menu there (**Product**, **Reference**, **Project**, each at least 44 px tall, **no `Menu` control on the page**), each opens its own panel **by tap and by keyboard**, Escape and a click outside close it, the focus goes back to the label that opened it, the three are exclusive, the menu reaches every link with **JavaScript disabled**, and on a device whose **pointer hovers** a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it (the owner's brief of 2026-10-18, item 1) | See "Check 70a" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | The header's measured height at each width is one row's (about 77 px, not the 177 px of three rows RF3 measured), `document.documentElement.scrollWidth` is not wider than the viewport, the wordmark's text is out of the row below its breakpoint and the mark is in it, the three labels are on the one row and each is at least 44 px tall, a label is focusable and opens its panel, Escape closes it and returns the focus, opening a second label closes the first, every link in the three groups is reachable and follows with JavaScript off, **and on a device whose pointer hovers a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it** (the owner's brief of 2026-10-18, item 1), and at 1280 × 900 the menu is **visible**: the three groups in the header's one row as the three dropdowns D182 asks for, with no `Menu` control and no overlay panel, and opening a group showing its links **without changing the header's height**. **USER-RUN, NOT RUN.** |
 | 70c | Every copy control copies its own command (redesign plan §3, part P6; D183, RF13): on the built or deployed site **each kind of control** — the hero's install blocks, Getting Started's code blocks, the docs hub's rendered reference, the caps guide's usage lines and the terminal's own line — puts **that command** on a real clipboard, **by mouse and by keyboard**, the "Copied" state is announced politely and clears itself, and **nothing is shown with JavaScript off** | See "Check 70c" below; run by you, in a browser, against the **built artifact** or the deployed site — read-only, no cloud project touched, and **No agent runs any step of it** | Each control's clipboard content equals the command it sits on and nothing else — no `$` prompt, no caret, no neighbouring line, no page furniture — the copied state appears, is announced and clears, the keyboard reaches every control and the focus ring is visible on it, and with JavaScript disabled every command is still on the page with **no button rendered at all**. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -4066,18 +4066,25 @@ C=$(sed -n 's/^canonical_url: *//p' website/data/site.yaml)
 **Paste back:** the panel's host list per page; the origins of any request that is not the canonical one; the analytics requests with the banner's state at each of the four points above; the cookie **names** — and `Path`/`Domain`, never a value — the tag left on `/privacy/` before the withdrawal and what the list held after it; the markup's absolute URLs; and the browser and its version (the panel groups requests differently between them). **Never paste a cookie value, or any header that is not an origin.** Until this check runs, the site's runtime behaviour is **UNVERIFIED** — the build's origin lint is not the browser — and the row above stays **NOT RUN**.
 
 
-## Check 70a: the mobile header fits one row, and the menu is a keyboard drawer (the built artifact or the live site, read-only; run by you; NOT RUN)
+## Check 70a: the mobile header fits one row, and the three group labels are the phone's menu (the built artifact or the live site, read-only; run by you; NOT RUN)
 
 **NOT RUN.** Written by **part P3** of the website redesign
 (`docs/website/redesign/implementation-plan.md` §3, decision D182, reconciliation finding
-RF3), and written here rather than left to the redesign's own plan because this is the file
+RF3; **the drawer D182 also decided was retired by the owner's brief of 2026-10-19, item 1,
+and the three group labels are the phone's menu now** — the amendment at the end of that
+part), and written here rather than left to the redesign's own plan because this is the file
 the owner runs live checks out of. It is the half of P3 no hermetic test can take: the tests
-in `website/test/base-styles.mjs` hold the **structure** — the header does not wrap, the panel
-is out of its flow, the toggle is hidden from 48rem up — a browser is what measures the
-rendered row, and since the owner's brief of 2026-10-18 (item 1) it is also where the brief's
-own acceptance line runs: **"hovering a top-level item on desktop opens its submenu
-immediately"** is a gesture on a real pointer, and `website/test/nav-hover.mjs` — which runs
-the shipped script in a stub DOM, with no browser — says so and points here for it.
+in `website/test/base-styles.mjs` hold the **structure** — the header does not wrap, the
+three labels are in its row at every width, a group's list is out of that row's flow, and the
+wordmark's text leaves the row below 390 px — a browser is what measures the rendered row.
+**Two briefs' acceptance lines are also here.** The owner's brief of **2026-10-19** (item 1)
+asks that the three group labels sit in the header's row with **no `Menu` button**, each one
+opening its own panel of links on a tap, and that they fit beside the wordmark at **375 px**:
+that is a gesture and a measurement on a phone-sized viewport, and the label's 44 px target is
+a measurement too. The owner's brief of **2026-10-18** (item 1) asks that **"hovering a
+top-level item on desktop opens its submenu immediately"**, which is a gesture on a real
+pointer. `website/test/nav-hover.mjs` — which runs the shipped script in a stub DOM, with no
+browser — says so about both and points here for them.
 
 **The touch side of step 6 is part of the acceptance, not an aside.** The script is bound
 only where `matchMedia` reports
@@ -4087,7 +4094,7 @@ tap is the whole menu there, as it was before the brief. Step 6 checks that side
 emulation or on a phone; what a real touch digitizer does with a tap is the owner's, and
 `website/test/nav-hover.mjs`'s stub is not it.
 
-**Method.** One browser, one built site, two widths, no account and no cloud project. Either
+**Method.** One browser, one built site, four widths, no account and no cloud project. Either
 serve the artifact locally or read the deployed site; both are read-only:
 
 ```bash
@@ -4100,6 +4107,10 @@ sed -n 's/^canonical_url: *//p' website/data/site.yaml
 # The breakpoint the layout switches at, read from the stylesheet rather than typed: the
 # narrow layout is everything below it, and it is the width step 2 must be under.
 grep -o '@media[^{]*48rem[^{]*' website/dist/index.html | head -1
+# The width the wordmark's TEXT leaves the header's row at, read out of the built page
+# rather than typed: step 1 measures the row on both sides of it, and it is a width and not
+# a fixed 380 (the row is measured, and the fallback font is wider than the design's).
+grep -o '@media (width<=[0-9.]*rem)' website/dist/index.html | head -1
 # The query the hover behaviour is scoped to, read out of the built page rather than typed:
 # step 6 asks a device that answers this one, and the artifact minifies it (the stylesheet
 # and `site.js` ask the same query, and `website/test/nav-hover.mjs` holds the two together).
@@ -4109,46 +4120,66 @@ grep -o '@media (hover:hover) and (pointer:fine)' website/dist/index.html | head
 sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "label: '[^']*'"
 ```
 
-1. **At 390 × 844, the header is one row.** Set the viewport to **390 × 844** (the size RF3
-   measured), hard-reload, and measure the header: `document.querySelector('.site-header').getBoundingClientRect().height`
-   in the console, and `document.documentElement.scrollWidth`. **FACT:** the header's height in
-   pixels and the document's scroll width. RF3 measured **177 px** of three wrapped nav rows on
-   the page before P3; one row is about **56 px**. A scroll width greater than 390 is a sideways
-   scrollbar on a phone, which is the same defect seen from the other side.
+1. **At 390 × 844, the header is one row, and the wordmark is the mark alone.** Set the
+   viewport to **390 × 844** (the size RF3 measured), hard-reload, and measure the header:
+   `document.querySelector('.site-header').getBoundingClientRect().height` in the console, and
+   `document.documentElement.scrollWidth`. Read the wordmark too:
+   `document.querySelector('.site-wordmark img').getBoundingClientRect()` is the mark, and
+   `document.querySelector('.site-wordmark-name')` is the text — below the width the method
+   block reads out of the stylesheet the text is **out of the row** (a 1 px clipped box, not a
+   `display: none`: the link keeps its accessible name), and above it the text is drawn beside
+   the mark. **FACT:** the header's height in pixels, the document's scroll width, and whether
+   the wordmark's text is in the row or out of it. RF3 measured **177 px** of three wrapped nav
+   rows on the page before P3; one row with the labels at their 44 px target is about **77 px**.
+   A scroll width greater than 390 is a sideways scrollbar on a phone, which is the same defect
+   seen from the other side. **Repeat at 375 and at 320** — the brief's own width and the
+   narrowest phone worth supporting — and then at **391**, just above the wordmark's breakpoint,
+   where the row is at its tightest: one row and no sideways scroll at every one of them.
 
-2. **The drawer opens and closes, by keyboard.** With the viewport still narrow, Tab to the
-   `Menu` control (`.site-nav-toggle`) and press Enter: the panel opens below the header, and
-   the header's own height does not change (the panel is out of its flow — step 1's number
-   again, with the drawer open). Press Escape: the panel closes and the focus is back on the
-   control that opened it. Open it again and click somewhere else on the page: it closes.
-   **FACT:** what each of the four did — Enter, Escape, the outside click, and the header's
-   height with the panel open.
+   **The three labels are the whole menu at this width, and each fits.** Read them:
+   `document.querySelectorAll('.site-nav-group > details > summary')` — three, labelled
+   **Product**, **Reference** and **Project**, each at least **44 px** tall, all three on the
+   header's one row beside the mark, and **no `Menu` control anywhere on the page**. At 375 px
+   the three labels measured **65**, **83.5** and **59.3 px** wide beside the 47 px mark.
+   **FACT:** the three labels' widths and heights, and that no `Menu` control is on the page.
 
-3. **Every link in the three groups is reachable.** Open the drawer, then reach each group's
-   `<summary>` and each link inside it by keyboard alone, and follow one. The groups are
-   **Product**, **Reference** and **Project**, and **Privacy is not among them** — it is a
-   footer link (D182). **FACT:** the three group names as rendered, the links under each, and
-   that Privacy is in the footer rather than the menu.
+2. **A label opens its own panel, by keyboard, and only one is open at a time.** With the
+   viewport still narrow, Tab to the first group label (`.site-nav-group summary`) and press
+   Enter: its panel opens across the header's own width, and the header's own height does not
+   change (the panel is out of its flow — step 1's number again, with the panel open). Press
+   Escape: the panel closes and the focus is back on the label that opened it. Open it again
+   and click somewhere else on the page: it closes. Open it again and then open a **second**
+   label: the first closes, because the three share one `name` and the browser keeps that set
+   exclusive — one group open at a time, at every width. **FACT:** what each of the five did —
+   Enter, Escape, the outside click, the second label's open, and the header's height with a
+   panel open.
+
+3. **Every link in the three groups is reachable.** Tab to each group's label, open it, and
+   reach each link inside it by keyboard alone, and follow one. The groups are **Product**,
+   **Reference** and **Project**, and **Privacy is not among them** — it is a footer link
+   (D182). **FACT:** the three group names as rendered, the links under each, and that Privacy
+   is in the footer rather than the menu.
 
 4. **With JavaScript disabled, the menu still works.** Turn scripting off and reload at 390 ×
-   844: the drawer still opens on Enter, the groups still open, every link is still there and
+   844: each label still opens its own group on Enter or on a tap, the second one still closes
+   the first (the `name` set is the browser's, not the script's), every link is still there and
    still follows. **FACT:** that each of those held with scripting off. The script's jobs in
    the menu are the two closes step 2 checks **and** the hover-open step 6 checks (the owner's
-   brief of 2026-10-18, item 1), so with no script the drawer opens and closes by the
-   control's own `<details>` behaviour, a group opens by a click on its summary, and the only
-   things missing are the two closes and the hover.
+   brief of 2026-10-18, item 1), so with no script a group opens and closes by the `<details>`'s
+   own behaviour, and the only things missing are the two closes and the hover.
 
-5. **At 1280 × 900, the menu is in the header's one row — and the wide menu is there at all.**
-   Widen the viewport to 1280 × 900. The header shows the wordmark and the three groups in
-   **one row**, and **no `Menu` control and no overlay panel**: the drawer and the panel it
-   opens are the narrow layout's, and from 768 px up the panel is the header's own flex item
-   instead. Read the groups: **they are dropdowns at this width too** — three `<summary>`
-   controls, each with its three links behind it and closed until the pointer arrives at it
-   (step 6) or the focus lands on it (step 7) (D182's "three top-level sections
-   with dropdowns", the same two levels as the drawer's menu, which is what makes this a
-   two-level menu rather than a row of nine links). **FACT:** the header's height, the three
-   group names, that no `Menu` toggle is visible, and that the nine links are not printed in
-   the row before anything is opened.
+5. **At 1280 × 900, the menu is the same three labels in the header's one row — and the wide
+   menu is there at all.** Widen the viewport to 1280 × 900. The header shows the wordmark's
+   text and the mark and the three groups in **one row**, and **no `Menu` control**: there is
+   none at any width now — the labels are the menu at every width, and what changes at the
+   48 rem the method block reads is only where a group's list is drawn (across the header on a
+   phone, a dropdown under its own label from there up). Read the groups: **they are dropdowns
+   at this width too** — three `<summary>` controls, each with its three links behind it and
+   closed until the pointer arrives at it (step 6) or the focus lands on it (step 7) (D182's
+   "three top-level sections with dropdowns", the same two levels as the phone's menu, which is
+   what makes this a two-level menu rather than a row of nine links). **FACT:** the header's
+   height, the three group names, that no `Menu` control is on the page, and that the nine
+   links are not printed in the row before anything is opened.
 
 6. **On a hovering pointer, the submenu opens when the pointer arrives (the owner's brief of
    2026-10-18, item 1 — the brief's acceptance line, and the reason `website/test/nav-hover.mjs`
@@ -4209,24 +4240,27 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
    **last** group as well, and read `document.documentElement.scrollWidth` with a group open.
    Then on the **emulated touch device of step 6** — a device that answers the pointer query
    no — Tab to a group's trigger: its submenu opens there too, because the keyboard is the
-   device's and not the pointer's, and its links are reachable by Tab; open the drawer first on
-   that width, since the groups are inside it.
+   device's and not the pointer's, and its links are reachable by Tab.
    **FACT:** the header's height before opening and with the group open — **the same number
-   twice**, because the wide dropdown is out of the header's flow, exactly as the narrow
-   drawer's panel is — the links that appeared, the document's scroll width with the last
+   twice**, because a group's list is out of the header's flow at both widths — the links that
+   appeared, the document's scroll width with the last
    group open (not wider than the viewport), what each of the two closes did, and where the
    focus was after the click on the page (not on the group's summary, and with no focus ring
    on it).
 
-**Passes when:** the header at 390 × 844 is one row — roughly 56 px rather than 177, with no
-sideways scroll — the drawer opens by keyboard, closes on Escape and on an outside click with
-the focus returned to its control, every link in the three groups is reachable by keyboard and
-follows, **all of that holds with JavaScript disabled**, Privacy is a footer link and not a
-menu item, and at 1280 × 900 the three groups are in the header's one row with **no toggle and
-no overlay**, as three dropdowns whose links are behind their summaries, opening a group
+**Passes when:** the header at 390 × 844 — and at 375, at 320 and at 391 — is one row of about
+**77 px** rather than 177, with no sideways scroll, and the wordmark's text is out of the row
+below the breakpoint the method block reads while the mark stays; the three labels are the
+whole menu there — **Product**, **Reference**, **Project**, each at least 44 px tall, no `Menu`
+control on the page — and each opens its own panel on Enter or on a tap, closes on Escape and
+on an outside click with the focus returned to the label, with the three kept exclusive by
+their shared `name`; every link in the three groups is reachable by keyboard and follows,
+**all of that holds with JavaScript disabled**, Privacy is a footer link and not a menu item,
+and at 1280 × 900 the same three labels are in the header's one row with **no toggle and no
+overlay**, as three dropdowns whose links are behind their summaries, opening a group
 **without changing the header's height** and without a sideways scroll even on the last group
 — and the menu is **visible** at that width at all, which is the thing a wide rule that
-repositions the panel without displaying it takes away. **And on a device whose pointer
+repositions a group's list without displaying it takes away. **And on a device whose pointer
 hovers, a group's submenu opens when the pointer arrives at it with no click, stays open while
 the pointer is inside the list, closes a moment after the pointer leaves, and opens again if
 the pointer comes back inside that moment — while the same page on a touch device shows no
@@ -4242,18 +4276,19 @@ page's own text — which moves the focus to the body and fires no `focusin` —
 and leaves the focus where the reader put it, not on the trigger of the menu they have just
 dismissed (step 7).
 
-**Fails when:** the header at 390 × 844 is taller than one row or the document scrolls
-sideways; the drawer does not open, or Escape or an outside click leaves it open, or the focus
-is lost; a group or a link cannot be reached or does not follow; the menu stops working with
-scripting off (which would mean P3 made the menu depend on the script, where the script adds
-two ways to close it and the hover-open); Privacy has moved into the menu; **at 1280 × 900
-there is no menu
-at all** — the wordmark and nothing else, which is what a 48rem block that sets the panel's
-`position` but not its `display` produces, since the base rule hides it and the drawer whose
-`open` attribute would show it is the element that block takes away; the wide viewport still
-shows the `Menu` toggle or an overlay panel hanging over the page; or opening a group there
-**grows the header and shifts the page down**, or makes the document wider than the viewport
-by opening off the right edge. **And on the pointer side (step 6):** a group that does not open
+**Fails when:** the header at any of the four widths is taller than one row or the document
+scrolls sideways; the wordmark's text is still in the row at 375 px (or the mark has gone out
+of it with the text); a label is under 44 px tall, or a `Menu` control is back in the header;
+a label does not open its panel, or Escape or an outside click leaves it open, or the focus is
+lost, or two groups are open at once; a group or a link cannot be reached or does not follow;
+the menu stops working with scripting off (which would mean P3 made the menu depend on the
+script, where the script adds two ways to close it and the hover-open); Privacy has moved into
+the menu; **at 1280 × 900 there is no menu
+at all** — the wordmark and nothing else, which is what a 48rem block that sets a group's
+list's `position` but not its `display` produces, since the base rule is the one that draws it;
+the wide viewport shows a `Menu` toggle or an overlay panel hanging over the page; or opening a
+group there **grows the header and shifts the page down**, or makes the document wider than the
+viewport by opening off the right edge. **And on the pointer side (step 6):** a group that does not open
 when the pointer arrives at it, or that closes the instant the pointer crosses from the summary
 into the list (which is what a close with no delay does), or that stays open after the pointer
 has left and gone elsewhere, or one that opens on a **touch** device — where a hover that
@@ -4277,11 +4312,13 @@ fix belongs in `src/styles/base.css`, `public/scripts/site.js` or the layout, wi
 that would have caught it
 added to one of those tests where the test can see it.
 
-**Paste back:** the header's height and the document's scroll width at 390 × 844; what Enter,
-Escape and the outside click each did, and the header's height with the drawer open; the three
+**Paste back:** the header's height and the document's scroll width at 390, 375, 320 and 391,
+and whether the wordmark's text was in the row or out of it at each; the three labels' widths
+and heights at 375, and that no `Menu` control is on the page; what Enter, Escape, the outside
+click and a second label's open each did, and the header's height with a panel open; the three
 group names, their links, and where Privacy is; what held with JavaScript disabled; at
-1280 × 900 the header's height closed **and** with a group open, the group names, the toggle's
-visibility, and the links that appeared; and what the pointer's arrival, its move into the
+1280 × 900 the header's height closed **and** with a group open, the group names, and the links
+that appeared; and what the pointer's arrival, its move into the
 list, its departure and its return each did, with roughly how long the submenu stayed open
 after it left and what the emulated touch device did on a hover and on a tap — with the
 browser and its version, because a

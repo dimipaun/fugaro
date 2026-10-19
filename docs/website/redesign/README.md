@@ -228,9 +228,9 @@ here goes stale the way the byte budgets did before D192.
   the menu's hover-open and the six corrections that day and the next made to it, which moved
   the same script again. So the figures below are derived once, over the build the merge
   produces, which is the only account of them that is true of the site that ships:
-  **JavaScript per page 148,494** (three times 49,498; `public/scripts/site.js` 39,598 bytes),
-  **page weight per page 999,885** (three times 333,295; the docs hub 266,636 bytes) and
-  **whole site 3,156,990** (three times 1,052,330; the gates' own build of the site, 841,864
+  **JavaScript per page 149,580** (three times 49,860; `public/scripts/site.js` 39,888 bytes),
+  **page weight per page 1,000,974** (three times 333,658; the docs hub 266,926 bytes) and
+  **whole site 3,158,079** (three times 1,052,693; the gates' own build of the site, 842,154
   bytes across 21 files). The last re-derivation is the owner's brief of 2026-10-19, item 1 —
   the menu's drawer came out and the three group labels took its place — which is 278 bytes
   off the base stylesheet every page inlines, 181 off the script, and so 459 off the page
@@ -266,8 +266,8 @@ here goes stale the way the byte budgets did before D192.
   `website/dist`, which is the checkout's own build. The reason is that one page of the site
   reads the checkout's git state: the changelog renders each release file's "not yet released"
   state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
-  to **841,864 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
-  and so the deployed site — and to **840,349 with the tags this repository's clone carries**,
+  to **842,154 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
+  and so the deployed site — and to **840,639 with the tags this repository's clone carries**,
   the 1,515-byte changelog page being the whole of the difference. A figure derived from one is
   refused by the other, which is what happened: the gate could not measure the build `main`'s
   README named, and `website-preview` could not deploy. A derivation is likewise not held to
@@ -565,6 +565,15 @@ goes stale the way the byte budgets did before D192.
   (`console-option.mjs`'s `FUGARO_GATES_DIST` run), which is where the homepage's two extra
   words meet D188's ceilings. No new origin, no CSP change, no inline script and no second
   script file (D183): the menu's script work shrank.
+- **The review round's re-derivation: 290 bytes back onto the script.** Three comments in
+  `site.js` still described the drawer as though it existed — the retired toggle, the second
+  level a group's list sat at, and the sibling combinator that showed the panel — and the
+  review of this branch is right that comments are the specification here, so they were
+  rewritten to describe the three `<details>` groups. Comments ship: the file the browser
+  fetches is **39,888 bytes** rather than 39,598, and all three figures moved with it, over the
+  same gates' build — the docs hub 266,636 → 266,926 and the site 841,864 → 842,154. Nothing
+  else in the artifact moved: the console's link is behind a flag this build has off, and no
+  stylesheet changed.
 - **The gates, and their proofs.** `website/test/base-styles.mjs`'s two nav gates are
   rewritten for the menu that is (`navLayoutFailures`: the three labels in one row at both
   widths, the header one row with the list out of its flow, a phone's row fitting, and an

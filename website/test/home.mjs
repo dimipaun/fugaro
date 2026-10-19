@@ -718,8 +718,10 @@ test('the hero renders a player only when site.yaml says the video exists', () =
 })
 
 test('the hero offers the console from its call to action only while the flag is on', () => {
-  // Item 6 asks that the console be findable from the home page's call to action, and
-  // `site.yaml`'s `features.console_downloads` is what decides whether it is offered at all.
+  // Item 6 of the owner's brief of 2026-10-19 asks that the console be findable from the home
+  // page's call to action, and `site.yaml`'s `features.console_downloads` is what decides
+  // whether it is offered at all. (The changes spec of 2026-10-18 has an item 6 too, and it is
+  // Getting Started's console option rather than this — `console-option.mjs` holds that one.)
   // This is the flag-off half — the state the site ships in, and the state `npm run check`
   // builds — and the flag-on half is `console-option.mjs`'s, over a copy with the flag
   // flipped, because the day the console ships is not a day this build can see.
@@ -746,7 +748,7 @@ test('the hero offers the console from its call to action only while the flag is
       ['Get started', '/getting-started/'],
       ['How it works', '/how-it-works/'],
     ],
-    'the hero\'s call to action is not exactly the two links it carries while features.console_downloads is false: the console\'s link arrives with the flag, and until then the row says nothing about the console (changes spec 2026-10-18, item 6)',
+    'the hero\'s call to action is not exactly the two links it carries while features.console_downloads is false: the console\'s link arrives with the flag, and until then the row says nothing about the console (the owner\'s brief of 2026-10-19, item 6)',
   )
   assert.ok(
     !/console/i.test(textOf(actions)),

@@ -79,8 +79,9 @@
   var OPEN_MENUS = '.site-nav details[open]'
 
   // The menu's submenus: one `<details>` per group, whose `<summary>` is the control that
-  // announces the group's state. The drawer is not one of them — it is the narrow viewport's
-  // toggle, and it opens and closes by its own click.
+  // announces the group's state. There are three of them and no other menu control at any
+  // width — the labels are the menu on a phone as much as on a wide viewport (the owner's
+  // brief of 2026-10-19, item 1) — and each one opens and closes by its own click.
   var GROUP_DETAILS = '.site-nav-group details'
   var SUMMARY = 'summary'
 
@@ -176,10 +177,10 @@
 
   // Close every open menu. A menu closed under the reader's focus would leave that focus on
   // an element that is no longer rendered, so the control that opened it takes the focus
-  // back — which is where a keyboard reader expects to be after dismissing a menu. Menus come
-  // in document order, outermost first, so the toggle that takes the focus is the outermost
-  // one that holds it and is on the page: the drawer's on a narrow viewport (closing it hides
-  // the groups' own toggles), the group's on a wide one (where the drawer is not drawn).
+  // back — which is where a keyboard reader expects to be after dismissing a menu. The open
+  // menus are read in document order and the first one that holds the focus and is still
+  // drawn takes it; the three groups are siblings and no level sits inside another, so there
+  // is only ever one open at a time and the search is a formality rather than a choice.
   function closeMenus() {
     var active = document.activeElement
     var open = document.querySelectorAll(OPEN_MENUS)
@@ -324,8 +325,10 @@
     var groups = document.querySelectorAll(GROUP_DETAILS)
     var bound = []
     // One re-reading of each group, for the listener below that hears the reader's focus move
-    // anywhere: the drawer's list is the trigger's sibling rather than its child, so a focus
-    // landing in it never reaches the group's own listener at all.
+    // anywhere on the page. What a group answers is whether a reader is inside it, and that
+    // changes when the focus arrives in the group *and* when it leaves — and the leaving fires
+    // no event on the group itself. So the listener is the document's and every group re-reads
+    // its own state from wherever the focus is now.
     var reread = []
 
     function on(element, type, handler) {
