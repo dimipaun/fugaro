@@ -2209,6 +2209,7 @@ func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 		{"a **left vertical rail**", "the rail's side is half of what it is — the canvas draws it on the left, as vertical tabs — and a region described without its side is one an implementer places by guess"},
 		{"`aside.console-rail`", "the rail is one element the entry appends, and its class is the hook a rule selects"},
 		{"216 px", "the width is the canvas's one fixed number; a rail whose width is unstated is a rail whose rows re-wrap at whatever font the machine has"},
+		{"56 px", "the collapsed rail's width is required by the same block, and the canvas draws the icons-only state without its arithmetic: a width left to the implementer is a rail whose glyph sits at a different size in the two states"},
 		{"`div.console-rail-list`", "the list is the rail's tablist, and it is a different element from the rail: a header row and a foot row inside a tablist are children a tablist may not have"},
 		{"Switch with the shortcut keys 1 2 3", "the hint is drawn text, so it is a string an implementer copies rather than one they write"},
 		{"Command-1", "the shortcut's macOS form is a fact about the platform, and a shortcut described as \"the shortcut keys\" alone is one implemented as the wrong modifier"},
@@ -2244,6 +2245,62 @@ func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 				t.Errorf("%s: §4.1's rail table draws %s without %s on its own row; %s", path, want.word, cell.has, cell.because)
 			}
 		}
+	}
+
+	// The rail is a child of the body, so every count of the body's children in
+	// the document is a count this section changes. §2.1 states the shape the e2e
+	// spec asserts and §4.1 states how many the entry appends; a document that
+	// says three in one place and five in another is a document an implementer
+	// writes the assertion from by choosing a section.
+	chrome := mdFlat(mdBetween(t, path, doc, "### 2.1 ", "### 2.2 "))
+	for _, want := range []struct{ has, because string }{
+		{"'console-rail', 'console-installation', 'console-views', 'console-panel'", "§2.1 quotes the body-children assertion, and the rail is the fourth shape in it: a spec left at three names fails against the entry Task 6.3 writes"},
+		{"`aside.console-rail`", "§2's inventory is the licence for a selector, so the rail's own element is a row of §2.1's table and not a hook that lives only in §4.1's tree"},
+		{"`div.console-rail-list`", "and its list with it, which is the element a rule styles and the tablist the keyboard task gives its keys"},
+		{"`button.console-rail-row`", "and the row, which is where the state word, the name, the project and the spend are drawn"},
+		{"`span.console-rail-state`", "and the span that carries the word and the glyph §3.5's never-colour-alone rule leans on"},
+	} {
+		if !strings.Contains(chrome, want.has) {
+			t.Errorf("%s: §2.1 does not name %s; %s", path, want.has, want.because)
+		}
+	}
+	if strings.Contains(chrome, "the body's three children") {
+		t.Errorf("%s: §2.1 still says the entry draws the body's three children; the rail is the fourth, and §4.1 says the entry appends up to five", path)
+	}
+
+	structure := mdFlat(mdBetween(t, path, doc, "### 4.1 The window's structure", "### 4.2 Narrow windows"))
+	for _, want := range []struct{ has, because string }{
+		{"up to **five** children", "§4.1 is where the count is stated, and the banner, the rail and the three bands are five"},
+		{"the other four children", "in refused mode the banner is the whole document, so the four children §4.1 counts are the ones never appended — a sentence that still says three leaves the rail in the refused document, where the canvas does not draw it"},
+	} {
+		if !strings.Contains(structure, want.has) {
+			t.Errorf("%s: §4.1 does not say %q; %s", path, want.has, want.because)
+		}
+	}
+
+	// `--ok` was bound to one reading before the rail, and the rail's running row
+	// is a second. The tone's role cell and §3.5's rule are the two places the
+	// binding is stated, so a rail drawn in a tone whose role does not include it
+	// is a rule the document cannot justify.
+	okRow := mdRow(t, path, mdBetween(t, path, doc, "### 3.2 ", "### 3.3 "), "| `--ok` |")
+	if !strings.Contains(okRow, "the rail's `running` row") {
+		t.Errorf("%s: §3.2's `--ok` role cell does not carry the rail's `running` row; the rail draws that state in `--ok`, and a state colour whose stated role it does not have is a colour used decoratively, which §3.5 rule 4 forbids", path)
+	}
+	state := mdFlat(mdBetween(t, path, doc, "### 3.5 ", "### 3.6 "))
+	if !strings.Contains(state, "and for the rail's `running` row") {
+		t.Errorf("%s: §3.5's rule 4 still binds `--ok` to measured-and-inside-cap alone; the rail's running row is the second reading, and the rule is what the implementer has to answer to", path)
+	}
+
+	// And the task that touches the entry: §7's ordering paragraph and §7.5's
+	// reviewer tier both said 6.5 was the only one, and 6.3 draws the rail's
+	// elements. The sentence is the ordering claim a reviewer reads first, so it
+	// is pinned by name here rather than left to prose.
+	order := mdFlat(mdBetween(t, path, doc, "**Order, and why it is this one.**", "### 7.1 Task 6.1"))
+	if !strings.Contains(order, "6.3 appends the rail's elements") || !strings.Contains(order, "6.5") {
+		t.Errorf("%s: §7's ordering paragraph does not name both tasks that touch the entry (6.3, which appends the rail's elements, and 6.5, which adds the attributes and the keys); the paragraph said 6.5 was the only one, and §7.3 puts entry.ts in 6.3's Files", path)
+	}
+	if strings.Contains(mdFlat(doc), "only task that touches the entry") {
+		t.Errorf("%s: the document still calls one task the only one that touches the entry; two do — the rail's elements are Task 6.3's and the attributes and keys are Task 6.5's", path)
 	}
 }
 

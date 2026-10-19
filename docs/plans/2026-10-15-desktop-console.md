@@ -1350,7 +1350,8 @@ one token, can a document gain a second stylesheet or an inline style.
 
 **Scope.** `src/renderer/theme/base.css`: the reset, the document as the **two-column grid**
 the design's §4.1 draws, **the installation rail** and the rules for it — its fixed 216 px
-width, its header row and its collapse control, its rows with their name, project, state
+expanded width and its 56 px collapsed width, its header row and its collapse control, its
+rows with their name, project, state
 glyph **and** state word and spend spans, its selected row's 3 px accent border, its foot
 row and its hint — the three bands the entry appends (`section.console-installation`,
 `nav.console-views`, `div.console-panel`, held in that order by `test/e2e/entry.spec.ts`,
@@ -1379,9 +1380,13 @@ chrome's boundary still visible under `emulateMedia({ forcedColors: 'active' })`
 first, which is this task's red step, and the rail's own boundary with it, since the rail is
 chrome and its rows are the surface the smoke reads; `entry.spec.ts`'s body-children
 assertion, which gains `console-rail` as the first of the four shapes it lists, because the
-entry appends it before the installation line and the rail is what a reader sees first; and
-a case that the rail draws one row per stored installation with its state word and its
-glyph. **Not the computed-background assertion**: it reads a *computed* background off a
+entry appends it before the installation line and the rail is what a reader sees first; a
+case that the rail draws one row per stored installation with its state word and its glyph;
+and **the §2-inventory selector scan over `base.css`** — the rail's thirteen hooks are the
+chrome's and the design's §2.1 lists them, so the list the scan checks against is the
+inventory's tables (the screens' class literals and the chrome's hooks), not the screens'
+literals alone: a scan of the screens' literals sees no rule written against a hook the
+entry draws, which is the one shape of rule this task adds. **Not the computed-background assertion**: it reads a *computed* background off a
 screen root, so it can pass only once a rule paints one, and the rules that paint a screen
 root are the stylesheets this phase lands. It goes with the recording it guards, because
 that is where the golden baselines are re-made — **what it waits for is the stylesheet, not
@@ -1438,8 +1443,9 @@ exist — Task 6.1 writes the file and leaves that case out for exactly that rea
 per-screen half).
 
 **Tests.** A case that every selector in `screens.css` names a hook the design's §2
-inventory lists — checked against a list derived from the screens' own class literals, so a
-rule that styles a class nothing emits fails; the `--border`-is-decorative scan of
+inventory lists — checked against a list derived from the inventory's tables, the screens'
+own class literals **and the chrome's hooks of §2.1** (the rail's thirteen, which Task 6.3
+draws and this scan must see), so a rule that styles a class nothing emits fails; the `--border`-is-decorative scan of
 `base.css` and `screens.css`; the forced-colors smoke per screen — every state word still in
 the DOM and the row boundary still visible. **Not the computed-background assertion**,
 which belongs with the recording it guards, for the reason Task 6.3 gives: it waits on the
@@ -1536,8 +1542,10 @@ task — which is a sequence, not a dependency: the last task's assertion waits 
 stylesheets, not on this task's theme choice (design §6.2).
 
 **Commit:** `console: the window paints its ground first, and the nav and the rail take the keyboard` —
-what this task commits under the ruling: one background literal and the nav's tablist
-behaviour. *The message as written for the two-set design was `console: the OS chooses the
+what this task commits under the ruling: one background literal, **the nav's tablist
+behaviour** (its `role`, its `aria-selected`, its roving `tabindex` and its Arrow/Home/End
+handling) **and the rail's** (the same over its rows plus Enter to select and the shortcut
+keys that select by position — the rail is a tablist in its own right, design §4.1). *The message as written for the two-set design was `console: the OS chooses the
 theme, and the window paints its ground first`*, and the switch that half of it names is
 the one the owner's Q1 ruling of 2026-10-19 removed.
 
