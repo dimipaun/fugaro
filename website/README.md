@@ -235,14 +235,17 @@ with fixtures that keep its refusals running, and none of them needs the network
   shipped `public/scripts/site.js` in a small stub DOM (no browser, F3), on a pointer that
   hovers and on one that does not, and holds both halves of the pair — the CSS's every
   `.site-nav` `:hover` rule inside `@media (hover: hover) and (pointer: fine)`, and the
-  script's `matchMedia` asking the same query before it binds anything. It opens a group by
-  moving the pointer onto it, keeps it open while the pointer is inside the submenu, closes it
-  one delay later when the pointer leaves and cancels that close when the pointer returns,
-  still opens and closes by the click the menu was built on, leaves the touch path with no
-  hover behaviour at all, opens on focus and closes on Escape with the focus given back, and
-  reads `aria-expanded` at every step. Each case was mutation-proved by hand: the defect was
-  planted in the script or the stylesheet, the case was watched failing, and the defect was
-  removed.
+  script's `matchMedia` asking the same query before it binds anything and again whenever its
+  answer changes. It opens a group by moving a mouse onto it and by moving a pen onto it, keeps
+  it open while the pointer is inside the submenu, closes it one delay later when the pointer
+  leaves and cancels that close when the pointer returns, still opens and closes by the click
+  the menu was built on, leaves the touch path with no hover behaviour at all — a finger's tap
+  opens and closes a group even on a device that answers the query "yes", where the tap's own
+  pointer would otherwise be taken for a hover — binds and unbinds the behaviour when the
+  device's answer changes under a loaded page, opens on focus and closes on Escape with the
+  focus given back, and reads `aria-expanded` at every step. Each case was mutation-proved by
+  hand: the defect was planted in the script or the stylesheet, the case was watched failing,
+  and the defect was removed.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
