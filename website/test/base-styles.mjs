@@ -815,6 +815,32 @@ function flowLayouts(css) {
 }
 
 /**
+ * The shape the flow is drawn in at a viewport width: `'column'` (one card under another),
+ * `'grid'` (the two-by-two) or `'row'` (four cards side by side). The browser's own reading of
+ * the stylesheet — every rule that reaches the list and is in force at the width, in document
+ * order, the last one that states a layout winning — so a band's own edges are read rather
+ * than assumed from the breakpoints the three blocks name.
+ *
+ * The list starts as a column because that is what it is with no other layout: the base rule
+ * declares it, and the phone's shape is not a rule of its own. A rule that lays the list out
+ * in a grid is the two-by-two; `flex-direction: row` is the four-across row. Nothing else in
+ * this component states a layout for `.flow-steps`, which is why a rule this reader does not
+ * recognise cannot hide a fourth shape: it would have to declare one of these two properties.
+ */
+export function flowLayoutAt(css, width) {
+  let shape = 'column'
+  for (const rule of allRules(css)) {
+    if (!/\.flow-steps(?![\w-])/.test(rule.selector)) continue
+    if (!appliesAt(width)(rule)) continue
+    const decls = declarations(rule)
+    if (decls['grid-template-columns'] !== undefined) shape = 'grid'
+    else if (decls['flex-direction'] === 'row') shape = 'row'
+    else if (decls['flex-direction'] === 'column') shape = 'column'
+  }
+  return shape
+}
+
+/**
  * Every way the flow's four-across row fails to render the step names it prints, for one
  * built page's stylesheet and the names that page carries. Five things are checked, and each
  * is the defect rather than a preference:
@@ -1100,6 +1126,68 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
         )
       }
     }
+  }
+  return out
+}
+
+// ---- the flow's three bands, at the widths a reader meets them (review round 3, item 3e) ---
+//
+// The flow is three layouts in three bands of width, and until now only the ends of them were
+// checked: `flowLayoutFailures` reads the block that starts the row and the block that starts
+// the two-by-two, and measures the boxes they make, but nothing held the *bands* — where each
+// one begins and ends, and what a reader at a width inside one of them actually gets. The
+// review of round 3 asked for the middle band by name: "at 768 the diagram is a tall stack
+// over 400 px", with the flow rendered as "a 2×2 grid ... stacking to one column only below
+// about 560 px". A stack of four cards is what a stylesheet with no two-by-two at all gives,
+// and the row blocks being present would not notice its absence.
+//
+// So this reads the shape in force at six widths rather than the blocks: the two pixels either
+// side of the phone's end (559 and 560, which is the review's "about 560 px" read exactly —
+// 35 rem), the width the review measured (768), the two either side of the row's start (1151
+// and 1152, since the two-by-two ends at 71.98 rem), and the desktop width the other half of
+// the round measured (1280).
+
+/** The widths the flow's bands are read at, and the shape each one is supposed to give. */
+const FLOW_BANDS = [
+  [559, 'column', 'a phone: the four steps are one column of cards, and the third band has not begun'],
+  [560, 'grid', "the two-by-two's first pixel — the review's “about 560 px”, which is 35 rem, and the width above which four stacked cards are the tall stack it measured"],
+  [768, 'grid', 'the width the review measured: `1 2` over `3 4`, four cards in two rows rather than four stacked over 400 px'],
+  [1151, 'grid', "the two-by-two's last pixel, since the row starts at 72 rem"],
+  [1152, 'row', 'the four-across row, one pixel after the two-by-two ends'],
+  [1280, 'row', 'the desktop width: the four steps stand side by side, left to right, and one band is in force'],
+]
+
+/**
+ * Every way the flow's bands fail to give the reader at a width the picture the review asked
+ * for, as the lines a failure lists. Two things are checked, and neither is a preference:
+ *
+ *   - **each band's shape**, at the widths `FLOW_BANDS` names — a phone's stack, the two-by-two
+ *     a 768 px screen reads, the row. A missing two-by-two is the defect the review measured
+ *     (four cards stacked over 400 px) and it leaves no trace in the blocks that are present,
+ *     so it is read where a reader meets it;
+ *   - **no band without a width.** A rule that lays the list out inside a query with no
+ *     viewport width in it — `@supports`, `prefers-reduced-motion`, or no query at all beyond
+ *     the base column — is a layout for every width, which is a fourth band nobody chose and
+ *     one that would silently beat the three.
+ */
+export function flowBandFailures(css) {
+  const out = []
+  for (const rule of allRules(css)) {
+    if (!/\.flow-steps(?![\w-])/.test(rule.selector)) continue
+    const decls = declarations(rule)
+    if (decls['grid-template-columns'] === undefined && decls['flex-direction'] === undefined) continue
+    if (!rule.query) continue
+    if (/width\s*[<>]=?\s*[\d.]+rem/.test(rule.query)) continue
+    out.push(
+      `the flow's list is laid out inside \`${rule.query}\`, a query with no viewport width in it: the flow has three bands (one column below 35 rem, the two-by-two to 71.98 rem, the row above that), and a layout that starts at no width is a layout that starts at every width (review round 3, item 3e; changes spec 2026-10-18, item 4)`,
+    )
+  }
+  for (const [width, shape, why] of FLOW_BANDS) {
+    const at = flowLayoutAt(css, width)
+    if (at === shape) continue
+    out.push(
+      `at ${width} px the flow's four steps are a \`${at}\` and not a \`${shape}\`: ${why} (review round 3, item 3e; changes spec 2026-10-18, item 4)`,
+    )
   }
   return out
 }
@@ -1487,9 +1575,66 @@ test('the four-across flow has room for the step names it prints', () => {
     if (names.length === 0) continue
     checked += 1
     failures.push(...flowLayoutFailures(pageCss(html), names, flowWrappers(html), flowListElement(html)).map((line) => `${rel}: ${line}`))
+    failures.push(...flowBandFailures(pageCss(html)).map((line) => `${rel}: ${line}`))
   }
   assert.ok(checked > 0, 'no built page carries the flow, and item 4 puts it on the homepage and on How It Works')
   assert.deepEqual(failures, [], `the flow cannot render its own step names:\n  ${failures.join('\n  ')}`)
+})
+
+test('the flow is a stack, a two-by-two and a row — each in its own band of width', () => {
+  const css = pageCss(readFileSync(path.join(DIST, 'index.html'), 'utf8'))
+  assert.deepEqual(flowBandFailures(css), [], 'the band rule fails on the built stylesheet, so the cases below are not proving what they name')
+
+  const cases = [
+    // The defect the review of round 3 measured, and the one this gate exists for: no
+    // two-by-two at all, which leaves the four cards as the tall stack the review counted at
+    // 768 px. The blocks that start the two-by-two and the row are both still there — this is
+    // the shape whose absence nothing else in the file would notice.
+    [
+      'a flow with no two-by-two at all',
+      css.replace(/@media \(width>=35rem\) and \(width<=71\.98rem\)\{\.flow-steps[^{]*\{[^}]*\}/, ''),
+      /at 768 px the flow's four steps are a `column`/,
+    ],
+    // And the same band one rem early: the stack ends at 35 rem, which is the review's "about
+    // 560 px", and a two-by-two that begins at 30 rem gives a 559 px reader it instead.
+    [
+      'a two-by-two beginning below the phone’s own end',
+      css.replace('(width>=35rem) and (width<=71.98rem)', '(width>=30rem) and (width<=71.98rem)'),
+      /at 559 px the flow's four steps are a `grid`/,
+    ],
+    // A band with no width in its query at all: the two-by-two moved out of the widths it is
+    // for, so it is a layout for every width — a fourth band nobody chose, and one that takes
+    // the phone's own stack away.
+    [
+      'a two-by-two in a query with no viewport width in it',
+      css.replace('(width>=35rem) and (width<=71.98rem)', '(min-resolution: 2dppx)'),
+      /a query with no viewport width in it/,
+    ],
+    // The row itself, starting past the desktop width the review measured.
+    // The row's own band starting past the desktop width the review measured, which leaves the
+    // three bands with a hole in them: the two-by-two has ended and the row has not begun, so a
+    // 1280 px reader gets the phone's stack back.
+    [
+      'a row that starts after the desktop width',
+      css.replace('@media (width>=72rem){.flow-steps', '@media (width>=90rem){.flow-steps'),
+      /at 1280 px the flow's four steps are a `column`/,
+    ],
+    // The phone's own column given a second column of its own: the base rule lays the list
+    // out, and laying it out as a grid there is a two-by-two at every width below the band.
+    [
+      'a phone’s stack given two columns',
+      css.replace(
+        /\.flow-steps(\[data-astro-cid-[a-z0-9]+\])\{flex-direction:column;max-width:none/,
+        '.flow-steps$1{grid-template-columns:1fr 1fr;max-width:none',
+      ),
+      /at 559 px the flow's four steps are a `grid`/,
+    ],
+  ]
+  for (const [what, planted, expected] of cases) {
+    assert.notEqual(planted, css, `${what} was not planted: the case's pattern did not match the built stylesheet`)
+    const failures = flowBandFailures(planted)
+    assert.ok(failures.some((line) => expected.test(line)), `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`)
+  }
 })
 
 test('the chat is one card holding one conversation, at a readable width', () => {

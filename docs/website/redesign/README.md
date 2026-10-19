@@ -9,7 +9,7 @@ all of them, and it changes what they built — the hero's headline and its exam
 four-step flow — which the readings under "Implementing items 2, 3 and 4" below record.
 
 The site itself **is** built: `website/` holds an eleven-route Astro site whose hermetic
-gates pass (264 tests, `npm run check`, measured 2026-10-19). The three documents of the
+gates pass (268 tests, `npm run check`, measured 2026-10-19). The three documents of the
 first line of work said the opposite, in the present tense — [`../README.md`](../README.md)
 `:3` and `:5`, [`../reconciliation.md`](../reconciliation.md) `:3`,
 [`../implementation-plan.md`](../implementation-plan.md) `:3` — which is reconciliation
@@ -118,7 +118,14 @@ here.
   forbidden change (the generated-file rule). The list above is held to the tree rather than
   trusted: `website/test/wording.mjs` reads each skill's own `SKILL.md` and fails unless the
   skills carrying the word are the three named here, so a skill that gains or loses it — in
-  0.9.0, or by accident — moves this sentence in the same commit.
+  0.9.0, or by accident — moves this sentence in the same commit. **The same test names the
+  one file of the site's tree the word stays in while it waits for 0.9.0** —
+  `FILES_THAT_KEEP_IT = ['content/cli-reference.md']`, dated 2026-10-19 — and holds that list
+  to `website/content` as well: the generated documents are swept with the rest of the tree
+  rather than left outside it, the one exception is a named path with the reason beside it,
+  and the case fails in both directions, so a second generated document that starts carrying
+  the word is refused and the exception cannot outlive the 0.9.0 change that removes the need
+  for it.
 - **The spec's `fugaro update` means `fugaro upgrade`.** There is no `update` command; the
   command that pins the plugin and moves the job images onto a release's base image is
   `fugaro upgrade` (`README.md` `## Upgrading`). Where the spec writes `update`, this work
@@ -129,8 +136,8 @@ here.
 Items 2, 3 and 4 of the changes spec are implemented in this branch's pull request. **Every
 reading the spec does not spell out is recorded here**, one bullet each, so that a later
 reader of the site does not have to guess them from the markup — and the list is not
-counted, because the fix rounds have added bullets to it twice and a number written here
-goes stale the way the byte budgets did before D192.
+counted, because each of the three fix rounds has added bullets to it and a number written
+here goes stale the way the byte budgets did before D192.
 
 - **Item 4's four steps are the spec's, and they supersede D185's names.** D185 ruled that
   How It Works uses "the brief's four steps, each captioned by a quoted line"; item 4 of the
@@ -197,11 +204,14 @@ goes stale the way the byte budgets did before D192.
   artifact weighs — the terminal's transcript goes, the chat comes, `site.js` loses 117 bytes,
   the flow's stylesheet changes — so all three figures move with it, from the build of
   2026-10-19: **JavaScript per page 76,086** (three times 25,362; `public/scripts/site.js`
-  20,289 bytes), **page weight per page 927,195** (three times 309,065; the docs hub
-  247,252 bytes) and **whole site 3,040,455** (three times 1,013,485; 810,788 bytes across 21
-  files — re-derived again in the second fix round on this branch, which moved the homepage's
-  order, the flow's treatment, the chat's launch line, the install command's wrapping and the
-  chat's own turns out of the measure's cap). The
+  20,289 bytes, unmoved since the second round), **page weight per page 927,834** (three times
+  309,278; the docs hub 247,422 bytes) and **whole site 3,057,045** (three times 1,019,015;
+  815,212 bytes across 21 files — re-derived again in the second fix round on this branch,
+  which moved the homepage's order, the flow's treatment, the chat's launch line, the install
+  command's wrapping and the chat's own turns out of the measure's cap, and a fourth time
+  across the third fix round, whose four commits moved the site figure to 814,455, 815,116 and
+  815,212 bytes and the page figure with it, each re-derived in the commit that shipped the
+  bytes). The
   figures live in `website/README.md` and nowhere else, and
   `website/test/budget.mjs` reads them from there and holds each to the build it can measure:
   a derivation that names another build fails, which is what stops the page and the site
@@ -236,7 +246,11 @@ goes stale the way the byte budgets did before D192.
   third** — found by measuring the built page in a browser rather than by reading it, and
   fixed the same way (`max-width: none`), with `website/test/base-styles.mjs`'s new
   `chatRowFailures` reading the smallest column and the gap out of the grid rule and the cap
-  out of the cascade. The `go install` command, which the same review found clipped at
+  out of the cascade. (That gate and the two-column chat are both gone again: the third fix
+  round made the chat one conversation card at the measure's own width, and the gate that
+  reads it now is `chatConversationFailures` — see the reading below. The history is kept
+  here because the round that found the hole was the round that measured the page rather
+  than read it.) The `go install` command, which the same review found clipped at
   `...@late`, wraps now (`white-space: pre-wrap`, `overflow-wrap: anywhere`) on both install
   cards, and `installCommandFailures` refuses a command block that clips instead. The agent's
   launch is the status line `Fugaro: launching 3 jobs` rather than a command block, which is
@@ -251,3 +265,50 @@ goes stale the way the byte budgets did before D192.
   reaches the CLI, the generated CLI reference and the three plugin skills in 0.9.0 and not
   in this run, and `website/test/wording.mjs` holds the tree to exactly that list. Nothing
   was changed here, and the finding is recorded as deferred rather than done.
+- **The third fix round is the second review's, and each of its five findings is a rule.**
+  The review built the site and looked at it, found the second round's two blockers fixed
+  (the cards equal height at 270 px, the flow inside the first 900 px) and asked for these:
+  - **the copy control has one placement, and it is beside the command** (item 3c). The
+    install cards put it above the code block and the watch bar beside it, so the same
+    component read two ways on one page. `base.css` now lays every `[data-copy]` block out as
+    one row — `flex-direction: row-reverse` with the command taking the width the control
+    leaves (`flex: 1 1 auto; min-width: 0`) — and the watch bar's own row rule is gone.
+    `website/test/base-styles.mjs`'s `copyBlocks`/`sideBySideCopyBlocks` read every block's
+    own rules and refuse one whose control is laid out first or wrapped above the command.
+  - **the chat is one conversation card, and its caption is under it** (item 3a and the
+    caption's place). Three cards with dead space and a `You` line floating mid-card became
+    one card of four turns: a fixed 7 rem speaker column from 35 rem up (a `max-content`
+    column resolves per row and aligns nothing), one column below it, the agent's turn marked
+    by the accent's own left border. The caption moved out from under "Watch it run" to
+    directly under the conversation, and the whole watch block — heading, item 5's slot, the
+    command bar, the note — is now a sibling of the figure rather than inside it, so the
+    caption can be the figure's last child. `chatConversationFailures` reads the card, the
+    speaker column and the caption's place; `website/test/home.mjs` reads the slot as the
+    element after the watch heading.
+  - **the empty slot takes no page** (item 3b). `[data-slot="watch-screenshot"]` with no rule
+    of its own was a box of blank page between the conversation and the command bar, which is
+    the ~140 px the review measured. `.chat-shot:empty { display: none }` takes it out until
+    PR #622's image lands, and `chatSlotFailures` refuses a slot rule that gives it height,
+    padding, a border or a background, and requires the rule that will size the image
+    (`.chat-shot > img`) so that adding the image stays one line of markup.
+  - **How It Works has one left edge, and room under its title** (item 3d). The detail section
+    carried `var(--space-md)` of inline padding of its own on top of `main`'s gutter, so "The
+    run, step by step" and the five steps were 24 px right of the `h1` and of the flow between
+    them; and `base.css`'s 12 px heading margin left the flow almost against the title. The
+    padding is gone from `.run-detail`, and the room under the title is the page's own rule
+    (`.page-title { margin-bottom: var(--space-xl) }` on `how-it-works.astro`, not on the
+    shared component, which the homepage renders early on purpose). The gate reads the inset
+    back out of the cascade and refuses a page whose top-level blocks start at two left edges.
+  - **the flow is a stack, a two-by-two and a row, each in its own band of width** (item 3e).
+    The 768 px band has been a two-by-two since the flow's own work, and nothing held it
+    there: `flowLayoutFailures` reads the blocks that start the row and the two-by-two, so a
+    stylesheet with no two-by-two at all — four cards stacked, the picture the review counted
+    at over 400 px — passed every check. `flowLayoutAt(css, width)` now reads the shape in
+    force at a width out of the cascade, and `flowBandFailures` reads the six widths that are
+    the bands' own edges and the two widths the reviews measured: 559 and 560 (the review's
+    "about 560 px", which is 35 rem, read exactly), 768, 1151 and 1152 (71.98 rem), and 1280.
+    A layout rule inside a query with no viewport width in it is refused too, because that is
+    a band at every width. Each of the five cases plants its defect and proves the refusal.
+  Nothing in this round was verified visually: this run cannot see an image, the rounds before
+  it are what a browser measured, and whether the page now *looks* right is the owner's check
+  (70a–70c), as D190 requires.
