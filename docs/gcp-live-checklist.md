@@ -4542,7 +4542,7 @@ read -rs TOKEN && printf '%s' "$TOKEN" > "$TOKEN_FILE" && unset TOKEN
 chmod 600 "$TOKEN_FILE"
 ```
 
-**FACT (U2):** what `claude setup-token` said about the token's validity — its stated expiry, or that it has none — **verbatim and without the value**, plus the file's length and mode. That sentence is U2's answer; [reconciliation.md](credentials-service/reconciliation.md)'s U2 row is where it is recorded.
+**FACT (U2):** what `claude setup-token` said about the token's validity — its stated expiry, or that it has none — **verbatim and without the value**, plus the file's length and mode. That sentence is U2's **evidence, not its answer** — U2 is settled by **Anthropic's documentation**, which the owner reads, and [reconciliation.md](credentials-service/reconciliation.md)'s U2 row is where that answer is recorded, with this check's stated expiry as the evidence beside it.
 
 ### Check 90 step 3: the proxy, in full
 

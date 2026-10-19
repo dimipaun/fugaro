@@ -39,6 +39,22 @@ func docTail(t *testing.T, path, doc, marker string) string {
 	return doc[i:]
 }
 
+// stepBlock returns one "###" step of a check: from its heading to the next
+// "###" heading (or to the end of the check). docSection cannot bound it — it
+// stops only at a "##" heading, and Check 91 is the register's last "##"
+// section — so a slice taken with docSection runs to the end of the file and a
+// later step's text satisfies an assertion about this one: the guard's marker
+// refusal and the Restore's are the same line, and deleting either left the
+// other to answer for it.
+func stepBlock(t *testing.T, path, check, heading string) string {
+	t.Helper()
+	sec := docSection(t, path, check, heading)
+	if i := strings.Index(sec[len(heading):], "\n### "); i != -1 {
+		return sec[:len(heading)+i]
+	}
+	return sec
+}
+
 // TestChecklistCheck90GuardClearsTheClientCredentialEnvironment: Claude Code
 // reads ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN before anything the check
 // sets, and ANTHROPIC_BASE_URL would decide where the call goes, so a control
@@ -48,7 +64,7 @@ func docTail(t *testing.T, path, doc, marker string) string {
 func TestChecklistCheck90GuardClearsTheClientCredentialEnvironment(t *testing.T) {
 	doc := readDoc(t, checklistPath)
 	check := docSection(t, checklistPath, doc, chk90Heading)
-	guard := docSection(t, checklistPath, check, "### Check 90 step 1: setup and guard")
+	guard := stepBlock(t, checklistPath, check, "### Check 90 step 1: setup and guard")
 	for _, want := range []string{
 		"for v in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL; do",
 		`unset "$v"`,
@@ -71,14 +87,20 @@ func TestChecklistCheck90GuardClearsTheClientCredentialEnvironment(t *testing.T)
 func TestChecklistCheck90ScratchDirectoryIsTheChecksOwn(t *testing.T) {
 	doc := readDoc(t, checklistPath)
 	check := docSection(t, checklistPath, doc, chk90Heading)
-	guard := docSection(t, checklistPath, check, "### Check 90 step 1: setup and guard")
+	guard := stepBlock(t, checklistPath, check, "### Check 90 step 1: setup and guard")
 	for _, want := range []string{
 		`SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk90.XXXXXXXX")`,
 		`: > "$SCRATCH/.chk90-mine"`,
 		`SCRATCH_RECORD`,
+		// The guard refuses a recorded path that carries no marker of its own,
+		// so a stale $SCRATCH_RECORD naming someone else's directory is never
+		// adopted — the same refusal Check 91's guard makes, and read from the
+		// step itself: step 9 has a copy of this line, and an unbounded slice
+		// would let that copy answer for this one.
+		`[ -f "$SCRATCH/.chk90-mine" ]`,
 	} {
 		if !strings.Contains(guard, want) {
-			t.Errorf("Check 90's guard does not make its own scratch directory: it lacks %q", want)
+			t.Errorf("Check 90's guard does not make its own scratch directory and refuse a path it does not recognise: it lacks %q", want)
 		}
 	}
 	// A reader-set SCRATCH is what the review found: the value went into an
@@ -86,7 +108,7 @@ func TestChecklistCheck90ScratchDirectoryIsTheChecksOwn(t *testing.T) {
 	if strings.Contains(check, `SCRATCH=${SCRATCH:-$HOME/chk90-scratch}`) {
 		t.Error("Check 90 still takes the scratch directory from a value the reader sets, which is what step 9's rm -rf removes")
 	}
-	restore := docSection(t, checklistPath, check, "### Check 90 step 9: Restore")
+	restore := stepBlock(t, checklistPath, check, "### Check 90 step 9: Restore")
 	// The order is the point: both refusals have to stand between the path and
 	// the delete, not after it.
 	shape := strings.Index(restore, `|/|"$HOME"`)
@@ -111,7 +133,7 @@ func TestChecklistCheck90ScratchDirectoryIsTheChecksOwn(t *testing.T) {
 func TestChecklistCheck91ScratchDirectoryIsTheChecksOwn(t *testing.T) {
 	doc := readDoc(t, checklistPath)
 	check := docSection(t, checklistPath, doc, chk91Heading)
-	guard := docSection(t, checklistPath, check, "### Check 91 step 1: setup and guard")
+	guard := stepBlock(t, checklistPath, check, "### Check 91 step 1: setup and guard")
 	for _, want := range []string{
 		`CHK91=$(mktemp -d "${TMPDIR:-/tmp}/chk91.XXXXXXXX")`,
 		`: > "$CHK91/.chk91-mine"`,
@@ -122,7 +144,7 @@ func TestChecklistCheck91ScratchDirectoryIsTheChecksOwn(t *testing.T) {
 			t.Errorf("Check 91's guard does not make its own scratch directory and refuse a path it does not recognise: it lacks %q", want)
 		}
 	}
-	restore := docSection(t, checklistPath, check, "### Check 91 step 7: Restore")
+	restore := stepBlock(t, checklistPath, check, "### Check 91 step 7: Restore")
 	// The order is the point: both refusals stand between the path and the
 	// delete, not after it.
 	shape := strings.Index(restore, `|/|"$HOME"`)
@@ -153,7 +175,7 @@ func TestChecklistCheck91ScratchDirectoryIsTheChecksOwn(t *testing.T) {
 func TestChecklistCheck91NeverAdoptsWhatItDidNotCreate(t *testing.T) {
 	doc := readDoc(t, checklistPath)
 	check := docSection(t, checklistPath, doc, chk91Heading)
-	guard := docSection(t, checklistPath, check, "### Check 91 step 1: setup and guard")
+	guard := stepBlock(t, checklistPath, check, "### Check 91 step 1: setup and guard")
 
 	// Hard stop 4, in the guard: an existing service is refused before anything
 	// touches it, and the refusal says why.
@@ -166,7 +188,7 @@ func TestChecklistCheck91NeverAdoptsWhatItDidNotCreate(t *testing.T) {
 		t.Error("Check 91's hard stop 4 does not refuse a service that is not this check's")
 	}
 	// ... and step 3 records the deploy that makes the service this check's.
-	build := docSection(t, checklistPath, check, "### Check 91 step 3: build and deploy the throwaway service")
+	build := stepBlock(t, checklistPath, check, "### Check 91 step 3: build and deploy the throwaway service")
 	if !strings.Contains(build, `: > "$CHK91/service-mine"`) {
 		t.Error("Check 91's step 3 does not record the service it deployed in $CHK91/service-mine, so hard stop 4 would refuse the service this check itself created")
 	}
@@ -191,7 +213,7 @@ func TestChecklistCheck91NeverAdoptsWhatItDidNotCreate(t *testing.T) {
 
 	// The Restore reads the baseline before the scratch directory holding it is
 	// gone, and deletes the repository only in the case the baseline recorded.
-	restore := docSection(t, checklistPath, check, "### Check 91 step 7: Restore")
+	restore := stepBlock(t, checklistPath, check, "### Check 91 step 7: Restore")
 	read := strings.Index(restore, `REPO_EXISTED=$(cat "$CHK91/repo-existed")`)
 	rmrf := strings.Index(restore, `rm -rf "$CHK91"`)
 	del := strings.Index(restore, `gcloud artifacts repositories delete "${SVC:?}"`)
@@ -218,7 +240,7 @@ func TestChecklistCheck91NeverAdoptsWhatItDidNotCreate(t *testing.T) {
 func TestChecklistCheck91CreatesItsOwnRegistryRepository(t *testing.T) {
 	doc := readDoc(t, checklistPath)
 	check := docSection(t, checklistPath, doc, chk91Heading)
-	build := docSection(t, checklistPath, check, "### Check 91 step 3: build and deploy the throwaway service")
+	build := stepBlock(t, checklistPath, check, "### Check 91 step 3: build and deploy the throwaway service")
 	create := strings.Index(build, `gcloud artifacts repositories create "${SVC:?}"`)
 	submit := strings.Index(build, `gcloud builds submit`)
 	if create == -1 {
@@ -238,7 +260,7 @@ func TestChecklistCheck91CreatesItsOwnRegistryRepository(t *testing.T) {
 	if !strings.Contains(check, `IMG=${L}-docker.pkg.dev/${P}/${SVC}/${SVC}:chk91`) {
 		t.Error("Check 91's image tag does not name the registry repository the check creates")
 	}
-	restore := docSection(t, checklistPath, check, "### Check 91 step 7: Restore")
+	restore := stepBlock(t, checklistPath, check, "### Check 91 step 7: Restore")
 	if !strings.Contains(restore, `gcloud artifacts repositories delete "${SVC:?}"`) {
 		t.Error("Check 91's Restore does not delete the registry repository it creates")
 	}
@@ -281,7 +303,7 @@ func TestChecklistCheck91MintsAnIdentityTokenPerProbe(t *testing.T) {
 func TestChecklistCheck91BodyProbeReadsTheRelayBody(t *testing.T) {
 	doc := readDoc(t, checklistPath)
 	check := docSection(t, checklistPath, doc, chk91Heading)
-	probe := docSection(t, checklistPath, check, "### Check 91 step 6: the request-body limit")
+	probe := stepBlock(t, checklistPath, check, "### Check 91 step 6: the request-body limit")
 	if strings.Contains(probe, "-o /dev/null") {
 		t.Error("Check 91's body probe still discards the response body, so the relay's own byte count is never read")
 	}
@@ -305,7 +327,7 @@ func TestChecklistCheck91BodyProbeReadsTheRelayBody(t *testing.T) {
 func TestChecklistCheck91DoesNotClaimEndToEndHTTP2(t *testing.T) {
 	doc := readDoc(t, checklistPath)
 	check := docSection(t, checklistPath, doc, chk91Heading)
-	probe := docSection(t, checklistPath, check, "### Check 91 step 6: the request-body limit")
+	probe := stepBlock(t, checklistPath, check, "### Check 91 step 6: the request-body limit")
 	for _, want := range []string{"not end to end", "h2c", "--use-http2", "UNVERIFIED"} {
 		if !strings.Contains(probe, want) {
 			t.Errorf("Check 91's body probe does not say what its second row is and is not: it lacks %q", want)
@@ -658,6 +680,22 @@ func TestChecklistCheck90RowDoesNotOverclaimU2AndU3(t *testing.T) {
 	if strings.Contains(check, "settle four of") {
 		t.Error("Check 90's summary still claims it settles four of the reconciliation's open items")
 	}
+	// The same overclaim came back once, 70 lines below the corrected sentence:
+	// step 2's FACT line read "That sentence is U2's answer". The step is read
+	// on its own — a section-wide check is satisfied by the correction above it
+	// — and no line of the section may call the check's expiry record U2's
+	// answer.
+	step := stepBlock(t, checklistPath, check, "### Check 90 step 2:")
+	for _, want := range []string{"U2's **evidence, not its answer**", "Anthropic's documentation"} {
+		if !strings.Contains(step, want) {
+			t.Errorf("Check 90's step 2 FACT line does not record the token's stated expiry as U2's evidence rather than its answer: it lacks %q", want)
+		}
+	}
+	for _, line := range strings.Split(check, "\n") {
+		if strings.Contains(line, "is U2's answer") {
+			t.Errorf("Check 90 still says the check answers U2 on a line of its own: %.140s", line)
+		}
+	}
 }
 
 // TestChecklistCheck91ColdStartProvesAFreshInstance: the step waited five
@@ -669,13 +707,13 @@ func TestChecklistCheck90RowDoesNotOverclaimU2AndU3(t *testing.T) {
 func TestChecklistCheck91ColdStartProvesAFreshInstance(t *testing.T) {
 	doc := readDoc(t, checklistPath)
 	check := docSection(t, checklistPath, doc, chk91Heading)
-	relay := docSection(t, checklistPath, check, "### Check 91 step 2: the relay")
+	relay := stepBlock(t, checklistPath, check, "### Check 91 step 2: the relay")
 	for _, want := range []string{"STARTED = time.time()", `"started=%s\n"`} {
 		if !strings.Contains(relay, want) {
 			t.Errorf("Check 91's relay does not report which instance answered: it lacks %q", want)
 		}
 	}
-	step := docSection(t, checklistPath, check, "### Check 91 step 4: cold start")
+	step := stepBlock(t, checklistPath, check, "### Check 91 step 4: cold start")
 	for _, want := range []string{
 		"sleep 2100",
 		"35 minutes",
@@ -707,7 +745,7 @@ func TestChecklistCheck91ColdStartProvesAFreshInstance(t *testing.T) {
 func TestChecklistCheck91PinsTheProtocolOfEachRow(t *testing.T) {
 	doc := readDoc(t, checklistPath)
 	check := docSection(t, checklistPath, doc, chk91Heading)
-	step := docSection(t, checklistPath, check, "### Check 91 step 6: the request-body limit")
+	step := stepBlock(t, checklistPath, check, "### Check 91 step 6: the request-body limit")
 	for _, want := range []string{
 		`--http1.1 -o "$CHK91/echo.out"`,
 		`--http2 -o "$CHK91/echo.out"`,
@@ -1015,5 +1053,46 @@ func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	}
 	if !strings.Contains(doc, "the four documents and the two test files that pin them") {
 		t.Error("the plan's review focus does not say what this pull request is: the documents and the two test files that pin them")
+	}
+}
+
+// TestCredentialsPlanC03ListsEveryChecklistGuardItsFileHas: C0.3's Tests line
+// enumerates the guards the check sections are pinned by, and its Red step
+// lists the defects each was proven against — and two guards this pull request
+// ships (the Check 91 scratch-directory and adoption guards) were named in
+// neither, so the normative task list disagreed with the file it governs. This
+// reads that file and requires every checklist guard in it to be named in the
+// task block, the way TestCredentialsPlanC06ListsEveryCaseTheFileHas does for
+// the emulator cases: the next guard added to the file and not to the plan
+// fails here.
+func TestCredentialsPlanC03ListsEveryChecklistGuardItsFileHas(t *testing.T) {
+	const path = "docs/credentials-service/implementation-plan.md"
+	doc := readDoc(t, path)
+	block := taskBlock(t, path, doc, "### Task C0.3: Checks 90 and 91")
+	const file = "internal/cli/docs_credentials_service_test.go"
+	src := readDoc(t, file)
+	re := regexp.MustCompile(`(?m)^func (TestChecklist\w+)\(t \*testing\.T\)`)
+	names := re.FindAllStringSubmatch(src, -1)
+	if len(names) < 13 {
+		t.Fatalf("%s has %d checklist guards; this test's floor is the thirteen known ones", file, len(names))
+	}
+	for _, m := range names {
+		if !strings.Contains(block, m[1]) {
+			t.Errorf("C0.3's task block does not name %s, which %s defines and which pins a sentence C0.3 writes", m[1], file)
+		}
+	}
+	// The Red step carries its own list, and it is the one a reader checks a
+	// guard's worth against: the mutations the two Check 91 guards were proven
+	// with are named there, not only the guards.
+	red := taskField(t, path, block, "**Red step.**")
+	for _, want := range []string{
+		"the `rm -rf` moved above its two refusals in either Restore",
+		"the marker refusal deleted from a guard",
+		"hard stop 4 deleted",
+		"the `repo-existed` baseline deleted",
+	} {
+		if !strings.Contains(red, want) {
+			t.Errorf("C0.3's red step omits a mutation the guards it lists were proven with: it lacks %q", want)
+		}
 	}
 }
