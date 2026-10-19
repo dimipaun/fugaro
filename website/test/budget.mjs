@@ -93,8 +93,9 @@
 // picture landing on the homepage; the menu's drawer coming out and the script's comments going
 // back in step with it; the console's release turning `features.console_downloads` on;
 // Getting Started's three bands; the console's screenshot slider; the run on How It Works
-// becoming one vertical timeline; the caps-and-costs rework; and the changelog's product
-// summaries — each re-derived in the commit that moved it (D192). None of those figures is
+// becoming one vertical timeline; the caps-and-costs rework; the changelog's product
+// summaries; and the homepage's prompt line, benefits, pull request caption and the benefits'
+// block rule — each re-derived in the commit that moved it (D192). None of those figures is
 // repeated here, because a figure in a comment is a figure that moves with
 // nothing when the build moves, which is what happened to the copy that used to be in this one;
 // the case below reads the README's figures and holds them to the build it makes itself.
@@ -309,7 +310,8 @@ function textBetween(main, from, to) {
  * **Where the homepage stands today** (2026-10-19): its `h1` is the headline, its first `h2`
  * is the chat's own "Through your agent" — the chat is the first block under the promise
  * (review round 5) and its heading is inside it — and the region between the two headings is
- * the promise and its two calls to action: **14 words**, the number the built page measures.
+ * the request the hero renders under the headline (the owner's feedback of 2026-10-19),
+ * the promise and its two calls to action: **23 words**, the number the built page measures.
  * Both readings agree here, because everything between the `h1` and that heading is inside
  * the hero's own section; they did not agree on the homepage of two rounds ago, when the
  * hero's section held the `h1`, the install blocks and the chat sat between it and the flow's
