@@ -762,6 +762,11 @@ func TestTheBoundsThemselvesAreAccepted(t *testing.T) {
 	}{
 		{"an id of exactly IDMax", message(Record{"id": strings.Repeat("a", IDMax)}), false,
 			"an id is at most IDMax code units, and the bound itself is one of them"},
+		{"an id of exactly IDMax code units of U+FFFF", message(Record{"id": strings.Repeat("￿", IDMax)}), false,
+			"U+FFFF is one UTF-16 code unit and not two: it is above the BMP's last character but below every astral one, and the count is a count of code units"},
+		{"a pull request numbered one", merged(map[string]any{
+			"target": map[string]any{"repo": "dimipaun/fugaro", "pr": number("1")}}), false,
+			"pull requests are numbered from one, so one is the smallest number a merge may name (the refusal table holds nought)"},
 		{"a sender of exactly SenderMax", message(Record{"sender": strings.Repeat("a", SenderMax)}), false,
 			"a sender is bounded like every other string"},
 		{"a body of exactly TextMax", message(Record{"text": strings.Repeat("a", TextMax)}), false,
@@ -807,8 +812,110 @@ func TestTheBoundsThemselvesAreAccepted(t *testing.T) {
 	}
 }
 
+// TestTheDocSaysWhichValuesAreNotArgvSafe pins the package doc's claim about
+// the alphabets, and it is the test the five-minor follow-up owes m5: the doc
+// says that only `action.target.run` and `action.target.repo` (whose patterns
+// refuse a leading flag character and a leading dot) are argv-safe, and that a
+// key may be a single space and may begin with `-` while an identity may be `.`
+// or `..` or begin with `-`. A claim that says "the validator accepts these and
+// a later task must not pass them to a program" is worth no more than the test
+// that holds it, because a task that TIGHTENED these alphabets would break the
+// merged module's contract, and a task that tightened the doc's warning away
+// would break nothing else.
+//
+// Every value below was checked against index.js as well as this package before
+// being written down: the two ends agree on each one.
+func TestTheDocSaysWhichValuesAreNotArgvSafe(t *testing.T) {
+	message := func(over Record) Record {
+		record := Record{
+			"id": "m-0001", "sender": "phone", "text": "run 42 finished",
+			"at": number("1700000000000"), "mac": strings.Repeat("a", MACMax),
+		}
+		for key, value := range over {
+			record[key] = value
+		}
+		return record
+	}
+	prompt := func(agent string) Record {
+		return message(Record{"kind": "prompt", "agent": agent, "options": []any{"merge it", "leave it"}})
+	}
+
+	for _, tc := range []struct {
+		name   string
+		record Record
+		why    string
+	}{
+		{"an id that is a single space", message(Record{"id": " "}),
+			"a space is not one of the seven characters a key refuses, and a key's alphabet is not an argv alphabet"},
+		{"an id that begins with a flag character", message(Record{"id": "--x"}),
+			"a key may begin with `-`: the leading-dash refusal belongs to the run and repository patterns, not to keyField"},
+		{"an id carrying glob and shell metacharacters", message(Record{"id": "* ?"}),
+			"`*` and `?` are ordinary characters to the database key rule"},
+		{"an id carrying a backslash and a quote", message(Record{"id": `a\b"c'd`}),
+			"quoting is the argv caller's problem, not this schema's"},
+		{"an id carrying a right-to-left override", message(Record{"id": "a‮b"}),
+			"U+202E is a format character and not a control character, and the merged module accepts it in a key"},
+		{"an id carrying a zero-width space and a byte order mark", message(Record{"id": "a\u200bb\xef\xbb\xbfc"}),
+			"U+200B and U+FEFF are the same class as U+202E"},
+		{"an id carrying an astral character", message(Record{"id": "x\U0001F600y"}),
+			"an astral character is two code units and stays inside the bound"},
+		{"a reply_to that is a single space", message(Record{"kind": "answer", "reply_to": " "}),
+			"every key field reaches keyField, so every key field admits what it admits"},
+		{"an action id that is a single space", message(Record{"kind": "action", "agent": "orchestrator", "action": action(map[string]any{
+			"id": " ", "verb": "cancel",
+			"target":       map[string]any{"run": "20261018-125859-d3c8"},
+			"confirmation": map[string]any{"id": "c-0001", "at": number("1700000000000")},
+		}, nil)}),
+			"the action id is a key like any other"},
+		{"a confirmation id that begins with a flag character", message(Record{"kind": "action", "agent": "orchestrator", "action": action(map[string]any{
+			"id": "a-0001", "verb": "cancel",
+			"target":       map[string]any{"run": "20261018-125859-d3c8"},
+			"confirmation": map[string]any{"id": "--x", "at": number("1700000000000")},
+		}, nil)}),
+			"a confirmation id is a key like any other"},
+
+		{"an agent that begins with a flag character", prompt("--help"),
+			"identityPattern is [A-Za-z0-9._:-], so `--help` is a well-formed agent id and must never be argv"},
+		{"an agent that is a single dot", prompt("."),
+			"the same alphabet admits `.`, which is a directory and not a program"},
+		{"an agent that is two dots", prompt(".."),
+			"and it admits `..`, which is the parent directory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, refusal := ValidateMessage(tc.record); refusal != nil {
+				t.Errorf("the value is refused %s: %s", refusal, tc.why)
+			}
+		})
+	}
+
+	// The identities that are not a message's `agent`: a boot id and an
+	// advertised agent's id are the same alphabet in the same function.
+	for _, boot := range []string{"--help", ".", "..", "-", "a:b"} {
+		if _, refusal := ValidateHeartbeat(heartbeatRecord(Record{"boot": boot})); refusal != nil {
+			t.Errorf("the boot id %q is refused %s: a boot id is drawn from the same alphabet an agent id is", boot, refusal)
+		}
+		if _, refusal := ValidateHeartbeat(heartbeatRecord(Record{"agents": []any{agent(boot, "Orchestrator")}})); refusal != nil {
+			t.Errorf("the advertised agent id %q is refused %s: it is drawn from the same alphabet", boot, refusal)
+		}
+	}
+
+	// And what each alphabet DOES refuse, so the test cannot be satisfied by an
+	// alphabet that refuses nothing.
+	for _, id := range []string{"%", ".", "$", "#", "[", "]", "/", "a\u0001b", "a\u001fb", "a\u007fb", "a b", "a b"} {
+		_, refusal := ValidateMessage(message(Record{"id": id}))
+		if refusal == nil || refusal.Code != CodeBadKey {
+			t.Errorf("the id %q is refused %v, wanted %s: these are the characters a database key may not carry", id, refusal, CodeBadKey)
+		}
+	}
+	for _, identity := range []string{"orchestrator!", "a b", "a/b", "a+b", "\U0001F600", "aéb"} {
+		if _, refusal := ValidateMessage(prompt(identity)); refusal == nil || refusal.Code != CodeBadCharacter {
+			t.Errorf("the agent %q is refused %v, wanted %s: an identity is drawn from [A-Za-z0-9._:-] and nothing else", identity, refusal, CodeBadCharacter)
+		}
+	}
+}
+
 // heartbeatRecord is the refusal table's heartbeat builder, at package scope so
-// the boundary table can use it too.
+// the boundary and alphabet tables can use it too.
 func heartbeatRecord(over Record) Record {
 	record := Record{
 		"at": number("1700000000000"), "boot": "boot-01",
@@ -1475,6 +1582,13 @@ func TestALoneSurrogateEscapeReachesTheValidator(t *testing.T) {
 // counting fix rather than a second exception to the bound.
 func TestABoundCountsALoneSurrogateAsOneCodeUnit(t *testing.T) {
 	const lone = "\xed\xa0\x80" // U+D800 in WTF-8: one code unit, three bytes
+	// The other edge of the same range: U+DFFF is the LAST lone half, so it
+	// pins the two byte bounds inside isWTF8Surrogate (0xa0..0xbf and
+	// 0x80..0xbf) and the `len(s) >= 3` that reads the last three bytes of a
+	// string. Counted as three — which is what recognising none of it does —
+	// IDMax-1 characters plus this one came back too-long where the module
+	// answers bad-key.
+	const lowLone = "\xed\xbf\xbf" // U+DFFF in WTF-8
 	for _, tc := range []struct {
 		name  string
 		field string
@@ -1484,6 +1598,8 @@ func TestABoundCountsALoneSurrogateAsOneCodeUnit(t *testing.T) {
 		{"34 lone halves in an id are 34 code units", "id", strings.Repeat(lone, 34), CodeBadKey},
 		{"one lone half in an id", "id", "m-" + lone, CodeBadKey},
 		{"101 lone halves in an id are past the bound", "id", strings.Repeat(lone, IDMax+1), CodeTooLong},
+		{"IDMax lone halves in an id are exactly IDMax code units", "id", strings.Repeat(lone, IDMax), CodeBadKey},
+		{"an id of IDMax code units ending in a lone low half", "id", strings.Repeat("a", IDMax-1) + lowLone, CodeBadKey},
 		{"1366 lone halves in a body are 1366 code units", "text", strings.Repeat(lone, 1366), CodeBadCharacter},
 		{"4097 lone halves in a body are past the bound", "text", strings.Repeat(lone, TextMax+1), CodeTooLong},
 	} {
