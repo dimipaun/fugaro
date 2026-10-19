@@ -93,8 +93,17 @@ a.skip-link:focus {
    * adding a row to it (P3, RF3). The gap between the wordmark and the menu is the phone's
    * 8 px — the two are pushed to opposite ends by `justify-content` wherever there is room,
    * so it is only a floor, and it is what the row measures against at 320 px — and the wide
-   * block below restores the 32 px the wide layout has room for. */
+   * block below restores the 32 px the wide layout has room for.
+   *
+   * `z-index` is the header's layer, and it is the whole of why the menu is never covered:
+   * a positioned box with no `z-index` paints with every other such box in tree order, and
+   * the header is the first of them, so a page that draws a positioned block after it —
+   * the flow's steps, whose arrows need their `position: relative` — was painted over the
+   * open panel. The layer makes the header a stacking context and lifts it, and everything
+   * it holds, above every block a page draws (`tokens.css` names the scale; the value is
+   * read from it, and `website/test/stacking.mjs` refuses a page block a layer of its own). */
   position: relative;
+  z-index: var(--z-header);
   display: flex;
   flex-wrap: nowrap;
   align-items: center;

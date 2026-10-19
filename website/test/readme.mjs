@@ -17,7 +17,7 @@
 // the two kinds of file are distinguished and each is held to its own property.
 //
 // The gates section makes one promise of a different kind: it opens by counting the checks it
-// lists ("Eight checks run over the **built** artifact …") and then names them, one bullet each.
+// lists ("Nine checks run over the **built** artifact …") and then names them, one bullet each.
 // A count is a claim like any other, and the one it makes is about the list under it — a gate
 // added without the sentence moving leaves the README undercounting itself, which is the defect
 // the case below is written for. It is held to the list, and the list to the files.

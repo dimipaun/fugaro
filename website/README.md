@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Eight checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Nine checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **977,921 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **978,768 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **976,406 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **977,253 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -205,8 +205,8 @@ added or removed without this sentence moving fails there:
     console option and the hero's link to the console into this build.
 
   Each half moved these figures in its own commits and re-derived them there — the script's
-  six corrections in `main`'s, the redesign's fix rounds in this branch's. The last three rounds
-  are where this build's three numbers come from, and both are measured over **two builds**
+  six corrections in `main`'s, the redesign's fix rounds in this branch's. The last four rounds
+  are where this build's three numbers come from, and each is measured over **two builds**
   rather than argued:
 
   - **This branch's own fix rounds**, each re-derived in the commit that moved it: the round
@@ -249,6 +249,14 @@ added or removed without this sentence moving fails there:
     downloads section, Getting Started's console option and the hero's link to the console.
     The page weight and the script did not move: the heaviest page is the docs hub, which
     renders none of the three.
+  - **The header was put on a layer of its own** (the owner's reading of 2026-10-19: "How it
+    works: menu hidden by the blocks on mobile"), and moved **every page by the same 77 bytes**:
+    977,921 → **978,768** at the site figure and 266,926 → **267,003** at the page weight. The
+    whole of the move is the stylesheet every one of the eleven pages inlines — the scale's two
+    tokens, the header's `z-index`, and the skip link's and the banner's moved onto the scale's
+    names — and the script is untouched, because the fix is CSS and the script was not what
+    covered the menu. That the eleven pages move by the same 77 bytes is the check worth
+    keeping: this round is the chrome, and the chrome is on every page.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -273,10 +281,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
-    docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 1,001,262 bytes. Three times 333,754: the heaviest page, the
+    docs hub, at 267,003 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,667,206 bytes. Three times 1,222,402 (every file in `dist/`, 977,921
+  - **Whole site:** 3,670,380 bytes. Three times 1,223,460 (every file in `dist/`, 978,768
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
@@ -416,6 +424,23 @@ added or removed without this sentence moving fails there:
   the stylesheet, and watches the named refusal come back.
   Each of those rules was then mutation-proved the other way: removed from the function, with the
   refusal it names watched failing.
+- `test/stacking.mjs` — the header paints above the page's blocks (the owner's reading of
+  2026-10-19: "How it works: menu hidden by the blocks on mobile"). `tokens.css` names the
+  site's two layers — `--z-header` for the header's row and the panel a group hangs below it,
+  `--z-chrome` for the reader's own chrome above the page — and this gate reads them out of the
+  **built** stylesheets: the header is positioned and carries the header's layer, which is what
+  makes it a stacking context; the skip link and the consent banner carry the chrome's layer
+  and nothing else does; and **no other rule declares a `z-index` at all**, which is the only
+  thing a content component would need to paint over an open menu. The defect it was written
+  for is the diagram: `ArchitectureDiagram.astro`'s steps are `position: relative` — that is
+  what their arrows are placed against — and a positioned box with no `z-index` paints with
+  every other such box in tree order, where the header is the first and a block drawn after it
+  covers the menu on the two pages that carry the drawing. `base.css` gives `.site-header` the
+  header's layer instead, in one rule rather than one per component, and this gate keeps it
+  there. Its refusals are kept the way the others keep theirs: a fixture page carries the scale
+  and the three layered rules, and a case plants each defect — a header with no layer, a header
+  a layer cannot apply to, a content block with a layer of its own — and watches the named
+  refusal come back.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
