@@ -192,21 +192,43 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 		}
 	}
 
-	// And the refusal the code emits says the same sentence — the same two
-	// phrases, read out of the source rather than typed twice.
+	// And the refusal the code emits says the same sentence — the same three
+	// phrases, read out of the source rather than typed twice. The slice is
+	// the refusal *message* and not the file: run.go cites this document in
+	// its comments too, and an assertion over the whole file cannot see the
+	// message's own citation move (which is exactly what the mutation run for
+	// this test found, when the citation was rewritten in the message alone
+	// and this test still passed).
 	run, err := os.ReadFile("../../internal/backend/batch/run.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	code := strings.Join(strings.Fields(string(run)), " ")
+	const opens = `fmt.Errorf("launching %s: the launch carries`
+	start := strings.Index(code, opens)
+	if start < 0 {
+		t.Fatalf("internal/backend/batch/run.go no longer builds the seal's refusal with %s: this test reads that message", opens)
+	}
+	end := strings.Index(code[start:], "full, kv.Name)")
+	if end < 0 {
+		t.Fatalf("internal/backend/batch/run.go's seal refusal no longer ends at `full, kv.Name)`: this test cannot find the message's end")
+	}
+	message := code[start : start+end]
 	for _, want := range []string{
 		"the job's definition",
 		"docs/design/budget-token-channel.md",
 		"runs its budget-on path on Cloud Run",
 	} {
-		if !strings.Contains(code, want) {
-			t.Errorf("internal/backend/batch/run.go's refusal does not carry %q, which %s's answer does: the document and the message an operator actually sees have to say the same thing", want, design)
+		if !strings.Contains(message, want) {
+			t.Errorf("internal/backend/batch/run.go's refusal does not carry %q, which %s's answer does: the document and the message an operator actually sees have to say the same thing\n\nmessage: %s", want, design, message)
 		}
+	}
+	// The message is refused rather than carried, and the value is never in
+	// it: the entry's name is the most an operator may be shown, which is
+	// checked on the real error in
+	// internal/backend/batch's TestLaunchRefusesASecretEnv too.
+	if strings.Contains(message, "kv.Value") {
+		t.Errorf("internal/backend/batch/run.go's refusal formats the secret's value into its text: the value must never appear in a refusal\n\nmessage: %s", message)
 	}
 }
 
