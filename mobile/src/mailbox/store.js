@@ -25,7 +25,10 @@
 // read of `mailbox/<uid>/outbox` and answers a map of message id to message,
 // or `null` when the node is empty -- the shape a Realtime Database listener
 // hands back. A message node handed over as itself (the heartbeat) comes back
-// as itself.
+// as itself. Every child is an OWN key of that map, whatever it is named: a
+// listener hands back what `JSON.parse` builds, and `__proto__` is one of the
+// keys P2.1's rules accept (see `own` below for why that is not a detail the
+// accumulator can leave to plain assignment).
 //
 // **The fake models the rules' two refusals, because a re-send meets them.**
 // `internal/budget/rules/rules.json.tmpl` writes the inbox node with
@@ -61,6 +64,25 @@ function copy(value) {
 
 function refuse(code, field) {
   return Object.freeze({ ok: false, code, field });
+}
+
+// own defines a child on a container as an OWN data property, which plain
+// assignment cannot do for every legal key. `__proto__` is a legal Realtime
+// Database key -- the schema's `keyField` and this port's `isDatabaseKey` both
+// accept it, and `paths.test.js` holds the two rules to each other -- and the
+// database delivers it as an own key, because a listener hands back what
+// `JSON.parse` builds (`copy` below has the same semantics for the same
+// reason). Assigning it would write THROUGH the key instead of adding a node:
+// as a leaf it sets the result's prototype, so `Object.entries` sees no message
+// and the client would never speak one the database had returned; one level up
+// it lands on `Object.prototype` and pollutes the whole test process.
+function own(container, key, value) {
+  Object.defineProperty(container, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
 }
 
 /**
@@ -168,10 +190,15 @@ export class MemoryMailboxStore {
       const rest = node.slice(path.length + 1).split('/');
       let at = found;
       for (let i = 0; i < rest.length - 1; i++) {
-        if (at[rest[i]] === undefined) at[rest[i]] = {};
+        // A slot that does not hold a container becomes one. That is what the
+        // database does when a write puts a child under a node that held a
+        // scalar -- and it is also what keeps `own` from being asked to define
+        // a property on a number.
+        const child = Object.hasOwn(at, rest[i]) ? at[rest[i]] : undefined;
+        if (child === null || typeof child !== 'object') own(at, rest[i], {});
         at = at[rest[i]];
       }
-      at[rest[rest.length - 1]] = copy(value);
+      own(at, rest[rest.length - 1], copy(value));
       any = true;
     }
     return any ? found : null;

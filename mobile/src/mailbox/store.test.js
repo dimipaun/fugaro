@@ -11,6 +11,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { isDatabaseKey } from './paths.js';
 import { MemoryMailboxStore, STORE_CODES } from './store.js';
 
 /** A mailbox id shaped like a uid, and never a real one. */
@@ -85,6 +86,48 @@ test('a read of a subtree is a map of id to message, and null when it is empty',
   const read = await store.read(OUTBOX);
   read.value['r-2'].text = 'tampered';
   assert.equal(store.valueAt(`${OUTBOX}/r-2`).text, 'run 42 finished');
+});
+
+test('a node named `__proto__` is an own key of the read, and pollutes nothing', async () => {
+  // `__proto__` is a legal Realtime Database key -- `isDatabaseKey('__proto__')`
+  // and the schema's `keyField` both accept it, which `paths.test.js` holds the
+  // two rules to -- and the database delivers it as an OWN key, because a
+  // listener hands back what `JSON.parse` would build. A double that built the
+  // subtree with plain assignment would instead write THROUGH the key: one
+  // level up it lands on `Object.prototype` (process-wide pollution, and the
+  // node vanishes from the read), and as a leaf it sets the result's PROTOTYPE
+  // (no own keys at all, so `Object.entries` never sees the message and the
+  // client would never speak it).
+  const store = new MemoryMailboxStore();
+  assert.equal(isDatabaseKey('__proto__'), true, 'the fixture key is one the rules accept');
+  await store.write(`${OUTBOX}/__proto__/x`, 1);
+  await store.write(`${INBOX}/__proto__`, message('__proto__'));
+
+  const middle = await store.read(OUTBOX);
+  assert.deepEqual(Object.keys(middle.value), ['__proto__'], 'the node is an own key');
+  assert.equal(Object.getPrototypeOf(middle.value), Object.prototype, 'the read is an ordinary object');
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(middle.value, '__proto__').value,
+    { x: 1 },
+    'and its value is the subtree, not a prototype',
+  );
+  assert.equal({}.x, undefined, 'nothing was written onto Object.prototype');
+
+  const leaf = await store.read(INBOX);
+  assert.deepEqual(Object.keys(leaf.value), ['__proto__']);
+  assert.deepEqual(Object.entries(leaf.value), [['__proto__', message('__proto__')]]);
+  assert.equal(Object.getPrototypeOf(leaf.value), Object.prototype);
+  assert.equal({}.text, undefined, 'and the message did not become anyone\'s prototype');
+});
+
+test('a child of a node that holds a value is a container, as the database has it', async () => {
+  // A Realtime Database has no mixed nodes: writing `a/b/c` when `a/b` holds a
+  // scalar leaves `b` as an object with a `c`. The double must not fall over
+  // (or silently drop the child) when the two writes disagree about the shape.
+  const store = new MemoryMailboxStore();
+  await store.write(`${OUTBOX}/r-1`, 5);
+  await store.write(`${OUTBOX}/r-1/x`, 1);
+  assert.deepEqual(await store.read(OUTBOX), { ok: true, value: { 'r-1': { x: 1 } } });
 });
 
 test('an unreachable store is a refusal, and the attempt is still recorded', async () => {

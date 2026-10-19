@@ -793,6 +793,24 @@ test('messages are spoken oldest first, and an empty outbox says so', async () =
 // What does not verify is dropped
 // ---------------------------------------------------------------------------
 
+test('a message in a node named `__proto__` is read, spoken and acked like any other', async () => {
+  // `__proto__` is a legal database key, and the database hands a subtree back
+  // with it as an OWN key (a listener's value is what `JSON.parse` builds). The
+  // double must deliver it the same way: built with plain assignment the node
+  // would vanish from `Object.entries`, and the phone would never speak a
+  // message the consumer had answered -- exactly the kind of difference a fake
+  // written to hold this client's rules must not have.
+  const h = await harness();
+  await plantOutbox(h, '__proto__');
+  const report = await h.client.poll();
+  assert.deepEqual(report.dropped, []);
+  assert.deepEqual(report.spoken, ['__proto__']);
+  assert.deepEqual(h.speaker.spoken(), ['run 42 finished']);
+  assert.equal(h.valueAt(`${OUTBOX}/__proto__/acked`), true, 'and it is acked on its own child');
+  assert.equal({}.id, undefined, 'with nothing written onto Object.prototype');
+  assertD113WriteSet(h.store, h.paths);
+});
+
 test('a tampered text, id or timestamp is dropped, never spoken and never acked', async () => {
   // The plan's tension (b) resolution: the phone verifies the tag over each
   // outbox message before it speaks a word or acks. Each tamper happens AFTER

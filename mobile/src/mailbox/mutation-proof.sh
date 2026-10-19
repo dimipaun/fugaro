@@ -100,6 +100,7 @@ require_clean() { # file
 }
 require_clean "$F"
 require_clean mobile/src/mailbox/mac.js
+require_clean mobile/src/mailbox/store.js
 require_clean mobile/src/app/root.js
 
 last_outcome=""
@@ -261,6 +262,18 @@ run "the tag comparison is over the whole tag (mac.js)" \
   "  return sameTag(offered, expected);" \
   "  return offered.slice(0, 8) === expected.slice(0, 8);" \
   mobile/src/mailbox/mac.js src/mailbox/mac.test.js
+run "a read's node is an own key, whatever it is named (store.js)" \
+  "      own(at, rest[rest.length - 1], copy(value));" \
+  "      at[rest[rest.length - 1]] = copy(value);" \
+  mobile/src/mailbox/store.js src/mailbox/store.test.js
+run "an intermediate container is an own key too (store.js)" \
+  "        if (child === null || typeof child !== 'object') own(at, rest[i], {});" \
+  "        if (child === null || typeof child !== 'object') at[rest[i]] = {};" \
+  mobile/src/mailbox/store.js src/mailbox/store.test.js
+run "and the client does not lose an outbox message named \`__proto__\` (store.js)" \
+  "      own(at, rest[rest.length - 1], copy(value));" \
+  "      at[rest[rest.length - 1]] = copy(value);" \
+  mobile/src/mailbox/store.js src/mailbox/client.test.js
 run "the store is written in one file only (the scan)" \
   "export function createRoot({ React, store, View, Text }) {" \
   "export async function aSecondWritePath(store) { return store.write('mailbox/u/inbox/x', 1); }
