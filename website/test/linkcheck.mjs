@@ -250,6 +250,7 @@ test('the recorded repository-relative defect on the security page is still real
 const FIXTURE_FACTS = siteFacts(`canonical_url: https://site.example
 analytics:
   enabled: false
+  measurement_id: ""
 allowed_hosts:
   - github.com
   - site.example

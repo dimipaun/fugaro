@@ -74,3 +74,51 @@ func TestParseRefusesAnUnknownOrMisspeltProfileKey(t *testing.T) {
 		t.Fatalf("a fully spelled profile was refused: %v", err)
 	}
 }
+
+// TestParseResolvesProfileClaudeAccounts: a profile's claude_accounts entry is
+// resolved against this same file's claude_accounts and project_secrets blocks
+// when the file is read, so an account that names no credential fails where it
+// was written rather than at publish, at init, or — worst — as a job that
+// mounts a secret the installation never created. The mutation is dropping the
+// call from validate: the file loads and the profile publishes.
+func TestParseResolvesProfileClaudeAccounts(t *testing.T) {
+	accounts := "claude_accounts:\n  acme-team: { allow_data_to: [acme/web] }\n"
+	// A configured account parses, and the field is carried whole.
+	c, err := Parse([]byte(accountProfileConfig(accounts, ", claude_accounts: [acme-team]")))
+	if err != nil {
+		t.Fatalf("a configured account was refused: %v", err)
+	}
+	if got := c.Profiles["standard"].ClaudeAccounts; len(got) != 1 || got[0] != "acme-team" {
+		t.Fatalf("claude_accounts = %v", got)
+	}
+
+	// An account this file does not define is refused, naming the entry and
+	// the block it belongs in.
+	_, err = Parse([]byte(accountProfileConfig(accounts, ", claude_accounts: [ops]")))
+	if err == nil {
+		t.Fatal("a profile naming an undefined account parsed")
+	}
+	for _, want := range []string{"profiles.standard.claude_accounts", "ops", "claude_accounts"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+
+	// The default account needs the project_secrets entry that stores it
+	// project-wide; without one the profile is refused, with one it parses.
+	_, err = Parse([]byte(accountProfileConfig("", ", claude_accounts: [default]")))
+	if err == nil || !strings.Contains(err.Error(), "project_secrets") {
+		t.Fatalf("the default account with no project_secrets entry: %v", err)
+	}
+	stored := "project_secrets:\n  claude-oauth-token: { allow_data_to: [acme/web] }\n"
+	if _, err := Parse([]byte(accountProfileConfig(stored, ", claude_accounts: [default]"))); err != nil {
+		t.Fatalf("the default account with its project_secrets entry was refused: %v", err)
+	}
+}
+
+// accountProfileConfig is the sample config with the caller's account blocks
+// before a one-profile block whose fields are the caller's, so a test writes
+// only the claude_accounts spelling in question.
+func accountProfileConfig(accounts, fields string) string {
+	return sample + accounts + "profiles:\n  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h" + fields + " }\n"
+}

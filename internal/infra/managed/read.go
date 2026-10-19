@@ -91,11 +91,16 @@ func runsBucketName(gcpProject string) string { return "fugaro-runs-" + gcpProje
 // err == nil and managed == true, and a caller that wants to explain itself
 // prints the reason whenever managed is false, error or not.
 func IsManaged(ctx context.Context, s *storage.Service, c *crm.Service, project, gcpProject string) (ok bool, reason string, err error) {
-	// The reason is one line wherever a caller prints it, and both a name out
-	// of a config file and an API's error text can carry a control character
-	// or a newline (a 5xx body does): safetext.OneLine is the boundary, so no
-	// return below has to remember it.
-	defer func() { reason = safetext.OneLine(reason) }()
+	// The reason and the error are one bounded field wherever a caller prints
+	// them, and both a name out of a config file and an API's error text can
+	// carry a control character, a newline (a 5xx body does), a bidi override
+	// or ten thousand characters: safetext.Field is the boundary, so no return
+	// below has to remember it. The error keeps its chain (safetext.FieldErr),
+	// so a caller that reads a *googleapi.Error out of it still does.
+	defer func() {
+		reason = safetext.Field(reason)
+		err = safetext.FieldErr(err)
+	}()
 	_, ok, reason, err = readFact(ctx, s, c, project, gcpProject)
 	return ok, reason, err
 }
@@ -141,9 +146,14 @@ type BudgetAnswer struct {
 	Reason  string
 }
 
-// ReadBudgetAnswer is ReadBudget, answering with a BudgetAnswer.
+// ReadBudgetAnswer is ReadBudget, answering with a BudgetAnswer. The reason
+// and the error are bounded the way IsManaged's are: this is the same read,
+// and what it prints is the same text.
 func ReadBudgetAnswer(ctx context.Context, s *storage.Service, c *crm.Service, project, gcpProject string) (a BudgetAnswer, err error) {
-	defer func() { a.Reason = safetext.OneLine(a.Reason) }()
+	defer func() {
+		a.Reason = safetext.Field(a.Reason)
+		err = safetext.FieldErr(err)
+	}()
 	m, managed, reason, err := readFact(ctx, s, c, project, gcpProject)
 	if err != nil || !managed {
 		if err == nil && m.Budget != nil && m.Budget.Check() != nil {
@@ -227,25 +237,17 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	if err != nil {
 		return Marker{}, false, fmt.Sprintf("reading gs://%s/%s for %s: %v", bucket, MarkerObject, project, err), err
 	}
-	if len(data) > markerMaxBytes {
-		return Marker{}, false, fmt.Sprintf("gs://%s/%s is %d bytes, bigger than any marker (%d), so it is not %s's creation fact", bucket, MarkerObject, len(data), markerMaxBytes, project), nil
+	// The object has to be exactly one marker and nothing else, and the shape
+	// is parseMarker's — one function, because the flag's writer has to make
+	// the same judgement before it may replace an object (marker.go, and its
+	// own doc says why the shape is shared rather than written twice): what
+	// counts as this project's version-1 creation fact is one answer or it is
+	// two.
+	parsed, perr := parseMarker(data, bucket, project)
+	if perr != nil {
+		return Marker{}, false, perr.Error(), nil
 	}
-
-	// The object has to be exactly one marker and nothing else: a second
-	// value after it, a field this build does not know, a version it does
-	// not know — none of them are the fact this package writes, and all of
-	// them are refused rather than partly believed.
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&m); err != nil {
-		return Marker{}, false, fmt.Sprintf("gs://%s/%s is not a marker for %s: %v", bucket, MarkerObject, project, err), nil
-	}
-	if _, err := dec.Token(); err != io.EOF {
-		return Marker{}, false, fmt.Sprintf("gs://%s/%s is not a marker for %s: it holds more than one JSON value", bucket, MarkerObject, project), nil
-	}
-	if err := checkMarkerShape(data, m.Version); err != nil {
-		return Marker{}, false, fmt.Sprintf("gs://%s/%s is not a marker for %s: %v", bucket, MarkerObject, project, err), nil
-	}
+	m = parsed
 	// The project it names first: a fact about another project is that,
 	// whatever else is wrong with it, so its budget is never judged (or
 	// handed back as this project's invalid figure) before the name is.
@@ -291,6 +293,40 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 		return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d, and this build knows versions %d and %d, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersion, MarkerVersionBudget, project), nil
 	}
 	return m, true, "", nil
+}
+
+// parseMarker is the shape every reader and writer of the object agrees on:
+// no bigger than markerMaxBytes (the object is a few dozen bytes, and anyone
+// holding objectAdmin on the bucket could replace it), holding exactly one
+// marker and nothing else — a second JSON value after it, a field this build
+// does not know, a version it does not know are all refused rather than
+// partly believed. Each message names the bucket and the object, so a caller
+// prints the answer as it stands, and the project it is asked about, so the
+// sentence is about the fact rather than about JSON.
+//
+// It is one function because there are two callers that must agree: the read
+// (readFact) and the flag's writer (WriteFlag), which may replace an object
+// only if it has recognised it as this project's version-1 creation fact. A
+// second copy of the shape would be a second answer to what counts as a
+// marker, and the writer's copy is the one that decides what may be
+// overwritten.
+func parseMarker(data []byte, bucket, project string) (Marker, error) {
+	if len(data) > markerMaxBytes {
+		return Marker{}, fmt.Errorf("gs://%s/%s is %d bytes, bigger than any marker (%d), so it is not %s's creation fact", bucket, MarkerObject, len(data), markerMaxBytes, project)
+	}
+	var m Marker
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&m); err != nil {
+		return Marker{}, fmt.Errorf("gs://%s/%s is not a marker for %s: %v", bucket, MarkerObject, project, err)
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return Marker{}, fmt.Errorf("gs://%s/%s is not a marker for %s: it holds more than one JSON value", bucket, MarkerObject, project)
+	}
+	if err := checkMarkerShape(data, m.Version); err != nil {
+		return Marker{}, fmt.Errorf("gs://%s/%s is not a marker for %s: %v", bucket, MarkerObject, project, err)
+	}
+	return m, nil
 }
 
 // checkMarkerShape walks the object's keys and refuses anything but the

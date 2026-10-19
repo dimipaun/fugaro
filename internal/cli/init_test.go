@@ -1816,7 +1816,7 @@ func TestPlanRepoThreadsReadyToFirstBuild(t *testing.T) {
 func TestPlanRepoGatesOnAPublishedPolicy(t *testing.T) {
 	db := gcpfake.NewRTDB(t)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":2,"budget":{"mode":"enforce","per_run_usd":5}}`))
+	db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":3,"budget":{"mode":"enforce","per_run_usd":5}}`))
 	// The local config holds the database (so the policy can be read) but no
 	// web API key, so its jobs carry neither of what a run needs.
 	p := newRepoPlanRig(t, names(3), sandboxBaseRelease, "budget: { mode: off, rtdb_url: "+db.URL+" }\n", changedRepoBuild)

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -238,5 +239,85 @@ func TestValidateClaudeAccountsRefusesWildcard(t *testing.T) {
 	ps := ValidateClaudeAccounts(map[string]ClaudeAccount{"acme-personal": {AllowDataTo: []string{"*"}}})
 	if len(ps) == 0 {
 		t.Fatal("the literal \"*\" was accepted as a repository slug for a claude account; only providers: gets the wildcard rule (design §3a)")
+	}
+}
+
+// TestProjectJobAccounts pins the account axis: the profile's own
+// claude_accounts field, the empty account first and always present, the
+// default account folded into it, and the rest sorted. It is the one rule the
+// deployer, the launcher and the runner compute a profile's job set with, so
+// every case here is a name one of the three would otherwise disagree about.
+//
+// Mutation (run, restore): drop the leading empty entry (a profile that lists
+// nothing then serves no job at all, and the deployer stops building the job
+// every existing installation has) or stop folding DefaultClaudeAccount into
+// it (a second job appears, named for "default", while the launcher and the
+// runner keep targeting the no-account one).
+func TestProjectJobAccounts(t *testing.T) {
+	for _, tc := range []struct {
+		why      string
+		accounts []string
+		want     []string
+	}{
+		{"a profile serving no account keeps its no-account job", nil, []string{""}},
+		{"the default account is the no-account job", []string{DefaultClaudeAccount}, []string{""}},
+		{"a named account is a job of its own beside the no-account one", []string{"acme-personal"}, []string{"", "acme-personal"}},
+		{"the axis is sorted, and the empty account sorts first", []string{"zulu", "acme-personal", DefaultClaudeAccount}, []string{"", "acme-personal", "zulu"}},
+		{"an account listed twice is one job", []string{"acme-personal", "acme-personal"}, []string{"", "acme-personal"}},
+	} {
+		if got := ProjectJobAccounts(JobProfile{ClaudeAccounts: tc.accounts}); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: ProjectJobAccounts(%v) = %v, want %v", tc.why, tc.accounts, got, tc.want)
+		}
+	}
+	// The profile's own list is never written to: it is the config's, and the
+	// deployer holds it for the whole job set.
+	list := []string{"acme-personal", DefaultClaudeAccount}
+	_ = ProjectJobAccounts(JobProfile{ClaudeAccounts: list})
+	if !slices.Equal(list, []string{"acme-personal", DefaultClaudeAccount}) {
+		t.Errorf("ProjectJobAccounts rewrote the profile's own list: %v", list)
+	}
+}
+
+// TestProjectJobTokenAccount pins the join of a job's account axis and the
+// token that job holds: the account as the policy's accounts block spells it
+// (the key whose allow_repos bounds the token) and whether the profile serves
+// one on that job. Every case here is a launch the gate admits or refuses and
+// a run the runner re-checks, so a wrong answer here is a job whose credential
+// both sides disagree about.
+//
+// Mutation (run, restore): answer the account's own name for the no-account
+// job instead of the default account (a profile listing "default" then holds
+// the token of an account named "default", a key the accounts block never
+// carries and whose list nothing holds the run to), or return true for a
+// profile that lists nothing (the gate would hold every run of a profile that
+// serves no account to an account the profile never named).
+func TestProjectJobTokenAccount(t *testing.T) {
+	plain := JobProfile{}
+	named := JobProfile{ClaudeAccounts: []string{"acme-personal"}}
+	both := JobProfile{ClaudeAccounts: []string{"acme-personal", DefaultClaudeAccount}}
+	for _, tc := range []struct {
+		why     string
+		pr      JobProfile
+		account string
+		want    string
+		serves  bool
+	}{
+		{"a profile that lists nothing holds no token on its no-account job", plain, "", "", false},
+		{"a named account's job holds that account's token", named, "acme-personal", "acme-personal", true},
+		{"a profile listing only named accounts holds none on its no-account job", named, "", "", false},
+		{"the default account rides the no-account job when the profile lists it", both, "", DefaultClaudeAccount, true},
+		{"the job axis spells the default account as the empty account", both, DefaultClaudeAccount, DefaultClaudeAccount, true},
+		{"and a named account beside it is a job of its own", both, "acme-personal", "acme-personal", true},
+		{"an account the profile does not list holds no token", named, "acme-work", "", false},
+	} {
+		got, serves := ProjectJobTokenAccount(tc.pr, tc.account)
+		if got != tc.want || serves != tc.serves {
+			t.Errorf("%s: ProjectJobTokenAccount(%v, %q) = (%q, %v), want (%q, %v)",
+				tc.why, tc.pr.ClaudeAccounts, tc.account, got, serves, tc.want, tc.serves)
+		}
+		if serves && !slices.Contains(tc.pr.ClaudeAccounts, got) {
+			t.Errorf("%s: the token account %q is not one the profile lists (%v): the policy's accounts block is keyed by what a profile lists",
+				tc.why, got, tc.pr.ClaudeAccounts)
+		}
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -147,6 +148,12 @@ func TestArtifactRunNeverPushesAndHasNoGitToken(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "out", "sizzle.mp4")); err != nil {
 		t.Fatalf("the render did not produce its file: %v", err)
+	}
+	// A run that ends without a pull request still records what it changed:
+	// the set is read before finalize's early return, which is the only
+	// place an artifact run's own commit could be missed (design D27).
+	if rec.ChangedFiles == nil || !slices.Contains(rec.ChangedFiles.Paths, "wip.txt") {
+		t.Fatalf("changed files = %+v, want wip.txt", rec.ChangedFiles)
 	}
 }
 

@@ -25,7 +25,8 @@
 // And two about getting started, whose wording W0.1's Go test pins to the
 // repository: every command the page prints is one `website/data/install.yaml`
 // carries, byte for byte, and the platform list is the file's own statuses —
-// macOS and Linux supported, Windows untested with the WSL note, never a
+// macOS and Linux supported, Windows untested and carrying its own note
+// (the redesign's P4 cut the WSL sentence that used to be in it), never a
 // platform a reader is offered (F20, D94).
 //
 // **Two things about this file are worth stating.**
@@ -463,9 +464,14 @@ test('getting started renders the install commands from install.yaml, and no com
 test('getting started promises commands only where install.yaml carries them', async (t) => {
   // install.yaml is allowed to carry a path with no commands — the release archive,
   // whose facts are a Releases page and a name template rather than a command line —
-  // and a page that printed "commands as printed in README.md" above that path's empty
-  // list would be telling a reader to read something that is not there. The line and
-  // the blocks are the same fact, so the page renders both or neither.
+  // and a page that printed a citation line above that path's empty list would be
+  // telling a reader to read something that is not there. The line and the blocks are
+  // the same fact, so the page renders both or neither.
+  //
+  // The citation line is the redesign's (P4): it used to read "Commands as printed in
+  // <file>." and now reads "From <file> · <platforms>", with the per-path platform line
+  // folded into it. What this case holds is the invariant, not the wording: one marker,
+  // rendered exactly where a command block is.
   const built = buildWith(t, () => {})
   const page = builtPage(built, '/getting-started/')
 
@@ -478,12 +484,12 @@ test('getting started promises commands only where install.yaml carries them', a
   let withCommands = 0
   for (const article of articles) {
     const hasCommands = /<pre[^>]*>/.test(article.block)
-    const promises = /Commands as printed in/.test(article.block)
+    const promises = /<p class="source"[^>]*>/.test(article.block)
     if (hasCommands) withCommands++
     assert.equal(
       promises,
       hasCommands,
-      `install path \`${article.id}\` ${promises ? 'says its commands are printed below' : 'says nothing about commands'} and renders ${hasCommands ? 'command blocks' : 'none'}: the sentence and the blocks are one fact, and a path with no commands says nothing about them`,
+      `install path \`${article.id}\` ${promises ? 'cites the file its commands come from' : 'cites no file'} and renders ${hasCommands ? 'command blocks' : 'none'}: the line and the blocks are one fact, and a path with no commands cites nothing`,
     )
   }
 
@@ -494,7 +500,7 @@ test('getting started promises commands only where install.yaml carries them', a
 
 test('getting started offers the platforms install.yaml marks, and states Windows as untested', async (t) => {
   // D94's answer: macOS and Linux are supported, Windows is untested and carries
-  // the WSL note — a note and never a platform a reader is offered, because this
+  // its own note — a note and never a platform a reader is offered, because this
   // repository builds no Windows binary (finding 20).
   const built = buildWith(t, () => {})
   const page = builtPage(built, '/getting-started/')
@@ -521,15 +527,17 @@ test('getting started offers the platforms install.yaml marks, and states Window
 
   // A path names the goos its archive is built for, and the page prints the name a reader
   // reads for it: `darwin` is `macOS` here, and an operating system's internal name is not
-  // what a reader is offered.
+  // what a reader is offered. The redesign (P4) folded each path's platform list into its
+  // citation line, so the names are read off the whole page rather than off a
+  // `Platforms: …` line of their own.
   assert.ok(
-    !/Platforms:[^<]*\b(darwin|goos)\b/.test(page),
+    !/\b(darwin|goos)\b/.test(text),
     'the page prints a path\'s platform list as the goos names install.yaml uses internally rather than the platform names its own list writes',
   )
-  assert.match(text, /Platforms: macOS, Linux/, 'the archive path does not render its platforms as the names install.yaml writes for them')
+  assert.match(text, /macOS, Linux/, 'the archive path does not render its platforms as the names install.yaml writes for them')
 
-  // The untested platform's own note is rendered, verbatim: the WSL sentence and
-  // the reason it is a note rather than a support promise.
+  // The untested platform's own note is rendered, verbatim: the reason Windows is a note
+  // rather than a support promise, which is the whole of what the note says.
   const note = install.slice(install.indexOf('- id: windows')).match(/note: >-\n((?: {6}[^\n]*\n?)+)/)[1]
   assert.ok(text.includes(collapse(note)), `the page does not render Windows' own note, which install.yaml writes as:\n${collapse(note)}`)
 })

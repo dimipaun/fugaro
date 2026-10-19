@@ -14,9 +14,11 @@
  *      deliberately keeps no changelog section and points at the Releases page instead
  *      (finding 44).
  *   2. **The page writes nothing of its own.** Its heading names it and the component
- *      renders the files' lines; there is no summary, no "what's new" prose and no
- *      editorial, and `website/test/changelog-page.mjs` fails on a sentence that is not in
- *      a release file — the page-level form of W0.6's file-level check.
+ *      renders the files' lines — the newest releases' first Highlights lines as a summary
+ *      above the list (the redesign's P4, D189), then every release's own bullets — and
+ *      `website/test/changelog-page.mjs` fails on a sentence that is not in a release file:
+ *      the page-level form of W0.6's file-level check. The summary is a rendering of those
+ *      files' lines and not prose about them, which is what lets it exist at all.
  *   3. **The repository the entries link is a fact.** It comes from `website/data/site.yaml`
  *      through the content pipeline (W0.2, W1.3), so the release URLs are built from the
  *      site's own fact and no host is typed into a template.

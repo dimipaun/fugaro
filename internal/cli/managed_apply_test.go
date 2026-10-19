@@ -69,7 +69,35 @@ func managedBudgetRig(t *testing.T) (*initRig, string) {
 		t.Fatal(err)
 	}
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
+	// The whole-project read these tests do not exercise: no Cloud Asset
+	// server is configured here, so the command would reach Google's own API.
+	// A read that cannot be made is the fallback (Task 4.5), which is the
+	// honest state of these fixtures, and the rows about the inventory itself
+	// stub their own answer (managedInventoryRig).
+	stubManagedAssets(t, &fakeManagedAssets{err: errors.New("no Cloud Asset server in this test")})
 	return r, root
+}
+
+// fakeManagedAssets is the command's whole-project read as a test sees it: the
+// answer it gives, and every project it was asked about.
+type fakeManagedAssets struct {
+	assets []managedmode.Asset
+	err    error
+	asked  []string
+}
+
+func (f *fakeManagedAssets) List(_ context.Context, gcpProject string) ([]managedmode.Asset, error) {
+	f.asked = append(f.asked, gcpProject)
+	return f.assets, f.err
+}
+
+// stubManagedAssets points the command's whole-project read at assets, for the
+// length of one test.
+func stubManagedAssets(t *testing.T, assets managedmode.Assets) {
+	t.Helper()
+	old := managedAssets
+	managedAssets = func(context.Context, *localcfg.Config) (managedmode.Assets, error) { return assets, nil }
+	t.Cleanup(func() { managedAssets = old })
 }
 
 // noWriteAcrossFakes is the task's own "no write is made" assertion, read off
@@ -121,7 +149,7 @@ func TestManagedApplyRefusesWhenNoBudgetReadOpensTheGate(t *testing.T) {
 	}{
 		{"the marker is version 1: managed, and no amount recorded",
 			[]byte(`{"version":1,"gcp_project":"proj-1234"}`), false,
-			[]string{"has no budget recorded", "this release cannot add a budget to an existing project", "fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID"}},
+			[]string{"has no budget recorded", "fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC", "fugaro init --create-project --managed --budget N --budget-currency CCC --billing-account ID"}},
 		{"there is no marker at all", nil, false, []string{"is not managed", "is not there"}},
 		{"the marker exists and cannot be read", []byte(v2), true, []string{"is not managed", "cannot be read"}},
 		// A version-2 marker whose figure fails Budget.Check is reported as an
@@ -536,17 +564,31 @@ func TestManagedApplyRootMustBeInTheProjectsCheckout(t *testing.T) {
 }
 
 // TestManagedCoverIsTheConfigsOwnAllowlist: the members a managed plan may
-// grant a role to are the config's own launchers and operators — the list
-// init's review screen shows — and the two fields this command deliberately
-// leaves empty decide against admitting rather than for it: no billing account
-// may be named, and the buckets are the project's own runs bucket alone.
+// grant a role to are the config's own launchers, operators and budget admins
+// — every list of people the config records, and the lists init's review
+// screen prints — and the two fields this command deliberately leaves empty
+// decide against admitting rather than for it: no billing account may be
+// named, and the buckets are the project's own runs bucket alone.
+//
+// The budget admins are the half that was missing: init's review admits a plan
+// that grants a role to a budget admin (init_review's accessLists prints them,
+// and its cover lists them), while this command passed only the launchers and
+// operators, so a plan init's own gate had admitted was refused here forever
+// with a sentence about a review screen this command does not have.
+//
+// Mutation (verified, run and restored): drop lc.Terraform.BudgetAdmins from
+// managedCover's slices.Concat — Cover.Listed loses user:budget@example.com
+// and this test fails.
 func TestManagedCoverIsTheConfigsOwnAllowlist(t *testing.T) {
 	noAgentSession(t)
 	r := newInitRig(t)
-	r.appendConfig(t, "image_source: ghcr.io/acme\nterraform:\n  launchers: [user:launcher@example.com, user:other@example.com]\n  operators: [user:operator@example.com]\n")
+	r.appendConfig(t, "image_source: ghcr.io/acme\nterraform:\n  launchers: [user:launcher@example.com, user:other@example.com]\n  operators: [user:operator@example.com]\n  budget_admins: [user:budget@example.com]\n")
 	lc, err := localcfg.Load(r.cfg)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(lc.Terraform.BudgetAdmins) != 1 {
+		t.Fatalf("the fixture's budget_admins did not load: %v", lc.Terraform.BudgetAdmins)
 	}
 	c := managedCover(lc, initRunsBucket)
 	if !slicesEqual(c.Projects, []string{initProject}) {
@@ -558,9 +600,9 @@ func TestManagedCoverIsTheConfigsOwnAllowlist(t *testing.T) {
 	if !slicesEqual(c.Buckets, []string{initRunsBucket}) {
 		t.Errorf("Cover.Buckets = %v, want the project's own runs bucket", c.Buckets)
 	}
-	want := []string{"user:launcher@example.com", "user:other@example.com", "user:operator@example.com"}
+	want := []string{"user:launcher@example.com", "user:other@example.com", "user:operator@example.com", "user:budget@example.com"}
 	if !slicesEqual(sorted(c.Listed), sorted(want)) {
-		t.Errorf("Cover.Listed = %v, want the config's own launchers and operators %v", c.Listed, want)
+		t.Errorf("Cover.Listed = %v, want the config's own launchers, operators and budget admins %v", c.Listed, want)
 	}
 	if len(c.Billing) != 0 {
 		t.Errorf("Cover.Billing = %v, want none: this command has no review screen to show a billing account on, so a plan that names one is refused", c.Billing)

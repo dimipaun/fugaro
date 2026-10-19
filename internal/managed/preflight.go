@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // preflight is the root's own files, read before terraform init: the part of a
@@ -89,13 +90,30 @@ import (
 func (r Request) preflight() ([]string, error) {
 	res, err := scanRoot(r.Workdir.Root)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", ErrPreflight, r.what(), err)
+		// The scan's own errors carry the root's file names and, under them, the
+		// text of the files themselves (a lexer that quotes what it could not
+		// read): both are the agent's, so the whole chain is bounded here, where
+		// it becomes this refusal's sentence.
+		return nil, fmt.Errorf("%w: %s: %w", ErrPreflight, r.what(), safetext.FieldErr(err))
 	}
 	if len(res.bad) > 0 {
+		// Each line is bounded where it is written (scanResult.refuse), and how
+		// many of them are printed is bounded here: a root of ten thousand
+		// refused files is one agent's single directory, and a refusal nobody
+		// can read to the end is a refusal that hides the line that matters.
+		// What is left out is said rather than dropped.
+		if n := len(res.bad) - preflightRefusalsMax; n > 0 {
+			return nil, fmt.Errorf("%w: %s: %s; and %d more refusal(s) in the same root, not listed here",
+				ErrPreflight, r.what(), strings.Join(res.bad[:preflightRefusalsMax], "; "), n)
+		}
 		return nil, fmt.Errorf("%w: %s: %s", ErrPreflight, r.what(), strings.Join(res.bad, "; "))
 	}
 	return res.providers(), nil
 }
+
+// preflightRefusalsMax is how many of the root's refusals one refusal message
+// carries; the rest are counted and named as a count (preflight, above).
+const preflightRefusalsMax = 20
 
 // maxModuleDepth bounds the walk of local modules: a module tree deeper than
 // this is refused rather than followed, so a symlink or a very long chain
@@ -206,8 +224,14 @@ func (s *scanResult) providers() []string {
 	return out
 }
 
+// refuse records one refusal of the root. The line is a field (safetext.Field)
+// before it is kept, and this is the one funnel every refusal of this file goes
+// through: where is a path inside the agent's own root and the format's
+// arguments are the file's own words (a block's labels, a function's name, a
+// quoted string), and neither may put a line, a control character, a bidi
+// override or ten thousand characters into the sentence a person reads.
 func (s *scanResult) refuse(where string, format string, args ...any) {
-	s.bad = append(s.bad, where+": "+fmt.Sprintf(format, args...))
+	s.bad = append(s.bad, safetext.Field(where+": "+fmt.Sprintf(format, args...)))
 }
 
 // overrideFile reports whether name is one terraform merges over the root's

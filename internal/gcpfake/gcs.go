@@ -57,7 +57,8 @@ import (
 //   - A bucket insert needs the project to have been added (AddProject),
 //     and otherwise answers 403.
 //   - DenyWrites answers 403 for a write under a prefix, as a conditional
-//     grant would; reads and listings are never denied.
+//     grant would; reads and listings are never denied by it (FailListings
+//     and FailObjectGetsAfter are what fail those).
 type GCS struct {
 	*Server
 	mu      sync.Mutex
@@ -81,6 +82,10 @@ type GCS struct {
 	reads      map[string]int
 	// listCalls counts object listing requests (one per page).
 	listCalls int
+	// failList makes every object listing of a bucket answer 403
+	// (FailListings), as GCS does for a principal without
+	// storage.objects.list or for a bucket that is not there.
+	failList map[string]bool
 	// denied maps a bucket to the prefixes DenyWrites has closed.
 	denied map[string][]string
 	// refusedPolicy makes a bucket's getIamPolicy answer 403.
@@ -131,7 +136,7 @@ func NewGCS(t *testing.T) *GCS {
 	g := &GCS{gen: 1_700_000_000_000_000, buckets: map[string]map[string]*object{}, meta: map[string]*bucketMeta{},
 		uploads: map[string]*upload{}, projects: map[string]uint64{}, denied: map[string][]string{},
 		refusedPolicy: map[string]bool{}, failedPolicy: map[string]bool{}, held: map[string][]string{},
-		failObject: map[string]int{}, reads: map[string]int{}}
+		failObject: map[string]int{}, reads: map[string]int{}, failList: map[string]bool{}}
 	g.Server = newServer(t, g.handle)
 	return g
 }
@@ -172,6 +177,15 @@ func (g *GCS) FailObjectGets(n int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.failGets = n
+}
+
+// FailListings makes every object listing of bucket answer 403
+// PERMISSION_DENIED, so a test can fail a listing a caller must not read as
+// an empty bucket.
+func (g *GCS) FailListings(bucket string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.failList[bucket] = true
 }
 
 // FailObjectGetsAfter makes reads of one object answer 403 PERMISSION_DENIED
@@ -811,6 +825,10 @@ func (g *GCS) patch(w http.ResponseWriter, bucket, name string, body []byte) {
 // prefixes together, as GCS counts them) after pageToken.
 func (g *GCS) list(w http.ResponseWriter, bucket string, q url.Values) {
 	g.listCalls++
+	if g.failList[bucket] {
+		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "the caller does not have storage.objects.list access to the bucket")
+		return
+	}
 	prefix, delim := q.Get("prefix"), q.Get("delimiter")
 	from, end := q.Get("startOffset"), q.Get("endOffset")
 	if t := q.Get("pageToken"); t > from {
