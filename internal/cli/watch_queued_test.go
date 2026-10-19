@@ -154,7 +154,15 @@ func TestWatchShowsLaunchedRunAsQueued(t *testing.T) {
 func TestWatchStartedRunNotDuplicatedAsQueued(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")
-	run := "20261002-090000-aaaa" // seedWatch's own live run
+	// The run is minted inside the queued scan's listing window
+	// (finishedLookback, 24h) so the scanner really does read it as a queued
+	// candidate and the live row has to win: seedWatch's own 2026-10-02 id is
+	// older than that window, so a fixed id made this pass without ever
+	// reaching the dedup it names (#651).
+	run := recentRunID(t, 30*time.Second, "a11e")
+	f.db.Set(budget.PathAgent(appSlug, run), map[string]any{
+		"repo": "acme/app", "title": "mine", "stage": "code", "round": 2, "auth": "api_key", "spent": 4 * usd1,
+		"startedAt": time.Now().UnixMilli() - 600_000, "updatedAt": time.Now().UnixMilli(), "requestedBy": "someone@example.com"})
 	f.writeTask(t, appSlug, run, "")
 	f.writeClaim(t, appSlug, run, time.Now().Add(-time.Minute))
 
