@@ -1145,8 +1145,11 @@ export const SERVED_FILES: readonly string[] = Object.freeze([
 ```
 
 `console/test/unit/bundle.test.ts` changes with it, in the three places it counts or compares:
-`expect(SERVED_FILES.length, …).toBe(6)`, and the comparison that holds the two sides equal
-in both directions — `expect(builtListing('bundle')).toEqual(servedNames())`. The two sides
+the non-vacuity count on the list itself, `expect(SERVED_FILES.length, …).toBe(6)`; the count
+on the packaged-files list the test derives from it, `expect(required.length, …).toBe(8)` —
+`required` is the two preload paths plus `SERVED_FILES`, so it grows with the list; and the
+comparison that holds the two sides equal in both directions —
+`expect(builtListing('bundle')).toEqual(servedNames())`. The two sides
 are **different sources, which is what makes the comparison worth making**: `builtListing`
 (`console/test/support/built.ts`) reads `dist/bundle/` off disk, and `servedNames()`
 (`bundle.test.ts`) maps `SERVED_FILES` to bare file names. Adding `/console.css` changes the
@@ -1203,7 +1206,7 @@ any file under `src/renderer/`; and the CSP assertions above refuse `'unsafe-inl
 
 | File | Change |
 |---|---|
-| `console/test/unit/bundle.test.ts` | `SERVED_FILES.length` 5 → **6**; a new case that `dist/bundle/console.css` is the concatenation of `THEME_STYLESHEETS` **read from the list**, in list order — not of four hard-coded names, so the case is already true at 6.2 with two files in it and stays true as 6.3 and 6.4 append theirs; a case that the theme directory holds no `.css` outside the list |
+| `console/test/unit/bundle.test.ts` | `SERVED_FILES.length` 5 → **6**, and `required.length` (the preload paths plus the list) 7 → **8**; a new case that `dist/bundle/console.css` is the concatenation of `THEME_STYLESHEETS` **read from the list**, in list order — not of four hard-coded names, so the case is already true at 6.2 with two files in it and stays true as 6.3 and 6.4 append theirs; a case that the theme directory holds no `.css` outside the list |
 | `console/test/unit/csp-document.test.ts` | a case that **every** document's `<link>` elements are exactly one, `rel="stylesheet"`, `href="./console.css"`, and carry no `media`/`onload`/`integrity`; the existing "no `<style>`, no `style` attribute" cases stay and now cover the stylesheet's existence too |
 | `console/test/unit/window.test.ts` | unchanged in substance: the CSP/no-`bypassCSP` assertions already cover the CSS response, and the served-document cases still compare byte-identical HTML — its `<link>` is part of that HTML, so the file the window loads is still the file the test read |
 | `console/test/unit/build-files.test.ts` | `bundlerOutputs` gains `'dist/bundle/console.css'`, so `build.files` in `console/package.json` **must** gain it (and `console/README.md`'s list must name it) — the packaged app would otherwise ship without its stylesheet, which is the exact failure this test exists to catch |

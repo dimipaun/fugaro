@@ -956,6 +956,47 @@ func TestDocsConsoleStylingCountsMatch(t *testing.T) {
 		}
 	}
 
+	// §5.3 and §5.6 name the places the bundle case counts the list it gains an
+	// entry in. There are two counts and they are arithmetic — the packaged-files
+	// list is the two preload paths plus `SERVED_FILES`, so its literal is the
+	// list's plus two — and this case recomputes the second from the first rather
+	// than reading the sentence that introduces them. A section that names one
+	// literal and not the other is how a reader changes one count and misses the
+	// second, which is what §5.3 did before this check.
+	serveSection := mdFlat(mdBetween(t, path, doc, "### 5.3 The one new entry", "### 5.4 "))
+	servedRE := regexp.MustCompile(`expect\(SERVED_FILES\.length, …\)\.toBe\((\d+)\)`)
+	requiredRE := regexp.MustCompile(`expect\(required\.length, …\)\.toBe\((\d+)\)`)
+	servedM := servedRE.FindStringSubmatch(serveSection)
+	requiredM := requiredRE.FindStringSubmatch(serveSection)
+	switch {
+	case servedM == nil:
+		t.Errorf("%s: §5.3 no longer gives `SERVED_FILES.length`'s new literal; that count is one of the places the test changes", path)
+	case requiredM == nil:
+		t.Errorf("%s: §5.3 gives `SERVED_FILES.length`'s new literal and not the packaged-files list's — `required.length` is derived from `SERVED_FILES`, so it moves with the list and a reader who is told of one count only changes one of the two", path)
+	default:
+		served, errS := strconv.Atoi(servedM[1])
+		required, errR := strconv.Atoi(requiredM[1])
+		if errS != nil || errR != nil {
+			t.Errorf("%s: §5.3's two count literals could not be read: %q, %q", path, servedM[0], requiredM[0])
+		} else if required != served+2 {
+			t.Errorf("%s: §5.3 says `SERVED_FILES.length` becomes %d and `required.length` becomes %d; the packaged list is the two preload paths plus the served list, so the second is the first plus two", path, served, required)
+		}
+	}
+	// The row is found by its file name rather than by its prefix: the prefix
+	// starts with a path under the console directory, and the boundary case's
+	// allow-list is a one-entry exception this file is not on.
+	bundleRow := ""
+	for _, line := range strings.Split(mdBetween(t, path, doc, "### 5.6 ", "\n---\n\n## 6. "), "\n") {
+		if strings.HasPrefix(line, "| ") && strings.Contains(line, "bundle.test.ts") {
+			bundleRow = line
+		}
+	}
+	if bundleRow == "" {
+		t.Errorf("%s: §5.6 no longer has a row for the bundle case; that row is where the section repeats the counts §5.3 gives", path)
+	} else if !strings.Contains(bundleRow, "required.length") {
+		t.Errorf("%s: §5.6's bundle row repeats the `SERVED_FILES.length` count and leaves out `required.length`; the second moves with the list too", path)
+	}
+
 	// And the document's own shape: §6.5's first item counts the section
 	// headings, so the count is taken from the headings themselves.
 	headings := len(regexp.MustCompile(`(?m)^## `).FindAllString(doc, -1))

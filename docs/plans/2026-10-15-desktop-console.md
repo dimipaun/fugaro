@@ -1398,7 +1398,8 @@ open does not leave the other theme's ground behind the next paint (the design's
 a single pinned literal would flash **dark** on a light-OS machine, which is the very
 flash the background colour exists to remove). `nativeTheme` is core Electron, needs no
 dependency and touches no CSP; the main process still cannot read the CSS, so the token
-test holds **both** literals equal to their set's `--ground`); and the nav gains the WAI-ARIA tablist behaviour it lacks — `role`,
+test holds **both** literals equal to their set's `--ground`. And the nav gains the
+WAI-ARIA tablist behaviour it lacks — `role`,
 `aria-selected`, a roving `tabindex` and Arrow/Home/End handling that calls the existing
 `show(id)`, since `entry.ts` has no keydown handling at all today.
 
