@@ -561,10 +561,20 @@ func TokenBucketCondition(bucket, slug string) string {
 	return BucketCondition(bucket, []string{TokenBucketPrefix}, slug)
 }
 
+// TokenBucketConditionTitlePrefix is the fixed part of
+// TokenBucketConditionTitle, for a caller that must recognise the title rather
+// than build it (internal/infra/tf, as for the project job's): the expression
+// a grant carries does not say whose grant it is, the title does.
+//
+// It is not a prefix of ProjectTokenBucketConditionTitlePrefix ("fugaro-project-tokens-"),
+// and the two must stay apart: a project job's whole-tokens/ binding must
+// never read as the per-repository job's own.
+const TokenBucketConditionTitlePrefix = "fugaro-tokens-"
+
 // TokenBucketConditionTitle is the title of that grant's condition for the
 // account saID: distinct from BucketConditionTitle, so the two bindings are
 // told apart by title as well as by role.
-func TokenBucketConditionTitle(saID string) string { return "fugaro-tokens-" + saID }
+func TokenBucketConditionTitle(saID string) string { return TokenBucketConditionTitlePrefix + saID }
 
 // ProjectTokenBucketCondition is the condition of a *project job's* read-only
 // (objectViewer) grant on the runs bucket: the whole of tokens/, with no slug,
@@ -609,6 +619,31 @@ func ProjectTokenBucketConditionTitle(saID string) string {
 // installation still carrying the runs/-only binding reads as a different
 // one rather than as this one.
 const LauncherBucketConditionTitle = "fugaro-launchers-runs-tokens"
+
+// LegacyLauncherBucketConditionTitle and LegacyLauncherBucketCondition are
+// the launchers' objectUser grant as every release before 0.9.0 wrote it:
+// the runs/-only expression under the old title (H5, before the widening
+// above). No release writes them any more — the installation module's
+// precondition refuses them, so an apply replaces the binding — but a
+// reader that must judge an *installed* policy meets them for as long as an
+// installation has not been re-initialised, and must read them as this
+// grant's old form rather than as a stranger's condition
+// (internal/infra's RunsBucketFindings; a removal suggested for it would
+// take away the runs/ write a launcher is supposed to hold). They are
+// defined here, beside their replacement, so the two spellings cannot drift
+// apart.
+const LegacyLauncherBucketConditionTitle = "fugaro-launchers-runs"
+
+// LegacyLauncherBucketCondition is the expression LauncherBucketCondition
+// built before the budget token moved to tokens/, and the title above is its
+// title. It embeds bucket unescaped exactly as LauncherBucketCondition does,
+// and panics for the same reason on a name outside [a-z0-9._-].
+func LegacyLauncherBucketCondition(bucket string) string {
+	if !bucketNameRE.MatchString(bucket) {
+		panic(fmt.Sprintf("gcp.LegacyLauncherBucketCondition: bucket name %q has a byte outside [a-z0-9._-]", bucket))
+	}
+	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/runs/")`, bucket)
+}
 
 // bucketNameRE is the charset LauncherBucketCondition accepts: narrower than
 // GCS's own bucket name rules, but every bucket Fugaro creates or accepts

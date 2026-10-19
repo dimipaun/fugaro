@@ -96,15 +96,39 @@ func DeleteObject(ctx context.Context, b *blobx.Bucket, slug, run string) error 
 // ObjectPresent reports whether the run's token object is in the bucket,
 // without reading it as a token: what a run whose job carries no budget
 // backend needs to know (a launcher minted for it), and nothing more.
+//
+// A refused read is not "no token object", and the read is strict so that it
+// can say so (ReadStrict): gocloud folds a GCS 403 into the same
+// gcerrors.NotFound a missing object gets, and a job account whose tokens/
+// grant is missing — the repository not re-applied since the budget token
+// moved there — is refused with a 403 whatever the object's state. Read
+// non-strictly, the one state this function exists to detect would answer
+// "absent", and the caller whose question it is (the runner's
+// refuseStrayToken: may a budget-on run with no backend go on?) would let the
+// run continue with no session, no cap and no kill switch. So a 403 is an
+// error here, and blobx.ErrForbidden is reachable through it, exactly as
+// DeleteObject's is.
+//
+// It reads the object's bytes rather than asking a driver for its metadata
+// (Exists): no driver answers "exists" with a refusal, and the object is a
+// sealed token of tens of bytes.
 func ObjectPresent(ctx context.Context, b *blobx.Bucket, slug, run string) (bool, error) {
 	if !validSegment(slug) || !validSegment(run) {
 		return false, errors.New("budget token: invalid slug or run id")
 	}
-	ok, err := b.Exists(ctx, ObjectKey(slug, run))
-	if err != nil {
+	_, _, err := b.ReadStrict(ctx, ObjectKey(slug, run))
+	switch {
+	case err == nil:
+		return true, nil
+	case isForbidden(err) || errors.Is(err, blobx.ErrForbidden):
+		return false, fmt.Errorf("budget token: checking for the token object failed: %w: %w", blobx.ErrForbidden, err)
+	case errors.Is(err, blobx.ErrNotExist) || isNotExist(err):
+		// The read's own name for a missing object (blobx.read folds a
+		// gcerrors.NotFound to it), and the same code DeleteObject asks for.
+		return false, nil
+	default:
 		return false, fmt.Errorf("budget token: checking for the token object failed: %s", errText(err))
 	}
-	return ok, nil
 }
 
 // Untaken objects: a token nobody takes is dead after an hour but the object

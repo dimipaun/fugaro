@@ -21,14 +21,11 @@ import (
 //
 //   - The policy node can only be read with the run's Firebase identity: the
 //     same custom token, exchanged for the same ID token, that the budget
-//     session uses. token.TakeObject reads the object and never deletes it —
-//     the job account's grant on tokens/ is read-only (D16) — so nothing
-//     forces the take to be shared; it is shared anyway, and memoized on the
-//     run, because the policy read and budget.Open must be *one* identity:
-//     exactly one take per run, and the id token the session meters against
-//     is the one the policy was read with (finding 2). A second take would
-//     succeed, which is why what the sharing buys is identity, not an object
-//     that disappears.
+//     session uses. token.TakeObject only *reads* the object (a job's grant on
+//     tokens/ is read-only, D16: consume-once rests on the per-launch key, not on
+//     a delete; internal/budget/token/object.go), and the take is still shared:
+//     exactly once per run, handed to the policy read and to budget.Open both
+//     (finding 2).
 //   - The mode-off path is entered by the job's own budget mode being off,
 //     never by an absence of a credential and never by a failure the run sees
 //     (B1). A budget-on run with no FUGARO_FIREBASE_API_KEY, or with no token
