@@ -585,8 +585,12 @@ subcommand of it, so it needs no line of its own. What that line drags with it, 
    claims in `../../docs/*.md`, `../../docs/design/*.md`, `README.md`, `SECURITY.md` and the plugin
    skills; its globs stop at `docs/`, so they **never reach `docs/plans/*.md`**, which is this file's
    directory. This plan therefore adds no IAM sentence anywhere near the bucket as a **duty**, and
-   nothing would go red if it did: **no test in this repository reads this document**, which is both
-   why the pin in §13 exists and why this claim is made in prose rather than attributed to a guard.
+   nothing would go red if it did. The precise gap: **the pin in §13 is the only test that reads
+   this document** (via `readDoc`, and §13 describes it), and it checks citations, the four-clause
+   exit rule and the three MAC states — **not the IAM prose**, and no other test looks for an IAM
+   claim inside `docs/plans/*.md` either, for its presence or for its absence. So the check that is
+   missing is exactly that one, and the duty rests on the pin's citations and on T8's checklist line
+   rather than on a guard.
    (An earlier draft made T7 the proof, which was wrong twice over: T7's verification filters on
    `-run 'Sweep|Expiry'`, so it does not run those guards at all, and a guard whose globs stop at
    `docs/` could not prove anything about a file in `docs/plans/` in any case.)
@@ -1031,7 +1035,7 @@ without regenerating and watch `TestParityCorpusIsCurrent` fail.
 | `docs/design/v1.md` | T5 | one §9.1 row |
 | `shared/` | T1, T3, T8 (test files only) | **no merged module changes.** If a task needs one, it is a finding, not an edit |
 | `internal/localcfg` | T2 | one field, validated |
-| `internal/cli/docs_mobile_mailbox_plan_test.go` | **this plan, not a task** | the pin this document ships with: it checks that every path and symbol cited above is still in the tree, and that M12, §4.4 and §9 state the same four-clause exit rule. It is the answer to the review that found the rule stated as one clause; it is not T1–T8's and it adds no product code |
+| `internal/cli/docs_mobile_mailbox_plan_test.go` | **this plan, not a task** | the pin this document ships with: it **derives its path list from this document at test time** — every backticked `internal/`, `shared/`, `mobile/`, `docs/`, `website/`, `deploy/` and `scripts/` path in the plan, plus its markdown links, must be in the tree, except the handful T1–T8 create, each of which must still be absent — that each symbol the plan names is still in the file it names it in, and that M12, §4.4 and §9 state the same four-clause exit rule. It is the answer to the review that found the rule stated as one clause; it is not T1–T8's and it adds no product code |
 | `.github/workflows/ci.yml` | **nobody** | P4.3 is owner-made (Global Constraint 8); see §16 |
 
 **Levels** (the mobile plan's): T1 and T2 are level 3 (with P4.1); T2a, T3–T8 follow in one lane,
