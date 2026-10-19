@@ -11,10 +11,11 @@ package cli
 // The reconciliation's whole value is that every claim in it is checkable, and
 // the three things a later edit can silently break are: the spec stops being
 // verbatim, a citation drifts to a path that no longer exists, or the work
-// starts allocating decision numbers the owner never gave it. Each of the six
+// starts allocating decision numbers the owner never gave it. Each of the seven
 // tests below is one of those, plus the two structural facts (the questions are
 // numbered and optioned; the index states the status, the owner and the commit
-// checked against).
+// checked against) and one that reads this file rather than the documents (the
+// mutation record's count against the list it heads).
 //
 //  * TestDocsCoordinatorIsWritten -- the three files exist and carry the
 //    load-bearing sentences: the status line, the owner, the date, the commit
@@ -39,9 +40,23 @@ package cli
 //  * TestDocsCoordinatorQuestionsAreNumberedAndOptioned -- Q1..Q16, contiguous,
 //    each with at least two options, a recommendation and the owner's recorded
 //    answer of 2026-10-19.
+//  * TestDocsCoordinatorMutationRecordIsCounted -- the mutation record's own
+//    count, checked against the list under it. The record is prose and cannot
+//    be run, so the one thing about it that can be checked is that it does not
+//    claim more mutations than it lists: each mutation is one bullet carrying
+//    one arrow, and the header states the total in digits for this test to read
+//    and compare. The count had drifted by two -- "twenty-six" over a list of
+//    twenty-four -- which is the same silent-overclaim the citation census
+//    exists to catch in the document.
 //
-// Mutation (verified, run and restored) -- twenty-six, one per way these
-// documents can rot, each planted and reverted:
+// Mutation (verified, run and restored) -- 24, one per way these documents can
+// rot, each planted and reverted. The count is a digit and not a word, and
+// there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
+// reads it and counts the list under it: one arrow per mutation, so a number
+// the list does not bear out fails the package like any other count that claims
+// more than it sees. Written as a word it drifted -- "twenty-six" over a list
+// of twenty-four -- and a word beside a digit would have let the two disagree
+// without either looking wrong.
 //
 //	TestDocsCoordinatorIsWritten
 //	  delete the README's status sentence -> fails, naming it;
@@ -718,5 +733,64 @@ func TestDocsCoordinatorQuestionsAreNumberedAndOptioned(t *testing.T) {
 	wantHeading := "## 3. The owner's answers (Q1–Q" + strconv.Itoa(len(bounds)) + ")"
 	if !strings.Contains(doc, wantHeading) {
 		t.Errorf("%s's questions section is headed %q while it carries %d questions: the heading and the count disagree", coordinatorReconciled, heading, len(bounds))
+	}
+}
+
+// TestDocsCoordinatorMutationRecordIsCounted reads this file rather than the
+// documents, and holds the mutation record to the list under it.
+//
+// The record is prose about work already done -- it cannot be run, and nothing
+// in it proves a mutation ever fired. The one thing about it that IS
+// mechanical is its own census: the header states how many mutations were
+// planted and reverted, and every one of them appears below as a bullet
+// carrying exactly one arrow. Counting the arrows is the same move the
+// citation check makes against the document, and it exists for the same
+// reason -- a check that claims more than it sees is the failure this whole
+// file is about. It caught one: the header read "twenty-six" over a list of
+// twenty-four, because two earlier bullets had been replaced by unrelated new
+// pins instead of kept.
+//
+// The count is a single digit ("-- 24,") so this test can read it without a
+// word-to-number table, and so there is nothing for a second copy of it to
+// disagree with: a word beside a digit would let the two drift apart with
+// neither looking wrong, which is the shape of the mistake here.
+func TestDocsCoordinatorMutationRecordIsCounted(t *testing.T) {
+	src, err := os.ReadFile("docs_coordinator_test.go")
+	if err != nil {
+		t.Fatalf("reading this test file to check its own mutation record: %v", err)
+	}
+	text := string(src)
+
+	const open = "// Mutation (verified, run and restored) -- "
+	start := strings.Index(text, open)
+	if start < 0 {
+		t.Fatalf("the mutation record's opening line (%q...) is gone: this test has nothing to check", open)
+	}
+	// The record runs from that line to the paragraph that disclaims its own
+	// numbers; the arrows outside it (the source's own operators, other
+	// comments) are not mutations and must not be counted.
+	const close = "// The numbers above are a reading"
+	end := strings.Index(text[start:], close)
+	if end < 0 {
+		t.Fatalf("the mutation record's closing paragraph (%q...) is gone, so the list it heads has no end this test can find", close)
+	}
+	record := text[start : start+end]
+
+	declaredRE := regexp.MustCompile(`^// Mutation \(verified, run and restored\) -- ([0-9]+),`)
+	m := declaredRE.FindStringSubmatch(record)
+	if m == nil {
+		t.Fatalf("the mutation record's opening line must state its count as a digit, in the form %q, so this test can read it", "Mutation (verified, run and restored) -- 24, ...")
+	}
+	declared, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("the mutation record's stated count %q is not a number: %v", m[1], err)
+	}
+
+	listed := strings.Count(record, "->")
+	if listed != declared {
+		t.Errorf("the mutation record claims %d mutations and lists %d: every mutation below is one bullet carrying one arrow, so the stated count and the list are the same census, and a stated count the list does not bear out is a check claiming more than it sees -- which is exactly how this number drifted from the list once already", declared, listed)
+	}
+	if declared == 0 {
+		t.Error("the mutation record claims no mutations at all: a record of zero planted mutations proves nothing about the checks above it")
 	}
 }
