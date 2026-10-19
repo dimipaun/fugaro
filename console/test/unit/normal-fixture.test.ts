@@ -171,9 +171,10 @@ const DIGEST_WITH_A_DIGIT_RUN = 'abcdef' + '123456789012' + 'ab'.repeat(23)
  * out of the arithmetic by coincidence". Inside a drawn token only the second
  * is possible -- nothing of the recording is in there, the token is a function
  * of the shift and of the invented document -- so the rule is not run over
- * them. It is still run over `removed.includes(raw)`: an invented token equal,
- * whole, to a removed value would be a coincidence worth failing on (it takes
- * an offset of exactly zero for a timestamp, which the draw cannot produce).
+ * them. It is still run over `removed.includes(raw)`: a drawn token equal,
+ * whole, to a removed value is still a failure. For a timestamp that is the
+ * offset zero, one of the 2R + 1 = 69,120,000,001 offsets the draw can produce,
+ * so it is a case the rule can keep.
  *
  * The coincidence is rare and it is what this file flaked on (CI run
  * 39231293918, `iteration 252`): the recording's `day` is a removed value as
@@ -395,15 +396,15 @@ describe('the normal fixture: nothing real is in it', () => {
   it('finds a removed value with a changed prefix, and a removed number', () => {
     expect(scan(line('PREFIX real-title-x'), ['real-title-x'])).toContain('a removed value')
     expect(scan(`{"at":"x","document":{"spent_usd":9.37,"x":1}}\n`, ['9.37'])).toContain('a removed number')
-    // The exemption from the removed-value rule is the SHAPE of a token the
-    // scrub draws, not the value in it: the recording's own day, standing where
-    // a day does not belong, is still a removed value. A version of the rule
-    // that mapped a derived token to the values inside it -- or the other way
-    // round, that dropped a removed value from the rule because the fixture
-    // carries it somewhere -- would pass the regression case below and fail
-    // here.
-    // (the verify line's name slot is the one the allow-list leaves open, so
-    // the removed day riding in it is refused by this rule and nothing else)
+    // The exemption from the removed-value rule is the SHAPE of the value the
+    // fixture carries, not which removed value it is: a removed day standing
+    // where a day does not belong is still a removed value. Exempting the
+    // removed value's own shape instead -- the shorter way to write the same
+    // fix, and the one that would let a recording's day ride out in any field
+    // -- passes the regression case below and fails here.
+    // The line is a verify line because its name slot is the one the allow-list
+    // leaves open (junit.go copies an ID verbatim): without the removed-value
+    // rule the line is clean, which the first expectation holds.
     const carried = line(`fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: ${RAW_DAY})`)
     expect(scan(carried), 'without the rule the line is clean').toEqual([])
     expect(scan(carried, [RAW_DAY])).toEqual(['a removed value'])
@@ -423,7 +424,8 @@ const RAW_KILL = '2026-10-19T01:00:00Z'
  * a nice number on purpose: it was found by walking seeds until the 300 draws
  * held both draws the walk is for -- a digest with twelve digits in it, and the
  * offset that puts the shifted kill.at back on the recording's day -- and 0xf0
- * is the first of them. A seed whose walk stops covering one of those fails the
+ * is one of them, with the crossing early (iteration 13) rather than at the
+ * end. A seed whose walk stops covering one of those fails the
  * walk's own two counts, so this cannot quietly become a walk of 300 draws that
  * test nothing. */
 const CLOCK_SEED = 0xf0

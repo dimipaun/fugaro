@@ -788,7 +788,12 @@ rather than copied (see the vocabularies below).
 `scrubDocument` takes the offset as an argument and, given none, draws a
 crypto-random one of up to ±400 days; the tool never passes one and never prints
 it. So the scrub is **not reproducible byte for byte between runs**, and that is
-the point: the fixture of PR #643 was shifted by `TIME_SHIFT_MS`, a constant in
+the point: `normalFixture` takes the offset as an optional argument too, so a
+test can hold the clock still and scan a scrub run that is the same on every
+machine — the tool never passes one, and the tests that hold the drawn clock's
+randomness use the scrub's own draw (`scrub-vocabulary.test.ts`: the offset is an
+integer inside the range; `normal-fixture.test.ts`: two unsaid draws differ).
+The fixture of PR #643 was shifted by `TIME_SHIFT_MS`, a constant in
 the file, and that constant added back to its `now` gave the real recording
 instant exactly. The committed fixture was re-scrubbed from its own structure
 under a drawn offset (`console: re-scrub the normal fixture…`), so the file on
@@ -910,7 +915,40 @@ line's name slot is open in the allow-list, because `junit.go` copies an ID
 verbatim, so this rule is the only guard against a number riding in it. The proof
 is a deterministic case (a 64-character digest with a twelve-digit run planted in
 it, plus runs of 12, 13 and 20 digits standing on their own) and a loop that
-scrubs and scans 300 drawings of the clock. Held by `test/unit/scrub-vocabulary.test.ts`: that
+scrubs and scans 300 drawings of the clock.
+
+**The removed-values rule is a substring rule, and it does not run over tokens
+the scrub drew.** The second flake of the same loop, and the one that failed on
+`main` (CI run 39231293918, `iteration 252`): the scan looks for each removed
+value as a substring of every string in the fixture, and a plain recording's
+`kill.at` sits an hour before its `now` — so an offset of between 22 and 23 hours
+(the shift is uniform over ±400 days, one offset in 19200) puts the shifted
+`kill.at` back on the recording's own date while the shifted `now` lands on the
+next one. The recording's `day` is a removed value as soon as the offset leaves
+it, so the rule read that day inside a timestamp that is a function of the
+offset, and the run failed: about one run in sixty of the 300 draws, which is
+exactly the shape of a flake nobody can reproduce. Inside a token the scrub draws
+— the shifted clock (`now`, `day`, `kill.at`, the header's `recorded` and `at`),
+the run IDs stamped from it, and the body's SHA-256 — nothing of the recording is
+present, so only coincidence can put a removed value there, and the rule is not
+run over them. It is still run over `removed.includes(raw)`, and the exemption is
+the shape of the value the *fixture carries*, never which removed value it is: a
+removed day riding in a verify line's name slot (the one slot the allow-list
+leaves open) is refused, and that case is held.
+
+**The draws are committed, so the loop is deterministic.** The 300 offsets no
+longer come from the scrub's own draw but from `CLOCK_SEED` in the test (a
+mulberry32 walk, written out there): a test that draws its own randomness passes
+on every machine but the unlucky one, which is what happened. The walk asserts
+what it is made of — that at least one of its 300 headers carries a digest with
+twelve digits in it, and that at least one of its offsets crosses the date — so a
+seed that stopped covering either flake fails the walk instead of passing
+quietly, and the crossing draw is a named regression case that fails when the
+rule is restored to the substring-only one (both mutations were run: restoring
+the rule fails the walk at `iteration 13` and the regression case; exempting the
+removed value's shape instead of the fixture's fails the name-slot case). The
+scrub's own draw is unchanged and still random — `scrub-vocabulary.test.ts` holds
+its range and `normal-fixture.test.ts` holds that two unsaid draws differ. Held by `test/unit/scrub-vocabulary.test.ts`: that
 the scrub accepts every stage, auth and mode the CLI writes and refuses what it
 does not — the stage list it loops over is `VOCAB.stage` itself, so this file
 keeps no second copy of it — that the connection `reason` the CLI wrote is kept
