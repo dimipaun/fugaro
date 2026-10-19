@@ -294,7 +294,12 @@ installation is its own Firebase project, and the app is multi-account** (D114: 
   FCM's `SENDER_ID_MISMATCH`/`UNREGISTERED` class of error). So a per-installation sender
   serves only that installation's devices, and **the app must hold one registration per
   installation it is signed into** — not one registration for the app. That is a real change to
-  §3.4's store: the node is per (device, installation) even though the *device* is one.
+  §3.4's store, and the unit it changes is the **child**, not the node: the node stays **one
+  per device** — `config/admin/push/$uid`, keyed by the uid D166 already pairs — and it is
+  `token/` **under it that multiplies**, one `token/<installation>/` per installation the phone
+  is signed into (the diagram in §3.4 is the one place the shape is written down; every other
+  section states the unit the same way, "the node is per device, its `token/` children are per
+  installation").
 - **iOS needs an APNs key in every installation's project.** For FCM's relay to reach an iOS
   device, that device's *Firebase project* must carry an APNs authentication key. An APNs
   `.p8` key is **team-wide**: it can send to every app of the Apple Developer team that
@@ -378,7 +383,10 @@ writes it but pairing.
 config/admin/devices/$uid/            # D166's node. WRITTEN AND DELETED ONLY by `fugaro pair`
   ...                                 #   / `fugaro pair revoke` (P6.6): mac key name, added at.
                                       #   Its existence IS the allowlist (userClaim, P6.4).
-config/admin/push/$uid/               # THIS design's node — a SIBLING, never a child
+config/admin/push/$uid/               # THIS design's node — a SIBLING, never a child.
+                                      #   ONE PER DEVICE, keyed by the paired uid: §3.3's
+                                      #   multi-installation change multiplies the CHILDREN
+                                      #   under it, never the node (§3.5's unit sentence)
   token/<installation>/               #   the provider registration token, per installation
                                       #   (§3.3: FCM addresses one project per token)
   platform                            #   "ios" | "android"
@@ -413,11 +421,15 @@ There are two deletion paths, and they are not alternatives:
   (D166's deletion, which is what stops the reads) **and** the sibling
   `config/admin/push/$uid`. That is what makes the *data's* lifetime bounded by the pairing
   rather than by a timer (§7, Q10(i)): revoke is the one act, and it takes the token, the
-  platform, the prefs, the quiet-hours zone and the sender's `ledger` (§3.6) with it. The pairing command is **one of the
-  writers** of the push node — it writes it at pairing (§3.5 (a)) — and it is the same admin
-  act that removes it; the writers table below states the whole set, because "the pairing
-  command is the only writer" was the first draft's claim and it is false: Q3's recommended
-  re-registration principal and §3.8's preferences writer write the push node too.
+  platform, the prefs, the quiet-hours zone and the sender's `ledger` (§3.6) with it. **The
+  pairing command writes the DEVICE node only, and it writes the push node not at all** —
+  D165's pairing flow has nothing that could carry a registration token (§3.5 (a), read off
+  `rules.json.tmpl`), so the push node's first write is Q3's registration principal's, after
+  pairing. Revoke is the same admin act that removes both nodes; the writers table below
+  states the whole set, because "the pairing command is the only writer of the push node" was
+  the first draft's claim and it is false twice over: pairing is not a writer of it at all,
+  and §3.5 (b)'s registration principal — which is also §3.8's preferences writer — and the
+  sender are.
 - **The sender reaps an orphaned `push/$uid` on its next sweep** — a push node whose
   `devices/$uid` is gone. This is the **net, not the mechanism**: it covers a revoke written by
   a principal that removed only the device node, **a re-registration the consumer had in flight
@@ -433,19 +445,21 @@ There are two deletion paths, and they are not alternatives:
   one owned the deletion, which is the ambiguity this paragraph closes.
 
 **Who writes which node, in one table, so no section has to be read for it.** The design names
-three writers besides pairing — §3.5's re-registration principal (Q3's recommendation (b)), §3.8's
-preferences writer (which is (b) again), and the sender (§3.6) — and they all write the
-**sibling**. The device node has exactly one pair of writers, and they are the same command — and
-**pairing writes both nodes in one act** (§3.5 (a)): the device node as the admission the rules
-consult, the push node as the home of the registration it just took. So neither of pairing's two
-rows may forbid the other's write, and neither does:
+**two** writers of the push node — §3.5's registration principal (Q3's recommendation (b)),
+which is §3.8's preferences writer too, and §3.6's sender, whose only write to either node is
+its own `ledger` — and they both write the **sibling**. The device node has exactly one pair of
+writers, and they are the same command in its two modes. **Pairing and revoke are the only
+writers of `devices/**`, and pairing writes nothing under `push/**` at all**: D165's pairing
+session carries no registration token, so there is none for it to write (§3.5 (a)). So no
+`devices/**` row may claim a `push/**` write, and no `push/**` row may claim a `devices/**`
+one, and none does. **The node is one per device; only its `token/<installation>/` children
+multiply (§3.3).**
 
 | node | writer | what it writes | what it must never do |
 | --- | --- | --- | --- |
-| `config/admin/devices/$uid` | **`fugaro pair`** (D165/P6.6) | creates the node, with the pairing's own fields | never re-creates a node `pair revoke` deleted (only a fresh, typed-code pairing does); its `push/**` write is **row 3's, in this same act** — pairing makes no other `push/**` write, and no later one |
-| `config/admin/devices/$uid` | **`fugaro pair revoke`** (D166/P6.6) | **deletes** the node — the one revocation act | never writes anything before deleting |
-| `config/admin/push/$uid` (token, platform, updated_at) | **`fugaro pair`** | the registration the pairing session itself has (§3.5 (a)) | writes `devices/$uid` **only in row 1's same act** — never a push node for a device it did not just pair, and never a *re*-registration (that is the next row's) |
-| `config/admin/push/$uid` (token, platform, updated_at) | **the registration principal** — §3.5 (b), Q3's recommendation: the principal that applies the app's mailbox re-registration message, holding `roles/firebasedatabase.admin` (the consumer beside the orchestrator where the operator holds the role) | the token and platform from that message — **including a create**, when revoke has already deleted the node (§3.5 (b): that write after a revoke is the orphan §3.4 reaps) | never writes a MAC-less or unvalidated token, and **never writes `devices/**`** — because the admission is pairing's alone, whatever this principal writes leaves a device un-admitted |
+| `config/admin/devices/$uid` | **`fugaro pair`** (D165/P6.6) | creates the node, with the pairing's own fields | never re-creates a node `pair revoke` deleted (only a fresh, typed-code pairing does); **never writes `push/**`** — it has no registration token to write (§3.5 (a)), so the rows below are the push node's whole set |
+| `config/admin/devices/$uid` | **`fugaro pair revoke`** (D166/P6.6) | **deletes** the node — the one revocation act — **and the sibling `push/$uid` with it** (next-to-last row) | never writes anything before deleting |
+| `config/admin/push/$uid` (token, platform, updated_at) — one node per device; `token/<installation>/` per installation | **the registration principal** — §3.5 (b), Q3's recommendation, and the **only** registration path: the principal that applies the app's mailbox registration message, holding `roles/firebasedatabase.admin` (the consumer beside the orchestrator where the operator holds the role) | the token and platform from that message — **including a create**, since it is the node's first write: pairing does not make one, and after a revoke this recreates the node revoke deleted (§3.5 (b): that write after a revoke is the orphan §3.4 reaps) | never writes a MAC-less or unvalidated token, and **never writes `devices/**`** — because the admission is pairing's alone, whatever this principal writes leaves a device un-admitted |
 | `config/admin/push/$uid/prefs` | **the same registration principal** (§3.8: the controls are written the same way, through the mailbox and (b)) | the per-category switches and the quiet-hours zone name and window | never writes a switch the app did not ask for, and never `devices/**` |
 | `config/admin/push/$uid/ledger` | **the sender** (§3.6, §3.7) — its **only** write to either node | the dedupe key of an event it has sent, the cap window's timestamps, and the pending intent it will retry (§6) | never writes a token, a platform or a pref, never writes **content** (§3.6: a device, a category, a timestamp, a state-change key), never `devices/**`, and never **creates** a node whose `devices/$uid` is absent |
 | `config/admin/push/$uid` | **the sender** (§3.6) | **deletes** a stale token entry, and deletes the whole node when it is empty or orphaned | never writes a marker, never writes a token, never **creates** a node (§3.4 "reaping deletes; it never marks") |
@@ -454,9 +468,10 @@ rows may forbid the other's write, and neither does:
 
 **Read off the table, the three sentences every section has to agree with:** *the device node is
 written by `fugaro pair` and deleted by `fugaro pair revoke`, and by nothing else*; *the push node
-is written by pairing, the registration principal, the preferences writer and the sender's ledger,
-and deleted by revoke and by the sender's reaping*; *no client, run account or app writes either*.
-§3.5 (a)/(b), §3.6, §3.7, §3.8 and §6 each state their own row of it.
+is written by the registration principal — the token, the platform, `updated_at` and, per §3.8,
+the prefs — and by the sender's ledger, **never by pairing**, and deleted by revoke and by the
+sender's reaping*; *no client, run account or app writes either*. §3.5 (a)/(b), §3.6, §3.7, §3.8
+and §6 each state their own row of it.
 
 **Why the table lets the registration principal create the push node, decided from
 `rules.json.tmpl` rather than from taste.** The template says exactly one thing about
@@ -465,8 +480,9 @@ and deleted by revoke and by the sender's reaping*; *no client, run account or a
 IAM principal. The registration principal is one: it holds `roles/firebasedatabase.admin`
 (§3.5 (b)), and **database admin bypasses the rules**, so no rule can couple `push/$uid` to
 `devices/$uid` on the write side. A row forbidding that create would be describing an
-enforcement the rules do not have, and §3.5 (b) relies on the write's landing after a revoke —
-which is the orphan §3.4 reaps. **What makes the sibling safe is therefore not what the rules
+enforcement the rules do not have — and it would forbid the node's **first** write too, since
+pairing makes none (§3.5 (a)): a push node could then never exist at all. §3.5 (b) also relies
+on the write's landing after a revoke — which is the orphan §3.4 reaps. **What makes the sibling safe is therefore not what the rules
 do about the write, but what happens on the read and afterwards**: the sender sends only when
 **both** nodes exist (rule 2), no client can read either node, and the reaper deletes an orphan —
 so a `push/$uid` created after the device node is gone is **inert**, and it can never re-admit a
@@ -504,8 +520,9 @@ same thing now.
 - **The honest sentence:** a push token is readable by every launcher and operator of the
   installation, and by the sender. **It is not a credential** — holding it lets a principal
   send to that device only if it also holds the FCM send credential (§3.6) — and §3.3's
-  multi-installation change makes the *node* per (device, installation) even though the device
-  is one.
+  multi-installation change leaves the *node* one per device (§3.5's unit sentence): it is the
+  `token/<installation>/` children that are per installation, and one launcher reading the node
+  reads all of them at once.
 
 **The generation.** Both nodes land in **rules generation 3, and that generation is in the
 tree**: `origin/main` at `371038f` (read 2026-10-19) carries
@@ -517,7 +534,10 @@ USER now requires (D166), and the two pairing nodes of D165*"; and `userClaim` i
 **#601 (`fugaro/20261018-151654-3ddb`, head `14e5ff4` when this document first read it) has
 merged as that generation**, so the file names above are read from the tree and not from a
 branch. **A push store does not need a generation of its own**: it is a sibling inside
-`config/admin`, whose rules that generation already rewrote.
+`config/admin`, whose rules that generation already rewrote. **The one part of the design that
+does need a later generation is the registration message's field, not the store** — §3.5 (b)
+asks for a bounded registration kind, because the mailbox node refuses every field it does not
+name — and the plan's P5.2 dependency row records that prerequisite beside P6.4 and P6.6.
 
 ### 3.5 Rotation and revocation
 
@@ -535,22 +555,74 @@ reap can recreate the node the rules consult — an orphaned `push/$uid` is iner
 deleted, never resurrected into an admission. This is the design's strongest property, and it
 survives only in the sibling shape.
 
+**The unit, stated once so no section states it differently: the node is per DEVICE, its
+children are per INSTALLATION.** `config/admin/push/$uid` is one node, keyed by the uid D166
+pairs; §3.3's multi-installation requirement multiplies `token/<installation>/` **under** it —
+one child per installation the phone is signed into — and touches neither the node's key nor
+its existence. (§3.3 states the requirement, §3.4's diagram draws the shape, the writers table
+and Q2 name the node; this is the sentence they all agree with.)
+
 **Rotation is the harder half, and it is an open question rather than a solved one (Q3).** Push
 tokens rotate: FCM and APNs issue new registration tokens on reinstall, on restore, on
 app-data clear, and occasionally otherwise, and FCM reports a stale token back as
 `UNREGISTERED`. Three shapes are available:
 
-- **(a) Register at pairing, and let the sender reap stale tokens.** The CLI writes
-  `config/admin/push/$uid` during D165/P6.6's pairing (an admin act,
-  `roles/firebasedatabase.admin`), and the sender **deletes** a token FCM reports
-  `UNREGISTERED` — the token child, or the whole push node (§3.4: reaping never writes a
-  marker) — leaving the device unregistered until the next pairing. Simple, needs no new write
-  grant — and **stale for exactly the case that matters** (a user who reinstalls and never
-  re-pairs gets no pushes).
-- **(b) Re-registration over the authenticated mailbox.** The app, on next open, writes its
-  current token as an ordinary mailbox message; a principal holding `roles/firebasedatabase.admin`
-  applies it to `config/admin/push/$uid`. No new grant to the app, no new write path for the
-  phone, and it reuses the mailbox the design already trusts. **The premise is conditional and
+- **(a) Register at pairing, and let the sender reap stale tokens — the registration half is
+  withdrawn, the reaping half is not.** **D165/P6.6's pairing flow cannot carry the phone's
+  registration token to the CLI, and that is a fact about the deployed rules, not a
+  preference.** Read off `rules.json.tmpl` (generation 3, merged as #601), the pairing subtree
+  admits exactly this and nothing more: `pairing/$uid/request` is
+  `".read": false, ".write": "PAIRING && newData.exists() && !data.exists()", ".validate":
+  "newData.hasChildren(['key', 'at'])"` with `key` a public key and `at` a timestamp, a
+  `"$other": { ".validate": false }` catch-all **refusing every other field**, and
+  `pairing/$uid/delivery` is `".read": "PAIRING", ".write": false` — the CLI writes it, the
+  phone reads it. So the session's one client write carries the phone's **public key** and
+  nothing else: `internal/budget/rules/emulator_pairing_test.go` proves it, asserting that a
+  request carrying a token is **denied** ("a request carrying a field the node does not have"),
+  and that file's own comment says the request "carries no secret — the key is public by
+  construction, and the token and the MAC key come back encrypted to it", where **that** token
+  is D165's `m~` custom token, not an FCM registration token (§2 keeps the two senses apart).
+  Nothing in D165's flow — QR, typed code, delivery — ever sees the phone's registration token,
+  so `fugaro pair` has nothing to write as a registration and **does not write the push node**
+  (§3.4's table). *(Making the request node admit a bounded `token` field would be a rules
+  change — generation 4 — and the design does not ask for it: it would buy shape (a)'s
+  one-shot registration, which is stale for exactly the case that matters, at the price of a
+  change to the one node whose "carries no secret" property D165's one-shotness rests on. The
+  other reading, "the phone writes the token itself after pairing", is (c) below, and is
+  rejected.)* **What survives from (a) is its second half, and it is not optional in any
+  shape:** the sender **deletes** a token FCM reports `UNREGISTERED` — the token child, or the
+  whole push node (§3.4: reaping never writes a marker) — leaving the device unregistered until
+  the app registers again. That reaping is the net, not a registration path.
+- **(b) Registration over the authenticated mailbox — the only shape that can carry the token,
+  and therefore the design's only registration path.** The app, on next open — which includes
+  the first open after pairing — writes its current token into the account's inbox; a
+  principal holding `roles/firebasedatabase.admin`
+  applies it to `config/admin/push/$uid`, creating that node on the first such message. No new
+  grant to the app, no new write path for the phone, and it reuses the mailbox the design
+  already trusts. **It is not a choice between equals: (a)'s registration cannot be built at
+  all, so the push node's existence depends on this message** — which is why §3.4's table gives
+  this principal the create and why the plan's P5.2 records the consumer as a prerequisite.
+  **But read the message node before promising that this costs nothing, because the mailbox is
+  as closed as the pairing node was.** `mailbox/$mb/inbox/$msg` in `rules.json.tmpl` names
+  exactly `id`, `sender`, `text`, `at`, `mac`, `agent`, `kind`, `options`, `reply_to` and
+  `action`, ends in `"$other": { ".validate": false }`, and the schema agrees from the other
+  side: `shared/mailbox-schema/index.js`'s `FIELDS` is the same closed list, validated as
+  "any other field is refused", so a message carrying a `token` field is refused **by the
+  rules and by the validator** — `internal/budget/rules/emulator_mailbox_test.go` proves the
+  rules' half ("a message carrying the unknown field `acked`", and `expires_at` beside it).
+  **So today the only field that can carry a registration token is `text`** (≤ `MaxText =
+  4096`, rules.go), and the design **does not recommend** that: `text` is the mailbox's
+  human-and-agent channel, and a consumer that decides "this message is a registration" by
+  pattern-matching free text is one a launcher- or user-authored message can imitate. **The
+  design's recommendation is a bounded field instead — a registration kind with a required
+  `token` — and that is a change to `shared/mailbox-schema/index.js` (the kind vocabulary and
+  the (kind, field) table) and to `rules.json.tmpl` (the `kind` enumeration and the new child),
+  i.e. a later rules generation and its own task; the plan's P5.2 dependency row records it.**
+  *(The mailbox schema's own comment says why the change is a version change and not a
+  formality: "the field set IS the version", and a message from a future protocol carrying an
+  extra field "is refused by the rules **and** here rather than silently accepted". This
+  design asks for exactly that deliberate change, rather than smuggling a token through
+  `text`.)* **The premise is conditional and
   this document states it as such rather than as a fact:** §3.4 records that, per
   `deploy/terraform/gcp/modules/firebase/iam.tf`, `roles/firebasedatabase.admin` is held by
   **`admins` and `budget_admins` only** — the very reason reconciliation G13 and D166 call
@@ -562,9 +634,10 @@ app-data clear, and occasionally otherwise, and FCM reports a stale token back a
   before the revoke and the consumer processes after it **creates** `push/$uid` — the node
   revoke deleted, and §3.4's table records that this principal may create it, because it writes
   with `roles/firebasedatabase.admin` and the rules deny only clients — a node the rules do not
-  read and the sender does not send to while `devices/$uid` is gone. (a)'s reaping is the
-  fallback, and that orphan is exactly what it is for; Q3 asks the owner to choose between them,
-  naming the role each depends on.
+  read and the sender does not send to while `devices/$uid` is gone. (a)'s surviving reaping is
+  the net, and that orphan is exactly what it is for; **Q3 therefore asks the owner one
+  question, not two — whether the operator holds the role this path needs — because the other
+  registration path does not exist**.
 - **(c) Let the app write its own push node.** A rules grant for the phone to write
   `config/admin/push/$uid/**` under the `MAILBOX` identity. Cheapest for the user and **the
   one shape this design rejects**: it reopens `config/admin` to a client write, which D166
@@ -573,7 +646,8 @@ app-data clear, and occasionally otherwise, and FCM reports a stale token back a
   rejected as a child of `devices/$uid`; the sibling node makes it less fatal but no less
   rejected.)*
 
-**Recommendation: (b), with (a)'s reaping as the safety net.** Q3 asks the owner.
+**Recommendation: (b) — the only registration path there is, with the bounded registration
+field it needs — and (a)'s reaping as the safety net.** Q3 asks the owner.
 
 ### 3.6 What writes a push
 
@@ -1348,27 +1422,48 @@ D160–D179 are not this document's to take.
 - ***Recommendation: (i), the sibling `config/admin/push/$uid`.*** *Why:* D166 already solved
   revocation through the device node's **existence**, and that property is only safe if
   nothing else ever writes under `devices/**`. The consequence is that **push cannot ship
-  before P6.4** and the generation stays 3.
+  before P6.4**; **the store needs no generation of its own** (the sibling rides generation 3,
+  and pairing writes nothing into it). The **registration message** is the one part that does
+  need a later change — a bounded field Q3 (b) asks for — and generation 4 is that change's,
+  not the store's.
 
 **Q3. How does the push token rotate and the user's switches get written, given the app cannot
 write `config/admin`?**
-- *(a) register at pairing; reap `UNREGISTERED`*: no new grant, but a reinstalled-and-not-
-  re-paired device goes silent.
-- *(b) re-register over the authenticated mailbox, and a principal holding
-  `roles/firebasedatabase.admin` writes **`config/admin/push/$uid`** from it*: **recommended** — the mailbox is the
+- *(a) register at pairing; reap `UNREGISTERED`*: **its registration half cannot be built** —
+  D165's pairing-request node admits only the phone's public key and its timestamp, and refuses
+  every other field (`rules.json.tmpl`, generation 3; `internal/budget/rules/emulator_pairing_test.go`
+  asserts the refusal), so no pairing session ever carries a registration token (§3.5 (a)).
+  A rules change adding a bounded field to that node would buy nothing (b) does not already
+  give, and the design does not ask for one. **Its reaping half is kept in every shape.**
+- *(b) register over the authenticated mailbox, and a principal holding
+  `roles/firebasedatabase.admin` writes **`config/admin/push/$uid`** from it*: **recommended,
+  and the only registration path** — the mailbox is the
   app's only write path, it reuses the MAC-authenticated channel (D169), and it puts the write
-  on a principal that already exists. **State the dependency, do not assume it:** per §3.4 and
+  on a principal that already exists. **And it needs one thing this document does not
+  pretend it already has:** the inbox message node names its fields and refuses every other
+  one (`"$other": { ".validate": false }` in `rules.json.tmpl`, `FIELDS` in
+  `shared/mailbox-schema/index.js`), so a registration token has no field to travel in today.
+  A bounded **registration kind with a required `token`** is the recommendation, and it is a
+  **rules-generation change and a schema change** — a later task, recorded in the plan's P5.2
+  dependency row. The alternative, the token as a mailbox message's `text`, needs no change
+  and is what §3.5 (b) recommends against (free text is not a discriminator).
+  **State the dependency, do not assume it:** per §3.4 and
   `deploy/terraform/gcp/modules/firebase/iam.tf`, that role is held by **`admins` and
   `budget_admins` only** — which is why G13 and D166 call pairing an admin act. So (b) is
   free where the operator holds the role (the consumer beside the orchestrator writes it), and
   **where the operator does not, it is an admin act like pairing** — the same role, the same
   person, and no discount for the app's convenience. The design does not claim otherwise.
-- *(c) a rules grant letting the phone write its own push child*: **rejected** — it reopens
+  **And it is where the push node comes from**: pairing does not create it, so the first
+  registration message does.
+- *(c) the phone writes its own push node after pairing — a rules grant for
+  `config/admin/push/$uid/**`*: **rejected** — it reopens
   `config/admin` to a client write, which D166 deliberately closed. (§3.5 (c) and §3.8 keep
   the same shape: **every** write of push data goes through (b) onto the sibling
   `config/admin/push/$uid`, and **none** touches `devices/**`.)
-- ***Recommendation: (b), with (a)'s reaping as a net.*** This also answers §3.8's switches:
-  they are written the same way.
+- ***Recommendation: (b) — the only registration path — with (a)'s reaping as a net.*** This
+  also answers §3.8's switches: they are written the same way. **The owner's question is
+  therefore not "which shape" but "does the operator hold `roles/firebasedatabase.admin`"**:
+  where they do, registration is free; where they do not, it is an admin act like pairing.
 
 **Q4. The categories — D160's set, or D160's set plus the two the phone cannot see — and the
 storm cap.**

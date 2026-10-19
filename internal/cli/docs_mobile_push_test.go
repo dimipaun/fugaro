@@ -572,9 +572,12 @@ func TestDocsMobilePushHasOneWritersTable(t *testing.T) {
 		// where the two readings are reconciled); what may never happen is a
 		// write into `devices/**`, the family whose existence is the admission.
 		"never writes `devices/**`",
-		// §3.5 (a)'s prose: pairing registers the token, so it is one of the
-		// push node's writers and not only the device node's.
-		"pairing writes both nodes in one act",
+		// §3.5 (a)'s prose, read off `rules.json.tmpl`: the pairing session has
+		// no registration token to write, so pairing is NOT one of the push
+		// node's writers — and the table says so instead of leaving the row's
+		// absence to be inferred.
+		"pairing writes nothing under `push/**` at all",
+		"the rows below are the push node's whole set",
 	} {
 		if !strings.Contains(normSpace(doc), normSpace(want)) {
 			t.Errorf("%s lacks %q: the writers table must name every writer and the rule each one obeys", docPath, want)
@@ -583,13 +586,17 @@ func TestDocsMobilePushHasOneWritersTable(t *testing.T) {
 
 	// The section calls this table its single source of truth, so its own rows
 	// are held against each other and against §3.5 (a) -- not only against a
-	// remembered list of phrases. This is the failure the table shipped with:
-	// the `config/admin/devices/$uid` row had `fugaro pair` "never touches
-	// `push/**`" three lines above the `config/admin/push/$uid` row where that
-	// same command writes the push node, and the push row had pair "never
+	// remembered list of phrases. The table shipped with this failure once
+	// already: the `config/admin/devices/$uid` row had `fugaro pair` "never
+	// touches `push/**`" three lines above a `config/admin/push/$uid` row where
+	// that same command wrote the push node, and the push row had pair "never
 	// writes `devices/**`" directly below the device row where pair creates it.
-	// A pair row may scope its prohibition to what the act does NOT do; it may
-	// not deny the write that act makes.
+	// The fix round after that one removed the impossible push row instead, on
+	// the rules' own evidence: D165's pairing request node admits only the
+	// phone's public key and its timestamp, so pairing has no registration token
+	// to write. Pairing therefore now has exactly ONE row, and that row has to
+	// say it makes no `push/**` write -- a row that claims one, or that leaves
+	// the absence unsaid, is the same defect read the other way.
 	rows := writersTableRows(t, doc)
 	if len(rows) == 0 {
 		t.Fatalf("%s's writers table has no rows for this guard to check", docPath)
@@ -600,14 +607,15 @@ func TestDocsMobilePushHasOneWritersTable(t *testing.T) {
 			continue
 		}
 		pairRows++
-		for _, bad := range []string{"never touches `push/**`", "never writes `devices/**`"} {
-			if strings.Contains(r.never, bad) {
-				t.Errorf("%s's %q writers-table row forbids %q, but §3.5 (a) has pairing write both nodes in one act and the table's own rows say so: %q", docPath, r.writer, bad, r.node)
-			}
+		if strings.Contains(r.writes, "push/") {
+			t.Errorf("%s's %q writers-table row claims a `push/**` write (%q), but §3.5 (a) says D165's pairing flow cannot carry a registration token, so pairing writes no push node", docPath, r.writer, r.writes)
+		}
+		if !strings.Contains(r.never, "never writes `push/**`") {
+			t.Errorf("%s's %q writers-table row does not say it makes no `push/**` write — the device node's row is the one place a reader looks for what pairing does and does not write (§3.5 (a)) — its \"never\" cell reads %q", docPath, r.writer, r.never)
 		}
 	}
-	if pairRows != 2 {
-		t.Errorf("%s's writers table has %d `fugaro pair` rows (the device node's and the push node's), want 2", docPath, pairRows)
+	if pairRows != 1 {
+		t.Errorf("%s's writers table has %d `fugaro pair` rows, want 1: pairing writes the device node only, and the push node's rows belong to the registration principal, the preferences writer and the sender (§3.5 (a))", docPath, pairRows)
 	}
 }
 
@@ -686,6 +694,118 @@ func TestDocsMobilePushRegistrationRowAgreesWithTheProse(t *testing.T) {
 		if !strings.Contains(flat, normSpace(want)) {
 			t.Errorf("%s lacks %q: the writers table, §3.5 (b) and the reaping paragraph have to give one account of who may create the push node", docPath, want)
 		}
+	}
+}
+
+// TestDocsMobilePushRegistrationTokenHasACarrier: the writers table, §3.4's
+// deletion paragraph and §3.5 (a) all said `fugaro pair` writes
+// `config/admin/push/$uid` with "the registration the pairing session itself
+// has" — a write nothing in D165/P6.6's pairing flow can make, because no step
+// of that flow ever sees the phone's FCM registration token. What the session's
+// one client write may carry is a fact about the deployed rules and not a matter
+// of taste, so this guard pins the design to it: the request node's admitted
+// shape, the emulator test that refuses every other field, the mailbox as the
+// only carrier left, and the bounded field that carrier needs before it can be
+// built at all.
+//
+// Mutation (verified, run and restored): putting the push-node row back for
+// `fugaro pair` in the writers table, re-writing §3.5 (a) as "the CLI writes
+// `config/admin/push/$uid` during pairing", or dropping the request node's
+// admitted shape from §3.5 (a): this test fails, each way.
+func TestDocsMobilePushRegistrationTokenHasACarrier(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	const planPath = "docs/mobile/implementation-plan.md"
+	doc := readDoc(t, docPath)
+	plan := readDoc(t, planPath)
+	flat := normSpace(doc)
+
+	// The claim that started this: pairing registers the token it took. It is
+	// gone, in every phrasing it had.
+	for _, stale := range []string{
+		"the registration the pairing session itself has",
+		"pairing writes both nodes",
+		"**one of the writers** of the push node",
+		"it writes it at pairing",
+		"The CLI writes `config/admin/push/$uid` during D165/P6.6's pairing",
+	} {
+		if strings.Contains(flat, normSpace(stale)) {
+			t.Errorf("%s still says %q, but D165's pairing flow cannot carry a phone's registration token: the request node admits only the phone's public key and its timestamp (§3.5 (a))", docPath, stale)
+		}
+	}
+
+	for _, want := range []string{
+		// What the request node admits, quoted from the template rather than
+		// remembered: `key`, `at`, and a catch-all that refuses the rest.
+		`newData.hasChildren(['key', 'at'])`,
+		`"$other": { ".validate": false }`,
+		// The emulator test that refuses a request carrying anything else, and
+		// the one line of it that says so.
+		"internal/budget/rules/emulator_pairing_test.go",
+		"a request carrying a field the node does not have",
+		// The consequence for the pairing command, stated where §3.4 and the
+		// writers table can be read against it.
+		"has nothing to write as a registration and **does not write the push node**",
+		// The mailbox is the carrier left, and the message node is closed too —
+		// named field by field, with the test that proves the rules' half.
+		"the only field that can carry a registration token is `text`",
+		"a message carrying the unknown field",
+		// ...and the bounded field the design asks for instead, with the plan
+		// recording it as a prerequisite.
+		"The design's recommendation is a bounded field instead — a registration kind with a required `token`",
+		"the plan's P5.2 dependency row records it",
+		// The reason the design does not simply add the field to the pairing
+		// request instead: a rules change that buys shape (a) alone.
+		"Making the request node admit a bounded `token` field would be a rules change",
+	} {
+		if !strings.Contains(flat, normSpace(want)) {
+			t.Errorf("%s lacks %q: a registration token with no flow that can carry it is the defect this guard exists for", docPath, want)
+		}
+	}
+
+	// The prerequisite has to be in the plan, in both places a reader looks.
+	for _, want := range []string{"a mailbox-schema and rules change", "**P6.7**"} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s does not record %q among P5.2's prerequisites: the design's only registration path needs a field the mailbox does not have and a consumer to apply it", planPath, want)
+		}
+	}
+}
+
+// TestDocsMobilePushStatesTheNodeUnitOnce: §3.3 said "the node is per (device,
+// installation)" and §3.4 repeated it, while §3.4's own diagram (one
+// `config/admin/push/$uid`, with `token/<installation>/` children) and its
+// writers table said the opposite — the node is per device and the CHILDREN
+// multiply. Two statements of one unit cannot both stand, so the unit is stated
+// once (§3.5) and every other place has to say the same thing.
+//
+// Mutation (verified, run and restored): re-writing either occurrence as "the
+// node is per (device, installation)", or dropping §3.5's unit sentence: this
+// test fails, each way.
+func TestDocsMobilePushStatesTheNodeUnitOnce(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	doc := readDoc(t, docPath)
+	flat := normSpace(doc)
+
+	if strings.Contains(flat, "per (device, installation)") {
+		t.Errorf("%s still calls the node per (device, installation), contradicting its own diagram and writers table: the node is per device and its `token/<installation>/` children are per installation (§3.3, §3.5)", docPath)
+	}
+	for _, want := range []string{
+		// §3.5, the one place the unit is stated.
+		"the node is per DEVICE, its children are per INSTALLATION",
+		// §3.3, where the requirement is derived.
+		"the node stays **one per device**",
+		"the node is per device, its `token/` children are per installation",
+		// §3.4's diagram and its table intro.
+		"ONE PER DEVICE, keyed by the paired uid",
+		"**The node is one per device; only its `token/<installation>/` children multiply (§3.3).**",
+		// §3.4's "who can read" paragraph, the sentence that had it wrong.
+		"leaves the *node* one per device (§3.5's unit sentence)",
+	} {
+		if !strings.Contains(flat, normSpace(want)) {
+			t.Errorf("%s lacks %q: the node's unit has to be stated once and agreed with everywhere else", docPath, want)
+		}
+	}
+	if got := strings.Count(flat, "(§3.5's unit sentence)"); got < 2 {
+		t.Errorf("%s cites §3.5's unit sentence %d times, want at least 2 (the diagram and §3.4's read paragraph): a section that states the unit itself is a section that can disagree with it", docPath, got)
 	}
 }
 
