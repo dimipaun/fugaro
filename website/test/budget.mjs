@@ -15,23 +15,24 @@
 // figures arrived by: `main`'s site, which ships the one script (P6's copy control, P3's
 // menu, W3.2's consent gate and analytics bootstrap in that same file, and the menu's
 // hover-open on a pointer that hovers — the owner's brief of 2026-10-18, item 1 — with the
-// corrections of that day and the next to it, named in the first bullet below), with this
-// branch's redesigned pages on top of it (the homepage's order and run animation, P4, P7 and
-// P8) — plus 25 %, which is D192's rule and the rule the README's loose figures are three
-// times. **The figures below are that build's as this branch ships it**, measured once more
-// over the artifact the fix round after the merge produces: the chat moved above the diagram,
-// its turns are drawn as alternating bubbles, three of the flow's four cyan card edges became
-// the site's separator, and the footer's link label is the repository's name rather than its
-// URL. Each of those moved bytes, and each was re-derived here in the commit that moved it —
-// the count below is read off the gates' own build of the site, which is the artifact the
+// corrections of that day and the next to it, named in the first bullet below), `main`'s
+// `fugaro watch` picture on the homepage (#655), and this branch's redesigned pages on top of
+// them (the homepage's order and run animation, P4, P7 and P8) together with its two changes
+// from the owner's brief of **2026-10-19**: the menu's drawer replaced by the three group
+// labels in the header's row (item 1), and the console's link in the homepage's call to
+// action (item 6), which renders nothing while its flag is off and so is no bytes of this
+// build at all — plus 25 %, which is D192's rule and the rule the README's loose figures are
+// three times.
+//
+// The count below is read off **the gates' own build of the site**, which is the artifact the
 // derivation case at the end of this file measures (see "the build the README's figures are a
 // derivation OF"), rather than carried from the merge. **That artifact is a copy of the
 // repository in a temp directory rather than the checkout's `dist/`**, and the reason is the
 // 1,515 bytes the site's own build moves with the checkout's git state: the changelog renders
 // each release file's "not yet released" state where `git tag --list` finds no tag
 // (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
-// deployed site's — builds 979,298 bytes where this repository's own clone, which carries the
-// tags, builds 977,783.
+// deployed site's — builds 976,349 bytes where this repository's own clone, which carries the
+// tags, builds 974,834.
 //
 //   - JavaScript per page: 49,860 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
@@ -56,7 +57,7 @@
 //     hover query no and still has a second level Tab can enter; and the guard that keeps a close
 //     from reopening the group it handed the focus back to lasts for that focus and no longer.
 //     Every page
-//     loads the script exactly once, so the file's own size IS the whole of a page's
+//     loads the script exactly once — so the file's own size IS the whole of a page's
 //     JavaScript — which is why the case below reads the artifact rather than trusting this
 //     line, and why D192 requires the README's figure to be re-derived in the same commit that
 //     changes the script.
@@ -66,62 +67,43 @@
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,224,123 bytes. Every file in `dist/` on that build summed to 979,298
+//   - Whole site: 1,220,437 bytes. Every file in `dist/` on that build summed to 976,349
 //     bytes (23 files: eleven pages, the script, the brand icons, the manifest and the two
-//     `fugaro watch` assets below);
-//     × 1.25, rounded up. **It is the build with no tags** — the one the gates make, and the
-//     one the deployed site is — and the changelog page's own "not yet released" labels are
-//     1,515 bytes of it; a full clone, whose checkout carries the release tags, builds the same
-//     site 1,515 bytes smaller. The last fix round re-derived it 54 bytes under the merge's: the
-//     install section's own top padding came off, because the flow above it carries the gap
-//     between them, and that is a shorter `padding` in the stylesheet — the homepage's own CSS
-//     is inlined in its page, so the page that carries it and the site figure move together.
-//     The page weight did not move with it: the heaviest page is the docs hub, which renders
-//     neither the flow nor the install section.
-//     **The round after that moved both figures up**, by the two declarations that make a
-//     command wrap — `white-space: pre-wrap; overflow-wrap: anywhere`, moved from the
-//     homepage's own `.home-install-command` onto `base.css`'s `.command-block > pre` because
-//     the copy control now shares the command's row and every command on the site gives up the
-//     control's width. The base stylesheet is inlined into every page, so ten of the eleven
-//     grew by those 44 bytes and the homepage did not, the declarations having left one of its
-//     own rules for the base one: 440 bytes onto the site figure and 44 onto the page weight,
-//     which is derived from the heaviest page — the docs hub — and that page carries the same
-//     inlined rule. The README states the same figures and the same reason, one bullet up from
-//     this file's name in its gates list, and the case below is what holds the figures to the
-//     build.
-//     **This round is the `fugaro watch` screenshot landing on the homepage**, and it moved the
+//     `fugaro watch` assets); × 1.25, rounded up. **It is the build with no tags** — the one
+//     the gates make, and the one the deployed site is — and the changelog page's own "not yet
+//     released" labels are 1,515 bytes of it; a full clone, whose checkout carries the release
+//     tags, builds the same site 1,515 bytes smaller.
+//
+// **Where this build's three numbers come from**, round by round, each measured over two
+// builds rather than argued — the README states the same figures and the same reason, one
+// bullet up from this file's name in its gates list, and the case below is what holds them to
+// the build:
+//   - `main`'s fix rounds moved the script and the pages they touched, and this branch's
+//     redesign's own rounds moved the homepage's order, the flow's treatment, the chat's turns
+//     and the command's wrapping; each was re-derived in the commit that shipped the bytes.
+//   - **The `fugaro watch` screenshot landed on the homepage** (`main`'s #655) and moved the
 //     site figure alone: the owner's capture and its transcription
-//     (`public/images/fugaro-watch.png`, 130,533 bytes, and `fugaro-watch.txt`, 3,363 — the
-//     assets of PR #622, published as the owner took them, with the transcription beside the
-//     picture as the text a reader gets when it does not arrive) were committed but placed on
-//     no page, and `public/` is served, so a build produced both of them and this figure — every
-//     file in `dist/` — was simply not counting them. The `<img>` the slot now holds is 299
-//     bytes of the homepage's markup on top of that. So the site sum is 979,298 bytes, the
-//     figure **1,224,123 tight and 3,672,369 stated**. The page weight is where it was: the
-//     picture is on the homepage, and the heaviest page is the docs hub (267,095 bytes), which
-//     renders neither the chat nor the screenshot — the homepage goes from 94,007 to 224,839
-//     bytes, and is still not the one the ceiling is derived from. The script's 39,779 bytes and
-//     its 49,724-byte figure are untouched, which is the third of the three the round leaves
-//     alone.
-//     inlined rule.
-//     **The round after that took the menu's drawer out** (the owner's brief of 2026-10-19,
-//     item 1): the "Menu" toggle, the panel it opened and the sibling combinator that showed it
-//     are gone, the three group labels stand in the header's row at every width, and the script
-//     loses the one branch it kept for the panel. Measured over that round's two builds, file by
-//     file: the base stylesheet every page inlines is 278 bytes shorter, the script 181, and the
-//     eleven pages are each 459 lower — the stylesheet they carry and the script they fetch,
-//     which is what a page's weight is. So the page figure is the docs hub's 459, and the site
-//     figure 3,239: those eleven pages and the script, and nothing else, the flag being off in
-//     this build.
-//     **The review round after that put the script's own comments back in step with the menu**
-//     (the same brief, item 1): three of them still described the drawer and the second level it
-//     opened, which the round above retired, and rewriting them added 290 bytes to the file the
-//     browser fetches. All three figures moved with it — the script 39,598 → 39,888, the docs hub
-//     266,636 → 266,926 and the site 841,864 → 842,154 — and nothing else in the artifact did:
-//     the pages and the stylesheets are the bytes they were, the homepage's console link being
-//     behind a flag this build has off. The README states the same figures and the same reason,
-//     one bullet up from this file's name in its gates list, and the case below is what holds the
-//     figures to the build.
+//     (`public/images/fugaro-watch.png`, 130,533 bytes, and `fugaro-watch.txt`, 3,363) are
+//     served by `public/` and are in every build's `dist/`, and the derivation the figure named
+//     before them predated the assets — 134,195 bytes of build, plus the 299 bytes of homepage
+//     markup that put the picture in its slot, tight 1,056,379 to 1,224,123 and stated
+//     3,169,137 to 3,672,369. The page weight did not move with it: the picture is on the
+//     homepage, and the heaviest page is the docs hub (267,095 bytes), which renders neither
+//     the chat nor the screenshot — the homepage goes from 94,007 to 224,839 bytes, and is
+//     still not the one the ceiling is derived from. The script's 39,779 bytes and its
+//     49,724-byte figure were untouched by that round.
+//   - **This branch's menu (item 1), and the review round after it**, measured against that
+//     build file by file. Taking the drawer out — the "Menu" toggle, the panel it opened and
+//     the sibling combinator that showed it — leaves each of the eleven pages **278 bytes
+//     lighter**, the base stylesheet every one of them inlines being that much shorter, and
+//     takes **181 bytes off the script**. The review round then put the script's own comments
+//     back in step with the menu, three of them still describing the retired drawer, which is
+//     **290 bytes onto the script** — comments are part of the file the browser fetches. So
+//     the script is 39,779 → **39,888** (the two rounds together: −181 and +290) and the site
+//     figure 979,298 → **976,349**, the eleven pages' 3,058 and the script's 109. The page
+//     weight moves with the script and the stylesheet both, 267,095 → **266,926**: the docs hub
+//     inlines the stylesheet (−278) and fetches the script (+109). Nothing else in the artifact
+//     moved — the console's link is behind a flag this build has off.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:

@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **979,298 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **976,349 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **977,783 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **974,834 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -161,9 +161,10 @@ added or removed without this sentence moving fails there:
   - the **1,515 bytes** between the two shapes of the site build are the changelog page's own
     "not yet released" labels, which a checkout with no tags prints for every release file;
   - flipping **`features.console_downloads`** — the flag `test/console-option.mjs` flips to
-    prove the released console is safe — moves the **site figure by 536 bytes**, the console
-    option's own markup on the two pages that render it, and moves the **page weight not at
-    all**: the heaviest page is the docs hub, which renders no install option;
+    prove the released console is safe — moves the **site figure by 622 bytes**, the console
+    option's own markup on the three pages that render it (the homepage's call to action 86,
+    the console page's downloads 146 and Getting Started's option 390), and moves the **page
+    weight not at all**: the heaviest page is the docs hub, which renders no install option;
   - the script and the pages that follow are the figures' own subject, and each moved them in
     the commit that shipped it (D192).
 
@@ -189,66 +190,52 @@ added or removed without this sentence moving fails there:
     the diagram, the install paths — changes spec item 4), the run animation (P7), the How It
     Works flow (P8) and the long-page cuts (P4), with the changes spec's items 2 and 3 over
     all of it.
+  - `main`'s picture: the owner's `fugaro watch` capture and its transcription, placed on the
+    homepage by #655.
+  - this branch's two changes from the owner's brief of 2026-10-19: the menu's drawer replaced
+    by the three group labels in the header's row (item 1), and the console's link in the
+    homepage's call to action (item 6), which renders nothing while its flag is off and so is
+    no bytes of this build at all.
 
   Each half moved these figures in its own commits and re-derived them there — the script's
-  six corrections in `main`'s, the redesign's five fix rounds in this branch's — and they are
-  re-derived once more here, because the merge is where the two halves first weigh together.
-  **The figures below are the build this branch ships** (2026-10-19), derived over the merged
-  tree: the fix round after the merge moved the chat above the diagram, drew its turns as
-  alternating bubbles, took three of the four cyan edges off the flow's cards and shortened
-  the footer's link label, and every one of those was measured over the build in the same
-  commit that moved it. The review of that round's changes then took the install section's own
-  top padding off — the flow above it already carries the gap between the two blocks — which
-  is the whole-site figure 54 bytes lower and the page weight where it was, the heaviest page
-  being the docs hub, which renders neither block. The round after that moved both figures
-  **up**: the two declarations that make a command wrap (`white-space: pre-wrap; overflow-wrap:
-  anywhere`) moved from the homepage's own `.home-install-command` onto `base.css`'s
-  `.command-block > pre`, because the copy control now shares the command's row and every
-  command on the site gives up the control's width, and the base stylesheet is inlined into
-  every page — ten of the eleven grew by those 44 bytes and the homepage did not, the
-  declarations having left one of its own rules for the base one. That is the whole-site figure
-  440 bytes higher, and the page weight 44, because the page it is derived from — the heaviest
-  one, the docs hub — carries the same inlined rule. That is the same rule every time (D192),
-  and it is also why **the page and the site move with the script**: a script every page
-  loads is a page's weight as well as its JavaScript.
+  six corrections in `main`'s, the redesign's fix rounds in this branch's. The last two rounds
+  are where this build's three numbers come from, and both are measured over **two builds**
+  rather than argued:
 
-  **The round after those is the `fugaro watch` screenshot landing on the homepage**, and it
-  moved the site figure alone. The owner's capture and its transcription
-  (`public/images/fugaro-watch.png`, 130,533 bytes, and `fugaro-watch.txt`, 3,363) were
-  committed by PR #622 but not yet placed on a page, and `public/` is served, so they were
-  already in every build of the site and were simply not counted here: the site figure is
-  derived from **every file in `dist/`** and can only see what a build produces, so the two
-  assets arrive in it as a build that grew. The `<img>` itself is 299 bytes of the homepage's
-  own markup. **The site figure moves 134,195 bytes of build**, so 167,744 bytes tight (that
-  plus 25 %) and 503,232 as stated: **tight 1,056,379 to 1,224,123, stated 3,169,137 to
-  3,672,369**. The page weight
-  does not move, and that is the check worth keeping: the picture lands on the homepage, and
-  the homepage is not the heaviest page — the docs hub is, at 267,095 bytes either side of
-  this change — while the homepage's own weight goes from 94,007 to 224,839 bytes, the
-  screenshot being 130,533 of it. The JavaScript is untouched.
-
-
-  - **JavaScript per page:** 149,172 bytes. Three times 49,724: the one script the site ships,
-    `public/scripts/site.js` (39,779 bytes), plus 25 %. What the file carries is the copy
-  The round after that **took the menu's drawer out** (the owner's brief of 2026-10-19, item
-  1): the "Menu" toggle, the panel it opened and the sibling combinator that showed it are
-  gone, the three group labels stand in the header's row at every width, and the script loses
-  the one branch it kept for the panel. Measured over that round's two builds, file by file:
-  the base stylesheet every page inlines is 278 bytes shorter, the script 181, and the eleven
-  pages are each 459 lower — the stylesheet they carry and the script they fetch, which is
-  what a page's weight is. The page figure is the docs hub's 459; the site figure is 3,239,
-  which is those eleven pages and the script and nothing else, the flag being off in this
-  build.
-
-  **The review round after that put the script's own prose back in step with the menu** (the
-  same brief, item 1): three comments in `site.js` still described the drawer and the second
-  level it opened — the control that was retired in the round above — so they were rewritten
-  to describe the three groups and their own `<summary>`s. Comments are part of the file the
-  browser fetches, so the script is **290 bytes longer** and all three byte figures moved with
-  it, re-derived here in the commit that moved them: the script 39,598 → 39,888, the docs hub
-  266,636 → 266,926, and the site 841,864 → 842,154. Nothing else in the artifact changed —
-  the homepage's console link is behind `features.console_downloads`, which is false in this
-  build, so the pages and the stylesheets are the bytes they were.
+  - **This branch's own fix rounds**, each re-derived in the commit that moved it: the round
+    after the merge moved the chat above the diagram, drew its turns as alternating bubbles,
+    took three of the four cyan edges off the flow's cards and shortened the footer's link
+    label; the round after that took the install section's own top padding off, because the
+    flow above it already carries the gap between the two blocks — 54 bytes off the site
+    figure, with the page weight where it was, the heaviest page being the docs hub, which
+    renders neither block — and the round after *that* moved both figures up by the two
+    declarations that make a command wrap (`white-space: pre-wrap; overflow-wrap: anywhere`)
+    moving onto `base.css`'s `.command-block > pre`, which every page inlines: 440 bytes onto
+    the site figure and 44 onto the page weight. That last round is also why **the page and
+    the site move with the script**: a script every page loads is a page's weight as well as
+    its JavaScript.
+  - **The `fugaro watch` screenshot landed on the homepage** (`main`'s #655) and moved the
+    site figure alone. The owner's capture and its transcription
+    (`public/images/fugaro-watch.png`, 130,533 bytes, and `fugaro-watch.txt`, 3,363) are served
+    by `public/` and are in every build's `dist/`, and the derivation the figure named before
+    them predated the assets: those 134,195 bytes of build, plus the 299 bytes of homepage
+    markup that put the picture in its slot, are the whole of the move — tight 1,056,379 to
+    1,224,123 and stated 3,169,137 to 3,672,369. The page weight does not move with it, and
+    that is the check worth keeping: the picture lands on the homepage, and the homepage is not
+    the heaviest page — the docs hub is, at 267,095 bytes either side of that change — while
+    the homepage's own weight went from 94,007 to 224,839 bytes, the screenshot being 130,533
+    of it. The JavaScript is untouched.
+  - **This branch's menu (item 1), and the review round after it**, measured against that
+    build file by file. Taking the drawer out — the `Menu` toggle, the panel it opened and the
+    sibling combinator that showed it — leaves each of the eleven pages **278 bytes lighter**,
+    the base stylesheet every one of them inlines being that much shorter, and takes **181
+    bytes off the script**. The review round then put the script's own comments back in step
+    with the menu, three of them still describing the retired drawer, which is **290 bytes onto
+    the script** — comments are part of the file the browser fetches. So the script is 39,779 →
+    **39,888** (the two rounds together: −181 and +290) and the site figure 979,298 →
+    **976,349**, the eleven pages' 3,058 and the script's 109. The page weight moves with the
+    script and the stylesheet both, 267,095 → **266,926**: the docs hub inlines the stylesheet
+    (−278) and fetches the script (+109). Nothing else in the artifact moved.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -276,7 +263,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,672,369 bytes. Three times 1,224,123 (every file in `dist/`, 979,298
+  - **Whole site:** 3,661,311 bytes. Three times 1,220,437 (every file in `dist/`, 976,349
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
