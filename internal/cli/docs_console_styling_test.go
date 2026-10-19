@@ -809,6 +809,108 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 			t.Errorf("%s: does not say %q — %s", path, want.has, want.because)
 		}
 	}
+
+	// And the phase paragraph's closing claim — "every place in the design and
+	// this file that assumed two value sets is marked with the ruling" — is read
+	// rather than trusted. A two-set phrase is not a typo: it is the sentence the
+	// next round implements, so each one has to say either the ruling itself or
+	// that it is the record of the mechanism the ruling removed. The paragraphs
+	// are the unit because that is the unit a reader takes a fact from, and a
+	// paragraph is marked if the section it sits in carries the ruling above it —
+	// a section that states it once, at its head, is a section that stated it.
+	twoSetPhrases := []string{
+		"light and dark",
+		"light dark",
+		"light-dark(",
+		"prefers-color-scheme",
+		"color-scheme: light",
+		"both value sets",
+		"two value sets",
+		"two grounds",
+		"two --ground",
+		"two literals",
+		"two schemes",
+		"two sets",
+		"both sets",
+		"in each set",
+		"the light set",
+		"matchmedia",
+		"themechoice",
+		"data-theme='light'",
+		`data-theme="light"`,
+	}
+	twoSetMarkers := []string{
+		"2026-10-19",
+		"q1",
+		"as first written",
+		"as designed",
+		"as the two-set",
+		"the record of",
+		"record of option",
+		"deferred",
+		"would have",
+		"did not take",
+		"the ruling",
+		"as shipped",
+		"removed",
+		"supersedes",
+		"kept",
+	}
+	paragraphs := func(text string) []string {
+		var out []string
+		var cur []string
+		flush := func() {
+			if len(cur) > 0 {
+				out = append(out, strings.Join(cur, "\n"))
+				cur = nil
+			}
+		}
+		for _, line := range strings.Split(text, "\n") {
+			if strings.TrimSpace(line) == "" {
+				flush()
+				continue
+			}
+			cur = append(cur, line)
+		}
+		flush()
+		return out
+	}
+	for _, doc := range []struct{ path, text string }{
+		{path, plan},
+		{"docs/design/console-styling.md", design},
+	} {
+		paras := paragraphs(doc.text)
+		sectionMarked := false
+		for _, para := range paras {
+			lower := strings.ToLower(para)
+			if strings.HasPrefix(strings.TrimSpace(para), "#") {
+				sectionMarked = false
+			}
+			marked := false
+			for _, marker := range twoSetMarkers {
+				if strings.Contains(lower, marker) {
+					marked = true
+					break
+				}
+			}
+			if marked {
+				sectionMarked = true
+				continue
+			}
+			var found []string
+			for _, phrase := range twoSetPhrases {
+				if strings.Contains(lower, phrase) {
+					found = append(found, phrase)
+				}
+			}
+			if len(found) == 0 || sectionMarked {
+				continue
+			}
+			{
+				t.Errorf("%s: the paragraph %q assumes two value sets (%s) and says nothing about the owner's Q1 ruling of 2026-10-19; one value set ships, so the place has to carry the ruling or say that it is the record of the mechanism the ruling removed, and the phase paragraph claims every such place does", doc.path, truncate(strings.ReplaceAll(para, "\n", " "), 120), strings.Join(found, ", "))
+			}
+		}
+	}
 }
 
 // mdPRRowRE matches a PR groups row for phase 6 — the phase's rows are the J

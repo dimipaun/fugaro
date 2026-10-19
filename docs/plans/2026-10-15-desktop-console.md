@@ -32,7 +32,7 @@
 | **3. When things are missing** | the no-Firebase and CLI-absent modes, the stale/gap rendering, the version-skew handshake (Task 3.2) **and its wiring at startup (Task 3.3)**; **the renderer entry — the preload, the handlers and the installation picker (Task 3.4, approved by the owner 2026-10-18; 3.4a implemented)** | nothing required (3.4's header and picker goldens are optional and owner-run) | phase 2 |
 | **4. macOS packaging** | the builder config and entitlements; the staged signing/notarisation workflow (a file of its own, tag-only); the update feed; **Checks 59a and 59b** | **all of it**: the certificate, the API key, the first signed build, the update round trip (Check 59); the protected GitHub environment the signing secrets live in; and Task 4.5's copy-in of the staged **signing** workflow | phase 3 |
 | **5. Later, unscheduled** | Windows and Linux packaging; the v1.1 write actions | each, when the owner decides | phase 4 |
-| **6. The console's style — APPROVED by the owner on 2026-10-19** | the token layer, the stylesheet's wiring into the served bundle, the layout and the screens' rules, the theme switch and the golden frames re-recorded (`docs/design/console-styling.md` is the design) | **the eight golden baselines re-recorded** (Task 6.6), after the stylesheet lands | phase 3 (Task 3.4a's bundler and served root); **approved by the owner on 2026-10-19** — its six questions are answered, and **Q1 is dark only: no light theme ships** |
+| **6. The console's style — APPROVED by the owner on 2026-10-19** | the token layer, the stylesheet's wiring into the served bundle, the layout and the screens' rules, the window background and the keyboard (*Task 6.5 as the ruling left it; the theme switch it was named for is removed — Q1, dark only*), and the golden frames re-recorded (`docs/design/console-styling.md` is the design) | **the eight golden baselines re-recorded** (Task 6.6), after the stylesheet lands | phase 3 (Task 3.4a's bundler and served root); **approved by the owner on 2026-10-19** — **Q1 is answered: dark only, no light theme ships**, and Q2 to Q6 stand as the design's §8 writes them (*as first written, "its six questions are answered"*) |
 
 **Nothing in this table depends on a later row.** Phase 5 is deliberately empty of work: it lists the two things a reader will otherwise wonder about, and each is gated on a decision this plan does not presume.
 
@@ -118,7 +118,7 @@ console/
   src/renderer/installations.{html,ts}  # Task 3.4b (approved by the owner 2026-10-18): the picker document
   src/renderer/screens/{live,spend,projects,run}.ts
   src/renderer/theme/tokens.css      # Task 6.1: the vocabulary - spacing, type, radius, motion; names no colour (the tree promised this file and no task created it)
-  src/renderer/theme/palette.css     # Task 6.1: the value set - every colour token, light and dark, once
+  src/renderer/theme/palette.css     # Task 6.1: the value set - every colour token, once; the dark set alone (Q1 ruling 2026-10-19)
   src/renderer/theme/base.css        # Task 6.3: reset, document, the three bands, the nav, focus, responsive, forced colours
   src/renderer/theme/screens.css     # Task 6.4: the per-screen rules, in the order docs/design/console-styling.md §2 lists the screens
   src/source/source.ts            # the FugaroSource interface - the whole data plane
@@ -1131,8 +1131,9 @@ under `console/`, `SERVED_FILES` has five entries and no stylesheet, the bundler
 `data-*` attributes a rule needs, and every state variant, read from the code — **the hooks
 a rule needs and not every attribute the screens emit**, which is the design's own rule:
 an emitted-but-unlisted hook is not a licence to select it, and a rule that wants one adds
-it to the inventory in the PR that wants it, design §2), the light and dark token sets with
-every WCAG ratio computed, the layout, and the wiring in full. This phase is the plan's
+it to the inventory in the PR that wants it, design §2), the token set that ships — the
+dark one, the owner's Q1 ruling of 2026-10-19, with the light set kept as the design's §3.3
+record — with every WCAG ratio computed, the layout, and the wiring in full. This phase is the plan's
 *ordering* of that design and nothing more.
 
 **These six tasks are `APPROVED by the owner on 2026-10-19`.** The OWNER APPROVAL GATE at
@@ -1176,8 +1177,10 @@ task is shaped the way it is.**
   reads the list rather than four hard-coded names, so it does not need rewriting either.
 - **A test that asserts a literal lands with the task that writes the literal.** The
   `--border`-is-decorative case reads `base.css` and `screens.css` and is Task 6.4's; the
-  window-background case compares `consoleWindowOptions`' two literals against the two
-  `--ground` values and is Task 6.5's, because `backgroundColor` does not exist before it;
+  window-background case compares `consoleWindowOptions`' **one** literal, `#0A0E16`,
+  against the one `--ground` and is Task 6.5's, because `backgroundColor` does not exist
+  before it (*as first written, "two literals against the two `--ground` values": the
+  owner's Q1 ruling of 2026-10-19 left one set, so there is one literal and one ground);
   the computed-background e2e assertion is Task 6.6's, because it reads a computed
   background off a screen root and lands with the recording it guards — its dependency is
   the **stylesheet** (6.1 to 6.4), not Task 6.5's theme choice, which the four golden specs
@@ -1206,7 +1209,7 @@ file, which is what keeps them green.
 **Scope.** `src/renderer/theme/tokens.css` (the vocabulary — spacing, radii, type sizes,
 leading, weights, `--row-height`, the focus-ring width and offset, the motion durations;
 **no colour**) and `src/renderer/theme/palette.css` (the value set — every colour token,
-light and dark, each written once, derived from the same logo hue as the website's
+each written once, derived from the same logo hue as the website's
 [`palette-logo.css`](../../website/src/styles/palette-logo.css), whose existing values are
 reused verbatim so the console and the site are one product; the design's §3.2 and §3.3 are
 the literal tables). **One of those two tables is the set that ships and the other is a
@@ -1369,7 +1372,8 @@ root are the stylesheets this phase lands. It goes with the recording it guards,
 that is where the golden baselines are re-made — **what it waits for is the stylesheet, not
 the theme choice**: the four golden specs never read `CONSOLE_THEME`, each draws its run
 with the theme it names, and the light run's root already says `data-theme='light'` today
-(design §6.2).
+(design §6.2) — **and under the owner's Q1 ruling of 2026-10-19 that run must paint the same
+ground as the dark one, so what it waits for is the stylesheet all the more.**
 
 **Command:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
 test:e2e -- entry` — the four golden tests are skipped, as they are in 6.4 and 6.5: this
