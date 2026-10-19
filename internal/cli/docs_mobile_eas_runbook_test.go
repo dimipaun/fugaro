@@ -39,15 +39,21 @@ package cli
 //
 // Four tests hold what the page says about **Check 89** to the check. Three of
 // them read what the page claims and refuse the shapes the check does not have:
-// the guard's own stop messages are quoted verbatim, not "there is no build
-// profile to read" and not a KeyError or a traceback
+// the guard's own stop messages are quoted, not "there is no build profile to
+// read" and not a KeyError or a traceback
 // (TestDocsMobileEasRunbookQuotesCheck89sGuardStops,
 // TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError), and the profile reads
 // are step 1's hand-run `jq` with the owner's own stop on them, not the guard's
-// (TestDocsMobileEasRunbookDoesNotGiveTheGuardTheProfileRead). They pin the
-// quotes as literals because docs/gcp-live-checklist.md is not on this branch:
-// P4.2a's text lands on main with PR #580, so the page -- and these tests --
-// cannot read it here.
+// (TestDocsMobileEasRunbookDoesNotGiveTheGuardTheProfileRead); the fourth says
+// where those quotations come from and that the guard stops on the store
+// identity too (TestDocsMobileEasRunbookPointsAtTheCheckItQuotes). The
+// quotations are not held in this file: they are read out of the register's
+// Check 89 section and compared with the page, so a stop reworded in
+// docs/gcp-live-checklist.md fails the page here. (P4.2a's text lands on main
+// with PR #580, and this branch merged main before it: where the register in the
+// tree has no Check 89 section there is nothing to compare against, and that one
+// test says so in a skip rather than passing quietly. The other three read only
+// the page, and run here.)
 //
 // Three tests hold what the page says about the *repository* to the repository:
 // TestDocsMobileEasRunbookNamesEveryProtectedEnvironment derives the protected
@@ -68,7 +74,7 @@ package cli
 //
 //	| Mutation | Went red |
 //	| the plan task's name, and every "P4.4", replaced | TestDocsMobileEasRunbookNamesTheTaskAndTheCheck |
-//	| every "Check 89" replaced (54 occurrences) | TestDocsMobileEasRunbookNamesTheTaskAndTheCheck, TestDocsMobileEasRunbookDoesNotRestateCheck89 |
+//	| every "Check 89" in the page replaced (every occurrence: the count is not written down here, because a count is one more thing to go stale) | TestDocsMobileEasRunbookNamesTheTaskAndTheCheck, TestDocsMobileEasRunbookDoesNotRestateCheck89 |
 //	| the "Never paste a signing key" warning dropped | TestDocsMobileEasRunbookStatesEveryOwnerOnlyWarning |
 //	| "credentials source" reworded | TestDocsMobileEasRunbookDoesNotRestateCheck89 |
 //	| EXPO_TOKEN renamed | TestDocsMobileEasRunbookNamesEveryCredentialAndWhereItLives, TestDocsMobileEasRunbookHoldsNoSecretShapedLiteral |
@@ -103,10 +109,13 @@ package cli
 //	| §9's website-live row dropped the `environment:` content citation | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
 //	| a line number ("(line 70)") put back into §2's citation | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
 //	| a probe workflow declaring website-live in another job (tmp-probe.yml, removed after) | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
-//	| Check 89's store-identity stop reworded (a paraphrase, not the guard's words) | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
-//	| Check 89's mobile/eas.json stop reduced to "there is no build profile to read" | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
-//	| the file and section the quotation comes from dropped from Tension 1 | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
-//	| the store identity dropped from §3's list of the guard's stops | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
+//	| Check 89's store-identity stop reworded in the page (a paraphrase, not the guard's words), with the register's Check 89 in the tree | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
+//	| Check 89's mobile/eas.json stop in the page reduced to "there is no build profile to read", with the register's Check 89 in the tree | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
+//	| that same stop reworded in the *register* instead (main's Check 89 appended to docs/gcp-live-checklist.md for the run, then removed) | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
+//	| ciSharedPackageJobs' parse error swallowed again (`return nil, nil`) | TestCISharedPackageJobsFindsAPlantedJob |
+//	| the guard-stop marker moved to a phrase the register does not print (no stop found in its Check 89) | TestDocsMobileEasRunbookQuotesCheck89sGuardStops |
+//	| the file and section the quotation comes from dropped from Tension 1 | TestDocsMobileEasRunbookPointsAtTheCheckItQuotes |
+//	| the store identity dropped from §3's list of the guard's stops | TestDocsMobileEasRunbookPointsAtTheCheckItQuotes |
 //	| "KeyError" planted in the store-identity paragraph | TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError |
 //	| "traceback" planted in the store-identity paragraph | TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError |
 //	| `d["ios"]["bundleIdentifier"]` planted again | TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError |
@@ -120,6 +129,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -542,18 +552,81 @@ func TestDocsMobileEasRunbookNamesEveryProtectedEnvironment(t *testing.T) {
 	}
 }
 
-// check89GuardStops are Check 89's own stop messages about the app's files,
-// verbatim from docs/gcp-live-checklist.md's "Check 89" section (P4.2a, merged
-// into main as PR #580 on 2026-10-19). The runbook quotes them instead of
-// paraphrasing them, because a reader who goes looking for the stop has to find
-// the sentence the check actually prints. The page cannot read that section
-// itself: P4.2a's text lands on main with #580, and a test that read the
-// checklist would be asserting a file this branch does not carry -- so the
-// quotes are held here, and the page is refused the shapes the guard does *not*
-// have (see TestDocsMobileEasRunbookDoesNotGiveTheGuardAKeyError).
-var check89GuardStops = []string{
-	"Check 89 stopped: mobile/app.json carries no ios.bundleIdentifier or android.package (the store identity P4.4 adds), so there is nothing to submit a build under — a build made now could not reach any track",
-	"Check 89 stopped: there is no mobile/eas.json in this checkout, so there is no build or submit profile to read (P4.4 makes it; this check reads it, it does not create it) — this is the stop a checkout of today hits",
+// check89Stops returns every stop message in text: the sentence after a
+// "Check 89 stopped: " marker, read to the closing quote of the `echo "…"` or
+// `sys.exit("…")` that carries it. The marker is Check 89's own -- the guard
+// prints its reason as `Check 89 stopped: …` and the section's prose says
+// "Check 89 stopped" of nothing else -- and no message contains a double quote,
+// so the marker and the closing quote delimit the sentence exactly. The same
+// function reads the register and the page, which is what lets the two be
+// compared byte for byte: nothing here decides what a stop *says*.
+func check89Stops(text string) []string {
+	const marker = "Check 89 stopped: "
+	var stops []string
+	for rest := text; ; {
+		i := strings.Index(rest, marker)
+		if i < 0 {
+			return stops
+		}
+		rest = rest[i:]
+		if j := strings.Index(rest, `"`); j >= 0 {
+			stops = append(stops, strings.TrimSpace(rest[:j]))
+		}
+		rest = rest[len(marker):]
+	}
+}
+
+// check89RegisterStops reads Check 89's own stop messages out of
+// docs/gcp-live-checklist.md -- the register the runbook quotes and defers to.
+//
+// The pin used to hold the two sentences as literals in this file, copied from
+// main by hand, because P4.2a's text (PR #580) is not in this branch's tree.
+// A literal cannot notice the register changing its mind, so the sentences are
+// read from the register itself now: a stop reworded there fails the page here.
+//
+// This tree's register does not carry Check 89 -- the branch merged main before
+// #580 landed -- and there is no register here to compare against, so the test
+// skips with that reason rather than passing quietly. It says so in its output:
+// a skip is visible, which is the difference between this and swallowing the
+// file. The moment the branch carries the section, the same test compares.
+func check89RegisterStops(t *testing.T) []string {
+	t.Helper()
+	const (
+		section = "## Check 89"
+		path    = "docs/gcp-live-checklist.md"
+	)
+	doc := readDoc(t, path)
+	start := strings.Index(doc, section)
+	if start < 0 {
+		t.Skipf("%s has no %q section in this tree: P4.2a's text lands with PR #580, which main carries and this branch merged before, so there is no register here to hold the page's quotations to -- this test compares them as soon as the section is in the tree", path, section)
+	}
+	rest := doc[start+len(section):]
+	if end := strings.Index(rest, "\n## "); end >= 0 {
+		rest = rest[:end]
+	}
+	// The guard's file tests and its python line are the stops a reader meets
+	// before any step runs; a section with fewer than the two the page quotes is
+	// the section moved, not a check that stops less often.
+	stops := check89Stops(rest)
+	if len(stops) < 2 {
+		t.Fatalf("%s's %q section yields %d stop messages, want at least the guard's file tests and its python line: the section or the marker has moved, and this test now reads a different part of the register", path, section, len(stops))
+	}
+	return stops
+}
+
+// firstCheck89Stop is the register's own sentence among stops that names marker
+// -- how the page's quotations are identified without this file repeating any of
+// them. It fails loudly when the register has no such stop: the section has
+// moved, and a test that went on to compare nothing would report a green page.
+func firstCheck89Stop(t *testing.T, stops []string, marker string) string {
+	t.Helper()
+	for _, stop := range stops {
+		if strings.Contains(stop, marker) {
+			return stop
+		}
+	}
+	t.Fatalf("the register's Check 89 section has no stop message naming %q: the guard's stops are what this page quotes, and one of the two has moved", marker)
+	return ""
 }
 
 // TestDocsMobileEasRunbookQuotesCheck89sGuardStops: the page describes what the
@@ -563,17 +636,48 @@ var check89GuardStops = []string{
 // absence is the stop it was written for -- printed on stderr from `sys.exit`
 // and acted on by `|| exit 1`, which the block's own comment says is there
 // precisely so the reason is not printed and read past.
+//
+// Both sentences are the register's, read from it here: the page may quote the
+// register, and it may not quote something the register does not say.
 func TestDocsMobileEasRunbookQuotesCheck89sGuardStops(t *testing.T) {
+	register := check89RegisterStops(t)
 	doc := runbook(t)
-	for _, want := range check89GuardStops {
-		if !strings.Contains(doc, want) {
-			t.Errorf("%s does not quote Check 89's guard stop %q: the page describes the stop as the check makes it, in the check's own words", mobileEasRunbook, want)
+	// Every "Check 89 stopped: …" the page writes is a sentence of the
+	// register's. A quotation the register does not carry is a paraphrase with
+	// quotation marks around it, which is the shape this test exists to refuse.
+	quoted := check89Stops(doc)
+	if len(quoted) == 0 {
+		t.Errorf("%s quotes none of Check 89's stop messages: the page describes the stops, and the reader has to be able to find the sentence the check actually prints", mobileEasRunbook)
+	}
+	for _, q := range quoted {
+		if !slices.Contains(register, q) {
+			t.Errorf("%s quotes %q, which is not a stop message in the register's Check 89 section: a quotation the register does not carry is this page's own words", mobileEasRunbook, q)
 		}
 	}
-	// The file and the section the quotes come from, named where the quotes are:
-	// a verbatim quotation an owner cannot go and check is a paraphrase with
-	// punctuation.
-	block := sectionText(readDoc(t, mobileEasRunbook), "**Tension 1 —", "**Tension 2 —")
+	// And the two stops the page's Tension 1 turns on are among the register's
+	// own sentences, found in the register by what they are about rather than
+	// repeated here: the store identity the guard reads out of app.json, and the
+	// mobile/eas.json file P4.4 adds.
+	for _, marker := range []string{"android.package", "mobile/eas.json"} {
+		want := firstCheck89Stop(t, register, marker)
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s does not quote the register's own stop %q: the page describes the stop as the check makes it, in the check's own words", mobileEasRunbook, want)
+		}
+	}
+}
+
+// TestDocsMobileEasRunbookPointsAtTheCheckItQuotes: the page names the file and
+// the section its verbatim quotations come from, so an owner can go and read the
+// stop for themselves -- a quotation nobody can check is a paraphrase with
+// quotation marks -- and §3's account of the guard block names the store identity
+// among the stops, because the guard's file tests are not the whole of it.
+//
+// This test reads only the page, so unlike the comparison above it needs no
+// register in the tree: it runs here, today, and it is where a page that dropped
+// its citation or its store-identity stop is caught.
+func TestDocsMobileEasRunbookPointsAtTheCheckItQuotes(t *testing.T) {
+	raw := readDoc(t, mobileEasRunbook)
+	block := sectionText(raw, "**Tension 1 —", "**Tension 2 —")
 	if block == "" {
 		t.Fatal("§14's Tension 1 was renamed: this test reads the text between \"**Tension 1 —\" and \"**Tension 2 —\", and it has to be repointed at it")
 	}
@@ -582,9 +686,10 @@ func TestDocsMobileEasRunbookQuotesCheck89sGuardStops(t *testing.T) {
 			t.Errorf("§14's Tension 1 does not name %s, the file and the section its verbatim quotation comes from", want)
 		}
 	}
-	// And §3's list of what the guard stops on has the store identity in it: the
-	// guard's file tests are not the whole of it.
-	guardList := blockAt(readDoc(t, mobileEasRunbook), "**Check 89 owns this step")
+	guardList := blockAt(raw, "**Check 89 owns this step")
+	if guardList == "" {
+		t.Fatal("§3's account of the guard block was renamed: this test reads the bullet beginning \"**Check 89 owns this step\", and it has to be repointed at it")
+	}
 	for _, want := range []string{"store identity", "`android.package`"} {
 		if !strings.Contains(guardList, want) {
 			t.Errorf("§3's account of the guard block does not name %q: the guard stops on the store identity too, and a reader who took the file tests for the whole of it would meet that stop as a surprise", want)
@@ -782,7 +887,13 @@ jobs:
 // `.github/workflows/ci.yml`, and the plan's open item 4 says what its absence
 // means -- *"Until it exists, the shared package's tests run only where someone
 // runs them"*.
-func ciSharedPackageJobs(text string) []string {
+//
+// It returns the parse error rather than folding it into "no such job": a
+// workflow this reader cannot read is not a workflow that runs no shared-package
+// tests, and a caller that asserted the second from the first would pass on any
+// file at all. environmentsInDirs, above, fails loudly on the same input for the
+// same reason.
+func ciSharedPackageJobs(text string) ([]string, error) {
 	var wf struct {
 		Jobs map[string]struct {
 			Defaults struct {
@@ -797,7 +908,7 @@ func ciSharedPackageJobs(text string) []string {
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
-		return nil
+		return nil, fmt.Errorf("the workflow is not valid YAML: %w", err)
 	}
 	var jobs []string
 	namesSharedPackage := func(s string) bool {
@@ -817,7 +928,7 @@ func ciSharedPackageJobs(text string) []string {
 		}
 	}
 	sort.Strings(jobs)
-	return jobs
+	return jobs, nil
 }
 
 // TestDocsMobileEasRunbookSaysP4Dot3IsStagedNotRunning holds the page's claim
@@ -842,7 +953,11 @@ func TestDocsMobileEasRunbookSaysP4Dot3IsStagedNotRunning(t *testing.T) {
 			t.Errorf("%s says %q in the present tense: that job does not exist yet", mobileEasRunbook, banned)
 		}
 	}
-	if jobs := ciSharedPackageJobs(readDoc(t, ".github/workflows/ci.yml")); len(jobs) != 0 {
+	jobs, err := ciSharedPackageJobs(readDoc(t, ".github/workflows/ci.yml"))
+	if err != nil {
+		t.Fatalf(".github/workflows/ci.yml cannot be read: %v -- this test reads the file P4.3 changes, and a file it cannot read is not one that runs no shared-package tests", err)
+	}
+	if len(jobs) != 0 {
 		t.Errorf(".github/workflows/ci.yml now runs the shared package's tests in job(s) %v: P4.3 has landed, and this page's 'staged, not yet running' sentence is stale", jobs)
 	}
 }
@@ -888,12 +1003,27 @@ jobs:
     steps:
       - run: npm test
 `
-	got := ciSharedPackageJobs(planted)
+	got, err := ciSharedPackageJobs(planted)
+	if err != nil {
+		t.Fatalf("the reader refused a valid workflow: %v", err)
+	}
 	if len(got) != 1 || got[0] != "shared" {
 		t.Errorf("the reader found %v in a workflow whose `shared` job runs npm in shared/, want [shared]", got)
 	}
-	if clean := ciSharedPackageJobs("name: ci\non:\n  push:\njobs:\n  go:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n"); len(clean) != 0 {
+	clean, err := ciSharedPackageJobs("name: ci\non:\n  push:\njobs:\n  go:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n")
+	if err != nil {
+		t.Fatalf("the reader refused a valid workflow: %v", err)
+	}
+	if len(clean) != 0 {
 		t.Errorf("the reader found %v in a Go-only workflow, want none", clean)
+	}
+	// The third state, and the one this reader used to report as "none": a file
+	// it cannot parse. Swallowing that would let a caller assert "ci.yml runs no
+	// shared-package tests" about a ci.yml that is not YAML at all, so the error
+	// is returned and the caller fails on it.
+	pending, err := ciSharedPackageJobs("name: ci\non:\n  push:\njobs:\n  go: [unterminated\n")
+	if err == nil {
+		t.Errorf("the reader accepted a workflow that is not YAML (it reported %v): a caller asserting 'no shared/ jobs' would then pass on a file it could not read", pending)
 	}
 }
 
