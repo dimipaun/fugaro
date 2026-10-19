@@ -1097,7 +1097,11 @@ func TestDocsVoiceModuleReconciliationPinsItsBaseline(t *testing.T) {
 		"**on `main` now**, as `ebe69147` and `3d02625d`",
 		"| #590 | `fugaro/20261018-132637-e66c` | `125e1650` | merged, on `main` as `ebe69147` |",
 		"| #604 | `fugaro/20261018-151705-dc83` | `bd8e439b` | merged, on `main` as `3d02625d` |",
+		// The baseline sentence is about the baseline commit and says so; what
+		// the tree carries now is the next sentence and the table below it.
 		"**P3.3** (`mobile/src/jobs/`)",
+		"not merged at the baseline commit and have no directory there",
+		"**P3.4 has since merged with this change**",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q", path, want)
@@ -1136,15 +1140,132 @@ func TestDocsVoiceModuleReconciliationPinsItsBaseline(t *testing.T) {
 			t.Errorf("%s: %s exists, so Phase 3 is under shared/ after all and the correction is wrong", path, dir)
 		}
 	}
-	// And the Phase 3 tasks the document says are not merged have no
-	// directory: the claim is about this tree, so it is checked against it.
-	// mobile/src/audio is not in the list: P3.4 (PR #592) is what merges it, and
-	// the document's baseline sentence is about the baseline commit, not the tree.
-	for _, dir := range []string{"mobile/src/jobs", "mobile/src/voice"} {
-		if _, err := os.Stat("../../" + dir); err == nil {
-			t.Errorf("%s: %s exists, so that Phase 3 task is merged and the document's list of what is not is stale", path, dir)
+	// And every Phase 3 directory the document says is merged or not is checked
+	// against this tree -- **read off the document's own list**, not restated
+	// here. The list used to be written out in this file, and that is exactly how
+	// it went wrong: when #592's merge put `mobile/src/audio` on `main`, the
+	// entry was dropped from the assertion instead of the document's claim being
+	// corrected, so the test kept passing while the document said P3.4 "has no
+	// directory in the tree". A directory's status is the document's claim, so
+	// the document is what this reads; what is pinned here is which directories
+	// the list must carry, so that deleting a row is an edit to this file too.
+	rows := voiceModulePhase3Rows(t, recon)
+	expected := map[string]string{
+		"mobile/src/app":      "P3.1",
+		"mobile/src/skeleton": "P3.1",
+		"mobile/src/accounts": "P3.1",
+		"mobile/src/feed":     "P3.2",
+		"mobile/src/jobs":     "P3.3",
+		"mobile/src/audio":    "P3.4",
+		"mobile/src/voice":    "P3.5",
+		"mobile/src/mailbox":  "P3.6",
+	}
+	// At the baseline the merged set is P3.1's three directories and nothing
+	// else. This half cannot be read off the tree -- the baseline is a commit,
+	// not the working copy -- so it is pinned, and it is what makes the two
+	// columns distinguishable rather than one column written twice.
+	mergedAtBaseline := map[string]bool{
+		"mobile/src/app":      true,
+		"mobile/src/skeleton": true,
+		"mobile/src/accounts": true,
+	}
+	found := map[string]string{}
+	for _, row := range rows {
+		task, ok := expected[row.directory]
+		if !ok {
+			t.Errorf("%s: §0's list carries a row for %s, which is not one of Phase 3's directories: the list is the plan's P3.1–P3.6 and nothing else", path, row.directory)
+			continue
+		}
+		if task != row.task {
+			t.Errorf("%s: §0's list files %s under %s; it is %s's directory", path, row.directory, row.task, task)
+		}
+		if found[row.directory] != "" {
+			t.Errorf("%s: §0's list names %s twice: one row per directory, or the second one's status is a claim nothing reads", path, row.directory)
+		}
+		found[row.directory] = row.task
+		for what, cell := range map[string]string{"baseline": row.atBaseline, "now": row.now} {
+			if !strings.HasPrefix(cell, "merged") && !strings.HasPrefix(cell, "not merged") {
+				t.Errorf("%s: §0's list says %q in the %s cell of %s's row; the cell is read as `merged` or `not merged`, and anything else is a status no check can hold", path, cell, what, row.directory)
+			}
+		}
+		// The baseline column, pinned: only P3.1 is there.
+		if mergedAtBaseline[row.directory] != strings.HasPrefix(row.atBaseline, "merged") {
+			t.Errorf("%s: §0's list says %s is %q at the baseline commit; P3.1's three directories are the whole of what that commit carries", path, row.directory, row.atBaseline)
+		}
+		// And the claim about now, checked against the tree this revision ships
+		// in -- which is what the merge of #592 changed and what the old
+		// hard-coded list stopped checking.
+		_, err := os.Stat("../../" + row.directory)
+		if strings.HasPrefix(row.now, "merged") && err != nil {
+			t.Errorf("%s: §0's list says %s is merged, and the directory is not in the tree: %v — the row is a claim about this tree, so the merge that would put it there had to make it true", path, row.directory, err)
+		}
+		if strings.HasPrefix(row.now, "not merged") && err == nil {
+			t.Errorf("%s: §0's list says %s is not merged, and the directory exists: it is merged, and this row was not corrected when it was", path, row.directory)
 		}
 	}
+	for dir := range expected {
+		if found[dir] == "" {
+			t.Errorf("%s: §0's list has no row for %s: a Phase 3 directory the list does not name is a directory whose presence in the tree nothing checks", path, dir)
+		}
+	}
+}
+
+// voiceModulePhase3TableHeader opens §0's list of Phase 3's directories and what
+// the tree does with each. It is addressed by its header rather than by a line
+// number because the table is the document's own statement of the fact, and the
+// statuses read out of it are what TestDocsVoiceModuleReconciliationPinsItsBaseline
+// checks against the tree: a document that says "not merged" of a directory the
+// tree carries is the drift this is here to catch.
+const voiceModulePhase3TableHeader = "| Task | Directory | At `82ba600d` | In the tree now |"
+
+// voiceModulePhase3Row is one row of that list: the task the plan gives the
+// directory to, the directory, and the two status cells as the document writes
+// them.
+type voiceModulePhase3Row struct {
+	task, directory, atBaseline, now string
+}
+
+// voiceModulePhase3Rows reads that list out of the reconciliation. An empty
+// result is a fatal error rather than a quiet no-op: every loop over a list that
+// failed to parse would otherwise pass while checking nothing.
+func voiceModulePhase3Rows(t *testing.T, recon string) []voiceModulePhase3Row {
+	t.Helper()
+	const path = "docs/voice-module/reconciliation.md"
+	lines := strings.Split(recon, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) != voiceModulePhase3TableHeader {
+			continue
+		}
+		if start >= 0 {
+			t.Fatalf("%s:%d: a second %q table: the document carries one list of Phase 3's directories, and which one a checker reads would otherwise depend on where it looked", path, i+1, voiceModulePhase3TableHeader)
+		}
+		start = i
+	}
+	if start < 0 {
+		t.Fatalf("%s: no %q table: every Phase 3 directory's presence in the tree is read off that list, so a document without it cannot be checked", path, voiceModulePhase3TableHeader)
+	}
+	var rows []voiceModulePhase3Row
+	for _, line := range lines[start+2:] {
+		if !strings.HasPrefix(line, "|") {
+			break
+		}
+		cells := markdownTableCells(line)
+		if len(cells) != 4 {
+			t.Errorf("%s: the Phase 3 row %q has %d cells and the header has 4", path, strings.TrimSpace(line), len(cells))
+			continue
+		}
+		rows = append(rows, voiceModulePhase3Row{
+			task:       strings.TrimSpace(cells[0]),
+			directory:  strings.Trim(strings.TrimSpace(cells[1]), "`"),
+			atBaseline: strings.TrimSpace(cells[2]),
+			now:        strings.TrimSpace(cells[3]),
+		})
+	}
+	if len(rows) == 0 {
+		t.Fatalf("%s: the %q table has no rows: the header alone states nothing about any directory", path, voiceModulePhase3TableHeader)
+	}
+	return rows
 }
 
 // voiceModuleFinding returns finding #n's block: its heading up to the next
@@ -1369,13 +1490,19 @@ func TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit(t *testing.T) {
 		"**\"⊂ PR #n\"** means the artifact is on that pull request's branch and not on `main`",
 		"**\"on `main` (`<short sha>`)\"** means the artifact is on `main` at the commit that merge landed as",
 		"`⊂ PR #n` is now used only for a pull request that is **still open**",
+		// The third notation, and the one this revision needed: #592 is the
+		// pull request this document ships in, so its artifacts are on `main`
+		// and have no merge commit to be named by while it is written.
+		"**\"merged with this change\"** means the artifact is on `main` as of **PR #592**, the pull request that carries this revision",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q; section 2 defines the notations the rest of the document is read with", path, want)
 		}
 	}
-	// Every use of the shorthand names a pull request that is still open.
-	open := map[string]bool{"584": true, "592": true}
+	// Every use of the shorthand names a pull request that is still open. #592
+	// is no longer one of them: this revision is #592, so the code it read is
+	// named as merged with this change, not as branch-only.
+	open := map[string]bool{"584": true}
 	for _, doc := range []string{"docs/voice-module/reconciliation.md", "docs/voice-module/README.md"} {
 		text := readDoc(t, doc)
 		for _, m := range voiceModuleBranchOnlyPRs.FindAllStringSubmatch(text, -1) {
@@ -1384,15 +1511,38 @@ func TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit(t *testing.T) {
 			}
 		}
 	}
+	// And the README's "Branches read" row is the same fact one page up: it
+	// listed #592 as still open too, and a reader who checks freshness there
+	// reads the same claim as section 0's table. Both halves are pinned, so the
+	// two documents cannot disagree about which pull requests have merged.
+	readme := readDoc(t, "docs/voice-module/README.md")
+	for _, want := range []string{
+		"**Six have merged since** (#590, #592, #602, #604, #633, #634)",
+		"#584 is still open",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("docs/voice-module/README.md lacks %q: its branch row is where a reader of the index checks whether a branch read is main now", want)
+		}
+	}
+	for _, banned := range []string{
+		"**Five have merged since**",
+		"#584 and #592 are still open",
+	} {
+		if strings.Contains(readme, banned) {
+			t.Errorf("docs/voice-module/README.md carries %q again: #592 is the pull request that carries this reconciliation, so it has merged with this change", banned)
+		}
+	}
 	// And section 0's table gives both halves: the commit each merged pull
-	// request's work is on main as, and the two that are still open.
+	// request's work is on main as, the one that is still open, and this
+	// revision's own pull request, whose merge commit is the one this revision
+	// lands in.
 	for _, want := range []string{
 		"| #590 | `fugaro/20261018-132637-e66c` | `125e1650` | merged, on `main` as `ebe69147` |",
 		"| #604 | `fugaro/20261018-151705-dc83` | `bd8e439b` | merged, on `main` as `3d02625d` |",
 		"| #602 | `fugaro/20261018-151658-6559` | `130ce03d` | merged, on `main` as `f67753f9` |",
 		"| #633 | `fugaro/20261019-001448-8569` | `9b5cc838` | merged, on `main` as `80f2b7fa` |",
 		"| #634 | `fugaro/20261019-002947-618d` | `9fa0bb57` | merged, on `main` as `721aa091` |",
-		"| #592 | `fugaro/20261018-132817-67ec` | `f36cc429` | **still open**",
+		"| #592 | `fugaro/20261018-132817-67ec` | `f36cc429` | **merged with this change**",
 		"| #584 | `fugaro/20261018-130633-f104` | `04ac88f8` | **still open**",
 	} {
 		if !strings.Contains(recon, want) {
@@ -1679,7 +1829,52 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 	}
 }
 
-// Mutation (verified, run and restored): 92 entries, numbered (1)–(92).
+// Mutation (verified, run and restored): 104 entries, numbered (1)–(104).
+// And twelve for the merged-phase-3 round: the documents said P3.4 was not
+// merged and PR #592 was still open, which the merge made false, and the list
+// of what is not merged was checked against the tree from a copy of itself
+// written in the test file -- so the entry was deleted instead of the claim
+// being corrected.
+// (93) Setting P3.4's "In the tree now" cell to "not merged" fails
+// TestDocsVoiceModuleReconciliationPinsItsBaseline with `says
+// mobile/src/audio is not merged, and the directory exists`: the status is read
+// off the document and checked against the tree, which carries
+// `mobile/src/audio/`.
+// (94) Deleting §0's P3.4 row fails it with `§0's list has no row for
+// mobile/src/audio`: a directory the list does not name is a claim nothing
+// checks, and the row set is pinned for exactly this.
+// (95) Setting P3.5's cell to "merged" fails it with `says mobile/src/voice is
+// merged, and the directory is not in the tree`: the check is two-sided, so a
+// document may not claim a directory the tree does not have either.
+// (96) Putting "are not merged and have no directory in the tree" back fails
+// it on the missing baseline phrasing: the sentence that describes the baseline
+// commit says so, or "not merged" is read as a claim about this tree.
+// (97) Writing "**still open**" back into #592's row fails
+// TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit: this revision
+// ships in #592, so its work is on `main` with it.
+// (98) Writing "⊂ PR #592's ports carry **no samples**" into finding #19 again
+// fails the same test: the shorthand is defined as "not on `main`", and #592's
+// ports are on `main` with this change.
+// (99) Renaming the Phase 3 table's header ("At `82ba600d`" -> "At the
+// baseline") fails TestDocsVoiceModuleReconciliationPinsItsBaseline: the table
+// is addressed by its header, so a renamed header is a list no checker reads.
+// (100) Setting a status cell to "pending" fails it: the cell is read as
+// `merged` or `not merged`, and anything else is a status no check can hold --
+// which is what the emptiness of the parse is guarded against too.
+// (101) Flipping P3.2's baseline cell to "merged" fails it: the baseline column
+// is pinned, because it is a claim about a commit rather than about this tree,
+// and a column written twice would make the two indistinguishable.
+// (102) Renaming P3.1's directory to `mobile/src/account`, which is not there,
+// fails it with `says mobile/src/account is merged, and the directory is not in
+// the tree`.
+// (103) Dropping the "merged with this change" notation's definition fails
+// TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit: section 2 defines
+// the three notations the document is read with.
+// (104) Putting "**Five have merged since** ... #584 and #592 are still open"
+// back into the README's "Branches read" row fails it: the index's row is the
+// same fact as section 0's table, and this mutation is why both halves are
+// pinned -- the row was unchecked until it was, and the mutation came back
+// green.
 // (64) Giving a merged pull request's work the branch-only shorthand again
 // ("the reader on `main` (`ebe69147`) subscribes" -> "the reader ⊂ PR #590
 // subscribes") fails TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit:
