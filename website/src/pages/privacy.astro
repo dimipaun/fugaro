@@ -37,10 +37,22 @@
  * `internal/updatecheck` and `internal/cli/updatewarn.go` (one GET to GitHub's public
  * "latest release" endpoint, at most once a day, cached on the machine, and the two switches
  * that turn it off), the phone app's two credentials and its secure storage from
- * `mobile/src/accounts/`, and "no analytics SDK and no advertising identifier" from
- * `mobile/package.json`, whose dependency list a later task would have to grow for that
- * sentence to become false. Nothing here is a promise about a service the project runs,
- * because the project runs none the software talks to.
+ * `mobile/src/accounts/`, and the app's reporting from the other direction — the page names
+ * Firebase Crashlytics and Firebase Analytics, so the same gate refuses that naming unless
+ * the repository carries the plan for it (`docs/plans/2026-10-19-mobile-telemetry.md`) or the
+ * app's own dependency list already carries the two packages, and it refuses the app's
+ * carrying them without the page naming them. The app's "no advertising identifier" is read
+ * off the tree, not asserted: the scan refuses the platform's advertising-identifier APIs
+ * anywhere under `mobile/`. The project the app signs in to is the reader's own — the CLI and
+ * the console reach nothing the Fugaro project operates, and the app's reports are the one
+ * flow that does, which is why the page states them and their switch.
+ *
+ * **The app's paragraph describes the app as it will be, and says so.** Crashlytics and
+ * Analytics are the owner's ruling of 2026-10-19 (D193) and are not in the app yet, so the
+ * sentences above them are read off the design that will build them, and the page says which
+ * version carries the reports rather than implying the build a reader may hold does. When the
+ * telemetry plan lands in this repository, the gate's second direction becomes the plan file
+ * rather than the page's own "earlier builds" sentence, with no change to this page.
  *
  * **It is measured like every other page**, and D188's ceiling is no longer 250 words: the
  * privacy statement is the one page that is not the site's pitch — it carries what a reader
@@ -178,10 +190,31 @@ const repo = site.facts.repository
     <h3>The phone app</h3>
     <p>
       The phone app is built to sign in to your own Firebase project — the project id you type
-      in for an installation — and to read only what that project's rules grant it. Its writes
-      go into the mailbox your own installation reads. Its two credentials, a Firebase ID token
-      and the pairing key, live in the device's secure storage, the Keychain or the Keystore,
-      and nowhere else. It carries no analytics SDK and no advertising identifier.
+      in for an installation — and to read only what that project's rules grant it. Signing in,
+      it names the paired device to that project, and nothing else of yours goes with it. Its
+      writes go into the mailbox your own installation reads. Its two credentials, a Firebase
+      ID token and the pairing key, live in the device's secure storage, the Keychain or the
+      Keystore, and nowhere else.
+    </p>
+    <p>
+      <strong>Crash reports and anonymous usage.</strong> The app version that carries these
+      reports sends two things to a Firebase project the Fugaro project operates, and not to
+      your own: crashes, through <strong>Firebase Crashlytics</strong>, and anonymous usage,
+      through <strong>Firebase Analytics</strong>. A crash report holds the crash's logs,
+      diagnostics and app performance data; the usage count says which screens were opened.
+      Firebase gives the app an app-instance identifier of its own, and that travels with both.
+      Google holds all of it, as Firebase's processor, for the Fugaro project, under{' '}
+      <a href="https://firebase.google.com/support/privacy" rel="noopener">Google's Firebase
+      privacy policy</a>.
+    </p>
+    <p>
+      Never sent: the contents of any message, anything from your installation or its mailbox,
+      your credentials and your keys. The reports are read to find and fix crashes and to see
+      which screens are used, and for nothing else. The app carries no advertising identifier.
+    </p>
+    <p>
+      Collection is off until you turn it on, in the app's settings, where the same switch turns
+      it off again. Earlier builds of the app send nothing at all.
     </p>
 
     <h3>Deleting your data</h3>

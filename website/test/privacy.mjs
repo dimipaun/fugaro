@@ -14,13 +14,21 @@
 // defect and watches the named refusal come back:
 //
 //   1. **The two parts.** The page carries "The website" and "The software" as its two `h2`s, in
-//      that order, and the second is not tucked inside the first: the store reviewer's part is a
-//      part of the page (`partFailures`).
-//   2. **No collecting SDK, and no advertising identifier.** Every executable file, manifest and
-//      lockfile under `mobile/` is scanned for the analytics, crash-reporting and advertising
-//      SDKs named below and for the platform advertising-identifier APIs — the page says the app
-//      "carries no analytics SDK and no advertising identifier", and this is what would make that
-//      false (`collectingFailures`). The names are listed rather than asked for by pattern,
+//      that order, at the same level — the second is a part of the page and not a section of the
+//      first, which is the shape that would tuck the store reviewer's half inside the site's
+//      (`partFailures`).
+//   2. **The app's reporting, and the page and the package agreeing about it.** The app reports
+//      crashes through Firebase Crashlytics and anonymous usage through Firebase Analytics, to a
+//      Firebase project the Fugaro project operates (D193), and this rule holds the page and the
+//      repository to each other in both directions: a telemetry package the app's dependency list
+//      declares and the page does not name is refused, and the page naming a product that neither
+//      the telemetry plan nor the dependency carries is refused unless it says which version of
+//      the app carries the reports (`telemetryFailures`). The sentences a reader is owed are
+//      listed rather than trusted — what is sent, what is never sent, the switch's default and
+//      where the switch is, Google as the holder, and Google's own policy linked rather than
+//      restated. Everything else that collects is still refused, by name, over the whole of
+//      `mobile/`: the page names two reporters, so a third one would be a flow nobody was told
+//      about (`collectingFailures`). The names are listed rather than asked for by pattern,
 //      because a pattern that tried to recognise an analytics SDK would be a pattern that misses
 //      the next one.
 //   3. **The phone's two credentials, and where they live.** `SECRET_ITEMS` in
@@ -133,24 +141,155 @@ export const PAGE_PARTS = Object.freeze(['The website', 'The software'])
 
 /** Every way the page's two named parts depart from that, or []. */
 export function partFailures(html) {
-  const found = [...walk(mainOf(html))]
-    .filter((el) => el.name === 'h2')
-    .map((el) => textOf(el).replace(/\s+/g, ' ').trim())
-  if (found.join(' | ') === PAGE_PARTS.join(' | ')) return []
-  return [
-    `the privacy page's sections are ${JSON.stringify(found)}: the page carries ${JSON.stringify(PAGE_PARTS)} as its two parts, in that order, because the App Store and Play listings link this page as the software's privacy policy as well as the site's`,
-  ]
+  const main = mainOf(html)
+  const headings = [...walk(main)].filter((el) => el.name === 'h2')
+  const found = headings.map((el) => textOf(el).replace(/\s+/g, ' ').trim())
+  const out = []
+  if (found.join(' | ') !== PAGE_PARTS.join(' | ')) {
+    out.push(
+      `the privacy page's sections are ${JSON.stringify(found)}: the page carries ${JSON.stringify(PAGE_PARTS)} as its two parts, in that order, because the App Store and Play listings link this page as the software's privacy policy as well as the site's`,
+    )
+  }
+  // And the two parts are SIBLINGS, not one inside the other. The reader above walks the
+  // heading tree flat, so a "The software" heading nested inside "The website" — an `h2` in a
+  // wrapper, an `h3` in the same part's markup, a section of the site's part — reads as the
+  // two parts in order and is the one shape that makes the software's statement a subsection
+  // of the site's: a store reviewer's part is a part of the page, and the sentence that says
+  // what the phone sends has to be able to stand on its own.
+  if (headings.length === 2 && headings[0].parent !== headings[1].parent) {
+    out.push(
+      `the privacy page's two parts are not siblings: "The software" sits ${depthOf(headings[1])} levels deep and "The website" ${depthOf(headings[0])}, so one part is nested inside the other, or the two are in different containers — the part headings are the page's two h2 elements at the same level, one after the other`,
+    )
+  }
+  return out
 }
 
-// ---- 2. no collecting SDK, and no advertising identifier ---------------------------------
+/** How deep an element sits under the document, counting element levels only. */
+function depthOf(el) {
+  let depth = 0
+  for (let node = el.parent; node; node = node.parent) depth += 1
+  return depth
+}
 
-// The SDKs whose presence would make the page's "no analytics SDK" false, each named by the
-// package a bundler would resolve it from. A crash reporter is on the list because it reports:
-// the page states that nothing is reported anywhere, and an SDK that sends a stack trace on the
-// next launch is an SDK that reports. So is every advertising SDK, whatever else it collects.
+// ---- 2. the app's reporting, and the page and the package agreeing about it ---------------
+//
+// The app reports crashes and usage through Firebase Crashlytics and Firebase Analytics, to a
+// Firebase project the Fugaro project operates (the owner's ruling of 2026-10-19, D193). The
+// page says so, and this section holds the page and the repository to each other in BOTH
+// directions: a package in the app's dependency list that the page does not name is a page
+// that stopped disclosing something the app does, and a page that names one of these products
+// when neither the plan nor the dependency carries it is a page claiming something the
+// repository does not hold.
+//
+// The two packages, each with the product name a reader is owed. They are named rather than
+// matched by pattern, because a pattern that recognised "a Firebase analytics package" would
+// be a pattern that misses the next one — which is exactly what the refused list below is for.
+export const APP_TELEMETRY = Object.freeze([
+  { pkg: '@react-native-firebase/crashlytics', product: 'Firebase Crashlytics' },
+  { pkg: '@react-native-firebase/analytics', product: 'Firebase Analytics' },
+])
+
+// The plan that records the work, as the sibling PR that owns it will land it. While it is not
+// in the tree, the page may only describe the reports as belonging to a version that carries
+// them — the sentence `EARLIER_BUILDS` below — which is the honest half of a statement about
+// an app the reader may not have. When the plan lands nothing here changes: the plan becomes
+// the thing direction B accepts, and the sentence stays true either way.
+export const TELEMETRY_PLAN = 'docs/plans/2026-10-19-mobile-telemetry.md'
+
+/** The sentence that says which version of the app this paragraph is about. */
+const EARLIER_BUILDS = /\b(?:earlier|previous|older) builds?\b[^.]*\bnothing\b/i
+
+/** What the page's reporting paragraph must say, and what makes each sentence true. */
+export const TELEMETRY_CLAIMS = Object.freeze([
+  { page: 'crash', why: 'Crashlytics reports crashes, and the page may not round that to "usage"' },
+  { page: 'logs, diagnostics and app performance data', why: "D196's allow-list: a crash report is the crash's logs, its diagnostics and its performance data" },
+  { page: 'which screens were opened', why: 'the usage Analytics collects is the screen set, and nothing about what a reader did there' },
+  { page: 'app-instance identifier', why: 'the identifier Firebase generates for the app instance is what the stores call "Device or other IDs" (D197)' },
+  { page: 'Never sent', why: "D196's ban list, which the page states as what never leaves the device" },
+  { page: 'message', why: 'no message content is ever sent, and it is the first thing a reader of this page wants to know' },
+  { page: 'credentials and your keys', why: "D111's two items are never sent anywhere" },
+  { page: 'mailbox', why: 'nothing from the reader\'s own mailbox reaches the Fugaro project' },
+  { page: 'no advertising identifier', why: 'google_analytics_adid_collection_enabled is false, and the scan below holds the tree to it' },
+  { page: 'off until you turn it on', why: "D195: collection is off until the reader turns it on, which is the default the page must state" },
+  { page: "the app's settings", why: 'the switch is in the app, and the page has to say where' },
+  { page: 'Google holds', why: "the data is held by Google as Firebase's processor for the Fugaro project, which is what the page says rather than restating Google's policy" },
+])
+
+/** The package names an app's dependency list declares, as its `dependencies` and `devDependencies`. */
+export function dependencyNames(packageJSON) {
+  const parsed = JSON.parse(packageJSON)
+  return [...Object.keys(parsed.dependencies ?? {}), ...Object.keys(parsed.devDependencies ?? {})]
+}
+
+/**
+ * Every way the page and the repository disagree about the app's reporting, or [].
+ *
+ * `planExists` is whether the telemetry plan is in the tree, and `packageJSON` is
+ * `mobile/package.json` (the app's own dependency list — the lockfile is not read here,
+ * because the lockfile is derived from this file and a lockfile entry nobody declared is a
+ * different defect, held by the app's own tests).
+ */
+export function telemetryFailures({ page, packageJSON, planExists }) {
+  const out = []
+  const deps = dependencyNames(packageJSON)
+  const named = APP_TELEMETRY.filter((one) => page.includes(one.product))
+
+  // Direction A: the app carries it, so the page names it. A dependency the app declares and
+  // the page stays silent about is the disclosure that went stale.
+  for (const { pkg, product } of APP_TELEMETRY) {
+    if (deps.includes(pkg) && !page.includes(product)) {
+      out.push(
+        `mobile/package.json declares ${pkg} and the privacy page does not name ${product}: the page is the privacy policy the stores link, so a package the app carries and the page does not name is a collection the reader was not told about`,
+      )
+    }
+  }
+
+  // Direction B: the page names it, so the repository backs it. The plan is the record; the
+  // dependency is the app's own evidence; and while neither is in the tree the page may only
+  // say this about a version of the app that carries the reports, which is the sentence the
+  // brief asks for and what the fixture below removes to make this direction red.
+  for (const { pkg, product } of named) {
+    if (planExists || deps.includes(pkg)) continue
+    if (EARLIER_BUILDS.test(page)) continue
+    out.push(
+      `the privacy page names ${product} and the repository does not hold it: neither ${TELEMETRY_PLAN} nor ${pkg} in mobile/package.json is here, so the page claims a flow nothing in this tree records — land the plan or add the dependency, or say on the page which version of the app carries these reports`,
+    )
+  }
+
+  // And the sentences the reader is owed, once the page says the app reports at all.
+  if (named.length > 0) {
+    for (const claim of TELEMETRY_CLAIMS) {
+      if (!page.includes(claim.page)) {
+        out.push(`the privacy page does not say ${JSON.stringify(claim.page)} about the app's reporting: ${claim.why}`)
+      }
+    }
+    if (!EARLIER_BUILDS.test(page)) {
+      out.push(
+        `the privacy page does not say which version of the app carries these reports: the reports are not in the app a reader may be holding, so the paragraph has to say so rather than read as a description of the build in their pocket`,
+      )
+    }
+    if (!page.includes(FIREBASE_PRIVACY_HREF)) {
+      out.push(
+        `the privacy page does not link Google's own Firebase privacy policy (${FIREBASE_PRIVACY}): the page names Google as the holder, and a page that names a holder without pointing at the holder's own statement is a page restating a policy it does not own`,
+      )
+    }
+  }
+  return out
+}
+
+/** Google's own Firebase privacy page, linked rather than restated. */
+export const FIREBASE_PRIVACY = 'https://firebase.google.com/support/privacy'
+
+/** The href the page has to carry for it, as the built HTML writes it. */
+const FIREBASE_PRIVACY_HREF = `href="${FIREBASE_PRIVACY}"`
+
+// The SDKs whose presence would make the page's disclosure false, each named by the package a
+// bundler would resolve it from: everything that collects and is NOT the two products the page
+// discloses. A crash reporter is on the list for the same reason Crashlytics is not — the
+// page names its reporter, and a second one would be a second flow nobody was told about. So
+// is every advertising SDK, whatever else it collects.
 export const COLLECTING_SDKS = Object.freeze([
   'firebase-analytics',
-  '@react-native-firebase/analytics',
   'expo-firebase-analytics',
   '@segment/analytics-react-native',
   '@segment/react-native',
@@ -204,7 +343,7 @@ export function collectingFailures(files) {
         ? `${name} is an analytics, crash-reporting or advertising SDK`
         : `${name} reads the platform's advertising identifier`
       out.push(
-        `${rel} names ${name}: the privacy page states that the phone app carries no analytics SDK and no advertising identifier, so ${what} and that sentence is false — either take it out of the app or say on the page what it collects`,
+        `${rel} names ${name}: the privacy page discloses two reporters — Firebase Crashlytics and Firebase Analytics — and says the app carries no advertising identifier, so ${what} is a collection the page does not account for — either take it out of the app or say on the page what it collects`,
       )
     }
   }
@@ -479,16 +618,28 @@ test('the privacy page carries the two named parts, in order', () => {
   assert.deepEqual(failures, [], failures.join('\n'))
 })
 
-test('the phone app carries no analytics SDK and no advertising identifier, and the page says so about exactly the tree it has', () => {
+test('the app reports what the page says it reports, and neither side has moved without the other', () => {
   const files = mobileFiles()
   assert.ok(files.length > 5, `only ${files.length} files under mobile/ matched the scan, so this check is looking at a fraction of the app`)
   const failures = collectingFailures(files)
   assert.deepEqual(failures, [], `the mobile tree carries something that collects:\n  ${failures.join('\n  ')}`)
-  const page = privacyPage().html
-  for (const sentence of ['no analytics SDK', 'no advertising identifier']) {
+
+  const telemetry = telemetryFailures({
+    page: privacyPage().html,
+    packageJSON: repoFile('mobile/package.json'),
+    planExists: existsSync(path.join(REPO, TELEMETRY_PLAN)),
+  })
+  assert.deepEqual(telemetry, [], telemetry.join('\n'))
+
+  // The plan is not in this tree today (the sibling PR that writes it has not landed), so the
+  // direction above is satisfied by the page's own sentence about which version carries the
+  // reports. This case says so rather than leaving it implied: the sentence is what makes the
+  // disclosure honest while the work is a plan, and the day the plan lands the file is what the
+  // same function reads instead.
+  if (!existsSync(path.join(REPO, TELEMETRY_PLAN))) {
     assert.ok(
-      page.includes(sentence),
-      `the privacy page does not say the phone app carries ${sentence}: the scan above is what holds that sentence to the tree, and a page that dropped it is a page with nothing to hold`,
+      EARLIER_BUILDS.test(privacyPage().html),
+      `the privacy page names the app's reporters and ${TELEMETRY_PLAN} is not in this tree: the paragraph has to say which version of the app carries the reports, because nothing in the repository holds them yet`,
     )
   }
 })
@@ -556,7 +707,7 @@ function distOf(t, files) {
   return dist
 }
 
-test('a page that lost a part, or nested one inside the other, is refused', () => {
+test('a page that lost a part, nested one inside the other, or put them side by side in two containers, is refused', () => {
   const one = SHELL('<h1>Privacy</h1><h2>The website</h2><p>w</p>')
   assert.match(partFailures(one).join('\n'), /carries \["The website","The software"\] as its two parts/)
   // The same words as a section INSIDE the first part: the reviewer's part is a part of the page.
@@ -565,21 +716,132 @@ test('a page that lost a part, or nested one inside the other, is refused', () =
   assert.deepEqual(partFailures(SHELL('<h1>Privacy</h1><h2>The website</h2><h2>The software</h2>')), [])
 })
 
+test('a second part nested under the first is refused, headings or not, and the flat reading is what missed it', () => {
+  // The headings in order, the right words, and one of them inside the other's markup: the
+  // reader that walked the heading tree flat read this as two parts and said nothing, which is
+  // the defect this case exists for.
+  const wrapped = SHELL('<h1>Privacy</h1><h2>The website</h2><div class="part"><h2>The software</h2></div>')
+  const failures = partFailures(wrapped)
+  assert.equal(failures.length, 1, `a nested "The software" heading was not refused: ${failures.join('\n')}`)
+  assert.match(failures[0], /two parts are not siblings/)
+  assert.match(failures[0], /levels deep/)
+
+  // And the control, which is the shape the page is built in: the two parts as siblings.
+  assert.deepEqual(partFailures(SHELL('<h1>Privacy</h1><h2>The website</h2><p>w</p><h2>The software</h2><p>s</p>')), [])
+
+  // Each part in a container of its own is the same defect read the other way: the parts are
+  // level, but not one after the other in the page's own flow, so the reader cannot slice the
+  // site's part without slicing into the software one.
+  const sections = SHELL('<h1>Privacy</h1><section><h2>The website</h2></section><section><h2>The software</h2></section>')
+  assert.match(partFailures(sections).join('\n'), /two parts are not siblings/)
+})
+
 test('an analytics, crash-reporting or advertising SDK named anywhere under mobile/ is refused', () => {
   for (const text of [
-    `import analytics from '@react-native-firebase/analytics';\n`,
+    `import analytics from 'firebase-analytics';\n`,
     `{ "dependencies": { "react-native-appsflyer": "^6.0.0" } }\n`,
     `import advertisingId from 'react-native-idfa';\n`,
     `const gaid = await nativeAds.getAdvertisingId();\n`,
+    `import crashlytics from '@sentry/react-native';\n`,
   ]) {
     const failures = collectingFailures([{ rel: 'mobile/fixture.js', text }])
     assert.equal(failures.length, 1, failures.join('\n'))
     assert.match(failures[0], /mobile\/fixture\.js names /)
-    assert.match(failures[0], /no analytics SDK and no advertising identifier/)
+    assert.match(failures[0], /the page does not account for/)
   }
   // The control: a file that names none of them is not refused, or the scan would be one that
   // fails everything and this case would prove nothing.
   assert.deepEqual(collectingFailures([{ rel: 'mobile/fixture.js', text: `import * as SecureStore from 'expo-secure-store';\n` }]), [])
+})
+
+test("the app's own reporters are admitted by the scan, and the page is what admits them", () => {
+  // The two packages the app is to carry are NOT findings — the page discloses them — which is
+  // the difference between a scan that refuses everything and a scan that refuses what the page
+  // does not account for. Named here so the list cannot quietly grow them back.
+  for (const pkg of APP_TELEMETRY.map((one) => one.pkg)) {
+    assert.ok(!COLLECTING_SDKS.includes(pkg), `${pkg} is refused by the SDK scan and disclosed by the page: the page names it as the app's reporter, so the scan must not also refuse it — one of the two is wrong`)
+  }
+  assert.deepEqual(
+    collectingFailures([{ rel: 'mobile/package.json', text: `{ "dependencies": { "${APP_TELEMETRY[0].pkg}": "^1.0.0" } }` }]),
+    [],
+    'the disclosed crash reporter is refused by the mobile scan, so the page names a package the gate forbids',
+  )
+})
+
+test("the page naming a reporter the repository does not hold, or the app holding one the page does not name, is refused", () => {
+  const page = privacyPage().html
+  const packageJSON = repoFile('mobile/package.json')
+  const base = { page, packageJSON, planExists: false }
+
+  // Direction A: the app declares it, the page stays silent. The package is planted in the
+  // app's own dependency list, which is where a later task would add it.
+  const declared = JSON.parse(packageJSON)
+  declared.dependencies = { ...(declared.dependencies ?? {}), [APP_TELEMETRY[1].pkg]: '^22.0.0' }
+  const silent = page.replace(/Firebase Analytics/g, 'the usage count')
+  assert.match(
+    telemetryFailures({ page: silent, packageJSON: JSON.stringify(declared), planExists: false }).join('\n'),
+    new RegExp(`mobile/package.json declares ${APP_TELEMETRY[1].pkg.replace(/[/@.]/g, '\\$&')} and the privacy page does not name Firebase Analytics`),
+    `a dependency the app declares and the page does not name was not refused: ${telemetryFailures({ page: silent, packageJSON: JSON.stringify(declared), planExists: false }).join('\n')}`,
+  )
+  // The control: the page's own naming, with the dependency declared and the plan in the tree,
+  // is the state the two directions agree on, and it is not refused.
+  assert.deepEqual(
+    telemetryFailures({ page, packageJSON: JSON.stringify(declared), planExists: true }),
+    [],
+    'the page and the repository name the same reporter and the gate still refuses one of them',
+  )
+
+  // Direction B: the page names a reporter nothing in the tree holds, and it does not say which
+  // version carries it. This is the half the brief asks for, and the sentence the fixture strips
+  // is what the page uses instead while the plan is still a plan.
+  const noVersion = page.replace(/Earlier builds of the app send nothing at all\./, 'The app sends these reports.')
+  const unbacked = telemetryFailures({ page: noVersion, packageJSON, planExists: false })
+  assert.equal(unbacked.length, 3, unbacked.join('\n'))
+  for (const product of APP_TELEMETRY.map((one) => one.product)) {
+    assert.ok(
+      unbacked.some((line) => line.includes(`names ${product} and the repository does not hold it`)),
+      `${product} is named on the page and neither the plan nor the app's dependency list records it, and the gate said nothing: ${unbacked.join('\n')}`,
+    )
+  }
+  assert.ok(
+    unbacked.some((line) => line.includes(TELEMETRY_PLAN)),
+    `the refusal does not name ${TELEMETRY_PLAN}, so a later task is not told what to land`,
+  )
+  assert.ok(
+    unbacked.some((line) => /does not say which version/.test(line)),
+    'a page naming a reporter nothing holds, and saying nothing about which version carries it, is accepted',
+  )
+
+  // And the same page with the plan in the tree: direction B is satisfied by the plan's existence,
+  // so the two "the repository does not hold it" refusals are gone.
+  assert.deepEqual(
+    telemetryFailures({ page, packageJSON, planExists: true }).filter((line) => /does not hold it/.test(line)),
+    [],
+    'the plan the page names is in the tree and the gate still refuses the page for naming a reporter nothing holds',
+  )
+  // The version sentence is not direction B's: it is the owner's own requirement (the reports are
+  // not in the app a reader may hold), so it stays required with the plan in the tree — which is
+  // what this fixture shows, the only line left being the sentence the fixture stripped.
+  assert.deepEqual(
+    telemetryFailures({ page: noVersion, packageJSON, planExists: true }),
+    [
+      'the privacy page does not say which version of the app carries these reports: the reports are not in the app a reader may be holding, so the paragraph has to say so rather than read as a description of the build in their pocket',
+    ],
+    'the sentence about which version carries the reports is direction B\'s to waive, and it is not: it is the owner\'s requirement in both states',
+  )
+
+  // The claims the reader is owed, one planted omission at a time: the ban list, the default,
+  // and the link to Google's own policy.
+  for (const [what, gone] of [
+    ['the ban list', page.replace('Never sent:', 'Also sent:')],
+    ['the default', page.replace('off until you turn it on', 'on unless you turn it off')],
+    ['Google as the holder', page.replace('Google holds all of it', 'It is held')],
+  ]) {
+    const failures = telemetryFailures({ ...base, page: gone })
+    assert.ok(failures.length >= 1, `a page that lost ${what} was not refused`)
+  }
+  const unlinked = telemetryFailures({ ...base, page: page.replace(FIREBASE_PRIVACY, 'https://example.net/policy') })
+  assert.match(unlinked.join('\n'), /does not link Google's own Firebase privacy policy/)
 })
 
 test('a third credential in SECRET_ITEMS, or a page that stopped naming one, is refused', () => {

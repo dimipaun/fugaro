@@ -257,6 +257,13 @@ added or removed without this sentence moving fails there:
     CLI, the console and the phone app — and the words the second part needs are what re-derive
     the ceiling. The page weight and the script did not move: the heaviest page is still the
     docs hub, and `public/scripts/site.js` is untouched.
+  - **The phone app's reporting was written into that part** (the owner's request of the same
+    day), and moved the site figure again, 980,195 → **981,543**, by the **1,348 bytes** those
+    paragraphs add, with the words ceiling re-derived in the same commit, 622 → **842**: the
+    page names Firebase Crashlytics and Firebase Analytics, states what is collected and what
+    is never sent, the opt-in default and the way back, holds Google as the processor for the
+    Fugaro project under Google's own policy (linked, not restated), and says that earlier
+    builds send nothing. The page weight, the script and the number of files did not move.
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -284,7 +291,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,675,732 bytes. Three times 1,225,244 (every file in `dist/`, 980,195
+  - **Whole site:** 3,680,787 bytes. Three times 1,226,929 (every file in `dist/`, 981,543
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
@@ -316,7 +323,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 622 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 842 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -330,8 +337,8 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's 250, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **497
-    words** — plus 25 %, rounded up, which is **622**. `budget.mjs`'s
+    site's pitch; the number is that page's own count on the gates' own build — **673
+    words** — plus 25 %, rounded up, which is **842**. `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
     commit that adds it. **The raise is that page's and nobody else's**: every other page of
@@ -442,11 +449,26 @@ added or removed without this sentence moving fails there:
   do as well as what the site does, and this file holds each of those sentences to the thing
   that makes it true rather than to a copy of the sentence:
   - **the two parts** — "The website" and "The software" as the page's two `h2`s, in that order,
-    because the store reviewer's part is a part of the page and not a subsection of the site's;
-  - **no analytics SDK and no advertising identifier** — every executable file, manifest and
-    lockfile under `mobile/` is scanned for the analytics, crash-reporting and advertising SDKs
-    and for the platform's advertising-identifier APIs, all of them named in the test, so a task
-    that added one fails the sentence rather than the sentence quietly becoming false;
+    because the store reviewer's part is a part of the page and not a subsection of the site's —
+    **and as siblings at the same level**, since a part nested inside the other is a page whose
+    two scopes cannot be read, which `consent.mjs`'s own site-part reader refuses for the same
+    reason;
+  - **the app's reporting, held in both directions** — the page names Firebase Crashlytics and
+    Firebase Analytics, so the file refuses that naming unless the repository holds the plan for
+    it (`docs/plans/2026-10-19-mobile-telemetry.md`) or `mobile/package.json` already carries the
+    two packages, and it refuses either package being declared while the page stays silent. A
+    page that names a reporter and says nothing about which version of the app carries it is
+    refused while the reports are still only planned, which is why the paragraph ends on
+    "Earlier builds of the app send nothing at all." — the sentence a later task replaces with
+    the plan's existence. The paragraphs' claims are each a sentence the file looks for: what is
+    collected, the ban list, the opt-in default, the switch that turns it off, Google as the
+    holder, and the link to Google's own Firebase policy rather than a restatement of it;
+  - **no advertising identifier, and no undisclosed reporter** — every executable file, manifest
+    and lockfile under `mobile/` is scanned for the analytics, crash-reporting and advertising
+    SDKs and for the platform's advertising-identifier APIs, all of them named in the test. The
+    app's own two reporters are admitted by name rather than left in the scan's list, so the page
+    and the scan agree about what the app carries; a task that added a third fails the sentence
+    rather than letting it quietly become false;
   - **the phone's two credentials and where they live** — `SECRET_ITEMS` in
     `mobile/src/accounts/secret.js` must be D111's `idToken` and `macKey` and no more, the page
     must name those two, secure storage, the Keychain and the Keystore, and the tuple field
@@ -467,9 +489,10 @@ added or removed without this sentence moving fails there:
     one, which is the owner's ruling of the same day written where the link would have gone.
 
   Each rule is one exported function with its own case, and each has a second case that plants
-  the defect it refuses — a lost part, a dependency that collects, a third secret, an endpoint
-  pointed elsewhere, a source naming the host, a third contact route, an address, a `/terms`
-  link — and watches the named refusal come back. The word ceiling's own derivation — the
+  the defect it refuses — a lost part, a part nested under the other, a dependency that collects,
+  a reporter the page does not name, a page naming a reporter nothing in the tree holds, a third
+  secret, an endpoint pointed elsewhere, a source naming the host, a third contact route, an
+  address, a `/terms` link — and watches the named refusal come back. The word ceiling's own derivation — the
   privacy statement's own count plus 25 %, the number `website/README.md` states, and every
   other page of the site still inside D188's 250 — is `budget.mjs`'s, beside the reader that
   measures it and the byte figures it is a sibling of.
