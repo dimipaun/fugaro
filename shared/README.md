@@ -25,6 +25,28 @@ approved, and this directory is not evidence that one is.
 
 `mailbox/` (P1.1) is the mailbox state machine, its dedupe ledger and its replay window: built, with its own tests; see `mailbox/README.md`.
 
+`mailbox-sim/` (P1.5) is the deterministic mailbox simulator: built, with its own tests and its own mutation proof; see `mailbox-sim/README.md`.
+
+`mailbox-schema/` (P0.2, extended by P6.3) is the message schema and its validation, and
+now the required `mac` on every message of every kind, the `agent`, `kind`, `options`,
+`reply_to` and action-record fields, the canonical serialisation the tag covers and its
+vectors: built, with its own tests, its own mutation proof (78 guards) and
+`vectors.json`, the contract the Go consumer reimplements against; see
+`mailbox-schema/README.md`. The package has one builtin import — `node:crypto`, for
+HMAC-SHA-256 — and it is deliberately **not** in the module's entry point: it is in
+`mailbox-schema/mac.js`, which `mailbox-schema/index.js` never imports, because React
+Native's bundler resolves no `node:` builtin and the phone must still be able to import
+the validator and the canonical serialisation. `index.js` imports nothing at all, a test
+asserts it, and the phone implements HMAC-SHA-256 itself against `vectors.json`. There
+is still no dependency: nothing is installed, nothing is fetched. Note that P6.3 changes
+the schema and not
+`internal/budget/rules`' template, which is P6.4's task and is asserted as a known gap in
+`TestMailboxRulesAgreeWithTheSharedSchema`.
+
+`command/` (P6.1) is the wake-word router and the app-command grammar: built, with its own tests and its own mutation proof; see `command/README.md`.
+
+`confirm/` (P6.2) is the spoken-confirmation state machine — the read-back, the fixed phrase, the timeout, the replay ledger and D128's refusals — with its own tests, its own mutation proof and `vectors.json` for P6.7's Go parity test; see `confirm/README.md`. It reuses `lease/`'s timestamp bound, recognises the phrase through `command/` (P6.1) and authorises `mailbox-schema/`'s action record (P6.3) field for field.
+
 ## The runner, and the glob
 
 `npm test` runs `node --test "**/*.test.js"` — Node's own test runner, so the package has

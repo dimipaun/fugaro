@@ -200,7 +200,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 		return err
 	}
 	for _, w := range lc.Warnings() {
-		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", safetext.Field(w))
 	}
 	// The project the argument names is the project this installation is in,
 	// and nothing else: --project and --config select the Fugaro project, the
@@ -209,7 +209,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// and credentials it is using.
 	if id != lc.GCPProject {
 		return userErr("nothing was written: the project this command would flag is the one the argument names, and %s is not the installation selected here: Fugaro project %s is installed in %s. Name %s, or select its installation with --project or --config",
-			safetext.Field(id), lc.Name, safetext.Field(lc.GCPProject), safetext.Field(lc.GCPProject))
+			safetext.Field(id), safetext.Field(lc.Name), safetext.Field(lc.GCPProject), safetext.Field(lc.GCPProject))
 	}
 	// The runs bucket's default name and no other, the rule the managed
 	// objects already live by (allow-delete, managed apply): the marker is
@@ -218,7 +218,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	bucket := "fugaro-runs-" + lc.GCPProject
 	if got := lc.RunsBucketName(); got != bucket {
 		return userErr("project %s names the runs bucket %q, and a managed project's marker lives in %s: the managed read locates the project's runs bucket by that name, so a marker written into another bucket would be read by nobody. Check runs_bucket in the project config",
-			lc.Name, got, bucket)
+			safetext.Field(lc.Name), safetext.Field(got), safetext.Field(bucket))
 	}
 	c, err := newInitClients(ctx, lc)
 	if err != nil {
@@ -229,14 +229,14 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	number, err := infra.ProjectNumber(ctx, c, lc.GCPProject)
 	if err != nil {
 		// The API's own text can carry a body: one sanitised line.
-		return remote(fmt.Errorf("reading the number of GCP project %s: %s", lc.GCPProject, safetext.Field(err.Error())))
+		return remote(fmt.Errorf("reading the number of GCP project %s: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error())))
 	}
 	w := cmd.OutOrStdout()
 	// What is about to be written, and what it costs, before anything is
 	// typed: the answer's own framing is that flagging only adds guards AND
 	// that the marker is what turns the confirmation off, so the second half
 	// is printed rather than left to be inferred.
-	fmt.Fprintf(w, "⚠ CONFIRM (project %s): flagging GCP project %s as managed writes gs://%s/%s\n", lc.Name, safetext.Field(lc.GCPProject), bucket, managed.MarkerObject)
+	fmt.Fprintf(w, "⚠ CONFIRM (project %s): flagging GCP project %s as managed writes gs://%s/%s\n", safetext.Field(lc.Name), safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject)
 	fmt.Fprintf(w, "  it records: this project is managed, with the budget alert amount %d %s\n", amount, safetext.Field(currency))
 	fmt.Fprintf(w, "  it gives up: the typed confirmation for this project's applies. From the next apply on, a plan a coding agent's session authored is applied with no human prompt when the deterministic gate admits it (D55), and what stands in the confirmation's place is the gate, the whole-project inventory, the owner's delete list (fugaro allow-delete) and the budget above.\n")
 	fmt.Fprintf(w, "  it creates nothing: no resource is created, no billing call is made, and the amount above is recorded rather than spent.\n")
@@ -262,19 +262,19 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 			why = fmt.Sprintf("it records %d %s", got.Amount, safetext.Field(got.Currency))
 		}
 		return remote(fmt.Errorf("wrote gs://%s/%s, but it does not read back as %s's marker with the budget %d %s (%s): check it with `gcloud storage cat gs://%s/%s` as the operator before relying on it",
-			bucket, managed.MarkerObject, lc.Name, amount, safetext.Field(currency), why, bucket, managed.MarkerObject))
+			safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), amount, safetext.Field(currency), why, safetext.Field(bucket), managed.MarkerObject))
 	}
-	fmt.Fprintf(w, "read back gs://%s/%s through the managed read, with the project-number check: managed, budget %d %s\n", bucket, managed.MarkerObject, got.Amount, safetext.Field(got.Currency))
+	fmt.Fprintf(w, "read back gs://%s/%s through the managed read, with the project-number check: managed, budget %d %s\n", safetext.Field(bucket), managed.MarkerObject, got.Amount, safetext.Field(got.Currency))
 	// What happened is said, and the two are different things: this project
 	// had no marker, or it had the version-1 creation fact and now records an
 	// amount.
-	wrote := fmt.Sprintf("wrote gs://%s/%s: %s is a managed project", bucket, managed.MarkerObject, lc.Name)
+	wrote := fmt.Sprintf("wrote gs://%s/%s: %s is a managed project", safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name))
 	if replaced {
-		wrote = fmt.Sprintf("replaced the creation fact in gs://%s/%s: %s recorded no budget amount and now records %d %s", bucket, managed.MarkerObject, lc.Name, amount, safetext.Field(currency))
+		wrote = fmt.Sprintf("replaced the creation fact in gs://%s/%s: %s recorded no budget amount and now records %d %s", safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), amount, safetext.Field(currency))
 	}
 	fmt.Fprintf(w, "%s, and its applies no longer stop for the typed confirmation; the gate, the owner's delete list and the recorded budget %d %s are what replace it\n",
 		wrote, amount, safetext.Field(currency))
-	fmt.Fprintf(w, "undo: there is no command that removes the marker in this release — delete gs://%s/%s yourself as the operator to make the project unmanaged again\n", bucket, managed.MarkerObject)
+	fmt.Fprintf(w, "undo: there is no command that removes the marker in this release — delete gs://%s/%s yourself as the operator to make the project unmanaged again\n", safetext.Field(bucket), managed.MarkerObject)
 	return nil
 }
 
@@ -311,7 +311,7 @@ func confirmTypedGCPProject(cmd *cobra.Command, gcpProject string) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "Type %s to confirm: ", safetext.Field(gcpProject))
 	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
-		return userErr("reading the confirmation: %v", err)
+		return userErr("reading the confirmation: %v", safetext.FieldErr(err))
 	}
 	// The exact ID, after the trim the other typed confirmations do: another
 	// project's ID, a prefix of this one and an empty line are all "not
@@ -329,14 +329,16 @@ func managedFlagErr(lc *localcfg.Config, bucket string, err error) error {
 	switch {
 	case errors.Is(err, managed.ErrAlreadyMarked):
 		return userErr("nothing was written for %s: gs://%s/%s is already there and is not the creation fact this command adds a budget to, so %s already records whether it is managed — a run that created it wrote the fact, or an owner flagged it before. This command replaces only a version-1 creation fact, which records no amount; a marker that records one is the owner's decision, not a value to edit. To read what is there, use `gcloud storage cat gs://%s/%s` as the operator",
-			lc.Name, bucket, managed.MarkerObject, lc.Name, bucket, managed.MarkerObject)
+			safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject)
 	case errors.Is(err, managed.ErrRefused):
 		return userErr("nothing was written for %s: the marker goes into the project's own runs bucket, at gs://%s/%s, and that bucket is not %s's: check gcp_project and runs_bucket in the project config, or run fugaro project check: %s",
-			lc.Name, bucket, managed.MarkerObject, lc.GCPProject, safetext.Field(err.Error()))
+			safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.GCPProject), safetext.Field(err.Error()))
 	case isAccessDenied(err):
 		return userErr("nothing was written for %s: gs://%s/%s is at the runs bucket's root, where only an operator's own credential may write (since 0.7.0 a launcher writes runs/ only, and no run account may write the bucket's root at all): run this as an operator, or ask one to flag the project: %s",
-			lc.Name, bucket, managed.MarkerObject, safetext.Field(err.Error()))
+			safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject, safetext.Field(err.Error()))
 	default:
-		return remote(fmt.Errorf("writing %s in gs://%s for %s: %w", managed.MarkerObject, bucket, lc.Name, err))
+		// A wrapped provider error is untrusted text too: one bounded field,
+		// with its chain kept so the exit code is still the remote one.
+		return remote(fmt.Errorf("writing %s in gs://%s for %s: %w", managed.MarkerObject, safetext.Field(bucket), safetext.Field(lc.Name), safetext.FieldErr(err)))
 	}
 }

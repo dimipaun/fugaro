@@ -87,6 +87,20 @@ bands alone, so a writer that reuses a boot id cannot make an old heartbeat look
 charset is narrow on purpose: the boot id reaches a screen (P3.5), and an id that can carry
 control characters or directionality is a rendering hazard for no benefit. A UUID fits.
 
+**This module's field name is `bootId`, and P6.3's signed heartbeat says `boot`.** The
+rule here accepts `{at, bootId}` and refuses any other field
+(`heartbeat-unknown-field`); `shared/mailbox-schema`'s `validateHeartbeat` accepts
+`{at, boot, agents?, mac}`, which is the shape P2.1's template already gates
+(`internal/budget/rules/rules.json.tmpl` uses `boot`) plus P6.3's `mac` and `agents`. So a
+heartbeat signed per §3.5 cannot be handed to `evaluatePresence` without a mapping, and
+no landed or planned task writes one: P6.4 touches the rules template, `rules.go` and the
+golden plan, not this module. The `boot`/`bootId` half is older than P6.3 and the
+template sides with `boot`; the `mac` and `agents` halves are new. This is recorded as a
+**conflict for the owner** in `shared/mailbox-schema/README.md`'s gaps, not resolved
+here: renaming a field on either side, or naming and testing the caller-side mapping in
+P3.6, is the owner's call, and either way the phone must not end up treating a *signed*
+heartbeat as offline because the rule could not read it.
+
 ## Who consumes it
 
 - **P3.5** (the voice screen) shows the offline state from this rule and refuses to accept a

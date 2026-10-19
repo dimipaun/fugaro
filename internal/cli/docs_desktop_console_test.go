@@ -8,18 +8,29 @@ package cli
 // imports nothing from console/, embeds nothing from it and adds no go.mod
 // dependency to reach it.
 //
-// Two halves. TestDocsDesktopConsoleDesignCarriesTheDecisions is the design's
-// own presence test (design section 9.5 item 1): the load-bearing strings of
-// docs/design/desktop-console.md. TestDocsDesktopConsoleContractNamesEveryWatchField
+// Two halves, three test families. TestDocsDesktopConsoleDesignCarriesTheDecisions
+// is the design's own presence test (design section 9.5 item 1): the load-bearing
+// strings of docs/design/desktop-console.md. TestDocsDesktopConsoleContractNamesEveryWatchField
 // is the stronger half this task adds: console/docs/json-contract.md must name
 // every json tag of internal/watch/json.go's shapes, derived from the structs
 // themselves rather than from a hand-kept list, so a rename in json.go fails a
 // test here instead of silently breaking a screen.
+//
+// TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers came later, with Task 5.0:
+// section 10's answer column, read as the twenty-row table it is (four ruled
+// cells compared exactly, the sixteen acceptances to the recommendation they
+// accept, and no twenty-first row or empty cell admitted), plus the design's
+// record that the owner's answers of 2026-10-16 do not reach this document.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
@@ -29,11 +40,16 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/report"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/userstats"
 	"github.com/dimipaun/fugaro/internal/watch"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"gopkg.in/yaml.v3"
 )
 
 // TestDocsDesktopConsoleDesignCarriesTheDecisions asserts the design holds
@@ -86,6 +102,127 @@ func TestDocsDesktopConsoleDesignCarriesTheDecisions(t *testing.T) {
 			if !strings.Contains(doc, want) {
 				t.Errorf("%s no longer carries %s: it never says %q", path, tc.what, want)
 			}
+		}
+	}
+}
+
+// TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers is the plan's Task 5.0
+// red step: the owner's answers of 2026-10-15 pinned where the design records
+// them -- section 10's last column -- and the lines that record what the
+// owner's answers of 2026-10-16 do to THIS design (nothing: D22, D34 and D21
+// belong to docs/design/desktop-console-v2.md's D21-D38, and no row of
+// section 10 moves).
+//
+// The column is read as a TABLE, not as prose, for the reason
+// TestDocsDesktopConsoleDesignAllowListIsExactArgv documents: a substring
+// check is satisfied by a sentence about the answers, so a cell could be
+// emptied, flipped or a twenty-first row added with no answer at all and the
+// test would still pass. Every one of the twenty rows is compared, in order,
+// with its key and its answer; the four ruled cells exactly, and the sixteen
+// acceptances as the recommendation they accept. D13's recommendation carries
+// a bare "|" inside a code span (`example|show|layer|init|publish`), which
+// docTableAfter splits on, so the answer is read as the row's LAST cell -- the
+// column's position is what is fixed, not the cell count.
+func TestDocsDesktopConsoleDesignCarriesTheOwnerAnswers(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+
+	for _, want := range []string{
+		"| Owner's answer 2026-10-15 |",
+		"the other sixteen accepted as recommended",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer carries section 10's answer column: it never says %q", path, want)
+		}
+	}
+
+	// The ruled cells, exactly as the owner ruled them, and the two acceptances
+	// that carry a recorded amendment to the recommendation they accept.
+	const accepted = "**Accepted as recommended.**"
+	ruled := map[string]string{
+		"**D1**":  "**CLI sidecar (option A), behind the `FugaroSource` interface; direct RTDB/Firestore access with the operator's credentials (option B) never.**",
+		"**D3**":  "**This repository, under `console/`.**",
+		"**D4**":  "**Direct download plus a Homebrew cask; signed, notarised and stapled.** Apple signing enters this repository's release path **tag-only**, behind `scripts/release-gate.sh` and a **protected GitHub environment**; **the owner holds the certificate and runs every signing step**. **The Mac App Store is out.**",
+		"**D11**": "**Its own artifact, published from the CLI's `vX.Y.Z` tag, with a declared supported CLI range.**",
+	}
+
+	// The sixteen lines the plan calls "accepted as recommended", keyed to the
+	// clause that must follow the acceptance where the design records one; ""
+	// is the plain acceptance, and D12 and D13 are the two with an amendment.
+	acceptedSixteen := map[string]string{
+		"**D2**": "", "**D5**": "", "**D6**": "", "**D7**": "", "**D8**": "",
+		"**D9**": "", "**D10**": "",
+		"**D12**": "with Check 59 written as 59a and 59b",
+		"**D13**": "with the pairing check above recorded",
+		"**D14**": "", "**D15**": "", "**D16**": "", "**D17**": "", "**D18**": "",
+		"**D19**": "", "**D20**": "",
+	}
+
+	rows := docTableAfter(t, path, doc, "| Owner's answer 2026-10-15 |")
+	if len(rows) != 20 {
+		t.Errorf("%s's section 10 carries %d answer rows, want the twenty decisions D1 to D20", path, len(rows))
+	}
+	seen := map[string]bool{}
+	for _, cells := range rows {
+		key := cells[0]
+		answer := cells[len(cells)-1]
+		seen[key] = true
+		if strings.Trim(answer, "*") == "" || strings.TrimSpace(answer) == "" {
+			t.Errorf("%s's section 10 leaves %s unanswered: its answer cell is %q", path, key, answer)
+			continue
+		}
+		if want, ok := ruled[key]; ok {
+			// D1 alone carries a dated scope note appended on main (mobile D112,
+			// 2026-10-17): the owner's ruling must still open the cell verbatim
+			// and the note must say the console keeps D1.
+			if key == "**D1**" {
+				const note = "**Amended 2026-10-17 by mobile D112"
+				if !strings.HasPrefix(answer, want+" "+note) || !strings.Contains(answer, "**The desktop console keeps D1**") {
+					t.Errorf("%s's D1 answer must open with the ruling of 2026-10-15 verbatim, then the dated mobile D112 scope note that keeps D1 for the console:\n got %q\nwant prefix %q", path, answer, want+" "+note)
+				}
+				continue
+			}
+			if answer != want {
+				t.Errorf("%s's %s answer is no longer the ruling of 2026-10-15:\n got %q\nwant %q", path, key, answer, want)
+			}
+			continue
+		}
+		clause, ok := acceptedSixteen[key]
+		if !ok {
+			t.Errorf("%s's section 10 carries an answer row for %s, which this test's twenty do not: a decision was added or renumbered", path, key)
+			continue
+		}
+		if !strings.HasPrefix(answer, "**Accepted as recommended") {
+			t.Errorf("%s's %s answer is no longer \"accepted as recommended\": it reads %q", path, key, answer)
+			continue
+		}
+		if clause == "" && answer != accepted {
+			t.Errorf("%s's %s answer gained a clause beyond the plain acceptance: %q", path, key, answer)
+		}
+		if clause != "" && !strings.Contains(answer, clause) {
+			t.Errorf("%s's %s answer no longer records %q: it reads %q", path, key, clause, answer)
+		}
+	}
+	for key := range ruled {
+		if !seen[key] {
+			t.Errorf("%s's section 10 no longer carries an answer row for %s", path, key)
+		}
+	}
+	for key := range acceptedSixteen {
+		if !seen[key] {
+			t.Errorf("%s's section 10 no longer carries an answer row for %s", path, key)
+		}
+	}
+
+	// What the answers of 2026-10-16 do to THIS design: nothing, and it says so
+	// in two places -- the v2 note above section 1 and section 10's own prose.
+	for _, want := range []string{
+		"2026-10-16: the two answers to that spec's decisions",
+		"**No answer of 2026-10-16 changes any row of §10 below**",
+		"they do not reopen or amend anything below",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer records what the answers of 2026-10-16 do here: it never says %q", path, want)
 		}
 	}
 }
@@ -210,6 +347,18 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(showKill{}),
 		reflect.TypeOf(doctorOutput{}),
 		reflect.TypeOf(doctorCheck{}),
+		reflect.TypeOf(configListDoc{}),
+		reflect.TypeOf(configListInstallation{}),
+		reflect.TypeOf(plan.Document{}),
+		reflect.TypeOf(plan.Node{}),
+		reflect.TypeOf(plan.Edge{}),
+		reflect.TypeOf(plan.Footprint{}),
+		reflect.TypeOf(runstore.ChangedFiles{}),
+		// §6.10: the by-person aggregate behind runs stats --json, and the
+		// counts it embeds (CLI 0.9.0).
+		reflect.TypeOf(userStatsDoc{}),
+		reflect.TypeOf(userstats.Row{}),
+		reflect.TypeOf(userstats.Counts{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
@@ -247,6 +396,14 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(doctorOutput{}), reflect.TypeOf(doctorCheck{}),
 		reflect.TypeOf(report.JSONDoc{}), reflect.TypeOf(report.JSONLine{}),
 		reflect.TypeOf(report.JSONTokens{}), reflect.TypeOf(Diagnosis{}),
+		reflect.TypeOf(configListDoc{}), reflect.TypeOf(configListInstallation{}),
+		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
+		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
+		reflect.TypeOf(runstore.ChangedFiles{}),
+		// §6.10, the same three shapes as the test above (CLI 0.9.0).
+		reflect.TypeOf(userStatsDoc{}),
+		reflect.TypeOf(userstats.Row{}),
+		reflect.TypeOf(userstats.Counts{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		real[name] = true
@@ -324,6 +481,50 @@ func TestDocsDesktopConsoleContractStatesTheThreeFeedFacts(t *testing.T) {
 				t.Errorf("%s does not state the feed fact %q: it never says %q", path, tc.fact, want)
 			}
 		}
+	}
+}
+
+// TestDocsDesktopConsoleContractStatesTheRunsStatsOwnViewRefusal pins §6.10's
+// own-view paragraph to the three states the command actually has. Two of them
+// are the empty table -- a window the caller started nothing in, and an
+// identity with no key of its own (nothing printable in it, or a text that
+// reads as the unattributed key) -- and the third is not a state of `rows` at
+// all: an identity the CLI cannot resolve (local config's user: empty, git
+// config user.email answering nothing) is REFUSED before any document exists,
+// with an error naming --all-users. A document that files the refusal with the
+// empty table sends a console looking for a `rows: []` it will never receive.
+// The help's own half of this is TestRunsStatsHelpStatesThePrivateViewsThreeWays
+// (runs_stats_test.go), and the refusal itself is behaviour-pinned by
+// TestRunsStatsVisibilityIsTheRuling's last case.
+func TestDocsDesktopConsoleContractStatesTheRunsStatsOwnViewRefusal(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	start := strings.Index(doc, "**The `\"own\"` view filters a read that is not its own.**")
+	end := strings.Index(doc, "`userstats.Row`")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatalf("%s's own-view paragraph was renamed or reordered; update this test's markers", path)
+	}
+	para := doc[start:end]
+	for _, want := range []string{
+		"`rows: []`",              // the empty table, still stated
+		"nothing printable in it", // the identity with no key of its own
+		"**refused**",             // and the case that is not a table at all
+		"`--all-users`",           // the way past it, as the error names it
+	} {
+		if !strings.Contains(para, want) {
+			t.Errorf("%s's own-view paragraph does not say %q:\n%s", path, want, para)
+		}
+	}
+	// The refusal's own wording, read out of the command rather than written
+	// here, so the two cannot drift: the error a caller gets names --all-users
+	// too, and that is what the paragraph claims it does.
+	f := newCloudFixture(t)
+	userStatsPlace(t, f, "", nil, nil)
+	testutil.IsolateGit(t)
+	t.Setenv("GIT_DIR", t.TempDir())
+	out, _, err := execute(t, "runs", "stats", "--json")
+	if err == nil || !strings.Contains(err.Error(), "--all-users") {
+		t.Fatalf("no identity: err = %v, want the refusal %s's paragraph describes (out: %s)", err, path, out)
 	}
 }
 
@@ -426,6 +627,12 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"budget show": newBudgetShowCmd,
 	"report":      newReportCmd,
 	"runs ls":     newLsCmd,
+	// §6.10 documents the by-person aggregate (CLI 0.9.0). It is not on the
+	// design's spawn allow-list yet -- the Spend screen's by-person view is
+	// the task that follows -- but the document describes its flags, so the
+	// flags written there are checked against this constructor like any
+	// other's.
+	"runs stats":  newRunsStatsCmd,
 	"diagnose":    newDiagnoseCmd,
 	"logs":        newLogsCmd,
 	"cancel":      newCancelCmd,
@@ -433,6 +640,8 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"accounts ls": newAccountsLsCmd,
 	"doctor":      newDoctorCmd,
 	"version":     newVersionCmd,
+	"config list": newConfigListCmd,
+	"plan graph":  newPlanGraphCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -1156,5 +1365,2494 @@ func TestWatchCancelReturnsNilSoTheChildExitsZero(t *testing.T) {
 		}
 	case <-time.After(20 * time.Second):
 		t.Fatal("the cancelled watch did not return: SIGTERM would leave the child running")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 1.4: the console's staged tests workflow.
+//
+// A workflow change cannot be delivered by an agent run at all (GitHub rejects
+// a Fugaro push that touches .github/workflows/**), so this repository's
+// workflow changes are written under docs/pending-workflows/ and copied in by
+// hand -- see docs/pending-workflows/README.md. The console's CI is staged with
+// Task 1.4 and applied by the owner as Task 1.5, and the three tests below are
+// the two halves of what that staging has to keep true:
+//
+//   - TestConsoleTestsWorkflowIsStagedAndPinned reads the STAGED file, which is
+//     why these tests keep passing after the copy-in: the staged copy is not
+//     deleted (unlike images.yml), and while both files exist they must be
+//     byte-identical, so an edit to one without the other fails here rather
+//     than drifting silently.
+//   - TestConsoleWorkflowJobIsGateable is the one that keeps Task 4.6 from
+//     silently breaking every tag on this repository. **Task 4.6 added this
+//     job's check runs to scripts/release-gate.sh's `names` array**
+//     (`TestReleaseGateRequiresTheConsoleCheck`, below), and because the job is
+//     a matrix the gate requires the two names GitHub actually reports for it,
+//     `console (ubuntu-latest)` and `console (macos-latest)`, not the bare job
+//     key. A check that does not exist is not a success, so a `console` job
+//     behind a `paths:` filter, behind an `if:` guard, or renamed by an
+//     interpolated matrix value would refuse every release -- including the
+//     ones that never touch the console (design section 9.4). The name and the
+//     triggers are asserted here so the job the gate names cannot change
+//     silently.
+// ---------------------------------------------------------------------------
+
+const (
+	// consoleTestsWorkflowPath is the staged console CI; appliedConsoleTestsPath
+	// is where the owner copies it (plan Task 1.5).
+	consoleTestsWorkflowPath = "docs/pending-workflows/console-tests.yml"
+	appliedConsoleTestsPath  = ".github/workflows/console-tests.yml"
+)
+
+// consoleWorkflow is the staged file's shape, as far as these tests read it.
+// The unmodelled keys are covered separately, from the raw mapping, so a
+// `paths:` filter or a job-level `if:` cannot hide behind a field this struct
+// does not have.
+type consoleWorkflow struct {
+	On struct {
+		Push struct {
+			Branches []string `yaml:"branches"`
+		} `yaml:"push"`
+	} `yaml:"on"`
+	Permissions map[string]string             `yaml:"permissions"`
+	Jobs        map[string]consoleWorkflowJob `yaml:"jobs"`
+}
+
+type consoleWorkflowJob struct {
+	Name        string            `yaml:"name"`
+	If          string            `yaml:"if"`
+	RunsOn      string            `yaml:"runs-on"`
+	Permissions map[string]string `yaml:"permissions"`
+	Strategy    struct {
+		Matrix struct {
+			OS []string `yaml:"os"`
+		} `yaml:"matrix"`
+	} `yaml:"strategy"`
+	Steps []consoleWorkflowStep `yaml:"steps"`
+}
+
+type consoleWorkflowStep struct {
+	Uses string            `yaml:"uses"`
+	Run  string            `yaml:"run"`
+	If   string            `yaml:"if"`
+	With map[string]string `yaml:"with"`
+}
+
+// readConsoleTestsWorkflow is the staged file's text, parsed both ways: into
+// the typed shape above, and into raw mappings of the trigger block and of each
+// job, where a key this test does not model (`paths:`, `paths-ignore:`, `if:`)
+// is still visible.
+func readConsoleTestsWorkflow(t *testing.T) (string, consoleWorkflow, map[string]any, map[string]map[string]any) {
+	t.Helper()
+	text := readDoc(t, consoleTestsWorkflowPath)
+	var wf consoleWorkflow
+	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", consoleTestsWorkflowPath, err)
+	}
+	var raw struct {
+		On   map[string]any            `yaml:"on"`
+		Jobs map[string]map[string]any `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &raw); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", consoleTestsWorkflowPath, err)
+	}
+	if len(raw.On) == 0 || len(wf.Jobs) == 0 {
+		t.Fatalf("%s parsed with no triggers (%d) or no jobs (%d): these tests read the file, not a comment about it",
+			consoleTestsWorkflowPath, len(raw.On), len(wf.Jobs))
+	}
+	return text, wf, raw.On, raw.Jobs
+}
+
+// consoleUsesLine matches one `uses:` line: a full 40-hex commit pin with the
+// `# vX.Y.Z` comment that makes the pin reviewable. Dependabot does not watch
+// docs/pending-workflows/, and this file is copied in by hand, so the comment is
+// how the person copying it can compare pins (README's "Before you copy").
+var consoleUsesLine = regexp.MustCompile(`^\s*(?:-\s*)?uses:\s*[^\s@]+@[0-9a-f]{40}\s+#\s+v\d+\.\d+\.\d+\s*$`)
+
+// consoleBlob matches a long run of characters that could be a base64 blob:
+// the shape a pasted secret has. The pinned SHAs match it too, so the `uses:`
+// lines are removed before it is applied, and `consoleWord` excludes a bare
+// identifier -- this workflow's own comment naming a Go test is 42 letters, and
+// a check that fires on prose is a check that gets deleted. What is left is a
+// long run carrying a `+`, a `/` or a `=`, which is what a real blob has and a
+// word does not. The limit is stated rather than hidden: a secret that base64s
+// to pure alphanumerics is indistinguishable from an identifier, which is why
+// the `secrets.` assertion above is the one that actually holds the line.
+var (
+	consoleBlob = regexp.MustCompile(`[A-Za-z0-9+/]{40,}={0,2}`)
+	consoleWord = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+)
+
+// TestConsoleTestsWorkflowIsStagedAndPinned holds the staged file to what the
+// plan's Task 1.4 says it is: pinned, secretless, gated on nothing, and -- once
+// the owner has copied it in -- byte-identical to the file under
+// .github/workflows/.
+func TestConsoleTestsWorkflowIsStagedAndPinned(t *testing.T) {
+	text, wf, _, rawJobs := readConsoleTestsWorkflow(t)
+
+	// Every `uses:` is pinned to a full commit SHA with a version comment, and
+	// the file has at least one (a workflow whose actions were all deleted would
+	// otherwise pass this loop vacuously).
+	uses := 0
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.Contains(line, "uses:") {
+			continue
+		}
+		uses++
+		if !consoleUsesLine.MatchString(line) {
+			t.Errorf("%s: %q is not a full 40-hex pin with a `# vX.Y.Z` comment", consoleTestsWorkflowPath, strings.TrimSpace(line))
+		}
+	}
+	if uses == 0 {
+		t.Fatalf("%s pins no action at all: the console job checks the repository out and installs Node", consoleTestsWorkflowPath)
+	}
+
+	// No secret of any kind, and no shape that could be one. The signing,
+	// notarising and stapling job is Task 4.2's separate file, and this is the
+	// assertion that keeps the two from being merged back into one: a job that
+	// runs on every pull request must hold nothing a fork's pull request would
+	// otherwise be running next to.
+	if strings.Contains(text, "secrets.") {
+		t.Errorf("%s names a secret: the console job holds none at all (design section 9.4)", consoleTestsWorkflowPath)
+	}
+	for _, forbidden := range []string{"-----BEGIN", "pull_request_target", "workflow_run", "write-all"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("%s contains %q, which the tests workflow may never have (design section 9.4)", consoleTestsWorkflowPath, forbidden)
+		}
+	}
+	var body []string
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "uses:") {
+			continue
+		}
+		body = append(body, line)
+	}
+	for _, blob := range consoleBlob.FindAllString(strings.Join(body, "\n"), -1) {
+		if consoleWord.MatchString(blob) {
+			continue
+		}
+		t.Errorf("%s carries %q, which is long enough and shaped like a pasted credential: the tests job holds no secret", consoleTestsWorkflowPath, blob)
+	}
+
+	// Every job declares `permissions:` explicitly, and only what it needs.
+	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
+		t.Errorf("%s's workflow-level permissions = %v, want exactly contents: read", consoleTestsWorkflowPath, wf.Permissions)
+	}
+	for name, job := range wf.Jobs {
+		if len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
+			t.Errorf("%s's %s job permissions = %v, want exactly contents: read declared on the job", consoleTestsWorkflowPath, name, job.Permissions)
+		}
+		raw, ok := rawJobs[name]
+		if !ok {
+			t.Fatalf("%s's %s job is missing from the raw mapping", consoleTestsWorkflowPath, name)
+		}
+		if _, ok := raw["permissions"]; !ok {
+			t.Errorf("%s's %s job inherits permissions instead of declaring them", consoleTestsWorkflowPath, name)
+		}
+	}
+
+	// The install is `npm ci` from the committed lockfile, with the flags the
+	// plan names, and nothing else installs anything: no `npm install`, no
+	// `npm test` (the script is `test:unit`), and no unpinned `npx`.
+	installs := 0
+	var runs []string
+	for _, job := range wf.Jobs {
+		for _, step := range job.Steps {
+			runs = append(runs, step.Run)
+			if step.Run == "npm ci --ignore-scripts --no-audit --no-fund" {
+				installs++
+			}
+		}
+	}
+	if installs != 1 {
+		t.Errorf("%s has %d steps running exactly `npm ci --ignore-scripts --no-audit --no-fund`, want 1: it is the plan's install step", consoleTestsWorkflowPath, installs)
+	}
+	all := strings.Join(runs, "\n")
+	for _, want := range []string{"npm run test:unit", "npm run test:e2e"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("%s never runs %q", consoleTestsWorkflowPath, want)
+		}
+	}
+	for _, forbidden := range []string{"npm install", "npm test\n", "npx "} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("%s contains %q: the install is `npm ci` from the lockfile, and nothing here is unpinned", consoleTestsWorkflowPath, forbidden)
+		}
+	}
+
+	// The two runners, and the Linux pass under a display: Electron has no X on
+	// a bare runner, and macOS needs none.
+	job := wf.Jobs["console"]
+	if !slices.Contains(job.Strategy.Matrix.OS, "ubuntu-latest") || !slices.Contains(job.Strategy.Matrix.OS, "macos-latest") {
+		t.Errorf("%s's console job runs on %v, want both ubuntu-latest and macos-latest", consoleTestsWorkflowPath, job.Strategy.Matrix.OS)
+	}
+	linux, darwin := "", ""
+	for _, step := range job.Steps {
+		if strings.Contains(step.Run, "test:e2e") {
+			switch step.If {
+			case "runner.os == 'Linux'":
+				linux = step.Run
+			case "runner.os != 'Linux'":
+				darwin = step.Run
+			}
+		}
+	}
+	if !strings.HasPrefix(linux, "xvfb-run") {
+		t.Errorf("%s's Linux end-to-end step is %q, want it under xvfb-run: Electron needs a display", consoleTestsWorkflowPath, linux)
+	}
+	if darwin == "" || strings.Contains(darwin, "xvfb") {
+		t.Errorf("%s's macOS end-to-end step is %q, want the plain e2e script (xvfb-run does not exist there)", consoleTestsWorkflowPath, darwin)
+	}
+
+	// The Node version is read from console/package.json's `engines.node`, never
+	// written here a second time: test/unit/pinning.test.ts keeps that field an
+	// exact pin, and a copy of it in this file is a pin that can disagree.
+	nodeSteps := 0
+	for _, step := range job.Steps {
+		if !strings.Contains(step.Uses, "actions/setup-node@") {
+			continue
+		}
+		nodeSteps++
+		if step.With["node-version-file"] != "console/package.json" {
+			t.Errorf("%s's setup-node takes node-version-file %q, want console/package.json's engines.node", consoleTestsWorkflowPath, step.With["node-version-file"])
+		}
+		if _, ok := step.With["node-version"]; ok {
+			t.Errorf("%s's setup-node pins a version of its own instead of reading engines.node", consoleTestsWorkflowPath)
+		}
+	}
+	if nodeSteps != 1 {
+		t.Errorf("%s has %d setup-node steps, want 1", consoleTestsWorkflowPath, nodeSteps)
+	}
+
+	// And while both files exist, they are the same file: the staged copy is the
+	// reviewed one, so a hand-edited or hand-written workflow under
+	// .github/workflows/ is a failure here rather than something nobody reads.
+	// (Absence is not asserted: the owner's copy-in is the whole point of the
+	// staging, and an absence assertion would turn main red the moment they did
+	// it -- Task 1.5.)
+	if _, statErr := os.Stat(filepath.Join("..", "..", appliedConsoleTestsPath)); statErr == nil {
+		applied, err := os.ReadFile(filepath.Join("..", "..", appliedConsoleTestsPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(applied) != text {
+			t.Errorf("%s differs from the staged %s: the workflow under .github/workflows/ must be the reviewed staged copy, not an edit of it", appliedConsoleTestsPath, consoleTestsWorkflowPath)
+		}
+	} else if !os.IsNotExist(statErr) {
+		t.Fatal(statErr)
+	}
+}
+
+// TestConsoleWorkflowJobIsGateable pins the job name and the triggers, which is
+// half of what keeps scripts/release-gate.sh from refusing every tag in this
+// repository. Task 4.6 is the other half, and it is in place: the gate's `names`
+// array carries this job's check runs, which because the job is a matrix are
+// `console (ubuntu-latest)` and `console (macos-latest)` -- derived from this
+// file by TestReleaseGateRequiresTheConsoleCheck -- and never the bare key.
+// Each check below is a separate way the `console` check runs stop existing on a
+// commit the gate asks about, and the two mutations to try first are the ones
+// that are invisible until a tag is refused: rename the job to `console-tests`,
+// and add `paths: ['console/**']` to its trigger.
+func TestConsoleWorkflowJobIsGateable(t *testing.T) {
+	_, wf, on, rawJobs := readConsoleTestsWorkflow(t)
+
+	// A job whose key is exactly `console`: the key is what GitHub prefixes onto
+	// each matrix leg's check-run name, so it is the stem of the two names the
+	// gate requires. A rename has to be a deliberate edit here AND there.
+	job, ok := wf.Jobs["console"]
+	if !ok {
+		var keys []string
+		for name := range wf.Jobs {
+			keys = append(keys, name)
+		}
+		slices.Sort(keys)
+		t.Fatalf("%s has no `console` job (it has %v): that key is the check name scripts/release-gate.sh will require once Task 4.6 names it", consoleTestsWorkflowPath, keys)
+	}
+	if len(wf.Jobs) != 1 {
+		var keys []string
+		for name := range wf.Jobs {
+			keys = append(keys, name)
+		}
+		slices.Sort(keys)
+		t.Errorf("%s has jobs %v: the console's tests are one job, and a second one is another check nobody asked for", consoleTestsWorkflowPath, keys)
+	}
+
+	// The displayed name is the check-run name, and it is the static string.
+	// A matrix value interpolated into it (`console (${{ matrix.os }})`) would
+	// rename the check to something the gate cannot find.
+	if job.Name != "console" {
+		t.Errorf("%s's console job is named %q, want exactly %q: that name is the stem every check run of the job is built from, and the gate requires the legs it produces (Task 4.6)", consoleTestsWorkflowPath, job.Name, "console")
+	}
+	if strings.Contains(job.Name, "${{") {
+		t.Errorf("%s's console job name %q interpolates: a matrix value in the name is a check name the gate cannot look up", consoleTestsWorkflowPath, job.Name)
+	}
+
+	// Triggers: every pull request and every push to main, which is ci.yml's
+	// pattern minus its docs-only skip.
+	if !slices.Equal(wf.On.Push.Branches, []string{"main"}) {
+		t.Errorf("%s's push trigger branches = %v, want [main]", consoleTestsWorkflowPath, wf.On.Push.Branches)
+	}
+	keys := make([]string, 0, len(on))
+	for key := range on {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	if !slices.Equal(keys, []string{"pull_request", "push"}) {
+		t.Errorf("%s triggers on %v, want exactly push and pull_request", consoleTestsWorkflowPath, keys)
+	}
+
+	// No `if:` on the job, in particular none on a `changes`/`docs_only` output:
+	// a skipped check is not a success, so scripts/release-gate.sh -- which
+	// requires the two check runs this job reports -- treats the leg as missing
+	// and refuses the tag.
+	if job.If != "" {
+		t.Errorf("%s's console job carries `if: %s`: a guarded job is a check that can be skipped, and a skipped check is not a success", consoleTestsWorkflowPath, job.If)
+	}
+
+	// No `paths:`/`paths-ignore:` at the trigger level or on the job -- **every
+	// trigger**, not just `push`. This is the failure that refuses every release,
+	// including the ones that ship none of the console: the gate's `names` array
+	// carries the two check runs this job reports, and it would require a check
+	// this filter skipped. The check is a function over the parsed `on:`
+	// map rather than a loop here, because the file has no such filter anywhere:
+	// a loop passes whether or not it looks at the trigger it is about, and an
+	// earlier revision skipped every key but `push`, so a filter under
+	// `pull_request` -- the trigger that decides whether the console job runs on
+	// a pull request at all -- was never inspected.
+	if offences := triggerFilterOffences(on); len(offences) > 0 {
+		t.Errorf("%s's %s the console job must run unconditionally or the release gate refuses every tag",
+			consoleTestsWorkflowPath, strings.Join(offences, "; "))
+	}
+	for _, filter := range []string{"paths", "paths-ignore", "if"} {
+		if _, ok := rawJobs["console"][filter]; ok {
+			t.Errorf("%s's console job carries `%s:`, and the job that produces the gate's `console` check has neither", consoleTestsWorkflowPath, filter)
+		}
+	}
+}
+
+// triggerFilterOffences reports every trigger-level `paths:`/`paths-ignore:` in
+// a parsed `on:` block: the filters that would stop the console job running for
+// a change, which is the failure Task 4.6's release gate refuses every tag over.
+//
+// It is a function over the parsed map rather than a loop inside the test that
+// calls it, because the staged workflow carries no such filter at any trigger --
+// so a loop there passes by not being reached, which is exactly what an earlier
+// revision did: it skipped every key but `push`, and a `paths:` under
+// `pull_request:` (the trigger that decides whether the console job runs on a
+// pull request at all) was never looked at.
+// TestConsoleTriggerFilterOffencesSeesEveryTrigger hands this function the map
+// that has one, so the check cannot go back to passing vacuously.
+func triggerFilterOffences(on map[string]any) []string {
+	keys := make([]string, 0, len(on))
+	for key := range on {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	var offences []string
+	for _, key := range keys {
+		trigger, ok := on[key].(map[string]any)
+		if !ok {
+			// A bare `pull_request:` is YAML null: the trigger with no filters at
+			// all, which is the state this check wants. Anything that is not a
+			// mapping carries no `paths:` either.
+			continue
+		}
+		for _, filter := range []string{"paths", "paths-ignore"} {
+			if _, ok := trigger[filter]; ok {
+				offences = append(offences, key+" trigger carries `"+filter+"`:")
+			}
+		}
+	}
+	return offences
+}
+
+// TestConsoleTriggerFilterOffencesSeesEveryTrigger is the mutation-proof half of
+// the trigger-filter check: it hands that check a map with a filter on the
+// trigger the earlier revision skipped, and one on a trigger that does not exist
+// today, and requires both to be reported -- and the shape the staged workflow
+// actually has to report nothing, so the check is not passing by refusing
+// everything.
+func TestConsoleTriggerFilterOffencesSeesEveryTrigger(t *testing.T) {
+	hostile := map[string]any{
+		"push":              map[string]any{"branches": []any{"main"}},
+		"pull_request":      map[string]any{"paths": []any{"console/**"}},
+		"workflow_dispatch": map[string]any{"paths-ignore": []any{"docs/**"}},
+	}
+	want := []string{
+		"pull_request trigger carries `paths`:",
+		"workflow_dispatch trigger carries `paths-ignore`:",
+	}
+	if got := triggerFilterOffences(hostile); !slices.Equal(got, want) {
+		t.Errorf("triggerFilterOffences(%v) = %v, want %v", hostile, got, want)
+	}
+	// The staged file's own `on:` block: `push:` with branches, and a bare
+	// `pull_request:` (YAML null).
+	clean := map[string]any{"push": map[string]any{"branches": []any{"main"}}, "pull_request": nil}
+	if got := triggerFilterOffences(clean); len(got) != 0 {
+		t.Errorf("triggerFilterOffences(%v) = %v, want no offences: a filter on a bare trigger is nil, not an offence", clean, got)
+	}
+}
+
+// TestPendingWorkflowsReadmeNamesTheConsoleTestsRow asserts the staging
+// directory's README carries THIS file's row: what it is, that it is staged
+// because no agent may push a workflow here, and the one command that applies
+// it. The name is singular and row-specific on purpose -- Task 4.2 adds a second
+// console row and a second test, `TestDocsPendingWorkflowsReadmeNamesTheConsoleRows`
+// (plural), which asserts both -- so no reader has to work out whether two
+// similarly-named tests are the same test.
+func TestPendingWorkflowsReadmeNamesTheConsoleTestsRow(t *testing.T) {
+	doc := readDoc(t, "docs/pending-workflows/README.md")
+	for _, want := range []string{
+		// What the file is: the console's own tests, on the two runners, with
+		// no secret and nothing to gate it.
+		"console-tests.yml",
+		"npm run test:unit",
+		"macos-latest",
+		"xvfb-run",
+		// Why it is staged here rather than applied.
+		"Fugaro refuses to push a commit that touches `.github/workflows/**`",
+		// The one command that applies it.
+		"cp docs/pending-workflows/console-tests.yml .github/workflows/console-tests.yml",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/pending-workflows/README.md lacks %q: the console's staged workflow needs its row here, with what it is, why it is staged and the one command that applies it", want)
+		}
+	}
+	// The staged file must exist under its own name, and the row must not tell a
+	// reader to delete it: unlike images.yml this staged copy is kept after the
+	// copy-in, because TestConsoleTestsWorkflowIsStagedAndPinned asserts the two
+	// files are byte-identical from then on.
+	if _, err := os.Stat(filepath.Join("..", "..", consoleTestsWorkflowPath)); err != nil {
+		t.Fatalf("%s is missing: the README describes a staged file that must be here (%v)", consoleTestsWorkflowPath, err)
+	}
+	if !strings.Contains(doc, filepath.Base(consoleTestsWorkflowPath)+"` is **not** deleted") &&
+		!strings.Contains(doc, "is not deleted after the copy") {
+		t.Error("docs/pending-workflows/README.md does not say the console-tests.yml staged copy is kept after the copy-in: it is, because the byte-identity test reads it afterwards")
+	}
+
+	// Task 1.5's record: console/README.md names WHEN the workflow was applied
+	// as a commit (not a date), and which console tasks had CI and which did not.
+	readme := readDoc(t, "console/README.md")
+	var line string
+	for _, l := range strings.Split(readme, "\n") {
+		if strings.Contains(l, "Tests workflow applied at commit") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatal("console/README.md lacks the Task 1.5 line beginning \"Tests workflow applied at commit\": it must name the applying commit")
+	}
+	if !regexp.MustCompile(`\b[0-9a-f]{7,40}\b`).MatchString(line) {
+		t.Errorf("the Task 1.5 line names no commit hash (7+ hex characters): %q", line)
+	}
+	if regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}\b`).MatchString(line) {
+		t.Errorf("the Task 1.5 line names a date; it must name the applying commit only: %q", line)
+	}
+	for _, want := range []string{"Tasks 1.0 to 1.4", "no console CI"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the Task 1.5 line lacks %q: it must say which console commits had no CI", want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 4.2: the console's staged signing and notarisation workflow.
+//
+// The second staged file, and the reason there are two rather than one: this one
+// reads the Apple signing material, so it must never run on a pull request, while
+// console-tests.yml runs on every pull request and holds nothing. One file
+// carrying both would put the key's job definition next to a job any branch can
+// run, where the only thing between a fork's pull request and the signing
+// material is GitHub's own rule about *forks* (design section 9.4; plan Task
+// 4.2's table). These three tests hold the split and the file's shape.
+//
+// The workflow's *behaviour* cannot run here -- it has never run, and the
+// directory's README says so -- but its text can be pinned, which is what these
+// do. The mutations that matter, and the ones the red step runs first: adding
+// `pull_request:` to the file's `on:` (TestDocsConsoleReleaseWorkflowHoldsNoPull-
+// RequestTrigger), a planted `uses: actions/checkout@v5` (the pin loop), and a
+// signing step that skips when a secret is absent instead of failing (the
+// fail-closed assertion).
+// ---------------------------------------------------------------------------
+
+const (
+	// consoleReleaseWorkflowPath is the staged signing workflow; appliedConsoleReleasePath
+	// is where the owner copies it (plan Task 4.5).
+	consoleReleaseWorkflowPath = "docs/pending-workflows/console-release.yml"
+	appliedConsoleReleasePath  = ".github/workflows/console-release.yml"
+)
+
+// consoleReleaseSecrets is the exact set of secrets the signing job reads, and
+// the names the owner's protected GitHub environment `console-release` holds.
+// The names are the owner's own (2026-10-17) and D4 does not settle the
+// notarisation credential: it is the App Store Connect API key, not an
+// app-specific password, so the file names APPLE_API_KEY, APPLE_API_KEY_ID and
+// APPLE_API_ISSUER and never APPLE_ID/APPLE_APP_PASSWORD.
+var consoleReleaseSecrets = []string{
+	"APPLE_CERTIFICATE",
+	"APPLE_CERTIFICATE_PASSWORD",
+	"APPLE_TEAM_ID",
+	"APPLE_API_KEY",
+	"APPLE_API_KEY_ID",
+	"APPLE_API_ISSUER",
+}
+
+// consoleReleaseWorkflow is the staged signing file's shape, as far as these
+// tests read it. The unmodelled keys are covered separately, from the raw
+// mapping, so an `if:` or a `paths:` cannot hide behind a field this struct
+// does not have.
+type consoleReleaseWorkflow struct {
+	On struct {
+		Push struct {
+			Tags     []string `yaml:"tags"`
+			Branches []string `yaml:"branches"`
+		} `yaml:"push"`
+	} `yaml:"on"`
+	Permissions map[string]string                    `yaml:"permissions"`
+	Jobs        map[string]consoleReleaseWorkflowJob `yaml:"jobs"`
+}
+
+type consoleReleaseWorkflowJob struct {
+	Name        string               `yaml:"name"`
+	If          string               `yaml:"if"`
+	RunsOn      string               `yaml:"runs-on"`
+	Environment string               `yaml:"environment"`
+	Needs       string               `yaml:"needs"`
+	Permissions map[string]string    `yaml:"permissions"`
+	Steps       []consoleReleaseStep `yaml:"steps"`
+}
+
+type consoleReleaseStep struct {
+	Name             string            `yaml:"name"`
+	Id               string            `yaml:"id"`
+	Uses             string            `yaml:"uses"`
+	Run              string            `yaml:"run"`
+	If               string            `yaml:"if"`
+	With             map[string]string `yaml:"with"`
+	Env              map[string]string `yaml:"env"`
+	WorkingDirectory string            `yaml:"working-directory"`
+}
+
+// readConsoleReleaseWorkflow is the staged signing file's text, parsed both
+// ways: into the typed shape above, and into raw mappings of the trigger block
+// and of each job, where a key this test does not model is still visible.
+func readConsoleReleaseWorkflow(t *testing.T) (string, consoleReleaseWorkflow, map[string]any, map[string]map[string]any) {
+	t.Helper()
+	text := readDoc(t, consoleReleaseWorkflowPath)
+	var wf consoleReleaseWorkflow
+	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", consoleReleaseWorkflowPath, err)
+	}
+	var raw struct {
+		On   map[string]any            `yaml:"on"`
+		Jobs map[string]map[string]any `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &raw); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", consoleReleaseWorkflowPath, err)
+	}
+	if len(raw.On) == 0 || len(wf.Jobs) == 0 {
+		t.Fatalf("%s parsed with no triggers (%d) or no jobs (%d): these tests read the file, not a comment about it",
+			consoleReleaseWorkflowPath, len(raw.On), len(wf.Jobs))
+	}
+	return text, wf, raw.On, raw.Jobs
+}
+
+// consoleTriggerBlock is the file's `on:` block as text: the lines after `on:`
+// up to the next top-level key. The forbidden-trigger scan runs over this and
+// not over the whole file, so the file's own comment header can explain which
+// triggers it refuses -- and the test cannot be satisfied by moving a trigger
+// into a comment.
+func consoleTriggerBlock(t *testing.T, text string) string {
+	t.Helper()
+	lines := strings.Split(text, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.TrimRight(line, " \t") == "on:" {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatalf("%s has no top-level `on:` block: a workflow with no trigger is not a workflow", consoleReleaseWorkflowPath)
+	}
+	var block []string
+	for _, line := range lines[start+1:] {
+		if line != "" && line[0] != ' ' && line[0] != '\t' && line[0] != '#' {
+			break
+		}
+		block = append(block, line)
+	}
+	return strings.Join(block, "\n")
+}
+
+// TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger is the named sub-assertion
+// the security finding behind the two-file split turns on, split out so the
+// failure sentence names the bug. The signing job reads the Apple certificate
+// and the App Store Connect key from a protected environment; if it also ran on
+// a pull request, the only thing between a branch of this repository and the
+// signing material would be GitHub's rule about *forks*, which is a rule about
+// forks and not about branches. **The mutation that proves it**: adding
+// `pull_request:` to the file's `on:` makes this red.
+func TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger(t *testing.T) {
+	text, wf, on, _ := readConsoleReleaseWorkflow(t)
+	block := consoleTriggerBlock(t, text)
+
+	// The reason is quoted here rather than in a comment nobody reads, because
+	// this is the assertion a future edit will meet.
+	if strings.Contains(block, "pull_request") {
+		t.Errorf("%s's `on:` block carries a pull_request trigger: the signing job must not run on a pull request -- it reads the Apple certificate and the App Store Connect key from a protected environment, and a branch of this repository can open one (design section 9.4)", consoleReleaseWorkflowPath)
+	}
+	for _, forbidden := range []string{"workflow_run", "workflow_dispatch"} {
+		if strings.Contains(block, forbidden) {
+			t.Errorf("%s's `on:` block carries %q: the signing job runs on a version tag push and on nothing else -- a dispatch trigger is a manual door into the signing material (design section 9.4)", consoleReleaseWorkflowPath, forbidden)
+		}
+	}
+
+	// And the same thing read from the parsed trigger, so a trigger written in a
+	// form the text scan above would miss is still caught: exactly one trigger,
+	// `push`, of a strict vX.Y.Z tag, with no branch list.
+	keys := make([]string, 0, len(on))
+	for key := range on {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	if !slices.Equal(keys, []string{"push"}) {
+		t.Errorf("%s triggers on %v, want exactly [push]: it is the tag-only signing job (plan Task 4.2's table)", consoleReleaseWorkflowPath, keys)
+	}
+	if !slices.Equal(wf.On.Push.Tags, []string{"v[0-9]+.[0-9]+.[0-9]+"}) {
+		t.Errorf("%s's push trigger tags = %v, want the strict release tag pattern release.yml and images.yml use: a loose `v*` would start a signing run for a tag the release gate refuses", consoleReleaseWorkflowPath, wf.On.Push.Tags)
+	}
+	if len(wf.On.Push.Branches) != 0 {
+		t.Errorf("%s's push trigger carries branches %v: the signing job runs on a tag and never on a branch", consoleReleaseWorkflowPath, wf.On.Push.Branches)
+	}
+	if _, ok := on["push"].(map[string]any)["paths"]; ok {
+		t.Errorf("%s's push trigger carries `paths:`: a filtered tag push is a release with no console build at all", consoleReleaseWorkflowPath)
+	}
+}
+
+// consoleReleaseSigningStep is the name of the one step in the signing job that
+// holds a secret. Everything that needs the certificate or the App Store
+// Connect key happens inside it, after every install and download has run with
+// no secret in any step's environment (review of Task 4.2, round 2).
+const consoleReleaseSigningStep = "Sign, notarise and staple the console"
+
+// consoleReleasePublishStep and consoleReleaseTagStep are the publish job's
+// release step and the release job's tag-shape step, which the behavioural
+// tests below run under bash with a faked `gh`.
+const (
+	consoleReleasePublishStep = "Publish the console's own release"
+	consoleReleaseTagStep     = "The tag is a strict vX.Y.Z, and its version is the app's"
+)
+
+// consoleArtifactPins are the upload/download-artifact pins this repository's
+// applied workflows (release.yml, images.yml) already use. The console's file
+// reuses them rather than introducing a SHA nobody has read.
+var consoleArtifactPins = map[string]string{
+	"actions/upload-artifact":   "cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2",
+	"actions/download-artifact": "9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2",
+}
+
+// consoleRunLines is a step's `run:` script as trimmed, non-empty lines with
+// shell comments dropped, so an assertion about a command cannot be satisfied
+// by a comment that names it.
+func consoleRunLines(run string) []string {
+	var out []string
+	for _, line := range strings.Split(run, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// consoleLineIndex is the index of the first line of lines equal to want, or
+// containing it when contains is true; -1 when there is none.
+func consoleLineIndex(lines []string, want string, contains bool) int {
+	for i, line := range lines {
+		if line == want || (contains && strings.Contains(line, want)) {
+			return i
+		}
+	}
+	return -1
+}
+
+// consoleReleaseRawSteps is one job's steps as raw mappings, so a key the
+// typed struct does not model (`continue-on-error`, a `shell:`) is still
+// visible to the assertions.
+func consoleReleaseRawSteps(t *testing.T, rawJobs map[string]map[string]any, job string) []map[string]any {
+	t.Helper()
+	list, ok := rawJobs[job]["steps"].([]any)
+	if !ok {
+		t.Fatalf("%s's %s job has no step list", consoleReleaseWorkflowPath, job)
+	}
+	var steps []map[string]any
+	for i, s := range list {
+		m, ok := s.(map[string]any)
+		if !ok {
+			t.Fatalf("%s's %s job step %d is not a mapping", consoleReleaseWorkflowPath, job, i)
+		}
+		steps = append(steps, m)
+	}
+	return steps
+}
+
+// consoleStepNamed is the step of job called name, failing the test if there
+// is none.
+func consoleStepNamed(t *testing.T, job consoleReleaseWorkflowJob, jobName, name string) (int, consoleReleaseStep) {
+	t.Helper()
+	for i, s := range job.Steps {
+		if s.Name == name {
+			return i, s
+		}
+	}
+	t.Fatalf("%s's %s job has no step named %q", consoleReleaseWorkflowPath, jobName, name)
+	return -1, consoleReleaseStep{}
+}
+
+// TestDocsConsoleReleaseWorkflowIsStagedAndPinned holds the staged signing file
+// to what the plan's Task 4.2 says it is, as amended by its two review rounds
+// and the owner's "Separate console release" ruling of 2026-10-17: pinned,
+// tag-only, gated on main, the tag's version stamped on every pack, no secret in
+// any step's environment while anything installs, every secret in exactly one
+// step, fail-closed with no way to skip a step, the write token only in a
+// `publish` job that runs no repository code, its own `console-vX.Y.Z` release
+// and never the CLI's, and -- once the owner has copied it in -- byte-identical
+// to the file under .github/workflows/.
+//
+// It reads the file structurally (yaml.v3) wherever a substring scan is what
+// would let a mutation through. Each clause names the mutation it was proved
+// against in console/README.md's Task 4.2 table.
+func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
+	text, wf, _, rawJobs := readConsoleReleaseWorkflow(t)
+
+	// Every `uses:` is pinned to a full commit SHA with a `# vX.Y.Z` comment,
+	// and there are exactly four: checkout and setup-node before the signing
+	// step, upload-artifact after it, download-artifact in `publish`. The two
+	// artifact actions carry the pins release.yml and images.yml already use.
+	uses := 0
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.Contains(line, "uses:") || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		uses++
+		if !consoleUsesLine.MatchString(line) {
+			t.Errorf("%s: %q is not a full 40-hex pin with a `# vX.Y.Z` comment", consoleReleaseWorkflowPath, strings.TrimSpace(line))
+		}
+		for action, pin := range consoleArtifactPins {
+			if strings.Contains(line, action+"@") && !strings.HasSuffix(strings.TrimSpace(line), action+"@"+pin) {
+				t.Errorf("%s pins %s as %q, want the repository's existing pin %s", consoleReleaseWorkflowPath, action, strings.TrimSpace(line), pin)
+			}
+		}
+	}
+	if uses != 4 {
+		t.Errorf("%s pins %d actions, want exactly 4 (checkout, setup-node, upload-artifact, download-artifact)", consoleReleaseWorkflowPath, uses)
+	}
+
+	// Two jobs: `release` (environment, secrets, packer, read-only token) and
+	// `publish` (no environment, no packer, no Apple secret, the write token).
+	var keys []string
+	for name := range wf.Jobs {
+		keys = append(keys, name)
+	}
+	slices.Sort(keys)
+	if !slices.Equal(keys, []string{"publish", "release"}) {
+		t.Fatalf("%s has jobs %v, want exactly [publish release]", consoleReleaseWorkflowPath, keys)
+	}
+	job, pub := wf.Jobs["release"], wf.Jobs["publish"]
+	if job.RunsOn != "macos-15" {
+		t.Errorf("%s's release job runs on %q, want the pinned macos-15: the runner image is the signing toolchain, and macos-latest moves it without a reviewed edit", consoleReleaseWorkflowPath, job.RunsOn)
+	}
+	if pub.RunsOn != "ubuntu-24.04" {
+		t.Errorf("%s's publish job runs on %q, want the pinned ubuntu-24.04", consoleReleaseWorkflowPath, pub.RunsOn)
+	}
+	if job.Environment != "console-release" {
+		t.Errorf("%s's release job takes environment %q, want exactly %q (owner, 2026-10-17)", consoleReleaseWorkflowPath, job.Environment, "console-release")
+	}
+	if pub.Environment != "" {
+		t.Errorf("%s's publish job takes environment %q: it holds no Apple secret and needs none", consoleReleaseWorkflowPath, pub.Environment)
+	}
+	if pub.Needs != "release" {
+		t.Errorf("%s's publish job needs %q, want release: it publishes only what the release job verified", consoleReleaseWorkflowPath, pub.Needs)
+	}
+
+	// Permissions: the write token is the publish job's alone. The release job
+	// runs the packer's dependency tree twice and holds `contents: read`.
+	if strings.Contains(text, "write-all") {
+		t.Errorf("%s contains `write-all`", consoleReleaseWorkflowPath)
+	}
+	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
+		t.Errorf("%s's workflow-level permissions = %v, want exactly contents: read", consoleReleaseWorkflowPath, wf.Permissions)
+	}
+	if want := map[string]string{"contents": "read", "checks": "read"}; !reflect.DeepEqual(job.Permissions, want) {
+		t.Errorf("%s's release job permissions = %v, want exactly %v: the job that runs the packer never holds a token that can write a release", consoleReleaseWorkflowPath, job.Permissions, want)
+	}
+	if want := map[string]string{"contents": "write"}; !reflect.DeepEqual(pub.Permissions, want) {
+		t.Errorf("%s's publish job permissions = %v, want exactly %v", consoleReleaseWorkflowPath, pub.Permissions, want)
+	}
+
+	// **Nothing can skip a step or swallow its failure**, in either job: no
+	// `if:` except the release job's cleanup `always()`, no
+	// `continue-on-error`, no workflow- or job-level `env:`/`defaults:`.
+	var top map[string]any
+	if err := yaml.Unmarshal([]byte(text), &top); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"env", "defaults"} {
+		if _, ok := top[key]; ok {
+			t.Errorf("%s has a workflow-level `%s:`: every step would inherit it, and secrets live in exactly one step's env", consoleReleaseWorkflowPath, key)
+		}
+	}
+	type jobRef struct {
+		name string
+		job  consoleReleaseWorkflowJob
+		raw  []map[string]any
+	}
+	jobs := []jobRef{
+		{"release", job, consoleReleaseRawSteps(t, rawJobs, "release")},
+		{"publish", pub, consoleReleaseRawSteps(t, rawJobs, "publish")},
+	}
+	cleanup := -1
+	for _, j := range jobs {
+		for _, key := range []string{"env", "defaults", "if", "continue-on-error"} {
+			if _, ok := rawJobs[j.name][key]; ok {
+				t.Errorf("%s's %s job carries a job-level `%s:`: every step would inherit an env, and a guarded or failure-tolerant job is a release that silently publishes nothing, or an unsigned one", consoleReleaseWorkflowPath, j.name, key)
+			}
+		}
+		if len(j.raw) != len(j.job.Steps) {
+			t.Fatalf("%s's %s job: %d raw steps, %d typed", consoleReleaseWorkflowPath, j.name, len(j.raw), len(j.job.Steps))
+		}
+		for i, raw := range j.raw {
+			if _, ok := raw["continue-on-error"]; ok {
+				t.Errorf("%s's step %q carries `continue-on-error`", consoleReleaseWorkflowPath, j.job.Steps[i].Name)
+			}
+			if _, ok := raw["shell"]; ok {
+				t.Errorf("%s's step %q sets its own `shell:`", consoleReleaseWorkflowPath, j.job.Steps[i].Name)
+			}
+			cond, has := raw["if"]
+			if !has {
+				continue
+			}
+			if j.name == "release" && cond == "always()" && strings.Contains(j.job.Steps[i].Run, "security delete-keychain") && cleanup < 0 {
+				cleanup = i
+				continue
+			}
+			t.Errorf("%s's step %q carries `if: %v`: no step is conditional except the release job's cleanup always(), so nothing (the gate, the fail-closed check, the signing, the publishing) can be skipped", consoleReleaseWorkflowPath, j.job.Steps[i].Name, cond)
+		}
+	}
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") && strings.Contains(trimmed, "continue-on-error") {
+			t.Errorf("%s carries %q: nothing in the signing workflow is allowed to fail quietly", consoleReleaseWorkflowPath, trimmed)
+		}
+	}
+	if cleanup < 0 {
+		t.Fatalf("%s has no `if: always()` step deleting the temporary keychain", consoleReleaseWorkflowPath)
+	}
+	if cleanup != len(job.Steps)-1 {
+		t.Errorf("%s's cleanup is step %d of %d, want the release job's last", consoleReleaseWorkflowPath, cleanup, len(job.Steps))
+	}
+	for _, want := range []string{"appstoreconnect.p8", "console-certificate.p12", "hdiutil detach", "security delete-keychain"} {
+		if !strings.Contains(job.Steps[cleanup].Run, want) {
+			t.Errorf("%s's cleanup step does not use %q", consoleReleaseWorkflowPath, want)
+		}
+	}
+
+	// Script hygiene over every step of both jobs:
+	//   - `|| true` (or `|| :`) only in the cleanup step;
+	//   - no `${{ }}` inside a `run:` -- values reach a script through `env:`;
+	//   - no shell tracing (`set -x`, `set -eux`, `set -o xtrace`, `bash -x`;
+	//     `ditto -x` is ditto's extract flag, hence the shell forms only);
+	//   - no download-and-run: `curl`, `wget`, a pipe into `sh`/`bash`,
+	//     `eval`, `source <(...)`;
+	//   - no environment dump: a bare `env`, `printenv`, `set`, `export -p`,
+	//     `declare -p`/`-x`, as a command or piped.
+	trace := regexp.MustCompile(`\bset\s+-[a-zA-Z]*x|\bset\s+-o\s+xtrace|\bbash\s+(-[a-zA-Z]+\s+)*-[a-zA-Z]*x|\bsh\s+-[a-zA-Z]*x`)
+	fetchRun := regexp.MustCompile(`\bcurl\b|\bwget\b|\|\s*(sudo\s+)?(ba|z|da)?sh\b|\beval\b|\bsource\s+<\(|\.\s+<\(`)
+	envDump := regexp.MustCompile(`(^|[;&|(]\s*|\$\(\s*)(env|printenv|set|export\s+-p|declare\s+-[a-zA-Z]*[px][a-zA-Z]*|compgen\s+-v)\s*($|[|>;&)])|\bprintenv\b`)
+	for _, j := range jobs {
+		for i, step := range j.job.Steps {
+			if strings.Contains(step.Run, "${{") {
+				t.Errorf("%s's step %q inlines a `${{ }}` expression into its script: values reach a `run:` through `env:` only", consoleReleaseWorkflowPath, step.Name)
+			}
+			for _, line := range consoleRunLines(step.Run) {
+				if !(j.name == "release" && i == cleanup) && (strings.Contains(line, "|| true") || strings.Contains(line, "|| :")) {
+					t.Errorf("%s's step %q swallows a failure (%q): `|| true` is the cleanup step's and nowhere else", consoleReleaseWorkflowPath, step.Name, line)
+				}
+				if trace.MatchString(line) {
+					t.Errorf("%s's step %q traces its shell (%q): a traced shell prints every expanded value, the secrets included", consoleReleaseWorkflowPath, step.Name, line)
+				}
+				if fetchRun.MatchString(line) {
+					t.Errorf("%s's step %q fetches or evaluates code (%q): nothing is downloaded and run outside the lockfile and the pinned actions", consoleReleaseWorkflowPath, step.Name, line)
+				}
+				if envDump.MatchString(line) {
+					t.Errorf("%s's step %q dumps its environment (%q): that prints every value in it, the secrets included", consoleReleaseWorkflowPath, step.Name, line)
+				}
+			}
+		}
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") && trace.MatchString(line) {
+			t.Errorf("%s traces its shell (%q)", consoleReleaseWorkflowPath, strings.TrimSpace(line))
+		}
+	}
+
+	// No secret-shaped literal anywhere, and no PEM block.
+	if strings.Contains(text, "-----BEGIN") {
+		t.Errorf("%s contains a PEM block", consoleReleaseWorkflowPath)
+	}
+	var body []string
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.Contains(line, "uses:") {
+			body = append(body, line)
+		}
+	}
+	for _, blob := range consoleBlob.FindAllString(strings.Join(body, "\n"), -1) {
+		if !consoleWord.MatchString(blob) {
+			t.Errorf("%s carries %q, which is shaped like a pasted credential", consoleReleaseWorkflowPath, blob)
+		}
+	}
+
+	stepNamed := func(name string) (int, consoleReleaseStep) {
+		t.Helper()
+		return consoleStepNamed(t, job, "release", name)
+	}
+
+	// **Secrets are in exactly one step's `env:`** of the release job, each
+	// bound to its own name; the publish job holds none, and `GH_TOKEN` is in
+	// exactly two steps: the release gate (read-only token, check-runs) and the
+	// publish job's release step.
+	signIdx, sign := stepNamed(consoleReleaseSigningStep)
+	gateIdx, gate := stepNamed("The tag is strict, on main, and its checks passed")
+	_, publish := consoleStepNamed(t, pub, "publish", consoleReleasePublishStep)
+	for _, j := range jobs {
+		for i, step := range j.job.Steps {
+			for name, value := range step.Env {
+				if strings.Contains(value, "secrets.") && !(j.name == "release" && i == signIdx) {
+					t.Errorf("%s's step %q reads %s from a secret: secrets are in exactly one step's env, %q", consoleReleaseWorkflowPath, step.Name, name, consoleReleaseSigningStep)
+				}
+				if strings.Contains(value, "github.token") || name == "GH_TOKEN" || name == "GITHUB_TOKEN" {
+					if !(j.name == "release" && i == gateIdx) && step.Name != consoleReleasePublishStep {
+						t.Errorf("%s's step %q holds the token (%s): only the gate and the publish step do", consoleReleaseWorkflowPath, step.Name, name)
+					}
+				}
+			}
+			for name, value := range step.With {
+				if strings.Contains(value, "secrets.") || strings.Contains(value, "github.token") {
+					t.Errorf("%s's step %q hands a secret or the token to an action's `with.%s`", consoleReleaseWorkflowPath, step.Name, name)
+				}
+			}
+			if j.name == "publish" && (strings.Contains(step.Uses, "actions/checkout@") || strings.Contains(step.Uses, "actions/setup-node@") || strings.Contains(step.Run, "npm")) {
+				t.Errorf("%s's publish job runs repository code (%q%q): the job holding the write token runs no checkout and no packer", consoleReleaseWorkflowPath, step.Uses, step.Name)
+			}
+		}
+	}
+	if gate.Env["GH_TOKEN"] != "${{ github.token }}" || publish.Env["GH_TOKEN"] != "${{ github.token }}" {
+		t.Errorf("%s: the gate and the publish step must each read GH_TOKEN from github.token", consoleReleaseWorkflowPath)
+	}
+	wantSignEnv := map[string]string{"VERSION": "${{ steps.tag.outputs.version }}"}
+	for _, name := range consoleReleaseSecrets {
+		wantSignEnv[name] = "${{ secrets." + name + " }}"
+	}
+	if !reflect.DeepEqual(sign.Env, wantSignEnv) {
+		t.Errorf("%s's signing step env = %v, want exactly the six secrets, each bound to its own name, and the tag's version: %v", consoleReleaseWorkflowPath, sign.Env, wantSignEnv)
+	}
+	secretRef := regexp.MustCompile(`^\s+([A-Z][A-Z0-9_]*): \$\{\{ secrets\.([A-Z][A-Z0-9_]*) \}\}$`)
+	refs := 0
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.Contains(line, "secrets.") || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		m := secretRef.FindStringSubmatch(line)
+		if m == nil || m[1] != m[2] {
+			t.Errorf("%s: %q is not a step env binding of a secret to its own name", consoleReleaseWorkflowPath, strings.TrimSpace(line))
+			continue
+		}
+		refs++
+	}
+	if refs != len(consoleReleaseSecrets) {
+		t.Errorf("%s has %d secret references, want exactly %d (one each, in the signing step)", consoleReleaseWorkflowPath, refs, len(consoleReleaseSecrets))
+	}
+
+	// **The order: on main, a strict tag, the gate, then every install and
+	// download, then the secrets, and after them only the upload of the
+	// finished assets.**
+	var runSteps []int
+	for i, s := range job.Steps {
+		if s.Run != "" {
+			runSteps = append(runSteps, i)
+		}
+	}
+	if len(runSteps) < 3 {
+		t.Fatalf("%s's release job runs almost nothing", consoleReleaseWorkflowPath)
+	}
+	onMain := consoleRunLines(job.Steps[runSteps[0]].Run)
+	ancestry := consoleLineIndex(onMain, `if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then`, false)
+	if consoleLineIndex(onMain, "git fetch --quiet --no-tags origin main", false) < 0 || ancestry < 0 ||
+		ancestry+2 >= len(onMain) || !strings.HasPrefix(onMain[ancestry+1], `echo "::error::`) || onMain[ancestry+2] != "exit 1" {
+		t.Errorf("%s's first run step (%q) does not fetch main and refuse a tagged commit that is not its ancestor", consoleReleaseWorkflowPath, job.Steps[runSteps[0]].Name)
+	}
+	tagIdx, tag := stepNamed(consoleReleaseTagStep)
+	if tagIdx != runSteps[1] || gateIdx != runSteps[2] {
+		t.Errorf("%s's run steps begin %v, want the ancestry check, then the tag shape (%d), then the gate (%d)", consoleReleaseWorkflowPath, runSteps[:3], tagIdx, gateIdx)
+	}
+	if tag.Id != "tag" || tag.Env["TAG"] != "${{ github.ref_name }}" {
+		t.Errorf("%s's tag step must have id `tag` and read TAG from github.ref_name", consoleReleaseWorkflowPath)
+	}
+	if !slices.Contains(consoleRunLines(gate.Run), `scripts/release-gate.sh "$TAG"`) || gate.Env["TAG"] != "${{ github.ref_name }}" {
+		t.Errorf("%s's gate step (%q) does not run the release gate with the tag", consoleReleaseWorkflowPath, gate.Name)
+	}
+	installIdx, install := stepNamed("Install the pinned toolchain")
+	if install.Run != "npm ci --ignore-scripts --no-audit --no-fund" || install.WorkingDirectory != "console" {
+		t.Errorf("%s's install step is %q in %q, want exactly `npm ci --ignore-scripts --no-audit --no-fund` in console", consoleReleaseWorkflowPath, install.Run, install.WorkingDirectory)
+	}
+	warmIdx, warm := stepNamed("Download Electron and warm the packer's cache, with no secret present")
+	warmLines := consoleRunLines(warm.Run)
+	for _, want := range []string{"node node_modules/electron/install.js", `npm run package -- -c.mac.identity=null -c.extraMetadata.version="$VERSION"`, "rm -rf release"} {
+		if !slices.Contains(warmLines, want) {
+			t.Errorf("%s's warm-up step does not run %q", consoleReleaseWorkflowPath, want)
+		}
+	}
+	if warm.WorkingDirectory != "console" {
+		t.Errorf("%s's warm-up step runs in %q, want console", consoleReleaseWorkflowPath, warm.WorkingDirectory)
+	}
+	for i, step := range job.Steps {
+		if step.Uses != "" && i > signIdx && !strings.Contains(step.Uses, "actions/upload-artifact@") {
+			t.Errorf("%s runs the action %q after the signing step: only the upload of the finished assets runs there", consoleReleaseWorkflowPath, step.Uses)
+		}
+	}
+	if !(gateIdx < installIdx && installIdx < warmIdx && warmIdx < signIdx) {
+		t.Errorf("%s's order is gate %d, install %d, warm-up %d, signing %d: want the gate, then the install, then the downloads, and only then the step holding the secrets", consoleReleaseWorkflowPath, gateIdx, installIdx, warmIdx, signIdx)
+	}
+
+	// **The version is the tag's, on every pack.** console/package.json says
+	// 0.0.0; every `npm run package` stamps `-c.extraMetadata.version` from the
+	// tag step's output, through env (mutation: the stamp removed from either
+	// pack).
+	packs := 0
+	for _, step := range job.Steps {
+		for _, line := range consoleRunLines(step.Run) {
+			if !strings.Contains(line, "npm run package") {
+				continue
+			}
+			packs++
+			if !strings.Contains(line, `-c.extraMetadata.version="$VERSION"`) {
+				t.Errorf("%s's step %q packs without the tag's version (%q): every release would say 0.0.0", consoleReleaseWorkflowPath, step.Name, line)
+			}
+			if step.Env["VERSION"] != "${{ steps.tag.outputs.version }}" {
+				t.Errorf("%s's step %q packs with VERSION = %q, want the tag step's output", consoleReleaseWorkflowPath, step.Name, step.Env["VERSION"])
+			}
+		}
+	}
+	if packs != 2 {
+		t.Errorf("%s packs %d times, want 2 (the unsigned warm-up and the signed pack)", consoleReleaseWorkflowPath, packs)
+	}
+
+	// The packer only through `npm run package`: never `npx`, never by name.
+	for _, j := range jobs {
+		for _, step := range j.job.Steps {
+			for _, line := range consoleRunLines(step.Run) {
+				if strings.Contains(line, "npx") || strings.Contains(line, "electron-builder") {
+					t.Errorf("%s's step %q runs %q: the packer is the lockfile's, through `npm run package`", consoleReleaseWorkflowPath, step.Name, line)
+				}
+			}
+		}
+	}
+
+	// **The signing step, line by line.**
+	if sign.WorkingDirectory != "console" || sign.Id != "signed" {
+		t.Errorf("%s's signing step runs in %q with id %q, want console and signed", consoleReleaseWorkflowPath, sign.WorkingDirectory, sign.Id)
+	}
+	lines := consoleRunLines(sign.Run)
+	at := func(want string, contains bool) int {
+		t.Helper()
+		i := consoleLineIndex(lines, want, contains)
+		if i < 0 {
+			t.Errorf("%s's signing step does not run %q", consoleReleaseWorkflowPath, want)
+		}
+		return i
+	}
+
+	// Fail closed, first, naming the missing secret.
+	loop := at("for name in "+strings.Join(consoleReleaseSecrets, " ")+"; do", false)
+	empty := at(`if [ -z "${!name}" ]; then`, false)
+	if empty >= 0 && (empty+1 >= len(lines) || lines[empty+1] != `missing="$missing $name"`) {
+		t.Errorf("%s's fail-closed loop does not record an empty secret's name", consoleReleaseWorkflowPath)
+	}
+	refuse := at(`if [ -n "$missing" ]; then`, false)
+	if refuse >= 0 && (refuse+2 >= len(lines) || !strings.HasPrefix(lines[refuse+1], `echo "::error::missing secret(s):$missing`) || lines[refuse+2] != "exit 1") {
+		t.Errorf("%s's fail-closed check does not print the missing names and exit 1", consoleReleaseWorkflowPath)
+	}
+	firstUse := at("KEYCHAIN_PASSWORD=\"$(openssl rand -base64 32)\"", false)
+	if loop != 2 || lines[0] != "set -euo pipefail" || lines[1] != `missing=""` || refuse < 0 || firstUse < refuse {
+		t.Errorf("%s's signing step does not start with the fail-closed check (loop at %d, refusal at %d, first use at %d)", consoleReleaseWorkflowPath, loop, refuse, firstUse)
+	}
+	trap := at("trap remove_key_material EXIT", false)
+	if trap < 0 || trap > firstUse {
+		t.Errorf("%s's signing step does not set its exit trap before it creates key material", consoleReleaseWorkflowPath)
+	}
+	at(`security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"`, false)
+	at(`security import "$P12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign`, false)
+	at(`security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null`, false)
+	if strings.Contains(text, "-T /usr/bin/security") {
+		t.Errorf("%s trusts /usr/bin/security with the signing key: any later command could export it", consoleReleaseWorkflowPath)
+	}
+	writeP12 := at(`(umask 077 && printf '%s' "$APPLE_CERTIFICATE" | tr -d '\n' | openssl base64 -d -A > "$P12")`, false)
+	writeKey := at(`(umask 077 && printf '%s' "$APPLE_API_KEY" > "$KEY")`, false)
+	if strings.Contains(sign.Run, "chmod") {
+		t.Errorf("%s's signing step chmods a file: key material is created private (umask 077), not tightened after", consoleReleaseWorkflowPath)
+	}
+
+	// No command prints the key material: every line that names a variable
+	// holding it is one of these, exactly.
+	sensitive := regexp.MustCompile(`\$\{?(APPLE_CERTIFICATE|APPLE_CERTIFICATE_PASSWORD|APPLE_API_KEY|KEYCHAIN_PASSWORD|P12|KEY)\b`)
+	allowed := []string{
+		`rm -f "$P12" "$KEY"`,
+		lines[max(writeP12, 0)],
+		`security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"`,
+		`security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"`,
+		`security import "$P12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign`,
+		`security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null`,
+		`rm -f "$P12"`,
+		lines[max(writeKey, 0)],
+		`export APPLE_API_KEY="$KEY"`,
+		`xcrun notarytool submit "$DMG" --key "$KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait`,
+	}
+	for _, j := range jobs {
+		for _, step := range j.job.Steps {
+			for _, line := range consoleRunLines(step.Run) {
+				if sensitive.MatchString(line) && !slices.Contains(allowed, line) {
+					t.Errorf("%s's step %q runs %q, which touches the key material outside the lines that create, import, hand on and remove it", consoleReleaseWorkflowPath, step.Name, line)
+				}
+			}
+		}
+	}
+
+	// The team, on the certificate, before packing; the signature after.
+	teamBefore := at(`*"($APPLE_TEAM_ID)\""*) ;;`, false)
+	pack := at(`npm run package -- -c.extraMetadata.version="$VERSION"`, false)
+	if teamBefore < 0 || pack < 0 || teamBefore > pack {
+		t.Errorf("%s's signing step does not check the certificate's team before packing", consoleReleaseWorkflowPath)
+	}
+	teamAfter := at(`if [ "$signed_team" != "$team" ]; then`, false)
+	if teamAfter < 0 || teamAfter+2 >= len(lines) || lines[teamAfter+2] != "exit 1" || teamAfter < pack {
+		t.Errorf("%s's signing step does not refuse a bundle signed by another team after packing", consoleReleaseWorkflowPath)
+	}
+	unset := at("unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_TEAM_ID", false)
+	exportKey := at(`export APPLE_API_KEY="$KEY"`, false)
+	at(`export CSC_NAME="$identity"`, false)
+	at(`export CSC_KEYCHAIN="$KEYCHAIN"`, false)
+	if unset < 0 || exportKey < 0 || unset > pack || exportKey > pack || writeKey > pack {
+		t.Errorf("%s's signing step packs before it has written the key file, handed on its path and unset the certificate", consoleReleaseWorkflowPath)
+	}
+	at(`APP="release/mac-universal/Fugaro Console.app"`, false)
+	staple := at(`if ! xcrun stapler validate "$APP"; then`, false)
+	if staple < 0 || staple+2 >= len(lines) || lines[staple+2] != "exit 1" {
+		t.Errorf("%s's signing step does not refuse an unstapled bundle", consoleReleaseWorkflowPath)
+	}
+	if strings.Contains(text, "mac-*") || strings.Contains(text, "mac-arm64") {
+		t.Errorf("%s globs or names a thin-arch output directory: the build is universal, release/mac-universal", consoleReleaseWorkflowPath)
+	}
+	named := at(`*"-$VERSION-"*"|"*"-$VERSION-"*) ;;`, false)
+	if named < 0 || named+1 >= len(lines) || lines[named+1] != "*)" || named+3 >= len(lines) || lines[named+3] != "exit 1" {
+		t.Errorf("%s's signing step does not refuse artifacts whose names do not carry the tag's version", consoleReleaseWorkflowPath)
+	}
+	signDMG := at(`codesign --sign "$identity" --keychain "$KEYCHAIN" --timestamp "$DMG"`, false)
+	submit := at(`xcrun notarytool submit "$DMG" --key "$KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait`, false)
+	stapleDMG := at(`xcrun stapler staple "$DMG"`, false)
+	if !(pack < signDMG && signDMG < submit && submit < stapleDMG) {
+		t.Errorf("%s's signing step does not pack, sign the .dmg, notarise it and staple it, in that order (%d, %d, %d, %d)", consoleReleaseWorkflowPath, pack, signDMG, submit, stapleDMG)
+	}
+
+	// **The record is about the shipped bytes**, and record() exits 1 on a
+	// failure; the record, the sums and both artifacts leave the job as one
+	// workflow artifact.
+	verifyIdx, verify := stepNamed("Verify the shipped artifacts, and record it")
+	vlines := consoleRunLines(verify.Run)
+	if verify.Env["DMG"] != "${{ steps.signed.outputs.dmg }}" || verify.Env["ZIP"] != "${{ steps.signed.outputs.zip }}" {
+		t.Errorf("%s's verification step does not read the signed .dmg and .zip: %v", consoleReleaseWorkflowPath, verify.Env)
+	}
+	fn := consoleLineIndex(vlines, "record() {", false)
+	if fn < 0 || fn+6 >= len(vlines) || vlines[fn+2] != `if ! "$@" >> "$RECORD" 2>&1; then` || vlines[fn+5] != "exit 1" || vlines[fn+6] != "fi" {
+		t.Errorf("%s's record() does not exit 1 when a recorded command fails", consoleReleaseWorkflowPath)
+	}
+	for _, want := range []string{
+		`(cd "$(dirname "$DMG")" && shasum -a 256 "$(basename "$DMG")" "$(basename "$ZIP")") > "$SUMS"`,
+		`record cat "$SUMS"`,
+		`record hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT"`,
+		`record codesign --verify --deep --strict --verbose=2 "$IN_DMG"`,
+		`record codesign -d --entitlements - "$IN_DMG"`,
+		`record spctl --assess --type execute --verbose=4 "$IN_DMG"`,
+		`record xcrun stapler validate "$IN_DMG"`,
+		`record ditto -x -k "$ZIP" "$UNZIP"`,
+		`record codesign --verify --deep --strict --verbose=2 "$IN_ZIP"`,
+		`record spctl --assess --type execute --verbose=4 "$IN_ZIP"`,
+		`record xcrun stapler validate "$IN_ZIP"`,
+		`record codesign --verify --strict --verbose=2 "$DMG"`,
+		`record xcrun stapler validate "$DMG"`,
+		`record spctl --assess --type open --context context:primary-signature -v "$DMG"`,
+		`cp "$DMG" "$ZIP" "$RECORD" "$SUMS" "$ASSETS/"`,
+	} {
+		if !slices.Contains(vlines, want) {
+			t.Errorf("%s's verification step does not run %q", consoleReleaseWorkflowPath, want)
+		}
+	}
+	if verifyIdx+1 >= len(job.Steps) || !strings.Contains(job.Steps[verifyIdx+1].Uses, "actions/upload-artifact@") ||
+		job.Steps[verifyIdx+1].With["name"] != "console-release-assets" || job.Steps[verifyIdx+1].With["if-no-files-found"] != "error" {
+		t.Errorf("%s does not upload the verified assets as the console-release-assets artifact right after verifying them", consoleReleaseWorkflowPath)
+	}
+
+	// **The publish job**: downloads that artifact, re-checks every asset
+	// against the sums, then publishes `console-vX.Y.Z` and never the CLI's
+	// release.
+	if len(pub.Steps) != 3 || !strings.Contains(pub.Steps[0].Uses, "actions/download-artifact@") || pub.Steps[0].With["name"] != "console-release-assets" {
+		t.Fatalf("%s's publish job is not [download the console-release-assets artifact, check the sums, publish]", consoleReleaseWorkflowPath)
+	}
+	sums := consoleRunLines(pub.Steps[1].Run)
+	if !slices.Contains(sums, "sha256sum --strict --check console-sha256sums.txt") || pub.Steps[2].Name != consoleReleasePublishStep {
+		t.Errorf("%s's publish job does not re-check the assets against console-sha256sums.txt before publishing", consoleReleaseWorkflowPath)
+	}
+	plines := consoleRunLines(publish.Run)
+	for _, want := range []string{
+		`CONSOLE_TAG="console-v$VERSION"`,
+		`VERSION="${TAG#v}"`,
+		`gh release create "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft --latest=false \`,
+		`--target "$GITHUB_SHA" \`,
+		`"$DMG" "$APP_ZIP" "$RECORD" "$SUMS"`,
+		`gh release edit "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false`,
+	} {
+		if !slices.Contains(plines, want) {
+			t.Errorf("%s's publish step does not run %q", consoleReleaseWorkflowPath, want)
+		}
+	}
+	for _, line := range plines {
+		if strings.Contains(line, "gh release upload") || strings.Contains(line, "--clobber") {
+			t.Errorf("%s's publish step runs %q: the console never adds to an existing release and never clobbers", consoleReleaseWorkflowPath, line)
+		}
+		if regexp.MustCompile(`gh release \w+ "\$TAG"`).MatchString(line) {
+			t.Errorf("%s's publish step touches the CLI's release (%q)", consoleReleaseWorkflowPath, line)
+		}
+	}
+	// The never-clobber shape: in each `case`, the only branch that lets the
+	// job go on is the "absent" one ("" for the release list, a 404 for the
+	// tag), and the default branch `*)` errors and exits 1. The behaviour is
+	// pinned again, against a faked gh, in
+	// TestDocsConsoleReleasePublishRefusesToClobber.
+	for _, c := range []struct{ subject, pass string }{
+		{`case "$existing" in`, `"") ;;`},
+		{`case "$answer" in`, `*"(HTTP 404)"*) ;;`},
+	} {
+		i := consoleLineIndex(plines, c.subject, false)
+		if i < 0 || i+1 >= len(plines) || plines[i+1] != c.pass {
+			t.Errorf("%s's publish step: %q does not open with the one passing branch %q", consoleReleaseWorkflowPath, c.subject, c.pass)
+			continue
+		}
+		end := consoleLineIndex(plines[i:], "esac", false)
+		def := consoleLineIndex(plines[i:], "*)", false)
+		if end < 0 || def < 0 || def > end || !strings.HasPrefix(plines[i+def+1], `echo "::error::`) || plines[i+def+2] != "exit 1" {
+			t.Errorf("%s's publish step: %q's default branch does not refuse", consoleReleaseWorkflowPath, c.subject)
+		}
+	}
+	if i := consoleLineIndex(plines, `if answer="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CONSOLE_TAG" 2>&1)"; then`, false); i < 0 || plines[i+2] != "exit 1" {
+		t.Errorf("%s's publish step does not refuse an existing console tag", consoleReleaseWorkflowPath)
+	}
+
+	// The Node version is console/package.json's engines.node, and no cache:
+	// a restored cache is written by other runs.
+	nodeSteps := 0
+	for _, step := range job.Steps {
+		if !strings.Contains(step.Uses, "actions/setup-node@") {
+			continue
+		}
+		nodeSteps++
+		if step.With["node-version-file"] != "console/package.json" {
+			t.Errorf("%s's setup-node takes node-version-file %q, want console/package.json", consoleReleaseWorkflowPath, step.With["node-version-file"])
+		}
+		for _, key := range []string{"node-version", "cache", "cache-dependency-path"} {
+			if _, ok := step.With[key]; ok {
+				t.Errorf("%s's setup-node sets %q: the version is engines.node, and the signing job restores no cache", consoleReleaseWorkflowPath, key)
+			}
+		}
+	}
+	if nodeSteps != 1 {
+		t.Errorf("%s has %d setup-node steps, want 1", consoleReleaseWorkflowPath, nodeSteps)
+	}
+
+	// The checkout: full history, no credentials kept.
+	if !strings.Contains(job.Steps[0].Uses, "actions/checkout@") {
+		t.Errorf("%s's first step is %q, want actions/checkout", consoleReleaseWorkflowPath, job.Steps[0].Uses)
+	} else {
+		if job.Steps[0].With["fetch-depth"] != "0" {
+			t.Errorf("%s's checkout has fetch-depth %q, want 0", consoleReleaseWorkflowPath, job.Steps[0].With["fetch-depth"])
+		}
+		if job.Steps[0].With["persist-credentials"] != "false" {
+			t.Errorf("%s's checkout persists credentials", consoleReleaseWorkflowPath)
+		}
+	}
+
+	// And while both files exist, they are the same file.
+	if _, statErr := os.Stat(filepath.Join("..", "..", appliedConsoleReleasePath)); statErr == nil {
+		applied, err := os.ReadFile(filepath.Join("..", "..", appliedConsoleReleasePath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(applied) != text {
+			t.Errorf("%s differs from the staged %s", appliedConsoleReleasePath, consoleReleaseWorkflowPath)
+		}
+	} else if !os.IsNotExist(statErr) {
+		t.Fatal(statErr)
+	}
+}
+
+// consoleRunScript runs one step's `run:` script under bash in dir, with a
+// fake `gh` first on PATH (a shell script that answers from FAKE_* variables
+// and logs its calls to $FAKE_LOG), and returns whether it succeeded and the
+// calls the fake saw.
+func consoleRunScript(t *testing.T, script string, env []string) (bool, string, string) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake := `#!/usr/bin/env bash
+echo "gh $*" >> "$FAKE_LOG"
+case "$*" in
+  *"/releases --jq"*) printf '%s' "$FAKE_RELEASES"; exit "${FAKE_RELEASES_EXIT:-0}" ;;
+  *"git/ref/tags/"*)
+    case "$FAKE_TAG" in
+      exists) echo '{"ref":"refs/tags/x"}'; exit 0 ;;
+      404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+      *) echo "gh: Server Error (HTTP 502)" >&2; exit 1 ;;
+    esac ;;
+  "release create"*|"release edit"*) exit 0 ;;
+esac
+echo "fake gh: unexpected call: $*" >&2
+exit 3
+`
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	work := filepath.Join(dir, "work")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Fugaro Console-1.2.3-universal.dmg", "Fugaro Console-1.2.3-universal-mac.zip", "console-verification.txt", "console-sha256sums.txt"} {
+		if err := os.WriteFile(filepath.Join(work, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logPath := filepath.Join(dir, "gh.log")
+	out := filepath.Join(dir, "github_output")
+	cmd := exec.Command(bash, "-e", "-c", script)
+	cmd.Dir = work
+	cmd.Env = append([]string{
+		"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"FAKE_LOG=" + logPath,
+		"GITHUB_OUTPUT=" + out,
+		"GITHUB_REPOSITORY=dimipaun/fugaro",
+		"GITHUB_SHA=0123456789abcdef0123456789abcdef01234567",
+		"RUNNER_TEMP=" + dir,
+	}, env...)
+	runErr := cmd.Run()
+	calls, _ := os.ReadFile(logPath)
+	output, _ := os.ReadFile(out)
+	return runErr == nil, string(calls), string(output)
+}
+
+// TestDocsConsoleReleasePublishRefusesToClobber runs the staged publish step
+// against a faked gh. It publishes only when no console release exists and the
+// tag lookup is a clean 404; a published release, a leftover draft, an existing
+// tag, a tag lookup that failed any other way (a 5xx must not read as "absent")
+// and a failed release listing all stop it before `gh release create`.
+func TestDocsConsoleReleasePublishRefusesToClobber(t *testing.T) {
+	_, wf, _, _ := readConsoleReleaseWorkflow(t)
+	_, step := consoleStepNamed(t, wf.Jobs["publish"], "publish", consoleReleasePublishStep)
+	for _, c := range []struct {
+		name        string
+		releases    string
+		releasesErr string
+		tag         string
+		publishes   bool
+	}{
+		{"nothing there: publishes", "", "0", "404", true},
+		{"published release", "published", "0", "404", false},
+		{"draft left by an earlier attempt", "draft", "0", "404", false},
+		{"tag exists without a release", "", "0", "exists", false},
+		{"tag lookup fails with a 5xx", "", "0", "502", false},
+		{"release listing fails", "", "1", "404", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ok, calls, _ := consoleRunScript(t, step.Run, []string{
+				"TAG=v1.2.3", "GH_TOKEN=fake",
+				"FAKE_RELEASES=" + c.releases, "FAKE_RELEASES_EXIT=" + c.releasesErr, "FAKE_TAG=" + c.tag,
+			})
+			created := strings.Contains(calls, "gh release create console-v1.2.3")
+			published := strings.Contains(calls, "gh release edit console-v1.2.3 --repo dimipaun/fugaro --draft=false --latest=false")
+			if c.publishes && (!ok || !created || !published) {
+				t.Errorf("the publish step did not create and publish console-v1.2.3 (ok=%v); gh saw:\n%s", ok, calls)
+			}
+			if !c.publishes && (ok || created || published) {
+				t.Errorf("the publish step went on (ok=%v, created=%v) when it must refuse; gh saw:\n%s", ok, created, calls)
+			}
+			if strings.Contains(calls, "gh release create v1.2.3") || strings.Contains(calls, "upload") {
+				t.Errorf("the publish step touched the CLI's release; gh saw:\n%s", calls)
+			}
+		})
+	}
+}
+
+// TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions runs the staged tag
+// step: a strict vX.Y.Z yields version=X.Y.Z (the value every pack is stamped
+// with); anything else fails before a pack can run.
+func TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions(t *testing.T) {
+	_, wf, _, _ := readConsoleReleaseWorkflow(t)
+	_, step := consoleStepNamed(t, wf.Jobs["release"], "release", consoleReleaseTagStep)
+	for _, c := range []struct {
+		tag, version string
+	}{
+		{"v1.2.3", "1.2.3"},
+		{"v0.10.0", "0.10.0"},
+		{"v1.2", ""},
+		{"v1.2.3-rc1", ""},
+		{"v01.2.3", ""},
+		{"1.2.3", ""},
+		{"v1.2.3\nversion=9.9.9", ""},
+	} {
+		ok, _, out := consoleRunScript(t, step.Run, []string{"TAG=" + c.tag})
+		if c.version == "" {
+			if ok || out != "" {
+				t.Errorf("tag %q: the tag step passed (output %q); it must refuse anything but a strict vX.Y.Z", c.tag, out)
+			}
+			continue
+		}
+		if !ok || out != "version="+c.version+"\n" {
+			t.Errorf("tag %q: ok=%v output %q, want version=%s", c.tag, ok, out, c.version)
+		}
+	}
+}
+
+// TestDocsPendingWorkflowsReadmeNamesTheConsoleRows asserts the staging directory's
+// README carries BOTH console rows -- this task's signing workflow and Task
+// 1.4's tests workflow -- each saying what the file is, that it is staged because
+// no agent may push a workflow here, and the one command that applies it. Task
+// 1.4's `TestPendingWorkflowsReadmeNamesTheConsoleTestsRow` (singular) is the
+// row-specific counterpart and keeps passing; the plural name is this one, so a
+// reader never has to work out whether two similarly-named tests are the same
+// test.
+func TestDocsPendingWorkflowsReadmeNamesTheConsoleRows(t *testing.T) {
+	doc := readDoc(t, "docs/pending-workflows/README.md")
+
+	// Both rows exist as staged files under their own names.
+	for _, path := range []string{consoleTestsWorkflowPath, consoleReleaseWorkflowPath} {
+		if _, err := os.Stat(filepath.Join("..", "..", path)); err != nil {
+			t.Fatalf("%s is missing: the README describes a staged file that must be here (%v)", path, err)
+		}
+	}
+
+	// This file's row: what it is, why it is staged, the one command that applies
+	// it, and the environment it reads.
+	for _, want := range []string{
+		"console-release.yml",
+		// What the file is.
+		"notarytool",
+		"stapler",
+		"macos-15",
+		// Its own release, never the CLI's (owner, 2026-10-17).
+		"console-vX.Y.Z",
+		// Why it is staged here rather than applied.
+		"Fugaro refuses to push a commit that touches `.github/workflows/**`",
+		// The one command that applies it.
+		"cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml",
+		// The protected environment, and the fact that it is the owner's to
+		// create: a staging file cannot create an environment (plan Task 4.5).
+		"console-release",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/pending-workflows/README.md lacks %q: the console's staged signing workflow needs its row here, with what it is, why it is staged and the one command that applies it", want)
+		}
+	}
+
+	// The row names every secret the workflow reads, exactly as the file does,
+	// and says the notarisation credential is the API key rather than an
+	// app-specific password -- the decision D4 does not settle, recorded where a
+	// reader looking at the environment's contents will find it.
+	for _, name := range consoleReleaseSecrets {
+		if !strings.Contains(doc, name) {
+			t.Errorf("docs/pending-workflows/README.md does not name the secret %s: the row must name every secret the signing job reads, so the owner can check the environment against it", name)
+		}
+	}
+	if !strings.Contains(doc, "APPLE_APP_PASSWORD") && !strings.Contains(doc, "app-specific password") {
+		t.Error("docs/pending-workflows/README.md does not say which notarisation credential the file uses: D4 leaves it open, and the answer here is the App Store Connect API key triple")
+	}
+
+	// The "Not verified" section, as the plan asks: this workflow has never run,
+	// and the README says so rather than leaving a reader to infer a green
+	// pipeline from a CI section. Read from THIS file's section, not from
+	// anywhere in the document -- `images.yml`'s own "Not verified" note is
+	// already there and would satisfy an unscoped grep while saying nothing about
+	// the signing workflow.
+	section := consoleReadmeSection(t, doc, "## `console-release.yml`")
+	for _, want := range []string{"Not verified", "has never run"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("docs/pending-workflows/README.md's `## console-release.yml` section lacks %q: neither this workflow nor the signing chain under it has ever run, and the section has to say so", want)
+		}
+	}
+	if !strings.Contains(section, "TestDocsConsoleReleaseWorkflowIsStagedAndPinned") {
+		t.Error("docs/pending-workflows/README.md's `## console-release.yml` section does not name the test that pins the file: what is verified is its text, and the section must say by which test")
+	}
+}
+
+// consoleReadmeSection is the text of one `## …` section of a Markdown
+// document: from its heading to the next `## ` heading at the same level, or to
+// the end. The scoping is the point -- a phrase that has to be in one file's row
+// must not be satisfied by the same phrase in another file's.
+func consoleReadmeSection(t *testing.T, doc, heading string) string {
+	t.Helper()
+	start := strings.Index(doc, heading)
+	if start < 0 {
+		t.Fatalf("the document has no %q section", heading)
+	}
+	rest := doc[start+len(heading):]
+	if end := strings.Index(rest, "\n## "); end >= 0 {
+		return rest[:end]
+	}
+	return rest
+}
+
+// TestConsoleMVPRequiresTheStartupHandshake pins the owner's ruling of
+// 2026-10-17: Task 3.3 (the version handshake wired at startup) is a release
+// gate for the console MVP, because Task 3.2 alone builds a check nothing calls.
+// The plan must carry the task as SECURITY-SENSITIVE, depending on Task 3.2, and
+// name it in "What ships with the MVP" and in Task 4.6.
+func TestConsoleMVPRequiresTheStartupHandshake(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "plans", "2026-10-15-desktop-console.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := string(raw)
+	section := func(start, end string) string {
+		i := strings.Index(plan, start)
+		if i < 0 {
+			t.Fatalf("plan has no %q", start)
+		}
+		rest := plan[i:]
+		if j := strings.Index(rest[len(start):], end); j >= 0 {
+			return rest[:len(start)+j]
+		}
+		return rest
+	}
+	heading := regexp.MustCompile(`(?m)^### Task 3\.3: .*SECURITY-SENSITIVE, independent opus review$`)
+	if !heading.MatchString(plan) {
+		t.Error("the Task 3.3 heading does not itself carry `SECURITY-SENSITIVE, independent opus review`")
+	}
+	if rule := regexp.MustCompile(`(?m)^9\. \*\*Security-sensitive tasks.*$`).FindString(plan); !strings.Contains(rule, "2.0, 3.3, 4.1") {
+		t.Error("Global Constraints rule 9's list of security-sensitive tasks does not include 3.3")
+	}
+	task := section("### Task 3.3:", "\n## Phase 4")
+	// "approved by the owner 2026-10-17" replaced "NOT APPROVED TO IMPLEMENT" on
+	// 2026-10-17, when the owner gave the go for this task; the rest of the list
+	// is unchanged, and the gate itself (this function's reason to exist) is
+	// asserted below and by Task 4.6.
+	for _, want := range []string{"**Depends on:** Task 3.2", "startup.compatibility", "Red step", "approved by the owner 2026-10-17"} {
+		if !strings.Contains(task, want) {
+			t.Errorf("Task 3.3 lost %q", want)
+		}
+	}
+	if gate := section("### Task 4.6:", "\n## Phase 5"); !strings.Contains(gate, "Task 3.3 must be merged before the console MVP is released") {
+		t.Error("Task 4.6's release gate does not require Task 3.3")
+	}
+	if ships := section("**What ships with the MVP.**", "\n\n"); !strings.Contains(ships, "Tasks 3.2 and 3.3") {
+		t.Error(`"What ships with the MVP" does not name Task 3.3`)
+	}
+}
+
+// TestConsoleMVPRequiresTheRendererEntry is the sibling of
+// TestConsoleMVPRequiresTheStartupHandshake for the proposed Task 3.4 (added
+// 2026-10-17): the console cannot draw a real dashboard until a task sets the
+// preload, registers the handlers after the handshake, loads a script into the
+// document and chooses an installation, and no other task owns that. The plan
+// must carry the task as SECURITY-SENSITIVE, depending on Task 3.3, split into
+// 3.4a/3.4b/3.4c, and named as an MVP gate in "What ships with the MVP", in Task
+// 4.6, in the phase summary and in the cross-task dependencies, and Task 3.3
+// must name it as the wiring's owner. Removing Task 3.4 from any of those places
+// fails a named check here.
+//
+// The status line was "NOT APPROVED TO IMPLEMENT" until 2026-10-18, when the
+// owner gave the go ("go on task 3.4") and answered C8, C9 and C10, the three
+// decisions this task needed. The check below is on the *current* line, in the
+// same shape TestConsoleMVPRequiresTheStartupHandshake uses for Task 3.3's
+// 2026-10-17 go: a stale "not approved" line, or an answer that went missing from
+// the decisions table, is what fails. C8's answer also amends the design --
+// §5.1 rule 10 and §7.4 become "the spawn log, when asked, and the installations
+// file, and nothing else" -- and that amendment is asserted here too, because a
+// plan that promises it and a design that does not carry it is the failure mode
+// this pair of documents has to be protected from.
+func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
+	plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
+	section := func(start, end string) string {
+		i := strings.Index(plan, start)
+		if i < 0 {
+			t.Fatalf("plan has no %q", start)
+		}
+		rest := plan[i:]
+		if j := strings.Index(rest[len(start):], end); j >= 0 {
+			return rest[:len(start)+j]
+		}
+		return rest
+	}
+	heading := regexp.MustCompile(`(?m)^### Task 3\.4: The renderer entry.*SECURITY-SENSITIVE, independent opus review$`)
+	if !heading.MatchString(plan) {
+		t.Error("the Task 3.4 heading is missing or does not itself carry `SECURITY-SENSITIVE, independent opus review`")
+	}
+	if rule := regexp.MustCompile(`(?m)^9\. \*\*Security-sensitive tasks.*$`).FindString(plan); !strings.Contains(rule, "plus 3.4") {
+		t.Error("Global Constraints rule 9's list of security-sensitive tasks does not include 3.4")
+	}
+
+	task := section("### Task 3.4:", "\n## Phase 4")
+	for _, want := range []string{
+		"**Status: approved by the owner 2026-10-18.**",
+		"**3.4a is implemented**",
+		"3.4b and 3.4c are approved and not yet written",
+		"C8, C9 and C10 are answered",
+		"**Depends on:** Task 3.3 (**hard**: #541 merged",
+		"#### 3.4a", "#### 3.4b", "#### 3.4c",
+		"registerConsoleHandlers",
+		"never in `refused`",
+		"script-src 'self'",
+		"The CSP delta of this task is none",
+		"Shared files",
+		"Red step",
+		"Owner-run additions",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("Task 3.4 lost %q", want)
+		}
+	}
+	if strings.Contains(task, "NOT APPROVED TO IMPLEMENT") {
+		t.Error("Task 3.4 still carries a NOT APPROVED TO IMPLEMENT line: the owner gave the go on 2026-10-18")
+	}
+
+	// The three answers this task was waiting on, read out of the decisions table
+	// rather than out of the task text: C8 is the persist ruling (and the wording
+	// the design now carries), C9 is the separate picker window, C10 is that the
+	// kill fields inside `live.watch` stay visible in reduced mode.
+	answers := section("| **C8** |", "## Open items")
+	for _, want := range []string{
+		"Answered by the owner 2026-10-18: yes",
+		"one bounded, schema-checked `installations.json` in `userData`, mode `0600`",
+		"never read from the operator's own CLI config",
+		"a **separate small picker window** opened from the application menu",
+		"Answered by the owner 2026-10-18: no",
+		"**stay visible**",
+	} {
+		if !strings.Contains(answers, want) {
+			t.Errorf("the decisions table lost %q: C8, C9 and C10 were answered on 2026-10-18", want)
+		}
+	}
+
+	// The design amendment C8's answer requires, in the design and not only in
+	// the plan: rule 10 and section 7.4 now name the second write, in the same
+	// words the plan's answer column uses.
+	design := readDoc(t, "docs/design/desktop-console.md")
+	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, and the installations file, and nothing else.**") {
+		t.Error("design section 5.1 rule 10 was not amended to C8's wording")
+	}
+	if !strings.Contains(design, "**The app writes two things to disk and nothing else (§5.1 rule 10, amended 2026-10-18)") {
+		t.Error("design section 7.4 was not amended to C8's wording")
+	}
+	if !strings.Contains(design, "never a credential") {
+		t.Error("design section 5.1 rule 10's installations paragraph does not say the file holds no credential")
+	}
+
+	// Task 3.3's own section, bounded by Task 3.4's heading so the text of 3.4
+	// cannot satisfy it, still carries its own facts and names 3.4 as the owner
+	// of the wiring it leaves out.
+	own := section("### Task 3.3:", "\n### Task 3.4:")
+	for _, want := range []string{"**Depends on:** Task 3.2", "startup.compatibility", "Red step", "**The renderer entry is Task 3.4's, not this task's"} {
+		if !strings.Contains(own, want) {
+			t.Errorf("Task 3.3's own section lost %q", want)
+		}
+	}
+
+	if gate := section("### Task 4.6:", "\n## Phase 5"); !strings.Contains(gate, "Task 3.4 must be merged before the console MVP is released") {
+		t.Error("Task 4.6's release gate does not require Task 3.4")
+	}
+	if ships := section("**What ships with the MVP.**", "\n\n"); !strings.Contains(ships, "the renderer entry (Task 3.4") || !strings.Contains(ships, "item 4 or item 5 does not ship") {
+		t.Error(`"What ships with the MVP" does not name Task 3.4 as a gate`)
+	}
+	if summary := section("## Phase summary", "\n## "); !strings.Contains(summary, "Task 3.4") {
+		t.Error("the phase summary does not name Task 3.4")
+	}
+	if deps := section("## Cross-task dependencies", "\n## "); !strings.Contains(deps, "Task 3.4 (the renderer entry") {
+		t.Error("the cross-task dependencies do not name Task 3.4")
+	}
+
+	// **The status is one fact in five places, and the scan above only holds one
+	// of them.** A review of the approval commit found the plan still calling
+	// Task 3.4 "proposed 2026-10-17, not approved" in the phase summary, in the
+	// cross-task dependencies and in the file tree's annotations for the three
+	// files 3.4a creates -- places the section-scoped scan above never reads, so
+	// the drift went undetected while the task itself was correct. These are the
+	// four strings that said so; each is asserted absent, and the three that
+	// carry a status (rather than a question's origin date) are asserted to carry
+	// the approval instead. Rewording any of them without updating the others
+	// fails here.
+	for _, stale := range []string{
+		"Task 3.4, proposed 2026-10-17, not approved",
+		"Task 3.4 (the renderer entry, proposed",
+		"Task 3.4a (proposed)",
+		"Task 3.4b (proposed)",
+	} {
+		if strings.Contains(plan, stale) {
+			t.Errorf("the plan still calls Task 3.4 %q: the owner approved it on 2026-10-18, and the status has to be one fact everywhere it is told", stale)
+		}
+	}
+	if row := section("| **3. When things are missing** |", "\n"); !strings.Contains(row, "Task 3.4, approved by the owner 2026-10-18") {
+		t.Error("the phase summary's phase-3 row does not carry Task 3.4's approval")
+	}
+	if bullet := section("- **Task 3.4 (the renderer entry", "\n"); !strings.Contains(bullet, "approved by the owner 2026-10-18") {
+		t.Error("the cross-task dependencies bullet does not carry Task 3.4's approval")
+	}
+	entry := regexp.MustCompile(`(?m)^  src/renderer/entry\.ts .*$`).FindString(plan)
+	if !strings.Contains(entry, "Task 3.4a (approved by the owner 2026-10-18") {
+		t.Errorf("the file tree's annotation for src/renderer/entry.ts does not carry 3.4a's approval: %q", entry)
+	}
+	if strings.Contains(entry, "proposed") {
+		t.Errorf("the file tree still calls src/renderer/entry.ts proposed: %q", entry)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 4.6: the release gate requires the console check.
+//
+// scripts/release-gate.sh requires the checks in its `names` list on the tag's
+// commit and, in its identical_tree_checks fallback, on the pull request head
+// whose tree matches. Task 4.6 adds the console to that list -- and the console
+// job is a **matrix**: .github/workflows/console-tests.yml runs one job keyed
+// `console` on two operating systems, and GitHub names each leg's check run
+// "<job> (<values>)", so what the checks API reports is
+// `console (ubuntu-latest)` and `console (macos-latest)`. A bare `console` is
+// reported by nothing: check_state matches check runs by exact name, so
+// requiring it would make the gate see a check it can never find, and a
+// missing check is not a success -- the gate would refuse **every** tag in this
+// repository, the CLI-only releases included. That is the failure this task's
+// correction (owner, 2026-10-18) exists to prevent, and the one the plan's own
+// wording -- "Add `console` to that list" -- would have caused.
+//
+// So the gate requires both legs, and this test **derives** them from the
+// workflow rather than repeating them: rename the job, add a matrix key or add
+// an operating system, and the gate's list has to move with it or this fails.
+// The two names carry a space, which the old whitespace-split `names` string
+// cannot hold -- so `names` is an array, and the array-shaped loops are pinned
+// here too, because reverting one of them to `$names` would silently look for
+// a check named `console` and one named `(ubuntu-latest)`.
+//
+// The behaviour is exercised, not just read: a fake gh answers the gate's three
+// API calls and runs the gate's own `--jq` expression through a real jq, so the
+// name match, the app filter and the status/conclusion rules are all the
+// script's, and a green run of a required name from another app is refused for
+// the reason the script gives it, not because the fake knew to say so.
+// ---------------------------------------------------------------------------
+
+const releaseGatePath = "scripts/release-gate.sh"
+
+// readReleaseGate returns the script's text, the required-check names its
+// `names=(...)` array holds, and the names listed by the block of `#   ` lines
+// directly above that array -- the comment's own copy of the list, which the
+// script's comment asks a reader to keep in step with it.
+func readReleaseGate(t *testing.T) (string, []string, []string) {
+	t.Helper()
+	script := readDoc(t, releaseGatePath)
+	lines := strings.Split(script, "\n")
+	quoted := regexp.MustCompile(`"([^"]*)"`)
+	listed := regexp.MustCompile(`^#   (.*\S)[ \t]*$`)
+	var required, commented []string
+	found := false
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "names=(") {
+			continue
+		}
+		if found {
+			t.Fatalf("%s has more than one names=(...) line: the required set has to be one list", releaseGatePath)
+		}
+		found = true
+		if !strings.HasSuffix(line, ")") {
+			t.Fatalf("%s's names= line is not one array literal on one line, which is the form this test reads: %q", releaseGatePath, line)
+		}
+		for _, m := range quoted.FindAllStringSubmatch(line, -1) {
+			required = append(required, m[1])
+		}
+		for j := i - 1; j >= 0; j-- {
+			m := listed.FindStringSubmatch(lines[j])
+			if m == nil {
+				break
+			}
+			commented = append([]string{m[1]}, commented...)
+		}
+	}
+	if !found {
+		t.Fatalf("%s has no names=(...) array: the gate's required-check set must be a list this task's test can read", releaseGatePath)
+	}
+	if len(required) == 0 {
+		t.Fatalf("%s's names=(...) array is empty: a gate that requires nothing passes every tag", releaseGatePath)
+	}
+	if len(commented) == 0 {
+		t.Fatalf("%s lists no checks in the `#   ` comment block directly above names=(...): the prose copy of the list is how the two are held together", releaseGatePath)
+	}
+	return script, required, commented
+}
+
+// consoleGateCheckNames derives, from the **applied** console workflow, the
+// check-run names its job produces: the job's displayed name (falling back to
+// its key, as GitHub does) and one name per matrix leg, "<job> (<values>)"
+// with the values joined by ", ". The matrix keys are read in sorted order --
+// the current workflow has one, and this is the one place to revisit if a
+// second key is ever added, since GitHub joins the values in the order the keys
+// are written.
+func consoleGateCheckNames(t *testing.T) []string {
+	t.Helper()
+	names, err := deriveConsoleCheckNames(readDoc(t, appliedConsoleTestsPath))
+	if err != nil {
+		t.Fatalf("%s: %v", appliedConsoleTestsPath, err)
+	}
+	return names
+}
+
+// deriveConsoleCheckNames is consoleGateCheckNames over a workflow's text, so
+// the derivation itself can be run against a workflow whose matrix differs
+// (TestConsoleCheckNamesFollowTheMatrix): a derivation that ignored the matrix
+// would otherwise agree with the gate for as long as the matrix never moved.
+func deriveConsoleCheckNames(text string) ([]string, error) {
+	var wf struct {
+		Jobs map[string]struct {
+			Name     string `yaml:"name"`
+			Strategy struct {
+				Matrix map[string][]string `yaml:"matrix"`
+			} `yaml:"strategy"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
+		return nil, fmt.Errorf("not valid YAML, or a matrix this derivation does not read (include/exclude): %v", err)
+	}
+	if len(wf.Jobs) != 1 {
+		var keys []string
+		for k := range wf.Jobs {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		return nil, fmt.Errorf("has jobs %v: the release gate requires the checks of the console's tests, and this test cannot tell which of several jobs that is", keys)
+	}
+	var key string
+	for k := range wf.Jobs {
+		key = k
+	}
+	job := wf.Jobs[key]
+	display := job.Name
+	if display == "" {
+		display = key
+	}
+	// GitHub appends the matrix values only to a name that does not use them
+	// itself; a name with an expression in it is a shape this derivation would
+	// get wrong, so it refuses rather than guessing.
+	if strings.Contains(display, "${{") {
+		return nil, fmt.Errorf("the %s job's name %q carries an expression: GitHub then does not append the matrix values, and this derivation does not evaluate expressions", key, display)
+	}
+	var keys []string
+	for k := range job.Strategy.Matrix {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	if len(keys) == 0 || len(job.Strategy.Matrix[keys[0]]) == 0 {
+		return nil, fmt.Errorf("the %s job has no matrix values (%v): without them it reports one check run named %q, which is not the shape scripts/release-gate.sh requires", key, job.Strategy.Matrix, display)
+	}
+	legs := [][]string{{}}
+	for _, k := range keys {
+		var next [][]string
+		for _, leg := range legs {
+			for _, v := range job.Strategy.Matrix[k] {
+				next = append(next, append(slices.Clone(leg), v))
+			}
+		}
+		legs = next
+	}
+	names := make([]string, 0, len(legs))
+	for _, leg := range legs {
+		names = append(names, display+" ("+strings.Join(leg, ", ")+")")
+	}
+	slices.Sort(names)
+	return names, nil
+}
+
+// TestConsoleCheckNamesFollowTheMatrix runs the derivation the gate test relies
+// on against workflows that differ from the applied one, so the console names
+// are shown to come from the job key and the matrix rather than from a list
+// that happens to match today: an added platform, a renamed job and a job with
+// no matrix each change the answer or are refused.
+func TestConsoleCheckNamesFollowTheMatrix(t *testing.T) {
+	wf := func(job, name, oses string) string {
+		out := "on: [push]\njobs:\n  " + job + ":\n"
+		if name != "" {
+			out += "    name: " + name + "\n"
+		}
+		if oses != "" {
+			out += "    strategy:\n      matrix:\n        os: [" + oses + "]\n"
+		}
+		return out + "    runs-on: ubuntu-latest\n    steps: [{run: 'true'}]\n"
+	}
+	for _, c := range []struct {
+		label string
+		text  string
+		want  []string
+	}{
+		{"the applied shape", wf("console", "console", "ubuntu-latest, macos-latest"), []string{"console (macos-latest)", "console (ubuntu-latest)"}},
+		{"an added platform", wf("console", "console", "ubuntu-latest, macos-latest, windows-latest"), []string{"console (macos-latest)", "console (ubuntu-latest)", "console (windows-latest)"}},
+		{"a renamed job with no name", wf("desktop", "", "ubuntu-latest"), []string{"desktop (ubuntu-latest)"}},
+		{"a display name over the key", wf("console", "console-ui", "macos-latest"), []string{"console-ui (macos-latest)"}},
+	} {
+		got, err := deriveConsoleCheckNames(c.text)
+		if err != nil {
+			t.Errorf("%s: %v", c.label, err)
+			continue
+		}
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s: derived %v, want %v", c.label, got, c.want)
+		}
+	}
+	for _, c := range []struct{ label, text string }{
+		{"no matrix", wf("console", "console", "")},
+		{"a name with an expression", wf("console", "'console ${{ matrix.os }}'", "ubuntu-latest")},
+	} {
+		if got, err := deriveConsoleCheckNames(c.text); err == nil {
+			t.Errorf("%s: derived %v, want a refusal", c.label, got)
+		}
+	}
+}
+
+// TestReleaseGateRequiresTheConsoleCheck holds scripts/release-gate.sh to the
+// console checks .github/workflows/console-tests.yml reports, and proves the
+// gate's verdict follows them: it passes only when every required check is
+// green on the tagged commit, and refuses when a console leg is missing,
+// pending, failed, cancelled or green only from some other app. The mutations
+// to try first are the ones this task exists to prevent: write the bare
+// `console` into the list (every tag is then refused), drop one leg, and revert
+// a loop to `for name in $names`.
+func TestReleaseGateRequiresTheConsoleCheck(t *testing.T) {
+	script, required, commented := readReleaseGate(t)
+	consoleNames := consoleGateCheckNames(t)
+
+	// The full set, exactly: the three CLI checks the gate required before this
+	// task, and both console legs, and nothing else. The workflow is the source
+	// of the console names, so a renamed job or an added platform fails here
+	// rather than at a release tag.
+	want := append([]string{"test", "terraform", "rules"}, consoleNames...)
+	slices.Sort(want)
+	got := slices.Clone(required)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s requires the checks %v, want %v (the console names derived from %s): a name no workflow reports is a check the gate can never find, and a missing check is not a success", releaseGatePath, got, want, appliedConsoleTestsPath)
+	}
+	for _, name := range consoleNames {
+		if !slices.Contains(required, name) {
+			t.Errorf("%s does not require %q, which %s's matrix reports on every commit: a console failure would not stop a tag (Task 4.6)", releaseGatePath, name, appliedConsoleTestsPath)
+		}
+	}
+	if slices.Contains(required, "console") {
+		t.Errorf("%s requires the bare name %q, which no workflow reports: the console job is a matrix, so its check runs are %v, and requiring a name that cannot exist refuses every tag in this repository", releaseGatePath, "console", consoleNames)
+	}
+
+	// Prose and variable: the comment above the array lists the same set, so the
+	// two cannot drift and a reader of the script sees what it requires.
+	commentedSorted := slices.Clone(commented)
+	slices.Sort(commentedSorted)
+	if !slices.Equal(commentedSorted, got) {
+		t.Errorf("%s's names array is %v but the comment above it lists %v: they have to name the same set", releaseGatePath, got, commentedSorted)
+	}
+
+	// The array is read as an array. A whitespace-split loop turns
+	// `console (ubuntu-latest)` into `console` and `(ubuntu-latest)`, two checks
+	// that no workflow reports.
+	if strings.Contains(script, "for name in $names") {
+		t.Errorf("%s still iterates `for name in $names`: word splitting takes a console leg apart, so the gate would require a check named `console` that no workflow reports", releaseGatePath)
+	}
+	if n := strings.Count(script, `for name in "${names[@]}"`); n != 2 {
+		t.Errorf("%s has %d loops over \"${names[@]}\", want 2 (the target's own checks and identical_tree_checks'): every loop over the required set has to keep a name with a space in it whole", releaseGatePath, n)
+	}
+	if strings.Contains(script, `pending="$name`) {
+		t.Errorf("%s still packs the first pending check into one \"$name $state\" string: a console leg's name carries a space, so the message would print it split at the wrong one", releaseGatePath)
+	}
+
+	// The documents that state the gate's check list name both legs, and say
+	// that the legs exist on main only once console is merged into main and a
+	// push has run them: a gate run before that refuses every tag.
+	for _, doc := range []string{"docs/release.md", ".claude/skills/new-release/SKILL.md", releaseGatePath} {
+		text := readDoc(t, doc)
+		for _, name := range consoleNames {
+			if doc != releaseGatePath && !strings.Contains(text, name) {
+				t.Errorf("%s does not name the required check %q", doc, name)
+			}
+		}
+		if !strings.Contains(text, "merged into `main`") {
+			t.Errorf("%s does not say the console check runs exist on main only once console is merged into main (and a push has run them)", doc)
+		}
+	}
+
+	if len(consoleNames) != 2 {
+		t.Fatalf("%s's console job reports %v: this test's cases are written for two legs, and a third platform must be a deliberate edit here", appliedConsoleTestsPath, consoleNames)
+	}
+	// The two legs, by position in the derived (sorted) set; only one of them is
+	// ever non-green in a case below, so position does not decide an
+	// expectation -- the gate reports the check that is actually missing.
+	legA, legB := consoleNames[0], consoleNames[1]
+	// The first console name the script requires: when neither leg is green,
+	// that is the one its message names, since it walks the array in order.
+	firstConsoleLeg := ""
+	for _, name := range required {
+		if slices.Contains(consoleNames, name) {
+			firstConsoleLeg = name
+			break
+		}
+	}
+	if firstConsoleLeg == "" {
+		t.Fatalf("%s requires none of the console legs %v: the set assertion above has already failed, and this is the check it failed on", releaseGatePath, consoleNames)
+	}
+
+	// requiredChecks is the five checks of a fully green commit, with one entry
+	// replaced or removed for a case.
+	requiredChecks := func(replace string, app, state string, drop bool) []string {
+		var out []string
+		for _, name := range append([]string{"test", "terraform", "rules"}, consoleNames...) {
+			switch {
+			case name == replace && drop:
+			case name == replace:
+				out = append(out, gateCheckRun(name, app, state))
+			default:
+				out = append(out, gateCheckRun(name, "github-actions", "success"))
+			}
+		}
+		return out
+	}
+
+	t.Run("every required check green is a pass", func(t *testing.T) {
+		h := newGateHarness(t)
+		h.setTargetChecks(t, requiredChecks("", "", "", false))
+		ok, out := h.run(t)
+		if !ok {
+			t.Fatalf("the gate refused a commit whose every required check is green:\n%s", out)
+		}
+		if !strings.Contains(out, "gate passed for v1.2.3") {
+			t.Errorf("the gate passed without saying so:\n%s", out)
+		}
+	})
+
+	// One leg at a time, so the message names the check that is not green: a run
+	// that is not there and a run that belongs to another app are both "missing"
+	// to the gate, which selects on the name and the app slug together. The
+	// labels are derived from the legs above, like everything else here.
+	type refusal struct {
+		name  string
+		leg   string
+		app   string
+		state string
+		drop  bool
+		// want is the state the gate reports, when it is not the fixture's own
+		// (a queued run is pending; skipped, neutral and timed-out runs are
+		// completed without success, so failed).
+		want string
+	}
+	var refusals []refusal
+	// Every leg and every non-green shape, and the three CLI checks too: the
+	// set those three were held to before this task must hold exactly as it did.
+	for _, leg := range append([]string{legA, legB}, "test", "terraform", "rules") {
+		refusals = append(refusals,
+			refusal{name: fmt.Sprintf("%s is missing", leg), leg: leg, drop: true},
+			refusal{name: fmt.Sprintf("%s is still running", leg), leg: leg, app: "github-actions", state: "pending"},
+			refusal{name: fmt.Sprintf("%s is queued", leg), leg: leg, app: "github-actions", state: "queued", want: "pending"},
+			refusal{name: fmt.Sprintf("%s failed", leg), leg: leg, app: "github-actions", state: "failed"},
+			refusal{name: fmt.Sprintf("%s was cancelled", leg), leg: leg, app: "github-actions", state: "cancelled"},
+			refusal{name: fmt.Sprintf("%s was skipped", leg), leg: leg, app: "github-actions", state: "skipped", want: "failed"},
+			refusal{name: fmt.Sprintf("%s is neutral", leg), leg: leg, app: "github-actions", state: "neutral", want: "failed"},
+			refusal{name: fmt.Sprintf("%s timed out", leg), leg: leg, app: "github-actions", state: "timed_out", want: "failed"},
+			refusal{name: fmt.Sprintf("%s is green, but from another app", leg), leg: leg, app: "some-other-app", state: "success"},
+		)
+	}
+	for _, c := range refusals {
+		t.Run(c.name+" is refused", func(t *testing.T) {
+			leg := c.leg
+			// What the gate's own rules make of the case: a run that is not there
+			// and a run that belongs to another app are both "missing", because
+			// check_state selects on the name **and** on the app slug.
+			state := c.state
+			if c.want != "" {
+				state = c.want
+			}
+			if c.drop || c.app != "github-actions" {
+				state = "missing"
+			}
+			h := newGateHarness(t)
+			h.setTargetChecks(t, requiredChecks(leg, c.app, c.state, c.drop))
+			ok, out := h.run(t)
+			if ok {
+				t.Fatalf("the gate passed with %s:\n%s", c.name, out)
+			}
+			wantErr := fmt.Sprintf("required check '%s' is %s on %s", leg, state, h.sha)
+			if !strings.Contains(out, wantErr) {
+				t.Errorf("the gate refused for the wrong reason:\nwant %q in:\n%s", wantErr, out)
+			}
+		})
+	}
+
+	t.Run("a check named plain console does not stand in for the legs", func(t *testing.T) {
+		// The plan's text asked for the bare name. A commit that carries a green
+		// run of that name -- and neither matrix leg -- must still be refused:
+		// the legs are what GitHub reports for the job that actually runs.
+		h := newGateHarness(t)
+		var checks []string
+		for _, name := range append([]string{"test", "terraform", "rules"}, consoleNames...) {
+			if slices.Contains(consoleNames, name) {
+				continue
+			}
+			checks = append(checks, gateCheckRun(name, "github-actions", "success"))
+		}
+		checks = append(checks, gateCheckRun("console", "github-actions", "success"))
+		h.setTargetChecks(t, checks)
+		ok, out := h.run(t)
+		if ok {
+			t.Fatalf("the gate passed on a bare `console` run:\n%s", out)
+		}
+		if want := fmt.Sprintf("required check '%s' is missing on %s", firstConsoleLeg, h.sha); !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	})
+
+	// `check_state`'s documented coexistence rule -- "cancelled runs (superseded
+	// by a newer one) are ignored while another run of the name exists" -- run
+	// rather than assumed. Every other fixture in this file writes exactly one
+	// run per name, so the `select(.conclusion != "cancelled")` branch was never
+	// reached: a mutation that made any cancelled run poison its name survived
+	// the whole suite. That is the re-run/superseded flow the rule exists for,
+	// and it is the normal state of a name while CI re-runs a failed leg.
+	t.Run("a cancelled run beside a green run of the same name is ignored", func(t *testing.T) {
+		h := newGateHarness(t)
+		var checks []string
+		for _, name := range required {
+			checks = append(checks, gateCheckRun(name, "github-actions", "success"))
+			checks = append(checks, gateCheckRun(name, "github-actions", "cancelled"))
+		}
+		h.setTargetChecks(t, checks)
+		ok, out := h.run(t)
+		if !ok {
+			t.Fatalf("the gate refused a commit whose every required name has a green run beside a superseded cancelled one:\n%s", out)
+		}
+		if !strings.Contains(out, "gate passed for v1.2.3") {
+			t.Errorf("the gate passed without saying so:\n%s", out)
+		}
+	})
+
+	t.Run("cancelled runs alone are a cancelled check, not a green one", func(t *testing.T) {
+		h := newGateHarness(t)
+		var checks []string
+		for _, name := range required {
+			checks = append(checks, gateCheckRun(name, "github-actions", "cancelled"))
+		}
+		h.setTargetChecks(t, checks)
+		ok, out := h.run(t)
+		if ok {
+			t.Fatalf("the gate passed on a commit whose only runs of every required name were cancelled:\n%s", out)
+		}
+		if want := fmt.Sprintf("required check '%s' is cancelled on %s", required[0], h.sha); !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	})
+
+	t.Run("a cancelled run beside a failed run of the same name still fails", func(t *testing.T) {
+		h := newGateHarness(t)
+		var checks []string
+		for _, name := range required {
+			checks = append(checks, gateCheckRun(name, "github-actions", "success"))
+		}
+		checks = append(checks, gateCheckRun(required[0], "github-actions", "failed"))
+		h.setTargetChecks(t, checks)
+		ok, out := h.run(t)
+		if ok {
+			t.Fatalf("the gate passed with %s failed beside a cancelled run:\n%s", required[0], out)
+		}
+		if want := fmt.Sprintf("required check '%s' is failed on %s", required[0], h.sha); !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	})
+
+	t.Run("the identical-tree fallback requires the console legs too", func(t *testing.T) {
+		h := newGateHarness(t)
+		head := h.identicalTreeHead(t)
+		h.setTargetChecks(t, nil)
+		h.setHeadChecks(t, requiredChecks("", "", "", false))
+		h.setMergedPR(t, h.sha, head)
+		ok, out := h.run(t)
+		if !ok {
+			t.Fatalf("the gate refused a commit whose merged pull request head carries every required check:\n%s", out)
+		}
+		if !strings.Contains(out, "using the checks of "+head+" (identical tree)") {
+			t.Errorf("the fallback did not name the head it used:\n%s", out)
+		}
+	})
+
+	for _, c := range []struct {
+		label, leg, app, state string
+	}{
+		{"pending " + legA, legA, "github-actions", "pending"},
+		{"skipped " + legA, legA, "github-actions", "skipped"},
+		{legB + " green only from another app", legB, "some-other-app", "success"},
+		{"failed terraform", "terraform", "github-actions", "failed"},
+	} {
+		t.Run("the identical-tree fallback refuses a head with "+c.label, func(t *testing.T) {
+			h := newGateHarness(t)
+			head := h.identicalTreeHead(t)
+			h.setTargetChecks(t, nil)
+			h.setHeadChecks(t, requiredChecks(c.leg, c.app, c.state, false))
+			h.setMergedPR(t, h.sha, head)
+			ok, out := h.run(t)
+			if ok {
+				t.Fatalf("the gate passed on a head with %s:\n%s", c.label, out)
+			}
+			if strings.Contains(out, "identical tree") {
+				t.Errorf("the head's checks must not vouch:\n%s", out)
+			}
+		})
+	}
+
+	t.Run("the identical-tree fallback refuses a head without a console leg", func(t *testing.T) {
+		h := newGateHarness(t)
+		head := h.identicalTreeHead(t)
+		h.setTargetChecks(t, nil)
+		h.setHeadChecks(t, requiredChecks(legB, "", "", true))
+		h.setMergedPR(t, h.sha, head)
+		ok, out := h.run(t)
+		if ok {
+			t.Fatalf("the gate passed on a head missing %s:\n%s", legB, out)
+		}
+		if strings.Contains(out, "identical tree") {
+			t.Errorf("the head's incomplete checks must not vouch:\n%s", out)
+		}
+		// The target has no checks of its own, so the message names the first
+		// name the script requires -- read from the array, not assumed.
+		if want := fmt.Sprintf("required check '%s' is missing on %s", required[0], h.sha); !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	})
+}
+
+// gateCheckRun is one check run as the fake gh's state file writes it: the
+// check-run name, the app slug that owns it, and the state the gate reads.
+func gateCheckRun(name, app, state string) string {
+	return name + "\t" + app + "\t" + state
+}
+
+// gateFakeGH answers the three `gh api` calls scripts/release-gate.sh makes.
+// It is a shell script because the gate runs it through PATH, and it runs the
+// gate's **own** `--jq` expression through a real jq over check runs built from
+// the state file -- so the name match, the `github-actions` app filter and the
+// status/conclusion rules are all the script's, and a bug in the expression
+// shows up here rather than being papered over by a fake that already knew the
+// answer.
+const gateFakeGH = `#!/usr/bin/env bash
+set -eu
+log=${FAKE_GH_LOG:?}
+printf 'gh %s\n' "$*" >>"$log"
+
+api=${2:-}
+expr=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--jq" ]; then expr=$a; fi
+  prev=$a
+done
+
+# check_runs_json FILE prints the checks API's own shape, one run per
+# "name<TAB>app<TAB>state" line.
+check_runs_json() {
+  jq -Rn '
+    [inputs | select(length > 0) | split("\t")
+     | {name: .[0], app: {slug: .[1]}, state: .[2]}
+     | . + (if .state == "pending" then {status: "in_progress", conclusion: null}
+            elif .state == "failed" then {status: "completed", conclusion: "failure"}
+            elif .state == "queued" then {status: "queued", conclusion: null}
+            elif .state == "cancelled" then {status: "completed", conclusion: "cancelled"}
+            elif .state == "skipped" then {status: "completed", conclusion: "skipped"}
+            elif .state == "neutral" then {status: "completed", conclusion: "neutral"}
+            elif .state == "timed_out" then {status: "completed", conclusion: "timed_out"}
+            elif .state == "success" then {status: "completed", conclusion: "success"}
+            else error("fake gh: unknown check state \(.state)") end)]
+    | {check_runs: .}' <"$1"
+}
+
+case "$api" in
+  */check-runs*)
+    sha=$(printf '%s' "$api" | sed -n 's|.*/commits/\([^/]*\)/check-runs.*|\1|p')
+    state=${FAKE_GH_STATE:?}
+    if [ -n "${FAKE_GH_HEAD_STATE:-}" ] && [ -s "${FAKE_GH_PR:-}" ] && [ "$sha" = "$(cut -f3 "${FAKE_GH_PR}")" ]; then
+      state=$FAKE_GH_HEAD_STATE
+    fi
+    check_runs_json "$state" | jq -r "$expr"
+    ;;
+  */git/commits/*)
+    sha=$(printf '%s' "$api" | sed -n 's|.*/git/commits/\([^/?]*\).*|\1|p')
+    git -C "${FAKE_GH_ORIGIN:?}" rev-parse "$sha^{tree}"
+    ;;
+  */pulls*)
+    if [ -s "${FAKE_GH_PR:-}" ]; then cat "${FAKE_GH_PR}"; fi
+    ;;
+  *)
+    echo "fake gh: unexpected call: $*" >&2
+    exit 3
+    ;;
+esac
+`
+
+// gateHarness is a checkout with a real origin/main, a fake gh first on PATH,
+// and the files that fake reads: nothing about the gate's logic is simulated.
+type gateHarness struct {
+	work   string
+	origin string
+	sha    string
+	bin    string
+	root   string
+}
+
+func newGateHarness(t *testing.T) *gateHarness {
+	t.Helper()
+	for _, tool := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not on PATH: the gate's own --jq expression is run through a real jq", tool)
+		}
+	}
+	testutil.IsolateGit(t)
+	root := t.TempDir()
+	origin := testutil.NewRemote(t, map[string]string{"README.md": "seed\n"})
+	work := filepath.Join(root, "work")
+	testutil.Git(t, root, "clone", "--quiet", origin, work)
+	testutil.WriteFiles(t, root, map[string]string{"bin/gh": gateFakeGH})
+	return &gateHarness{
+		work:   work,
+		origin: origin,
+		sha:    testutil.Git(t, work, "rev-parse", "HEAD"),
+		bin:    filepath.Join(root, "bin"),
+		root:   root,
+	}
+}
+
+func (h *gateHarness) write(t *testing.T, name string, lines []string) string {
+	t.Helper()
+	path := filepath.Join(h.root, name)
+	body := ""
+	if len(lines) > 0 {
+		body = strings.Join(lines, "\n") + "\n"
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// setTargetChecks is the tagged commit's check-run set.
+func (h *gateHarness) setTargetChecks(t *testing.T, lines []string) {
+	t.Helper()
+	h.write(t, "target.tsv", lines)
+}
+
+// setHeadChecks is the merged pull request head's check-run set.
+func (h *gateHarness) setHeadChecks(t *testing.T, lines []string) {
+	t.Helper()
+	h.write(t, "head.tsv", lines)
+}
+
+// setMergedPR is the checks API's listing of the pull request merged as the
+// target: the tsv the gate's own jq would have produced.
+func (h *gateHarness) setMergedPR(t *testing.T, mergeSHA, headSHA string) {
+	t.Helper()
+	h.write(t, "pulls.tsv", []string{"2026-01-01T00:00:00Z\t" + mergeSHA + "\t" + headSHA})
+}
+
+// identicalTreeHead pushes an empty commit -- the same tree as the target, a
+// different commit -- to origin and returns its sha, so the gate's fallback has
+// a candidate to read.
+func (h *gateHarness) identicalTreeHead(t *testing.T) string {
+	t.Helper()
+	testutil.Git(t, h.work, "checkout", "--quiet", "-b", "pr-head")
+	testutil.Git(t, h.work, "commit", "--quiet", "--allow-empty", "-m", "pr head")
+	head := testutil.Git(t, h.work, "rev-parse", "HEAD")
+	testutil.Git(t, h.work, "push", "--quiet", "origin", "HEAD:refs/heads/pr-head")
+	testutil.Git(t, h.work, "checkout", "--quiet", "main")
+	targetTree := testutil.Git(t, h.work, "rev-parse", h.sha+"^{tree}")
+	if headTree := testutil.Git(t, h.work, "rev-parse", head+"^{tree}"); headTree != targetTree {
+		t.Fatalf("the fixture head's tree is %s, not the target's %s: the fallback is about identical trees", headTree, targetTree)
+	}
+	return head
+}
+
+// run runs scripts/release-gate.sh for v1.2.3 in the checkout and returns
+// whether it passed and everything it printed.
+func (h *gateHarness) run(t *testing.T, extra ...string) (bool, string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", filepath.Join(testutil.ModuleRoot(), releaseGatePath), "v1.2.3")
+	cmd.Dir = h.work
+	cmd.Env = append(os.Environ(),
+		"PATH="+h.bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GITHUB_SHA="+h.sha,
+		"GITHUB_REPOSITORY=dimipaun/fugaro",
+		// No waiting: a conclusive failure fails at once, and a missing or
+		// running check fails on the first pass rather than after a poll.
+		"GATE_WAIT_SECONDS=0",
+		"GATE_POLL_SECONDS=1",
+		"FAKE_GH_LOG="+filepath.Join(h.root, "gh.log"),
+		"FAKE_GH_ORIGIN="+h.origin,
+		"FAKE_GH_STATE="+filepath.Join(h.root, "target.tsv"),
+	)
+	for _, name := range []string{"head.tsv", "pulls.tsv"} {
+		path := filepath.Join(h.root, name)
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		if name == "head.tsv" {
+			cmd.Env = append(cmd.Env, "FAKE_GH_HEAD_STATE="+path)
+		} else {
+			cmd.Env = append(cmd.Env, "FAKE_GH_PR="+path)
+		}
+	}
+	cmd.Env = append(cmd.Env, extra...)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := cmd.Run()
+	return err == nil, out.String()
+}
+
+// TestPlanRule9ListsEveryFlaggedHeading holds Global Constraints rule 9 to
+// its own sentence, "This list is the headings": every task whose heading
+// carries `SECURITY-SENSITIVE, independent opus review` is named in the rule.
+// The 0.8.5 merge of `console` into `main` (PR #611) had to fold main's Task
+// 2.4 into the console's rewritten rule by hand, and no test failed when it
+// was dropped; this one does, for 2.4 and for any later flagged task.
+func TestPlanRule9ListsEveryFlaggedHeading(t *testing.T) {
+	plan := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
+	rule := regexp.MustCompile(`(?m)^9\. \*\*Security-sensitive tasks.*$`).FindString(plan)
+	if rule == "" {
+		t.Fatal("the plan has no Global Constraints rule 9")
+	}
+	flagged := regexp.MustCompile(`(?m)^### Task (\d+\.\d+[a-z]?): .*SECURITY-SENSITIVE, independent opus review`).FindAllStringSubmatch(plan, -1)
+	if len(flagged) == 0 {
+		t.Fatal("the plan has no task heading flagged SECURITY-SENSITIVE: the pattern no longer matches the headings")
+	}
+	for _, m := range flagged {
+		id := m[1]
+		if !regexp.MustCompile(`(^|[^0-9.])` + regexp.QuoteMeta(id) + `([^0-9]|$)`).MatchString(rule) {
+			t.Errorf("Task %s's heading carries SECURITY-SENSITIVE but rule 9's list does not name it: the rule says the list is the headings", id)
+		}
 	}
 }

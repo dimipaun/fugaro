@@ -88,8 +88,12 @@ a.skip-link:focus {
 }
 
 .site-header {
+  /* One row, always: the menu does not wrap under the wordmark, and the drawer hangs from
+   * this box's bottom edge (`position: relative` is what it hangs from) instead of adding a
+   * row to it (P3, RF3). */
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2xs) var(--space-lg);
@@ -114,15 +118,146 @@ a.skip-link:focus {
   color: var(--accent-on-dark);
 }
 
-/* The section nav: a horizontal bar that wraps onto as many lines as the viewport needs. It
- * needs no script and no hidden menu: at 360px the ten sections are three short lines. */
-.site-nav ul {
+/* The section nav (P3, D182): three groups of three, each a dropdown in the header's one row
+ * on a wide viewport, and the whole menu behind one toggle on a narrow one. Both levels are
+ * `<details>` — the markup is in `layouts/Base.astro`, with the note on why the panel is the
+ * toggle's sibling rather than its child — so the menu opens and closes with JavaScript off.
+ * `public/scripts/site.js` adds only what `<details>` does not do by itself: Escape and a
+ * click outside close what is open.
+ *
+ * The header keeps one row at every width: it does not wrap, and the drawer hangs from its
+ * bottom edge rather than becoming a second row inside it (the complaint RF3 measured: 177 px
+ * of header, three nav rows, on a 390 px first screen). */
+.site-nav {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3xs) var(--space-2xs);
+  align-items: center;
+}
+
+/* The drawer's toggle, and the only part of the menu a narrow header shows until it is
+ * opened. `display: inline-block` is what removes the disclosure triangle — the marker is
+ * drawn by `display: list-item`, the summary's default — and the button is the affordance. */
+.site-nav-toggle {
+  display: inline-block;
+  padding: var(--space-3xs) var(--space-2xs);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.site-nav-toggle:hover,
+.site-nav-toggle:focus-visible,
+.site-nav-drawer[open] > .site-nav-toggle {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* The panel: hidden until the toggle is open, and then an overlay under the header rather
+ * than a block inside it, so opening the menu does not change the header's height. The switch
+ * is the toggle's `open` attribute and the wire is the sibling combinator (P3). */
+.site-nav-panel {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  padding: var(--space-sm);
+  border-bottom: var(--border-width) solid var(--border);
+  background: var(--ground);
+}
+
+.site-nav-drawer[open] ~ .site-nav-panel {
+  display: block;
+}
+
+/* Both levels are lists of links, so both lose the bullet and the indent. */
+.site-nav-groups,
+.site-nav-group ul {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* A group's label is its `<summary>` — the second level's control — styled as what it behaves
+ * like, a link. */
+.site-nav-group > details > summary {
+  display: inline-block;
+  padding: var(--space-3xs) var(--space-2xs);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.site-nav-group > details > summary:hover,
+.site-nav-group > details > summary:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}
+
+/* The group holding the page being read says so, because on a wide viewport the dropdown is
+ * closed and the marked link inside it is not visible. The mark is not `aria-current`: the
+ * page carries exactly one of those, on the link itself. */
+.site-nav-group > details[data-current] > summary {
+  color: var(--accent-on-dark);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.35em;
+}
+
+/* The wide viewport: the same panel, in the header's row, as three dropdowns. The drawer's
+ * toggle goes away — nothing needs opening — and the panel stops being an overlay. */
+@media (min-width: 48rem) {
+  .site-nav-drawer {
+    display: none;
+  }
+
+  /* `display: block` is not decoration here, it is the whole of the wide layout. The base
+   * rule above hides the panel, and the only thing that shows it again is the drawer's own
+   * `open` attribute — which cannot arrive up here, because this block is where the drawer
+   * itself is taken away. Without this declaration the menu is `display: none` on every
+   * viewport at or above the breakpoint: the wordmark, and no way to reach a section.
+   * `base-styles.mjs` asserts it, and keeps the fixture that fails when it is dropped. */
+  .site-nav-panel {
+    display: block;
+    position: static;
+    padding: 0;
+    border-bottom: 0;
+  }
+
+  .site-nav-groups {
+    display: flex;
+    gap: var(--space-3xs) var(--space-2xs);
+  }
+
+  /* A group's own dropdown, out of the header's flow for the same reason the drawer's panel
+   * is: the header is one row (`flex-wrap: nowrap`) and opening *Product* must not grow that
+   * row's cross size and push the page down under the reader. The group is the box the list
+   * hangs from, and the list is what makes the group a dropdown rather than a label.
+   *
+   * It hangs from the group's **right** edge rather than its left, because the menu sits at
+   * the right of the header: between this breakpoint and the page's maximum width the
+   * header's own padding is still narrow, so a list opening rightwards from the last group
+   * would run past the viewport and give the page a sideways scroll. Anchored right, no
+   * group's list can reach that edge — and the wordmark at the other end leaves far more room
+   * than a three-item list needs at any width from 48rem up. */
+  .site-nav-group {
+    position: relative;
+  }
+
+  .site-nav-group ul {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    min-width: max-content;
+    padding: var(--space-2xs);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--ground);
+  }
 }
 
 .site-nav a {
@@ -182,6 +317,53 @@ a.skip-link:focus {
 :focus-visible {
   outline: var(--focus-ring-width) solid var(--accent);
   outline-offset: var(--focus-ring-offset);
+}
+
+/* ---- 2b. the copy control (redesign part P6, D183) --------------------------------------- */
+
+/* Every command the site prints — the hero's install blocks, the getting-started page's, the
+ * terminal's own line, the usage lines on the caps guide and every code block of the rendered
+ * CLI reference — carries one of these, and the markup is written once in
+ * `src/lib/copy-control.mjs`. The control is emitted `hidden` and `public/scripts/site.js`
+ * reveals it, so a reader whose browser runs no script sees the command and no button rather
+ * than a button that copies nothing.
+ *
+ * The control is a row above the block it belongs to and right-aligned on it: it is in the
+ * flow, so it can never overlap the command, and the confirmation has room beside the button.
+ * With no script the row holds nothing and is therefore no taller than nothing. */
+.command-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2xs);
+}
+
+/* Deliberately no `display` here. The `hidden` attribute is the whole mechanism that keeps
+ * the control out of a reader's way until the script has revealed it, and an author `display`
+ * would win over the user agent's `[hidden]` rule and put the button back on the page. */
+.copy-button {
+  padding: var(--space-3xs) var(--space-2xs);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--accent-on-dark);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.copy-button:hover {
+  border-color: var(--accent);
+}
+
+/* What the control says: the live region the markup carries, and the visible half of the
+ * "copied" state. It is empty until the script writes into it, so it takes no space. */
+.copy-status {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 /* ---- 3. the element defaults (all zero-specificity) ------------------------------------- */

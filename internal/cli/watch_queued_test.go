@@ -328,6 +328,7 @@ type queuedJSONRun struct {
 	Workflow    string `json:"workflow"`
 	RequestedBy string `json:"requested_by"`
 	Recipe      string `json:"recipe"`
+	LaunchedBy  string `json:"launched_by"`
 }
 
 // watchOnceJSON runs watch --once --json and returns its runs by id and its
@@ -540,6 +541,26 @@ func TestWatchQueuedTaskFieldsSanitised(t *testing.T) {
 	if !strings.Contains(plain, run) || strings.Contains(plain, "PWNED") || strings.ContainsAny(plain, "\x1b\x07\u009b") {
 		t.Fatalf("plain: %q", plain)
 	}
+}
+
+// writeLaunchBy writes launch.json with the launcher fugaro run records at
+// launch (writeLaunch's own records none: the shape every run launched before
+// the launcher was recorded has).
+func (f *budgetFixture) writeLaunchBy(t *testing.T, slug, run, by string, at time.Time) {
+	t.Helper()
+	data, err := json.Marshal(struct {
+		Version    int       `json:"version"`
+		RunID      string    `json:"run_id"`
+		Backend    string    `json:"backend"`
+		Execution  string    `json:"execution"`
+		LaunchedBy string    `json:"launched_by,omitempty"`
+		LaunchedAt time.Time `json:"launched_at"`
+	}{Version: 1, RunID: run, Backend: "cloud-run", Execution: "projects/p/locations/r/jobs/j/executions/e-" + run,
+		LaunchedBy: by, LaunchedAt: at.UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.writeRunObject(t, slug, run, "launch.json", string(data))
 }
 
 // writeLaunchJob writes launch.json naming the Cloud Run job the run was

@@ -1,0 +1,8 @@
+{
+  "schema_version": 2,
+  "plan": "docs/plans/from-a-newer-cli.md",
+  "nodes": [
+    {"id": "a", "title": "first", "critical_path": 4, "footprint": {"prediction": true, "paths": []}}
+  ],
+  "edges": []
+}

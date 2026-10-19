@@ -550,10 +550,28 @@ test('the README claims about docs/pending-workflows/, firebase.json and the dep
   const text = readme()
   assert.ok(!/Nothing under `docs\/pending-workflows\/`/.test(text), 'the README says nothing is staged under docs/pending-workflows/, but other pending workflows are committed there')
   const staged = path.join(REPO_ROOT, 'docs', 'pending-workflows')
-  // The README says the directory holds no pending workflow today: it must hold none.
-  assert.ok(/holds no pending workflow today/.test(text.replace(/\s+/g, ' ')), 'the README no longer says docs/pending-workflows/ holds no pending workflow today')
-  const pending = existsSync(staged) ? readdirSync(staged).filter((n) => /\.ya?ml$/i.test(n)) : []
-  assert.deepEqual(pending, [], 'a workflow is pending under docs/pending-workflows/: the README says there is none, so update the README')
+  // The owner copied the website's two manual workflows (#566) into .github/workflows/ and removed
+  // the staged copies, so the directory holds no pending workflow and the real files exist.
+  assert.ok(/now holds no pending workflow/.test(text.replace(/\s+/g, ' ')), 'the README no longer says what docs/pending-workflows/ holds today')
+  // The console's two workflows are the one exception, and it is not a pending one: the owner copied
+  // both into .github/workflows/ and their staged copies are kept on purpose (the Go docs tests assert
+  // byte-identity), so each staged file must be exactly the one that runs.
+  const keptStaged = ['console-release.yml', 'console-tests.yml']
+  const yamls = existsSync(staged) ? readdirSync(staged).filter((n) => /\.ya?ml$/i.test(n)).sort() : []
+  const pending = yamls.filter((n) => !keptStaged.includes(n))
+  assert.deepEqual(pending, [], 'a workflow is staged under docs/pending-workflows/ but the README says none is pending, so update the README')
+  for (const name of yamls.filter((n) => keptStaged.includes(n))) {
+    const real = path.join(REPO_ROOT, '.github', 'workflows', name)
+    assert.ok(existsSync(real), `docs/pending-workflows/${name} is staged but .github/workflows/${name} is missing, so it is pending and the README says none is`)
+    assert.ok(
+      readFileSync(real).equals(readFileSync(path.join(staged, name))),
+      `docs/pending-workflows/${name} differs from .github/workflows/${name}: a staged copy that is not the running file is a pending change, and the README says none is`,
+    )
+  }
+  assert.ok(/console-tests\.yml/.test(text) && /console-release\.yml/.test(text), 'the README does not say why the console\'s two workflows are still under docs/pending-workflows/')
+  for (const name of ['website-preview.yml', 'website-promote.yml']) {
+    assert.ok(existsSync(path.join(REPO_ROOT, '.github', 'workflows', name)), `.github/workflows/${name} is missing: the README says the owner copied it in`)
+  }
   // firebase.json landed ahead of W2.1 with scripts/deploy-website.sh, and the README says so.
   assert.ok(existsSync(path.join(REPO_ROOT, 'firebase.json')), 'firebase.json is missing: the README says the hosting configuration is at the repository root')
   assert.ok(/`firebase\.json`/.test(text) && /scripts\/deploy-website\.sh/.test(text), 'the README does not describe firebase.json and scripts/deploy-website.sh')

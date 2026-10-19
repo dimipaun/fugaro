@@ -2,6 +2,7 @@ package runview
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -617,5 +619,162 @@ func TestJoinArtifactBytesCountsNoNegativeSize(t *testing.T) {
 	}
 	if row.ArtifactBytes != 10 {
 		t.Errorf("artifact bytes = %d, want 10 (a negative count is not a size)", row.ArtifactBytes)
+	}
+}
+
+// TestJoinLaunchedByIsTheLaunchRecordsOwn: the launcher is what the run's own
+// launch.json says, sanitised, and nothing at all for a run whose record has
+// none — never a value invented from the task, the record or the account.
+// Mutation caught: leaving LaunchedBy out of Join, or filling it from
+// spec.RequestedBy (which is the task's, not the launch's).
+func TestJoinLaunchedByIsTheLaunchRecordsOwn(t *testing.T) {
+	l := *launch
+	l.LaunchedBy = "dana@example.com"
+	row := Join(Input{Task: spec, Launch: &l, Record: rec(runstore.StatusSucceeded, nil), Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.LaunchedBy != "dana@example.com" {
+		t.Errorf("LaunchedBy = %q, want the launch.json's own value", row.LaunchedBy)
+	}
+	// A launch.json with no launched_by (one written by hand, or by a
+	// launcher older than the field): absent, not the task's RequestedBy.
+	row = Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil)}, prices, now)
+	if row.LaunchedBy != "" {
+		t.Errorf("LaunchedBy = %q for a launch.json with none, want \"\"", row.LaunchedBy)
+	}
+	// No launch.json at all: an unlaunched run has no launcher.
+	if row := Join(Input{Task: spec}, prices, now); row.LaunchedBy != "" {
+		t.Errorf("unlaunched row carries LaunchedBy %q", row.LaunchedBy)
+	}
+}
+
+// TestJoinLaunchedByIsSanitised: the launcher is untrusted display text, so
+// what reaches the JSON (and so the console) carries no escape sequence, no
+// control, no bidi override and no newline, and a 10 KB value is capped.
+// Mutation caught: assigning in.Launch.LaunchedBy raw.
+func TestJoinLaunchedByIsSanitised(t *testing.T) {
+	cases := map[string]string{
+		"ansi":    "\x1b[2Jroot",
+		"osc":     "\x1b]52;c;AAAA\x07root",
+		"newline": "root@x.io\nroot@y.io",
+		"cr":      "root@x.io\rroot@y.io",
+		"bidi":    "root" + string(rune(0x202e)) + "@x.io",
+		"sep":     "root@x.io" + string(rune(0x2028)) + "root@y.io",
+		"nul":     "root\x00@x.io",
+		"tab":     "root\t@x.io",
+	}
+	for name, hostile := range cases {
+		l := *launch
+		l.LaunchedBy = hostile
+		row := Join(Input{Task: spec, Launch: &l, Record: rec(runstore.StatusSucceeded, nil)}, prices, now)
+		if strings.ContainsAny(row.LaunchedBy, "\x1b\n\r\t\x00\x07") {
+			t.Errorf("%s: hostile control survived: %q", name, row.LaunchedBy)
+		}
+		for _, r := range row.LaunchedBy {
+			if r == 0x202e || r == 0x2028 || r == 0x2029 {
+				t.Errorf("%s: hostile rune %U survived: %q", name, r, row.LaunchedBy)
+			}
+		}
+		// Sanitised, not erased: the harmless part of the value is still
+		// there, so a hostile byte cannot hide an identity entirely.
+		if !strings.Contains(row.LaunchedBy, "root") {
+			t.Errorf("%s: the value was destroyed rather than sanitised: %q", name, row.LaunchedBy)
+		}
+	}
+	l := *launch
+	l.LaunchedBy = strings.Repeat("x", 10_000)
+	row := Join(Input{Task: spec, Launch: &l, Record: rec(runstore.StatusSucceeded, nil)}, prices, now)
+	if n := len([]rune(row.LaunchedBy)); n > safetext.FieldMax {
+		t.Errorf("a 10 KB launcher was not capped: %d runes", n)
+	}
+	// And the JSON document carries exactly the sanitised value.
+	data, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["launched_by"] != row.LaunchedBy {
+		t.Errorf("launched_by = %v, want %q", m["launched_by"], row.LaunchedBy)
+	}
+}
+
+// TestLaunchedByIsOmittedFromTheJSONWhenAbsent: the key is absent, never
+// "" or null, for a run whose launch.json recorded no launcher.
+func TestLaunchedByIsOmittedFromTheJSONWhenAbsent(t *testing.T) {
+	row := Join(Input{Task: spec, Launch: launch}, prices, now)
+	data, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "launched_by") {
+		t.Errorf("an absent launcher still emitted the key: %s", data)
+	}
+}
+
+// TestLauncherShort: a text column shows the part before the @ of an
+// address and the whole value of anything else — a service account name, a
+// CI identity, a value with no @ at all.
+func TestLauncherShort(t *testing.T) {
+	for in, want := range map[string]string{
+		"dana@example.com":                           "dana",
+		"dana.person+fugaro@example.com":             "dana.person+fugaro",
+		"fugaro-runner@proj.iam.gserviceaccount.com": "fugaro-runner",
+		"ci-runner":    "ci-runner",
+		"":             "",
+		"@example.com": "",
+		"a@b@c":        "a",
+	} {
+		if got := LauncherShort(in); got != want {
+			t.Errorf("LauncherShort(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestJoinCarriesTheRunsChangedFiles: the row carries the run's own record of
+// the paths it changed (console v2 design D27), and a run that recorded none
+// carries none — an absent field, never an empty set.
+func TestJoinCarriesTheRunsChangedFiles(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	r.ChangedFiles = runstore.NewChangedFiles([]string{"a.go", "b/c.go"})
+	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
+	if row.ChangedFiles == nil || len(row.ChangedFiles.Paths) != 2 || row.ChangedFiles.Paths[1] != "b/c.go" {
+		t.Fatalf("row.ChangedFiles = %+v", row.ChangedFiles)
+	}
+	b, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"changed_files"`) {
+		t.Fatalf("the row does not carry the set:\n%s", b)
+	}
+	plain := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil)}, prices, now)
+	if plain.ChangedFiles != nil {
+		t.Fatalf("a run that recorded none: %+v", plain.ChangedFiles)
+	}
+	b, err = json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "changed_files") {
+		t.Fatalf("a run that recorded none names the field:\n%s", b)
+	}
+}
+
+// TestJoinReboundsTheRecordedChangedFiles: the row does not pass a record's
+// set through as written — a record carrying more than the bound is cut on
+// read and flagged truncated, so `runs ls --json` never hands the console an
+// unbounded list or a cut one dressed as whole.
+func TestJoinReboundsTheRecordedChangedFiles(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	big := make([]string, 0, 3*runstore.MaxChangedFiles)
+	for i := range 3 * runstore.MaxChangedFiles {
+		big = append(big, fmt.Sprintf("f%04d", i))
+	}
+	r.ChangedFiles = &runstore.ChangedFiles{Paths: big, Total: len(big)}
+	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
+	if row.ChangedFiles == nil || len(row.ChangedFiles.Paths) != runstore.MaxChangedFiles || !row.ChangedFiles.Truncated {
+		t.Fatalf("an oversized record reached the row as %d paths, truncated %v",
+			len(row.ChangedFiles.Paths), row.ChangedFiles.Truncated)
 	}
 }

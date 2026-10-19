@@ -128,9 +128,14 @@ func TestDecodeRefusesBadCloneURLs(t *testing.T) {
 // map. Which URL survived was then whichever member the map's iteration saw
 // last, and both answers are visible: the surviving URL is what the run clones
 // from, and it is the entry validCloneURLs validates, so the same bytes were
-// accepted on one read of the node and refused on the next — from Go's map
-// order alone. model_prices refuses the analogous pair explicitly
-// (Prices.UnmarshalJSON), and this block reads the same way.
+// accepted on one read of the node and refused on the next — 355 of 400 decodes
+// of one node accepted and 45 refused, from Go's map order alone. model_prices
+// refuses the analogous pair explicitly (Prices.UnmarshalJSON), and this block
+// reads the same way.
+//
+// Mutation (verified, run and restored): drop the `spelled` check (and the
+// sort) — the first case below is accepted, with one of the two URLs in the
+// map. Mutation: drop checkNoDuplicateNames — the second case is accepted.
 func TestDecodeRefusesOneRepositoryNamedTwice(t *testing.T) {
 	for _, tc := range []struct{ name, block, want string }{
 		{"the escaped and the literal spelling, two URLs this repository answers to", `{"github%2Facme%2Fapp":"https://github.com/acme/app.git","github/acme/app":"https://github.com/acme/app"}`, "are both the repository"},

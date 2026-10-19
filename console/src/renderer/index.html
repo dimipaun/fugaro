@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      The CSP of design section 5.1 rule 3, and it is the *copy*. The real one is
+      delivered as a `Content-Security-Policy` response header by
+      `src/main/protocol.ts`, over the registered `app://` scheme; that header is
+      the reason the scheme exists, because it cannot be attached to a `file://`
+      document at all. This meta element is belt and braces: it is parsed late
+      and it cannot cover everything the header covers, but a document carrying
+      both cannot end up with neither, and `console/test/unit/window.test.ts`
+      asserts the two strings are still byte-identical, so the copy cannot drift
+      into a lie.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+    />
+    <title>Fugaro console</title>
+    <!--
+      The one script this document loads, and the whole of what it may load
+      (desktop-console plan Task 3.4a; design section 5.1 rules 1 and 3).
+
+      It is `./console.js` -- this origin, one file, no query -- because there is
+      no bundler dependency in this console and the CSP allows no inline script:
+      `dist/bundle/console.js` is the compiled `src/renderer/entry.ts` and
+      everything it requires, written by `tools/bundle-renderer/index.ts`, and it
+      is the only script the served root holds (`SERVED_FILES` in
+      `src/main/protocol.ts`). `defer` means it runs after the document is
+      parsed, so the entry has a body to draw into; the entry's first call is
+      `startConsole`, which asks the main process for the handshake's answer and
+      draws nothing before it has one. `test/unit/csp-document.test.ts` pins this
+      element as the document's only script, so a second one -- or an inline
+      one -- is a failing test rather than a loosened CSP.
+    -->
+    <script src="./console.js" defer></script>
+  </head>
+  <body>
+    <!--
+      The body is empty on purpose, and it is the entry that fills it (Task
+      3.4c): `domSurface`'s mount appends the installation header, the navigation
+      and the panel to `document.body`, and every figure in the window comes from
+      a read over IPC.
+
+      Task 1.1's placeholder -- a `<h1>` and "The console's window is up. It has
+      no data yet." -- was true of a frame with no entry in it and became false
+      the day this document gained one: it would have printed a second `<h1>`
+      and a false sentence directly above the dashboard. `test/unit/
+      csp-document.test.ts` holds the body empty so it cannot come back, and
+      `test/e2e/entry.spec.ts` holds the window to the entry's own drawing.
+
+      The document is deliberately script-free and style-free apart from the one
+      script below: the CSP of rule 3 allows neither inline scripts nor inline
+      styles, so both arrive as files served from this same bundle and from
+      nowhere else. It exists so that every rule the window enforces has
+      something real to enforce it against, a document loaded over
+      `app://console`, with an origin, a title and no capabilities.
+    -->
+  </body>
+</html>

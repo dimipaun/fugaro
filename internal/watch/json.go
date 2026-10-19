@@ -92,6 +92,18 @@ type JSONRun struct {
 	Profile  string `json:"profile,omitempty"`
 	Provider string `json:"provider,omitempty"`
 	Account  string `json:"account,omitempty"`
+	// LaunchedBy is who started the run, as the run's own launch.json recorded
+	// it at launch: a person's address, or the identity an automated launch
+	// runs as (a service account, a CI runner). It is the full recorded
+	// identity, where the text views show the short form a column has room for
+	// (runview.LauncherShort). Absent when the record has none — a run from
+	// before the launcher was recorded, or one whose launch.json the reader
+	// does not have — never a value this package invents.
+	//
+	// UNTRUSTED display text a launcher wrote: sanitised (clean) like every
+	// other bucket-derived string here, and never an authority — no policy,
+	// admission or budget rule reads it.
+	LaunchedBy string `json:"launched_by,omitempty"`
 }
 
 // JSONFinished is a finished run (design generic-tool §10.1 and §10.3): a
@@ -114,6 +126,10 @@ type JSONFinished struct {
 	Profile  string `json:"profile,omitempty"`
 	Provider string `json:"provider,omitempty"`
 	Account  string `json:"account,omitempty"`
+	// LaunchedBy is who started the run, as in JSONRun: a reader that follows a
+	// run into finished[] must not lose who launched it either. Absent when the
+	// launch record has none.
+	LaunchedBy string `json:"launched_by,omitempty"`
 }
 
 // JSONDoc is one watch --json document.
@@ -140,7 +156,8 @@ type JSONDoc struct {
 func jsonFinished(slug, repo string, r RunRow) JSONFinished {
 	return JSONFinished{Run: r.Run, Slug: slug, Repo: repo, Title: r.Title, Status: r.Stage, Outcome: r.Outcome,
 		Failed: r.Failed, PRURL: r.PRURL, PRNumber: r.PRNumber, AgeSecs: r.Age.Seconds(),
-		Job: r.Job, Profile: r.Profile, Provider: r.Provider, Account: r.Account}
+		Job: r.Job, Profile: r.Profile, Provider: r.Provider, Account: r.Account,
+		LaunchedBy: r.LaunchedBy}
 }
 
 func usdPtr(b Bar) (cap, pct *float64) {
@@ -194,7 +211,8 @@ func BuildJSON(project string, v View) JSONDoc {
 				Job:         run.Job,
 				Profile:     run.Profile,
 				Provider:    run.Provider,
-				Account:     run.Account}
+				Account:     run.Account,
+				LaunchedBy:  run.LaunchedBy}
 			if run.HasSpent {
 				s := run.Spent.USD()
 				j.SpentUSD = &s

@@ -317,6 +317,10 @@ func TestWatchJSONUnaffectedByPRState(t *testing.T) {
 	run := runID(10*time.Minute, "ff01")
 	f.writeTask(t, appSlug, run, "")
 	f.writeFinishedResult(t, appSlug, run, "succeeded", "ready", 42, "https://github.com/acme/app/pull/42", 10*time.Minute)
+	// The run records who launched it, so the shape golden covers the
+	// launcher's key too (a run from before the launcher was recorded has no
+	// key, which the same field's own tests pin).
+	f.writeLaunchBy(t, appSlug, run, "dana@example.com", time.Now().Add(-11*time.Minute))
 	calls := fakeWatchGH(t, "echo MERGED\n")
 
 	with, _, err := execute(t, "watch", "--once", "--json")

@@ -30,12 +30,13 @@ type CRM struct {
 	// done yet.
 	PendingPolls int
 
-	noPolicy map[string]bool   // projects whose getIamPolicy answers 403 (the plain read stays readable)
-	taken    map[string]bool   // IDs held by projects the caller cannot read
-	creates  []CreatedProject  // creates accepted, in order
-	failNew  *apiError         // answers every create (an organization policy, say)
-	hide     map[string]int    // reads still refused per new project
-	ops      map[string]*crmOp // operations by name
+	noPolicy map[string]bool      // projects whose getIamPolicy answers 403 (the plain read stays readable)
+	taken    map[string]bool      // IDs held by projects the caller cannot read
+	creates  []CreatedProject     // creates accepted, in order
+	failNew  *apiError            // answers every create (an organization policy, say)
+	failGet  map[string]*apiError // answers the plain read of a project with an error of the test's own words
+	hide     map[string]int       // reads still refused per new project
+	ops      map[string]*crmOp    // operations by name
 	nextOp   int
 	nextProj int64
 }
@@ -96,6 +97,22 @@ func (f *CRM) DenyGet(project string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.noGet[project] = true
+}
+
+// FailGet makes the plain read of project answer code, status and msg: an
+// API error whose words are the test's, so a caller's handling of the far
+// end's own text (a hostile message, say) can be exercised. A code of 0 lifts
+// it.
+func (f *CRM) FailGet(project string, code int, status, msg string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failGet == nil {
+		f.failGet = map[string]*apiError{}
+	}
+	delete(f.failGet, project)
+	if code != 0 {
+		f.failGet[project] = &apiError{code: code, status: status, msg: msg}
+	}
 }
 
 // DenyPolicy makes project's getIamPolicy answer 403 while its plain read
@@ -253,6 +270,10 @@ func (f *CRM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	m := crmProjectRE.FindStringSubmatch(r.URL.Path)
 	if r.Method != http.MethodGet || m == nil {
 		f.unhandled(w, r)
+		return
+	}
+	if e := f.failGet[m[1]]; e != nil {
+		writeError(w, e.code, e.status, e.msg)
 		return
 	}
 	n, ok := f.projects[m[1]]

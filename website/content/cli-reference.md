@@ -37,6 +37,7 @@ Subcommands:
 - `fugaro init` -- Stand up or adopt the installation's, or a repository's, cloud resources through Terraform
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
+- `fugaro plan` -- Read a plan's graph artifact
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
 - `fugaro recipes` -- List, show, validate and publish recipes, the task loop a run follows after implement
 - `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model or person
@@ -739,6 +740,7 @@ Subcommands:
 - `fugaro config example` -- Print an annotated fugaro.yaml template
 - `fugaro config init` -- Write the minimal fugaro.yaml of a repository whose project publishes a project layer
 - `fugaro config layer` -- Print the project layer published for this checkout's project
+- `fugaro config list` -- List the Fugaro installations this machine has
 - `fugaro config publish` -- Publish the project layer: defaults and profiles for every repository of the project (fugaro/project-layer.yaml in the runs bucket)
 - `fugaro config show` -- Print the checkout's fugaro.yaml resolved over the project layer, with where each value comes from
 
@@ -798,6 +800,30 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for layer |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro config list`
+
+List the Fugaro installations this machine has
+
+List the project configs under $XDG_CONFIG_HOME/fugaro/projects (else
+~/.config/fugaro/projects), with the GCP project and region of each and what
+is known about its published shared config.
+
+This is a local read: it opens no bucket and needs no project selected, so it
+works outside a checkout and with no config at all (an empty list).
+
+Usage: `fugaro config list`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for list |
 | `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:
@@ -1614,6 +1640,50 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro plan`
+
+Read a plan's graph artifact
+
+Usage: `fugaro plan`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for plan |
+
+Subcommands:
+
+- `fugaro plan graph` -- Print a plan's graph: its tasks, their dependencies and their footprints
+
+## `fugaro plan graph`
+
+Print a plan's graph: its tasks, their dependencies and their footprints
+
+Print the graph artifact written beside a plan.
+
+The artifact is `<plan>.graph.json` — for docs/plans/foo.md it is
+docs/plans/foo.graph.json. With no --plan, the one graph artifact under
+docs/plans/ is read; more than one is refused rather than guessed at.
+
+A graph this build does not understand is refused rather than rendered: a
+future schema version, a malformed document, an edge to a node that is not
+there, or a cycle. This is a local read and it writes nothing.
+
+Usage: `fugaro plan graph`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for graph |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--plan` | string | "" | no | the plan document the graph sits beside (default: the one graph artifact under docs/plans) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro project`
 
 The project's policy, its allow-list and the repositories enrolled
@@ -2111,6 +2181,14 @@ batch, under one batch label (bestof-<first run id> unless --batch is given); on
 they have all opened a pull request, compare them with fugaro run --recipe pick.
 It takes no --pr, --run-id or --retry.
 
+--title TEXT names the run: one line, at most 100 characters. It is what
+fugaro watch and runs ls list the run by, and the title (with the body's first
+heading) of the pull request the run opens when the agent writes no pr.md of
+its own. Without it the run is named by the task's first line, so briefs that
+start with the same preamble all read alike. A follow-up (--pr) keeps its run's
+title unless --title is given, and --retry takes none (the stored task keeps its
+own).
+
 Usage: `fugaro run [TEXT]`
 
 Flags:
@@ -2134,6 +2212,7 @@ Flags:
 | `--retry` | string | "" | no | launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
+| `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given |
 | `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's) |
 | `--total-timeout` | string | "" | no | override the workflow's timeouts.total for this run, such as 45m |
 | `--workflow` | string | "" | no | workflow to run (default: the repo's only workflow) |
@@ -2157,6 +2236,7 @@ Flags:
 Subcommands:
 
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
+- `fugaro runs stats` -- Aggregate run records by the person who started each run
 
 ## `fugaro runs ls`
 
@@ -2192,6 +2272,109 @@ Flags:
 | `--repo` | string | "" | no | only this repository (owner/name) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs stats`
+
+Aggregate run records by the person who started each run
+
+Count the runs one installation's records hold, and what they cost, grouped by
+the person who started each one: how many jobs an identity began, how they ended,
+what they spent, and a total row.
+
+The numbers come from the run records, not from the budget database: each run's
+launch.json carries the launcher it recorded at launch, and its result.json the
+outcome and the settled cost. Nothing else is read, no counter is consulted, and
+nothing is written.
+
+Attribution, as the records themselves state it:
+
+  - A follow-up (fugaro run --pr) belongs to the launcher of that follow-up: the
+    identity is the one the follow-up's own launch recorded.
+  - An automated launch -- a service account, a CI runner -- appears as its own
+    identity, exactly as it recorded itself; it is never folded into a person's.
+  - A run whose launch recorded no launcher is grouped as 'unknown'. It is never
+    guessed from the run's task, its record or the account it ran under.
+  - Dollars are never added across currencies: a row is one user and one currency,
+    and a total covers one currency. Every cost recorded today is in USD.
+  - The window is UTC days like the rest of the CLI. A run is counted on the day
+    the bucket's run IDs place its start, so the window and the runs in it agree
+    with runs ls.
+
+The money is model dollars, counted the way the budget screens count them. COUNTED
+$ is the model spend that counts toward the caps (a run on an API key or Vertex),
+and NOTIONAL $ the model spend of a run on a subscription (agent.auth oauth),
+which counts toward the plan's limits and is no one's bill: they are separate
+columns and are never summed. Compute is not attributed to a person: no run's
+compute is, and the budget database's own person view leaves it out too. AVG
+$/RUN is COUNTED $ over COUNTED RUNS, the runs that settled a real-dollar cost;
+a notional run, a run with no readable record and a record from before the cost
+breakdown existed are none of them averaged in as a run that cost nothing.
+
+Who sees whom. An operator of the installation -- the identity the local config's
+user: (or git config user.email) names, listed in its terraform.operators, the
+list fugaro doctor's runs-bucket-iam check reads -- sees every user. Anyone else
+sees their own row alone, and --all-users asks for the whole table. An
+installation that names no operators (one from before the 0.7.0 hardening, say)
+places nobody, and the view then stays private: the default is never the wider
+one. Whose numbers a table shows is printed above it.
+
+A private view is the caller's own row. A caller whose identity cannot be told at
+all -- the local config names nobody, and git config user.email answers nothing --
+is refused, never quietly widened: the error says so, and names --all-users. An
+identity with no key of its own because nothing printable is left of it (a pasted
+zero-width character, say) is shown no row instead: the table is empty, and its
+view line says the CLI cannot tell who you are. A row keyed 'unknown' is every run
+of the window that recorded no launcher -- never one person's -- so it is not shown
+as the caller's own either, and a note says so.
+
+The launcher text is what a launcher wrote and is read for nothing else: it is
+sanitised and size-capped before it is printed, and it authorises and admits
+nothing. Two identities that differ only in what the sanitising drops -- an
+invisible character a paste left in one of them, say -- or only past the cap are
+one key and one row: the row is the key, not the person. A private view is not
+read off that key. It holds the runs whose launch recorded your identity itself,
+compared as runs ls --mine compares it, so someone whose identity merely
+sanitises to the same text is never counted in it and your own row can be
+smaller than that key's row in the full table.
+
+A window can hold every run of every repository in the bucket, so the read is
+bounded: at most --max-runs records are read per call, newest first, and a window
+holding more says so in the output rather than publishing figures over a part of
+itself silently. The bound is on the read, not on a person: the newest --max-runs
+runs are taken before any view is applied, so a private view can be over fewer of
+the caller's own runs than --max-runs suggests. A run with neither a launch nor a
+record -- never launched, cancelled before launch, or a stale claim -- never
+started and is counted in no figure. The count of those is the window's, over
+everyone's runs, and is no more the caller's own than the truncation is.
+
+--json prints {project, by, view, you, operator, since, until, max_runs,
+truncated, rows[], totals[], unlaunched, notes}; rows and totals carry {user,
+currency, runs, succeeded, failed, halted, infra_error, other, no_record,
+counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the counts add up:
+runs == succeeded + failed + halted + infra_error + other + no_record.
+
+Usage: `fugaro runs stats`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | every repository in the runs bucket |
+| `--all-users` | bool | `false` | no | show every user's row, not only your own (the table names whose numbers it shows) |
+| `--by` | string | `user` | no | what to break the figures down by (user) |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for stats |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--max-runs` | int | `5000` | no | read at most this many runs, newest first (a bigger window is truncated and says so) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | only this repository (owner/name) |
+| `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 
 Subcommands:
 

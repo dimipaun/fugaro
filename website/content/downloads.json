@@ -3,7 +3,7 @@
   "available": false,
   "name": "The Fugaro desktop console",
   "what": {
-    "text": "A desktop application that is a graphical fugaro watch: live run monitoring and spending graphs, drawn over the CLI's own read-only output. It holds no credential, no database client and no backend of its own — the CLI is the data plane.",
+    "text": "A desktop application that is a graphical fugaro watch: live run monitoring and spending graphs. It has no backend, no service account, no database client and no credential of its own — the CLI is the data plane.",
     "source": "docs/design/desktop-console.md D1"
   },
   "not_released": {

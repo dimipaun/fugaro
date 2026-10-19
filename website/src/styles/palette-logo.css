@@ -1,0 +1,63 @@
+/* website/src/styles/palette-logo.css — D180's palette, and the palette in force.
+ *
+ * The owner ruled on 2026-10-18 that the site's accent is the logo's own hue. That is not a
+ * matter of taste: `brand/fugaro-logo.png` was sampled pixel by pixel (the method is
+ * `docs/website/redesign/sample-logo-hue.py`; the figures are `docs/website/redesign/
+ * reconciliation.md` §5.1), and its colour is a saturated cyan-blue whose circular mean hue
+ * is **198.4°** over the pixels with alpha ≥ 250, value ≥ 0.05 and saturation ≥ 0.5. The
+ * palette this file replaces had `--accent: #8B5CF6` at 258.3°, about 60° away from it.
+ *
+ * So the whole palette moves, not only the accent: `--ground` is a blue-black rather than a
+ * neutral violet-black, and the surfaces, the border and both gradient stops move with it,
+ * so the page reads as the logo's colour rather than as a violet site with a cyan picture on
+ * it. `--accent` is the logo's hue as an electric fill and structure colour (focus ring,
+ * rules, the terminal's caret, a filled button's background) at 3:1 as a UI colour;
+ * `--accent-on-dark` is the same hue made legible as text, which is what every link and
+ * every accent heading uses, at 4.5:1. `--warn` keeps D104's role — the one thing that asks
+ * a reader to pay attention, on the caps-and-costs page — and moves to the amber `#F5A524`
+ * (D181): amber reads as "attention" without reading as "error", and it is 161° from the
+ * accent, so the two can never be mistaken for each other.
+ *
+ * It is a complete value set for the vocabulary `tokens.css` declares: the same ten tokens
+ * as `palette-violet.css`, `palette-orange.css` and `palette-split.css`, with the same
+ * roles, so swapping the import in `tokens.css` swaps the whole site's colour and nothing
+ * else. The other three stay in the tree as the record of D104's choice, and
+ * `website/test/a11y.mjs` keeps computing every designed pair for **all four** files, not
+ * only for the one in force. `website/test/accent.mjs` is the other half: it decodes the
+ * logo itself and refuses an accent that has drifted from the hue the logo actually is.
+ *
+ * Every value is an opaque six-digit hex literal, for the reason `palette-violet.css`
+ * states: the contrast check computes every pair from these literals, and it refuses a value
+ * it cannot compute rather than skipping it.
+ */
+
+:root {
+  /* The page's ground and the surface a card, a code block or a terminal sits on — the
+   * logo's blue-black rather than D104's violet-black. Both are dark enough that every text
+   * tone below clears AA on either of them. */
+  --ground: #0A0E16;
+  --surface: #121A26;
+
+  /* Body text and the tone for the sentence beside it. */
+  --text: #E6EEF5;
+  --text-muted: #9FB2C4;
+
+  /* The accent in its two jobs, which are two different contrast requirements and are why
+   * the pair exists rather than one token. The darker fill is what carries dark text
+   * (`--ground` on `--accent` is a pair too, at 4.5:1, because a button's label is text). */
+  --accent: #17A8E6;
+  --accent-on-dark: #6FD8F5;
+
+  /* A separator that is meant to be seen and not to shout, and the warning tone. */
+  --border: #24303F;
+  --warn: #F5A524;
+
+  /* The hero's gradient, as its two stops: `linear-gradient(var(--gradient-from),
+   * var(--gradient-to))`. Naming the stops as tokens is what lets the contrast check treat
+   * text over the hero as text over a known colour instead of exempting the one place the
+   * site's largest type sits (U5) — so the stops are dark enough for `--text`,
+   * `--text-muted` and `--accent-on-dark` to clear AA on each of them, and there are
+   * exactly two of them, which the token-set case asserts. */
+  --gradient-from: #08131F;
+  --gradient-to: #0A2233;
+}

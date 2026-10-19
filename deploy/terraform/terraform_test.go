@@ -1270,6 +1270,125 @@ func firstAttr(body, name string) string {
 	return m[1]
 }
 
+// TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant pins the
+// claim D75 makes in prose — serviceAccountTokenCreator is "one grant on that
+// account, for var.operators" — as a property of the whole tree, because the
+// role scanner does not hold it. checkLiteralRole exempts
+// roles/iam.serviceAccountTokenCreator beside roles/iam.serviceAccountUser so
+// the deployer's impersonation grant is allowed at all, and an exemption
+// cannot tell an operator impersonating the deployer from the same role on a
+// job account, which is a credential that runs as that account. A literal
+// token-creator grant is therefore allowed in exactly one place, and it is the
+// deployer's own block: the deployer account, written as a literal path, for
+// var.operators.
+//
+// Its members are people on the review screen (internal/infra/tf's grantRules)
+// and the plan itself is screened again by Cover.deployerTokenCreator, so what
+// this test is the file-level half of is: no second block anywhere grants the
+// role, and the one that does is the one D75 describes.
+func TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant(t *testing.T) {
+	const (
+		role = "roles/iam.serviceAccountTokenCreator"
+		// The install module's deployer account, as deployer.tf writes it.
+		account = `"projects/${var.project}/serviceAccounts/fugaro-deployer@${var.project}.iam.gserviceaccount.com"`
+		file    = "gcp/modules/installation/deployer.tf"
+		block   = "google_service_account_iam_member.fugaro_deployer_token_creator"
+	)
+	var sites []string
+	walk(t, func(path string, b []byte) {
+		code := stripComments(string(b))
+		for _, m := range quotedRoleRE.FindAllStringSubmatch(code, -1) {
+			if m[1] == role {
+				sites = append(sites, path)
+			}
+		}
+	})
+	if len(sites) != 1 || sites[0] != file {
+		t.Errorf("the literal %s appears in %v; want once, in %s (D75's impersonation grant, and nothing else in the tree)", role, sites, file)
+	}
+
+	var found bool
+	walk(t, func(path string, b []byte) {
+		if path != file {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if blk.name != block {
+				continue
+			}
+			found = true
+			if !hasAttr(blk.body, "service_account_id", account) {
+				t.Errorf("%s: %s does not name the deployer account as the literal %s: a grant whose account is computed is a grant nobody can check, and this is the account an operator is impersonating", path, blk.name, account)
+			}
+			if !hasAttr(blk.body, "for_each", "toset(var.operators)") {
+				t.Errorf("%s: %s is not for var.operators, the people the owner names at init", path, blk.name)
+			}
+			if !hasAttr(blk.body, "member", "each.value") {
+				t.Errorf("%s: %s does not grant the role to each.value", path, blk.name)
+			}
+		}
+	})
+	if !found {
+		t.Fatalf("%s has no %s", file, block)
+	}
+}
+
+// TestInstallationServiceAccountGrantsNameTheirAccount pins the one shape the
+// installation module's service-account grants have to have: the account is a
+// literal path built from var.project, never read from the account resource's
+// own name attribute.
+//
+// Why it is a rule and not a preference. The installation module is the one
+// that creates the deployer account (D75), and the review that screens the
+// apply — internal/infra/tf's Cover.onDeployer — refuses every
+// service-account grant in a deployer-creating module whose account is
+// computed, because a computed account there could be the deployer, and actAs
+// on the deployer is a job that runs as the deployer. A grant written as
+// google_service_account.<x>.name is therefore not merely unreadable: it makes
+// the installation apply stop riding the run's one confirmation and ask for
+// its own, printing a reason that is false about the module's own grant. The
+// operators' actAs on the scheduler account did exactly that (scheduler.tf),
+// which is what this test was added for.
+//
+// deployer.tf's token-creator grant gives the same reason for the same choice
+// in its own comment; this holds the whole module to it. The other modules are
+// not held to it: none of them creates the deployer, so a grant there may read
+// its account from the resource, and most of them do.
+func TestInstallationServiceAccountGrantsNameTheirAccount(t *testing.T) {
+	const dir = "gcp/modules/installation/"
+	// The literal form: var.project twice — the account path and its own
+	// domain — and the account's ID, either written out or read from a
+	// variable the module validates as a service account ID. What the pattern
+	// is here to refuse is an account read from the account RESOURCE's own
+	// name attribute (google_service_account.<x>.name), which is the shape
+	// that is unknown at plan time.
+	literalSA := regexp.MustCompile(`^"projects/\$\{var\.project\}/serviceAccounts/([a-z][a-z0-9-]*|\$\{var\.[A-Za-z0-9_.\[\]]+\})@\$\{var\.project\}\.iam\.gserviceaccount\.com"$`)
+	n := 0
+	walk(t, func(path string, b []byte) {
+		if !strings.HasPrefix(path, dir) {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if blk.typ != "google_service_account_iam_member" {
+				continue
+			}
+			n++
+			id := firstAttr(blk.body, "service_account_id")
+			// Only deployer.tf grants on the deployer (the token-creator
+			// rule); another file's grant naming it is actAs on the deployer.
+			if m := literalSA.FindStringSubmatch(id); m != nil && m[1] == "fugaro-deployer" && !strings.HasSuffix(path, "/deployer.tf") {
+				t.Errorf("%s: %s grants on the deployer account outside deployer.tf (%q)", path, blk.name, id)
+			}
+			if !literalSA.MatchString(id) {
+				t.Errorf("%s: %s names its account as %q: a service-account grant in the installation module must name its account as a literal path, because this module creates the deployer account and cover.onDeployer refuses a computed account beside it — the apply then asks its own confirmation and refuses the module's own grant", path, blk.name, id)
+			}
+		}
+	})
+	if n < 2 {
+		t.Errorf("found only %d service-account grants in %s: the scan is not seeing the module's own grants", n, dir)
+	}
+}
+
 // REGRESSION (same-project layout): the project-level roles any job, build or
 // scheduler account holds are exactly these, in every module and IAM resource
 // type. None gives access to the RTDB, Firestore, Identity Platform or the
@@ -2822,5 +2941,80 @@ func TestJobTokenGrantIsReadOnlyOnTokens(t *testing.T) {
 	}
 	if strings.Contains(gcp.ProjectBucketCondition("b", gcp.JobBucketPrefixes), "/"+gcp.TokenBucketPrefix+"/") {
 		t.Error("the project job's objectUser condition reaches tokens/")
+	}
+}
+
+// TestProjectJobSecretGrantFollowsTheMount pins the one property that makes a
+// project job's account axis a credential boundary rather than a label: the
+// module grants secretmanager.secretAccessor on each secret the job's *own*
+// secret_env names, to that job's own account, at the secret level — one
+// member per (job, mounted secret), never a project-wide role, never another
+// job's secret — and the container mounts exactly those entries through
+// secret_key_ref (design project-named-oauth-tokens §4.3 and D2, plan task 2).
+//
+// The grant and the mount are one list, which is what makes the credentials
+// service a clean swap (§4.6): removing an account's one secret_env entry
+// removes its member with it and moves nothing else — not the job's name, not
+// its account, not its profile.
+//
+// Mutation (run, restore): iterate anything but var.job.secret_env in the
+// member's for_each (a literal set, var.secrets, another variable) — the
+// member and the mount then describe different secrets, and this fails.
+func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
+	path := "gcp/modules/project/sa.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := resourceBlocks(t, path, b, "google_secret_manager_secret_iam_member")
+	if len(blocks) != 1 {
+		t.Fatalf("%s has %d secretAccessor resources, want the one the project job's mounts drive", path, len(blocks))
+	}
+	body := blocks[0].body
+	for _, want := range []string{
+		// One member per secret this job mounts, and none for a secret it
+		// does not: the list is the job's own secret_env, not the
+		// installation's secrets and not another job's.
+		"for_each = toset(values(var.job.secret_env))",
+		// The secret's own ID, at the secret level: never the project.
+		"secret_id = var.secrets[each.value]",
+		"role      = \"roles/secretmanager.secretAccessor\"",
+		// The job's own account and no other member, ever.
+		"member    = google_service_account.job.member",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s: google_secret_manager_secret_iam_member.job does not hold %q:\n%s", path, want, body)
+		}
+	}
+	if strings.Contains(body, "var.project_number") || strings.Contains(body, `"allUsers"`) || strings.Contains(body, `"allAuthenticatedUsers"`) {
+		t.Errorf("%s: the job's secret grant names something wider than the job's own account:\n%s", path, body)
+	}
+
+	// And the container mounts each of those entries, as a secret_key_ref to
+	// the same container: the mount is the carrier, so a secret_env entry the
+	// job does not mount would be a grant with no reader, and a mount with no
+	// entry would be a variable the job's account cannot read.
+	jobPath := "gcp/modules/project/job.tf"
+	jb, err := os.ReadFile(jobPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := resourceBlocks(t, jobPath, jb, "google_cloud_run_v2_job")
+	if len(jobs) != 1 {
+		t.Fatalf("%s has %d jobs, want the one shared project job", jobPath, len(jobs))
+	}
+	for _, want := range []string{
+		"for_each = var.job.secret_env",
+		"secret  = var.secrets[env.value]",
+		`version = "latest"`,
+	} {
+		if !strings.Contains(jobs[0].body, want) {
+			t.Errorf("%s: the job's container does not mount its secret_env through %q:\n%s", jobPath, want, jobs[0].body)
+		}
+	}
+	// The values never travel in the plain environment: every secret the job
+	// mounts is a value_source, and the plain env is the profile's own.
+	if strings.Contains(jobs[0].body, "value = var.secrets") {
+		t.Errorf("%s: a secret's value is written into the job's plain environment", jobPath)
 	}
 }

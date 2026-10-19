@@ -47,11 +47,52 @@ import (
 // instead of an unknown-field decode error that names a field and no move. It
 // also states in the node which enforcement a reader must have, which is what
 // a version is for. The rules themselves ship in the
-// same release as this constant: an account job's enforcement is plan task 3,
-// and until it lands no OAuth launch reaches such a job at all
-// (checkProjectJobOAuth). The shape is version 2's; only what a runner must
-// enforce changed.
+// same release as this constant, and they have two doors: what admits an OAuth
+// launch onto such a job, or refuses it before the claim and before the token,
+// is internal/cli's projectJobAccountFor — with checkProjectJobAccount and
+// checkProjectJobAccountCovers behind it, the two its answer is computed with —
+// and the runner re-decides the same pair from the policy it read itself, in
+// internal/runner's own checkProjectJobAccount, before any stage, lease or
+// budget spend. The shape is version 2's; only what a runner must enforce
+// changed.
 const Version = 3
+
+// VersionSince names, for each policy version, the fugaro release that
+// introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
+// is the profile gate above (0.8.5), 3 the account axis (0.9.0). It sits
+// beside Version because a bump of Version adds its row in the same change
+// (TestVersionSinceCoversEveryVersion fails until it does), and it is
+// read by every message about a node *ahead* of its reader (SkewSentence, so
+// the launch gate, the CLI's other reads, `fugaro project policy`, doctor and
+// the runner all answer from it): the release that reads such a node is the
+// one that introduced its version, never the release the model ships in — an
+// 0.8.1 binary meeting a version-2 node already runs 0.8.0.
+//
+// A row may name a version above Version: the table records history, and a
+// binary of an older line needs the row of a version a newer release
+// introduced. A version no row names gets the remedy alone (VersionRelease
+// answers false), never a borrowed release.
+var VersionSince = map[int]string{
+	1: "0.8.0",
+	2: "0.8.5",
+	3: "0.9.0",
+}
+
+// VersionRelease is the release that introduced policy version v, and false
+// when VersionSince has no row for it.
+func VersionRelease(v int) (string, bool) {
+	rel, ok := VersionSince[v]
+	return rel, ok
+}
+
+// arrivedClause is the clause a too-new refusal appends when the table knows
+// the version on the node, and "" when it does not.
+func arrivedClause(v int) string {
+	if rel, ok := VersionRelease(v); ok {
+		return fmt.Sprintf("; policy version %d arrived in fugaro %s", v, rel)
+	}
+	return ""
+}
 
 // PolicyRulesVersion is the generation of the Realtime Database security rules
 // that introduced the config/policy nodes of §5 and their per-child read
@@ -215,12 +256,16 @@ const (
 // older side. Found < Understood means the node is behind. Equal cannot come
 // from Decode (a version it understands is not a skew), and is read as the
 // node's own problem — the direction in which this reader is the newer side.
+//
+// A node ahead of its reader also names the release that introduced its
+// version when VersionSince has a row for it ("; policy version 2 arrived in
+// fugaro 0.8.5"), and nothing more when it does not.
 func SkewSentence(ve *VersionError, reader Reader) string {
 	switch {
 	case ve.Found > ve.Understood && reader == ReaderRunner:
-		return fmt.Sprintf(RunnerSkew, ve.Found, ve.Understood)
+		return fmt.Sprintf(RunnerSkew, ve.Found, ve.Understood) + arrivedClause(ve.Found)
 	case ve.Found > ve.Understood:
-		return fmt.Sprintf(CLISkew, ve.Found, ve.Understood)
+		return fmt.Sprintf(CLISkew, ve.Found, ve.Understood) + arrivedClause(ve.Found)
 	case reader == ReaderRunner:
 		return fmt.Sprintf(RunnerSkewNewer, ve.Found, ve.Understood)
 	default:
@@ -231,7 +276,7 @@ func SkewSentence(ve *VersionError, reader Reader) string {
 // SkewRemedy is SkewSentence's remedy alone — everything after the shared
 // "Skew; " prefix — for the caller that prints Skew itself, with its own text
 // inside it (the launch gate's policySkewRefusal, which quotes the release the
-// policy model ships in). Deriving it here rather than wording a second remedy
+// policy model ships in for a node behind this binary). Deriving it here rather than wording a second remedy
 // keeps SkewSentence's constants the one source of both sentences.
 func SkewRemedy(ve *VersionError, reader Reader) string {
 	skew := fmt.Sprintf(Skew, ve.Found, ve.Understood)

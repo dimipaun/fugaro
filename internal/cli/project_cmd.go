@@ -348,7 +348,7 @@ func refuseNewerPolicy(raw []byte) error {
 		return nil
 	}
 	if head.Version > projectpolicy.Version {
-		return userErr("%s", fmt.Sprintf(projectpolicy.CLISkew, head.Version, projectpolicy.Version))
+		return userErr("%s", projectpolicy.SkewSentence(&projectpolicy.VersionError{Found: head.Version, Understood: projectpolicy.Version}, projectpolicy.ReaderCLI))
 	}
 	return nil
 }
@@ -365,7 +365,7 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 	switch {
 	case errors.As(err, &ve):
 		if ve.Found > ve.Understood {
-			return nil, userErr("%s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood))
+			return nil, userErr("%s", projectpolicy.SkewSentence(ve, projectpolicy.ReaderCLI))
 		}
 		// An older version (a hand-written node, or one a release before this
 		// shape wrote). "Publish again" would be advice this very refusal

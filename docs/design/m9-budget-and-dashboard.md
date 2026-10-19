@@ -545,7 +545,7 @@ These record where the build settled something the design left open. The authori
   heartbeat                                # {at, boot}: the consumer's liveness (mobile plan D117)
 ```
 
-- **`title`** is the task's first line, clipped to 80 characters and redacted. Launchers already read every `task.json`.
+- **`title`** is the run's own title, clipped to 80 characters and redacted: the launcher's `fugaro run --title` when it was given one (task.Spec.Title), else the task's first line (`task.Spec.TitleLine` is that one rule, read here and by `fugaro watch` and the pull request). Launchers already read every `task.json`.
 - **The mailbox** is the mobile app's own family (`docs/mobile/`, plan task P2.1): one node per account, keyed by that account's Firebase Auth uid, so a person with two installations has two mailboxes and neither is reachable from the other. A **message** is the shared schema's (`shared/mailbox-schema`): `id` (the node key it is stored under), `sender` (the writer's identity, bound by the rules to the writer's claim), `text` (already redacted, non-empty, bounded), `at` (epoch milliseconds) and, on an outbox message only, `acked` — the phone's acknowledgement of a message it has spoken. `heartbeat` is `{at, boot}`: when the consumer last wrote, and which boot of it, so a restart is distinguishable from a stall (§6.5). Nothing here is spend: the mailbox carries text and liveness, and the writer's own messages are not a cap, a lease or a counter.
 - **Day nodes older than 8 days** are deleted by the rollover only after the day is final, equal to its Firestore documents and read back (§9). `spend/<day>/meta` is not written by M9d (nothing reads it); the Firestore document, not a flag in RTDB, says a day is archived.
 

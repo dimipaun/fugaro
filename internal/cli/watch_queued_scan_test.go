@@ -491,8 +491,8 @@ func TestScanCachesFinishedRunsAcrossPolls(t *testing.T) {
 func TestPruneFinishedCacheDropsStaleEntries(t *testing.T) {
 	sc := newQueuedScanner(&localcfg.Config{}, "")
 	now := time.Now()
-	sc.cacheFinished("acme-a/old", watch.FinishedRun{FinishedAt: now.Add(-finishedLookback - time.Minute)}, "old-job")
-	sc.cacheFinished("acme-a/new", watch.FinishedRun{FinishedAt: now.Add(-time.Hour)}, "new-job")
+	sc.cacheFinished("acme-a/old", cachedFinishedRun{row: watch.FinishedRun{FinishedAt: now.Add(-finishedLookback - time.Minute)}})
+	sc.cacheFinished("acme-a/new", cachedFinishedRun{row: watch.FinishedRun{FinishedAt: now.Add(-time.Hour)}})
 	sc.pruneFinishedCache(now.Add(-finishedLookback))
 	if _, ok := sc.cachedFinished("acme-a/old"); ok {
 		t.Fatal("an entry older than the lookback must be pruned")
@@ -507,14 +507,14 @@ func TestPruneFinishedCacheDropsStaleEntries(t *testing.T) {
 //
 // A reader follows a run from runs[] into finished[] and must not lose the job
 // it ran on (the contract JSONFinished's own comment states, watch/json.go):
-// watch.MergeJobs stamps a row's job, profile, provider and account from the
-// scan's jobs map, which the scan rebuilds from the runs it *read*. The
+// watch.MergeFacts stamps a row's job, profile, provider and account from the
+// scan's facts map, which the scan rebuilds from the runs it *read*. The
 // finished cache exists so a later scan does not re-read an object it has
 // already read — and a cache hit rebuilt the row as {IsFinished, Finished} with
-// no Job, so the scan that first saw a run finish yielded a row with all four
+// no Facts, so the scan that first saw a run finish yielded a row with all four
 // fields and every scan afterwards yielded the same row with all four gone, for
 // the whole 24h finishedLookback (this round's high finding). The row is
-// user-visible while it happens: watch.go treats a change to the jobs map as a
+// user-visible while it happens: watch.go treats a change to the facts map as a
 // dirty frame, so the job chip disappears on the next frame and stays gone.
 //
 // The four fields are asserted, not just the job: the job is what the cache
@@ -523,7 +523,7 @@ func TestPruneFinishedCacheDropsStaleEntries(t *testing.T) {
 // checks holds for both.
 //
 // Mutation (run, restored): cache the entry without its job (the cache hit
-// rebuilding the scanResult with no Job) — scan 2's finished row is left
+// rebuilding the scanResult with no Facts) — scan 2's finished row is left
 // unstamped and this fails there, with scan 1 still green.
 func TestFinishedCacheKeepsTheJob(t *testing.T) {
 	ctx := context.Background()
@@ -552,9 +552,9 @@ func TestFinishedCacheKeepsTheJob(t *testing.T) {
 			t.Fatalf("scan %d: finished = %+v, want the one finished run", scan, fin)
 		}
 		// The two steps a frame makes of the scan's rows, in watch.go's own
-		// order (MergeFinished, then MergeJobs).
+		// order (MergeFinished, then MergeFacts).
 		v := watch.MergeFinished(watch.View{}, watch.Config{}, fin, time.Now())
-		v = watch.MergeJobs(v, sc.Jobs())
+		v = watch.MergeFacts(v, sc.Facts())
 		row := v.Repos[0].Finished[0]
 		return [4]string{row.Job, row.Profile, row.Provider, row.Account}
 	}
@@ -571,7 +571,7 @@ func TestFinishedCacheKeepsTheJob(t *testing.T) {
 		t.Fatalf("scan 2: %v", err)
 	}
 	if got := stamped(2, fin2); got != want {
-		t.Fatalf("scan 2: the finished row's (job, profile, provider, account) = %q, want %q: a cached finished row must carry what the read one carried, or every poll after the first drops a finished run's job, profile, provider and account (watch.MergeJobs, the contract JSONFinished states)", got, want)
+		t.Fatalf("scan 2: the finished row's (job, profile, provider, account) = %q, want %q: a cached finished row must carry what the read one carried, or every poll after the first drops a finished run's job, profile, provider and account (watch.MergeFacts, the contract JSONFinished states)", got, want)
 	}
 }
 
@@ -617,20 +617,36 @@ func TestFinishedResultFallsBackToStartedAt(t *testing.T) {
 	}
 }
 
-// finishedTitle stops at the task prompt's first line: a second line (a
+// runTitle stops at the task prompt's first line: a second line (a
 // fuller description) never leaks into the one-line title.
 func TestFinishedTitleStopsAtFirstLine(t *testing.T) {
-	got := finishedTitle(&task.Spec{Task: "first line\nsecond line"})
+	got := runTitle(&task.Spec{Task: "first line\nsecond line"})
 	if got != "first line" {
 		t.Fatalf("title = %q, want just the first line", got)
 	}
 }
 
-// finishedTitle clips a long first line to 80 runes, like the runner's own
+// runTitle lists a run by its own job title when fugaro run --title gave
+// it one: the row is the title the launcher stored, not the brief's first
+// line, which a shared preamble makes identical across every run of it.
+//
+// Mutation (read the task's first line instead of Spec.TitleLine): the row
+// shows "Read CLAUDE.md and the plan first." and this test fails.
+func TestFinishedTitlePrefersTheStoredTitle(t *testing.T) {
+	got := runTitle(&task.Spec{
+		Task:  "Read CLAUDE.md and the plan first.\n\nThen fix the flaky test.",
+		Title: "Ship the flaky-test fix",
+	})
+	if got != "Ship the flaky-test fix" {
+		t.Fatalf("title = %q, want the run's own title", got)
+	}
+}
+
+// runTitle clips a long first line to 80 runes, like the runner's own
 // registry entry title.
 func TestFinishedTitleClipsAt80Runes(t *testing.T) {
 	long := strings.Repeat("x", 90)
-	got := finishedTitle(&task.Spec{Task: long})
+	got := runTitle(&task.Spec{Task: long})
 	if got != long[:80] {
 		t.Fatalf("title = %q (%d runes), want the first 80", got, len([]rune(got)))
 	}

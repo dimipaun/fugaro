@@ -157,12 +157,14 @@ type scanResult struct {
 	IsQueued   bool
 	Finished   watch.FinishedRun
 	IsFinished bool
-	// Job is the Cloud Run job the run's launch.json names, for every run
-	// the scan read one for — a live run's included, whose RTDB registry
-	// entry carries no job and could not be trusted with one if it did (a
-	// launcher writes a job's environment, never the job's name). "" when
-	// there is no launch.json to read.
-	Job string
+	// Facts is what the run's own launch.json says about it: the Cloud Run job
+	// it names, and who started the run — reported for every run the scan read
+	// one for, a live run's included, whose RTDB registry entry carries
+	// neither and could not be trusted with either (a launcher writes a job's
+	// environment and its own launch.json, never the job's name or the
+	// registry). Job is "" when there is no launch.json to read, and
+	// LaunchedBy too (a launch.json written before the launcher was recorded).
+	Facts watch.RunFacts
 }
 
 // scanRun reads one run and says what the scanner should report about it:
@@ -178,19 +180,20 @@ func scanRun(ctx context.Context, env *cloudEnv, slug, id string, w scanWindow, 
 	if in.Problem != "" {
 		return scanResult{}, errors.New(in.Problem) // a corrupt object: ls's error row
 	}
-	// The job comes from launch.json and is attached whichever row this run
-	// produces — queued, finished, or neither (a live run, which this scan
-	// still read): one run's job is one launch.json's, and the rows it is
-	// stamped onto are the view's, not this function's (watch.MergeJobs).
-	job := ""
+	// The job and the launcher come from launch.json and are attached whichever
+	// row this run produces — queued, finished, or neither (a live run, which
+	// this scan still read): one run's launch.json is one run's, and the rows
+	// it is stamped onto are the view's, not this function's
+	// (watch.MergeFacts).
+	facts := watch.RunFacts{}
 	if in.Launch != nil {
-		job = in.Launch.Job
+		facts.Job, facts.LaunchedBy = in.Launch.Job, in.Launch.LaunchedBy
 	}
 	res, err := scanRow(ctx, env, ro, in, w, now)
 	if err != nil {
 		return scanResult{}, err
 	}
-	res.Job = job
+	res.Facts = facts
 	return res, nil
 }
 
@@ -231,23 +234,25 @@ func finishedResult(in runview.Input, finishedSince, now time.Time) scanResult {
 	}
 	row := runview.Join(in, noComputePrices, now)
 	return scanResult{IsFinished: true, Finished: watch.FinishedRun{
-		Run: in.RunID, Slug: in.Slug, Title: finishedTitle(in.Task), Workflow: row.Workflow,
+		Run: in.RunID, Slug: in.Slug, Title: runTitle(in.Task), Workflow: row.Workflow,
 		Status: row.Status, Outcome: row.Outcome, PRNumber: row.PR, PRURL: row.PRURL,
+		LaunchedBy: row.LaunchedBy,
 		FinishedAt: finishedAt,
 	}}
 }
 
-// finishedTitle is a finished run's one-line title: the first line of its
-// task prompt, clipped as the runner's own registry entry titles a live
-// run (budget_session.go's registryEntry). Unlike that entry, it is not
-// redacted against the run's own secrets, which this reader never holds;
-// watch.clean sanitises it for display like every other bucket-derived
-// field here.
-func finishedTitle(t *task.Spec) string {
-	if t == nil {
-		return ""
-	}
-	title, _, _ := strings.Cut(strings.TrimSpace(t.Task), "\n")
+// runTitle is a run's one-line title while it is queued and once it has
+// finished: both rows name a run the same way, from the ONE place the text
+// comes from (task.Spec.TitleLine) — the title its launcher stored (fugaro
+// run --title), else its task prompt's first line. A queued --batch or
+// --attempts launch would otherwise fall back to its workflow and read alike
+// on every row, the very problem --title exists to fix. It is clipped as the
+// runner's own registry entry titles a live run (budget_session.go's
+// registryEntry). Unlike that entry, it is not redacted against the run's
+// own secrets, which this reader never holds; watch.clean sanitises it for
+// display like every other bucket-derived field here.
+func runTitle(t *task.Spec) string {
+	title := t.TitleLine()
 	if runes := []rune(title); len(runes) > 80 {
 		title = string(runes[:80])
 	}
@@ -279,8 +284,8 @@ func queuedResult(in runview.Input, queuedSince, queuedMinted, now time.Time) sc
 		return scanResult{}
 	}
 	return scanResult{IsQueued: true, Queued: watch.QueuedRun{
-		Run: in.RunID, Slug: in.Slug, Workflow: row.Workflow, Recipe: row.Recipe, RequestedBy: row.RequestedBy,
-		LaunchedAt: at, Stale: stale,
+		Run: in.RunID, Slug: in.Slug, Title: runTitle(in.Task), Workflow: row.Workflow, Recipe: row.Recipe,
+		RequestedBy: row.RequestedBy, LaunchedBy: row.LaunchedBy, LaunchedAt: at, Stale: stale,
 	}}
 }
 
@@ -321,31 +326,28 @@ type queuedScanner struct {
 	// "slug/runID": once a run's record is no longer running it never
 	// changes again (nothing in this codebase writes result.json after a
 	// run has finalized), so a later scan reuses the cached row instead of
-	// re-reading task.json, launch.json and result.json for it. cacheMu
-	// guards it: scanRepo runs concurrently across repositories and within
-	// one repository's run reads. pruneFinishedCache drops entries whose
-	// FinishedAt has aged out of finishedLookback, so the cache never
+	// re-reading task.json, launch.json and result.json for it. The facts
+	// the same read found (the job and the launcher, scanResult.Facts) are
+	// cached with the row: a cache hit reads no launch.json, so keeping only
+	// the row would lose them from every frame after the first scan.
+	// cacheMu guards it: scanRepo runs concurrently across repositories and
+	// within one repository's run reads. pruneFinishedCache drops entries
+	// whose FinishedAt has aged out of finishedLookback, so the cache never
 	// grows past what one scan's window could hold.
-	//
-	// The job is cached beside the row, not left to be re-read: a cache hit
-	// reads no launch.json, and the scan's jobs map is what stamps a row's
-	// job onto the view (watch.MergeJobs), so an entry that carried only the
-	// row would give the scan that first saw a run finish a job for it and
-	// every later scan none.
 	cacheMu       sync.Mutex
-	finishedCache map[string]finishedEntry
+	finishedCache map[string]cachedFinishedRun
 
 	env *cloudEnv
 	// index places the job names the runs' launch.json records, when the
 	// command has one (a live watch reads the published policy once; a unit
 	// test of the scanner alone has none, and every job is then a bare name).
 	index *projectJobIndex
-	// jobs is the job of each run the last scan read, by the run's key. It
-	// is written at the end of a scan and read by Jobs, both on the scanning
-	// goroutine, so it needs no lock of its own: what guards it against a
-	// reader on another goroutine is queuedSource's own mutex, which the
-	// frame's Get holds.
-	jobs watch.Jobs
+	// facts is the job and launcher of each run the last scan read, by the
+	// run's key. It is written at the end of a scan and read by Facts, both on
+	// the scanning goroutine, so it needs no lock of its own: what guards it
+	// against a reader on another goroutine is queuedSource's own mutex, which
+	// the frame's Get holds.
+	facts watch.Facts
 	// opening is the open in flight, nil when none.
 	opening chan openResult
 	// openFails counts opens failed in a row; until nextOpen no new open
@@ -447,32 +449,30 @@ func (s *queuedScanner) connect(ctx context.Context) (*cloudEnv, error) {
 	}
 }
 
-// finishedEntry is one entry of the finished cache: the row a read produced,
-// and the job its launch.json named ("" when it had none to name — the same
-// empty scanResult.Job the read itself carries).
-type finishedEntry struct {
-	run watch.FinishedRun
-	job string
+// cachedFinishedRun is one entry of the finished cache: the row a read
+// produced, and the facts (the job and the launcher) the same read found for
+// it. The two travel together because a cache hit reads no launch.json.
+type cachedFinishedRun struct {
+	row   watch.FinishedRun
+	facts watch.RunFacts
 }
 
-// cachedFinished is key's cached entry, if any.
-func (s *queuedScanner) cachedFinished(key string) (finishedEntry, bool) {
+// cachedFinished is key's cached finished run, if any.
+func (s *queuedScanner) cachedFinished(key string) (cachedFinishedRun, bool) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	c, ok := s.finishedCache[key]
 	return c, ok
 }
 
-// cacheFinished remembers f — the row res produced and the job it was read
-// with — under key, so a later scan does not re-read it and still reports
-// the same run.
-func (s *queuedScanner) cacheFinished(key string, f watch.FinishedRun, job string) {
+// cacheFinished remembers c under key, so a later scan does not re-read it.
+func (s *queuedScanner) cacheFinished(key string, c cachedFinishedRun) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	if s.finishedCache == nil {
-		s.finishedCache = map[string]finishedEntry{}
+		s.finishedCache = map[string]cachedFinishedRun{}
 	}
-	s.finishedCache[key] = finishedEntry{run: f, job: job}
+	s.finishedCache[key] = c
 }
 
 // pruneFinishedCache drops every cached entry whose FinishedAt is before
@@ -483,7 +483,7 @@ func (s *queuedScanner) pruneFinishedCache(finishedSince time.Time) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	for key, c := range s.finishedCache {
-		if c.run.FinishedAt.Before(finishedSince) {
+		if c.row.FinishedAt.Before(finishedSince) {
 			delete(s.finishedCache, key)
 		}
 	}
@@ -493,12 +493,12 @@ func (s *queuedScanner) pruneFinishedCache(finishedSince time.Time) {
 type repoScan struct {
 	queued     []watch.QueuedRun
 	finished   []watch.FinishedRun
-	jobs       watch.Jobs // the job of each run read, by the run's key
-	unreadable int        // runs left out (failed reads)
-	runErr     error      // the first of them's error
-	cutOff     int        // runs not read before the repository's deadline
-	total      int        // runs listed
-	err        error      // the repository could not be listed: rows is nil
+	facts      watch.Facts // the job and launcher of each run read, by the run's key
+	unreadable int         // runs left out (failed reads)
+	runErr     error       // the first of them's error
+	cutOff     int         // runs not read before the repository's deadline
+	total      int         // runs listed
+	err        error       // the repository could not be listed: rows is nil
 }
 
 // scanRepo reads slug's queued and finished runs under its own deadline:
@@ -524,11 +524,7 @@ func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string
 	var toRead []int
 	for i, id := range ids {
 		if c, ok := s.cachedFinished(slug + "/" + id); ok {
-			// The job comes back with the row: the jobs map below is built from
-			// these results, and a row with no job is a row MergeJobs leaves as
-			// it is — a finished run would show its job for the scan that read
-			// it and none for every scan afterwards.
-			results[i] = result{scanResult{IsFinished: true, Finished: c.run, Job: c.job}, nil, true}
+			results[i] = result{scanResult{IsFinished: true, Finished: c.row, Facts: c.facts}, nil, true}
 			continue
 		}
 		toRead = append(toRead, i)
@@ -545,7 +541,7 @@ func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string
 					continue // cut off: the result is not trusted
 				}
 				if res.IsFinished {
-					s.cacheFinished(slug+"/"+ids[i], res.Finished, res.Job)
+					s.cacheFinished(slug+"/"+ids[i], cachedFinishedRun{row: res.Finished, facts: res.Facts})
 				}
 				results[i] = result{res, err, true}
 			}
@@ -564,14 +560,14 @@ feed:
 
 	r := repoScan{total: len(ids)}
 	for i, res := range results {
-		if res.done && res.err == nil && res.res.Job != "" {
-			if r.jobs == nil {
-				r.jobs = watch.Jobs{}
+		if res.done && res.err == nil && (res.res.Facts.Job != "" || res.res.Facts.LaunchedBy != "") {
+			if r.facts == nil {
+				r.facts = watch.Facts{}
 			}
 			// watch.RunKeyOf applies the same normalisation the rows carry
 			// (the wire slug key, the cleaned run id), so the reader that
 			// stamps the view never reproduces either rule.
-			r.jobs[watch.RunKeyOf(slug, ids[i])] = s.index.ref(res.res.Job)
+			r.facts[watch.RunKeyOf(slug, ids[i])] = s.factsOf(res.res.Facts)
 		}
 		switch {
 		case !res.done:
@@ -645,7 +641,7 @@ feed:
 		return nil, nil, "", ctx.Err() // shutting down
 	}
 
-	jobs := watch.Jobs{}
+	jobs := watch.Facts{}
 	var parts []string
 	unreadRepos, unreadRuns := 0, 0
 	var repoErr, runErr, cutOff string
@@ -660,7 +656,7 @@ feed:
 		}
 		queued = append(queued, r.queued...)
 		finished = append(finished, r.finished...)
-		maps.Copy(jobs, r.jobs)
+		maps.Copy(jobs, r.facts)
 		if r.cutOff > 0 {
 			if cutRepos == 0 {
 				cutOff = fmt.Sprintf("%s: %d of %d runs not read (%s)", slugs[i], r.cutOff, r.total, errText(context.DeadlineExceeded, s.repoTimeout))
@@ -688,27 +684,37 @@ feed:
 	if len(parts) > 0 {
 		note = "runs: " + strings.Join(parts, "; ")
 	}
-	s.jobs = jobs
+	s.facts = jobs
 	return queued, finished, note, nil
 }
 
-// Jobs is the job of each run the last scan read, by the run's key (plan task
-// 3.5 step 2). It is what a frame stamps onto its rows (watch.MergeJobs): a
-// live row's job is in no registry entry, so the bucket's launch.json — read
-// by the scan for every run it lists — is where it comes from.
+// factsOf is what a scan read about one run, as the facts a frame stamps onto
+// the row it draws: the job name launch.json recorded, placed against the
+// published policy (s.index.ref — never parsed), and the launcher launch.json
+// recorded. The launcher is carried as it was read; watch.MergeFacts sanitises
+// it for display like every other bucket-derived string.
+func (s *queuedScanner) factsOf(f watch.RunFacts) watch.RunFacts {
+	return watch.RunFacts{JobRef: s.index.ref(f.Job), LaunchedBy: f.LaunchedBy}
+}
+
+// Facts is the job and launcher of each run the last scan read, by the run's
+// key (plan task 3.5 step 2, and who started a run). It is what a frame stamps
+// onto its rows (watch.MergeFacts): neither a live row's job nor its launcher
+// is in any registry entry, so the bucket's launch.json — read by the scan for
+// every run it lists — is where they come from.
 //
 // Call it on the goroutine that ran the scan (queuedSource.refresh does): the
 // map is the scan's own and is never mutated after it returns.
-func (s *queuedScanner) Jobs() watch.Jobs { return s.jobs }
+func (s *queuedScanner) Facts() watch.Facts { return s.facts }
 
 // fetchQueuedOnce is watch --once's read of the queued and finished rows:
 // one scan in the background, waited for at most queuedOnceWait; past that
 // it returns no rows and a note, and the scan is abandoned.
-func fetchQueuedOnce(ctx context.Context, lc *localcfg.Config, repo string, index *projectJobIndex) ([]watch.QueuedRun, []watch.FinishedRun, watch.Jobs, string) {
+func fetchQueuedOnce(ctx context.Context, lc *localcfg.Config, repo string, index *projectJobIndex) ([]watch.QueuedRun, []watch.FinishedRun, watch.Facts, string) {
 	type result struct {
 		queued   []watch.QueuedRun
 		finished []watch.FinishedRun
-		jobs     watch.Jobs
+		facts    watch.Facts
 		note     string
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -722,11 +728,11 @@ func fetchQueuedOnce(ctx context.Context, lc *localcfg.Config, repo string, inde
 		if err != nil {
 			note = queuedNote(err)
 		}
-		done <- result{queued, finished, sc.Jobs(), note}
+		done <- result{queued, finished, sc.Facts(), note}
 	}()
 	select {
 	case r := <-done:
-		return r.queued, r.finished, r.jobs, r.note
+		return r.queued, r.finished, r.facts, r.note
 	case <-time.After(queuedOnceWait):
 		return nil, nil, nil, fmt.Sprintf("queued runs unavailable: the runs bucket did not answer within %s", queuedOnceWait)
 	}
@@ -747,10 +753,10 @@ type queuedSource struct {
 	mu       sync.Mutex
 	rows     []watch.QueuedRun
 	finished []watch.FinishedRun
-	// jobs is the job of each run the last good scan read, resolved against
-	// the published policy (watch.MergeJobs stamps it onto the rows the
-	// frame draws).
-	jobs     watch.Jobs
+	// facts is the job and launcher of each run the last good scan read,
+	// resolved against the published policy (watch.MergeFacts stamps them
+	// onto the rows the frame draws).
+	facts    watch.Facts
 	note     string
 	failures int // scans failed in a row
 }
@@ -800,21 +806,21 @@ func (qs *queuedSource) refresh(ctx context.Context) {
 	if ctx.Err() != nil {
 		return // shutting down: nothing will render it
 	}
-	var jobs watch.Jobs
+	var facts watch.Facts
 	if qs.sc != nil {
-		jobs = qs.sc.Jobs()
+		facts = qs.sc.Facts()
 	}
 	qs.mu.Lock()
 	defer qs.mu.Unlock()
 	if err == nil {
-		qs.rows, qs.finished, qs.jobs, qs.note, qs.failures = rows, finished, jobs, note, 0
+		qs.rows, qs.finished, qs.facts, qs.note, qs.failures = rows, finished, facts, note, 0
 		return
 	}
 	qs.failures++
 	qs.note = queuedNote(err)
 	if qs.failures >= queuedDropAfter {
 		qs.rows, qs.finished = nil, nil
-		qs.jobs = nil
+		qs.facts = nil
 	} else if len(qs.rows) > 0 || len(qs.finished) > 0 {
 		qs.note += " (the queued rows shown are from an earlier read)"
 	}
@@ -828,10 +834,10 @@ func (qs *queuedSource) Get() ([]watch.QueuedRun, []watch.FinishedRun, string) {
 	return qs.rows, qs.finished, qs.note
 }
 
-// Jobs is the last good scan's jobs, by the run's key. Safe to call on every
+// Facts is the last good scan's facts, by the run's key. Safe to call on every
 // frame, like Get, and empty until the first scan lands.
-func (qs *queuedSource) Jobs() watch.Jobs {
+func (qs *queuedSource) Facts() watch.Facts {
 	qs.mu.Lock()
 	defer qs.mu.Unlock()
-	return qs.jobs
+	return qs.facts
 }
