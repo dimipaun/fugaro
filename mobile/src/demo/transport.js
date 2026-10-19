@@ -23,9 +23,19 @@
 // client's verification would prove nothing. It signs `sample.js`'s fixed
 // records and nothing else.
 //
+// **Why the simulant is not P1.5's simulator.** `shared/mailbox-sim` is the
+// repository's other simulator, and it is the wrong tool HERE for the reason
+// `src/mailbox/README.md` already records: it signs nothing (`PLACEHOLDER_MAC`)
+// and sets no answering id at all, so the app's client would verify nothing it
+// wrote and speak nothing it received. The demo would be a screen full of
+// refusals. What is reused is the pair the tests already use for the same
+// purpose -- the port double `MemoryMailboxStore` and the fake `MemorySpeaker`
+// -- with the tags made by this app's own `mac.js`, which is exactly how
+// `src/mailbox/client.test.js` builds the outbox fixtures it speaks.
+//
 // **What is deliberately absent.** No network, no filesystem, no clock, no
 // random source and no platform storage: every value is either a fixed sample
-// value, a counter (`demodIds`), or the output of a pure function. The demo's
+// value, a counter (`demoIds`), or the output of a pure function. The demo's
 // clock is `sample.js`'s `DEMO_NOW`, injected into the client like any other
 // clock, so the demo is the same run every time it is entered -- which is what
 // lets `index.test.js` assert that a reply was verified rather than hope it

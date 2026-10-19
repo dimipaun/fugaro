@@ -45,6 +45,8 @@ import {
   DEMO_UTTERANCES,
 } from './sample.js';
 import { DEMO_PAIRING_KEY } from './keys.js';
+import * as KEYS from './keys.js';
+import * as SAMPLE from './sample.js';
 
 /** Every string in the sample data, with a path saying where it is. */
 function stringsIn(value, path = 'sample', found = []) {
@@ -112,16 +114,10 @@ test('nothing in the sample data is a credential, and nothing carries a tag', ()
   // LOOKS like, and it is the same judgement the app's other configured
   // strings are held to (`app-config.test.js`). A demo whose sample data
   // tripped it would be a demo carrying something a reviewer must not see.
-  for (const [path, value] of stringsIn({
-    accounts: [DEMO_ACCOUNT, DEMO_SECOND_ACCOUNT],
-    installations: DEMO_INSTALLATIONS,
-    jobs: DEMO_JOBS,
-    prompt: DEMO_PROMPT,
-    replies: DEMO_REPLIES,
-    utterances: DEMO_UTTERANCES,
-    destructive: DEMO_DESTRUCTIVE,
-    heartbeat: DEMO_HEARTBEAT,
-  })) {
+  // The whole MODULE and not a list of the exports a reviewer thought of: a
+  // new export carrying a key-shaped value would be invisible to a hand-written
+  // list, and this file exists to make that visible.
+  for (const [path, value] of stringsIn({ sample: SAMPLE, keys: KEYS })) {
     assert.equal(secretShaped(value), null, `${path} is ${secretShaped(value)}`);
   }
 

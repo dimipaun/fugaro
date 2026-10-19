@@ -401,6 +401,15 @@ from their absence:
   **A message this client sends is therefore never answered end to end in CI**:
   the "clears the pending message" path is tested with a locally signed `answer`
   record, not with the consumer.
+* **Demo mode (the owner's ruling of 2026-10-19) reuses this module and forks
+  nothing.** `src/demo/` drives THIS client over THIS port double, with the
+  consumer's side delivered into the tree by `MemoryMailboxStore.deliver` --
+  the other end's write, which is not a phone write, is not recorded in
+  `writes()`, and so keeps the one-write-path scan (`write-path.test.js`) a
+  statement about the client. Its tags are made by this directory's own
+  `macOf`, for the reason the bullet above gives: the simulator signs nothing,
+  so it cannot be the demo's other end either (`src/demo/transport.js` says
+  so at the code). Nothing in this directory knows the demo exists.
 * **P3.4's audio and P3.5's voice screen are not here.** `speaker.js` is the
   stub described above -- the interface P3.6 needs and no more. Nothing in this
   directory records audio, transcribes, or decides when to speak.

@@ -29,10 +29,23 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { SECURE_STORE_CODES, SecretStore } from '../accounts/index.js';
-import { createDemoMode } from './index.js';
+import { DEMO_BANNER, LEAVE_DEMO, TRY_DEMO, createDemoMode } from './index.js';
+import { DEMO_KEY_ITEM, DEMO_PAIRING_KEY, demoKeySource } from './keys.js';
 
 const DIR = import.meta.dirname;
+const MOBILE = join(DIR, '..', '..');
+const REPO = join(MOBILE, '..');
 const SELF = 'safety.test.js';
+
+/**
+ * The sentence the owner pastes into the Play Console's "any other information
+ * required for access" field, exactly as `docs/mobile/play-review-access.md`
+ * carries it. It is asserted here because it is a claim about THIS code: the
+ * form text tells a reviewer to tap a control on the first screen, and a form
+ * that promised a control the app does not have would send a reviewer looking
+ * for a way in that is not there.
+ */
+const PLAY_ACCESS = 'Open the app and tap **Try the demo** on the first screen. It runs on built-in sample data and needs no account, sign-in or network.';
 
 /** Every `.js` file of the module, at any depth, sorted, `/`-separated. */
 function demoFiles(dir = DIR, prefix = '') {
@@ -270,6 +283,56 @@ test('entering the demo reads and writes nothing in secure storage, and opens no
   assert.equal(direct.ok, false);
   assert.equal(direct.code, SECURE_STORE_CODES.STORE_FAILED);
   assert.deepEqual(keychain.calls, ['getItem']);
+});
+
+test('the demo\'s key source answers for one item, and hands the material to one callback', async () => {
+  // The demo has exactly one key and exactly one item that may be asked for
+  // (D111's `macKey`, the name P3.6's client asks by). Any other item is
+  // refused with P3.1's own code -- so a later caller cannot read something out
+  // of this source that does not exist, and a demo cannot become a second door
+  // to a phone's items by being convenient.
+  const keys = demoKeySource();
+  const seen = [];
+  const used = await keys.use('demo-phone', DEMO_KEY_ITEM, (key) => {
+    seen.push(key);
+    return 'the tag is not the key';
+  });
+  assert.deepEqual(used, { ok: true, result: 'the tag is not the key' });
+  assert.deepEqual(seen, [DEMO_PAIRING_KEY], 'the callback is the only reader');
+  assert.equal(JSON.stringify(used).includes(DEMO_PAIRING_KEY), false, 'and the answer carries no material');
+
+  const other = await keys.use('demo-phone', 'idToken', () => 'ok');
+  assert.equal(other.ok, false);
+  assert.equal(other.code, SECURE_STORE_CODES.UNKNOWN_ITEM);
+  assert.equal(other.field, 'item');
+
+  const notAFunction = await keys.use('demo-phone', DEMO_KEY_ITEM, 'read it for me');
+  assert.equal(notAFunction.code, SECURE_STORE_CODES.NOT_A_CALLBACK);
+
+  // A callback that threw is a refusal that carries nothing: what it threw may
+  // quote the material, which is the whole reason `use` exists.
+  const threw = await keys.use('demo-phone', DEMO_KEY_ITEM, () => {
+    throw new Error(`could not use ${DEMO_PAIRING_KEY}`);
+  });
+  assert.equal(threw.code, SECURE_STORE_CODES.CALLBACK_FAILED);
+  assert.equal(JSON.stringify(threw).includes(DEMO_PAIRING_KEY), false);
+});
+
+test('the Play form text and the README promise the control the app has', () => {
+  // Markdown wraps, so the sentence is compared with its line breaks flattened:
+  // what must not change is the words, not where the file breaks them.
+  const play = readFileSync(join(REPO, 'docs', 'mobile', 'play-review-access.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(play.includes(PLAY_ACCESS), 'the sentence the owner pastes is in the file, unchanged');
+  assert.ok(play.includes(TRY_DEMO));
+
+  // The README carries the same three strings, so the instructions for entering
+  // the demo cannot drift from the words on the screen. The words themselves
+  // have one home each: `TRY_DEMO`, `DEMO_BANNER` and `LEAVE_DEMO` in
+  // `index.js`, which the shell and the first screen import rather than
+  // restate.
+  const readme = readFileSync(join(MOBILE, 'README.md'), 'utf8');
+  for (const words of [TRY_DEMO, DEMO_BANNER, LEAVE_DEMO]) assert.ok(readme.includes(words), words);
+  assert.ok(readme.includes('Demo mode: how to enter it'), 'the README says how to enter it');
 });
 
 test('the demo\'s controller takes no store, no key source and no port', () => {

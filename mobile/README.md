@@ -16,6 +16,14 @@ client -- which is the only place in the app that writes to the database -- and
 the three voice ports with the fakes the voice screen's logic is written and
 tested against.
 
+**Demo mode (the owner's ruling of 2026-10-19).** The app carries a built-in
+demo, so that a Google Play reviewer -- who cannot create an account and cannot
+pair a phone -- can reach everything the app shows. It runs the app's own code
+on fixed sample data (`src/demo/`), it can never touch the network, secure
+storage or a credential (`src/demo/safety.test.js`), and every screen it draws
+says "Demo mode: sample data" with an always-visible way out (the shell,
+`src/app/root.js`). **How to enter it** is the section below.
+
 **Two audio seams coexist.** P3.6 defined the one audio seam it needed --
 `src/mailbox/speaker.js`, `speak(text)` answering whether the utterance was
 spoken, which is what the ack's rule is written against -- before P3.4 was
@@ -45,14 +53,38 @@ Constraint 10). That is not an accident of these tests: it is why every module
 under `src/` is written as a function of its platform module, with the real
 module plugged in by `index.js` at the bottom of the tree.
 
+## Demo mode: how to enter it, and how to leave it
+
+1. Start the app the way this file describes under "Running the tests" (the
+   Expo toolchain, which is not installed in the environment this was written
+   in). The first screen appears: "Try the demo".
+2. Tap **Try the demo**. There is nothing to set up first -- no account, no
+   pairing, no sign-in and no network -- and the demo runs entirely on the
+   phone, on fixed sample data.
+3. Every screen now carries the banner **"Demo mode: sample data"** and the
+   control **"Leave demo mode"**. Tap it to leave; the app is exactly as it was
+   before, and tapping "Try the demo" again starts the same demo from the
+   beginning.
+
+What a reviewer sees, and why each part is the app rather than a picture of it:
+the sentences the phone sent (with the ids its own client minted), the consumer's
+replies verified by the app's MAC code, spoken and acked; the orchestrator's
+heartbeat read by P1.4's presence rule; the question P6.5 is holding; and a
+destructive command whose read-back and confirmation go through P6.2's state
+machine -- including the refusal a second tap gets. The strings, and the three
+fences, are `src/demo/`'s; the words the owner pastes into the Play form are
+`docs/mobile/play-review-access.md`.
+
 ## The layout
 
 | Path | What it is |
 | --- | --- |
-| `index.js` | The entry. The one file that knows what a device is: it imports `expo`, `expo-secure-store`, `@react-native-async-storage/async-storage`, `react` and `react-native`, builds the two ports and the store, and registers the root. No decisions of its own, and no test (see "What is not verified"). |
+| `index.js` | The entry. The one file that knows what a device is: it imports `expo`, `expo-secure-store`, `@react-native-async-storage/async-storage`, `react` and `react-native`, builds the two ports, the store and the demo controller, wires the two screens and registers the root. No decisions of its own, and no test (see "What is not verified"). |
 | `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
-| `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from. |
+| `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from; while demo mode is on it draws the banner and the way out on **every** screen, above whatever the screen holds. |
+| `src/app/first-screen.js` | The first screen: what the app is waiting for, the "Try the demo" control, and the slot (`pairingScreen`) where P6.8's pairing screen goes -- above the demo control, never instead of it. |
+| `src/demo/` | Demo mode (the owner's ruling of 2026-10-19): the fixed sample data (`sample.js`), the placeholder key source (`keys.js`), the transport that plants the consumer's side in the port double (`transport.js`), the controller (`index.js`) and the screen (`screen.js`). `safety.test.js` is the scan that holds the three fences (no network, no secure storage, no credential). |
 | `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
 | `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
 | `src/audio/` | The voice ports and their fakes (P3.4): the capture path (`audio-in.js`), transcription (`stt.js`), speech output (`tts.js`), the transcript-to-message rule (`message.js`) and the pipeline that wires them (`pipeline.js`). **No engine, no device, no SDK**: `index.js` is the one door, and its test scans the directory for exactly that. |
@@ -405,6 +437,61 @@ names five availability states, and `availability.js` now says in place that the
 constructor has no caller in P3.2 and that the day break §10.7 calls a gap is
 drawn as `drawable: null` instead.
 
+## The demo mode, and the mutations that prove it
+
+Demo mode is one module and two screens, and every rule about it is either a
+fence (something that must never happen) or a claim about the app's own code
+being the code that ran. Both are listed here.
+
+**The three fences, and where each is asserted.**
+
+| Fence | Where |
+| --- | --- |
+| It can never touch the network. | `src/demo/safety.test.js`: a scan over the module's code (comments stripped, with a positive control per pattern) for `fetch(`, `XMLHttpRequest`, `WebSocket`, a URL, a Firebase SDK import or a database host -- and a run of the whole demo with `fetch`, `XMLHttpRequest` and `WebSocket` replaced by throwers. |
+| It can never touch secure storage or a real credential. | The same file: the same scan for the storage SDK's surface (`expo-secure-store`, `ItemAsync`, `AsyncStorage`, a Keychain name, the port's own `getItem`/`setItem`/`deleteItem`), plus the demo entered, confirmed and left against the app's own `SecretStore` built over a port that records and refuses every call -- which sees none -- with that port's control (the store being asked directly) right beside it. The controller takes **no port, no account store and no key source**, so there is nothing to reach with. |
+| No sample value is a credential, and every name says it is a demo. | `src/demo/sample.test.js`: every string of the `sample.js` and `keys.js` MODULES (not a hand-written list of exports) through the app's own `secretShaped` detector, and every installation, repo, uid and project name asserted to be the demo's own. |
+
+**The claims about the app's code, and where each is asserted.**
+
+| Claim | Where |
+| --- | --- |
+| The client is P3.6's client, and the demo does not answer in its place. | `src/demo/transport.test.js` plants a reply whose tag covers different bytes: the app's own verifier drops it, it is not spoken and it is not acked. |
+| The tags are made by the app's own MAC code. | The same file recomputes every planted tag with `macOf(record, key, direction)` over the record without its `mac`. |
+| The read-back is P6.2's, built from the resolved target. | `src/demo/index.test.js` and `src/demo/screen.test.js` compare the demo's string with `readBack(verb, target)`, require it to contain the run id and require it **not** to be the command. |
+| The confirmation is a real utterance and spends one action. | `src/demo/index.test.js`: the phrase is sent (a signed write), its id is minted fresh and differs from the command's, the record carries `demo-confirmation-1`, and a second tap is refused by the machine. |
+| The question is P6.5's queue. | `src/demo/index.test.js`: the queue's `pending` is what the screen shows, with the safe answer beside it. |
+| The banner and the way out are the shell's, on every screen. | `src/app/root.test.js`, asserted with the demo off and on, and end to end with the real controller and the real screens. |
+| `MemoryMailboxStore.deliver` is the other end's write and not a phone write. | `src/mailbox/store.test.js`. It is what keeps the demo from seeding the tree through `write`, which the one-write-path scan fences to the client. |
+| The Play form text promises the control the app has. | `src/demo/safety.test.js` reads `docs/mobile/play-review-access.md` and requires the sentence the owner pastes, with the control's own words (`TRY_DEMO`), and the README required to carry the same three strings. |
+
+**The mutations run against this task** (each one planted, seen red, removed):
+
+| Mutation | Went red |
+| --- | --- |
+| the screen's read-back is the command instead of the machine's string | `the read-back is the machine's...`, `the destructive path shows the machine's read-back...` |
+| the planted tags are made with the wrong direction | `every planted message carries the tag the app's own code makes`, `entering the demo runs the app's own pass...` |
+| the sample replies answer an id nobody minted | `the demo's id source names the utterances...`, and the replies in `sample.test.js` |
+| a delivery is recorded in `writes()` as a phone write | `a delivery is the other end's write...` |
+| the banner is drawn for no screen | `the demo is on: the banner and the way out are on the screen...` |
+| the pairing screen replaces the demo control instead of joining it | `the pairing seam is a slot...` |
+| a confirmation does not advance the machine | `a second confirmation is refused...`, `the destructive path shows...` |
+| entering the demo twice builds a second one | `entering the demo twice is the same demo...` |
+| a reply's `acked` state is not shown | `the screen shows the app's own run...` |
+| the sample clock moves by a millisecond | `the clock is fixed, and the data is frozen` |
+| the key source answers for any item | `the demo's key source answers for one item...` |
+| the safe answer is not one of the answers offered | `the sample data is legal where the app will use it` |
+| a new sample export is key-shaped | `nothing in the sample data is a credential...` |
+| a sample message or heartbeat is made schema-illegal | `the sample data is valid under the schema...` (and 15 more, before the demo can be built) |
+| the README stops saying how to enter the demo | `the Play form text and the README promise the control the app has` |
+| the control's words change and the Play form text does not | the same test, and `the control is the owner's words...` |
+
+**What the demo deliberately does not do.** It does not translate the machine's
+refusals into its own vocabulary (it shows the code P6.2 gave), it does not
+disable the Confirm control after a confirmation (the second tap's refusal is
+part of what the app does), and it does not read a clock, a random source or an
+environment variable -- its clock is `sample.js`'s fixed instant, which is what
+makes two runs of the demo the same run.
+
 ## Which files may write a credential
 
 `src/boundary.test.js` is the D54b-clause-(3)-shaped half of P3.1 (reconciliation
@@ -700,6 +787,13 @@ could tell a recursive walk from a flat one.
   calls this repository makes (including the accessibility constant, read off
   the module rather than guessed), not what the modules do. `index.js`, which
   imports the real ones, is untested for that reason.
+* **`useSyncExternalStore`, and the demo as a running app.** The demo's
+  subscription is `React.useSyncExternalStore(demo.subscribe, demo.state)`,
+  passed into the shell as the `useDemo` hook (`index.js`); every test supplies
+  its own. That React's hook calls `subscribe` the way this code assumes, that
+  `Pressable` renders a tappable control, and that a reviewer can actually read
+  the demo on a phone are all unverified here -- there has been no `expo start`
+  and no device run, which is the first bullet in this list.
 * **`WHEN_UNLOCKED_THIS_DEVICE_ONLY`'s name and value**, which come from the
   documented `expo-secure-store` API and are not exercised against the package.
   The port refuses to construct if the constant is missing, so an SDK rename is
