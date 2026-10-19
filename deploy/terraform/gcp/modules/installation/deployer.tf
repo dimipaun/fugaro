@@ -30,9 +30,9 @@
 # API keys. setIamPolicy would have rejected the binding and stopped every
 # fugaro init. The fix is the split: one custom role per service, each holding
 # that service's slice of the 31 scoped permissions and each bound once under
-# its own condition, which needs one or two clauses and three logical operators
-# at most. The seven permission lists partition D75's 31 exactly — none added,
-# none dropped, none moved into the unconditioned role.
+# its own condition, which needs one or two clauses and so one `||` at most. The
+# seven permission lists partition D75's 31 exactly — none added, none dropped,
+# none moved into the unconditioned role.
 #
 # What none of them holds, and why: no resourcemanager.projects.* at all
 # (project-level IAM authority is the authority that could grant this account
@@ -47,7 +47,7 @@
 # 0.9.0"). The seven conditioned roles and their seven bindings exist only when
 # var.managed_deployer_scoped is true, and nothing sets it, because the
 # redesigned fence has not been measured live yet. Until it is (Check 68 of
-# docs/gcp-live-checklist.md, which does not exist yet), the account, the
+# docs/gcp-live-checklist.md, which is written and NOT RUN), the account, the
 # unconditioned create-and-read role and the operators' impersonation grant are
 # created as before, and every command that would use the deployer refuses
 # first (internal/cli's managedDeployerShipped).
