@@ -256,6 +256,26 @@ owner.
 **Independently mergeable because** it moves blocks within pages, and neither P4's nor
 P5's tests assert the other's layout. It reads best after P4.
 
+**Amended 2026-10-19 (owner's feedback on the page this part is about) — GETTING STARTED IS
+THREE BANDS, AND WHAT THE COMMAND DOES NOT DO IS ITS OWN SECTION.** The owner's reading of
+the page, after P4 and P5 shipped: "above the fold: just `brew install dimipaun/tap/fugaro`
+and Console links, then we need a section with what you need to do for the actual
+installation (Firebase etc), rest are details, later." So `getting-started.astro` is now
+`#install` (the quick path `install.yaml` carries first, with its copy control, beside the
+console option, and one closing sentence), `#setup` ("Set up your installation": seven
+one-line steps in `docs/gcp-setup.md`'s own order — its preconditions and its short path —
+each naming the document that carries the detail), and `#details` ("Details": the other
+install paths as P4 left them, and the platform list D94 settles). **Nothing P5 claims is
+undone**: `#install` still opens with a command, the two options are still in that section
+in that order, and the page's first command block is what Check 70b measures. The page
+stays inside D188's 250-word ceiling, so the words the new list costs are paid for out of
+the page's own copy rather than out of the ceiling — `install.yaml`'s archive, cosign and
+plugin notes and names are shorter for it, and the notes the Go test pins (the Homebrew
+"tested on macOS", the go install's three phrases) are untouched. `install.yaml`'s header
+now says the first path is the quick path, because that is what puts it above the fold.
+The site's own build is 1,642 bytes heavier, re-derived in `website/README.md` in the same
+commit (D192).
+
 ### P6 — a copy button on every command block (RF13, RF14, RF15; D183, D192)
 
 **What.** One first-party script for the whole site — recommended at
