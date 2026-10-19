@@ -30,10 +30,10 @@ could carry one:
 | Claim | Read from |
 |---|---|
 | `console/src/renderer/index.html` is script-only: its `<head>` holds one `<script src="./console.js" defer>` and nothing else. There is no `<link rel="stylesheet">` and no `<style>` element. | the file, 60 lines, read whole |
-| The body of `index.html` is **empty on purpose**, and `test/unit/csp-document.test.ts` holds it empty (`expect(bodyMarkup(served('index.html'))).toBe('')`). | the file; the test |
-| `installations.html` and `refusal.html` carry the same CSP `<meta>` and no stylesheet either; `refusal.html` is script-free as well (`expect(scriptElements(served('refusal.html'))).toEqual([])`). | the two documents; `csp-document.test.ts` |
+| The body of `index.html` is **empty on purpose**, and `console/test/unit/csp-document.test.ts` holds it empty (`expect(bodyMarkup(served('index.html'))).toBe('')`). | the file; the test |
+| `console/src/renderer/installations.html` and `console/src/renderer/refusal.html` carry the same CSP `<meta>` and no stylesheet either; `refusal.html` is script-free as well (`expect(scriptElements(served('refusal.html'))).toEqual([])`). | the two documents; `csp-document.test.ts` |
 | There is **no `.css` file anywhere under `console/`**: `find console -name '*.css'` returns nothing. | the tree |
-| `SERVED_FILES` in `console/src/main/protocol.ts` lists five paths — `/console.js`, `/index.html`, `/installations.html`, `/installations.js`, `/refusal.html` — and `test/unit/bundle.test.ts` holds that list equal to the contents of `dist/bundle/` in both directions: `expect(SERVED_FILES.length, …).toBe(5)` and `expect(builtListing('bundle')).toEqual(servedNames())`. | `protocol.ts`; the test |
+| `SERVED_FILES` in `console/src/main/protocol.ts` lists five paths — `/console.js`, `/index.html`, `/installations.html`, `/installations.js`, `/refusal.html` — and `console/test/unit/bundle.test.ts` holds that list equal to the contents of `dist/bundle/` in both directions: `expect(SERVED_FILES.length, …).toBe(5)` and `expect(builtListing('bundle')).toEqual(servedNames())`. | `protocol.ts`; the test |
 | `console/tools/bundle-renderer/index.ts` copies **`.html` only** (`names.filter((name) => name.endsWith('.html')).sort()`) and writes the two scripts. Nothing in it reads, resolves, concatenates or emits CSS. | the tool |
 | `mediaTypeFor` in `protocol.ts` already maps `'.css': 'text/css; charset=utf-8'`, so the handler could serve a stylesheet the day one exists — the type is the only piece that is ready. | `protocol.ts` |
 
@@ -66,7 +66,7 @@ used.** `'self'` permits a stylesheet served from `app://console` — the consol
 bundle — and the policy has no `'unsafe-inline'`, so a `<style>` element and a `style="…"`
 attribute are both refused by the browser whatever the code does. The `<meta
 http-equiv>` copy in each of the three documents is byte-identical to the header, and
-`test/unit/window.test.ts` holds the two equal and asserts the policy contains neither
+`console/test/unit/window.test.ts` holds the two equal and asserts the policy contains neither
 `unsafe-inline`, `unsafe-eval` nor `*`.
 
 So this design **adds nothing to the CSP and removes nothing from it**. A stylesheet is
@@ -133,7 +133,7 @@ the same PR.
 Three facts hold across every screen and are stated once:
 
 - **A number is never bare.** Every figure goes through `putReading` (`app.ts`), which
-  calls `formatReading` (`shared/availability.ts`), so the marks are fixed console-wide:
+  calls `formatReading` (`console/src/shared/availability.ts`), so the marks are fixed console-wide:
   `NOTIONAL~` prefix, `est.` prefix, `n/a` (`UNAVAILABLE_MARK`), `—` (`GAP_MARK`), and a
   `≥` (`LOWER_BOUND_MARK`) in front of a sum that is a lower bound. An element carrying a
   reading with no value also carries its **reason in `title`** — the console's own
@@ -171,7 +171,7 @@ The entry draws the body's three children, in this order, all from `domSurface`'
 - The only ARIA attribute in the whole renderer is `aria-current`; **no element carries
   `role=`**.
 
-### 2.2 The installation picker — `src/renderer/installations.html` + `installations.ts`
+### 2.2 The installation picker — `console/src/renderer/installations.html` + `console/src/renderer/installations.ts`
 
 A **second document** in its own window (owner ruling C9). Its markup is hand-written
 HTML, so it is the one screen whose hooks are **element ids, not classes**: the view sets
@@ -190,11 +190,11 @@ States, all in the status line: **error/refusal** (`reply.reason`), **file unrea
 (`"<path> could not be read: <refusal>"`), **empty** ("No installations yet. Add one
 below."), **ready/none chosen** ("No installation is chosen. Choose one below."),
 **ready/chosen** ("`<project>` is the installation this console is showing (`<mode>`).").
-`installations-view.test.ts` builds its fake document **from the ids the file really
+`console/test/unit/installations-view.test.ts` builds its fake document **from the ids the file really
 declares** and asserts each id exists, so the ids are a pinned hook set — this design
 styles them by id rather than adding classes.
 
-### 2.3 Live — `screens/live.ts`
+### 2.3 Live — `console/src/renderer/screens/live.ts`
 
 The default screen: one glance at what is spending money now. Regions in tree order:
 header (`h1.live-project`, mode, day, connection, notes) → total block → `ol.live-repos`
@@ -253,7 +253,7 @@ Time constants the stylesheet's threshold rules must agree with:
 `LIVE_LOST_AFTER_SECONDS = 3 * 60`, `LIVE_NEAR_DEADLINE_FRACTION = 0.8` (80 %),
 `LIVE_BURN_WINDOW_SECONDS = 5 * 60`.
 
-### 2.4 Spend — `screens/spend.ts`
+### 2.4 Spend — `console/src/renderer/screens/spend.ts`
 
 Regions in tree order: header → range picker → breakdown switch → person knob →
 `div.spend-accounts` (three charts) → `ol.spend-rows` → totals → notes → warnings → the
@@ -297,7 +297,7 @@ by:'day', persons:false}`, `SPEND_PICKER_WINDOWS = ['7d','30d','90d','12w']`,
 `SPEND_DIMENSIONS` (seven), `SPEND_ACCOUNTS = ['model','notional','compute']`,
 `PARTIAL_MARKER = '(partial)'`.
 
-### 2.5 Projects — `screens/projects.ts`
+### 2.5 Projects — `console/src/renderer/screens/projects.ts`
 
 Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` and
 (where there is one) `data-operation`: `caps`, `kill`, `repositories`, `jobs`, `accounts`,
@@ -328,7 +328,7 @@ Readings: money (`usd`) for the reserve, the caps and the job figures; counts fo
 counts, dropped/total, enrolled/seen, secret versions. **No reading is a time on this
 screen** — every date is text.
 
-### 2.6 Run detail — `screens/run.ts`
+### 2.6 Run detail — `console/src/renderer/screens/run.ts`
 
 Reached from a `live-run` row. Regions in tree order: header → ledger → stages → pull
 request → logs → diagnosis → replay → warnings.
@@ -359,7 +359,7 @@ Readings: money (`usd`) throughout the ledger, the diagnosis route and model spl
 reported/charged pair; counts for tests, failures, dropped lines, follow-up PRs and
 comments, replay records; **seconds** for a stage's duration and the replay window.
 
-### 2.7 Degraded: no Firebase — `screens/degraded.ts`
+### 2.7 Degraded: no Firebase — `console/src/renderer/screens/degraded.ts`
 
 `section.degraded` with `data-kind="no-firebase"`, `data-theme`, `data-received-at`; the
 mode line `span.degraded-mode` carries the literal `polling` **and**
@@ -378,7 +378,7 @@ Its presence is the design's §6.3 rule made visible: **caps read `n/a`, the kil
 affordance is absent (`KILL_ABSENT_BECAUSE`), and a figure that is a lower bound says so**
 (`COMPUTE_LOWER_BOUND_NOTE`).
 
-### 2.8 The unavailable and refusal screens — `screens/degraded.ts` + `entry.ts`
+### 2.8 The unavailable and refusal screens — `console/src/renderer/screens/degraded.ts` + `console/src/renderer/entry.ts`
 
 `renderUnavailable` draws `section.console-unavailable` with `data-kind="no-binary"` or
 `data-kind="refused"`, `data-theme`, `data-received-at=""`. Two bodies:
@@ -900,7 +900,7 @@ export const SERVED_FILES: readonly string[] = Object.freeze([
 ])
 ```
 
-`test/unit/bundle.test.ts` changes with it, in the three places it counts or compares:
+`console/test/unit/bundle.test.ts` changes with it, in the three places it counts or compares:
 `expect(SERVED_FILES.length, …).toBe(6)`, and `builtListing('bundle')` — which is derived
 from `SERVED_FILES` — keeps holding the directory equal in both directions. **The test's
 non-vacuity assertion is the load-bearing half**: a name dropped from the list, or a file
@@ -909,7 +909,7 @@ written into `dist/bundle/` that nothing vouches for, still fails.
 ### 5.4 The three `<link>` elements
 
 One `<link rel="stylesheet" href="./console.css" />` in the `<head>` of **each** of
-`index.html`, `installations.html` and `refusal.html`, beside the existing CSP `<meta>`:
+`console/src/renderer/index.html`, `console/src/renderer/installations.html` and `console/src/renderer/refusal.html`, beside the existing CSP `<meta>`:
 
 - it is a **relative path on this origin** (`./console.css`), like `./console.js`: no
   query, no host, no scheme, so it is resolved by the bundler as a literal and by the
@@ -933,9 +933,9 @@ a fetch the CSP's `connect-src` governs, and no script fetches the CSS).
 The evidence a reviewer should require, and which the tests provide:
 
 - `CONTENT_SECURITY_POLICY` is byte-identical before and after, and so is the `<meta>`
-  copy in each of the three documents — held by `test/unit/window.test.ts`
+  copy in each of the three documents — held by `console/test/unit/window.test.ts`
   (`expect(CONTENT_SECURITY_POLICY).toBe(DESIGN_CSP)`) and by
-  `test/unit/csp-document.test.ts`;
+  `console/test/unit/csp-document.test.ts`;
 - `APP_SCHEME_PRIVILEGES` still has **no `bypassCSP`**, asserted rather than merely unset;
 - the served CSS is served by the same `serveAppRequest`, with
   `content-type: text/css; charset=utf-8` from `mediaTypeFor`, `nosniff`, and the CSP
@@ -944,7 +944,7 @@ The evidence a reviewer should require, and which the tests provide:
 **No inline style attribute and no CSP loosening is introduced, and a test fails if either
 appears** — three of them, in fact: `csp-document.test.ts` already refuses a `<style`
 element and a `style` attribute in any served document; [Task 6.2](#72-task-62--the-wiring-security-sensitive)
-extends `test/unit/screen-literals.test.ts`'s scan so that a `.style` property write, a
+extends `console/test/unit/screen-literals.test.ts`'s scan so that a `.style` property write, a
 `setAttribute('style', …)` or a `style` entry in its attribute vocabulary is an offence in
 any file under `src/renderer/`; and the CSP assertions above refuse `'unsafe-inline'` (and
 `'unsafe-eval'`, `*`, and a loosened `style-src`).
@@ -953,12 +953,12 @@ any file under `src/renderer/`; and the CSP assertions above refuse `'unsafe-inl
 
 | File | Change |
 |---|---|
-| `test/unit/bundle.test.ts` | `SERVED_FILES.length` 5 → **6**; a new case that `dist/bundle/console.css` is the concatenation of `THEME_STYLESHEETS` in order (the same both-directions equality the documents get); a case that the theme directory holds no `.css` outside the list |
-| `test/unit/csp-document.test.ts` | a case that **every** document's `<link>` elements are exactly one, `rel="stylesheet"`, `href="./console.css"`, and carry no `media`/`onload`/`integrity`; the existing "no `<style>`, no `style` attribute" cases stay and now cover the stylesheet's existence too |
-| `test/unit/window.test.ts` | unchanged in substance: the CSP/no-`bypassCSP` assertions already cover the CSS response, and the served-document cases still compare byte-identical HTML — its `<link>` is part of that HTML, so the file the window loads is still the file the test read |
-| `test/unit/build-files.test.ts` | `bundlerOutputs` gains `'dist/bundle/console.css'`, so `build.files` in `console/package.json` **must** gain it (and `console/README.md`'s list must name it) — the packaged app would otherwise ship without its stylesheet, which is the exact failure this test exists to catch |
-| `test/unit/theme-tokens.test.ts` (new) | the contrast and vocabulary cases of [§6.3](#63-contrast-as-unit-tests) |
-| `test/unit/screen-literals.test.ts` | the `style` scan of §5.5 |
+| `console/test/unit/bundle.test.ts` | `SERVED_FILES.length` 5 → **6**; a new case that `dist/bundle/console.css` is the concatenation of `THEME_STYLESHEETS` in order (the same both-directions equality the documents get); a case that the theme directory holds no `.css` outside the list |
+| `console/test/unit/csp-document.test.ts` | a case that **every** document's `<link>` elements are exactly one, `rel="stylesheet"`, `href="./console.css"`, and carry no `media`/`onload`/`integrity`; the existing "no `<style>`, no `style` attribute" cases stay and now cover the stylesheet's existence too |
+| `console/test/unit/window.test.ts` | unchanged in substance: the CSP/no-`bypassCSP` assertions already cover the CSS response, and the served-document cases still compare byte-identical HTML — its `<link>` is part of that HTML, so the file the window loads is still the file the test read |
+| `console/test/unit/build-files.test.ts` | `bundlerOutputs` gains `'dist/bundle/console.css'`, so `build.files` in `console/package.json` **must** gain it (and `console/README.md`'s list must name it) — the packaged app would otherwise ship without its stylesheet, which is the exact failure this test exists to catch |
+| `console/test/unit/theme-tokens.test.ts` (new) | the contrast and vocabulary cases of [§6.3](#63-contrast-as-unit-tests) |
+| `console/test/unit/screen-literals.test.ts` | the `style` scan of §5.5 |
 
 ---
 
@@ -1007,7 +1007,7 @@ the regression that could otherwise be recorded as a fresh golden and never noti
 
 ### 6.3 Contrast as unit tests
 
-`test/unit/theme-tokens.test.ts`, in the shape of `website/test/a11y.mjs` (which this file
+`console/test/unit/theme-tokens.test.ts`, in the shape of `website/test/a11y.mjs` (which this file
 should reuse the arithmetic of rather than re-derive):
 
 - it **reads `theme/palette.css` and nothing else** — the literals the window paints, not a
@@ -1077,7 +1077,7 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 ### 7.1 Task 6.1 — the tokens
 
 - **Scope:** `console/src/renderer/theme/tokens.css` (the vocabulary of §3.1),
-  `theme/palette.css` (both value sets, §3.2–§3.3), and `test/unit/theme-tokens.test.ts`
+  `theme/palette.css` (both value sets, §3.2–§3.3), and `console/test/unit/theme-tokens.test.ts`
   (the contrast and vocabulary cases of §6.3).
 - **Files:** the three above; the plan's tree; `console/README.md`'s theme note.
 - **Tests:** the red step is real: the token test is written first, and the failing pair it
