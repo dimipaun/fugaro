@@ -859,6 +859,44 @@ func TestRunsStatsUnreadableRecordIsUnknownNotZero(t *testing.T) {
 	}
 }
 
+// TestRunsStatsUnreadableLaunchIsUnknownNotUnlaunched is the other half of that
+// rule, and the case the read's own count got wrong: a run whose launch.json is
+// there and unreadable, with no result.json beside it, DID start -- so it is
+// counted among the runs under 'unknown' (a launcher nobody can read is not a
+// launcher nobody recorded), and it is not in the count of runs that never
+// started. That count is what the table's "never launched" note rests on, and
+// runs ls reports the same object as an error row: the two must not disagree
+// about whether the run happened, or the by-user figures silently drop it.
+//
+// Mutation (verified, run and restored): drop the `!o.corrupt` guard from the
+// unlaunched arm in readUserStatsRuns -- this fails, reporting the run as never
+// launched and leaving it out of every row.
+func TestRunsStatsUnreadableLaunchIsUnknownNotUnlaunched(t *testing.T) {
+	f := newCloudFixture(t)
+	userStatsPlace(t, f, "someone@example.com", nil, []string{"user:someone@example.com"})
+	day := time.Now().UTC()
+	seedUserRun(t, f, userStatsID(day, 0), "dana@example.com", userRec(runstore.StatusSucceeded, 1.00, runstore.BasisAPIList))
+	// Launched, with a launch record nobody can decode and no result.json at
+	// all: nothing but the corrupt object says this run ever happened.
+	if err := runstore.Open(statsBucket(t, f), appSlug, userStatsID(day, 1)).
+		PutFile(context.Background(), "launch.json", []byte(`{"version":1,"run_id":`), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+
+	doc := runsStats(t)
+	if doc.Unlaunched != 0 {
+		t.Fatalf("unlaunched = %d, want 0: an unreadable launch.json is a run that launched, not one that never started", doc.Unlaunched)
+	}
+	unknown := userStatsRow(t, doc, userstats.UnknownUser)
+	if unknown.Runs != 1 || unknown.NoRecord != 1 {
+		t.Errorf("unknown = %+v, want the run counted under %q with no readable record", unknown, userstats.UnknownUser)
+	}
+	dana := userStatsRow(t, doc, "dana@example.com")
+	if dana.Runs != 1 || dana.CountedUSD != 1.00 {
+		t.Errorf("dana = %+v, want her own run and its money: the unreadable run is not hers to carry", dana)
+	}
+}
+
 // TestRunsStatsHostileLauncherIsSanitised is the untrusted-text rule: the
 // launcher is text a launcher wrote, so it is made one printable line and
 // size-capped before it reaches a row, a column or a key.

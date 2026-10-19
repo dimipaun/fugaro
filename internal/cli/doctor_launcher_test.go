@@ -249,3 +249,61 @@ func TestDoctorLauncherReachAsAPlainLauncher(t *testing.T) {
 		t.Errorf("does not report the job the caller can start (with overrides, as fugaro run launches): %s", c.Problem)
 	}
 }
+
+// TestDoctorLauncherReachEndsOnARepeatedPageToken: the jobs listing is the
+// SDK's own page loop, which follows whatever next-page token the server
+// answers with and never notices one it has already followed. A server that
+// answers the same token on every page would have doctor walk forever; the
+// bound ends the walk and the check reports it as the failed read every other
+// failure of this read is reported as, never as a shorter list of jobs (a
+// listing cut short reads as jobs a launcher cannot start).
+//
+// Mutation (verified, run and restored): delete the `seen[next]` guard from
+// doctorLauncherReach -- this test fails on the page cap's message instead
+// ("runs past 200 pages"), which is the guard's own answer missing. On its
+// own the walk still ends, which is the point of keeping both guards: the
+// repeat guard is what names the real cause and keeps a listing of a few
+// pages from being walked to the bound. Its companion below covers the page
+// cap by never repeating a token.
+func TestDoctorLauncherReachEndsOnARepeatedPageToken(t *testing.T) {
+	r := newDoctorRig(t)
+	r.withLaunchers(t)
+	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+	r.run.LoopListToken = true
+
+	c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "launcher-jobs")
+	if !found {
+		t.Fatal("doctor reports no launcher reach")
+	}
+	if c.OK || c.Severity != "warning" {
+		t.Fatalf("check = %+v, want the warning a failed read is", c)
+	}
+	if !strings.Contains(c.Problem, "repeated page token") {
+		t.Errorf("Problem does not say the server repeated a page token: %s", c.Problem)
+	}
+}
+
+// TestDoctorLauncherReachEndsOnAnEndlessListing is the same bound's other
+// half: a server whose token is never empty and never a repeat ends no walk
+// that only remembers tokens, so the page cap is what ends this one. A walk
+// that ran past it would hold a job list nobody bounded.
+//
+// Mutation (verified, run and restored): delete the `pages >= doctorMaxJobPages`
+// guard -- this test hangs until the go test timeout kills it.
+func TestDoctorLauncherReachEndsOnAnEndlessListing(t *testing.T) {
+	r := newDoctorRig(t)
+	r.withLaunchers(t)
+	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+	r.run.EndlessListToken = true
+
+	c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "launcher-jobs")
+	if !found {
+		t.Fatal("doctor reports no launcher reach")
+	}
+	if c.OK || c.Severity != "warning" {
+		t.Fatalf("check = %+v, want the warning a failed read is", c)
+	}
+	if !strings.Contains(c.Problem, "runs past 200 pages") {
+		t.Errorf("Problem does not say the listing ran past the bound: %s", c.Problem)
+	}
+}

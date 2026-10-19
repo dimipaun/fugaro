@@ -351,6 +351,15 @@ type userStatsRead struct {
 // corrupt or missing result.json leaves its outcome and its cost unknown. One
 // bad object never makes the figures unproducible, and neither is ever read
 // as a zero.
+//
+// Unreadable is not absent, and the two are counted apart. A run whose
+// objects are both *absent* never started (unlaunched, in no figure); a run
+// whose launch.json or result.json is *there and unreadable* did start, so it
+// is counted among the runs -- under 'unknown', the group the runs that
+// recorded no launcher are in, since a launcher nobody can read is not a
+// launcher nobody recorded. A run whose corrupt launch.json and absent
+// result.json were read as "never started" would be a run missing from every
+// by-user figure while runs ls shows the same object as an error row.
 func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since time.Time, max int) (userStatsRead, error) {
 	type ref struct{ slug, id string }
 	var refs []ref
@@ -380,6 +389,13 @@ func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since
 	type objects struct {
 		launch *runstore.Launch
 		record *runstore.Record
+		// corrupt is "the bucket holds an object this read could not use" --
+		// a launch.json or a result.json that is unreadable (a syntax error,
+		// an oversized object) rather than absent. It is what tells the two
+		// apart below, and it is the whole reason it is tracked: a nil launch
+		// alone cannot say whether the run recorded no launcher or recorded
+		// one nobody can read.
+		corrupt bool
 	}
 	objs := make([]objects, len(refs))
 	errs := make([]error, len(refs))
@@ -393,6 +409,7 @@ func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since
 		case err == nil:
 			objs[i].launch = l
 		case corruptObject(err):
+			objs[i].corrupt = true
 		default:
 			errs[i] = err
 			return
@@ -402,6 +419,7 @@ func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since
 		case err == nil:
 			objs[i].record = r
 		case corruptObject(err):
+			objs[i].corrupt = true
 		default:
 			errs[i] = err
 		}
@@ -411,11 +429,19 @@ func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since
 	}
 	for _, o := range objs {
 		switch {
-		case o.launch == nil && o.record == nil:
-			// No launch and no record: the run never started, and no
-			// launcher is on record either. It is counted, and in no figure.
+		case o.launch == nil && o.record == nil && !o.corrupt:
+			// No launch and no record, and neither object is there to be
+			// unreadable: the run never started, and no launcher is on
+			// record either. It is counted, and in no figure.
 			read.unlaunched++
 		default:
+			// A run with a launch, a record, or an object the bucket holds
+			// and this read could not use. The last is why the arm above
+			// tests corrupt: an unreadable launch.json is a run that did
+			// launch with a launcher nobody can read, so it belongs under
+			// 'unknown' with the runs that recorded none -- runs ls reports
+			// the same object as an error row -- and never in the count of
+			// runs that never started.
 			read.runs = append(read.runs, userStatsRun(o.launch, o.record))
 		}
 	}

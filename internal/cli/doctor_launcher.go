@@ -13,6 +13,16 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
+// doctorMaxJobPages is the most pages the launcher-jobs check follows while
+// listing a location's Cloud Run jobs: at the 100 a page it asks for, room for
+// 20,000 jobs, which is far past any installation's job set (one per
+// (profile, provider, account) plus one per per-repository workflow). It is a
+// bound on a walk that has gone wrong rather than a capacity: the SDK follows
+// whatever next-page token the server answers with, and doctor must end
+// whatever the server does (internal/managed's inventoryMaxPages is the same
+// guard on its own listing).
+const doctorMaxJobPages = 200
+
 // doctorLauncherReach is the launcher-jobs check (plan task 3.5 step 1): the
 // grant count doctor sees on the project's Cloud Run jobs, and the jobs a
 // launcher can start.
@@ -62,8 +72,9 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 		withheld  int      // jobs whose policy the caller may not read
 		selfCan   []string // of those, the jobs the caller can start
 	)
+	seen := map[string]bool{}
 	page := ""
-	for {
+	for pages := 1; ; pages++ {
 		resp, err := svc.Projects.Locations.Jobs.List(parent).PageSize(100).PageToken(page).Context(ctx).Do()
 		if err != nil {
 			return unchecked(err)
@@ -108,10 +119,26 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 				public = append(public, shortJobName(j.Name))
 			}
 		}
-		page = resp.NextPageToken
-		if page == "" {
+		next := resp.NextPageToken
+		if next == "" {
 			break
 		}
+		// The SDK follows whatever next-page token the server answers with
+		// and never notices one it has already followed, so a server that
+		// repeats a token would have doctor walk this listing forever -- the
+		// same two guards internal/managed's inventory read carries, for the
+		// same reason. A walk past either bound is a read that failed, and
+		// this check has one answer for a failed read (the warning above),
+		// never a shorter list of jobs: a listing cut short would read as
+		// jobs a launcher cannot start.
+		if seen[next] {
+			return unchecked(fmt.Errorf("the server repeated page token %q after %d pages of the location's jobs", oneLineCLI(next), pages))
+		}
+		if pages >= doctorMaxJobPages {
+			return unchecked(fmt.Errorf("the listing of %s's jobs runs past %d pages", parent, doctorMaxJobPages))
+		}
+		seen[next] = true
+		page = next
 	}
 	slices.Sort(startable)
 	slices.Sort(selfCan)
