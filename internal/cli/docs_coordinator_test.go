@@ -60,7 +60,7 @@ package cli
 //    twenty-four -- which is the same silent-overclaim the citation census
 //    exists to catch in the document.
 //
-// Mutation (verified, run and restored) -- 45, one per way these documents can
+// Mutation (verified, run and restored) -- 52, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -152,23 +152,41 @@ package cli
 //	  70a`, so the range rule rejects it. This is the defect this round fixed;
 //	  write 71–79 as 70–79 in the row -> fails: the row no longer says of 71–79
 //	  that it is inside the website work's held range;
+//	  change a block's number in the row (D1–D20 written as D1–D21) -> fails:
+//	  the row no longer names D1–D20, and the number the row states is the one
+//	  the table's own readers look for. This is the round's own mutation: the
+//	  row is where the numbers are stated, so a row stating a different one has
+//	  to fail whether or not the document behind it moved;
+//	  read D1–D20 from another document -> fails: the citation after the block
+//	  is the redesign's README, not the mobile one;
+//	  delete the mobile table's `| **D1–D20** |` row -> fails: the document
+//	  carries no line with the anchor, and the anchor is the block's own label;
+//	  paste a second copy of that row in -> fails, naming both lines: an anchor
+//	  that names two lines is a citation two readers would follow to different
+//	  places, which is what choosing one has to make impossible;
+//	  put the checks row's old claim back -- 70–79 "unused and deliberately not
+//	  taken" -> fails: 70 is inside that range and the register writes `## Check
+//	  70a`, so the range rule rejects it. This is the defect this round fixed;
+//	  write 71–79 as 70–79 in the row -> fails: the row no longer says of 71–79
+//	  that it is inside the website work's held range;
 //	  drop 70a–70c from the row -> fails: the row no longer names a block the
-//	  register allocates, and if its citation is left behind the census sees a
-//	  citation no pin claims;
-//	  move 71–79's citation to `:307` -> fails: that line carries the mobile
-//	  range, not the website work's held one;
+//	  register allocates, and the block's own document is named by no pin;
+//	  drop the credentials-service citation after 90–99 -> fails: the citation
+//	  the row leaves behind is the checklist's, so the row reads 90–99 from the
+//	  register that explicitly does not reach it;
+//	  move 71–79's citation to another document -> fails: that document carries
+//	  no line holding the website work's held range;
 //	  strip the register's `## Check` headings -> fails: the range rule has no
 //	  written number left to judge a claim against, and says so rather than
 //	  passing;
 //	  change 105–109 to 100–109 in the state cell -> fails: the row names no
-//	  105–109, and the citation after 100–104 is the plan's, not the mobile
-//	  README's;
+//	  105–109, so the pin has no block to read it from;
 //	  delete the numbering-ruling citation from the note -> fails: the claim is
-//	  stated with no line behind it;
+//	  stated with no document behind it;
 //	  widen the D-block's gap to D78–D89 -> fails: the row no longer names
-//	  D79–D89, and the line it is read from records the gap as D79–D89;
+//	  D79–D89, and the anchor's line records the gap as D79–D89;
 //	  call D180–D192 taken -> fails: the row no longer says of it that it is
-//	  proposed, which is what the line it cites records;
+//	  proposed;
 //	  merge the console's two blocks back into D1–D38 -> fails: the row no
 //	  longer names D21–D38, and the table it is read from splits them;
 //	  call a held block unused (`**D55–D78** managed projects, unused`) ->
@@ -182,6 +200,15 @@ package cli
 //	  the questions are answered now, and the heading says which;
 //	  strip the "Answered 2026-10-19: option (A)" line out of Q7 -> fails,
 //	  naming Q7: a question with no answer reads as one that is still open.
+//
+// One change is deliberately NOT in that list, because it is not a way a
+// document can rot and the record counts only those: insert a row above every
+// block in `docs/mobile/README.md`'s numbers table and
+// TestDocsCoordinatorNumbersTableIsReadFromItsSources still passes. That is the
+// whole point of the content anchors and it is checked by running it. The line
+// pins the anchors replaced failed on exactly that change, all at once, which
+// is why they were replaced: a row inserted into somebody else's table is a
+// change this work cannot see and must not have to chase.
 //
 // The numbers above are a reading of the document at the commit that last
 // edited this comment, not a constant, and they have gone stale every time the
