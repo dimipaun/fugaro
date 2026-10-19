@@ -16,7 +16,7 @@ them moves under the sentence it was written for without anything looking wrong.
 `TestDocsCoordinatorFrequentCitationsAreAnchoredByContent` holds every one of those citations
 to the single line of that document which carries the phrase — and it reads the reconciliation
 and nothing else.
-**This index's own citations into those two trees name no phrase and are held by no anchor**: the Check 110 row below and the reading list at the end link to the documents themselves.
+**This index's own citations into those two trees name no phrase and are held by no anchor**: the Check 110 row below and the reading list at the end name a whole document each, and no sentence in one.
 
 **All sixteen questions are answered, and none is approved.** The owner answered Q1–Q16 on
 **2026-10-19**, each by taking **option (A)**, the recommended one; each answer is recorded
