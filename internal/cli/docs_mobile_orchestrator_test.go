@@ -45,16 +45,24 @@ func TestDocsMobileOrchestratorDesignIsWritten(t *testing.T) {
 		"## 6. What it must never do",
 		"No IAM",
 		"managed apply",
-		"never a model credential in the resident service",
+		"no model credential of its own",
 		// The three candidates for the credential.
 		"the credentials service",
 		"Secret Manager secret mounted",
 		"Named OAuth tokens per project",
-		// The envelope: the three attackers, the MAC, revocation.
+		// The envelope: the attackers, the MAC, the key's custody, revocation.
 		"stolen phone",
 		"poisoned",
 		"direction",
 		"revocation",
+		// The 2026-10-19 security review's four blockers: the cloud copy of the
+		// pairing key (B1), the compromised resident orchestrator (B2), what a
+		// launch authority really reaches (B3), and launches as an attacker's
+		// verb (B4).
+		"pairing key",
+		"E4 — a compromised resident orchestrator",
+		"holds the job's own credentials",
+		"launch",
 		// Approvals with the phone as the only human.
 		"spoken-confirmation",
 		"Confirm targets",
@@ -65,12 +73,22 @@ func TestDocsMobileOrchestratorDesignIsWritten(t *testing.T) {
 		// The threat model, the checks, the alternatives, the questions.
 		"## 5. The threat model, stated once",
 		"## 7. The checks it would need",
-		"Check 110",
+		// The number is not claimed: two open pull requests were reported to be
+		// pointing at the number that read as free on 2026-10-19, so the design
+		// says when a number is taken, not which one.
+		"the next free number at merge time",
 		"## 9. The alternatives, priced",
 		"## 10. Open for the owner",
 		"## 11. UNVERIFIED",
+		// The hygiene list, where a collision with work in flight is written down.
+		"## 12. The hygiene list",
 		// Every question, so one cannot be dropped without this failing.
 		"**Q1 —", "**Q2 —", "**Q3 —", "**Q4 —", "**Q5 —", "**Q6 —", "**Q7 —",
+		// The six the 2026-10-19 review added, mapped to its findings: the cloud
+		// key's custody, the phone's launch envelope, a phone-side kill switch,
+		// the cloud's merge identity, the pairing's lifetime, and the
+		// credentials service's run.invoker.
+		"**Q8 —", "**Q9 —", "**Q10 —", "**Q11 —", "**Q12 —", "**Q13 —",
 		// And the sentence that keeps it out of the owner's numbering.
 		"No decision number is allocated",
 	} {
@@ -88,7 +106,7 @@ func TestDocsMobileOrchestratorDesignIsWritten(t *testing.T) {
 func TestDocsMobileOrchestratorTakesNoDecisionNumber(t *testing.T) {
 	doc := readDoc(t, orchDesign)
 	if strings.Contains(doc, "\n| **D") {
-		t.Errorf("%s carries a decision-table row: this design may not allocate a decision number, and its questions belong in \"Open for the owner\" as Q1–Q7", orchDesign)
+		t.Errorf("%s carries a decision-table row: this design may not allocate a decision number, and its questions belong in \"Open for the owner\" as Q1–Q13", orchDesign)
 	}
 	if !strings.Contains(doc, "allocates no decision number") {
 		t.Errorf("%s does not say in its own words that it allocates no decision number", orchDesign)
@@ -173,12 +191,14 @@ func TestDocsMobileOrchestratorCitationsExist(t *testing.T) {
 	}
 }
 
-// TestDocsMobileOrchestratorCheckNumberIsFree: the design names the next free
-// live-check number — 110, the first past every reservation the register
-// records — and writes neither its row nor its section. A `## Check 110` section
-// or a `| 110 |` row in the register means another document has taken the
-// number, and this design would be proposing a taken one; the design must then
-// be renumbered, never the register.
+// TestDocsMobileOrchestratorCheckNumberIsFree: the design says it takes "the
+// next free number at merge time" and writes neither a row nor a section — and
+// it must NOT hard-claim a number. 110 was the first free number past every
+// reservation on 2026-10-19, but two other pull requests in flight were reported
+// to be pointing at it as well, so a design that wrote "Check 110" into its own
+// text would be proposing a number two other documents may take. The register
+// must also still be free of 110: if it is not, the collision has landed and
+// this test's premise is what a later reader needs to see.
 //
 // The reservation it accounts for: 80–89 are this work's and all ten are named
 // in the plan, 90–99 are the credentials service's, and 100–109 are the
@@ -188,18 +208,24 @@ func TestDocsMobileOrchestratorCitationsExist(t *testing.T) {
 func TestDocsMobileOrchestratorCheckNumberIsFree(t *testing.T) {
 	const checklist = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, orchDesign)
-	if !strings.Contains(doc, "Check 110") {
-		t.Errorf("%s does not name the live-check number it would need", orchDesign)
+	if !strings.Contains(doc, "the next free number at merge time") {
+		t.Errorf("%s does not say which live-check number it would take — and it must say it in those words, not as a claimed number", orchDesign)
+	}
+	// A hard claim is the failure: the number must not be asserted as this
+	// work's. The one place 110 may appear is as the number that READ as free,
+	// which the text qualifies.
+	if strings.Contains(doc, "**Check 110**") || strings.Contains(doc, "names Check 110") {
+		t.Errorf("%s claims Check 110 as its own: the number is the next free one at merge time, because two other pull requests were reported to point at 110 too", orchDesign)
 	}
 	register := readDoc(t, checklist)
 	for _, taken := range []string{"## Check 110", "| 110 |"} {
 		if strings.Contains(register, taken) {
-			t.Errorf("%s carries %q, so Check 110 is no longer free and %s must propose the next number", checklist, taken, orchDesign)
+			t.Errorf("%s carries %q, so 110 is no longer free: the collision this design's hygiene list predicted has landed and the design's text must be reworded, never the register", checklist, taken)
 		}
 	}
 	readme := readDoc(t, "docs/mobile/README.md")
 	if !strings.Contains(readme, "80–89") {
-		t.Errorf("docs/mobile/README.md no longer records this work's 80–89 reservation: Check 110 is only free past it")
+		t.Errorf("docs/mobile/README.md no longer records this work's 80–89 reservation: the next free number is only free past it")
 	}
 }
 
@@ -236,7 +262,7 @@ func TestDocsMobileOrchestratorIsIndexedAndPlanned(t *testing.T) {
 	if entry == "" {
 		t.Fatalf("docs/mobile/implementation-plan.md has no P5.1 task entry")
 	}
-	for _, want := range []string{"UNSCHEDULED", "SECURITY-SENSITIVE", "design/always-on-orchestrator.md", "Check 110"} {
+	for _, want := range []string{"UNSCHEDULED", "SECURITY-SENSITIVE", "design/always-on-orchestrator.md", "the next free number at merge time"} {
 		if !strings.Contains(entry, want) {
 			t.Errorf("Task P5.1's entry no longer says %q:\n\n%s", want, entry)
 		}
