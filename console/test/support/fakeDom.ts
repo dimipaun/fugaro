@@ -26,8 +26,58 @@
 // Nothing else of the DOM is offered, so a drawing that reaches for something
 // else -- a `querySelector`, a `classList`, a `dataset` -- fails here rather than
 // passing on a surface a real window would not give it either.
+//
+// **The keyboard is the one thing Task 6.5 adds to this fake, and it is offered
+// for the same reason the click is**: a tablist's behaviour is a listener on a
+// node, and a suite that could not dispatch a key could not tell a roving
+// `tabindex` that works from one that is only written down. So `press` fires a
+// node's `keydown` listeners with the key and the two modifiers the console
+// reads, and `focus` records the node as the document's active element -- which
+// is the observable the arrow keys are held to, since a roving `tabindex` that
+// moved the attribute and left the keyboard where it was would be a tablist that
+// looks right and is not.
 
 import { CLI_HARD_FLOOR_VERSION, CLI_VERSION_BUILT_AGAINST, SUPPORTED_CLI_MINORS } from '../../src/shared/version'
+
+/** FakeEvent is what this fake dispatches: the fields the console's listeners
+ * read, and the `preventDefault` that says a key the console handled is no
+ * longer the browser's. One shape covers a click and a keydown, because the two
+ * differ only in what the case cares about. */
+export interface FakeEvent {
+  readonly key: string
+  readonly metaKey: boolean
+  readonly ctrlKey: boolean
+  readonly defaultPrevented: boolean
+  preventDefault(): void
+}
+
+/** fakeEvent builds one, with `defaultPrevented` flipped by its own
+ * `preventDefault` -- which is what lets a case assert that the console took the
+ * key rather than letting the window scroll under it. */
+function fakeEvent(key: string, metaKey: boolean, ctrlKey: boolean): FakeEvent {
+  const event = {
+    key,
+    metaKey,
+    ctrlKey,
+    defaultPrevented: false,
+    preventDefault(): void {
+      event.defaultPrevented = true
+    },
+  }
+  return event
+}
+
+/** FakeModifiers is the two modifiers a case may hold down. */
+export interface FakeModifiers {
+  readonly meta?: boolean
+  readonly ctrl?: boolean
+}
+
+/** keyEvent builds the keyboard event the console's mappings are driven with, for
+ * a case that has no node to dispatch one on. */
+export function keyEvent(key: string, modifiers: FakeModifiers = {}): FakeEvent {
+  return fakeEvent(key, modifiers.meta === true, modifiers.ctrl === true)
+}
 
 /** FakeNode is one element of the fake document. */
 export class FakeNode {
@@ -95,11 +145,16 @@ export class FakeNode {
     this.children.push(...nodes)
   }
 
-  /** listeners is what the entry attached, by event type. The wiring is a click
-   * on a drawn control, and a test drives it by calling `click()`. */
-  readonly listeners = new Map<string, (() => void)[]>()
+  /** owner is the document that made this node, so `focus()` has somewhere to
+   * record itself. It is `null` for the body, which no factory made. */
+  owner: FakeDocument | null = null
 
-  addEventListener(type: string, listener: () => void): void {
+  /** listeners is what the entry attached, by event type. The wiring is a click
+   * on a drawn control and a key on one of the two tablists, and a test drives
+   * them by calling `click()` and `press()`. */
+  readonly listeners = new Map<string, ((event: FakeEvent) => void)[]>()
+
+  addEventListener(type: string, listener: (event: FakeEvent) => void): void {
     const found = this.listeners.get(type) ?? []
     found.push(listener)
     this.listeners.set(type, found)
@@ -107,7 +162,23 @@ export class FakeNode {
 
   /** click fires this node's click listeners, in the order they were added. */
   click(): void {
-    for (const listener of this.listeners.get('click') ?? []) listener()
+    for (const listener of this.listeners.get('click') ?? []) listener(fakeEvent('', false, false))
+  }
+
+  /** press fires this node's keydown listeners with one key and the modifiers a
+   * case holds down, and answers the event, so a case can assert that the
+   * console took the key (`defaultPrevented`) rather than leaving it to the
+   * window. */
+  press(key: string, modifiers: FakeModifiers = {}): FakeEvent {
+    const event = keyEvent(key, modifiers)
+    for (const listener of this.listeners.get('keydown') ?? []) listener(event)
+    return event
+  }
+
+  /** focus is where the keyboard went: a real node moves the document's focus,
+   * and this one records itself as the document's active element. */
+  focus(): void {
+    if (this.owner !== null) this.owner.activeElement = this
   }
 }
 
@@ -116,13 +187,24 @@ export class FakeNode {
 export class FakeDocument {
   readonly body = new FakeNode('body')
   visibilityState = 'visible'
-  readonly listeners = new Map<string, (() => void)[]>()
+  /** activeElement is the node `focus()` last moved the keyboard to, which is
+   * what a case asserts after an arrow key: the roving tabindex and the focus
+   * are two halves of the same move and a case that read only the attribute
+   * would pass on a tablist whose ring never moved. */
+  activeElement: FakeNode | null = null
+  readonly listeners = new Map<string, ((event: FakeEvent) => void)[]>()
 
-  createElement(tag: string): FakeNode {
-    return new FakeNode(tag)
+  constructor() {
+    this.body.owner = this
   }
 
-  addEventListener(type: string, listener: () => void): void {
+  createElement(tag: string): FakeNode {
+    const node = new FakeNode(tag)
+    node.owner = this
+    return node
+  }
+
+  addEventListener(type: string, listener: (event: FakeEvent) => void): void {
     const found = this.listeners.get(type) ?? []
     found.push(listener)
     this.listeners.set(type, found)
@@ -132,7 +214,18 @@ export class FakeDocument {
    * is what a real window does when it is minimized or occluded. */
   setVisibility(state: string): void {
     this.visibilityState = state
-    for (const listener of this.listeners.get('visibilitychange') ?? []) listener()
+    for (const listener of this.listeners.get('visibilitychange') ?? []) {
+      listener(fakeEvent('', false, false))
+    }
+  }
+
+  /** press fires the document's own keydown listeners: the rail's shortcut keys
+   * are the document's and not a node's -- they reach a row from wherever the
+   * operator is (design section 4.3) -- so this is where a case drives them. */
+  press(key: string, modifiers: FakeModifiers = {}): FakeEvent {
+    const event = keyEvent(key, modifiers)
+    for (const listener of this.listeners.get('keydown') ?? []) listener(event)
+    return event
   }
 }
 

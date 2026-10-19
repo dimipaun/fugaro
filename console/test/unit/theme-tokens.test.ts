@@ -47,6 +47,8 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import { consoleWindowOptions } from '../../src/main/window'
+
 const THEME = fileURLToPath(new URL('../../src/renderer/theme', import.meta.url))
 const PALETTE_FILE = 'palette.css'
 const TOKENS_FILE = 'tokens.css'
@@ -739,6 +741,77 @@ describe("the console's theme tokens", () => {
       expect(lightThemeOffences(readThemeDirectory(directory)), 'the control file was left behind').toEqual([])
       expect(commentOffences(readThemeDirectory(directory)), 'the control file was left behind').toEqual([])
     })
+  })
+
+  it('paints the window the ground the stylesheet paints, so the first frame is not a flash', () => {
+    // Task 6.5, and the case design section 6.3 deferred to it: "the literal arrives in
+    // `src/main/window.ts` here, so this is the first task at which there is anything to
+    // compare it against". `backgroundColor` is what the platform paints in the frame
+    // between the window being created and the document's first paint, so a value that
+    // drifted from `--ground` is a white (or stale) flash on every launch -- a defect no
+    // screenshot of a *painted* window can see, which is why it is checked here.
+    //
+    // The literal is read **out of the options the window is built with**, not out of the
+    // exported constant: a `backgroundColor` dropped from `consoleWindowOptions` fails this
+    // case as surely as one that drifted, and the constant is an implementation detail of
+    // how it is spelled.
+    //
+    // **One literal, one direction** -- the ruled scope. One value set ships (the owner's Q1
+    // ruling of 2026-10-19, design section 3.6), so there is one `--ground` for the window to
+    // paint; the two-set design's second literal and its `nativeTheme` read are the record of
+    // option (a), not a pair of assertions this case owes.
+    const ground = palette.get('ground')
+    expect(ground, 'palette.css declares no --ground: the window has nothing to be equal to').toBeDefined()
+    const painted = consoleWindowOptions().backgroundColor
+    expect(
+      painted,
+      `the window paints ${JSON.stringify(painted)} behind the document and --ground is ${JSON.stringify(ground)}`,
+    ).toBe(ground)
+    // The comparison is the literal and not the colour: `#0a0e16` is the same colour in
+    // lower case, and the equality above is what a reader comparing the two files by eye
+    // cannot do.
+    expect(ground).toBe('#0A0E16')
+  })
+
+  it('keeps the focus ring one :focus-visible rule, drawn from the tokens', () => {
+    // The focus ring is one of the requirements Task 6.5's brief names and the rule itself
+    // is Task 6.3's (`base.css`); what this case holds is that it stays the single rule
+    // design section 4.3 writes, because the mutation it guards is one character away and
+    // changes who can see it at all: `:focus` draws a ring on a mouse click, which is the
+    // thing the rule is written as `:focus-visible` to avoid.
+    //
+    // Three claims, and the third is the one a rewrite would lose first: the ring's width
+    // and offset come from the two tokens (`tokens.css`), and its colour is `--accent` --
+    // the token section 3.4 measures against the ground for exactly this role, 7.16:1.
+    const css = stripComments(readTheme('base.css'))
+    const focusRules = [...css.matchAll(RULE)]
+      .map(([, selector, body]) => ({ selector: (selector ?? '').trim(), body: body ?? '' }))
+      .filter(({ selector }) => selector.includes(':focus'))
+    expect(
+      focusRules.map(({ selector }) => selector),
+      'base.css does not draw exactly one focus rule',
+    ).toEqual([':focus-visible'])
+    const ring = focusRules[0]?.body ?? ''
+    expect(ring, 'the focus ring is not the design section 4.3 rule').toContain(
+      'outline: var(--focus-ring-width) solid var(--accent)',
+    )
+    expect(ring, 'the focus ring does not read the offset token').toContain(
+      'outline-offset: var(--focus-ring-offset)',
+    )
+
+    // And no file of the theme selects `:focus` alone, however it is spelled -- the scan is
+    // over the directory rather than over `base.css`, so a later layer cannot add the second
+    // rule this case exists to refuse.
+    const bare: string[] = []
+    for (const [name, text] of readThemeDirectory(THEME)) {
+      for (const _ of stripComments(text).matchAll(/:focus(?!-visible)/g)) bare.push(name)
+    }
+    expect(bare, 'a theme file selects :focus rather than :focus-visible').toEqual([])
+
+    // The probe: the scan above is only worth what it finds, so the two spellings are read
+    // off a snippet that carries them.
+    expect([...':focus-visible'.matchAll(/:focus(?!-visible)/g)]).toHaveLength(0)
+    expect([...'a:focus { outline: 0 }'.matchAll(/:focus(?!-visible)/g)]).toHaveLength(1)
   })
 
   it('refuses a pair below AA, with the line the red step recorded', () => {
