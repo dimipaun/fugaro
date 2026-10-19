@@ -391,14 +391,27 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 // the guide shows real, the way TestDocsProjectLayerCommandsExist does for
 // docs/project-layer.md: a command must resolve in the cobra tree and a flag
 // must belong to it. The guide is what an operator copies into a terminal, so
-// a renamed subcommand or flag fails here rather than at their prompt.
+// a word that no longer names a command stops the walk and fails here rather
+// than at their prompt.
 //
 // It reads the fenced shell blocks too, not only the inline spans: this page is
 // mostly commands, and a command in a block is the copy-pasteable one.
 //
+// What it resolves is the LONGEST LEADING RUN of words that is a command path,
+// not necessarily all of them, and the limit is stated rather than implied: a
+// word that does not resolve ends the walk (a secret NAME is spelled like a
+// subcommand — `fugaro secrets set claude-oauth-token` has to stop at `set`),
+// and all the loop then requires is that the run is not empty. So this catches
+// a renamed FIRST word — `fugaro accounts ls` → `fugaro account ls` fails, as
+// does a flag that is not the resolved command's, which is what the guide
+// mostly gets wrong — but NOT a renamed leaf behind a valid prefix: a guide
+// line reading `fugaro accounts lsx` would pass. Catching that would need the
+// loop to require every command-shaped word to be consumed, which the secret
+// names above forbid.
+//
 // Mutation (verified, run and restored): change the guide's `fugaro run --token
 // acme-team` to `--account acme-team` — this fails naming the flag. The same
-// holds for a renamed subcommand (`fugaro accounts ls` → `fugaro account ls`).
+// holds for a renamed first word (`fugaro accounts ls` → `fugaro account ls`).
 func TestDocsProjectClaudeAccountsCommandsExist(t *testing.T) {
 	doc := readDoc(t, projectClaudeAccountsDoc)
 	root := NewRootCmd()
