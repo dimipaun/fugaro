@@ -123,7 +123,14 @@ a.skip-link:focus {
  * `<details>` — the markup is in `layouts/Base.astro`, with the note on why the panel is the
  * toggle's sibling rather than its child — so the menu opens and closes with JavaScript off.
  * `public/scripts/site.js` adds only what `<details>` does not do by itself: Escape and a
- * click outside close what is open.
+ * click outside close what is open; a group's submenu opens when the pointer arrives at it on a
+ * device whose pointer hovers (the query block below) and closes a moment after the pointer
+ * leaves; the keyboard's focus arriving at a trigger opens its group, so Tab reaches the links
+ * inside one that is closed; the trigger's `aria-expanded` is kept in step with the group; and a
+ * close that would strand the reader's focus hands it back to the trigger. The click is the
+ * `<summary>`'s own in every mode and the script does not touch it — which is why the focus a
+ * click or a tap brings opens nothing, and a tap on a touch laptop opens a group instead of
+ * opening it and closing it again with the click that follows.
  *
  * The header keeps one row at every width: it does not wrap, and the drawer hangs from its
  * bottom edge rather than becoming a second row inside it (the complaint RF3 measured: 177 px
@@ -146,7 +153,6 @@ a.skip-link:focus {
   cursor: pointer;
 }
 
-.site-nav-toggle:hover,
 .site-nav-toggle:focus-visible,
 .site-nav-drawer[open] > .site-nav-toggle {
   border-color: var(--accent);
@@ -190,11 +196,43 @@ a.skip-link:focus {
   cursor: pointer;
 }
 
-.site-nav-group > details > summary:hover,
 .site-nav-group > details > summary:focus-visible {
   color: var(--text);
   text-decoration: underline;
   text-underline-offset: 0.25em;
+}
+
+/* The menu's hover states, for a pointer that hovers and for no other kind (the owner's brief
+ * of 2026-10-18, item 1: a group's submenu opens when the pointer arrives at it). The query is
+ * the pointer's capability and never the viewport's width — a tablet 1280 px wide has no hover
+ * to give, and a phone with a mouse attached has one — and `public/scripts/site.js` asks the
+ * same query with `matchMedia` before it binds anything, and again whenever that query's answer
+ * changes, so the mark the pointer sees and the state the pointer sets are decided by one rule
+ * rather than two. The script's half is the finer of the two, because a stylesheet can ask the
+ * device and an event can say which pointer it was: it opens a group for a mouse or a pen and
+ * for nothing else, so a finger's tap on a device that answers this query "yes" — a touch laptop
+ * — still opens and closes the group by the click the `<summary>` already has.
+ * `test/nav-hover.mjs` holds the two strings to each other, and refuses a width query in either.
+ *
+ * The block is the menu's every `:hover` rule, the drawer's own toggle included, because a
+ * `:hover` that sticks after a tap is a mark on a control the reader has not opened: on a touch
+ * screen there is no hover, so there is no hover state. Nothing else about the drawer or the
+ * header's one row changes — the toggle is still a `<summary>`, the panel is still its sibling
+ * and the row still does not wrap. */
+@media (hover: hover) and (pointer: fine) {
+  .site-nav-group > details > summary:hover,
+  .site-nav a:hover {
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 0.25em;
+  }
+
+  /* The drawer's toggle is drawn as a button, so its hover is its border and not an
+   * underline under the word inside it. */
+  .site-nav-toggle:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
 }
 
 /* The group holding the page being read says so, because on a wide viewport the dropdown is
@@ -269,7 +307,6 @@ a.skip-link:focus {
   text-decoration: none;
 }
 
-.site-nav a:hover,
 .site-nav a:focus-visible {
   color: var(--text);
   text-decoration: underline;

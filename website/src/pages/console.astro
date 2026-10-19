@@ -3,230 +3,54 @@
  * website/src/pages/console.astro — the console page (website plan, Task W1.6).
  *
  * The spec's section 4 asks for *"Console downloads: per-OS download links (placeholder
- * until the console ships)"*, and the console is designed and not shipped. This page is
- * that placeholder, and it is built so that the placeholder is honest in the way the
- * reconciliation asks for: it says what the console is, that it is not released yet and
- * what it will be, and it renders **no link and no button** a reader could follow
- * (finding 23, finding 25, D95).
+ * until the console ships)"*, and the console is built and **not released**: `console/` holds
+ * the application and the workflow that signs, notarises and staples its macOS artifacts, that
+ * workflow creates the release as a draft the owner publishes, and `features.console_downloads`
+ * is false until then. This page is that placeholder, and it is built so that the placeholder
+ * is honest in the way the reconciliation asks for: it says what the console is, that it is not
+ * released yet and what it will be, and it renders **no link and no button** a reader could
+ * follow (finding 23, finding 25, D95).
  *
  * Where its facts come from, and why nothing here is typed into the markup:
  *
- *   - `website/content/downloads.json` — the console's own facts, this task's data file:
- *     what the console is, the sentence that it is not released, the properties the
- *     console's own decisions fix (read-only, no telemetry, its own artifact), and — the
- *     day the console ships — one download per platform. Every sentence below is rendered
- *     from that file, and `website/test/console.mjs` asserts that: a page that writes its
- *     own copy of a fact is the copy that drifts first (F37, Global Constraint 6).
+ *   - `website/content/downloads.json` — the console's own facts, read and validated by
+ *     `src/lib/console-downloads.mjs`: what the console is, the sentence that it is not
+ *     released, the properties the console's own decisions fix (read-only, no telemetry,
+ *     its own artifact), the release its download URLs are built from, and one download
+ *     per published asset. Every sentence below is rendered from that file, and
+ *     `website/test/console.mjs` asserts that: a page that writes its own copy of a fact is
+ *     the copy that drifts first (F37, Global Constraint 6).
  *   - `website/data/site.yaml` — the site's own facts, read through `loadSite()`: the
  *     feature flag `features.console_downloads`, which is the flag the Go boundary test
  *     holds the whole of `website/` to (`internal/cli/docs_website_boundary_test.go`,
- *     `TestWebsiteLinksNoConsoleWhileTheFlagIsOff`).
+ *     `TestWebsiteLinksNoConsoleWhileTheFlagIsOff`), and the `repository` every download
+ *     URL is composed from.
+ *
+ * **The reader is shared, because two pages offer the console.** Getting Started's console
+ * option renders the same artifact from the same module (the owner's changes spec of
+ * 2026-10-18, item 6), so `src/lib/console-downloads.mjs` holds the two flags' rule, the
+ * release's own shape and the URL derivation, and this page only renders what it returns.
  *
  * **The two flags are one fact, and the build refuses them disagreeing.** `site.yaml`'s
- * flag is what the repository-wide rule reads; `downloads.json`'s `available` is what this
- * page's own section renders from. A build that rendered one state while the other said
- * the opposite is exactly the drift the placeholder exists to prevent, so a disagreement
- * stops the build here, naming both files — the same shape `content.ts` gives the
- * analytics flag and its measurement id (W1.3 step 2). W3.1 flips both in one commit, with
- * the console's first release.
+ * flag is what the repository-wide rule reads; `downloads.json`'s `available` is what the
+ * section renders from. A build that rendered one state while the other said the opposite
+ * is exactly the drift the placeholder exists to prevent, so the disagreement stops the
+ * build, naming both files — the same shape `content.ts` gives the analytics flag and its
+ * measurement id (W1.3 step 2).
  *
- * **And a URL may not exist while the flag is false.** That is step 2's wiring of the rule
- * the Go test enforces over the tree: a download URL in this file's data while the flag is
- * false fails the build here, before any page renders anything — so the site cannot link
- * an unreleased artifact even by way of a "placeholder" URL someone pasted into the data
- * file (Global Constraint 9).
- *
- * The data file is read here rather than through `content.ts` because it is this task's
- * own fact file: `content.ts` is the shared pipeline for the generated documents (W1.3,
- * not edited here), and `content/downloads.json` — unlike `content/*.md` — is neither
- * generated nor required for every page of the site.
+ * **And a URL may not exist under `website/` at all.** Every download URL is composed at
+ * build time from the release's published names, so no file carries one — the state the Go
+ * boundary test scans the whole site for while the flag is false (Global Constraint 9).
  */
-import { existsSync, readFileSync } from 'node:fs'
-import path from 'node:path'
-
 import Base from '../layouts/Base.astro'
 import Downloads from '../components/Downloads.astro'
 import { SITE_ROOT, loadSite } from '../content.ts'
-
-/** The file this page's facts live in, as every message below names it. */
-const DOWNLOADS_FILE = 'website/content/downloads.json'
-
-/** One property of the console the page states, with the decision that fixes it. */
-interface ConsoleProperty {
-  id: string
-  title: string
-  text: string
-  source: string
-}
-
-/** website/content/downloads.json, validated. */
-interface DownloadsFacts {
-  available: boolean
-  name: string
-  what: { text: string; source: string }
-  notReleased: { text: string; source: string }
-  properties: ConsoleProperty[]
-  downloads: { id: string; platform: string; url: string }[]
-}
-
-/**
- * A build error naming the data file, the way `content.ts` names the file it refused:
- * the reader of the message is whoever just edited `downloads.json`.
- */
-function refuse(message: string): never {
-  throw new Error(`${DOWNLOADS_FILE}: ${message} (W1.6 steps 1 and 2).`)
-}
-
-function asMap(value: unknown, what: string): { [key: string]: unknown } {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    refuse(`${what} is not a JSON object, and the console's facts are read from keys in one`)
-  }
-  return value as { [key: string]: unknown }
-}
-
-/** A string a page renders, and never the empty one: a blank claim is a hole in the page. */
-function asText(value: unknown, what: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    refuse(`${what} is ${value === undefined ? 'not written in the file' : JSON.stringify(value)}, and every fact below is a written sentence`)
-  }
-  return value as string
-}
-
-function asClaim(value: unknown, what: string): { text: string; source: string } {
-  const map = asMap(value, what)
-  for (const key of Object.keys(map)) {
-    if (key !== 'text' && key !== 'source') {
-      refuse(`${what} carries the key "${key}", and a claim is a "text" and the "source" it came from — a sentence without a source is a sentence nobody can check (W1.6 step 3)`)
-    }
-  }
-  return { text: asText(map.text, `${what}.text`), source: asText(map.source, `${what}.source`) }
-}
-
-/**
- * The page's facts: `downloads.json`, validated, and held to `site.yaml`'s feature flag.
- *
- * Every rule below is a state the page must not render rather than a style: a missing
- * file, a flag that disagrees with the site's, a download URL while the console is
- * unreleased, and a section that says the console is available with nothing to download
- * are all build errors, each naming the file and the key it refused.
- */
-function loadDownloadsFacts(flagFromSiteYAML: boolean): DownloadsFacts {
-  const file = path.join(SITE_ROOT, 'content', 'downloads.json')
-  if (!existsSync(file)) {
-    refuse('is missing, and the console page renders what the console is, that it is not released and what it will be from it — the build stops rather than rendering an empty section')
-  }
-  const raw = readFileSync(file, 'utf8')
-  if (raw.trim() === '') refuse('is empty, and an empty file is an empty section')
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch (err) {
-    refuse(`is not JSON: ${(err as Error).message}`)
-  }
-
-  const doc = asMap(parsed, 'the document')
-  const allowed = ['version', 'available', 'name', 'what', 'not_released', 'properties', 'downloads']
-  for (const key of Object.keys(doc)) {
-    if (!allowed.includes(key)) {
-      refuse(`carries the key "${key}", which no part of the page reads — a fact nobody reads is a fact nothing pins, so a new key arrives with the element that renders it`)
-    }
-  }
-
-  if (doc.version !== 1) refuse(`version is ${JSON.stringify(doc.version)}, and this reader knows version 1`)
-
-  const available = doc.available
-  if (typeof available !== 'boolean') {
-    refuse(`available is ${JSON.stringify(available)}, and the console's downloads are rendered from a true or false`)
-  }
-
-  // The two flags are one fact (see the header). A disagreement is not a page that looks
-  // odd: it is the site saying the console has shipped while the repository's own rule
-  // says it has not, or the reverse.
-  if (available !== flagFromSiteYAML) {
-    refuse(
-      `available is ${available} and website/data/site.yaml's features.console_downloads is ${flagFromSiteYAML}. The console's release flips both in one commit, and the site cannot render a console that has shipped while the repository's own rule still refuses its download URL (W3.1, Global Constraint 9)`,
-    )
-  }
-
-  const properties = (() => {
-    if (!Array.isArray(doc.properties) || doc.properties.length === 0) {
-      refuse('properties is not a non-empty list, and the page states the console\'s own read-only, no-telemetry and release properties from it (W1.6 step 3)')
-    }
-    return (doc.properties as unknown[]).map((entry, index) => {
-      const map = asMap(entry, `properties[${index}]`)
-      for (const key of Object.keys(map)) {
-        if (!['id', 'title', 'text', 'source'].includes(key)) {
-          refuse(`properties[${index}] carries the key "${key}", and a property is an id, a title, a text and the decision it came from`)
-        }
-      }
-      const claim = asClaim({ text: map.text, source: map.source }, `properties[${index}]`)
-      return {
-        id: asText(map.id, `properties[${index}].id`),
-        title: asText(map.title, `properties[${index}].title`),
-        text: claim.text,
-        source: claim.source,
-      }
-    })
-  })()
-
-  const downloads = (() => {
-    if (!Array.isArray(doc.downloads)) {
-      refuse('downloads is not a list, and the section renders one link per entry when the console has shipped')
-    }
-    const entries = (doc.downloads as unknown[]).map((entry, index) => {
-      const map = asMap(entry, `downloads[${index}]`)
-      for (const key of Object.keys(map)) {
-        if (!['id', 'platform', 'url'].includes(key)) {
-          refuse(`downloads[${index}] carries the key "${key}", and a download is an id, the platform it is for and the URL a reader follows`)
-        }
-      }
-      const url = asText(map.url, `downloads[${index}].url`)
-      let parsedURL: URL
-      try {
-        parsedURL = new URL(url)
-      } catch {
-        refuse(`downloads[${index}].url is ${JSON.stringify(url)}, which is not an absolute URL — a link a reader follows points somewhere`)
-      }
-      if (parsedURL.protocol !== 'https:') {
-        refuse(`downloads[${index}].url is ${JSON.stringify(url)}, and a reader downloads over https`)
-      }
-      return {
-        id: asText(map.id, `downloads[${index}].id`),
-        platform: asText(map.platform, `downloads[${index}].platform`),
-        url: parsedURL.href,
-      }
-    })
-
-    // The rule the placeholder rests on, wired into the build (step 2): while the console
-    // is unreleased there is no URL under `website/`, and a data file that carries one is
-    // the defect the Go boundary test scans the whole site for -- caught here, by name,
-    // before a page renders.
-    if (!available && entries.length > 0) {
-      refuse(
-        `available is false and downloads carries ${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}: the console is not released, so this section renders no link at all, and a URL here would be a link either to nothing or to an unsigned artifact (finding 25, D95, Global Constraint 9)`,
-      )
-    }
-    if (available && entries.length === 0) {
-      refuse('available is true and downloads is empty: a section that says the console has shipped with nothing to download is the broken state the flag exists to prevent')
-    }
-    return entries
-  })()
-
-  return {
-    available,
-    name: asText(doc.name, 'name'),
-    what: asClaim(doc.what, 'what'),
-    notReleased: asClaim(doc.not_released, 'not_released'),
-    properties,
-    downloads,
-  }
-}
+import { loadConsoleDownloads } from '../lib/console-downloads.mjs'
 
 // The whole generated layer is checked first — every page renders through the base layout,
 // and this call is what a page does before it reads a fact of its own (W1.3 step 2).
 const site = loadSite()
-const facts = loadDownloadsFacts(site.facts.features.consoleDownloads)
+const facts = loadConsoleDownloads(SITE_ROOT, site.facts.features.consoleDownloads, site.facts.repository)
 ---
 
 <Base title="Console" description={facts.what.text}>

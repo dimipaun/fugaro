@@ -1,0 +1,108 @@
+---
+/**
+ * website/src/components/ConsoleOption.astro — the console, offered on Getting Started
+ * (the owner's changes spec of 2026-10-18, item 6).
+ *
+ * Getting Started presents two ways to install Fugaro side by side: the CLI — the install
+ * paths `website/data/install.yaml` carries, the Homebrew cask first, each command with its
+ * copy control — and the desktop console. This component is the second option, and it is
+ * the only place on that page the console is mentioned: a reader who wants the console can
+ * install it from this page, and a reader who wants the CLI reads past it.
+ *
+ * **It renders no link while the console is unreleased, and that is structural.** The two
+ * states are one `if`: the download list is rendered from the release's own published names
+ * and *only* when `available` is true, and the branch a reader gets while it is false is one
+ * sentence and the link to the console page — no element that could be a download. The
+ * `Learn more` link is the option's way out to the page that says what the console is, and
+ * it is there in both states, because "what is this thing" is a question the unreleased state
+ * raises rather than answers.
+ *
+ * The facts come in as props rather than being read here: `src/lib/console-downloads.mjs`
+ * owns the one reader for `website/content/downloads.json`, and Getting Started and the
+ * console page both render what it returns. Nothing below is typed into the markup except
+ * the words a reader navigates by — the option's own heading and the words on the link to
+ * the console page.
+ *
+ * The card this sits in — its border, radius and padding — is Getting Started's, written
+ * once on the `#install` section's two option wrappers so that the CLI option and this one
+ * are the same shape. What is here is what is inside the card.
+ */
+interface DownloadFacts {
+  /** What a reader sees on the button: the platform and the asset's extension. */
+  label: string
+  /** Where a reader downloads it from. Only ever rendered while `available` is true. */
+  url: string
+}
+
+interface Props {
+  /** `downloads.json`'s `available`: the console's own release exists and is published. */
+  available: boolean
+  /** The data file's one-line unreleased state, rendered while `available` is false. */
+  note: string
+  /** The release's published assets, in the order the data file lists them. */
+  downloads: DownloadFacts[]
+}
+
+const { available, note, downloads }: Props = Astro.props
+
+// The option's own heading: a label rather than a fact about the console, which is why it is
+// written here and not in the data file (the console page's own `h1` is the data file's
+// `name`).
+const HEADING = 'Desktop console'
+---
+
+<h3>{HEADING}</h3>
+
+{
+  available ? (
+    <ul class="console-downloads">
+      {downloads.map((download) => (
+        <li>
+          {/* An `<a>` and not a `<button>`: it is a download, and the site ships no script
+              that could give a button one (D183). */}
+          <a href={download.url} rel="noopener">
+            {download.label}
+          </a>
+        </li>
+      ))}
+    </ul>
+  ) : (
+    <p class="console-unreleased">{note}</p>
+  )
+}
+
+<p class="console-more">
+  <a href="/console/" aria-label="Learn more about the console">Learn more</a>
+</p>
+
+<style>
+  /* What is inside the card. Every value is a token from `src/styles/tokens.css` (D104,
+     D105): no colour, no spacing step and no radius is written here, and the links take
+     their colour from the layout's own `a` rule. */
+  .console-downloads {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .console-downloads a {
+    display: inline-block;
+    padding: var(--space-2xs) var(--space-sm);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+  }
+
+  .console-unreleased {
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  .console-more {
+    margin: var(--space-sm) 0 0;
+    font-size: var(--font-size-sm);
+  }
+</style>

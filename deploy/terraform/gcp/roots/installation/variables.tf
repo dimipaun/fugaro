@@ -131,6 +131,16 @@ variable "enable_budget" {
   nullable = false
 }
 
+variable "managed_deployer_scoped" {
+  # The managed deployer's scoped role and its conditioned binding: off by
+  # default, and fugaro init never sets it in 0.8.6 (the module's variable
+  # says why). An installation that does not name it plans exactly as before
+  # minus those two resources.
+  type     = bool
+  default  = false
+  nullable = false
+}
+
 variable "history" {
   type = object({
     account_id       = string

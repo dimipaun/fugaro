@@ -108,7 +108,9 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 ## The gates
 
 Seven checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
-with fixtures that keep its refusals running, and none of them needs the network:
+with fixtures that keep its refusals running, and none of them needs the network. The count is
+a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
+added or removed without this sentence moving fails there:
 
 - `test/linkcheck.mjs` — every internal link and asset resolves to a built file, every
   `#anchor` to an id in its target, every external link is `https:` on `site.yaml`'s
@@ -129,67 +131,55 @@ with fixtures that keep its refusals running, and none of them needs the network
 - `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes). **They are
   deliberately loose, by the owner's ruling of 2026-10-17: size is not a concern yet, so
   each is three times what the build of 2026-10-19 needs — the build that ships the site's one
-  script and its menu (P6, P3), the homepage's run animation (P7), the How It Works flow (P8)
-  and the long-page cuts (P4), with the changes spec's items 2, 3 and 4 on top of all of it —
-  and a later
-  optimisation pass tightens them.** The gate itself is not loose: a page or a site over the
-  number fails, and the test keeps a case that proves it. The derivation (that build plus
-  25 %, D192) is in the test's header, and a task that moves the bytes re-derives **all three
-  numbers** here, in the commit that moves them — the test refuses a derivation that names a
-  build other than the one it can measure, so the figures cannot drift down as pages grow:
-  - **JavaScript per page:** 76,086 bytes. Three times 25,362: the one script the site ships,
-    `public/scripts/site.js` (20,289 bytes — the copy control of P6 and D183, the menu's
-    Escape/outside-click close of P3, and W3.2's consent banner and analytics gate, which
-    moved out of the markup and into this one file, with the cookie deletion the owner's
-    ruling of 2026-10-18 added to a withdrawal), plus 25 %. Every page loads it once, so
-    it is the whole of a page's JavaScript, and the test keeps a case that says so over the
-    built artifact. The script lost 117 bytes in the changes spec's item 3: the copy control
-    used to prefer an element a block marked with `data-copy-source`, which only the deleted
-    terminal emitted, and it now copies the block's first `pre`/`code` — the command every
-    block the site prints is written in.
-  - **Page weight per page:** 927,834 bytes. Three times 309,278: the heaviest page, the
-    docs hub, at 247,422 bytes (its HTML — the whole generated CLI reference — plus the
-    files it fetches: the script above, the logo and the icons), plus 25 %. The 170 bytes it
-    moved since the last derivation are the one placement rule the site figure below accounts
-    for — `.command-block` — which every page's inlined stylesheet carries.
-  - **Whole site:** 3,059,394 bytes. Three times 1,019,798 (every file in `dist/`, 815,838
-    bytes across 21 files, plus 25 %). The figure moved 1,242 bytes with the second fix
-    round on this branch: the homepage's order (the promise and its call to action, then the
-    diagram, then the chat, then the install paths — changes spec item 4), the flow's
-    centrepiece treatment, the chat's status line in place of the `fugaro run` command, and
-    the install command's `pre-wrap`/`overflow-wrap` so the `go install` line wraps instead
-    of being clipped; and then 15 with that round's last edit, `max-width: none` on the
-    chat's turns, which is the same cap the flow's list had already opted out of — the turns
-    are an `<ol>` too, and the measure drew them two across with a hole beside the third.
-    (That declaration is gone again in the third round, where the turns stop being cards and
-    the measure is the card's own width.)
-    Before that it moved 52 bytes with the chat's caption, rewritten so
-    that it says what the figure is rather than claiming every line of it is a quotation —
-    and 29 with the fix round's two layout declarations (the watch bar's `flex-direction:
-    row-reverse` and the flow's `rotate(-90deg)`) — and each time it was re-derived in the
-    commit that moved it, like any other (D192).
-    The third fix round moved it four times, and this is where all four are re-derived,
-    because only the page figure was re-derived for the first: **1,892 bytes** with the
-    round's first commit, which settled the flow's layout (the cards answering to one height,
-    the step names at `--font-size-lg` so `Ephemeral cloud job` is one line, the two-by-two
-    from 35 rem up and the arrow moved out of the flow into the gap); **1,775** with the
-    second, the one placement rule `base.css` gained — `.command-block` and its `pre`, which
-    is in every page's inlined stylesheet at 170 bytes each, 1,870 in all, less the 95 the
-    homepage gives back because the watch bar's own rule no longer writes the four
-    declarations that rule now owns and pays 14 for the class name it gained; and **661**
-    with the third, all of it on the homepage alone. That last one is the chat drawn as one
-    conversation card (one card instead of three, the speaker column the labels share, and the
-    caption moved to the foot of the conversation, which takes the watch block — heading, the
-    empty slot, the bar and the note — out of the figure and makes it the figure's sibling),
-    and with it the slot's two rules: the one that takes an empty slot out of the page so it
-    reserves no height at all, and the one that sizes the image the moment a later task puts
-    one in it. And **96** with the fourth, all of it on How It Works: the detail section gives
-    back the inline padding it was indenting itself with, and the page gains the rule that
-    holds the picture off its title. Each of the four was re-derived in the commit that moved
-    it, like any other (D192). And **626** with the fifth, which is the review of round 4: the
-    two-by-two's own shape — the two placements that put step 3 under step 2 and step 4 at the
-    end of the run, and the rule that turns step 3's arrow back along the bottom row — which
-    only the two pages that draw the flow carry, at about 313 bytes each.
+  script and its menu (P6, P3), the homepage's run animation (P7), the How It Works flow (P8),
+  W3.2's consent gate, the menu's hover-open on a pointer that hovers (the owner's brief of
+  2026-10-18, item 1), and the two corrections of 2026-10-19 to that behaviour: the event
+  decides which pointer arrived and the device's answer is watched rather than sampled once,
+  and the focus a click or a tap moves opens nothing while a close the browser makes hands the
+  reader's focus back — and a later optimisation pass tightens them.** The gate itself is not
+  loose: a page or a site over the number fails, and the test keeps a case that proves it. The
+  derivation (that build plus 25 %, D192) is in the test's header, and a task that moves the
+  bytes re-derives the numbers here, in the commit that moves them — which is why all three
+  were re-derived in the commit that taught the script the hover behaviour, again in the one
+  that taught it to read the pointer out of the event rather than out of the device's one
+  answer, again in the one that taught it to tell a pointer's focus from the keyboard's, and
+  again in the one that taught it that a close the reader asks for from outside the menu hands
+  nothing back, again in the one that taught the pointer's close to wait for the keyboard, and
+  again in the one that gave the keyboard its own binding —
+  and why the page and the site move with the script (a script every page loads is a page's
+  weight as well as its JavaScript):
+  - **JavaScript per page:** 149,610 bytes. Three times 49,870: the one script the site ships,
+    `public/scripts/site.js` (39,896 bytes), plus 25 %. What the file carries is the copy
+    control of P6 and D183; the menu's Escape/outside-click close of P3; W3.2's consent banner
+    and analytics gate, which moved out of the markup and into this one file, with the cookie
+    deletion the owner's ruling of 2026-10-18 added to a withdrawal; and, from the same
+    ruling's brief, its item 1: a group's submenu opens when the pointer arrives at it on a
+    device whose pointer hovers. That behaviour is bound only where `matchMedia` says the
+    device's pointer hovers and only for a pointer that says it is a mouse or a pen — a tap
+    sends a pointer of its own, and a finger never hovers, so a touch screen keeps the tap it
+    has always had — and the answer is watched rather than sampled once, so a pointer plugged
+    in or taken away after the page has loaded is answered too. The keyboard's focus opens a
+    group so Tab reaches the links inside a closed one; the focus a click or a tap moves opens
+    nothing, because the click that brought it is the `<summary>`'s own toggle and would close
+    what the focus had opened; and a group the browser closes because its sibling in the
+    `name` set opened hands the reader's focus back to its trigger — while a close the reader
+    asks for from outside the menu hands nothing back, because a press on the page's own text
+    moves the focus to the body without a `focusin` to hear, and the trigger of the menu just
+    dismissed is not where the reader is. A group has two readers, and the pointer is only one
+    of them: the close a pointer's departure owes is owed when nobody is left reading, so a
+    keyboard reader standing in the group holds it open and the close lands when the focus
+    goes — and a focus that arrives inside the `CLOSE_AFTER_MS` the close waits cancels it.
+    That keyboard half is bound whatever the device answers, because the keyboard is the
+    device's and not the pointer's: a phone or a tablet with a keyboard attached answers the
+    hover query no, and the menu still has a second level Tab has to be able to enter.
+    Every page loads the file
+    once, so it is the whole of a page's JavaScript, and the test keeps a case that says so
+    over the built artifact.
+  - **Page weight per page:** 1,001,316 bytes. Three times 333,772: the heaviest page, the
+    docs hub, at 267,017 bytes (its HTML — the whole generated CLI reference — plus the
+    files it fetches: the script above, the logo and the icons), plus 25 %.
+  - **Whole site:** 3,106,374 bytes. Three times 1,035,458 (every file in `dist/`, 828,366
+    bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte
@@ -274,6 +264,51 @@ with fixtures that keep its refusals running, and none of them needs the network
   the item's ruling rather than a miss: the tagline change reaches the CLI's help, the
   generated reference and the three plugin skills that carry it (`routing`, `working` and
   `parallelism`) in 0.9.0, not here.
+- `test/nav-hover.mjs` — the menu's hover behaviour (the owner's brief of 2026-10-18, item 1).
+  A `<details>` hides its own closed content in a way author CSS cannot portably override, so
+  opening a group on hover is the script's work and not the stylesheet's: the gate runs the
+  shipped `public/scripts/site.js` in a small stub DOM (no browser, F3), on a pointer that
+  hovers and on one that does not, and holds both halves of the pair — the CSS's every
+  `.site-nav` `:hover` rule inside `@media (hover: hover) and (pointer: fine)`, and the
+  script's `matchMedia` asking the same query before it binds anything and again whenever its
+  answer changes. It opens a group by moving a mouse onto it and by moving a pen onto it, keeps
+  it open while the pointer is inside the submenu, closes it one delay later when the pointer
+  leaves and cancels that close when the pointer returns, still opens and closes by the click
+  the menu was built on, leaves the touch path with no hover behaviour at all — a finger's tap
+  opens and closes a group even on a device that answers the query "yes", where the tap's own
+  pointer would otherwise be taken for a hover — binds and unbinds the behaviour when the
+  device's answer changes under a loaded page, opens on the keyboard's focus and closes on
+  Escape with the focus given back, reads `aria-expanded` at every step, opens a closed group on
+  the first click even though the press moves the focus to the trigger (a group opened by that
+  focus would be closed again by the click that brought it), and hands a keyboard reader's focus
+  back when the browser closes the group it was standing in because a sibling in the same `name`
+  set opened — while a click on the page's own text, which closes the menu the reader is walking
+  away from, hands nothing back: the press moves the focus to the body without a `focusin` to
+  hear, and the trigger of the menu just dismissed is not where the reader is. A group has two
+  readers, and the pointer is only one of them: the close a pointer's departure owes is owed when
+  nobody is left reading, so a keyboard reader standing in the group holds it open and the close
+  lands a moment after the focus goes — and a focus arriving inside that moment cancels the close
+  the pointer asked for. The keyboard's way into a group is bound whatever the device answers,
+  because the keyboard is the device's and not the pointer's: a phone or a tablet with a keyboard
+  attached answers the query "no" and still has a second level Tab can enter. And the guard that
+  keeps a close from reopening the group it handed the focus back to lasts for that focus and no
+  longer: a reader who takes the focus out of the menu altogether and comes back to the same
+  trigger opens the group again, as arriving at it the first time did. Each case was
+  mutation-proved by hand: the defect was planted in the script or the stylesheet, the case was
+  watched failing, and the defect was removed. The gate's rules are also
+  one function over one script source (`menuFailures`) and one over one stylesheet
+  (`hoverScopeFailures`), so its refusals are kept the way the other gates keep theirs: a case
+  plants each defect in the shipped script — a pointer arrival that opens whatever arrived, an
+  answer sampled once at load and never again, a close that waits no time, a control that never
+  says what it is, a focus a press moved that opens the group, a browser's close nobody answers, a
+  device that answers the query "no" getting the behaviour anyway, a close the reader asked
+  for answering with the focus, a pointer whose close lands under a keyboard reader standing in
+  the group, a close the reader arriving inside the delay does not cancel, a keyboard's way into
+  a group bound with the pointer's hover so that a device with no hovering pointer has a menu Tab
+  cannot enter, and a guard against reopening that outlives the focus it was written for — and in
+  the stylesheet, and watches the named refusal come back.
+  Each of those rules was then mutation-proved the other way: removed from the function, with the
+  refusal it names watched failing.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull
@@ -322,7 +357,7 @@ check until this document says the same thing.
 | `content/cli-reference.md` | the command tree, `internal/cli.NewRootCmd` | `go run ./internal/clidoc` |
 | `content/security.md` | `SECURITY.md`, byte for byte below the title | `go run ./internal/clidoc` |
 | `content/costs.json` | `fugaro stats runs --project <installation> --json`, and it is the aggregation's output verbatim | owner-run: `fugaro stats runs --project <installation> --json > website/content/costs.json` |
-| `content/downloads.json` | hand-kept, not generated: W3.1 fills it from the console's release artifacts; a placeholder with `available: false` until then | none: hand-kept |
+| `content/downloads.json` | hand-kept, not generated: the console's facts and the release's own published names, with `{version}` where the version goes — the URLs are derived from them (below), and `available: false` until the console ships | none: hand-kept |
 
 Three things about those commands are worth stating rather than leaving to the table:
 
@@ -339,7 +374,9 @@ Three things about those commands are worth stating rather than leaving to the t
   `install.yaml` is held to `README.md`, `docs/release.md` and `.goreleaser.yaml` by
   `internal/cli/docs_website_install_test.go`, and `site.yaml` to `go.mod`, the
   repository's decisions and the site's own host list by the boundary test. Change the
-  fact in the repository, then the value here, in one commit.
+  fact in the repository, then the value here, in one commit. `site.yaml`'s
+  `features.console_downloads` is held to the hand-kept `content/downloads.json`'s
+  `available` by the build itself, which refuses the two disagreeing (below).
 
 ## The changelog is built, never committed
 
@@ -349,6 +386,67 @@ what it returns. Nothing is written to disk, so a Highlights file that lands on 
 before its tag exists leaves no stale copy behind — and no date is taken from a tag,
 because a shallow checkout has no tags and the newest entry a reader sees has none yet
 (D100). `website/test/changelog.mjs` holds that.
+
+## The console's downloads are derived, never written down
+
+`content/downloads.json` is hand-kept and carries the console's facts, and the one rule about
+it is the flag: `site.yaml`'s `features.console_downloads` is what the repository's own
+boundary test reads (`internal/cli/docs_website_boundary_test.go`), and while it is false **no
+file under `website/` may carry a download URL** (Global Constraint 9, finding 25). The data
+file therefore carries the release's *published names* rather than a URL: `release.tag_prefix`,
+`release.version`, and one `file` per asset with `{version}` where the version goes.
+`src/lib/console-downloads.mjs` composes each URL at build time from those, from the tag
+(`console-vX.Y.Z`, cut from the CLI's own `vX.Y.Z` tag) and from `site.yaml`'s `repository` —
+that module is the one reader of the file, and each page renders what it returns.
+
+Two pages offer the console from those facts: the console page's own Downloads section (W1.6)
+and Getting Started's console option, beside the CLI (the owner's changes spec of 2026-10-18,
+item 6). In both, the unreleased state is **structural rather than editorial**: the download
+list is rendered from `available`'s branch and nothing else, so an unreleased console has no
+link to follow even though its assets' names are already in the data file — and the option's
+only link is the way to `/console/`. `website/test/console.mjs` holds the console page to that,
+and `website/test/console-option.mjs` holds Getting Started to it in **both** states: the
+shipped one, read off the built page, and the released one, read off a build of a copy with the
+flag flipped. That second case also runs the budget gate over the flag-on build
+(`FUGARO_GATES_DIST`), because the two-option page costs words and Getting Started sits at
+D188's 250-word ceiling — the owner's flip has to be the whole change and may not be the change
+that breaks the ceiling. A data file that says the console has shipped while the flag says it
+has not stops the build, naming both files: they are one fact.
+
+**The flip, in the site's own data, is three values:** `site.yaml`'s
+`features.console_downloads: true`, `downloads.json`'s `available: true`, and `release.version`
+bumped to the CLI tag the console was built from. The download list does not change — it already
+carries the release's published names — so no URL is typed anywhere and every button, label and
+URL follows from those three.
+
+**It is not a one-line change, and four checks are written to say so.** Each exists to keep the
+unreleased state true, so each refuses the flip until the commit that makes it extends it — and
+following the three values alone leaves both `npm run check` and `go test ./...` red:
+
+- `internal/cli/docs_website_boundary_test.go`'s `TestWebsiteLinksNoConsoleWhileTheFlagIsOff`
+  fails on a true flag (`t.Fatalf`, *"this test has not been extended"*). The flip's commit
+  extends it to hold every release-asset URL under `website/` against an asset of a **tag that
+  exists** (W1.6 step 2, plan Task W3.1) — that is the check nothing offline can make, and the
+  one the owner runs against the published release.
+- The same file's `TestWebsiteFactsMatchTheRepository` refuses a true flag too, and the same
+  commit relaxes that pin: the file is one writer per level in the plan, and W3.1's row names it.
+- `website/test/console.mjs` guards its unreleased-state case with an assertion that `site.yaml`
+  says `false` — the case is *about* the unreleased console, so the flip's commit retires it
+  rather than leaving it failing.
+- `website/test/console-option.mjs` carries the same guard for the same reason, and the same
+  commit retires that one with it.
+
+One more thing the flip does **not** have to touch, and this is the point of deriving the URLs:
+nothing under `website/src/` or `website/content/` changes beyond the two values and the version,
+and no test needs a new expectation, because the released-state cases hold the built page to the
+release's own documentation (`console/README.md`) and to the workflow that cuts its tag rather
+than to a URL the test composed the way the build does.
+
+The console is built for macOS and nothing else (`console/README.md`,
+`.github/workflows/console-release.yml`: one universal `.dmg` and one `.zip`), which is why the
+platform, and not an invented second one, is the word each button carries. Its release is a
+**draft until the owner publishes it** (the workflow creates `console-vX.Y.Z` with `--draft`),
+so the buttons land with the published release and not with the draft.
 
 ## The rule this directory is written to
 
