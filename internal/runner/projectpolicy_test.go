@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -307,6 +308,43 @@ func TestRunnerWithTheMarkerAndNoBackendRefuses(t *testing.T) {
 	}
 }
 
+// The other half of that refusal, and the one the bucket read can get wrong: a
+// budget-on run whose read of the token object is *refused* (403, which GCS
+// answers a job account with no grant on tokens/ — a job not re-applied since
+// the shared budget was turned on, the same re-apply that adds the grant) must
+// stop, exactly as one whose object is missing does. gocloud reports the
+// refusal as the same NotFound a missing object gets, so a presence check that
+// is not strict answers "no token object" and lets the run go on with no
+// session, no cap and no kill switch — the fail-open state refuseStrayToken
+// exists to close. The bucket here is a fake that answers the read with a 403,
+// and the object is there: the refusal, not the absence, is what stops the run.
+func TestRunnerWithARefusedTokenReadRefuses(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "off", "")
+	gcs := gcpfake.NewGCS(t)
+	gcs.AddBucket("runs", 1, nil)
+	g.deps.Bucket = gcs.Bucket(t, "runs")
+	key := token.ObjectKey(repoSlug, runID)
+	gcs.Put("runs", key, []byte("sealed")) // the launcher's object, which this job may not read
+	gcs.FailObjectGetsAfter("runs", key, 0)
+	g.deps.Spend = runner.Spend{Mode: "enforce"} // budget on
+	g.deps.Backend = runner.Backend{}            // and no backend in the job's environment
+	rec, err := g.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a refused read of the token object must stop the run: rec = %+v", rec)
+	}
+	if !strings.Contains(err.Error(), "refused") || !strings.Contains(err.Error(), "tokens/") {
+		t.Fatalf("err = %v, want the refusal the refused read makes", err)
+	}
+	// The cure, as the marker's refusal names it: the re-apply that writes the
+	// tokens/ grant this read was refused for.
+	if !strings.Contains(err.Error(), "fugaro init --repo") {
+		t.Errorf("the refusal does not name the operator's cure: %v", err)
+	}
+	if len(g.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+		t.Fatalf("the run went on: calls = %d, rec = %+v", len(g.agent.calls), rec)
+	}
+}
+
 // The same refusal, at the placement it has to have: the marker is proof that
 // a policy or a shared budget exists, and a job that carries no backend cannot
 // read either — so the run must stop at the *policy read*, before
@@ -571,17 +609,23 @@ func TestPolicyNonIntegerMarkerHaltsTheRun(t *testing.T) {
 	}
 }
 
-// The single token take (finding 2): the policy read and the session share one
-// TakeObject, because the call deletes the object as it reads it. A second take
-// inside the run would find nothing and stop it, so a run that finishes — with
-// a policy published, so that both readers use the identity — is the assertion.
-// The exchange itself happens twice (once for the client the policy is read
-// with, once in budget.Open), with the same custom token and the same claims.
+// One take, one identity: the policy read and the session share a single
+// TakeObject — the custom token is read out of the bucket once and held in
+// memory — so a run with a policy published finishes with the policy in effect
+// and two exchanges made (one for the client the policy is read with, one in
+// budget.Open). The take removes nothing: the job's grant on tokens/ is
+// read-only (D16), so the object is still in the bucket when the run ends, and
+// that is what the assertion below says. Consume-once does not rest on the
+// object being gone — it rests on the seal's key, which the launcher delivers
+// to the one execution it starts — so a leftover object stays readable for the
+// lifecycle window and gives a second reader nothing. (That the take itself
+// is one read of the object is a shape of the source, not of the run's state,
+// and TestTheBudgetTokenIsTakenAtOneCallSite is what holds it.)
 func TestTokenIsTakenOnce(t *testing.T) {
 	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":3,"budget":{"mode":"enforce","per_run_usd":5}}`, capScript(1)...)
 	rec, err := b.run(t, calling(new([]int), implement("feature"), call{sonnet, 4000}), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
-		t.Fatalf("rec = %+v, err = %v: the run could not take the token twice", rec, err)
+		t.Fatalf("rec = %+v, err = %v: the run with a published policy did not finish", rec, err)
 	}
 	if s := sourceOf(t, rec, "mode"); s != "policy" {
 		t.Fatalf("mode source = %q: the policy was not read", s)

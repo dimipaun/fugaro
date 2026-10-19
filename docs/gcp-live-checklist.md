@@ -4001,13 +4001,13 @@ The loop prints **which commits it reverted and which were already reverted** (`
 
 The budget token's seal ([design/budget-token-channel.md](design/budget-token-channel.md) §7, both halves built for 0.9.0): the launcher seals the run's Firebase custom token under a key drawn for that one launch and writes it to `tokens/<slug>/<run>/budget-token`; the key travels as the value of the execution's `FUGARO_BUDGET_TOKEN` override; the run reads the object read-only, unseals it, and refuses everything else. The unit tests hold the AAD and every refusal row of §7.4; this check records what only a live installation can show: that a sealed run works end to end, what the object and the override actually expose, what the audit log carries, and that the grants are the ones the plan says. **No agent runs any step of this check**; you run every command. **Never `belong`**: nothing here creates, changes or deletes anything there.
 
-**Before you start.** The installation must have been applied with this release's `fugaro init` (the `tokens/` grants and the widened launcher condition — step 8 reads them), and the sandbox repository's job image must be at `sealSince` (0.9.0) or later, or a development image built from this branch (its build record then says `sealed_budget_token`, and the launch passes with no seal warning; a development job image whose record does not say it is refused if built before 2026-10-17T17:45:33Z and otherwise launches with only a warning — record which you got) — a launch that mints against an older image is refused by the launcher (`sealGate`), which is itself worth a FACT if you meet it. Check 52 step 3 (U2) is the probe this check's step 3 repeats on the deployed shape; it has not run either.
+**Before you start.** The installation must have been applied with this release's `fugaro init` (the `tokens/` grants and the widened launcher condition — step 8 reads them), and the sandbox repository's job image must be at `sealSince` (0.9.0) or later, or a development image built from this branch (its build record then says `sealed_budget_token`, and the launch passes with no seal warning; a development job image whose record does not say it is refused if built before 2026-10-17T17:45:33Z and otherwise launches with only a warning — record which you got) — a launch that mints against an older image is refused by the launcher (`sealGate`), which is itself worth a FACT if you meet it. A `checkout: clone` workflow has no job image to judge, so there the gate reads the installation's own `base_images.base` (`sealGate`'s `checkCloneImageSince`): a release ref below 0.9.0 is refused, and a ref that is not a release only warns. Check 52 step 3 (U2) is the probe this check's step 3 repeats on the deployed shape; it has not run either.
 
-**Method.** Every block runs in `bash`. Keep the step variables in one file and re-run the guard block at the start of every step.
+**Method.** Every block runs in `bash`. Keep the step variables in `$CHK60/vars.env` and re-run the guard block at the start of every step: the block reads that file back, so a later shell keeps `SLUG`, `RUN2`, `RUN9` and `SANDBOX_JOB`, which is what makes the steps runnable in any order of shells — and what lets step 1 and step 2 run before step 3 has learnt the job. **Starting over:** if `/tmp/chk60` is left from an earlier attempt, its `vars.env` is read back as this attempt's, so every step would work on the earlier attempt's run and the baseline would be its policy file — delete the directory first (`rm -rf /tmp/chk60`) and start the check again at step 1, which makes it again (and if the earlier attempt had already changed the bucket, run Restore first).
 
 ### 1. Setup and guard
 
-**Adapted from Check 43's guard block (the same three stops, with `L` filled in for this installation)**:
+**Check 43's guard block, with this check's number in the three stop messages and its own variables.** The three stops are verbatim (Check 43's "Why the guard is one block, and why it is re-run", "Paste the block into a file, not straight into an interactive zsh" and "Every `fugaro` command that takes `--project` gets `--project fugaro`" paragraphs apply here word for word), and the only variables it sets are this check's:
 
 ```bash
 # === Check 60: setup + guard. RE-RUN THE WHOLE BLOCK at the start of every
@@ -4017,18 +4017,25 @@ L=us-east5                   # the installation's region
 [ "$P" = fugaro-dev ] && [ -n "$L" ] \
   || { echo "Check 60 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L not empty)" >&2; exit 1; }
 fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
-  || { echo "Check 60 stopped: this is not the fugaro-dev installation" >&2; exit 1; }
+  || { echo "Check 60 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
-  || { echo "Check 60 stopped: this checkout's origin is not the sandbox" >&2; exit 1; }
-# The step's variables: fill the two SANDBOX_* values in once (read-only
-# lines below), every one ${VAR:?}-guarded.
+  || { echo "Check 60 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+# The step's variables. SANDBOX_BUCKET is the runs bucket the local config
+# names — the read-only list below prints the candidates — and every use of it
+# is ${SANDBOX_BUCKET:?}-guarded. SANDBOX_JOB is NOT filled in here: it is
+# learnt in step 3, off the run's own launch record, because the job the steps
+# execute is not always the repository's own (a clone workflow of a project
+# that has published the profile it selects launches on the shared project
+# job). Steps 1 and 2 therefore run without it, and every step that names it
+# re-runs this block, which reads it back out of vars.env.
 SANDBOX_BUCKET=${SANDBOX_BUCKET:?the runs bucket the local config names}
-SANDBOX_JOB=${SANDBOX_JOB:?the sandbox repository job name}
 CHK60=/tmp/chk60; mkdir -p "$CHK60"; chmod 700 "$CHK60"
+[ -f "$CHK60/vars.env" ] && . "$CHK60/vars.env"   # step 2's RUN2/SLUG, step 3's SANDBOX_JOB
+SANDBOX_JOB=${SANDBOX_JOB:-}   # empty until step 3 writes it; every use is ${SANDBOX_JOB:?}-guarded
 ```
 
 ```bash
-# Read-only: the two values above.
+# Read-only: the bucket above, and the job names step 3 reads its job out of.
 gcloud run jobs list --project="${P:?}" --region="${L:?}" --format='value(name)'
 gcloud storage buckets list --project="${P:?}" --format='value(name)'
 ```
@@ -4049,9 +4056,25 @@ echo "RUN2=${RUN2:?} SLUG=${SLUG:?}" >> "$CHK60/vars.env"
 fugaro logs --project fugaro --follow "${SLUG:?}/${RUN2:?}" > "$CHK60/run2.log"
 ```
 
-FACT: the run's outcome (`fugaro status`), and that `run2.log` and the run's `result.json` carry no budget token and no key (`grep -c` for `eyJ` and for the marker's value: both `0`; the key is not printed anywhere for you to grep, which is the point — record the count of `FUGARO_BUDGET_TOKEN=` in the log, which must be `0` too).
+FACT: the run's outcome (`fugaro runs ls --project fugaro`, or `fugaro diagnose "${SLUG:?}/${RUN2:?}" --project fugaro` for the one run), and that `run2.log` and the run's `result.json` carry no budget token and no key (`grep -c` for `eyJ` and for the marker's value: both `0`; the key is not printed anywhere for you to grep, which is the point — record the count of `FUGARO_BUDGET_TOKEN=` in the log, which must be `0` too).
 
 ### 3. The object is worthless without the key, and where the key is (design steps 2 and 3)
+
+**Which job `SANDBOX_JOB` is.** The one step 2's run launched on, which is not always the sandbox repository's own job: a `checkout: clone` workflow of a project whose published policy defines the profile it selects launches on the **shared project job** (`internal/cli/project_job.go`'s `launchProjectJobFor` — the clone path only, and only once the project has published that profile), and a baked workflow, or a project that has published none, keeps the repository's own job. Read it off the run's own launch record — this step is where it is learnt, so steps 1 and 2 do not have it and every step from here re-runs the setup block, which reads it back out of `vars.env` — and use that job in every step below that names it (3 to 7, and 9 — step 4's audit-log filter carries it too, and a filter left on the repository's own job would return nothing and record a false FACT). Every use is `${SANDBOX_JOB:?}`-guarded, so an empty one stops there rather than reaching `gcloud`:
+
+```bash
+# -er, not -r, AND the non-zero exit is consumed: a launch record with no .job
+# prints the word `null` — under -r it also exits 0, and under -e it exits 1 but
+# still prints `null`, which `$(...)` captures whatever the status is — and
+# `null` is a non-empty name the guard below would accept, so the step would go
+# on to describe a job called null. The `||` is what makes the read fail: it
+# stops the step before anything is described or recorded.
+SANDBOX_JOB=$(gcloud storage cat "gs://${SANDBOX_BUCKET:?}/runs/${SLUG:?}/${RUN2:?}/launch.json" --project="${P:?}" | jq -er .job) \
+  || { echo "Check 60 stopped: ${SLUG:?}/${RUN2:?}'s launch record carries no .job (jq -e exited non-zero), so step 2's run is not one this check can read: re-read step 2, or start over at step 1" >&2; exit 1; }
+echo "SANDBOX_JOB=${SANDBOX_JOB:?}" >> "$CHK60/vars.env"
+```
+
+Step 8 records the `tokens/` grant of whichever job this is; the two kinds have different shapes — the repository's own job reads exactly `tokens/<its slug>/`, the shared project job the whole `tokens/` (design `docs/design/budget-token-channel.md`, the **Slice B is built** paragraph, and the FACT in step 8 below).
 
 ```bash
 O="gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token"
@@ -4062,13 +4085,18 @@ gcloud storage ls "gs://${SANDBOX_BUCKET:?}/runs/${SLUG:?}/${RUN2:?}/budget-toke
 # The job's own environment: no key there (the key is an execution override).
 gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json \
   | jq '[.spec.template.spec.template.spec.containers[0].env[]? | select(.name=="FUGARO_BUDGET_TOKEN")] | length'
-# The execution's record (v1 path): what it shows of the override, recorded, not asserted.
-EXE=$(fugaro status --project fugaro --json "${SLUG:?}/${RUN2:?}" | jq -r .execution)
+# The execution's record (v1 path): what it shows of the override, recorded, not
+# asserted. -er with its exit consumed, for the reason above: a row carrying no
+# execution prints `null`, and describe below would look up an execution named
+# null. A row with no execution is itself what U2 records, so read the row by
+# hand before going on.
+EXE=$(fugaro diagnose "${SLUG:?}/${RUN2:?}" --project fugaro --json | jq -er .row.execution) \
+  || { echo "Check 60 stopped: ${SLUG:?}/${RUN2:?}'s diagnose row carries no execution (jq -e exited non-zero): read the row by hand and record what U2 finds there" >&2; exit 1; }
 gcloud run jobs executions describe "${EXE##*/}" --project="${P:?}" --region="${L:?}" --format=json \
   | jq '[.spec.template.spec.containers[0].env[]? | select(.name=="FUGARO_BUDGET_TOKEN") | (.value|length)]'
 ```
 
-If the installation has the compute backend, also read every Fugaro Batch job's variables: the launcher refuses a sealed launch on Batch, so none may carry the marker.
+On an installation that runs the compute backend, read every Fugaro Batch job's variables too. **No installation of this release can:** `backend: cloud-batch` is refused by config validation (`not enabled yet`, `internal/localcfg`), and the launcher's Batch wiring is not built, so the block below is a record for the release that enables it. What it checks then is the **Batch backend's own refusal** — a launch carrying the marker (`LaunchSpec.SecretEnv`) is refused before anything is created (`backend.ErrRejected`, and the refusal never quotes the value), so no Fugaro Batch job may carry `FUGARO_BUDGET_TOKEN`.
 
 ```bash
 for j in $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --format='value(name)' --filter='name~/jobs/fugaro-'); do
@@ -4077,7 +4105,7 @@ for j in $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --forma
 done
 ```
 
-FACT: the object's size and first byte (`01`); the two `grep -c` counts (`0`, `0`); that nothing is under `runs/`; the job's env count of `FUGARO_BUDGET_TOKEN` (`0`); and **U2 as found**: whether the execution record shows the override at all, and if so the **length** of its value (43 is the key) — never the value; and, with the compute backend, that no Fugaro Batch job's variables carry `FUGARO_BUDGET_TOKEN` (every line `false`). This FACT, not the design, is what §3.1's and §7.1's audience sentences are then worded from.
+FACT: the object's size and first byte (`01`); the two `grep -c` counts (`0`, `0`); that nothing is under `runs/`; the job's env count of `FUGARO_BUDGET_TOKEN` (`0`); and **U2 as found**: whether the execution record shows the override at all, and if so the **length** of its value (43 is the key) — never the value; and, on an installation that runs the compute backend (none of this release does), that no Fugaro Batch job's variables carry `FUGARO_BUDGET_TOKEN` (every line `false` — with no such job the loop prints nothing, which is not this FACT). This FACT, not the design, is what §3.1's and §7.1's audience sentences are then worded from.
 
 ### 4. What the audit log carries (design step 4)
 
@@ -4091,10 +4119,12 @@ FACT: whether the RunJob entry for `RUN2`'s launch carries the marker's name, an
 
 ### 5. A wrong key refuses (design step 5)
 
-A second execution of the same run with a key you draw now (a sandbox-only override). Its object is step 2's, sealed under step 2's key, so it must not open:
+A second execution of the same run with a key you draw now (a sandbox-only override). Its object is step 2's, sealed under step 2's key, so it must not open.
+
+The key is 32 random bytes as one unpadded base64url string — the form the launcher's marker carries (`BackendFromEnv`; 43 characters) — drawn here and never written down. It is `openssl` and not `basenc`: `basenc` is GNU coreutils and stock macOS has none, while `openssl rand` is what draws the bytes anyway, so `openssl base64 -A` (one line, no wrap) with the alphabet mapped is the same encoding on both. The two `KEY=` lines below are the same pipeline, for the same reason.
 
 ```bash
-WRONG=$(openssl rand 32 | basenc --base64url | tr -d '=\n')   # a fresh 43-character key, never written down
+WRONG=$(openssl rand 32 | openssl base64 -A | tr '+/' '-_' | tr -d '=')   # a fresh 43-character key, never written down
 gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
   --update-env-vars="FUGARO_RUN=${SLUG:?}/${RUN2:?},FUGARO_BUDGET_TOKEN=${WRONG:?}" ; unset WRONG
 ```
@@ -4108,7 +4138,7 @@ printf 'not a sealed token' > "$CHK60/plain.txt"
 gcloud storage cp "$CHK60/plain.txt" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token.plain-probe" --project="${P:?}"
 gcloud storage cp "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" "$CHK60/object.keep" --project="${P:?}"
 gcloud storage cp "$CHK60/plain.txt" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" --project="${P:?}"
-KEY=$(openssl rand 32 | basenc --base64url | tr -d '=\n')
+KEY=$(openssl rand 32 | openssl base64 -A | tr '+/' '-_' | tr -d '=')
 gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
   --update-env-vars="FUGARO_RUN=${SLUG:?}/${RUN2:?},FUGARO_BUDGET_TOKEN=${KEY:?}" ; unset KEY
 gcloud storage cp "$CHK60/object.keep" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" --project="${P:?}"   # put it back
@@ -4131,12 +4161,14 @@ FACT: the delete is refused (403), and the read succeeds with the same size as s
 
 ### 8. The grants the move changed, and the ones it did not (design step 8)
 
+**This is the one step that is installation-wide rather than per-job**: it reads the bucket's whole policy — the launchers' binding, and the `tokens/` grant of every job of the project, not only `SANDBOX_JOB`'s. Steps 3 to 7 and 9 are per-job: each names one job (`SANDBOX_JOB`, the one step 3 learnt) and its FACT is about that job's own grant, override, audit entry or refusal. Steps 1 and 2 are per-run: step 2's run is what everything below reads.
+
 ```bash
 gcloud storage buckets get-iam-policy "gs://${SANDBOX_BUCKET:?}" --project="${P:?}" --format=json > "$CHK60/bucket-policy.after.json"
 jq -r '.bindings[] | select(.condition) | [.role, .condition.title, .condition.expression] | @tsv' "$CHK60/bucket-policy.after.json"
 ```
 
-FACT: the launchers' binding is `roles/storage.objectUser`, title `fugaro-launchers-runs-tokens`, expression exactly `gcp.LauncherBucketCondition`'s (`runs/` **or** `tokens/` of this bucket, nothing else); the sandbox job's account holds `roles/storage.objectViewer` titled `fugaro-tokens-<account id>` on exactly `tokens/<its slug>/`; and its `objectUser` condition on `runs/`, `cache/`, `locks/` is byte-identical to `bucket-policy.before.json`'s (the `apply` replaced the launchers' binding, so it is **not** unchanged — record the old and the new).
+FACT: the launchers' binding is `roles/storage.objectUser`, title `fugaro-launchers-runs-tokens`, expression exactly `gcp.LauncherBucketCondition`'s (`runs/` **or** `tokens/` of this bucket, nothing else); step 3's job account holds `roles/storage.objectViewer` on `tokens/`, in the shape its kind has — the repository's own job: title `fugaro-tokens-<account id>` on exactly `tokens/<its slug>/` (`gcp.TokenBucketCondition`); the shared project job: title `fugaro-project-tokens-<account id>` on the whole `tokens/` (`gcp.ProjectTokenBucketCondition`, `internal/backend/gcp/names.go`) — read-only, with no create, delete or update; and its `objectUser` condition on `runs/`, `cache/`, `locks/` is byte-identical to `bucket-policy.before.json`'s (the `apply` replaced the launchers' binding, so it is **not** unchanged — record the old and the new).
 
 ### 9. A sideways replay refuses, and what that does and does not prove (design step 9)
 
@@ -4148,7 +4180,7 @@ RUN9=$(jq -r .run_id "$CHK60/run9.json"); echo "RUN9=${RUN9:?}" >> "$CHK60/vars.
 # with a fresh key; then put RUN9's object back.
 gcloud storage cp "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN9:?}/budget-token" "$CHK60/run9.keep" --project="${P:?}"
 gcloud storage cp "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN9:?}/budget-token" --project="${P:?}"
-KEY=$(openssl rand 32 | basenc --base64url | tr -d '=\n')
+KEY=$(openssl rand 32 | openssl base64 -A | tr '+/' '-_' | tr -d '=')
 gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
   --update-env-vars="FUGARO_RUN=${SLUG:?}/${RUN9:?},FUGARO_BUDGET_TOKEN=${KEY:?}" ; unset KEY
 gcloud storage cp "$CHK60/run9.keep" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN9:?}/budget-token" --project="${P:?}"

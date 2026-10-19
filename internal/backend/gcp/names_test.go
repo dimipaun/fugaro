@@ -314,6 +314,13 @@ func TestDisplayNamesAndConditions(t *testing.T) {
 		{LauncherBucketConditionTitle, "fugaro-launchers-runs-tokens"},
 		{LauncherBucketCondition("fugaro-runs-proj-1234"),
 			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/") || resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/")`},
+		// The launchers' grant as every release before 0.9.0 wrote it: what a
+		// reader must recognise as that grant's old form rather than as a
+		// stranger's condition (internal/infra's RunsBucketFindings), and the
+		// bytes no release writes any more.
+		{LegacyLauncherBucketConditionTitle, "fugaro-launchers-runs"},
+		{LegacyLauncherBucketCondition("fugaro-runs-proj-1234"),
+			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/")`},
 		{TokenBucketConditionTitle("fugaro-x-12345678"), "fugaro-tokens-fugaro-x-12345678"},
 		{TokenBucketCondition("b", "s"), `resource.name.startsWith("projects/_/buckets/b/objects/tokens/s/")`},
 		// The project job's pair (plan task 3.2 step 2): the widened objectUser
@@ -326,15 +333,27 @@ func TestDisplayNamesAndConditions(t *testing.T) {
 		{ProjectTokenBucketCondition("fugaro-runs-proj-1234"),
 			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/")`},
 		{ProjectTokenBucketConditionTitle("fugaro-x-12345678"), "fugaro-project-tokens-fugaro-x-12345678"},
-		// The two title prefixes the plan reader matches on
+		// The three title prefixes the plan reader matches on
 		// (internal/infra/tf) are these, and a project job's title must not
 		// read as a per-repository job's: the prefix of one is not a prefix of
 		// the other's titles.
 		{BucketConditionTitlePrefix, "fugaro-"},
+		{TokenBucketConditionTitlePrefix, "fugaro-tokens-"},
 		{ProjectTokenBucketConditionTitlePrefix, "fugaro-project-tokens-"},
 	} {
 		if c.got != c.want {
 			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+	// The plan reader takes a tokens/ expression for a repository's job grant
+	// only under the title built from the member
+	// (internal/infra/tf's jobAccountGrant), so the per-repository title and
+	// the project job's must not be readable as each other: a title built with
+	// one prefix never is a title built with the other.
+	for _, id := range []string{"fugaro-x-12345678", "fugaro-p-standard-git-0ca96e64"} {
+		if got, other := TokenBucketConditionTitle(id), ProjectTokenBucketConditionTitle(id); got == other ||
+			strings.HasPrefix(got, ProjectTokenBucketConditionTitlePrefix) || strings.HasPrefix(other, TokenBucketConditionTitlePrefix) {
+			t.Errorf("the per-repository and project tokens/ titles are not told apart: %q vs %q", got, other)
 		}
 	}
 }
@@ -366,6 +385,26 @@ func TestLauncherBucketConditionRejectsBadBucketNames(t *testing.T) {
 	// A bucket name of only the allowed characters never panics.
 	if got := LauncherBucketCondition("fugaro-runs-proj-1234"); got == "" {
 		t.Error("a valid bucket name panicked")
+	}
+	// The old form embeds the bucket the same way, so it takes the same guard.
+	for _, bad := range []string{`fugaro-runs-proj-1234"`, "fugaro runs proj", ""} {
+		t.Run("legacy "+bad, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("LegacyLauncherBucketCondition(%q) did not panic", bad)
+				}
+			}()
+			LegacyLauncherBucketCondition(bad)
+		})
+	}
+	// The old form is not the new one (the new expression *starts* with the
+	// old clause — it is that clause plus tokens/ — so the two are told apart
+	// by the whole string and by the title, which is what every reader
+	// compares): a reader that confused them would accept the runs/-only
+	// write as the widened grant, the failure this pair exists to name.
+	b := "fugaro-runs-proj-1234"
+	if got, want := LegacyLauncherBucketCondition(b), LauncherBucketCondition(b); got == want || LegacyLauncherBucketConditionTitle == LauncherBucketConditionTitle {
+		t.Errorf("the launchers' old form and its replacement are not told apart: %q vs %q, titles %q vs %q", got, want, LegacyLauncherBucketConditionTitle, LauncherBucketConditionTitle)
 	}
 }
 

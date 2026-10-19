@@ -80,25 +80,49 @@ func decodeAccountBlock(raw json.RawMessage) (map[string]Account, error) {
 		if err := checkNoDuplicateNames("accounts."+name, members); err != nil {
 			return nil, fmt.Errorf("projectpolicy: %w", err)
 		}
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(entries[name], &fields); err == nil {
-			for _, member := range memberNames(fields) {
-				known := spelledMember(accountMembers, member)
-				if known == member {
-					continue
-				}
-				if known == "" {
-					// Unreachable through Decode: the strict decode above
-					// refuses a name no member answers to. Kept so this
-					// function holds on its own too.
-					return nil, fmt.Errorf("projectpolicy: accounts.%s: unknown field %q", name, member)
-				}
-				return nil, fmt.Errorf("projectpolicy: accounts.%s.%s: an account entry's members are spelled as the policy spells them — write %s. A name that differs only in case is read by the decoder and not by this document's own checks, so the list it names would be the one the decoder read", name, member, known)
-			}
+		if err := checkWrittenAccountFields(name, entries[name]); err != nil {
+			return nil, err
 		}
 		out[name] = acct
 	}
 	return out, nil
+}
+
+// checkWrittenAccountFields applies the account rule that reads the written
+// document rather than the decoded value: the spelling of an entry's members.
+// It is decodeAccountBlock's twin of checkWrittenProfileFields, in the same
+// shape and for the same reason — a name that differs only in case is matched
+// by encoding/json and by nothing else here, so a misspelt allow_repos leaves
+// the nil slice, and what a run then holds is an account whose list of
+// repositories is empty while the node appears to state it.
+//
+// An entry this function cannot read as an object is an error, exactly as it is
+// in checkWrittenProfileFields, and never a check that quietly does not run: a
+// spelling check skipped for the entry it was written for is the check a
+// case-folded or misspelt member walks past, which is the whole failure the
+// check exists to stop. Through Decode the error is unreachable — the strict
+// decode above refuses anything that is not an object first — and it is
+// returned anyway, because a check that depends on another one running first is
+// a check a later change to that one can silently disable.
+func checkWrittenAccountFields(name string, raw json.RawMessage) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return fmt.Errorf("projectpolicy: accounts.%s: %w", name, err)
+	}
+	for _, member := range memberNames(fields) {
+		known := spelledMember(accountMembers, member)
+		if known == member {
+			continue
+		}
+		if known == "" {
+			// Unreachable through Decode: the strict decode above refuses a
+			// name no member answers to. Kept so this function holds on its
+			// own too.
+			return fmt.Errorf("projectpolicy: accounts.%s: unknown field %q", name, member)
+		}
+		return fmt.Errorf("projectpolicy: accounts.%s.%s: an account entry's members are spelled as the policy spells them — write %s. A name that differs only in case is read by the decoder and not by this document's own checks, so the list it names would be the one the decoder read", name, member, known)
+	}
+	return nil
 }
 
 // validAccounts checks the accounts block, entry by entry: each key an account

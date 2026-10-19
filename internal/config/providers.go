@@ -568,6 +568,75 @@ func conventionUsable(name string) bool {
 	return !reservedSecretName(c) && !HarnessOAuthSecret(c)
 }
 
+// CheckWorkflowProviderSecrets refuses a workflow secret whose name belongs to
+// a configured provider's key. It is both halves of what
+// infra.SecretMounts refuses when a job is built, in the same order, because
+// the two names are two different collisions — and the second is the one
+// docs/design/project-secrets.md §3 names as needing exactly this pair of
+// documents, "a provider's .Secret is an operator-chosen, open-ended string
+// config.Validate ... has no way to know about — only SecretMounts, which has
+// both w.Secrets and lc.Providers in scope, can catch that one":
+//
+//   - the provider's own secret (ProviderBySecret): a workflow declaring
+//     `ds-key` while the local config stores deepseek's key under that name
+//     would mount the owner's provider credential into the job as the
+//     workflow's own variable, which is the provider key leaving the one place
+//     it is stored and used.
+//   - the conventional name of a provider's key (ReservedProviderSecret):
+//     <entry>-api-key belongs to that provider whatever its .secret is written
+//     as today, so a value a workflow stored under it would be read as the
+//     provider's credential the day the key is renamed to the convention — the
+//     rename would hand the provider a credential somebody else wrote.
+//
+// The order matters and is SecretMounts's: a name that IS a provider's secret
+// takes the first branch (a name stored on convention takes both, and "this is
+// provider X's key" is the sharper truth about it). Both are refusals rather
+// than warnings because `fugaro secrets set` stores a value under neither
+// (secrets.go's own two branches, the same order), so a workflow that declared
+// one would either mount the owner's key or mount a name that can have no
+// version.
+//
+// It is Validate's own rule for the other reserved names
+// (workflows.<name>.secrets[i].name, the same path and the same sentence
+// shape), and it lives here rather than in Validate for one reason: both
+// collisions are relative to the owner's providers, which are in the local
+// config and never in a fugaro.yaml — Validate(c *Config) has no table to
+// judge a name against, and the callers that hold both (fugaro validate, and
+// the job spec's own SecretMounts) call this.
+//
+// The refusal names the provider and the name, and never a value: a workflow
+// secret's Name is a name, but the same field is a place a value has been
+// typed before (CheckSecretName's rule).
+func CheckWorkflowProviderSecrets(c *Config, providers map[string]ModelProvider) []Problem {
+	var ps []Problem
+	if len(providers) == 0 {
+		return nil
+	}
+	for _, name := range sortedKeys(c.Workflows) {
+		for i, s := range c.Workflows[name].Secrets {
+			path := fmt.Sprintf("workflows.%s.secrets[%d].name", showKey(name), i)
+			if p, ok := ProviderBySecret(providers, s.Name); ok {
+				ps = append(ps, Problem{
+					Path: path,
+					Message: fmt.Sprintf("%s is the secret of model provider %s in the project's local config: a provider's key is the owner's, stored and mounted by that config alone (fugaro secrets set stores it there and nowhere else), so a workflow declaring it would mount the owner's provider credential into the job as a variable of its own. Name the workflow's own secret something else",
+						showKey(s.Name), showKey(p)),
+				})
+				continue
+			}
+			p, ok := ReservedProviderSecret(providers, s.Name)
+			if !ok {
+				continue
+			}
+			ps = append(ps, Problem{
+				Path: path,
+				Message: fmt.Sprintf("%s is reserved for model provider %s's key: the convention names a provider's key after its entry in the local config (%s), and that name belongs to that provider whatever its .secret is written as today, so a value stored under it would become the provider's credential the day the key is renamed to the convention. Name the workflow's own secret something else",
+					showKey(s.Name), showKey(p), showKey(ProviderSecretConvention(p))),
+			})
+		}
+	}
+	return ps
+}
+
 // ProviderSecretWarnings are the providers whose key is stored under a name
 // the convention does not give it, one Problem per provider, in name order.
 // They are warnings and never refusals (the owner's ruling of 2026-10-18):

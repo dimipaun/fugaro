@@ -208,11 +208,12 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// processEnv is the environment of every git call: the process's, then
-// Env, without the variables in StripEnv.
-// Environ is the environment of every git call on r.
+// Environ is the environment of every git call on r: the process's, then Env,
+// without the variables StripEnv names — and, whatever that list says, without
+// the provider keys and BudgetTokenEnv, which processEnv strips itself.
 func (r *Repo) Environ() []string { return r.processEnv() }
 
+// processEnv is the environment of every git call: the process's, then Env.
 func (r *Repo) processEnv() []string {
 	env := append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), r.Env...)
 	// A provider key (FUGARO_PROVIDER_KEY_*) is the gateway's alone, and the

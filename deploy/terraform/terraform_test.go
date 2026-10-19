@@ -18,6 +18,63 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
+// TestProjectJobTftestTitlesAreTheOnesInternalInfraWrites: the project job's
+// tftest supplies the two IAM condition titles as input variables and asserts
+// the module passes them through, so a title internal/infra never writes is
+// nothing but consistent with itself. The 2026-10-19 review found exactly that
+// there: the bucket condition's title read "fugaro-project-job-runs", a string
+// that occurs nowhere else in the repository, while internal/infra writes
+// gcp.BucketConditionTitle(saID) = "fugaro-" + saID (the golden tfvars carry
+// "fugaro-fugaro-p-standard-git-0ca96e64",
+// internal/infra/testdata/installation-budget-job.tfvars.json) and
+// internal/infra/tf's own plan review requires title ==
+// BucketConditionTitlePrefix + <account id>, so a plan carrying the literal
+// would have been rejected by it. Each title is derived here instead, from the
+// account id of the block it sits in, through the two functions internal/infra
+// builds them with.
+func TestProjectJobTftestTitlesAreTheOnesInternalInfraWrites(t *testing.T) {
+	const path = "gcp/roots/installation/tests/project_job.tftest.hcl"
+	data, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	text := string(data)
+	// An assignment, not a comparison: the same file asserts on
+	// google_service_account.job.account_id == "..." and on a condition's own
+	// title == "...", and those are the module's values read back, not the
+	// variables this test is about.
+	reAccount := regexp.MustCompile(`account_id\s*=\s*"([^"]+)"`)
+	reBucketTitle := regexp.MustCompile(`bucket_condition\s*=\s*\{[^}]*?title\s*=\s*"([^"]+)"`)
+	reTokenTitle := regexp.MustCompile(`token_condition\s*=\s*\{[^}]*?title\s*=\s*"([^"]+)"`)
+
+	accounts := reAccount.FindAllStringSubmatchIndex(text, -1)
+	if len(accounts) == 0 {
+		t.Fatalf("%s declares no job account: the test file this checks is gone or reworded", path)
+	}
+	for n, a := range accounts {
+		// Each block's own account id, its titles following it and the next
+		// block's account id the boundary.
+		end := len(text)
+		if n+1 < len(accounts) {
+			end = accounts[n+1][0]
+		}
+		sec := text[a[0]:end]
+		id := text[a[2]:a[3]]
+		bucket := reBucketTitle.FindStringSubmatch(sec)
+		token := reTokenTitle.FindStringSubmatch(sec)
+		if bucket == nil || token == nil {
+			t.Errorf("%s: the block whose account id is %q declares no bucket_condition/token_condition title of its own (bucket %v, token %v): this test pairs each account with the titles that follow it, so a reworded block must not leave it pairing the wrong two", path, id, bucket, token)
+			continue
+		}
+		if want := gcp.BucketConditionTitle(id); bucket[1] != want {
+			t.Errorf("%s: the block whose account id is %q gives its bucket condition the title %q, want %q (gcp.BucketConditionTitle, the title internal/infra writes into the tfvars and its plan review requires): a plan carrying the other would be rejected by internal/infra/tf/cover.go, and nothing else in the repository spells that string", path, id, bucket[1], want)
+		}
+		if want := gcp.ProjectTokenBucketConditionTitle(id); token[1] != want {
+			t.Errorf("%s: the block whose account id is %q gives its tokens/ condition the title %q, want %q (gcp.ProjectTokenBucketConditionTitle)", path, id, token[1], want)
+		}
+	}
+}
+
 // The embedded tree is what fugaro init writes into its workdir, so every
 // root, module and lock file it needs must be in it. Each task that adds a
 // root or module adds its paths here.
@@ -57,6 +114,11 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/repo/.terraform.lock.hcl",
 		"gcp/roots/repo/tests/repo.tftest.hcl",
 		"gcp/roots/repo/tests/testdata/bitbucket-oauth.tfvars.json",
+		// The shared project job's plan test (design project-centric §4.1,
+		// plan tasks 3.2 and 3.5), in the installation root's own test
+		// directory beside installation.tftest.hcl: what a task that adds a
+		// root's test file owes this list.
+		"gcp/roots/installation/tests/project_job.tftest.hcl",
 		"gcp/roots/repo/tests/testdata/github-vertex.tfvars.json",
 		"gcp/modules/installation/history.tf",
 		"gcp/modules/firebase/versions.tf",

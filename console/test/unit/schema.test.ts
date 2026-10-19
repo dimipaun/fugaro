@@ -34,9 +34,11 @@ import { describe, expect, it } from 'vitest'
 import { UNAVAILABLE_MARK, formatReading, readNumber } from '../../src/shared/availability'
 import {
   DEGRADED_KEYS,
+  FINISHED_KEYS,
   LIVE_KEYS,
   RECORD_KEYS,
   REPO_KEYS,
+  RUN_KEYS,
   LIVE_MARKERS,
   NON_TEXT_STRING_KEYS,
   WIRE_TEXT_CLASSES,
@@ -77,6 +79,17 @@ const first: JSONDoc = documents[0] ?? {}
  */
 const RUNVIEW_SOURCE = readFileSync(
   fileURLToPath(new URL('../../../internal/runview/runview.go', import.meta.url)),
+  'utf8',
+)
+
+/** WATCH_SOURCE is `internal/watch/json.go`, read the same way and for the same
+ * reason: `RUN_KEYS` and `FINISHED_KEYS` -- the two lists the Live screen's own
+ * feed is decoded against -- were unexported and pinned against nothing, so
+ * 0.9.0's five new keys on `JSONRun`/`JSONFinished` went missing from both and
+ * only a hand-read of the structs could notice. They are read off the structs
+ * now, exactly as `RECORD_KEYS` is. */
+const WATCH_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../internal/watch/json.go', import.meta.url)),
   'utf8',
 )
 
@@ -256,6 +269,10 @@ const FULL_ROW: JSONDoc = Object.freeze({
   halt: { by: 'redacted@example.invalid', at: '2026-10-15T11:00:00Z', reason: 'budget kill <project>' },
   batch: '2026-10-15',
   requested_by: 'redacted@example.invalid',
+  // Who started the run, as its own `launch.json` recorded it (0.9.0). The
+  // key the struct's pin caught `RECORD_KEYS` missing: it sits between
+  // `requested_by` and `pr_url`, and a real `runs ls --json` row carries it.
+  launched_by: 'redacted@example.invalid',
   pr_url: 'https://example.invalid/r-4c25cf20/r-f1aa9214/pull/412',
   execution: 'fugaro-20261015-120000-aa01',
   log_url: 'https://example.invalid/logs/20261015-120000-aa01',
@@ -314,6 +331,70 @@ const DEGRADED_REAL: JSONDoc = Object.freeze({
   degraded: true,
   notice: 'no budget backend: showing run records only',
 })
+
+/** FULL_LIVE_RUN is a `JSONRun` as `watch --json` writes one: **every** key the
+ * struct can write (`internal/watch/json.go`), 0.9.0's five among them. The
+ * committed fixture predates those five, so a document built from it alone
+ * cannot catch a `RUN_KEYS` that is missing them -- which is how the Live
+ * screen's own feed came to be refused whole, while this suite stayed green.
+ * This row is `first`'s own first run plus the keys the recording predates. */
+const FULL_LIVE_RUN: JSONDoc = Object.freeze({
+  run: '20261015-120000-aa01',
+  slug: 'slug-6a7c7d06',
+  repo: 'r-4c25cf20/r-f1aa9214',
+  title: 'wire the console to the live feed',
+  stage: 'implement',
+  round: '2',
+  verify: 'pending',
+  models: 'claude-sonnet-4-5-20250929 / claude-opus-4-1',
+  recipe: 'console-text-path',
+  auth: 'oauth',
+  notional: true,
+  spent_usd: 12.5,
+  age_seconds: 1761,
+  health: 'lost',
+  deadline: 'ok',
+  halted: 'budget kill fixture-sandbox',
+  queued: false,
+  stuck: false,
+  workflow: 'web',
+  requested_by: 'redacted@example.invalid',
+  // 0.9.0: the Cloud Run job the run is in, the (profile, provider, account)
+  // its name was computed from, and who launched it (task 3.5; `launched_by`).
+  job: 'fugaro-proj-web',
+  profile: 'web',
+  provider: 'github',
+  account: 'redacted@example.invalid',
+  launched_by: 'redacted@example.invalid',
+})
+
+/** FULL_FINISHED_RUN is a `JSONFinished` as `watch --json` writes one: every key
+ * of that struct, 0.9.0's five among them -- a reader that follows a run out of
+ * `runs[]` into `finished[]` lands on this shape. */
+const FULL_FINISHED_RUN: JSONDoc = Object.freeze({
+  run: '20261015-113000-aa02',
+  slug: 'slug-6a7c7d06',
+  repo: 'r-4c25cf20/r-f1aa9214',
+  title: 'rotate the fixture tokens',
+  status: 'succeeded',
+  outcome: 'ready',
+  failed: false,
+  pr_url: 'https://example.invalid/r-4c25cf20/r-f1aa9214/pull/411',
+  pr_number: 411,
+  age_seconds: 3600,
+  job: 'fugaro-proj-web',
+  profile: 'web',
+  provider: 'github',
+  account: 'redacted@example.invalid',
+  launched_by: 'redacted@example.invalid',
+})
+
+/** LIVE_REAL is the committed fixture's first document carrying those two rows:
+ * a live document with every key `JSONRun` and `JSONFinished` can write, which
+ * is the document a 0.9.0 CLI actually writes and this suite had none of. */
+const LIVE_REAL: JSONDoc = Object.freeze(
+  patched(patched(first, ['runs'], [FULL_LIVE_RUN]), ['finished'], [FULL_FINISHED_RUN]),
+)
 
 describe('both document shapes decode', () => {
   it('decodes every document of the committed fixture', () => {
@@ -394,6 +475,52 @@ describe('both document shapes decode', () => {
     // The optional keys it does not read are accepted rather than refused.
     expect(row?.workflow).toBe('web')
     expect(row?.prUrl).toBe('https://example.invalid/r-4c25cf20/r-f1aa9214/pull/412')
+  })
+
+  it('decodes a live document carrying every key `JSONRun` and `JSONFinished` can write', () => {
+    // The same finding, on the shape the console actually consumes: `runs[]`,
+    // `finished[]` and `ready[]` are closed too, and 0.9.0's five new keys on
+    // both structs were in neither list, so a real `watch --json` document was
+    // refused whole -- the Live screen's only feed, drawn as the skew state.
+    const result = decodeDocument(LIVE_REAL, 'a live document')
+    expect(result.ok, result.ok ? '' : result.skew.because).toBe(true)
+    if (!result.ok || result.value.shape !== 'live') return
+    expect(result.value.runs[0]?.run).toBe('20261015-120000-aa01')
+    expect(result.value.runs[0]?.requestedBy).toBe('redacted@example.invalid')
+    expect(result.value.finished[0]?.run).toBe('20261015-113000-aa02')
+    expect(result.value.finished[0]?.prNumber).toBe(411)
+  })
+
+  it('lists every key of `JSONRun` and `JSONFinished`, the Live screen\'s own shapes', () => {
+    // Pinned against the structs, as `RECORD_KEYS` and `REPO_KEYS` are. These
+    // two were unexported and pinned against nothing, which is how they drifted:
+    // 0.9.0 added `job`, `profile`, `provider`, `account` and `launched_by` to
+    // both structs (`internal/watch/json.go`) and neither list had them. No
+    // test noticed, because the committed fixture is a recording from before the
+    // fields -- so the console was green while refusing every 0.9.0 document.
+    for (const [name, list] of [
+      ['JSONRun', RUN_KEYS],
+      ['JSONFinished', FINISHED_KEYS],
+    ] as const) {
+      const fromTheStruct = structTags(WATCH_SOURCE, name).map((tag) => tag.key)
+      expect([...list].sort(), name).toEqual([...fromTheStruct].sort())
+      expect(list.length, name).toBe(fromTheStruct.length)
+      // The five keys this pin exists for, named: a struct that lost one would
+      // otherwise make the comparison agree with a list that lost it too.
+      for (const found of ['job', 'profile', 'provider', 'account', 'launched_by']) {
+        expect(fromTheStruct, `${name} carries ${found}`).toContain(found)
+      }
+    }
+    // And the lists are closed like every other shape here: a key neither struct
+    // writes is a refusal on each of them, not a row with a field nobody read.
+    for (const [list, path] of [
+      ['runs', ['runs', 0, 'rogue']],
+      ['finished', ['finished', 0, 'rogue']],
+    ] as const) {
+      const refusal = refusalFor(patched(LIVE_REAL, path, 1))
+      expect(refusal.name, list).toBe('unknown-key')
+      expect(refusal.field, list).toBe(`${list}[0].rogue`)
+    }
   })
 
   it('lists every key of `runview.Row`, and refuses one the struct cannot write', () => {
@@ -799,7 +926,7 @@ describe('every wire string is classified', () => {
       by: 'fixture-operator',
       at: '2026-10-15T12:00:00Z',
       reason: 'budget kill fixture-sandbox',
-    }), patched(first, ['queued_note'], 'the bucket was read a minute ago')]
+    }), patched(first, ['queued_note'], 'the bucket was read a minute ago'), LIVE_REAL]
     for (const document of all) {
       expect(unclassified(document), JSON.stringify(stringLeaves(document).map((l) => l.path))).toEqual([])
     }
@@ -820,6 +947,12 @@ describe('every wire string is classified', () => {
     expect(unclassified(patched(first, ['queued_note'], 'a note'))).toEqual([])
     // Every key of a realistic `runview.Row` is classified too.
     expect(unclassified(DEGRADED_REAL)).toEqual([])
+    // And every key of a realistic `JSONRun`/`JSONFinished`: 0.9.0's `job`,
+    // `profile`, `provider`, `account` and `launched_by` are in no document of
+    // the corpus, so without this row the map could claim to be total over the
+    // wire while missing exactly the keys a 0.9.0 CLI writes.
+    expect(stringLeaves(LIVE_REAL).map((leaf) => leaf.key)).toContain('launched_by')
+    expect(unclassified(LIVE_REAL)).toEqual([])
   })
 
   it('reports a key it has no class for, which is what makes the walk a test', () => {
@@ -837,6 +970,15 @@ describe('every wire string is classified', () => {
     expect(wireTextClass('repo')).toBe('repository')
     expect(wireTextClass('branch')).toBe('branch')
     expect(wireTextClass('requested_by')).toBe('person')
+    // 0.9.0's five keys on the live run shapes: `launched_by` and `account` are
+    // the same kind of value as `requested_by` above -- a launcher's and a run's
+    // own recorded identities, drawn as people -- and `job`, `profile` and
+    // `provider` are identifiers a policy wrote, drawn as labels.
+    expect(wireTextClass('launched_by')).toBe('person')
+    expect(wireTextClass('account')).toBe('person')
+    expect(wireTextClass('job')).toBe('label')
+    expect(wireTextClass('profile')).toBe('label')
+    expect(wireTextClass('provider')).toBe('label')
     expect(wireTextClass('pr_url')).toBe('url')
     expect(wireTextClass('round')).toBe('label')
     expect(wireTextClass('round')).not.toBe('sentence')
