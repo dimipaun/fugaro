@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -125,13 +126,22 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 	if err := profileAdmissionRefusal(p, profile, provider, spec.Repo); err != nil {
 		return nil, err
 	}
+	// The run's own credential, re-resolved over the layer the run itself
+	// carries rather than read off co — the checkout's own, leniently made
+	// resolution, which a repeated run's stored layer can legitimately
+	// disagree with — and a credential that cannot be resolved is refused
+	// rather than guessed at (projectJobAgentAuth).
+	auth, err := e.projectJobAgentAuth(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
 	// The account axis of the job this launch targets, which is also the gate
 	// on the Claude credential a shared job holds (plan task 3, design §4.4):
 	// an OAuth run lands on the job of the account its own credential selects —
 	// and on no other — while every other kind of run targets the profile's
 	// no-account job, and whichever job that is, the token its container holds
 	// must be one whose own policy list covers this repository.
-	account, err := projectJobAccountFor(p, profile, pr, co.Agent.Auth, spec.OAuthToken, provider, spec.Repo)
+	account, err := projectJobAccountFor(p, profile, pr, auth, spec.OAuthToken, provider, spec.Repo)
 	if err != nil {
 		return nil, err
 	}
@@ -399,4 +409,168 @@ func checkProjectJobAccountCovers(p *projectpolicy.Policy, profile, provider, ac
 	}
 	return userErr("%s. This repository is not on it: accounts.%s.allow_repos is %s, and %s is not one of them. The block is derived at publish from %s in the project's local config, so the fix is the project's owner's: add this repository there and publish the policy again, or run it on a profile whose account covers it. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called",
 		held, tokenAccount, strings.Join(acct.AllowRepos, ", "), canonical, source)
+}
+
+// projectJobAgentAuth is the agent.auth a launch on a shared project job runs
+// under: the fugaro.yaml at spec.Ref — the ref the run checks out, read out of
+// the launcher's checkout's object database — resolved over spec.ProjectLayer,
+// the project layer the task carries into task.json, through
+// runner.ResolveConfig, the runner's own function, so the two documents are
+// composed exactly as the run composes them.
+//
+// It is deliberately not the checkout's own resolution (co.Agent.Auth), which
+// launchProjectJobFor has in hand and used to read here. Three things make that
+// one a different document from the run's:
+//
+//   - It is the *launcher's* resolution, made leniently (decision L16: launches
+//     are strict, the in-checkout readers are not), so a project layer the
+//     launcher could not read leaves it with the file's own values and a
+//     problem rather than the layer's defaults — the values a run does not use.
+//   - It may stand on a cached copy of the layer, up to seven days old (L13),
+//     while the run's task carries the layer that was resolved for real.
+//   - It is resolved *before* createTask adopts a repeated --run-id's stored
+//     project layer over the freshly resolved one (run.go's
+//     adoptStoredProjectLayer and createTask: a layer republished between the
+//     first launch and the repeat makes the two differ, deliberately, because
+//     the stored task is what the job reads). A task stored while the layer
+//     still said `agent.auth: oauth`, repeated after the layer stopped saying
+//     it, carries an OAuth layer into a run while the launcher's own resolution
+//     now says api-key — a run whose credential selects an account's job
+//     launched onto the no-account job (projectJobAccountFor), the launch the
+//     account gate exists to refuse, and one this check would let through if
+//     it read co.
+//
+// Both documents are the run's. The layer is: the task carries the bytes the
+// run applies. And so is the fugaro.yaml, read at the ref the run checks out —
+// spec.Ref, out of this checkout's own object database
+// (checkoutFugaroYAMLAtRef), never the working tree. The run resolves that
+// file after cloning spec.Ref (runner.go's blobless checkout of origin/
+// spec.Ref) and it resolves the layer over it, so a launcher that judged its
+// own working tree instead would judge a document the run never reads: a
+// checkout left on another branch, or carrying an uncommitted edit, can say
+// api-key where the ref the run clones says oauth, and the launch this check
+// exists to refuse would go through. Even the plain-ref fallback is a fact
+// about the repository rather than about the working tree.
+//
+// Only the auth is judged on the ref: launchProjectJobFor still takes the
+// workflow, the checkout mode and the profile from the working tree's
+// resolution (co), and a difference there fails closed in the run (the
+// runner's job-profile and job-binding checks refuse it, or the run lacks the
+// credential) rather than launching on another account.
+//
+// Nothing is fetched to make the read: a fetch is a network write into a
+// repository this command does not own. A checkout that does not hold the ref
+// at all is therefore refused with the message naming it (an operator can
+// fetch or check it out), never launched on a guess at another document.
+//
+// A resolution that cannot be made is refused rather than guessed at: an
+// unknown credential is one the job may not be able to serve, and the run would
+// halt inside Cloud Run, past the claim and the budget token, instead of here.
+//
+// The resolution itself is the runner's own — runner.ResolveConfig, the
+// exported core of (*run).resolveConfig, called with the deployment's project
+// exactly as the runner calls it (internal/cli/consumers_test.go states the
+// convention: every consumer resolves the same bytes through that function,
+// never through a copy of its logic). Two of its decisions are the ones this
+// check has to share:
+//
+//   - it parses the carried layer against the *deployment's* project alone and
+//     then computes Applied, the layer's project and gcp_project against the
+//     file's own; a layer that belongs to another project, or to another GCP
+//     project, is not an error there — it simply does not apply, and the file
+//     resolves alone (out.Applied false, the case the runner logs as "project
+//     layer not applied"). Reading the file's own pair as the anchor instead
+//     would refuse such a launch here with "the project layer its task carries
+//     is invalid" although the run would start perfectly well, and would refuse
+//     it on a document the run is not affected by.
+//   - an invalid layer is LayerErr, and the credential is then unknown rather
+//     than the file's: the run itself fails bootstrap on it
+//     (resolveConfig), so a launch that resolved past it would start a run that
+//     cannot begin.
+func (e *cloudEnv) projectJobAgentAuth(ctx context.Context, spec *task.Spec) (string, error) {
+	root := checkoutRoot(ctx, spec.Repo)
+	if root == "" {
+		// launchProjectJobFor only reaches this from a launch that has a
+		// checkout of its own (checkoutConfig returned a config), so this is
+		// that checkout having gone away between the two reads.
+		return "", checkProjectJobAuthUnknown(spec.Repo, "the repository's own checkout could not be found")
+	}
+	data, err := readFugaroYAMLAtRef(ctx, root, spec.Ref)
+	if err != nil {
+		return "", checkProjectJobAuthUnknown(spec.Repo, "the fugaro.yaml at the ref the run checks out ("+oneLineCLI(spec.Ref)+") could not be read out of this checkout ("+oneLineCLI(err.Error())+")")
+	}
+	out := runner.ResolveConfig(data, spec.ProjectLayer, e.lc.Name)
+	if out.LayerErr != nil {
+		return "", checkProjectJobAuthUnknown(spec.Repo, oneLineCLI(out.LayerErr.Error()))
+	}
+	if len(out.Problems) > 0 {
+		return "", checkProjectJobAuthUnknown(spec.Repo, "its fugaro.yaml and the project layer its task carries do not resolve ("+oneLineCLI(layerProblemsText(out.Problems))+")")
+	}
+	return out.Cfg.Agent.Auth, nil
+}
+
+// readFugaroYAMLAtRef is checkoutFugaroYAMLAtRef; a test seam, like
+// readCheckoutFugaroYAML, so a read failure's exact text can be controlled
+// without a repository.
+var readFugaroYAMLAtRef = checkoutFugaroYAMLAtRef
+
+// checkoutFugaroYAMLAtRef reads ref's fugaro.yaml out of the checkout's own
+// object database — git cat-file, never the network and never the working
+// tree — or returns an error when this checkout does not hold that ref.
+//
+// ref is tried as the remote-tracking ref first, refs/remotes/origin/<ref>,
+// because that is the ref the run itself checks out: the runner clones the
+// repository blobless and does CheckoutNewBranch over origin/<ref>
+// (internal/runner/runner.go), so origin/<ref> as this checkout last fetched
+// it is the ref whose fugaro.yaml the run resolves agent.auth from. The plain
+// ref is the fallback for a checkout that has the branch but no
+// remote-tracking ref of it (a freshly made repository, or a branch never
+// fetched): git resolves it through refs/heads, refs/tags and a commit id in
+// turn. Nothing is fetched here — a fetch is a network write into a repository
+// this command does not own — so a ref this checkout does not hold is an
+// error rather than a guess at another document.
+func checkoutFugaroYAMLAtRef(ctx context.Context, root, ref string) ([]byte, error) {
+	if ref == "" {
+		return nil, errors.New("the launch names no ref")
+	}
+	at := ""
+	for _, candidate := range []string{"refs/remotes/origin/" + ref, ref} {
+		sha, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", "--end-of-options", candidate+"^{commit}")
+		if err == nil && sha != "" {
+			at = candidate
+			break
+		}
+	}
+	if at == "" {
+		return nil, fmt.Errorf("this checkout holds no %s ref (fetch it, or check it out)", ref)
+	}
+	data, err := gitCmd(ctx, root, "cat-file", "blob", at+":fugaro.yaml").Output()
+	if err != nil {
+		return nil, fmt.Errorf("%s has no fugaro.yaml at it", at)
+	}
+	return data, nil
+}
+
+// checkProjectJobAuthUnknown refuses a launch onto a shared project job whose
+// own Claude credential the launcher cannot resolve, with the same guarantee
+// the account gate's refusals make (checkProjectJobAccount): nothing of the
+// launch happened.
+//
+// Refusing rather than launching is the conservative direction, and it is the
+// only one that keeps the account gate's promise: a launch whose agent.auth
+// cannot be told may be an OAuth one, whose account decides which job it lands
+// on and which token that job holds (projectJobAccountFor), so a guess could
+// start it on a job holding another account's token, or none. The launch is where the job is decided (launchProjectJobFor),
+// so this runs before the claim, before the budget token and before any Cloud
+// Run call — an unknown credential costs a refusal here, not a run that stops
+// inside a job that cannot hold it.
+//
+// The fix named is the two ways out an operator has: repair the document the
+// message names (a fugaro.yaml that does not resolve, a layer that no longer
+// parses), or take the workflow off the shared-job path — a workflow that is
+// not `checkout: clone` keeps the per-repository job it has always had
+// (design §4.4).
+func checkProjectJobAuthUnknown(repo, why string) error {
+	return userErr("cannot tell which Claude credential a run of %s would use on the shared project job its workflow selects, so nothing was launched: %s. A run resolves agent.auth from the fugaro.yaml at the ref it checks out, over the project layer its own task carries (project_layer in task.json), and this launch is judged on that same layer with that same fugaro.yaml — read at that ref out of your checkout's git objects, never out of the working tree — rather than on a guess: a shared job holds the credential its profile was deployed with — the account segment of its own name — so a launch whose credential cannot be resolved is refused instead of started on a job that may not be able to serve it. Fix what the message names, or keep this repository on its own per-repository job (a workflow that is not `checkout: clone` keeps the job it has always had). Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called",
+		repo, why)
 }

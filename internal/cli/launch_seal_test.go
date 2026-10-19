@@ -332,6 +332,68 @@ func TestTheSealGateRefusesAnImageThatPredatesTheSeal(t *testing.T) {
 	})
 }
 
+// TestTheSealGateJudgesACloneJobImage is sealGate's `checkout: clone` branch:
+// such a job is never built, so it has no build record to judge — the image a
+// clone launch runs is the installation's own base_images.base ref, and that
+// ref is the judge (checkCloneImageSince). The branch is reached by a launch
+// whose workflow is `checkout: clone`, which no other test drives, so the gate
+// is called directly with the spec such a launch carries.
+//
+// Two things the branch must get right: a release older than the seal is
+// refused (the fall of the seal is the key in the marker, which that runner
+// echoes into the run's record), and a development base is warned about *once*,
+// by the seal's own warning, which carries the stake and the cure — falling
+// through to checkCloneImageSince as well would print two warnings saying one
+// thing.
+//
+// Mutation (run, restored): return nil from the clone branch before
+// checkCloneImageSince — "a release before the seal" launches.
+// Mutation (run, restored): let a development base fall through to
+// checkCloneImageSince as well as the seal's warning — "a development base"
+// warns twice and fails on the count.
+func TestTheSealGateJudgesACloneJobImage(t *testing.T) {
+	previousRelease := "ghcr.io/dimipaun/fugaro-base:0.8.1"
+	for _, tc := range []struct {
+		name, base string
+		refused    string
+		warns      string
+	}{
+		{"a release before the seal", previousRelease, "release 0.8.1", ""},
+		{"the seal's release", releaseSeal, "", ""},
+		{"a development base", devSealBase, "", "is not a release base image"},
+		{"no base image", "", "is not set", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			if tc.base != "" {
+				f.appendConfig(t, "base_images: {base: "+tc.base+"}\n")
+			}
+			env := memEnv(t, f.cloudFixture)
+			spec := raceSpec(t, env)
+			var warn bytes.Buffer
+			err := env.sealGate(context.Background(), appSlug, spec, "web", true, &warn)
+			if tc.refused == "" {
+				if err != nil {
+					t.Fatalf("err = %v, want no refusal (stderr %q)", err, warn.String())
+				}
+				if tc.warns != "" && !strings.Contains(warn.String(), tc.warns) {
+					t.Fatalf("stderr = %q, want a warning that says %q", warn.String(), tc.warns)
+				}
+				if n := strings.Count(warn.String(), "not a release base image"); n > 1 {
+					t.Fatalf("stderr = %q: the base image is said not to be a release %d times, want once", warn.String(), n)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.refused) {
+				t.Fatalf("err = %v, want a refusal saying %q", err, tc.refused)
+			}
+			if warn.Len() != 0 {
+				t.Fatalf("a refused launch warned too (%q): the gate refuses or warns, never both", warn.String())
+			}
+		})
+	}
+}
+
 // devSealBase is a development base image (not a release): its age is the
 // build record's built_at, the only thing the seal gate can tell from it.
 const devSealBase = "europe-docker.pkg.dev/p/r/fugaro-base:dev-abc"
@@ -375,5 +437,61 @@ func TestSealRedactRemovesBothSpellings(t *testing.T) {
 	}
 	if sealRedact(nil, key) != nil {
 		t.Fatal("a nil error is not nil after redaction")
+	}
+}
+
+// envRecorder keeps the two environment lists apart: a backend that wraps the
+// fixture's own and records what the launcher handed it, then launches.
+type envRecorder struct {
+	backend.Backend
+	env, secretEnv []string
+}
+
+func (b *envRecorder) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.ExecutionRef, error) {
+	b.env, b.secretEnv = spec.Env, spec.SecretEnv
+	return b.Backend.Launch(ctx, spec)
+}
+
+// TestTheSealKeyTravelsAsASecretEnvEntry: the marker is a SECRET entry
+// (backend.LaunchSpec.SecretEnv, D15), never a plain one, and that is the whole
+// carrier's safety. A plain entry is part of the execution's ordinary
+// environment: it is visible in the job's definition and in every listing of
+// it, and no formatter redacts it — while a secret entry is carried only where
+// the design accepts its audience, and a backend that cannot carry one where
+// only the execution and the override's own audience read it refuses the
+// launch (the Batch backend's guard) rather than put the key in a job
+// definition. internal/backend/backend.go's LaunchSpec comments say exactly
+// that (Env is plain and carries no secret; the marker is SecretEnv's), and the
+// fact is pinned here, where a launcher that followed the old comment — the
+// marker in Env — would break it.
+//
+// Mutation (verified, run and restored): set lspec.Env instead of
+// lspec.SecretEnv in internal/cli/run.go's launch — this fails on the plain
+// list carrying the marker.
+func TestTheSealKeyTravelsAsASecretEnvEntry(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	env := memEnv(t, f.cloudFixture)
+	rec := &envRecorder{Backend: env.be}
+	env.be = rec
+	spec := raceSpec(t, env)
+	// launchRun, not the command: the command builds its own backend from the
+	// fixture, so only a direct launch hands the spec to a recorder.
+	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.env) != 0 {
+		t.Errorf("the launch put %v in the plain Env list: the budget marker's value is the launch's seal key, and a plain entry is readable through the job's definition by every launcher (backend.LaunchSpec.SecretEnv)", rec.env)
+	}
+	var key string
+	for _, kv := range rec.secretEnv {
+		if v, ok := strings.CutPrefix(kv, runner.BudgetTokenEnv+"="); ok {
+			key = v
+		}
+	}
+	if key == "" {
+		t.Fatalf("the seal key is not among the launch's secret entries: %v", rec.secretEnv)
+	}
+	if _, err := token.ParseKey(key); err != nil {
+		t.Fatalf("the marker's secret value is not a seal key: %v", err)
 	}
 }

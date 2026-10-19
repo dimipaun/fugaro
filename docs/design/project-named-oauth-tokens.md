@@ -1,6 +1,11 @@
 # Project-level named Claude OAuth tokens
 
-Status: design, 2026-10-18, **RULED** (release 0.9.0). Step 1 of the feature the owner ruled on
+Status: **built, release 0.9.0 (unreleased; the released CLI is 0.8.6)**, 2026-10-19. Was: design,
+2026-10-18, **RULED** (release 0.9.0). The three implementation tasks are merged — the policy's
+`accounts` block and the profile field (policy version 3), the account jobs and their static mount,
+and the two gates with doctor and SECURITY.md — and the operator guide is
+[../project-claude-accounts.md](../project-claude-accounts.md). No live cloud check was run for
+any of it (§7's U3 and U5 are still the owner's). Step 1 of the feature the owner ruled on
 2026-10-18: an audit of what the project (shared-job) path does with a Claude OAuth credential
 today, and the design that lifts the refusal. The owner answered every decision in §8 on
 2026-10-18; none is open. The plan is
@@ -152,12 +157,16 @@ accounts:
   acme-team:
     allow_repos: ["github/acme/app", "github/acme/tools"]   # which repositories may use this token
   ops:
-    allow_repos: ["github/acme/infra"]
+    allow_repos: ["github/acme/app", "github/acme/tools", "github/acme/infra"]
 profiles:
   standard:
     provider: github
     claude_accounts: [acme-team, ops]   # NEW: one job per (profile, provider, account)
-    allow_repos: ["github/acme/app", "github/acme/tools", "github/acme/infra"]
+    allow_repos: ["github/acme/app", "github/acme/tools"]   # every account above covers every entry
+  infra:
+    provider: github
+    claude_accounts: [ops]
+    allow_repos: ["github/acme/infra"]
 ```
 
 - **Several accounts per profile, one job each** (D4). The deployer builds one job per (profile,

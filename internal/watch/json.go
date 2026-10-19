@@ -83,11 +83,16 @@ type JSONRun struct {
 	// what says which job a row came from, and the job's name does not spell
 	// it out. The three are absent for a run on a per-repository job (its
 	// name is not a project job the published policy defines) and for a run
-	// whose launch.json the reader does not have; Account is also absent for
-	// an API-key job, which in phase 3 is every project job. Job is
-	// launch.json's, which launchers and shared-job runs can write: display
-	// text, never an authority. The grouping stays by repository, from the
-	// row's own slug.
+	// whose launch.json the reader does not have. Account is present only for
+	// a job of a named Claude account: a profile that lists claude_accounts
+	// has one job per account beside its no-account job
+	// (config.ProjectJobAccounts), and an absent Account means the name's
+	// account axis is empty — the profile's no-account job, which holds the
+	// default account's token when the profile lists "default" and no token
+	// otherwise (config.ProjectJobTokenAccount) — never "this job mounts no
+	// credential". Job is launch.json's, which launchers and shared-job runs
+	// can write: display text, never an authority. The grouping stays by
+	// repository, from the row's own slug.
 	Job      string `json:"job,omitempty"`
 	Profile  string `json:"profile,omitempty"`
 	Provider string `json:"provider,omitempty"`

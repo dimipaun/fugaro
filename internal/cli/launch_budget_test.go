@@ -156,6 +156,64 @@ func TestRetryMintsFresh(t *testing.T) {
 	}
 }
 
+// TestAMintThatCannotDeleteOrWriteStopsTheLaunch is mintBudgetToken's two
+// failure paths after the mint itself succeeded — the launcher's last chances
+// to say no, and the two the review found untested:
+//
+//   - the earlier attempt's object cannot be removed (the delete answers 503;
+//     a delete that fails leaves the earlier key able to open an object a
+//     second execution could be handed, D17). The launch is refused and
+//     nothing of this attempt is written.
+//   - the new object cannot be *confirmed* written: the create stored it and
+//     then answered 503 — the response was lost. The launch is refused, and
+//     the launcher removes what that create left (dropBudgetToken), because an
+//     object nobody is going to be handed a key for is an object a later
+//     reader could mistake for this run's identity.
+//
+// Both must return no key: the marker is the only delivery, and a refusal that
+// had already handed the key on would be a key in front of an execution that
+// was never launched.
+//
+// Mutation (run, restored): ignore token.DeleteObject's error in
+// mintBudgetToken — "a delete that fails" launches.
+// Mutation (run, restored): drop the e.dropBudgetToken call from the put
+// failure arm — "a create whose response was lost" leaves the sealed object in
+// the bucket.
+func TestAMintThatCannotDeleteOrWriteStopsTheLaunch(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name, want string
+		fail       func(*gcpfake.GCS)
+	}{
+		{"a delete that fails", "deleting the token object failed", func(g *gcpfake.GCS) { g.FailObjectDeletes(1) }},
+		{"a create whose response was lost", "writing the token object failed", func(g *gcpfake.GCS) { g.FailObjectStoresAfterWrite(1) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			gcs := gcpfake.NewGCS(t)
+			env := envOn(t, f.cloudFixture, gcs.Bucket(t, "runs"))
+			spec := raceSpec(t, env)
+			name := token.ObjectKey(appSlug, spec.RunID)
+			tc.fail(gcs)
+			key, err := env.mintBudgetToken(ctx, appSlug, spec, nil)
+			if err == nil || key != nil {
+				t.Fatalf("key = %v, err = %v: the launch minted anyway", key, err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want it to say %q", err, tc.want)
+			}
+			// The mint itself happened: the failure is the one after it, not
+			// a decision not to mint.
+			if n := len(f.iam.SignCalls()); n != 1 {
+				t.Errorf("sign calls = %d, want the one mint the failure followed", n)
+			}
+			if _, _, rerr := env.bucket.Read(ctx, name); !errors.Is(rerr, blobx.ErrNotExist) {
+				t.Errorf("the failed mint left %s in the bucket: %v", name, rerr)
+			}
+		})
+	}
+}
+
 // A config that names a budget mode and no database is not refused for that
 // alone (the review of this PR reconciled the launcher with internal/infra's
 // readiness rule, "nothing is blocked until a policy exists"): the mode is the

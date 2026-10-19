@@ -296,6 +296,14 @@ func TestDecodeRefusesAProfileSecretThatIsAValueOrNotAName(t *testing.T) {
 // names a claude_accounts block happens to define (config.ClaudeOAuthTokenPrefix
 // says why: a name merely shaped like one must be refused wherever a secret
 // name is accepted).
+// The rule is enforced on the read path as well as at publish and at deploy:
+// validProfiles runs inside the decode (policy.go's Decode), so a node
+// written by an older CLI, or by hand, is refused by every reader of it — the
+// launcher, the runner and `fugaro project policy show` — and not only by the
+// command that published it.
+//
+// The mutation is dropping the isClaudeOAuthSecret call from validProfiles:
+// every secrets list below is accepted, on the read path included.
 func TestDecodeRefusesAProfileMountingAClaudeOAuthToken(t *testing.T) {
 	secrets := func(list string) string {
 		return `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":` + list + `}}`
@@ -391,6 +399,48 @@ func TestDecodeRefusesAProfileNameWrittenTwice(t *testing.T) {
 	}
 	if len(p.Profiles) != 2 {
 		t.Errorf("profiles = %v, want both", p.ProfileNames())
+	}
+}
+
+// TestDecodeRefusesAProfileMemberWrittenTwice: a profile whose member is
+// written twice folds onto one field, and encoding/json keeps the last value it
+// reads — so a second "provider" picks the provider axis of the job the launch
+// selects, and a second "secrets" is the list the job mounts. Both are decided
+// by the order the operator happened to write the keys in, which is exactly the
+// silence TestDecodeRefusesAProfileNameWrittenTwice and the top-level and
+// providers-block checks refuse beside this one; checkWrittenProfileFields
+// applies the same rule to a profile's own members, and its missing call is the
+// mutation (before it, every document below decodes to a working profile).
+func TestDecodeRefusesAProfileMemberWrittenTwice(t *testing.T) {
+	const full = `"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"`
+	for _, tc := range []struct{ what, doc string }{
+		// The provider axis of the job's name, and the profile the run holds the
+		// repository to: written twice, the second one wins.
+		{"provider", `{"standard":{` + full + `,"provider":"bitbucket"}}`},
+		// The secrets the shared job mounts: written twice, the job mounts the
+		// second list and the first operator's list is silently dropped.
+		{"secrets", `{"standard":{` + full + `,"secrets":["deploy-key"],"secrets":["db-password"]}}`},
+		// The admission list of a secret-bearing profile: written twice, the
+		// list that admits fewer repositories is not the one that applies.
+		{"allow_repos", `{"standard":{` + full + `,"allow_repos":["github/acme/app"],"allow_repos":["github/acme/*"]}}`},
+		{"cpu", `{"standard":{` + full + `,"cpu":4}}`},
+	} {
+		_, err := decodeProfiles(t, tc.doc)
+		if err == nil {
+			t.Errorf("a profile with %s written twice was accepted", tc.what)
+			continue
+		}
+		for _, want := range []string{"profiles.standard", "twice"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal for %s does not say %q: %v", tc.what, want, err)
+			}
+		}
+	}
+	// A profile that writes each of its members once still decodes, so the rule
+	// claims the repeat and not the block (and not a member's presence beside
+	// another).
+	if _, err := decodeProfiles(t, `{"standard":{`+full+`,"secrets":["deploy-key"],"allow_repos":["github/acme/app"]}}`); err != nil {
+		t.Errorf("a profile with each member once was refused: %v", err)
 	}
 }
 

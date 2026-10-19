@@ -844,6 +844,14 @@ func TestInventoryIgnoresWhatTheInstallationItselfCreated(t *testing.T) {
 			listed("//storage.googleapis.com/"+ManagedStateBucketName(gcpProject), "storage.googleapis.com/Bucket")},
 		{"the default Firestore database Firebase provisions",
 			listed("//firestore.googleapis.com/projects/"+gcpProject+"/databases/(default)", "firestore.googleapis.com/Database")},
+		{"the Firebase project infra.AddFirebase adds to every created project",
+			listed("//firebase.googleapis.com/projects/"+gcpProject, "firebase.googleapis.com/FirebaseProject")},
+		{"the creation fact the owner's run writes into the runs bucket",
+			listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-"+gcpProject+"/objects/fugaro/managed.json",
+				"storage.googleapis.com/Object")},
+		{"the owner's allow-delete list, beside the creation fact",
+			listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-"+gcpProject+"/objects/fugaro/allow-delete.json",
+				"storage.googleapis.com/Object")},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			a := &fakeAssets{assets: []Asset{tc.asset, listed(runsName, "storage.googleapis.com/Bucket")}}
@@ -862,6 +870,11 @@ func TestInventoryIgnoresWhatTheInstallationItselfCreated(t *testing.T) {
 		listed("//storage.googleapis.com/"+InstallationsStateBucket(gcpProject), "storage.googleapis.com/Bucket"),
 		listed("//storage.googleapis.com/"+ManagedStateBucketName(gcpProject), "storage.googleapis.com/Bucket"),
 		listed("//firestore.googleapis.com/projects/"+gcpProject+"/databases/(default)", "firestore.googleapis.com/Database"),
+		listed("//firebase.googleapis.com/projects/"+gcpProject, "firebase.googleapis.com/FirebaseProject"),
+		listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-"+gcpProject+"/objects/fugaro/managed.json",
+			"storage.googleapis.com/Object"),
+		listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-"+gcpProject+"/objects/fugaro/allow-delete.json",
+			"storage.googleapis.com/Object"),
 	} {
 		if none.installationCreated(asset) {
 			t.Errorf("with no project id %s was claimed as the installation's own", asset.Name)
@@ -895,6 +908,25 @@ func TestInventoryStillForeignWhatTheInstallationDidNotCreate(t *testing.T) {
 			listed("//firestore.googleapis.com/projects/other-proj/databases/(default)", "firestore.googleapis.com/Database")},
 		{"a database of another type in this project",
 			listed("//firebasedatabase.googleapis.com/projects/"+gcpProject+"/locations/us-east5/instances/rtdb", "firebasedatabase.googleapis.com/Instance")},
+		{"another project's Firebase project",
+			listed("//firebase.googleapis.com/projects/other-proj", "firebase.googleapis.com/FirebaseProject")},
+		{"a Firebase project nested under this one's path",
+			listed("//firebase.googleapis.com/projects/"+gcpProject+"/extra/"+gcpProject, "firebase.googleapis.com/FirebaseProject")},
+		{"a creation fact in another project's runs bucket",
+			listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-other-proj/objects/fugaro/managed.json",
+				"storage.googleapis.com/Object")},
+		{"an allow-delete list in another project's runs bucket",
+			listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-other-proj/objects/fugaro/allow-delete.json",
+				"storage.googleapis.com/Object")},
+		{"another object under fugaro/ in this project's runs bucket",
+			listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-"+gcpProject+"/objects/fugaro/notes.json",
+				"storage.googleapis.com/Object")},
+		{"a run's own record in this project's runs bucket",
+			listed("//storage.googleapis.com/projects/_/buckets/fugaro-runs-"+gcpProject+"/objects/runs/2026-10-19/abc.json",
+				"storage.googleapis.com/Object")},
+		{"a creation fact in a bucket of this project that is not the runs bucket",
+			listed("//storage.googleapis.com/projects/_/buckets/"+InstallationsStateBucket(gcpProject)+"/objects/fugaro/managed.json",
+				"storage.googleapis.com/Object")},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			a := &fakeAssets{assets: []Asset{tc.asset, listed(runsName, "storage.googleapis.com/Bucket")}}

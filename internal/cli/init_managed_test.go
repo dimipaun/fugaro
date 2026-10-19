@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
 // The gate at the call site, which internal/infra/managed's own test cannot
@@ -104,6 +106,89 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		}
 		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; b != want {
 			t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, b, want)
+		}
+		// And the other half of the same fact, written by the same step
+		// (Task 3.0): the label on the project itself, which the read
+		// requires. Both, or the project is not managed at all.
+		if got := r.crm.Labels(newProj)[managed.ProjectLabelKey]; got != managed.ProjectLabelValue {
+			t.Errorf("%s on the created project %s = %q, want %q: the run that creates a project writes both halves of the fact", managed.ProjectLabelKey, newProj, got, managed.ProjectLabelValue)
+		}
+	})
+
+	// (c'') The label write refused: the project can be read and not written
+	// (no resourcemanager.projects.update — the shape every credential a run
+	// holds is in), so the object lands and the label does not. It is the one
+	// state where the two halves disagree, and what it must not do is report
+	// the project as marked: the read answers "not managed" for a project
+	// with the object and no label, so a run that said it marked one would be
+	// telling the operator that confirmations are skipped for a project they
+	// are not.
+	t.Run("--create-project with the label refused", func(t *testing.T) {
+		r := newProjectRig(t)
+		bucket := "fugaro-runs-" + newProj
+		r.gcs.AddProject(newProj, gcpfake.FirstCreatedProjectNumber)
+		r.gcs.AddBucket(bucket, gcpfake.FirstCreatedProjectNumber, managedBucketLabels)
+		roles := map[string]string{}
+		for _, r := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+			roles[r] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(r[:1]) + r[1:]
+		}
+		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+			"runs_bucket":               bucket,
+			"registry_host":             "us-east5-docker.pkg.dev/" + newProj,
+			"scheduler_service_account": "fugaro-scheduler@" + newProj + ".iam.gserviceaccount.com",
+			"role_ids":                  roles,
+		})}
+		r.save(t)
+		r.bill.AddAccount(billingAcc, true)
+		r.crm.DenyUpdate(newProj)
+		out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n"+initProjectName+"\n", "--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if _, ok := markerAt(t, r.gcs, bucket); !ok {
+			t.Fatalf("no %s in gs://%s: the object is written first and this run wrote it\n%s", managed.MarkerObject, bucket, out)
+		}
+		if got := r.crm.Labels(newProj)[managed.ProjectLabelKey]; got != "" {
+			t.Errorf("%s on %s = %q, want it unwritten: the API refused the update", managed.ProjectLabelKey, newProj, got)
+		}
+		if !strings.Contains(out, "not marked as managed") {
+			t.Errorf("the run did not say the project is unmarked, and the read answers \"not managed\" for it:\n%s", out)
+		}
+		if strings.Contains(out, "recorded that this run created project "+newProj) {
+			t.Errorf("the run reported a project marked when only half the fact was written:\n%s", out)
+		}
+		// And the state bucket is set up anyway: it is D77's, what an apply
+		// under the deployer needs, and markCreated is its only writer in the
+		// tree — a later run creates no project and returns before it. So a
+		// run that stopped at the refused label takes with it the one step
+		// that no command of ours can take later, and the paths a person is
+		// sent to for the half-written mark end in a managed apply.
+		state := managedmode.ManagedStateBucketName(newProj)
+		if r.gcs.Inserted(state) == nil {
+			t.Fatalf("the run that could not write the label created no gs://%s: a project no later run can make applyable\n%s", state, out)
+		}
+		member := "serviceAccount:" + managedmode.DeployerAccount(newProj)
+		var bound bool
+		for _, b := range r.gcs.BucketPolicy(state) {
+			if b.Role == managedmode.DeployerStateRole && slices.Contains(b.Members, member) {
+				bound = true
+			}
+		}
+		if !bound {
+			t.Errorf("%s is not bound to gs://%s: the state bucket step is the deployer's binding and nothing else does it (D75, Task 1.5): %v", member, state, r.gcs.BucketPolicy(state))
+		}
+		// The half-written mark's own account of itself: which owner-run
+		// commands complete it, and the one route that works for the fact a
+		// --managed creation writes. The warning this replaced gave both
+		// marks to the creating run alone ("written once, by the run that
+		// creates the project") and offered a command that refuses for a
+		// fact that already records an amount.
+		s := out
+		if !strings.Contains(s, "records no amount") || !strings.Contains(s, "already records one") {
+			t.Errorf("the unmarked warning does not split the two states the owner's commands answer to (a fact that records no amount, and one that does):\n%s", s)
+		}
+		if strings.Contains(s, "written once, by the run that creates the project") {
+			t.Errorf("the unmarked warning still gives both marks to the creating run alone, and the owner's own flag writes both:\n%s", s)
 		}
 	})
 
@@ -440,6 +525,9 @@ func noMarker(t *testing.T, g *gcpfake.GCS, bucket string) {
 func (r *initRig) managedRuns(t *testing.T, name, gcp string) {
 	t.Helper()
 	r.markedRuns(t, name, gcp)
+	// The project's own half of the fact (Task 3.0): a world with the object
+	// and no label is not managed, so a test that means "managed" needs both.
+	labelled(r.crm, gcp)
 	body := fmt.Sprintf(`{"version":1,"gcp_project":%q}`, gcp)
 	if err := r.gcs.Bucket(t, initRunsBucket).Bucket.WriteAll(context.Background(), managed.MarkerObject, []byte(body), nil); err != nil {
 		t.Fatal(err)

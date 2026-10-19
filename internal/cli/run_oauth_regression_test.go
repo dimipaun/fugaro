@@ -68,11 +68,13 @@ func TestLsNamedRunIsPendingNotError(t *testing.T) {
 	writeBuildRecord(t, f, otherSlug, "svc", release065)
 	variant := gcp.WorkflowVariant("svc", "acme-personal")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
-	// The run id is minted now rather than written out: `runs ls` lists the
-	// last `--since` (7d by default, runs.go), so a hard-coded id stops being
-	// listed a week after it was typed and this regression starts failing on
-	// the clock instead of on the code.
-	id := time.Now().UTC().Format("20060102-150405") + "-b2b2"
+	// The id carries today's date, not a fixed one: ls lists the last 7 days by
+	// default, so an id dated exactly seven days ago falls out of the window as
+	// soon as the clock passes the hour in it — from then on, permanently. This
+	// test read 0 runs that way from 2026-10-19T10:00Z on, and the full-suite
+	// run of PR #642's security round is what met it. runs_test.go's own ids
+	// carry today's date for the same reason (TestLsFollowsTheRecordsExecution).
+	id := time.Now().UTC().Format("20060102") + "-100000-b2b2"
 	if _, _, err := execute(t, "run", "--run-id", id, "--token", "acme-personal", "A task"); err != nil {
 		t.Fatal(err)
 	}

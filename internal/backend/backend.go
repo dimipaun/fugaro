@@ -82,10 +82,13 @@ type LaunchSpec struct {
 	Timeout time.Duration
 	// Env are extra "NAME=value" variables for this execution only, merged
 	// into the job's own environment (the Cloud Run v2 API merges override env
-	// into the job's; docs/design/project-centric.md §2.2). The launcher sets
-	// the budget marker here — whether it minted a token is a fact about this
-	// launch, not about the job's deploy-time environment, so it cannot come
-	// from init --repo (internal/runner's BudgetTokenEnv, plan R2-8(a)).
+	// into the job's; docs/design/project-centric.md §2.2). They are plain: a
+	// value here is readable in the job's definition and in every listing of it,
+	// so a value that is a secret goes in SecretEnv instead — the budget marker
+	// of a launch that minted is one (a fact about this launch, not about the
+	// job's deploy-time environment, so it cannot come from init --repo either
+	// way; internal/runner's BudgetTokenEnv, plan R2-8(a)). No launcher sets an
+	// entry here today.
 	Env []string
 	// SecretEnv are "NAME=value" variables like Env, for this execution only,
 	// whose value is a secret: today the one entry is the budget marker of a

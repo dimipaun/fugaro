@@ -13,6 +13,7 @@ import (
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 
+	inframanaged "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -313,13 +314,22 @@ func (in Inventory) foreign(listed []Asset) []Asset {
 // installationCreated is the third thing that is not foreign: a resource
 // Fugaro's own owner-run commands created and NO Terraform state accounts for.
 //
-// Why it is needed, and why it is not Accounted: the two kinds of resource the
+// Why it is needed, and why it is not Accounted: the resources the
 // installation makes without Terraform. Its own state buckets are created by
 // infra.CreateStateBucket (the installation's fugaro-tfstate-<gcp-project> and
 // D77's fugaro-managed-tfstate-<gcp-project>) and the managed creation's own
-// step, and the Firebase the project was created with is added by
-// infra.AddFirebase, which is an API call and no root's plan — the Firestore
-// default database Firebase provisions with it is in no state either. The
+// step, and the Firebase project is added by infra.AddFirebase, which is an
+// API call and no root's plan — the Firestore default database Firebase
+// provisions with it is in no state either.
+//
+// The Firebase project is the one a creating run always adds and a root only
+// sometimes declares: `fugaro init --create-project` adds Firebase to every
+// project it makes (init_project.go's addFirebase), while the Firebase ROOT —
+// which holds google_firebase_project, the resource a state would account for
+// — runs only under --firebase (init_stages.go). So a managed project created
+// without --firebase holds a Firebase project no state has ever seen, and an
+// inventory that did not name it here would read every such project as
+// foreign and keep the confirmations of every apply forever. The
 // whole-project read lists all of them, so without this the accounted side
 // could never cover them, every real managed project would fall back, and the
 // agent apply the budget gate opens would ask for a confirmation on every run
@@ -338,15 +348,34 @@ func (in Inventory) foreign(listed []Asset) []Asset {
 //     there is exactly one of each and an agent cannot make a second under
 //     that name; a bucket called fugaro-tfstate-<another id> is another
 //     project's and stays foreign.
+//   - the Firebase project AddFirebase added to this one,
+//     firebase.googleapis.com/FirebaseProject at "projects/<this id>". A
+//     Firebase project is named by the GCP project it belongs to, so there is
+//     exactly one of this project's; another project's is another project's
+//     and stays foreign. The path is compared whole, like the database's: a
+//     resource filed deeper under this project is not the project itself.
 //   - the DEFAULT Firestore database of this project,
 //     firestore.googleapis.com/Database at "projects/<this id>/databases/(default)".
 //     Any other database in the project is one somebody created and stays
 //     foreign.
+//   - the two objects the creating run writes into the runs bucket itself,
+//     storage.googleapis.com/Object at
+//     "projects/_/buckets/fugaro-runs-<this id>/objects/fugaro/managed.json"
+//     and ".../fugaro/allow-delete.json". They are Fugaro's own records and
+//     not a run's output: the marker is the creation fact
+//     (internal/infra/managed.MarkerObject, written by the run that created
+//     the project) and the list is the owner's own approval of the deletes
+//     (AllowDeleteObject). Both are named by key under the runs bucket this
+//     program derives from the project id — the same bucket
+//     internal/infra/managed reads them back from (its runsBucketName), which
+//     is what makes the name a fact about this project and not a guess. Every
+//     other object stays foreign, including every other key under fugaro/ and
+//     a run's own records under runs/.
 //
 // Anything else is foreign, and a project is single-purpose (D59) whatever
-// else it holds. What this cannot claim, because no name identifies it, is
-// listed where the check's own limits are: the objects a run writes into the
-// runs bucket, which is itself accounted for by the installation's state.
+// else it holds. What this still cannot claim, because no name identifies it,
+// is listed where the check's own limits are: the records a run writes into
+// the runs bucket, which is itself accounted for by the installation's state.
 func (in Inventory) installationCreated(a Asset) bool {
 	if in.GCPProject == "" {
 		return false
@@ -355,8 +384,17 @@ func (in Inventory) installationCreated(a Asset) bool {
 	case "storage.googleapis.com/Bucket":
 		name := lastSegment(a.Name)
 		return name == InstallationsStateBucket(in.GCPProject) || name == ManagedStateBucketName(in.GCPProject)
+	case "firebase.googleapis.com/FirebaseProject":
+		return assetPath(a.Name) == "projects/"+in.GCPProject
 	case "firestore.googleapis.com/Database":
 		return assetPath(a.Name) == "projects/"+in.GCPProject+"/databases/(default)"
+	case "storage.googleapis.com/Object":
+		root := "projects/_/buckets/fugaro-runs-" + in.GCPProject + "/objects/"
+		key, ok := strings.CutPrefix(assetPath(a.Name), root)
+		if !ok {
+			return false
+		}
+		return key == inframanaged.MarkerObject || key == inframanaged.AllowDeleteObject
 	}
 	return false
 }

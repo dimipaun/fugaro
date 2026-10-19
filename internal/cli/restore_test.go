@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -209,6 +210,7 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 	t.Run("read from the fact, and no state is read", func(t *testing.T) {
 		r := newInitRig(t)
 		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		labelled(r.crm, initProject)
 		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
 		r.stateBucket()
 		r.gcs.Put(initStateBucket, "fugaro/installation/default.tfstate", []byte(`{"serial":7}`))
@@ -247,6 +249,7 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 	t.Run("readable and managed: the flags win for the amount, and the fact is still read", func(t *testing.T) {
 		r := newInitRig(t)
 		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		labelled(r.crm, initProject)
 		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
 		lc, err := localcfg.Load(r.cfg)
 		if err != nil {
@@ -281,6 +284,7 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 				// The old project's own runs bucket, labelled, and no fact:
 				// an installation that was never managed.
 				r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+				labelled(r.crm, initProject)
 				lc, err := localcfg.Load(r.cfg)
 				if err != nil {
 					t.Fatal(err)
@@ -352,6 +356,7 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 		r := newInitRig(t)
 		// A version-1 fact: managed, from before Task 4.2, with no amount.
 		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		labelled(r.crm, initProject)
 		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":1,"gcp_project":"`+initProject+`"}`))
 		lc, err := localcfg.Load(r.cfg)
 		if err != nil {
@@ -380,6 +385,7 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 	t.Run("the billing account is required", func(t *testing.T) {
 		r := newInitRig(t)
 		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		labelled(r.crm, initProject)
 		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
 		lc, err := localcfg.Load(r.cfg)
 		if err != nil {
@@ -405,13 +411,15 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		lc := &localcfg.Config{
 			Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5",
 			RunsBucket: initRunsBucket, Bucket: "gs://" + initRunsBucket,
-			RegistryHost: "us-east5-docker.pkg.dev/" + initProject, LogView: initLogView,
+			Registry: "gcr.io/" + initProject, RegistryHost: "us-east5-docker.pkg.dev/" + initProject, LogView: initLogView,
 			Build:       localcfg.Build{ServiceAccount: "fugaro-build@" + initProject + ".iam.gserviceaccount.com", MachineType: "E2_HIGHCPU_8"},
 			Terraform:   localcfg.Terraform{StateBucket: initStateBucket, Launchers: []string{"user:test@example.com"}, Operators: []string{"user:test@example.com"}},
 			Budget:      &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
 			MaxParallel: 4,
 		}
-		next, left, err := restoreConfig(lc, restoreNewProj)
+		// The two arguments are the same config here; the region subtest below
+		// is the one where they differ.
+		next, left, err := restoreConfig(lc, lc, restoreNewProj)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -423,6 +431,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		}
 		for _, f := range []struct{ what, got string }{
 			{"bucket_url", next.Bucket},
+			{"registry", next.Registry},
 			{"registry_host", next.RegistryHost},
 			{"log_view", next.LogView},
 			{"build.service_account", next.Build.ServiceAccount},
@@ -451,6 +460,29 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		}
 	})
 
+	// The invocation's flags address the old project; they are not the
+	// installation's own settings. --region is applied to the selection
+	// (selectProject's announce → localcfg.Config.Override), and a moved config
+	// written from that copy would make a per-invocation override the
+	// installation's region on disk — and, because the creating path derives the
+	// new project's resources from the moved config, the new project's region
+	// too. The region that moves is the one the file writes.
+	t.Run("the invocation's --region does not become the installation's", func(t *testing.T) {
+		onDisk := &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5"}
+		selected := *onDisk
+		selected.Region = "us-central1" // what --region leaves behind
+		next, _, err := restoreConfig(&selected, onDisk, restoreNewProj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if next.Region != "us-east5" {
+			t.Errorf("the moved config's region is %q, want us-east5 (the file's): --region overrides the project config's for this invocation, and the restore is not a way to change the installation's region", next.Region)
+		}
+		if selected.Region != "us-central1" {
+			t.Errorf("the caller's selection now names %q: the move is a new value, not an edit in place", selected.Region)
+		}
+	})
+
 	t.Run("what the restore cannot place in the new project is refused by name", func(t *testing.T) {
 		for _, tc := range []struct {
 			what string
@@ -460,7 +492,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 			{"a state bucket of its own", &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, Terraform: localcfg.Terraform{StateBucket: "my-own-state"}}, "state_bucket"},
 			{"a runs bucket that is not the default", &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, RunsBucket: "somewhere-else"}, "runs_bucket"},
 		} {
-			_, _, err := restoreConfig(tc.lc, restoreNewProj)
+			_, _, err := restoreConfig(tc.lc, tc.lc, restoreNewProj)
 			if err == nil {
 				t.Errorf("%s was accepted", tc.what)
 				continue
@@ -498,7 +530,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 				"history": "us-east5-docker.pkg.dev/" + initProject + "/fugaro-ghcr/acme/fugaro-history:0.7.5@sha256:" + strings.Repeat("a", 64),
 			},
 		}
-		next, left, err := restoreConfig(lc, restoreNewProj)
+		next, left, err := restoreConfig(lc, lc, restoreNewProj)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -518,7 +550,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		// An entry of the operator's own — another registry entirely — names no
 		// project of this installation's and is kept as it is.
 		lc.BaseImages["base"] = "ghcr.io/acme/my-base:1"
-		next, left, err = restoreConfig(lc, restoreNewProj)
+		next, left, err = restoreConfig(lc, lc, restoreNewProj)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -543,7 +575,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 				"base":    "us-east5-docker.pkg.dev/" + initProject + "/fugaro-base/fugaro-base:0.7.5",
 				"history": "us-east5-docker.pkg.dev/other/fugaro-base/fugaro-history:0.7.5",
 			}}
-		next, left, err = restoreConfig(derived, restoreNewProj)
+		next, left, err = restoreConfig(derived, derived, restoreNewProj)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -555,6 +587,35 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		}
 		if joined := strings.Join(left, "\n"); !strings.Contains(joined, "base") || strings.Contains(joined, "history") {
 			t.Errorf("the kinds named as stranded are %v, want base alone", left)
+		}
+	})
+
+	// The stranded base images are judged on the file's config, not on the
+	// selection --region changed. With no registry_host recorded, the host is
+	// derived from the region (<region>-docker.pkg.dev/<gcp_project>), and the
+	// old installation's images are in the file's region: judging them on the
+	// selection's region would derive another host, find nothing under it, and
+	// carry the lost project's references into the moved config.
+	//
+	// Mutation (verified, run and restored): pass lc instead of onDisk to
+	// restoreBaseImages in restoreConfig — the old registry's entry is kept and
+	// nothing is named as stranded, and this subtest fails.
+	t.Run("the base images are judged in the file's region when --region is given", func(t *testing.T) {
+		onDisk := &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5",
+			BaseImages: map[string]string{
+				"base": "us-east5-docker.pkg.dev/" + initProject + "/fugaro-base/fugaro-base:0.7.5",
+			}}
+		selected := *onDisk
+		selected.Region = "us-central1" // what --region leaves behind
+		next, left, err := restoreConfig(&selected, onDisk, restoreNewProj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(next.BaseImages) != 0 {
+			t.Errorf("base_images = %v, want none: the entry is under the lost project's registry in the file's region (us-east5), whatever --region said", next.BaseImages)
+		}
+		if joined := strings.Join(left, "\n"); !strings.Contains(joined, "kinds: base") {
+			t.Errorf("the stranded base kind is not named: %v", left)
 		}
 	})
 
@@ -571,7 +632,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 				RTDBURL:         "https://" + initProject + "-default-rtdb.firebaseio.com",
 				FirebaseProject: initProject, FirebaseAPIKey: fixtureToken("apikey"), TokenSigner: "fugaro-token-signer@" + initProject + ".iam.gserviceaccount.com"},
 		}
-		next, left, err := restoreConfig(lc, restoreNewProj)
+		next, left, err := restoreConfig(lc, lc, restoreNewProj)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -687,9 +748,10 @@ func TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer(t *testing.T
 	if err := rr.create(t.Context(), &made); err != nil {
 		t.Fatalf("the creating path: %v\n%s", err, out.String())
 	}
-	// The creating run's own account, which verifyCreated binds to.
-	if made != (initCreation{Created: newProj, Marked: true}) {
-		t.Errorf("the creating run reported %+v, want it created %s, did not find it there, and wrote its fact", made, newProj)
+	// The creating run's own account, which verifyCreated binds to: both
+	// halves of the mark, so the project it created is managed (Task 3.0).
+	if made != (initCreation{Created: newProj, Fact: true, Marked: true}) {
+		t.Errorf("the creating run reported %+v, want it created %s, did not find it there, and wrote both halves of its mark", made, newProj)
 	}
 	if strings.Contains(out.String(), "left for you") {
 		t.Errorf("the creating path left a typed step for the user: it was not given the user's terminal\n%s", out.String())
@@ -1055,11 +1117,18 @@ func TestRestoreApplyCloudDropsTheOldProjectID(t *testing.T) {
 // confirm — and nothing is written when one of them fires.
 func TestRestorePlansTheConfigBeforeItAsks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "aurora.yaml")
-	const doc = "version: 1\nname: " + initProjectName + "\ngcp_project: " + initProject + "\nruns_bucket: somewhere-else\n"
+	const doc = "version: 1\nname: " + initProjectName + "\ngcp_project: " + initProject + "\nregion: us-east5\nruns_bucket: somewhere-else\n"
 	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	lc := &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, RunsBucket: "somewhere-else"}
+	// The selection is the file, parsed: planConfig parses rr.old with the same
+	// function selectProject's own load uses (localcfg.Load is Parse plus the
+	// read), so a fixture that writes one document and hand-builds the other
+	// tests a state no invocation reaches.
+	lc, err := localcfg.Parse([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
 	rr := &restoreRun{lc: lc, newID: restoreNewProj, path: path, old: mustRead(t, path)}
 	if err := rr.planConfig(); err == nil {
 		t.Fatal("a config whose runs bucket cannot move was planned")
@@ -1221,10 +1290,15 @@ func restoreCheckout(t *testing.T) (checkout, root string) {
 	return checkout, root
 }
 
-// restoreManagedOld makes the old project read as managed, with an amount.
+// restoreManagedOld makes the old project read as managed, with an amount:
+// both halves of the fact, the object in the runs bucket and the
+// fugaro_managed label on the project itself (Task 3.0), because the read
+// requires both and a world with one of them is a not-managed world.
 func restoreManagedOld(r *projectRig) {
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+	labelled(r.crm, initProject)
 	r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":2,"gcp_project":"`+initProject+`","budget":{"amount":7,"currency":"USD"}}`))
+	r.crm.SetLabels(initProject, map[string]string{managed.ProjectLabelKey: managed.ProjectLabelValue})
 }
 
 // ttyLines is a terminal's stdin as a program sees it: one Read returns at
@@ -1404,8 +1478,9 @@ func TestRestoreAFailedCreationPutsTheConfigBack(t *testing.T) {
 // path can succeed and still leave a project that is not managed — its
 // marker write is a warning, never a failure (markCreated). Here the new
 // project's runs bucket reports another project's number, so the marker is
-// refused; the restore must catch that before the checkout's line moves and
-// before the apply, and put the config back.
+// refused — neither half of the mark is written; the restore must catch that
+// before the checkout's line moves and before the apply, and put the config
+// back.
 func TestRestoreACreationThatEndsUnmarkedStopsBeforeTheCheckout(t *testing.T) {
 	r, _ := newRestoreRig(t)
 	restoreManagedOld(r)
@@ -1425,6 +1500,78 @@ func TestRestoreACreationThatEndsUnmarkedStopsBeforeTheCheckout(t *testing.T) {
 	}
 	if !bytes.Equal(mustRead(t, r.cfg), before) || !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
 		t.Error("an unmarked creation left the project config or the checkout moved")
+	}
+	// The creating run's own account of the state, which is the only place a
+	// person sees it at the time: neither half was written, and the owner's
+	// own flag is what writes both — not "an owner-run command", and not the
+	// creating run alone, which is what the warning said before this round
+	// and is false for a project whose run is over.
+	if !strings.Contains(out, "No later run of ours writes either half") {
+		t.Errorf("the unmarked creation does not say that no later run of ours writes the fact, leaving the owner with no way out:\n%s", out)
+	}
+	// And the state bucket step still ran: this function is its one writer in
+	// the tree, so a run that stopped at the marks takes it with it.
+	if r.gcs.Inserted(managedmode.ManagedStateBucketName(newProj)) == nil {
+		t.Errorf("the unmarked creation set up no gs://%s, which no later run can do:\n%s", managedmode.ManagedStateBucketName(newProj), out)
+	}
+}
+
+// TestRestoreAHalfMarkedCreationKeepsTheConfigAndItsWayToFinish: the mark is
+// two writes (Task 3.0), and the creating run wrote the first and not the
+// second — the runs bucket's creation fact landed and the project's
+// fugaro_managed label did not, because the credentials an init run holds
+// need not carry resourcemanager.projects.update.
+//
+// The project is this run's all the same: the create-only fact write is what
+// proves that, and it is on disk. So this is NOT putBack's case — "shut the
+// project down and retry with another NEW_PROJECT_ID" would orphan a project
+// one owner-run line away from being complete — and it is not the
+// budget-gate case either, whose message says the project is complete for
+// the apply. The config keeps naming the new project, the checkout does not
+// move, nothing reaches the apply, and the refusal says what is missing
+// (the label), that only the owner writes it, and where that one line is.
+func TestRestoreAHalfMarkedCreationKeepsTheConfigAndItsWayToFinish(t *testing.T) {
+	r, _ := newRestoreRig(t)
+	restoreManagedOld(r)
+	// The project can be read and its label cannot be written: exactly the
+	// shape of a credential holding resourcemanager.projects.get and not
+	// resourcemanager.projects.update.
+	r.crm.DenyUpdate(newProj)
+	calls := recordRestoreApply(t, r)
+	checkout, root := restoreCheckout(t)
+	before, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
+	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	if err == nil || !strings.Contains(err.Error(), "but not its fugaro_managed=true label") {
+		t.Fatalf("want the half mark to refuse and name the missing label, got %v\n%s", err, out)
+	}
+	if len(r.crm.Creates()) != 1 {
+		t.Errorf("%d creation(s), want 1: the case is a creation that ran and wrote one half of the mark", len(r.crm.Creates()))
+	}
+	if len(*calls) != 0 {
+		t.Errorf("a half-marked project reached the apply %d time(s)", len(*calls))
+	}
+	// The local config still names the new project: this run created it, and
+	// putting the config back is what would make the operator restart with
+	// another ID.
+	cfg := mustRead(t, r.cfg)
+	if !bytes.Contains(cfg, []byte(newProj)) {
+		t.Errorf("the project config was put back, so a retry would orphan %s:\n%s", newProj, cfg)
+	}
+	if bytes.Equal(cfg, before) {
+		t.Errorf("the project config was put back byte for byte:\n%s", cfg)
+	}
+	if !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
+		t.Error("a half-marked creation moved the checkout's gcp_project: line")
+	}
+	// The way out is named, and it is not a command in the refusal: the
+	// label's writer is the owner's, in their own terminal (Task 3.0 §5).
+	for _, want := range []string{"docs/gcp-setup.md", "fugaro managed apply", "gcloud projects delete"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %s: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "gcloud projects update") {
+		t.Errorf("the refusal names the label-writing command, which is the owner's to run: %v", err)
 	}
 }
 
@@ -1461,6 +1608,12 @@ func TestRestoreVerifiesTheCreatedProjectIsManaged(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r, lc := newRestoreRig(t)
 			r.crm.AddProject(newProj, int64(gcpfake.FirstCreatedProjectNumber))
+			// The creating run writes both halves of the fact (Task 3.0), so
+			// the new project is labelled the way such a run leaves it; the
+			// rows below that expect a refusal expect it for their own
+			// reason, and a project without the label would refuse them all
+			// with the same one.
+			labelled(r.crm, newProj)
 			if tc.fact != "" {
 				r.gcs.Put("fugaro-runs-"+newProj, managed.MarkerObject, []byte(tc.fact))
 			}
@@ -1630,6 +1783,19 @@ func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
 			if strings.Contains(err.Error(), "cannot add one") {
 				t.Errorf("the refusal says a budget cannot be added:\n%v", err)
 			}
+			// And it is scoped to the state it applies to (round-2 review, nit
+			// 3): the flag replaces a creation fact that records no amount, so
+			// the sentence offering it has to be about that fact, and the state
+			// this command's own --managed creation leaves — a version-2 fact
+			// that records an amount — has to be given the way out it has,
+			// which is not the flag. A message that offered the flag for both
+			// (the inherited one) would hand the owner a command that refuses.
+			if !regexp.MustCompile(`records none[^.]*fugaro managed flag ` + regexp.QuoteMeta(newProj) + ` --budget N`).MatchString(err.Error()) {
+				t.Errorf("the refusal does not scope the flag to a creation fact that records no amount:\n%v", err)
+			}
+			if want := "no command of ours rewrites one that does"; !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not say what applies to a fact that records an amount (want %q):\n%v", want, err)
+			}
 			if len(r.crm.Creates()) != 1 {
 				t.Errorf("%d creation(s), want 1", len(r.crm.Creates()))
 			}
@@ -1682,6 +1848,7 @@ func TestRestorePreflightRefusesEachBadInputWithoutASideEffect(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r, _ := newRestoreRig(t)
 			r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+			labelled(r.crm, initProject)
 			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":2,"gcp_project":"`+initProject+`","budget":{"amount":7,"currency":"USD"}}`))
 			checkout, root := restoreCheckout(t)
 			if tc.setup != nil {
@@ -1891,6 +2058,7 @@ func restoreBudgetOf(t *testing.T, r *initRig, o restoreOptions) (*managed.Budge
 func TestRestoreNotManagedReasonIsCut(t *testing.T) {
 	r := newInitRig(t)
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+	labelled(r.crm, initProject)
 	r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":1,"gcp_project":"`+strings.Repeat("a", 3900)+`"}`))
 	_, _, err := restoreBudgetOf(t, r, restoreOptions{billingAccount: billingAcc})
 	if err == nil || !strings.Contains(err.Error(), "is not managed") {
@@ -1915,6 +2083,7 @@ func TestRestoreRefusesAnInvalidOldBudget(t *testing.T) {
 		} {
 			r := newInitRig(t)
 			r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+			labelled(r.crm, initProject)
 			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
 			_, _, err := restoreBudgetOf(t, r, o)
 			if err == nil || !strings.Contains(err.Error(), "is invalid") || strings.Contains(err.Error(), "not managed") {
@@ -1936,6 +2105,7 @@ func TestRestoreSaysWhenTheFlagsDifferFromTheOldFact(t *testing.T) {
 	} {
 		r := newInitRig(t)
 		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		labelled(r.crm, initProject)
 		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":2,"gcp_project":"`+initProject+`","budget":{"amount":7,"currency":"USD"}}`))
 		b, errOut, err := restoreBudgetOf(t, r, tc.o)
 		if err != nil || b.Amount != tc.o.budget {

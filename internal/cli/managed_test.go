@@ -261,11 +261,17 @@ type managedWorldOpts struct {
 	noBucket     bool
 	bucketNumber uint64
 	noLabel      bool
-	object       []byte // nil: the right marker; use noObject for none
-	noObject     bool
-	refuseObject int // a status for the marker object's read, 0 for none
-	refuseGCS    int // a status for every storage call, 0 for none
-	refuseCRM    int // a status for every Resource Manager call, 0 for none
+	// projectLabels are the GCP project's own labels (Task 3.0), nil for the
+	// one the creating run writes: managed.ProjectLabelKey=ProjectLabelValue
+	// beside the fact. A row that sets it is a row about the project's half
+	// of the fact — its absence (the state of everything marked before Task
+	// 3.0) or a value that is not the one this build writes.
+	projectLabels map[string]string
+	object        []byte // nil: the right marker; use noObject for none
+	noObject      bool
+	refuseObject  int // a status for the marker object's read, 0 for none
+	refuseGCS     int // a status for every storage call, 0 for none
+	refuseCRM     int // a status for every Resource Manager call, 0 for none
 }
 
 func managedWorld(o managedWorldOpts) func(t *testing.T) (*storage.Service, *crm.Service) {
@@ -298,6 +304,11 @@ func managedWorld(o managedWorldOpts) func(t *testing.T) (*storage.Service, *crm
 		}
 		cf := gcpfake.NewCRM(t)
 		cf.AddProject(managedPropertyGCP, managedPropertyNumber)
+		labels := o.projectLabels
+		if labels == nil {
+			labels = map[string]string{managed.ProjectLabelKey: managed.ProjectLabelValue}
+		}
+		cf.SetLabels(managedPropertyGCP, labels)
 		if o.refuseCRM != 0 {
 			cf.Refuse(o.refuseCRM, "INTERNAL", "", "backend error")
 		}
@@ -309,8 +320,25 @@ func managedWorld(o managedWorldOpts) func(t *testing.T) (*storage.Service, *crm
 // one is managed.
 func managedPropertyWorlds() []managedPropertyWorld {
 	return []managedPropertyWorld{
-		{"the creation fact is there (marker, right project number, label)", true, managedWorld(managedWorldOpts{})},
-		{"the fugaro=managed label alone, no creation fact", false, managedWorld(managedWorldOpts{noObject: true})},
+		{"the creation fact is there (marker, right project number, both labels)", true, managedWorld(managedWorldOpts{})},
+		// The bucket's own fugaro=managed label and nothing else: the project
+		// carries unrelated labels, so this is the bucket mark alone and not
+		// the project's label with it (the row below is that one).
+		{"the runs bucket's fugaro=managed label alone, no creation fact", false, managedWorld(managedWorldOpts{noObject: true,
+			projectLabels: map[string]string{"environment": "prod"}})},
+		// Task 3.0's two halves of the same fact, each alone: the project's
+		// own label with no object is not managed (the label comes off one
+		// project get and is a property of the project, not a second way in),
+		// and the object with the project's label taken away is not managed
+		// either — that is the state of every project marked before this
+		// task, and it fails closed until the owner-run backfill of
+		// docs/gcp-setup.md puts the label back.
+		{"the project's fugaro_managed label alone, no creation fact", false, managedWorld(managedWorldOpts{noObject: true,
+			projectLabels: map[string]string{managed.ProjectLabelKey: managed.ProjectLabelValue}})},
+		{"the creation fact with the project's label taken away", false, managedWorld(managedWorldOpts{
+			projectLabels: map[string]string{"environment": "prod"}})},
+		{"the creation fact with the project's label saying something else", false, managedWorld(managedWorldOpts{
+			projectLabels: map[string]string{managed.ProjectLabelKey: "no"}})},
 		{"a creation fact that cannot be read (403)", false, managedWorld(managedWorldOpts{refuseObject: http.StatusForbidden})},
 		{"a creation fact whose read fails (500)", false, managedWorld(managedWorldOpts{refuseObject: http.StatusInternalServerError})},
 		{"a malformed creation fact", false, managedWorld(managedWorldOpts{object: []byte(`{"version":1,"gcp_project":`)})},
@@ -400,6 +428,50 @@ func TestManagedReadReturnsTheHandWrittenVerdict(t *testing.T) {
 	}
 	if managedN != 1 || notManaged < 2 {
 		t.Fatalf("the worlds hold %d managed and %d not managed: the oracle is one managed world against every way of not being one", managedN, notManaged)
+	}
+}
+
+// TestManagedWorldsWithDifferentNamesAreDifferentWorlds: a row of
+// managedPropertyWorlds asserts a state, and the state is what its name
+// says. Two rows building the same world assert the same thing twice and
+// leave the state one of the names promises untested — which is what happens
+// quietly here, because managedWorld defaults the project's label in and only
+// a row that overrides projectLabels takes it away.
+//
+// The pair it pins is Task 3.0's: the runs bucket's own fugaro=managed label
+// alone (the project carries nothing) against the project's fugaro_managed
+// label alone (the bucket mark present, no creation fact). Both are not
+// managed, and for different reasons — the first is missing the project
+// label the read asks for, the second has it and no fact — so a build that
+// makes them one world leaves one of those two reasons unread.
+func TestManagedWorldsWithDifferentNamesAreDifferentWorlds(t *testing.T) {
+	byName := map[string]managedPropertyWorld{}
+	for _, w := range managedPropertyWorlds() {
+		if _, dup := byName[w.name]; dup {
+			t.Errorf("two worlds are named %q", w.name)
+		}
+		byName[w.name] = w
+	}
+	const inTheBucket = "the runs bucket's fugaro=managed label alone, no creation fact"
+	const onTheProject = "the project's fugaro_managed label alone, no creation fact"
+	a, b := byName[inTheBucket], byName[onTheProject]
+	if a.build == nil || b.build == nil {
+		t.Fatalf("the two label-alone worlds are gone: %q=%v, %q=%v", inTheBucket, a.build != nil, onTheProject, b.build != nil)
+	}
+	// What the read answers, and why, is what a row asserts. Two worlds that
+	// answer with the same reason are one world: the row whose name promises
+	// the other state is asserting what its neighbour already asserts.
+	var reasons []string
+	for _, w := range []managedPropertyWorld{a, b} {
+		s, c := w.build(t)
+		ok, reason, err := managed.IsManaged(context.Background(), s, c, managedPropertyProject, managedPropertyGCP)
+		if ok || err != nil {
+			t.Fatalf("%s: ok=%v err=%v, and both of these worlds are not managed", w.name, ok, err)
+		}
+		reasons = append(reasons, reason)
+	}
+	if reasons[0] == reasons[1] {
+		t.Errorf("%q and %q are answered with the same reason (%q), so one of the two names describes the other's world", inTheBucket, onTheProject, reasons[0])
 	}
 }
 

@@ -53,6 +53,16 @@ type Run struct {
 	// read, which is what doctor's launcher-jobs check degrades on. Set it
 	// before the fake serves.
 	FailPolicyOf map[string]int
+	// LoopListToken, when set, makes jobs.list answer with a nextPageToken it
+	// repeats on every page: the server bug a walk with no repeated-token
+	// guard follows forever, which is what the launcher-jobs check's own bound
+	// is written against.
+	LoopListToken bool
+	// EndlessListToken, when set, makes jobs.list answer with a
+	// nextPageToken that is never empty and never the one it was given: a
+	// listing that never ends without ever repeating a token, which only a
+	// page cap ends.
+	EndlessListToken bool
 	// HeldOn is what jobs:testIamPermissions reports the caller holds, by
 	// job name (by default nothing): the view of a launcher, who may not
 	// read a job's policy but may ask what it can do on the job.
@@ -1023,7 +1033,16 @@ func (f *Run) listJobs(w http.ResponseWriter, r *http.Request, parent string) {
 		out = append(out, job)
 	}
 	resp := map[string]any{"jobs": out}
-	if end < len(names) {
+	switch {
+	case f.LoopListToken:
+		// The same token on every page, whatever was asked for.
+		resp["nextPageToken"] = "loop"
+	case f.EndlessListToken:
+		// A token that is neither empty nor a repeat: one character longer
+		// than the one it was given, so no walk ends and no guard that only
+		// remembers tokens ends it either.
+		resp["nextPageToken"] = q.Get("pageToken") + "x"
+	case end < len(names):
 		resp["nextPageToken"] = strconv.Itoa(end)
 	}
 	writeJSON(w, http.StatusOK, resp)
