@@ -3027,6 +3027,51 @@ func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
 	}
 }
 
+var moduleHeader = regexp.MustCompile(`(?m)^\s*module\s+"([A-Za-z0-9_-]+)"\s*\{`)
+
+// TestTheRepoModuleForwardsTheCredentialsService pins the one hop of the
+// credentials service (0.9.5, D146, D147) that no `terraform test` can reach:
+// a child module call's arguments are invisible to the parent's runs, and an
+// object-typed variable silently drops an attribute its type does not name.
+// So if modules/repo/workflows.tf stopped passing the opt-in down, every
+// repository of an installation that has it on would keep its job accounts'
+// secretAccessor grant on the model secrets and gain no run.invoker on the
+// service — the two things C1.18 exists to move — and the plan would succeed
+// with nothing else failing. The other half of the hop, the repo module's and
+// the repo root's `installation` types declaring the attribute at all, is
+// internal/infra's TestRepoInstallationAttributesAreDeclared; the workflow
+// module's own behaviour is repo.tftest.hcl's credentials_service_on.
+//
+// Mutation (run, restore): delete the credentials_service line from the
+// module "workflow" block — this fails.
+func TestTheRepoModuleForwardsTheCredentialsService(t *testing.T) {
+	const path = "gcp/modules/repo/workflows.tf"
+	data, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(data))
+	seen := 0
+	for _, m := range moduleHeader.FindAllStringSubmatchIndex(code, -1) {
+		if code[m[2]:m[3]] != "workflow" {
+			continue
+		}
+		seen++
+		open := m[1] - 1
+		end := matchBrace(code, open)
+		if end < 0 {
+			t.Fatalf("%s: unbalanced braces in the workflow module call", path)
+		}
+		body := code[open+1 : end]
+		if !hasAttr(body, "credentials_service", "var.installation.credentials_service") {
+			t.Errorf("%s: the workflow module call does not pass credentials_service = var.installation.credentials_service:\n%s", path, body)
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("%s: %d module \"workflow\" calls, want the one that creates the repository's jobs", path, seen)
+	}
+}
+
 // customRolePermissions is the snapshot of the permissions Google allows in a
 // custom role (GA, customRolesSupportLevel empty), for the service prefixes
 // the modules use. See the header of the file for how it is made and refreshed.
