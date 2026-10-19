@@ -121,7 +121,14 @@ const PolicyRulesVersion = 1
 // even where nothing else did: a phone on generation 2 cannot read its own
 // mailbox under a generation-3 document until its account is paired, so an
 // installation that deploys these rules and forgets `fugaro pair` finds every
-// app read refused — the skew doctor reports is what says why.
+// app read refused — and `fugaro doctor` says nothing about it *afterwards*.
+// `policy-rules-skew` compares the deployed *document* with this binary's, so
+// it warns only **before** the deploy, while the marker still records
+// generation 2; the deploy that records generation 3 is what silences it, and
+// from then on the unpaired account is the app's own empty reads to diagnose
+// rather than a skew doctor reports. The warning is where the operator is told
+// to pair first (internal/cli's rulesMarkerOlderText says it in as many words),
+// and it is the deploy that takes it away.
 //
 // What the bump does to an existing installation, plainly. Runs and the
 // project policy are untouched: Read and the publish gate stay on

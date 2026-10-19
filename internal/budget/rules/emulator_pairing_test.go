@@ -584,6 +584,32 @@ func TestMailboxActionRecordShape(t *testing.T) {
 	h.mustDeny(alice, "a head SHA on a verb that has no head",
 		put(inbox(mbAlice, "b11"), actionMessage("b11", mbAlice, cancelWithSha)))
 
+	// Three bounds of the record that no other case in this file reaches, and
+	// that the security review of P6.4 found loosened without a test noticing:
+	// a pull request's number is positive (`pr >= 1`), the record's own `id` is
+	// within the key bound, and the confirmation's `at` is an instant rather
+	// than any number. Each is a bound the shape checks beside it cannot stand
+	// in for — a `{repo, pr}` target is a target whatever the number, a
+	// non-empty `id` is an `id` however long, and `hasChildren(['id', 'at'])`
+	// says the instant is there, never that it is one.
+	//
+	// They are here rather than in a case of their own so that the reader of
+	// the record's shape meets them with it, and they are deliberately the
+	// loosest value each rule refuses (0, one character over the bound, a
+	// negative instant): the boundary is where a loosening lands first.
+	zeroPR := aActionRecord()
+	zeroPR["target"] = map[string]any{"repo": "dimipaun/fugaro", "pr": 0}
+	h.mustDeny(alice, "a pull request numbered zero",
+		put(inbox(mbAlice, "b17"), actionMessage("b17", mbAlice, zeroPR)))
+	longID := aActionRecord()
+	longID["id"] = strings.Repeat("i", MaxKeyLength+1)
+	h.mustDeny(alice, "an action id over the key bound",
+		put(inbox(mbAlice, "b18"), actionMessage("b18", mbAlice, longID)))
+	badAt := aActionRecord()
+	badAt["confirmation"] = map[string]any{"id": "cfm-1", "at": -1}
+	h.mustDeny(alice, "a confirmation whose at is not an instant",
+		put(inbox(mbAlice, "b19"), actionMessage("b19", mbAlice, badAt)))
+
 	// An action record on any other kind, and any other kind carrying the
 	// fields the (kind, field) table gives to another — the table is what makes
 	// "is this an action?" a question with one answer.

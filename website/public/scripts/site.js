@@ -106,11 +106,10 @@
     return !!(navigator.clipboard && typeof navigator.clipboard.writeText === 'function')
   }
 
-  // The text a block offers: the element the block marks as its own source, or the code
-  // element inside it. The terminal marks its command, because what a reader wants out of
-  // that window is the invocation and not the prompt and the caret drawn around it.
+  // The text a block offers: the command inside it, which every block the site prints holds in
+  // a `<pre><code>` or in a `code.usage` (website/test/copy.mjs holds each page to that shape).
   function sourceOf(block) {
-    return block.querySelector('[data-copy-source]') || block.querySelector('pre, code')
+    return block.querySelector('pre, code')
   }
 
   // The one thing the control says, in the live region the markup carries for it. The

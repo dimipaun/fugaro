@@ -11,20 +11,27 @@
 // The README's numbers are DELIBERATELY LOOSE (owner's ruling, 2026-10-17: "ignore them for
 // now and optimize later"): each is three times the tight derivation below, until a later
 // optimisation pass tightens them back towards these figures. The tight derivation is the
-// build of 2026-10-19 — the 2026-10-18 build, plus the five corrections the menu's halves took
-// that day, named in the first bullet below — the one that ships the site's script (P6), its
-// menu behaviour (P3),
-// the homepage's run animation (P7), the How It Works flow (P8), the consent gate's analytics
-// bootstrap in that same script (W3.2) and the menu's hover-open on a pointer that hovers
-// (the owner's brief of 2026-10-18, item 1) — plus 25 %, which is D192's rule and the rule
-// the README's loose figures are three times:
+// build of 2026-10-19 — THE MERGED ONE, and this is one account of it rather than the two the
+// figures arrived by: `main`'s site, which ships the one script (P6's copy control, P3's
+// menu, W3.2's consent gate and analytics bootstrap in that same file, and the menu's
+// hover-open on a pointer that hovers — the owner's brief of 2026-10-18, item 1 — with the
+// corrections of that day and the next to it, named in the first bullet below), with this
+// branch's redesigned pages on top of it (the homepage's order and run animation, P4, P7 and
+// P8) — plus 25 %, which is D192's rule and the rule the README's loose figures are three
+// times. **The figures below are that build's as this branch ships it**, measured once more
+// over the artifact the fix round after the merge produces: the chat moved above the diagram,
+// its turns are drawn as alternating bubbles, three of the flow's four cyan card edges became
+// the site's separator, and the footer's link label is the repository's name rather than its
+// URL. Each of those moved bytes, and each was re-derived here in the commit that moved it —
+// the count below is read off `dist/`, which is the build the test measures, rather than
+// carried from the merge.
 //
-//   - JavaScript per page: 49,870 bytes. The one script the site ships,
+//   - JavaScript per page: 49,724 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
 //     ruling of 2026-10-18 added to a withdrawal, and that ruling's brief item 1: a group's
 //     submenu opens when the pointer arrives at it, bound only where `matchMedia` reports a
 //     pointer that hovers and only for a pointer that reports itself a mouse or a pen, and
-//     re-decided whenever that answer changes), is 39,896 bytes; × 1.25, rounded up. The event
+//     re-decided whenever that answer changes), is 39,779 bytes; × 1.25, rounded up. The event
 //     that says which pointer arrived, and the query's `change` that says the device's answer has
 //     moved, re-derived all three figures here on 2026-10-19; the same day's second correction
 //     did it again — the focus a click or a tap moves is the pointer's and opens nothing (the
@@ -46,15 +53,31 @@
 //     JavaScript — which is why the case below reads the artifact rather than trusting this
 //     line, and why D192 requires the README's figure to be re-derived in the same commit that
 //     changes the script.
-//   - Page weight per page: 333,772 bytes. The heaviest page on 2026-10-19, `docs/index.html`,
-//     weighed 267,017 bytes: its HTML (the whole generated CLI reference) plus the first-party
+//   - Page weight per page: 333,869 bytes. The heaviest page on 2026-10-19, `docs/index.html`,
+//     weighed 267,095 bytes: its HTML (the whole generated CLI reference) plus the first-party
 //     files it fetches — the script above and the logo and icons the layout links; × 1.25,
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,035,458 bytes. Every file in `dist/` on that build summed to 828,366
+//   - Whole site: 1,054,485 bytes. Every file in `dist/` on that build summed to 843,588
 //     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
-//     × 1.25, rounded up.
+//     × 1.25, rounded up. The last fix round re-derived it 54 bytes under the merge's: the
+//     install section's own top padding came off, because the flow above it carries the gap
+//     between them, and that is a shorter `padding` in the stylesheet — the homepage's own CSS
+//     is inlined in its page, so the page that carries it and the site figure move together.
+//     The page weight did not move with it: the heaviest page is the docs hub, which renders
+//     neither the flow nor the install section.
+//     **The round after that moved both figures up**, by the two declarations that make a
+//     command wrap — `white-space: pre-wrap; overflow-wrap: anywhere`, moved from the
+//     homepage's own `.home-install-command` onto `base.css`'s `.command-block > pre` because
+//     the copy control now shares the command's row and every command on the site gives up the
+//     control's width. The base stylesheet is inlined into every page, so ten of the eleven
+//     grew by those 44 bytes and the homepage did not, the declarations having left one of its
+//     own rules for the base one: 440 bytes onto the site figure and 44 onto the page weight,
+//     which is derived from the heaviest page — the docs hub — and that page carries the same
+//     inlined rule. The README states the same figures and the same reason, one bullet up from
+//     this file's name in its gates list, and the case below is what holds the figures to the
+//     build.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:
@@ -77,6 +100,7 @@ import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DIST, SITE, builtPages, filesUnder, find, parse, servedFile, walk } from './lib/html.mjs'
+import { DOCUMENT_PAGES } from './lib/exempt.mjs'
 
 // ---- the numbers, from the README ------------------------------------------------------
 
@@ -174,7 +198,11 @@ export function budgetFailures(dist, budgets) {
 // exempt from the **page** ceiling because each renders a document of this repository
 // rather than a page of the site; their leads are still held to the lead ceiling, since a
 // lead is a page's own and every page has one.
-const PAGE_EXEMPT = new Set(['/docs/', '/security/', '/changelog/'])
+//
+// The list itself is not written here: it is `test/lib/exempt.mjs`'s `DOCUMENT_PAGES`, which
+// `test/wording.mjs` skips for the same reason and holds equal to D188's own row. Two lists
+// would be two rules, and the page that ends up on one of them is exempt from a ceiling and
+// held to a wording rule — or the reverse — with both gates green.
 
 /** The words of a piece of text, the way a reader counts them. */
 function words(text) {
@@ -246,15 +274,22 @@ function textBetween(main, from, to) {
  * page opens with before its first section, which is the text D188's 40-word ceiling is
  * about. That is the whole of the definition, and it is the plan's own: **the region between
  * the two headings in document order**, wherever either heading sits. It used to be read
- * from the `h1`'s container instead when the first `h2` was outside it — the shape the
- * homepage had, where the hero's section held the `h1` and the flow's step names were the
- * first `h2`s under it — and that reading measured the homepage's lead as 24 words where the
- * plan's measures 134: the promise, the install commands, the terminal and everything up to
- * the flow. A gate whose number depends on which end it is read from is two gates (P4's
- * reviewer asked which one this is, and P5 answered it). The homepage now carries its
- * install section's own `h2` above those blocks, so both readings agree on every built page
- * — 24 words — and the strict one is the one enforced, on this page and on any page that
- * grows blocks between its `h1` and its first `h2` later.
+ * from the `h1`'s container instead when the first `h2` was outside it, and the two readings
+ * are the same number only while a page keeps every block between its `h1` and its first `h2`
+ * inside the heading's own container. A gate whose number depends on which end it is read
+ * from is two gates (P4's reviewer asked which one this is, and P5 answered it), so the
+ * region is the reading and the container is not.
+ *
+ * **Where the homepage stands today** (2026-10-19): its `h1` is the headline, its first `h2`
+ * is the chat's own "Through your agent" — the chat is the first block under the promise
+ * (review round 5) and its heading is inside it — and the region between the two headings is
+ * the promise and its two calls to action: **14 words**, the number the built page measures.
+ * Both readings agree here, because everything between the `h1` and that heading is inside
+ * the hero's own section; they did not agree on the homepage of two rounds ago, when the
+ * hero's section held the `h1`, the install blocks and the chat sat between it and the flow's
+ * first step heading, and the container reading said 24 words where the region said 134. The
+ * region is what is enforced, on this page and on any page that grows a block between its
+ * `h1` and its first `h2` later.
  *
  * A page with no `h2` at all has no such region, and its lead is the paragraph run under the
  * `h1` — the text D188's ceiling is about, read from the other end. A page whose first `h2`
@@ -314,8 +349,8 @@ export function wordFailures(dist, budgets) {
     if (counts.lead > budgets.lead) {
       out.push(`${page.rel} opens with a ${counts.lead}-word lead; the ceiling is ${budgets.lead} words in a page's lead (website/README.md)`)
     }
-    if (!PAGE_EXEMPT.has(page.url) && counts.words > budgets.words) {
-      out.push(`${page.rel} is ${counts.words} words; the ceiling is ${budgets.words} words per page (website/README.md), and the pages D188 exempts are ${[...PAGE_EXEMPT].join(', ')}`)
+    if (!DOCUMENT_PAGES.has(page.url) && counts.words > budgets.words) {
+      out.push(`${page.rel} is ${counts.words} words; the ceiling is ${budgets.words} words per page (website/README.md), and the pages D188 exempts are ${[...DOCUMENT_PAGES].join(', ')}`)
     }
   }
   return out
@@ -472,9 +507,24 @@ test('the README budget lines are read strictly', () => {
 // D192: each README number is three times the build it was derived from plus 25 %, and the
 // README says which build. These read the derivation the README writes beside each number and
 // hold the number to it, so raising a ceiling means re-deriving it from a build the artifact
-// can be measured against — not editing the headline figure. The script is one file edited on
-// purpose, so its stated size is its size; the page and the site may grow under the × 3, and
-// may shrink up to a tenth before the stated build is too far above this one to stand.
+// can be measured against — not editing the headline figure.
+//
+// **And the build each number names is the one the site builds** (P8's review, and the fixes
+// round on this branch): all three, not only the script's. A derivation that names a build the
+// artifact is not is a number nobody can check against today's build — it drifts down as pages
+// grow, and a budget derived from a smaller build than the site has is a ceiling tighter than
+// the README says it is, which is a lie in the reader's favour that still leaves the × 3
+// meaningless. So a byte that moves re-derives its figure in the commit that moves it, which is
+// D192's own rule and the plan's ("later parts that add bytes re-derive in their own commit").
+// The refusal this replaced — a stated build more than a tenth above the real one — is a case
+// of this one, which is why the strictness only ever went up.
+//
+// The build named is `dist/` and not whatever directory this run reads its ceilings in: the
+// merge of `main` into the redesign brought a second artifact with it — `console-option.mjs`
+// builds the site with the console's flag flipped and runs the artifact gates over that copy to
+// prove the flip is safe — and that copy is a different build, 2,051 bytes larger at the site
+// figure, so a derivation held to it would be the flag's own bytes rather than the site's. The
+// case below says so where it measures (`DOCUMENTED_BUILD`).
 const DERIVATIONS = {
   js: /\*\*JavaScript per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the one script[\s\S]*?\(([\d,]+) bytes/,
   page: /\*\*Page weight per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the heaviest page[\s\S]*? at ([\d,]+) bytes/,
@@ -494,23 +544,45 @@ export function derivationFailures(readme, measured) {
     const [budget, tight, build] = [n(m[1]), n(m[2]), n(m[3])]
     if (budget !== 3 * tight) out.push(`the ${key} budget is ${budget} bytes and three times ${tight} is ${3 * tight} (D192)`)
     if (tight !== Math.ceil(build * 1.25)) out.push(`the ${key} tight figure is ${tight} bytes and ${build} plus 25 % is ${Math.ceil(build * 1.25)} (D192)`)
-    if (key === 'js' && build !== measured.js) out.push(`the README derives the JavaScript budget from a ${build}-byte site.js and the built one is ${measured.js} bytes: re-derive it in the commit that changes the script (D192)`)
-    if (key !== 'js' && build > measured[key] * 1.1) out.push(`the README derives the ${key} budget from a ${build}-byte build and this one is ${measured[key]} bytes: a stated build that far above the real one is a loosened budget (D192)`)
+    if (build !== measured[key]) {
+      out.push(
+        `the README derives the ${key} budget from a ${build}-byte build and this one is ${measured[key]} bytes: re-derive it in the commit that moves those bytes (D192)`,
+      )
+    }
   }
   return out
 }
 
-function measuredNow() {
-  const pages = builtPages(DIST).map((p) => measurePage(p.html, p.rel, DIST))
+/**
+ * The build the README's figures are a derivation OF: the site's own, `website/dist`, which is
+ * the one `npm run check` makes.
+ *
+ * It is deliberately not `DIST`. `FUGARO_GATES_DIST` is the mechanism the gates document for
+ * reading another artifact, and the one case that uses it — `console-option.mjs`'s released
+ * build — is a DIFFERENT build rather than another copy of this one: flipping
+ * `features.console_downloads` adds the console option's markup to two pages, so that copy's
+ * site figure is 2,051 bytes larger than the one the README documents. Measuring the
+ * derivation against it would take the flag's own bytes for the site's, and the site the
+ * README describes is the one this checkout builds. So the derivation is read where it is
+ * written — over `dist/` — whatever directory the ceilings above are being read in.
+ */
+const DOCUMENTED_BUILD = path.join(SITE, 'dist')
+
+function measuredNow(dist = DOCUMENTED_BUILD) {
+  const pages = builtPages(dist).map((p) => measurePage(p.html, p.rel, dist))
   return {
-    js: statSync(path.join(DIST, SCRIPT)).size,
+    js: statSync(path.join(dist, SCRIPT)).size,
     page: Math.max(...pages.map((m) => m.weight)),
-    site: filesUnder(DIST).reduce((sum, rel) => sum + statSync(path.join(DIST, rel)).size, 0),
+    site: filesUnder(dist).reduce((sum, rel) => sum + statSync(path.join(dist, rel)).size, 0),
   }
 }
 
 test("the README's budgets are D192's derivation from a build this one can be measured against", () => {
   const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
+  assert.ok(
+    existsSync(DOCUMENTED_BUILD),
+    `the site's own build is not at ${DOCUMENTED_BUILD}, so the README's derivation cannot be measured against the build it names: \`npm run check\` builds it before the gates read it, and this case is about that build rather than about the directory this run was pointed at`,
+  )
   assert.deepEqual(derivationFailures(readme, measuredNow()), [])
 })
 
@@ -519,8 +591,20 @@ test('a budget raised without re-deriving it is refused', () => {
   const now = measuredNow()
   const js = /\*\*JavaScript per page:\*\* ([\d,]+) bytes/.exec(readme)[1]
   assert.match(derivationFailures(readme.replace(`**JavaScript per page:** ${js} bytes`, '**JavaScript per page:** 100,000 bytes'), now).join('\n'), /three times/)
-  assert.match(derivationFailures(readme, { ...now, js: now.js + 1 }).join('\n'), /re-derive it/)
-  assert.match(derivationFailures(readme, { ...now, site: Math.floor(now.site / 2) }).join('\n'), /loosened budget/)
+  // Every one of the three, not only the script's: a build that moves under a stated
+  // derivation — a page that grows, a site that shrinks — is a figure to re-derive.
+  for (const key of ['js', 'page', 'site']) {
+    assert.match(
+      derivationFailures(readme, { ...now, [key]: now[key] + 1 }).join('\n'),
+      /re-derive it/,
+      `the ${key} figure is not held to the build this one can measure`,
+    )
+    assert.match(
+      derivationFailures(readme, { ...now, [key]: Math.floor(now[key] / 2) }).join('\n'),
+      /re-derive it/,
+      `a ${key} derivation far above the real build is not refused`,
+    )
+  }
 })
 
 // ---- the word ceilings' own refusals, kept ----------------------------------------------
@@ -595,14 +679,16 @@ test('the lead is the h1 -> first h2 region wherever the first h2 sits, and what
   // The homepage's shape before P5 put an `h2` above its install block: the hero's section
   // holds the `h1`, and the first `h2` of `main` is a step of a figure that sits outside that
   // section. The whole region between the two headings is the lead — the hero's own paragraph
-  // and the blocks that follow it, which is where a page's install commands and terminal were —
+  // and the blocks that follow it, which is where a page's install commands and chat were —
   // because that is the region the plan defines the lead as, and a page that puts its commands
   // between its `h1` and its first `h2` is a page whose lead they are part of. The run of
   // paragraphs under the `h1` is not the answer here: it is shorter than the region — 38 words
   // where the region is 40 on the `under/` fixture, 39 where it is 41 on `over/` — so a
   // reader that stopped at the hero's own container would pass this fixture and
-  // let the page's whole gist through unmeasured (the reading P5 replaced, which measured the
-  // built homepage's 134-word lead as 24).
+  // let the page's whole gist through unmeasured. The fixture is not hypothetical: it is the
+  // homepage's own shape of two rounds ago, where the hero held the `h1`, the install blocks
+  // and the chat sat between it and the flow's step headings, and the container reading
+  // measured a 134-word region as 24 words.
   const budgets = { ...readmeBudgets(), words: 100000 }
   const x = (n) => Array.from({ length: n }, () => 'x').join(' ')
   const page = (n) =>
