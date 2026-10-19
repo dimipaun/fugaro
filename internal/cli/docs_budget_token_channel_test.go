@@ -201,8 +201,13 @@ func TestCheck60LearnsTheJobBeforeAnyStepNamesIt(t *testing.T) {
 	if !strings.Contains(step3, keep) {
 		t.Errorf("Check 60's step 3 does not keep the job in vars.env (`%s`): every step after it re-runs the setup block in a shell that has never seen it", keep)
 	}
-	if a, b := strings.Index(step3, learn), strings.Index(codeLines(sec), "${SANDBOX_JOB:?"); a < 0 || b < 0 || b < a {
-		t.Errorf("Check 60's first `${SANDBOX_JOB:?}` is not after the step that learns the job (learn at %d, first hard stop at %d): the guard at the point of use is what has to catch an empty job, not the setup block", a, b)
+	// Both offsets are into the section's own code lines. An offset into step
+	// 3's slice is a different coordinate: step 3 starts partway through the
+	// section, so an index into the section is always the larger of the two and
+	// the comparison could never fail — the 2026-10-19 review's first finding.
+	secCode := codeLines(sec)
+	if a, b := strings.Index(secCode, learn), strings.Index(secCode, "${SANDBOX_JOB:?"); a < 0 || b < 0 || b < a {
+		t.Errorf("Check 60's first `${SANDBOX_JOB:?}` is not after the step that learns the job (the learn at %d, the first hard stop at %d, both offsets into the check's code lines): the guard at the point of use is what has to catch an empty job, not the setup block", a, b)
 	}
 }
 
@@ -276,6 +281,40 @@ func TestCheck60SaysHowToStartOver(t *testing.T) {
 	}
 }
 
+// TestCodeLinesKeepsAHashThatIsNotAComment: codeLines feeds every Check 60
+// assertion, so what it removes has to be comments and nothing else. It cut
+// each fenced line at its first `#`, which read the check's own
+// `"${EXE##*/}"` as `"${EXE` — a `#` inside a parameter expansion is the
+// length operator, not a comment, and a `#` inside quotes is a string. Cutting
+// there hands the assertions a line the shell never runs, which is the shape
+// of the 2026-10-19 review's second finding. A comment is a `#` that starts a
+// line or follows whitespace, outside quotes and outside `${…}`; the `##` case
+// the review named is in the table.
+func TestCodeLinesKeepsAHashThatIsNotAComment(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		// The review's case: `##` is the length operator inside `${…}`.
+		{`gcloud run jobs executions describe "${EXE##*/}" --region="${L:?}"`, `gcloud run jobs executions describe "${EXE##*/}" --region="${L:?}"`},
+		// A comment after code, and one on a line of its own.
+		{`grep -c 'eyJ' "$f"   # both 0`, `grep -c 'eyJ' "$f"   `},
+		{`   # a whole-line comment`, `   `},
+		// `#` inside quotes is text, in both quotings.
+		{`echo 'a # b'`, `echo 'a # b'`},
+		{`echo "a # b" # out here`, `echo "a # b" `},
+		// `#` inside an expansion is text even after a space — `${…}` is not
+		// parsed for comments — and the `#` after it is one.
+		{`X=${Y:?no # comment here} # and this goes`, `X=${Y:?no # comment here} `},
+		// `#` that follows no whitespace is part of the word, as in a URL.
+		{`curl "https://host/p#frag"`, `curl "https://host/p#frag"`},
+		// An escaped `#` is a literal `#`, not a comment.
+		{`echo \# not a comment`, `echo \# not a comment`},
+	} {
+		got := codeLines("```bash\n" + c.in + "\n```")
+		if got != c.want {
+			t.Errorf("codeLines(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 // codeLines is what s runs: the lines inside its fenced blocks, with each
 // line's `#` comment removed. Prose is not read, so a sentence that names a
 // guard is not a guard — the check is on the commands the owner pastes.
@@ -290,12 +329,56 @@ func codeLines(s string) string {
 		if !fenced {
 			continue
 		}
-		if i := strings.Index(line, "#"); i >= 0 {
-			line = line[:i]
-		}
-		out = append(out, line)
+		out = append(out, stripComment(line))
 	}
 	return strings.Join(out, "\n")
+}
+
+// stripComment removes one line's shell comment: the `#` that starts it, or
+// that follows whitespace. A `#` inside a quote or inside a `${…}` expansion
+// is code — `${EXE##*/}` is the length operator, and `'a # b'` is a string —
+// so it is kept, to the end of the line if there is no comment at all.
+//
+// Nesting is tracked for quotes and for `${…}` only: a `#` inside a `$( … )`
+// or a backtick could be a comment (the shell parses their insides), and this
+// would keep it, which is the safe direction for tests that assert on what the
+// owner pastes. Nothing in Check 60's blocks has one.
+func stripComment(line string) string {
+	var quote byte // '\'' or '"' while inside one
+	depth := 0     // `$ {` nesting, so a `#` in `${…}` is not a comment
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			}
+		case quote == '"':
+			switch {
+			case c == '\\':
+				i++ // the escaped byte is text, whatever it is
+			case c == '"':
+				quote = 0
+			case c == '$' && i+1 < len(line) && line[i+1] == '{':
+				depth++
+				i++
+			case c == '}' && depth > 0:
+				depth--
+			}
+		case c == '\\':
+			i++ // ditto, outside quotes
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '$' && i+1 < len(line) && line[i+1] == '{':
+			depth++
+			i++
+		case c == '}' && depth > 0:
+			depth--
+		case c == '#' && depth == 0 && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
+			return line[:i]
+		}
+	}
+	return line
 }
 
 // TestCheck60LabelsWhatIsPerJobAndWhatIsNot: the check has three scopes and the
