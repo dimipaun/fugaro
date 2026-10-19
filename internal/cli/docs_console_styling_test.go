@@ -40,7 +40,7 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 		"## 4. Layout",
 		"## 5. Wiring (SECURITY-SENSITIVE)",
 		"## 6. Tests",
-		"## 7. The build plan (Phase 6, UNAPPROVED)",
+		"## 7. The build plan (Phase 6)",
 		"## 8. Open for the owner",
 		"## 9. Alternatives considered",
 		"## 10. Design brief for the Claude Design canvas",
@@ -670,22 +670,29 @@ func mdHeadingSlug(heading string) string {
 	return b.String()
 }
 
-// TestDocsConsoleStylingPlanTasksAreUnapproved (the console plan's phase 6,
-// added 2026-10-19 with the design above):
+// TestDocsConsoleStylingPlanTasksAreApproved (the console plan's phase 6, added
+// 2026-10-19 with the design above, and rewritten the same day to the owner's
+// approval of it):
 // the plan carries the styling work in its own numbering and carries it as
-// UNAPPROVED. Two things have to hold together and neither is visible from the
-// other — the six tasks exist as headings, and the file says in the phase's own
-// heading, its summary row and its PR rows that the owner has not approved any
-// of them. The wiring task's `SECURITY-SENSITIVE` flag is checked by
+// APPROVED by the owner on 2026-10-19. Two things have to hold together and
+// neither is visible from the other — the six tasks exist as headings, and the
+// file says in the phase's own heading, its summary row and its PR rows that the
+// owner approved them. The approval is a dated fact and the date is pinned with
+// it: a marker that says `APPROVED` without saying when is a claim the next
+// reader has to take on trust, and the four places below are the four the file
+// can be read from. The wiring task's `SECURITY-SENSITIVE` flag is checked by
 // TestPlanRule9ListsEveryFlaggedHeading, which is why this test does not repeat
 // rule 9's list; what it adds is that the flag is on a task that *exists* in a
-// phase that *says* it is unapproved.
-func TestDocsConsoleStylingPlanTasksAreUnapproved(t *testing.T) {
+// phase that *says* it is approved. The gate at the foot of the plan keeps its
+// own 2026-10-15 text as history, so this test asserts the approval is recorded
+// there as well rather than that the older sentences are gone — a history that
+// is deleted is a history nobody can check the approval against.
+func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 	const path = "docs/plans/2026-10-15-desktop-console.md"
 	plan := readDoc(t, path)
 	for _, want := range []string{
-		// The phase, in the file's numbering, marked unapproved in its heading.
-		"## Phase 6 — The console's style — UNAPPROVED",
+		// The phase, in the file's numbering, carrying the approval in its heading.
+		"## Phase 6 — The console's style — APPROVED by the owner on 2026-10-19",
 		// The six tasks. 6.2's heading is the flagged one.
 		"### Task 6.1: The token layer",
 		"### Task 6.2: The wiring — SECURITY-SENSITIVE, independent opus review",
@@ -699,10 +706,12 @@ func TestDocsConsoleStylingPlanTasksAreUnapproved(t *testing.T) {
 		"src/renderer/theme/palette.css",
 		"src/renderer/theme/base.css",
 		"src/renderer/theme/screens.css",
-		// The authority the phase defers to, and the gate it does not pass.
+		// The authority the phase defers to, the approval itself, and the gate
+		// that now records it.
 		"docs/design/console-styling.md",
-		"These six tasks are `UNAPPROVED`",
+		"These six tasks are `APPROVED by the owner on 2026-10-19`",
 		"OWNER APPROVAL GATE",
+		"**Phase 6, and only Phase 6, is `APPROVED by the owner on 2026-10-19`",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s lacks %q: phase 6's tasks are the styling design's build plan, and a task that leaves the plan must leave this test", path, want)
@@ -722,7 +731,7 @@ func TestDocsConsoleStylingPlanTasksAreUnapproved(t *testing.T) {
 			return rest[:len(start)+j]
 		}
 		return rest
-	}("## Phase 6 — The console's style — UNAPPROVED", "\n## Cross-task dependencies")
+	}("## Phase 6 — The console's style — APPROVED by the owner on 2026-10-19", "\n## Cross-task dependencies")
 	for _, q := range []string{"**Q1**", "**Q2**", "**Q3**", "**Q4**", "**Q5**", "**Q6**"} {
 		if !strings.Contains(section, q) {
 			t.Errorf("%s: phase 6 no longer names %s among the questions the owner decides before it starts", path, q)
@@ -734,21 +743,21 @@ func TestDocsConsoleStylingPlanTasksAreUnapproved(t *testing.T) {
 		t.Errorf("%s: the MVP list no longer says phase 6 is not on it, which is the design's recommendation (its Q6) and would otherwise read as an omission", path)
 	}
 
-	// The other two places the file can say a phase is unapproved, because the
+	// The other two places the file can carry a phase's approval, because the
 	// docstring above claims all three and the heading alone is the one a reader
 	// who never scrolls to the tables would check. The plan's own preamble
 	// promises a Phase-summary row and the phase's PR rows, so this is also the
 	// check that the promise landed.
-	if !strings.Contains(plan, "| **6. The console's style — UNAPPROVED** |") {
-		t.Errorf("%s: the Phase summary has no row for phase 6 marked UNAPPROVED; the phase is listed in that table like every other one, and a row without the marker is a phase a reader takes as approved", path)
+	if !strings.Contains(plan, "| **6. The console's style — APPROVED by the owner on 2026-10-19** |") {
+		t.Errorf("%s: the Phase summary has no row for phase 6 carrying the approval; the phase is listed in that table like every other one, and a row without the dated marker is a phase a reader cannot tell the state of", path)
 	}
 	prRows := mdTableRows(plan, mdPRRowRE)
 	if len(prRows) != 5 {
 		t.Errorf("%s: the PR groups table holds %d rows for phase 6 (J to J5); the phase is six tasks across five PR groups — J3 is the two PRs of Tasks 6.3 and 6.4 — and this count is the number the design's §7 states", path, len(prRows))
 	}
 	for _, row := range prRows {
-		if !strings.Contains(row, "UNAPPROVED") {
-			t.Errorf("%s: the PR groups row %q does not say UNAPPROVED; every row the phase occupies carries the marker, since a PR group is what a reviewer merges", path, strings.TrimSpace(row))
+		if !strings.Contains(row, "APPROVED by the owner on 2026-10-19") {
+			t.Errorf("%s: the PR groups row %q does not carry the approval; every row the phase occupies carries the marker, since a PR group is what a reviewer merges", path, strings.TrimSpace(row))
 		}
 	}
 

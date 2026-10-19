@@ -1,14 +1,21 @@
 # The console's style: the theme, the layout, and the wiring
 
-**Status: design only; nothing is implemented.** Proposed 2026-10-19, at the owner's
-request ("a console styling task is needed … draft a styling design before anyone builds
-it"). Owner: **@Dimi**. Every claim below was read on `origin/main` at `82ba600` and names
-the file and the symbol it was read from. Nothing here starts until the owner approves it:
-**no `.css` file, no Go, no TypeScript, no change to `console/`, and no change to
-`SERVED_FILES` follows this document on its own.** The build plan it produces is
-[§7](#7-the-build-plan-phase-6-unapproved), added to
-[the desktop-console plan](../plans/2026-10-15-desktop-console.md) as **Phase 6,
-UNAPPROVED**.
+**Status: design only; APPROVED by the owner on 2026-10-19, and Phase 6 is being built to
+it.** *The status as first written, kept:* **Status: design only; nothing is implemented.**
+Proposed 2026-10-19, at the owner's request ("a console styling task is needed … draft a
+styling design before anyone builds it"). Owner: **@Dimi**. Every claim below was read on
+`origin/main` at `82ba600` and names the file and the symbol it was read from. Nothing here
+starts until the owner approves it: *no `.css` file, no Go, no TypeScript, no change to
+`console/`, and no change to `SERVED_FILES` follows this document on its own* — which is
+why this document is the design and the build plan it produces,
+[§7](#7-the-build-plan-phase-6), is the work. **The owner approved both on 2026-10-19**, so
+that go is given: §7's tasks are **APPROVED by the owner on 2026-10-19**, **Task 6.1** (the
+token layer) is the first of them, and
+[the desktop-console plan](../plans/2026-10-15-desktop-console.md) carries the same approval
+in its phase heading, its Phase-summary row and its PR rows. **One of the six questions §8
+put to the owner is answered in the ruling itself and is binding on the tasks below**:
+**Q1 is option (b)** — one value set, dark; the light set does not ship, and §3.3's table is
+kept as the record of it.
 
 Related: [desktop-console.md](desktop-console.md) (§5.1 the hard rules, §6.1 the six
 transfers from tmog.org, §6.2 the four screens, §6.3 how it degrades),
@@ -1437,7 +1444,7 @@ in `base.css` and the rows' and badges' is in `screens.css`.
    anchors were dead when the test was written — two of them for exactly that missing
    hyphen, one left over from an earlier revision of §7.5 that named a heading since
    rewritten;
-4. a **plan test** that [Phase 6](#7-the-build-plan-phase-6-unapproved) exists, that its
+4. a **plan test** that [Phase 6](#7-the-build-plan-phase-6) exists, that its
    six task headings are there, that the four `theme/*.css` files are in the plan's tree,
    and that the phase names all six of the [§8](#8-open-for-the-owner) questions.
 
@@ -1481,7 +1488,7 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    least 50°", "at least 3:1").
 10. a **phase-ordering test**, the tenth and the only case of the eleven that is neither about
    this document's shape nor about its numbers — it reads
-   [§7](#7-the-build-plan-phase-6-unapproved) and the plan together: it cuts the plan's
+   [§7](#7-the-build-plan-phase-6) and the plan together: it cuts the plan's
    Phase 6 at its six task headings and §7 at its seven, and fails when a task's `**Files**`
    or `**Tests**` clause names a **later** task — the shape both of this revision's ordering
    errors took — when [§5.2](#52-how-the-bundler-emits-it)'s `THEME_STYLESHEETS` literal
@@ -1532,15 +1539,20 @@ named with the change ([§7.7](#77-the-red-steps)).
 
 ---
 
-## 7. The build plan (Phase 6, UNAPPROVED)
+## 7. The build plan (Phase 6)
 
 Added to [the plan](../plans/2026-10-15-desktop-console.md) as a new **Phase 6** in the
 file's own numbering, in the five places that file carries a phase: one section
 `## Phase 6 — …`; **six** `### Task 6.n:` headings; **one** row in the Phase summary table;
 **five** rows in the PR groups table (`J` to `J5`, one row per PR *group* — the phase is six
 tasks across five groups, since `J3` is the two PRs of Tasks 6.3 and 6.4); and
-**four** lines in the File Structure tree, one per `theme/*.css` file. **Nothing here is approved**: the plan's OWNER APPROVAL GATE stands, and these tasks
-carry `UNAPPROVED` until the owner answers [§8](#8-open-for-the-owner). Task 6.2's heading
+**four** lines in the File Structure tree, one per `theme/*.css` file. **These six tasks are
+`APPROVED by the owner on 2026-10-19`**, and so is this document: the owner's approval is the
+go, §8's six questions are answered with it (**Q1** taking option (b), dark only), and the
+plan's phase heading, summary row and PR rows say the same. *The heading as first written,
+kept:* `The build plan (Phase 6, UNAPPROVED)`, whose text read "**Nothing here is approved**:
+the plan's OWNER APPROVAL GATE stands, and these tasks carry `UNAPPROVED` until the owner
+answers §8" — that was the state on 2026-10-19, before the go. Task 6.2's heading
 carries `SECURITY-SENSITIVE, independent opus review`, and Global Constraints rule 9's list
 gains `6.2` in the same edit — `TestPlanRule9ListsEveryFlaggedHeading` fails otherwise,
 which is the mutation this change is proved against.
@@ -1896,8 +1908,9 @@ draw a zero.
   IPC allow-list or the spawn contract.
 - **It allocates no D-number and no C-number** (§8); the six questions are the owner's and
   are unnumbered on purpose.
-- **It does not approve Phase 6.** The plan's OWNER APPROVAL GATE stands: the tasks are
-  `UNAPPROVED` until the owner answers [§8](#8-open-for-the-owner) and gives the go.
+- **It does not approve Phase 6** — that was the first revision's line, and the owner's
+  approval of 2026-10-19 is the act that did. *As first written:* the tasks are `UNAPPROVED`
+  until the owner answers [§8](#8-open-for-the-owner) and gives the go.
 - **It does not decide the home for a theme override** (Q2) — that is a §5.1-rule-10
   amendment and an owner's ruling, not a styling choice.
 - **It does not re-record the golden frames.** That is Task 6.6 and it is owner-run.

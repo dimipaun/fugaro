@@ -18,7 +18,7 @@
 | 3 | `internal/watch/source.go` (the degradation phases), `internal/cli/runs.go` (`lsDoc`), `docs/design/watch-queued.md` §6 |
 | 4 | `docs/release.md` (one tag releases everything; `scripts/release-gate.sh`; the cask), `.goreleaser.yaml`, `.github/workflows/{ci,images,release}.yml`, `docs/pending-workflows/README.md`, `.github/dependabot.yml` |
 | 5 | everything above |
-| 6 (styling, **UNAPPROVED**) | `console/src/main/protocol.ts` (`SERVED_FILES`, `mediaTypeFor`), `console/tools/bundle-renderer/index.ts`, `console/src/renderer/{index,installations,refusal}.html`, `console/src/renderer/entry.ts` (`CONSOLE_THEME`, the nav), the four screens' class and `data-*` vocabulary, `console/test/unit/{bundle,csp-document,build-files,screen-literals}.test.ts`, `website/src/styles/{tokens,palette-logo}.css` |
+| 6 (styling, **APPROVED by the owner on 2026-10-19**) | `console/src/main/protocol.ts` (`SERVED_FILES`, `mediaTypeFor`), `console/tools/bundle-renderer/index.ts`, `console/src/renderer/{index,installations,refusal}.html`, `console/src/renderer/entry.ts` (`CONSOLE_THEME`, the nav), the four screens' class and `data-*` vocabulary, `console/test/unit/{bundle,csp-document,build-files,screen-literals}.test.ts`, `website/src/styles/{tokens,palette-logo}.css` |
 
 **Releases.** The console is **its own artifact published from the CLI's own `vX.Y.Z` tag** (design D11): one release train, one gate (`scripts/release-gate.sh`), one Highlights section — which is what `docs/release.md`'s "one tag releases everything" means once a second deliverable exists. Its first shippable version is whatever release carries phase 4. **This changes one thing in this repo's release path and the plan says it plainly: until now every signature here has been keyless cosign over GitHub OIDC, and the console's Apple signing would be the first private key the repo has ever held** (`docs/release.md`: the checksums are signed, the binaries are not Apple-signed, and the Homebrew cask papers over Gatekeeper with an `xattr -dr com.apple.quarantine` postflight hook). Every step that touches that key is owner-run (Tasks 4.3 and 4.5 and Check 59), and no agent-run step in this plan or any other produces, stores, reads or transmits it.
 
@@ -32,7 +32,7 @@
 | **3. When things are missing** | the no-Firebase and CLI-absent modes, the stale/gap rendering, the version-skew handshake (Task 3.2) **and its wiring at startup (Task 3.3)**; **the renderer entry — the preload, the handlers and the installation picker (Task 3.4, approved by the owner 2026-10-18; 3.4a implemented)** | nothing required (3.4's header and picker goldens are optional and owner-run) | phase 2 |
 | **4. macOS packaging** | the builder config and entitlements; the staged signing/notarisation workflow (a file of its own, tag-only); the update feed; **Checks 59a and 59b** | **all of it**: the certificate, the API key, the first signed build, the update round trip (Check 59); the protected GitHub environment the signing secrets live in; and Task 4.5's copy-in of the staged **signing** workflow | phase 3 |
 | **5. Later, unscheduled** | Windows and Linux packaging; the v1.1 write actions | each, when the owner decides | phase 4 |
-| **6. The console's style — UNAPPROVED** | the token layer, the stylesheet's wiring into the served bundle, the layout and the screens' rules, the theme switch and the golden frames re-recorded (`docs/design/console-styling.md` is the design) | **the eight golden baselines re-recorded** (Task 6.6), after the stylesheet lands | phase 3 (Task 3.4a's bundler and served root); **not approved** — see its six open questions |
+| **6. The console's style — APPROVED by the owner on 2026-10-19** | the token layer, the stylesheet's wiring into the served bundle, the layout and the screens' rules, the theme switch and the golden frames re-recorded (`docs/design/console-styling.md` is the design) | **the eight golden baselines re-recorded** (Task 6.6), after the stylesheet lands | phase 3 (Task 3.4a's bundler and served root); **approved by the owner on 2026-10-19** — its six questions are answered, and **Q1 is dark only: no light theme ships** |
 
 **Nothing in this table depends on a later row.** Phase 5 is deliberately empty of work: it lists the two things a reader will otherwise wonder about, and each is gated on a decision this plan does not presume.
 
@@ -167,11 +167,11 @@ Each row is one mergeable PR, green on its own:
 | H | 4.3, 4.5 | **OWNER-RUN**, no agent performs any step of either; 4.5 copies in the **signing** workflow |
 | I | 4.6 | the release gate; **merges only after C2**, and refuses a tag until the console job runs |
 | F3 | **3.4a**, **3.4b**, **3.4c** (three PRs) | **SECURITY-SENSITIVE** (the preload, the handlers and the installation store); **approved by the owner 2026-10-18** — 3.4a is implemented, 3.4b and 3.4c are not; merges after F2 and before the console MVP ships. Listed last only because it was added last |
-| J | **6.1** | **UNAPPROVED** (added 2026-10-19 with `docs/design/console-styling.md`); the token layer only — inert until J2 lands, and its PR says so |
-| J2 | **6.2** | **SECURITY-SENSITIVE** (the CSP's tests, the protocol handler's served-file list and the served documents); **UNAPPROVED** |
-| J3 | **6.3**, **6.4** (two PRs) | **UNAPPROVED**; ordinary stylesheet review |
-| J4 | **6.5** | **UNAPPROVED**; the one task that touches the renderer entry |
-| J5 | **6.6** | **UNAPPROVED**; the eight baselines are **OWNER-RUN** (recorded by the owner, once per platform), the assertions are agent-written |
+| J | **6.1** | **APPROVED by the owner on 2026-10-19** (added 2026-10-19 with `docs/design/console-styling.md`); the token layer only — inert until J2 lands, and its PR says so. Implemented in this round |
+| J2 | **6.2** | **SECURITY-SENSITIVE** (the CSP's tests, the protocol handler's served-file list and the served documents); **APPROVED by the owner on 2026-10-19** |
+| J3 | **6.3**, **6.4** (two PRs) | **APPROVED by the owner on 2026-10-19**; ordinary stylesheet review |
+| J4 | **6.5** | **APPROVED by the owner on 2026-10-19**; the one task that touches the renderer entry |
+| J5 | **6.6** | **APPROVED by the owner on 2026-10-19**; the eight baselines are **OWNER-RUN** (recorded by the owner, once per platform), the assertions are agent-written |
 
 ---
 
@@ -1121,7 +1121,7 @@ which it must be, since two of the names carry a space and the old whitespace-sp
 
 **Steps.** Kill, resume and cancel, if the owner says so (**D2**). Each is implemented **by invoking the CLI's own command**, never by writing to RTDB from the app: the typed confirmation, the admin check and the ETag compare-and-set stay in `internal/watch/keys.go` and `internal/cli/budget.go`, where they already are, and where a `budget kill` fails with `AdminDeniedText` — "you are not a budget admin" — when the operator is not one. **That text is the refusal of a write, and round 2 is why the plan says so here**: it is the only place in the CLI that tells a caller anything about the caller's role, it arrives *after* a denied write, and no read-only command reports the role at all. So the console treats **every identity as potentially admin** and its read-only guarantee rests on the exact-argument allow-list alone — it does not detect the role, does not grey out a kill button because the operator looks like a non-admin, and shows this text only when the CLI returned it. The console's own copy of the message is never composed from anything else. Rejected outright: any design in which the console writes.
 
-## Phase 6 — The console's style — UNAPPROVED
+## Phase 6 — The console's style — APPROVED by the owner on 2026-10-19
 
 **Added 2026-10-19 with [`docs/design/console-styling.md`](../design/console-styling.md),
 which is the authority for everything below.** Read that document first: it carries the
@@ -1135,14 +1135,18 @@ it to the inventory in the PR that wants it, design §2), the light and dark tok
 every WCAG ratio computed, the layout, and the wiring in full. This phase is the plan's
 *ordering* of that design and nothing more.
 
-**These six tasks are `UNAPPROVED`.** The OWNER APPROVAL GATE at the foot of this file
-stands: the styling design's six questions — **Q1** does a light theme ship and is the OS
-the default; **Q2** where does the owner's override live; **Q3** does the "phosphor set"
-ship; **Q4** is PR #629's darwin baseline set superseded; **Q5** is the forced-colors smoke
-a gate; **Q6** does the styling work gate the console's first release — are open, each with
-its options, its recommendation and the reason in the design's §8. **No D-number and no
-C-number is allocated to any of them**, deliberately: a number is the owner's to give.
-Nothing in this phase starts until the owner answers and gives the go.
+**These six tasks are `APPROVED by the owner on 2026-10-19`.** The OWNER APPROVAL GATE at
+the foot of this file keeps what it said while the design was `UNAPPROVED`, as history;
+this paragraph is the approval. The styling design's six questions — **Q1** does a light
+theme ship and is the OS the default; **Q2** where does the owner's override live; **Q3**
+does the "phosphor set" ship; **Q4** is PR #629's darwin baseline set superseded; **Q5** is
+the forced-colors smoke a gate; **Q6** does the styling work gate the console's first
+release — were put to the owner with their options, their recommendation and the reason in
+the design's §8, and that approval answers them. **The answer the first task below turns on
+is Q1's, and it is option (b): the console ships a dark theme only** — one value set,
+matching the `CONSOLE_THEME` the screens are drawn with today, with the design's §3.3 light
+set deferred and that table kept as its record. **No D-number and no C-number is allocated
+to any of them**, deliberately: a number is the owner's to give. The work starts now.
 
 **Dependencies, all soft but the first.** Phase 6 needs Task 3.4a's bundle step and served
 root (`console/tools/bundle-renderer/index.ts` and `SERVED_FILES` do not exist before it),
@@ -1570,4 +1574,13 @@ Review round 4 raised five findings, all of them fixed in place: the PR-link rul
 
 ## OWNER APPROVAL GATE
 
-**The decisions are answered. The tasks are not approved, and this gate stands.** On 2026-10-15 the owner answered the design's D1 to D20 — D1, D3, D4 and D11 as the design's §10 records them and Task 5.0's table mirrors, the other sixteen accepted as recommended — so the first half of this gate is behind us: **answering a decision is not approving the tasks**, and the owner said so. Concretely: `docs/design/desktop-console.md` and this file are the deliverable of the PR that adds them; Tasks 0.1 onward are future work; and **no task in this plan starts until the owner gives an explicit go on the plan itself**, which is a separate act from answering D1 to D20 and has not happened. If a later ruling reverses an answer, Task 5.0 rewrites the design to it first. The three that gate the most: **D1** (the sidecar, which decides everything about the data plane), **D3** (this repository, which decides the CI and the module), and **D4** (Apple signing, which would be the first private key this repo's release path has ever held, and which every step of phase 4 and all of Check 59, and both copy-ins (Tasks 1.5 and 4.5), is owner-run because of).
+**Phase 6, and only Phase 6, is `APPROVED by the owner on 2026-10-19`.** The owner approved
+the console styling design (`docs/design/console-styling.md`, merged as #634) and the six
+tasks of Phase 6 — 6.1 to 6.6 — on that date, and Task 6.1 is the first of them to be built.
+The approval is the go this gate's own text asks for, and it is scoped: it says nothing
+about phases 0 to 5, whose tasks stay unapproved below, and nothing about the styling
+design's other five questions beyond what the phase's section records. The rest of this
+section is the gate **as it was written on 2026-10-15, kept as history**.
+
+*The gate as first written:* **The decisions are answered. The tasks are not approved, and
+this gate stands.** On 2026-10-15 the owner answered the design's D1 to D20 — D1, D3, D4 and D11 as the design's §10 records them and Task 5.0's table mirrors, the other sixteen accepted as recommended — so the first half of this gate is behind us: **answering a decision is not approving the tasks**, and the owner said so. Concretely: `docs/design/desktop-console.md` and this file are the deliverable of the PR that adds them; Tasks 0.1 onward are future work; and **no task in this plan starts until the owner gives an explicit go on the plan itself**, which is a separate act from answering D1 to D20 and has not happened. If a later ruling reverses an answer, Task 5.0 rewrites the design to it first. The three that gate the most: **D1** (the sidecar, which decides everything about the data plane), **D3** (this repository, which decides the CI and the module), and **D4** (Apple signing, which would be the first private key this repo's release path has ever held, and which every step of phase 4 and all of Check 59, and both copy-ins (Tasks 1.5 and 4.5), is owner-run because of).
