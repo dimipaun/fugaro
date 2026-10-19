@@ -100,6 +100,115 @@ func TestChecklistCheck90ScratchDirectoryIsTheChecksOwn(t *testing.T) {
 	}
 }
 
+// TestChecklistCheck91ScratchDirectoryIsTheChecksOwn: step 7 removes the
+// scratch directory recursively, so — exactly as in Check 90, whose twin guard
+// is TestChecklistCheck90ScratchDirectoryIsTheChecksOwn — the path may not be
+// one the reader set: it is the one this check makes itself (mktemp -d, mode
+// 0700, carrying a marker the check writes) and remembers across steps in
+// $CHK91_RECORD, and the Restore re-checks the shape and the marker immediately
+// before the delete. Moving the `rm -rf` above either refusal, or dropping the
+// marker check, fails here instead of removing a directory the check never made.
+func TestChecklistCheck91ScratchDirectoryIsTheChecksOwn(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk91Heading)
+	guard := docSection(t, checklistPath, check, "### Check 91 step 1: setup and guard")
+	for _, want := range []string{
+		`CHK91=$(mktemp -d "${TMPDIR:-/tmp}/chk91.XXXXXXXX")`,
+		`: > "$CHK91/.chk91-mine"`,
+		`CHK91_RECORD`,
+		`[ -f "$CHK91/.chk91-mine" ]`,
+	} {
+		if !strings.Contains(guard, want) {
+			t.Errorf("Check 91's guard does not make its own scratch directory and refuse a path it does not recognise: it lacks %q", want)
+		}
+	}
+	restore := docSection(t, checklistPath, check, "### Check 91 step 7: Restore")
+	// The order is the point: both refusals stand between the path and the
+	// delete, not after it.
+	shape := strings.Index(restore, `|/|"$HOME"`)
+	marker := strings.Index(restore, `[ -f "$CHK91/.chk91-mine" ]`)
+	rmrf := strings.Index(restore, `rm -rf "$CHK91"`)
+	if shape == -1 || marker == -1 || rmrf == -1 {
+		t.Fatalf("Check 91's Restore lacks its scratch-directory guard (shape=%d, marker=%d, rm -rf=%d)", shape, marker, rmrf)
+	}
+	if !(shape < rmrf && marker < rmrf) {
+		t.Error("Check 91's Restore runs `rm -rf \"$CHK91\"` before checking the path's shape and its marker")
+	}
+	// The record file goes with the directory: a surviving $CHK91_RECORD names
+	// a path the next run would adopt as its own.
+	if !strings.Contains(restore, `rm -f "$CHK91_RECORD"`) {
+		t.Error("Check 91's Restore removes the scratch directory but leaves $CHK91_RECORD naming it")
+	}
+}
+
+// TestChecklistCheck91NeverAdoptsWhatItDidNotCreate: the Restore deletes the
+// service, its image and (when the baseline said so) the registry repository,
+// so every one of those deletes rests on the check knowing what it created.
+// Hard stop 4 refuses a fugaro-chk91 that is already there unless step 3
+// recorded the deploy in $CHK91/service-mine, and the baseline's repo-existed
+// file is what step 3's create and step 7's delete both read — and it is read
+// before the scratch directory holding it is removed. Deleting either leaves a
+// check that would adopt, write into and then delete a service or repository
+// the installation already had.
+func TestChecklistCheck91NeverAdoptsWhatItDidNotCreate(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk91Heading)
+	guard := docSection(t, checklistPath, check, "### Check 91 step 1: setup and guard")
+
+	// Hard stop 4, in the guard: an existing service is refused before anything
+	// touches it, and the refusal says why.
+	describe := strings.Index(guard, `gcloud run services describe "${SVC:?}"`)
+	mine := strings.Index(guard, `[ -f "$CHK91/service-mine" ]`)
+	if describe == -1 || mine == -1 {
+		t.Fatalf("Check 91's guard has no hard stop 4 (describe=%d, service-mine=%d): an existing fugaro-chk91 would be adopted", describe, mine)
+	}
+	if !strings.Contains(guard[describe:], "it is not this check's") {
+		t.Error("Check 91's hard stop 4 does not refuse a service that is not this check's")
+	}
+	// ... and step 3 records the deploy that makes the service this check's.
+	build := docSection(t, checklistPath, check, "### Check 91 step 3: build and deploy the throwaway service")
+	if !strings.Contains(build, `: > "$CHK91/service-mine"`) {
+		t.Error("Check 91's step 3 does not record the service it deployed in $CHK91/service-mine, so hard stop 4 would refuse the service this check itself created")
+	}
+
+	// The baseline: taken once, before anything is created, and it records both
+	// answers rather than only the one that permits a delete.
+	baseStart := strings.Index(check, "**Baseline, once, before anything is created**")
+	baseEnd := strings.Index(check, "### Check 91 step 2")
+	if baseStart == -1 || baseEnd == -1 || baseStart > baseEnd {
+		t.Fatal("Check 91 has no baseline block before step 2, so nothing says whether the registry repository was already there")
+	}
+	baseline := check[baseStart:baseEnd]
+	for _, want := range []string{
+		`[ ! -e "$CHK91/repo-existed" ]`,
+		`echo yes > "$CHK91/repo-existed"`,
+		`echo no > "$CHK91/repo-existed"`,
+	} {
+		if !strings.Contains(baseline, want) {
+			t.Errorf("Check 91's baseline does not snapshot what it found: it lacks %q", want)
+		}
+	}
+
+	// The Restore reads the baseline before the scratch directory holding it is
+	// gone, and deletes the repository only in the case the baseline recorded.
+	restore := docSection(t, checklistPath, check, "### Check 91 step 7: Restore")
+	read := strings.Index(restore, `REPO_EXISTED=$(cat "$CHK91/repo-existed")`)
+	rmrf := strings.Index(restore, `rm -rf "$CHK91"`)
+	del := strings.Index(restore, `gcloud artifacts repositories delete "${SVC:?}"`)
+	if read == -1 || rmrf == -1 || del == -1 {
+		t.Fatalf("Check 91's Restore lacks the baseline read, the scratch delete or the repository delete (read=%d, rm=%d, delete=%d)", read, rmrf, del)
+	}
+	if read > rmrf {
+		t.Error("Check 91's Restore reads $CHK91/repo-existed after the scratch directory that holds it is removed")
+	}
+	if read > del {
+		t.Error("Check 91's Restore deletes the registry repository before reading the baseline that says whether it was this check's to delete")
+	}
+	if !strings.Contains(restore, `[ "$REPO_EXISTED" = no ]`) {
+		t.Error("Check 91's Restore deletes the registry repository without the baseline's answer gating it: a repository the installation already had would be deleted")
+	}
+}
+
 // TestChecklistCheck91CreatesItsOwnRegistryRepository: the image tag names an
 // Artifact Registry repository in the project, and nothing created it, so the
 // build failed at its first step. The check creates the repository its own name
@@ -845,5 +954,66 @@ func TestChecklistCheck47IsSupersededNotHeld(t *testing.T) {
 		if !strings.Contains(line, "D130") && !strings.Contains(line, "superseded") {
 			t.Errorf("the register still holds a check against phase 5 without recording the supersession that moots it: %.120s", line)
 		}
+	}
+}
+
+// TestCredentialsPlanSaysWhatThisPullRequestChanges: the plan's first Global
+// Constraint said the pull request changes "No Go, Terraform, rules, schema,
+// skill or workflow" — while the same plan's status line records C0.3 and C0.6
+// as built, the two tasks that add internal/cli/docs_credentials_service_test.go
+// and internal/budget/rules/creds_emulator_test.go. A constraint that denies
+// the files the status line reports is a reader's trap, so both halves are
+// anchored here: the two test files named (and the absolute claim gone), and the
+// reviewer's line, which called the pull request "docs only" for the same
+// reason. The two files are read, so the constraint cannot name a path the
+// pull request does not have.
+func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
+	const path = "docs/credentials-service/implementation-plan.md"
+	doc := readDoc(t, path)
+	gc1 := docTail(t, path, doc, "1. **This pull request adds the documents")
+	if i := strings.Index(gc1, "\n2. **"); i != -1 {
+		gc1 = gc1[:i]
+	}
+	const cliGuard = "internal/cli/docs_credentials_service_test.go"
+	const rulesGuard = "internal/budget/rules/creds_emulator_test.go"
+	for _, want := range []string{
+		cliGuard,
+		rulesGuard,
+		"firebase",
+		"test only",
+		"No production Go, Terraform, rules, schema, skill or workflow change",
+	} {
+		if !strings.Contains(gc1, want) {
+			t.Errorf("Global Constraint 1 does not say what this pull request actually changes: it lacks %q", want)
+		}
+	}
+	if strings.Contains(doc, "No Go, Terraform, rules, schema, skill or workflow change") {
+		t.Error("the plan still says the pull request changes no Go at all, though C0.3 and C0.6 add two Go test files")
+	}
+	// The two files it names are the two Slice 0's task blocks write, so the
+	// constraint and the tasks below cannot drift apart.
+	for _, tc := range []struct{ task, file string }{
+		{"### Task C0.3: Checks 90 and 91", cliGuard},
+		{"### Task C0.6:", rulesGuard},
+	} {
+		// The Files field, not the block: the file has to be one the task
+		// writes, and naming it in the tests line alone would not make it so.
+		files := taskField(t, path, taskBlock(t, path, doc, tc.task), "**Files.**")
+		if !strings.Contains(files, tc.file) {
+			t.Errorf("%s does not write %s, which Global Constraint 1 names as one of the two files this pull request adds", tc.task, tc.file)
+		}
+	}
+	// ... and both are really there, with the shapes the constraint claims.
+	if src := readDoc(t, cliGuard); !strings.HasPrefix(src, "package cli") {
+		t.Errorf("%s is not the package cli guard file Global Constraint 1 names", cliGuard)
+	}
+	if src := readDoc(t, rulesGuard); !strings.Contains(src, "//go:build firebase") {
+		t.Errorf("%s is not behind the firebase tag Global Constraint 1 claims for it", rulesGuard)
+	}
+	if strings.Contains(doc, "**this pull request** (docs only)") {
+		t.Error("the plan's review focus still calls this pull request docs only, though it adds two Go test files")
+	}
+	if !strings.Contains(doc, "the four documents and the two test files that pin them") {
+		t.Error("the plan's review focus does not say what this pull request is: the documents and the two test files that pin them")
 	}
 }
