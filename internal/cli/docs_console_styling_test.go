@@ -384,6 +384,21 @@ func mdHueGap(t *testing.T, a, b string) float64 {
 	return d
 }
 
+// mdSeparatedArm names the arm of §3.4's disjunction a pair takes — "hue" when
+// the two hues are at least 50° apart, "luminance" when they are not but the
+// luminance contrast between them is at least 3:1 — and whether the pair takes
+// either arm at all. Both thresholds are inclusive: the rule is written "at
+// least 50°", "at least 3:1".
+func mdSeparatedArm(gap, contrast float64) (arm string, separated bool) {
+	if gap >= 50 {
+		return "hue", true
+	}
+	if contrast >= 3 {
+		return "luminance", true
+	}
+	return "", false
+}
+
 // mdCut splits s at the given markers, which must appear in that order, and
 // returns the pieces between them (one more piece than markers). A marker that
 // is missing or out of order fails rather than silently slicing the wrong
@@ -655,17 +670,17 @@ func TestDocsConsoleStylingStateSeparation(t *testing.T) {
 			// fails both is the one thing the rule forbids, and a pair that
 			// clears the first need not clear the second: none of the ten does
 			// today, and demanding it would be a rule the design does not state.
-			separated := "hue"
-			if gap < 50 {
-				separated = "luminance"
-			}
-			if gap < 50 && contrast < 3 {
+			// The decision itself is mdSeparatedArm, which the case below tests
+			// on its own — no pair in the document takes the fallback, so a
+			// mutation of the document alone could not reach that arm.
+			arm, separated := mdSeparatedArm(gap, contrast)
+			if !separated {
 				t.Errorf("%s: the %s set's %s and %s are %.1f° apart and %.2f:1 apart; §3.4's rule needs one of the two — 50° of hue, or 3:1 of luminance as the fallback — so change the token, not the rule", path, tc.name, a, b, gap, contrast)
 			}
 			// And the row says which arm it took, so a fallback pair cannot be
 			// tabulated as if hue had separated it.
-			if m[5] != separated {
-				t.Errorf("%s: the %s pair table says %s / %s are separated by %q, and the literals say %q (%.1f° of hue, %.2f:1 of luminance)", path, tc.name, a, b, m[5], separated, gap, contrast)
+			if separated && m[5] != arm {
+				t.Errorf("%s: the %s pair table says %s / %s are separated by %q, and the literals say %q (%.1f° of hue, %.2f:1 of luminance)", path, tc.name, a, b, m[5], arm, gap, contrast)
 			}
 		}
 		for i, a := range mdStateOrder {
@@ -674,6 +689,36 @@ func TestDocsConsoleStylingStateSeparation(t *testing.T) {
 					t.Errorf("%s: the %s pair table omits %s / %s", path, tc.name, a, b)
 				}
 			}
+		}
+	}
+}
+
+// TestDocsConsoleStylingSeparationArms: the two arms of §3.4's rule, on their
+// own. The document's own ten pairs per set all take the hue arm — every state
+// colour has to clear 4.5:1 as text on all three surfaces, which puts them all
+// within a narrow luminance band, so no pair of the five present colours is 3:1
+// apart in luminance — and so no edit to the document alone can exercise the
+// fallback branch. Testing the decision directly is what makes it a tested
+// branch rather than dead code, and pins both thresholds as inclusive, which is
+// how §3.4 writes them.
+func TestDocsConsoleStylingSeparationArms(t *testing.T) {
+	for _, tc := range []struct {
+		gap, contrast float64
+		arm           string
+		separated     bool
+		why           string
+	}{
+		{120, 1.1, "hue", true, "hue alone separates these"},
+		{50, 1.1, "hue", true, "the rule is \"at least 50°\", so 50° clears it"},
+		{49.9, 3.2, "luminance", true, "under 50° of hue, but 3:1 is what the fallback needs and this pair is over it"},
+		{49.9, 3, "luminance", true, "the rule is \"at least 3:1\", so exactly 3:1 clears it"},
+		{49.9, 2.99, "", false, "under both thresholds, which is the one thing §3.4 forbids"},
+		{0, 1, "", false, "identical colours are the far end of the same failure"},
+		{0, 21, "luminance", true, "nil hue separation is the case the fallback exists for"},
+	} {
+		arm, separated := mdSeparatedArm(tc.gap, tc.contrast)
+		if separated != tc.separated || arm != tc.arm {
+			t.Errorf("%.1f° of hue and %.2f:1 of luminance: mdSeparatedArm says (%q, %v), and §3.4 says (%q, %v) — %s", tc.gap, tc.contrast, arm, separated, tc.arm, tc.separated, tc.why)
 		}
 	}
 }

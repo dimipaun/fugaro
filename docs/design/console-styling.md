@@ -693,7 +693,13 @@ instead is a rule and a number:
 > the crowded one — and it is the same 3:1 [§4.4](#44-forced-colors-and-high-contrast)
 > leans on. **A pair that clears the first need not clear the second**, and none of the
 > ten below does: the luminance column is there to carry a pair that falls back, not to be
-> a second constraint on a pair that does not.
+> a second constraint on a pair that does not. In fact no pair of the five present colours
+> comes within a mile of it — the widest luminance gap in either set is **1.47** (dark,
+> `--warn`/`--error`) and **1.30** (light) — because every state colour has to clear 4.5:1
+> as text on all three surfaces, which holds all five in one narrow luminance band. The
+> fallback is reachable only by a pair at both extremes of what that band allows: one at
+> the 4.5:1 floor, the other near white. It is stated for the token that has to leave the
+> band, not for these five.
 
 50° is chosen as the point where two hues stop reading as "the same colour, shaded"; it is
 satisfiable without moving `--warn`, which is reused verbatim from the website, and it
@@ -1244,7 +1250,7 @@ golden**: forced-colors rendering is the platform's and its pixels are not ours 
 ### 6.5 The docs test
 
 `internal/cli/docs_console_styling_test.go` (new), in the shape of
-`docs_budget_token_channel_test.go`, with eight tests:
+`docs_budget_token_channel_test.go`, with nine tests:
 
 1. a **presence test** over this document's eleven section headings and its load-bearing
    strings — the status line, `SERVED_FILES`, "No inline style attribute", `Never colour
@@ -1271,7 +1277,7 @@ golden**: forced-colors rendering is the platform's and its pixels are not ours 
    six task headings are there, that the four `theme/*.css` files are in the plan's tree,
    and that the phase names all six of the [§8](#8-open-for-the-owner) questions.
 
-And **four that read §3.4's numbers rather than its prose**, which is the half the review of
+And **five that read §3.4's numbers rather than its prose**, which is the half the review of
 the first revision asked for. They recompute WCAG 2.1's relative luminance
 (`(L1+0.05)/(L2+0.05)`) and circular hue distance
 (`min(|Δh|, 360°−|Δh|)`) from the literal values in §3.2 and §3.3, in four lines of Go each,
@@ -1285,17 +1291,30 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    **still below** 3:1, because a hairline that cleared it would be a boundary this design
    should have named as one;
 6. a **state-separation test** that the ten pairs of state colours in each set are the ten
-   the literals make, and that every one clears the 50° minimum §3.4 states — the claim the
-   first revision got wrong, now a table of computed numbers rather than a sentence;
+   the literals make, that every one clears §3.4's minimum, and that each row says which
+   arm of §3.4's disjunction it took — 50° of hue, **or** 3:1 of luminance contrast where
+   hue cannot separate a pair — so a pair that missed both fails the test and a row that
+   tabulated a fallback pair as if hue had separated it fails too. It does **not** demand
+   3:1 of a pair that already clears 50°, which is a rule this document does not state and
+   none of the ten present pairs meets;
 7. a **provenance test** that reads [`palette-logo.css`](../../website/src/styles/palette-logo.css)
    and checks §3.2's accounting against it: the seven values reused byte for byte, the one
    reused under another name (`--accent-on-dark` → `--accent-ink`), the six that are new
    and therefore absent from the website's palette, and the fourteen the three add up to;
 8. an **accent-on-a-light-ground test** that `#17A8E6` is 2.70:1 on white and 2.49:1 on
    this set's own `--ground`, and that the light set's accent clears 4.5:1 on all three
-   surfaces — the finding that the right figure was in the wrong place, made runnable.
+   surfaces — the finding that the right figure was in the wrong place, made runnable;
+9. a **separation-arms test** of the two arms of the rule in 6 on their own, over synthetic
+   hue gaps and contrasts rather than over this document's colours. Every state colour has
+   to clear 4.5:1 as text on all three surfaces, which holds the five in one narrow
+   luminance band — the widest luminance gap between any two of them is 1.47 — so **no pair
+   of the five present colours can take the fallback**, and no edit to this document alone
+   can reach that branch. The case in 6 is proved against a self-consistent document that
+   does take it; 9 is what keeps the branch itself tested rather than dead code. It also
+   pins both thresholds as inclusive, which is how §3.4 writes them ("at least 50°", "at
+   least 3:1").
 
-**The citation test stats a file; these four read the file**, which is the difference
+**The citation test stats a file; these five read the file**, which is the difference
 between a citation that exists and a citation that is true. Neither substitutes for the
 console's own token test in [§6.3](#63-contrast-as-unit-tests), which is the one that will
 run against `palette.css` once it exists; these read the design's own tables, and the point
