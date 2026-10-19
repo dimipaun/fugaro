@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // computeBackendPlan is the plan this file pins: docs/plans/2026-10-19-compute-backend.md,
@@ -18,9 +20,14 @@ import (
 // from `integration-0.9.0` at `af953e5e`; the branch's own commits are this plan
 // and this test, the documents and tests a review of them corrected, and no
 // Terraform and no workflow). The one behavioural line among those corrections
-// is internal/managed/stateaccounts.go's table, which learns the compute
-// module's three types; everything else the branch adds is a comment, a test or
-// a document, and no task of this plan is built.
+// is internal/managed/stateaccounts.go's table, which learns two of the compute
+// module's three types and records the third as undecided; everything else the
+// branch adds is a comment, a test or a document. **The owner approved the plan
+// on 2026-10-19 ("Approve and start", every recommendation P1–P8 accepted as
+// written), and Task 8's first half is built here under that approval** — the
+// plan's Status line and its OWNER APPROVAL GATE say so, and
+// TestDocsComputeBackendStatusMatchesTheBranch holds both paragraphs to the
+// tree, so a branch that carries more (or less) than they claim fails.
 const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
 
 // TestDocsComputeBackendCitationsExist: every path the plan cites is a path a
@@ -528,10 +535,16 @@ func TestDocsComputeBackendCheck57IsStillOnlyARow(t *testing.T) {
 }
 
 // TestDocsComputeBackendDecisionsAreRecommendations: the plan's own decisions
-// are P1 to P8, every one of them a recommendation and none an answer, and the
-// gate at the foot is UNAPPROVED. A row that acquires an owner's answer must
-// acquire it here and in the gate's own text, so this test is what makes
-// "answered silently" impossible.
+// are P1 to P8, and every one of them is still written as a recommendation the
+// plan does not answer itself — what changed is that the owner answered all
+// eight, and both the decisions section and the gate at the foot have to say
+// so. An answer recorded in one place and not the other is the failure this
+// test is for: a gate that says APPROVED over rows a reader still reads as
+// open questions, or rows marked answered by a gate nobody pointed them at.
+//
+// The wrong pair is the one that matters: the gate is APPROVED and the section
+// says the plan answers none of them, or the reversal — a section that looks
+// answered while the gate still refuses to let a task start. Both fail here.
 func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
 	for i := 1; i <= 8; i++ {
@@ -541,8 +554,15 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 		}
 	}
 	decisions := section(t, doc, "## Decisions this plan defers to the owner", "## Open items")
-	if !strings.Contains(decisions, "**None is answered**") {
-		t.Errorf("%s: the decisions section no longer says none of its rows is answered", computeBackendPlan)
+	for _, want := range []string{
+		// Still a recommendation, and still not the plan's own answer.
+		"this plan answers none of them itself",
+		// And the owner's answer, with the date it was given.
+		"the owner accepted all eight, as written, on 2026-10-19",
+	} {
+		if !strings.Contains(decisions, want) {
+			t.Errorf("%s: the decisions section no longer says %q", computeBackendPlan, want)
+		}
 	}
 	// The three the gate says change what gets built, named there as such.
 	// The gate is the file's last section, so it runs to the end of the file.
@@ -552,7 +572,8 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 	}
 	gate := doc[i:]
 	for _, want := range []string{
-		"**UNAPPROVED. Nothing in this plan is approved",
+		"**APPROVED, 2026-10-19",
+		"accepted every recommendation P1–P8 as written",
 		"**P1 — the seal's carrier.**",
 		"**P2 — the reaper's impossible permission.**",
 		"**P5 — the release.**",
@@ -562,6 +583,100 @@ func TestDocsComputeBackendDecisionsAreRecommendations(t *testing.T) {
 		if !strings.Contains(gate, want) {
 			t.Errorf("%s's OWNER APPROVAL GATE no longer says %q", computeBackendPlan, want)
 		}
+	}
+}
+
+// TestDocsComputeBackendStatusMatchesTheBranch holds the two paragraphs that
+// describe what this branch carries, against the tree they describe: the Status
+// line's account and the gate's. A plan is a document about code, so a sentence
+// in it that says "the branch carries X and no task is built" goes stale the
+// moment a task's commit lands — and a stale one is worse than none, because
+// its whole job is to tell a reviewer what to expect before they read the diff.
+// The plan's own gate makes that a finding rather than a shortcut ("a task that
+// lifts it earlier is a finding"), so the paragraph claiming no task has started
+// must not survive the first task that starts.
+//
+// Two directions, both checked here:
+//
+//   - the sentences are present, so the account cannot be deleted to make the
+//     second half pass; and
+//   - the work the account names really is in the tree, so the account cannot
+//     claim a task whose code is not there — the names are the symbols the task
+//     added, and each is read out of its file.
+func TestDocsComputeBackendStatusMatchesTheBranch(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	status := section(t, doc, "**Status:", "**Spec:**")
+	for _, want := range []string{
+		// The approval, in the Status line as well as in the gate.
+		"the owner APPROVED this plan on 2026-10-19",
+		// What the branch carries beyond the plan and its pin test.
+		"Task 8 is the one begun",
+		// And what that half does not include, which is the honest half of
+		// the account: a reader who reads only the Status knows the task is
+		// incomplete before opening its pull request.
+		"steps 4 (`fugaro validate`'s offline checks) and 5 (`fugaro doctor`'s live ones) not written",
+	} {
+		if !strings.Contains(status, want) {
+			t.Errorf("%s: the Status line no longer says %q", computeBackendPlan, want)
+		}
+	}
+	// The sentences the first task to start falsified, and which no later
+	// reader may find again: each said this branch builds none of the plan's
+	// work, and Task 8's commits do.
+	for _, gone := range []string{
+		"nothing here is approved",
+		"no task's commit exists",
+		"this pull request builds none of it",
+		"no line of the work below has been written or run",
+	} {
+		if strings.Contains(doc, gone) {
+			t.Errorf("%s still says %q, and Task 8's first half is committed on this branch: the account a reader checks the diff against says nothing was built", computeBackendPlan, gone)
+		}
+	}
+	// What the account names, read out of the tree: the opener and the
+	// configuration it reads, the command, and the seam's call sites. The
+	// symbols are the pin test's own list (computeBackendSymbols above), so
+	// this is the same hold the rest of the file makes, applied to the
+	// paragraph that says which of them exist.
+	for file, symbols := range map[string][]string{
+		"internal/cli/cloud.go":         {"cloudOpeners", "batchOptions", "batchTimeouts"},
+		"internal/cli/backends.go":      {"newBackendsCmd", "selectableBackends", "backendsLs", "backendsListDoc"},
+		"internal/localcfg/localcfg.go": {"validateBatch", "BatchTaskTimeout"},
+	} {
+		data, err := os.ReadFile("../../" + file)
+		if err != nil {
+			t.Fatalf("the Status line says this branch carries %s, which could not be read: %v", file, err)
+		}
+		code := stripLineComments(string(data))
+		for _, sym := range symbols {
+			if !strings.Contains(code, sym) {
+				t.Errorf("%s no longer defines %s, and %s's Status line says the branch carries it: the account and the tree disagree", file, sym, computeBackendPlan)
+			}
+		}
+	}
+	// And the gate's own account of the same thing, which is the paragraph a
+	// reader arriving at the foot of the file reads.
+	i := strings.Index(doc, "## OWNER APPROVAL GATE")
+	if i < 0 {
+		t.Fatalf("%s has no OWNER APPROVAL GATE: the plan's whole approval story is that section", computeBackendPlan)
+	}
+	gate := doc[i:]
+	for _, want := range []string{
+		"Task 8's first half, begun under that approval",
+		"**No other task has a commit",
+		"`backend: cloud-batch` is still refused by `internal/localcfg`",
+	} {
+		if !strings.Contains(gate, want) {
+			t.Errorf("%s's OWNER APPROVAL GATE no longer says %q: the gate is what tells a reviewer which tasks have started", computeBackendPlan, want)
+		}
+	}
+	// The one refusal the account promises is still there, checked against
+	// localcfg's behaviour rather than against its prose: a gate that says the
+	// name is still refused over a config this build accepts would be the
+	// worst of the two failures.
+	if _, err := localcfg.Parse([]byte("version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +
+		"backend: cloud-batch\nrepos:\n  acme/app: { provider: github, workflows: [web] }\n")); err == nil {
+		t.Errorf("%s's gate says `backend: cloud-batch` is still refused, and this build accepts the config that names it", computeBackendPlan)
 	}
 }
 
