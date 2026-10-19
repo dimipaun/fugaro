@@ -1764,6 +1764,15 @@ config/policy/repos children are removed too, shared node or not: a delete
 that failed on the shared node leaves them behind, and this is what clears
 them.
 
+Each repository some account's allow_data_to admits also gets a child under
+config/policy/repos/$slug, holding the NAMES of its admitted accounts and
+nothing else. The children are narrowed before the shared node and widened
+after it, so a publish that stops between the two writes leaves the
+installation tighter than the config asked, never looser. When the node this
+publish writes carries a member an older Fugaro refuses whole — a credentials
+block, or routing.claude.via: cascade — the diff warns: older launchers (and,
+for the cascade, older runner images) stop until they are upgraded.
+
 routing.claude is written where the operator writes it: this config. A publish
 refuses to drop an active route the config does not account for, and refuses
 a config that writes a routing block naming no Claude switch in the same
