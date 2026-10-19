@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -108,15 +109,22 @@ func TestDoctorLauncherReachCountsOnlyStartableRoles(t *testing.T) {
 }
 
 // The line a person reads: the launcher reach is an *info* line and it is
-// printed. A check that is OK with a Problem is one printDoctorChecks skips
-// (`if c.OK { continue }`), so the surface the owner checks after a migration
-// existed only in --json — the human output said nothing about the jobs a
-// launcher can start, or said "everything checked is ok" over a project whose
-// launcher grants nothing called it.
+// printed. A check that is OK and carries no Severity is the one
+// printDoctorChecks skips (doctor's own bookkeeping), so the surface the owner
+// checks after a migration existed only in --json — the human output said
+// nothing about the jobs a launcher can start.
 //
-// Mutation (run, restore): put OK: true back on the check
-// (doctorLauncherReach) — doctor prints no launcher-jobs line, and
-// "everything checked is ok" comes back.
+// It also has to leave doctor's summary line alone: an info check reports what
+// doctor *measured*, and counting it as a failure (printDoctorChecks' failed
+// flag) printed the reach while saying nothing at all about everything else —
+// "everything checked is ok" never came out on a healthy installation, which is
+// what the two assertions below are for.
+//
+// Mutation (run, restore): drop Severity "info" from the check
+// (doctorLauncherReach) — the line loses its Severity, so it fails doctor's
+// exit code (checksFail's default arm) and the caller's doctor reports a
+// failure. The other half, the check not holding back doctor's summary line,
+// is TestDoctorInfoChecksDoNotHoldBackTheSummary's subject.
 func TestDoctorPrintsTheLauncherReach(t *testing.T) {
 	r := newDoctorRig(t)
 	r.withLaunchers(t)
@@ -495,5 +503,39 @@ func TestDoctorLauncherReachEndsOnAnEndlessListing(t *testing.T) {
 	}
 	if !strings.Contains(c.Problem, "runs past 200 pages") {
 		t.Errorf("Problem does not say the listing ran past the bound: %s", c.Problem)
+	}
+}
+
+// TestDoctorInfoChecksDoNotHoldBackTheSummary: an "info" check is what doctor
+// measured rather than what it found wrong — the launcher reach the owner
+// reads after a migration, the price catalog's age, whether a policy node could
+// be read — and it must cost the reader neither the line nor the sentence.
+//
+// printDoctorChecks sets its failed flag from the checks it prints, and every
+// un-ok check used to set it: on a healthy installation whose only lines were
+// info ones, doctor printed them and then said nothing about the rest, which
+// is the one thing the summary line is for ("fugaro doctor: everything checked
+// is ok" is the answer to "did anything fail?"). checksFail already refuses to
+// fail doctor on an info check, with or without --strict, so the two readings
+// of the same check had to agree.
+//
+// Mutation (run, restore): take the `c.Severity != "info"` guard off
+// printDoctorChecks' failed flag — the summary line goes missing below, and
+// the exit code stays right, which is what made the old reading invisible.
+func TestDoctorInfoChecksDoNotHoldBackTheSummary(t *testing.T) {
+	var out bytes.Buffer
+	printDoctorChecks(&out, []doctorCheck{
+		{ID: "launcher-jobs", Severity: "info", Problem: "launcher grants on Cloud Run jobs: 0 grant(s) over 1 job(s), and a launcher can start 0 of them"},
+		{ID: "everything-else", OK: true},
+	})
+	got := out.String()
+	if !strings.Contains(got, "launcher-jobs: launcher grants") {
+		t.Errorf("doctor did not print the info check:\n%s", got)
+	}
+	if !strings.Contains(got, "fugaro doctor: everything checked is ok") {
+		t.Errorf("an info check held back doctor's summary line: it is a measurement, never a failure (checksFail):\n%s", got)
+	}
+	if checksFail([]doctorCheck{{ID: "launcher-jobs", Severity: "info"}}, true) {
+		t.Errorf("an info check fails doctor under --strict, so the exit code and the summary disagreed")
 	}
 }
