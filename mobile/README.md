@@ -6,23 +6,30 @@ CLI (mobile plan D125, Phase 3).
 
 **Status.** Phase 3: tasks **P3.1** (the app skeleton and the account store), **P3.2**
 (the feed reader and the contract's document rules), **P3.4** (the audio
-interfaces) and **P3.6** (the mailbox client) are here
-([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)).
-P3.3 (the job list) and P3.5 (the voice screen) are not. What exists is the
-shell, the account model, the two device ports, the fences around them, the
-feed (the four granted families read directly from the Realtime Database, the
-document they add up to, and the screen's rules over it), the phone's mailbox
-client -- which is the only place in the app that writes to the database -- and
-the three voice ports with the fakes the voice screen's logic is written and
-tested against.
+interfaces), **P3.5** (the voice screen) and **P3.6** (the mailbox client) are
+here ([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)).
+P3.3 (the job list) is not. What exists is the shell, the account model, the two
+device ports, the fences around them, the feed (the four granted families read
+directly from the Realtime Database, the document they add up to, and the
+screen's rules over it), the phone's mailbox client -- which is the only place
+in the app that writes to the database -- the three voice ports with the fakes
+the voice screen's logic is written and tested against, and the voice screen
+itself: the interrupt switch (D127), the queue it gates, P1.4's offline refusal
+and P1.2's lease. It ships **without an engine**: the first store build is
+voiceless (the owner's ruling of 2026-10-19), so what is here is the screen's
+logic over the interfaces, which is what D126 asks CI to hold.
 
-**Two audio seams coexist.** P3.6 defined the one audio seam it needed --
-`src/mailbox/speaker.js`, `speak(text)` answering whether the utterance was
-spoken, which is what the ack's rule is written against -- before P3.4 was
-merged. P3.4's `src/audio/` (`tts.js`) is the full speech-output port. They are
-not yet unified: `speaker.js` stays until the voice screen (P3.5) wires the
-mailbox client to the audio pipeline. The secure store is **not** stubbed:
-P3.1's `SecretStore` is reused, and it gained one method (`use`) for the reason
+**Two audio seams, and now one of them is wired.** P3.6 defined the one audio
+seam it needed -- `src/mailbox/speaker.js`, `speak(text)` answering whether the
+utterance was spoken, which is what the ack's rule is written against -- before
+P3.4 was merged. P3.4's `src/audio/` (`tts.js`) is the full speech-output port.
+**P3.5 wired them** with `src/voice/speaker.js`, which puts the pipeline behind
+the port the client asks for, so the client's "ack only after it has spoken"
+now runs over the real audio ports (`src/voice/speaker.test.js` asserts both
+halves through the real client). The mailbox module keeps its own
+`MemorySpeaker`: it is the double that module's tests are written against, and
+P3.5 does not own `src/mailbox/`. The secure store is **not** stubbed: P3.1's
+`SecretStore` is reused, and it gained one method (`use`) for the reason
 `src/mailbox/README.md` gives.
 
 ## Running the tests
@@ -56,6 +63,7 @@ module plugged in by `index.js` at the bottom of the tree.
 | `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
 | `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
 | `src/audio/` | The voice ports and their fakes (P3.4): the capture path (`audio-in.js`), transcription (`stt.js`), speech output (`tts.js`), the transcript-to-message rule (`message.js`) and the pipeline that wires them (`pipeline.js`). **No engine, no device, no SDK**: `index.js` is the one door, and its test scans the directory for exactly that. |
+| `src/voice/` | The voice screen (P3.5): the interrupt switch and the pure decision it gates (`interrupt.js`), the screen itself — the queue, P1.4's offline refusal, P1.2's lease and D122's microphone state (`screen.js`) — and the adapter that puts P3.4's pipeline behind P3.6's speaker port (`speaker.js`). **No engine, no device, no database**: `index.js` is the one door, and its test scans the directory for exactly that. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
 | `src/skeleton/` | The trivial module and test that proved the runner runs (P3.1's red step). |
 
@@ -686,6 +694,176 @@ token rules and the import scan — invisible to a directory that exists to
 refuse exactly that. The walk is recursive now and has a control of its own,
 because with no subdirectory in the tree yet, no other assertion in the file
 could tell a recursive walk from a flat one.
+
+## The voice screen (P3.5)
+
+The screen P3.4's ports and P3.6's client were built for, and the four
+decisions the plan gives it. The plan's verification is four sentences, and
+`src/voice/screen.test.js` and `src/voice/interrupt.test.js` are those four, in
+order, over the fakes -- **no device, no network, no database, no microphone**
+(Global Constraint 10). The pipeline, the mailbox client and the three audio
+ports are the **real** merged modules, each built the way the app builds it,
+with only the device replaced: the database is `MemoryMailboxStore`, the
+speaker is P3.4's pipeline, and the microphone, the engine and the voice are
+P3.4's fakes. That is what makes "the app refuses to accept a message" a claim
+about **the store's write log** rather than about a returned value.
+
+**It ships without an engine.** The first store build is voiceless (the owner's
+ruling of 2026-10-19), so this is the screen's *logic*: no speech engine, no
+speech recognition, no audio. D123 inherits Voice D46 -- on-device engines only,
+chosen by a bake-off measured on the oldest supported device, **owner-run check
+85** -- and D52 is why the logic is in CI at all.
+
+| Piece | What it is |
+| --- | --- |
+| `interrupt.js` | **D127**: `INTERRUPT_SWITCH` (a local phone setting, never written to the database) and `interruptDecision({ switch, severity, highest, speaking, turn })`, a pure function over P1.3's ladder |
+| `screen.js` | The screen: the queue the switch drains, P1.4's offline refusal at the one door every message goes through, P1.2's lease, D122's microphone state, and one frozen snapshot a screen renders |
+| `speaker.js` | The wiring `mobile/README.md` said this task would do: P3.4's pipeline answering P3.6's `speak(text)` port, so the client's "ack only after it has spoken" runs over the real audio ports |
+
+**The four rules, each with its own tests:**
+
+1. **With the switch off a proactive update is queued, and not spoken over the
+   user.** The switch is judged before the severity and before the boundary, so
+   the reason a screen shows names the switch -- and with it off nothing is ever
+   spliced out of the queue. Turning it on *is* the boundary: the queue drains
+   at once if nothing else is happening.
+2. **With it on, an update is spoken at the next boundary and never over an
+   in-progress utterance.** A boundary is an event the pipeline reports, not a
+   delay: an utterance finishing (`utterance`), a turn closing (the engine's
+   `final` becoming a `message`), or the owner turning the switch on. The
+   decision is asked with the pipeline's own `speaking()` and `turn()`, so an
+   update that may not interrupt **stays queued** rather than being lost to a
+   refusal, and one utterance is spoken at a time.
+3. **The offline state shows from P1.4, and the app refuses to accept a
+   message while offline.** The presence is P1.4's own answer read through the
+   client (`poll`), and the refusal is one line at the one door every message
+   goes through -- the pipeline's `message` event and a typed one alike. The
+   spec's sentence is *rather than accepting messages into the void*, and it is
+   asserted as **the store's write log**, before and after. **Only `offline`
+   refuses**: a `stale` orchestrator is one the phone can still talk to (the
+   mailbox is not the heartbeat), and `clock-differs` is not a state P1.4 has
+   yet.
+4. **The digest's highest severity is the only thing that interrupts when the
+   switch is on.** `highest` is P1.3's `digest.severity` -- the most severe item
+   the document carries -- and an update whose severity is not it waits. The
+   consequence is stated rather than hidden: an update **above** a changed top
+   (a `fast_burn` queued while a failure was the top, after the digest stops
+   carrying one) also waits, because the rule is equality with the digest's own
+   highest. The queue is bounded and **refuses rather than evicting**, which is
+   what eventually surfaces it; a silent drop is the failure this module is
+   written against.
+
+**The lease is surfaced, not enforced.** P3.5's sentence is *a lease held by
+another consumer is surfaced rather than ignored*, and that is the whole of what
+this does: P1.2's verdict is returned **verbatim** (`already-claimed` with its
+`existing` claim, `not-holder` on a release that is not the phone's), the holder
+is in the snapshot a screen renders, and the state P1.2 hands back is adopted
+whether or not the take succeeded. **Nothing is gated on it**, deliberately: a
+lease held by a laptop that died mid-run would otherwise silence the owner's
+phone -- a failure mode worse than the one it prevents, and a policy the plan
+does not ask for.
+
+**D122's degradation is a state, not a control.** The OS refusing the microphone
+(or the background audio mode) is shown in the snapshot, which is what the "tap
+to speak" control is built on; the screen's queue, switch and mailbox keep
+working, and the refusal itself is P3.4's value passed through untouched.
+
+**Where the plan's text and the merged code disagree.** P3.5's verification says
+the digest's highest severity is *the only thing* that interrupts when the
+switch is on. `shared/prompts/` (P6.5, merged before this task) carries a wider
+`evaluateInterrupt` table: a cap being reached, a cap being near and the
+live-to-offline transition also interrupt there. **P3.5's dependency list names
+P1.2, P1.3, P1.4, P3.4 and P3.6 and not P6.5**, so this module holds the
+sentence the plan writes for this task and nothing else, and says so in
+`interrupt.js`'s header. When P6.5's queue is wired to this screen, the wider
+table is the thing to compose with, deliberately and with its own tests. The
+same is true of P6.10, which widens the offline refusal later.
+
+**P6.12's seam is left and none of it is implemented.** The spoken confirmation
+builds on this task later: the seam is `accept` (the one door a message goes
+through) and the pipeline's events, and nothing here reads a message back.
+
+**The scan, and what it keeps true.** `src/voice/index.test.js` pins the
+module's files **at every depth** (the walk is recursive and the recursion has
+its own control, because a fence one directory deep is not a fence), pins the
+door's exports against a literal, and scans the code for the things an engine
+or a second write path would need. This module sits above `src/audio/`,
+`src/mailbox/` and `src/accounts/` and wires them together, so its import rule
+is **"inside `mobile/` or `shared/`, and no package at all"** -- the fence
+`boundary.test.js` uses, rather than the narrower one P3.4's scan can afford at
+the bottom of the tree. `boundary.test.js` cannot close that gap itself: it
+judges *path* specifiers, so a package name like `react-native-voice` is not a
+thing it can see.
+
+| Rule | Exactly what the voice scan forbids | Why |
+| --- | --- | --- |
+| no clock | `Date`, `performance.now`, `hrtime` | D117: the clock is the server-anchored one the screen is handed, so this module reads none |
+| no random source | `Math.random`, `crypto` | the message id is the client's (`newId`), and a random source here would be one no test could pin |
+| no timer | `setTimeout`, `setInterval`, `setImmediate`, `requestAnimationFrame` | a boundary is an event the pipeline reports, never a delay this module waits out |
+| no network | `fetch(`, `WebSocket`, `XMLHttpRequest`, `EventSource` | D123/D46: on-device engines only, and every byte that leaves the phone leaves through the client |
+| no device API | `getUserMedia`, `MediaRecorder`, `AudioContext`, `navigator`, `Permissions` | D122: the microphone is reached through the pipeline, and the OS permission through whoever implements the port |
+| no database of its own | `firebase`, `Firestore`, `getDatabase`, `reference(`, `AsyncStorage` | D113: the mailbox client is the app's only write path, and a screen that could reach a database could be a second one |
+| no samples, in any encoding | `pcm`, `samples`, `ArrayBuffer`, `Float32Array`, `Uint8Array`, `base64`, `Blob` | D118/F26: text crosses these ports and audio never does -- so there is no buffer here to leak one through |
+| no logging | `console.` | a transcript in a log line is a transcript outside the mailbox |
+| nothing is read from the environment | `process.env` | a screen configured by an environment variable is a screen no test can build the same way twice |
+
+The middle column is not a summary of the rule, it **is** the rule: the scan
+builds its pattern from exactly these tokens, and
+`the README's rule table and the scan are the same list` reads this table and
+compares it to the scan's own list, row for row and token for token. The header
+is deliberately **not** the same string as P3.4's, so the two tables cannot be
+confused for one another. Every rule has a **positive control** (it must match
+a planted line of real code) and a **prose control** (it must not match the same
+line in a comment), which is what lets these files' headers explain the rules
+they are held to.
+
+### Mutations run against this task
+
+Each was planted, the run went red on the named test, and the bug was removed.
+The tests are run with `node --test "src/**/*.test.js"` -- the app's whole
+suite, all passing -- and the four sentences of `screen.test.js` and
+`interrupt.test.js` are the plan's own verification.
+
+**The column names the tests that went red; it does not count them**, for the
+reason P3.4's table gives: a count is a claim about a suite that grows, and a
+cascade makes it meaningless even sooner.
+
+| Mutation | Went red |
+| --- | --- |
+| `interruptDecision` judges the boundary before the severity | `with the switch on, a severity below the digest's highest does not interrupt` and `the severity is judged before the boundary` |
+| the switch is judged after the severity | `with the switch off nothing interrupts, whatever the severity is` |
+| `speaking` stops being a boundary | `an in-progress utterance is never spoken over` and the plan's second sentence |
+| the user's turn stops being a boundary | `the user's turn is a boundary too` and `an update waits for the user's turn to close` |
+| `severityRank` is replaced by string equality (an off-ladder severity ranks as `info`) | `a switch that is neither off nor on, and a severity off the ladder, are wiring bugs and they throw` |
+| `drain` splices every queued update instead of one | `one utterance at a time: two queued updates are spoken one after the other` |
+| `drain` ignores the switch | the plan's first sentence |
+| `drain` speaks an update below the digest's top | the plan's fourth sentence |
+| a below-the-top update is dropped instead of queued | the plan's fourth sentence |
+| the queue evicts its oldest entry instead of refusing | `the queue is bounded, and refuses rather than dropping what is in it` |
+| `offer` queues without a digest | `a digest that arrives after the queue does not speak an update it does not cover` |
+| `accept` stops refusing while offline | the plan's second sentence and `a transcript that arrives while offline is refused too` |
+| `accept` refuses on `stale` as well as `offline` | `stale is not offline: a heartbeat three intervals old still accepts a message` |
+| `accept` refuses before validating the text | `an update that is not an update, and a switch that is not a switch, are refusals with a code` |
+| the offline refusal is returned but not recorded | the plan's second sentence (`state().refused`) |
+| the `message` event stops being accepted | `a transcript that arrives while offline is refused too` and `an update waits for the user's turn to close` |
+| the `message` event stops draining the queue | `an update waits for the user's turn to close, and is spoken after it` |
+| the `utterance` event stops draining the queue | the plan's second sentence |
+| the `unavailable` event stops being recorded | `D122: a refused microphone is shown` |
+| `takeLease` swallows `already-claimed` | the plan's third sentence |
+| `takeLease` does not adopt P1.2's returned state | the plan's third sentence |
+| `releaseLease` releases another consumer's lease | the plan's third sentence |
+| `setLease` accepts a state P1.2 refuses | `a lease state that is not one is refused` |
+| the lease gates `accept` | `the lease does not gate the app` |
+| the speaker maps `interrupted` to `ok: true` | `a reply that played out is a spoken verdict, and one that did not is not` and `a reply the pipeline could not speak is not acked` |
+| the speaker maps `bad-text` to `speak-failed` | `a reply that played out is a spoken verdict, and one that did not is not` |
+| `setSwitch` accepts a third value | `an update that is not an update, and a switch that is not a switch, are refusals with a code` |
+| `setDigest` accepts an off-ladder severity | the same |
+| the door grows one more export | `the door exports exactly this` |
+| the file walk stops recursing | `the walk is recursive, so a file in a subdirectory is part of the module` |
+| a `Date.now()` planted in `screen.js` | `no clock` |
+| a `getDatabase()` planted in `screen.js` | `no database of its own` |
+| the README's rule table header is renamed | `the README's rule table and the scan are the same list` |
+| the README's tokens are reordered within a row | the same |
 
 ## What is not verified here
 
