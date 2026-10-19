@@ -521,3 +521,51 @@ func TestDocsReleaseChecklistNamesEveryPolicyVersion(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsProjectLayerSaysWhatTiesARepositoryToAProject: task 4.1's step 4 —
+// the doc must state, in one paragraph, the three things that tie a repository
+// to a project (design project-centric.md §4.3) and that there is no
+// registration record, because the "no record is written" half is what an
+// operator has to believe before they trust `repos ls`'s answer, and the three
+// ties are what they have to satisfy before a run works at all.
+//
+// It also pins the two §7 rows the task changes — `repos ls` reads enrolled
+// against seen, `sync` offers the App's installed repositories — and that §10
+// stopped claiming the discovery surface is missing. An operator told a
+// shipped command is "not yet" looks for another way to do the work.
+//
+// Mutation (verified, run and restored): drop the "Three things" paragraph,
+// put `repos ls`'s "and the repositories running now" back, or restore §10's
+// "without the fuller discovery answer phase 4 adds" — this test fails,
+// naming it.
+func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
+	doc := readDoc(t, "docs/project-layer.md")
+	for _, want := range []string{
+		"### What ties a repository to a project",
+		"**Three things, all of them data**",
+		"default-branch `fugaro.yaml` names the project (`project:`",
+		"the project's published **allow-list**",
+		"provider-side access, the GitHub App installed on the repository",
+		"There is **no registration record**",
+		"the runs bucket's `runs/<slug>/` prefixes and Firestore's `spendDaily`",
+		"Discovery stays **optional and explicit**",
+		"| `fugaro project sync [--github-app-id <id>] [--github-app-key] [--yes]` |",
+		"The **enrolled** against the **seen**",
+		"the ones the allow-list does not already admit, in **one batch, confirmed once**",
+		"the discovery answer has shipped too",
+		"never removes an entry",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md lacks %q", want)
+		}
+	}
+	for _, notWant := range []string{
+		"| `fugaro project repos ls` | The allow-list with each entry's source, and the repositories running now |",
+		"without the fuller discovery answer phase 4 adds",
+		"phase 4's discovery surface is where a durable answer comes from",
+	} {
+		if strings.Contains(doc, notWant) {
+			t.Errorf("docs/project-layer.md still says %q, which task 4.1 made false", notWant)
+		}
+	}
+}
