@@ -635,11 +635,13 @@ Adding the first one is two edits:
   ceiling, so it has room for the pictures it renders, and it is not the page the ceiling is
   derived from (the docs hub is).
 - **The page's words, and this is the tight one.** The console page stands at **239 of the 250
-  words** D188 allows it, and a caption is visible text, so its words count — `alt` is not
-  visible text and does not. Eleven words of caption is the whole of the room there is, so the
-  first screenshot with a caption of its own needs the page ceiling raised in the same commit
-  that adds it, which is D188's own rule: the number moves where the need is, and a build that
-  needs more fails until it moves.
+  words** D188 allows it, and a row's words all count: the caption is text under the picture,
+  and the `alt` is counted too, because it is the text a reader gets when the picture does not
+  arrive (`test/budget.mjs`'s `visibleText` reads an `img`'s `alt`). The slider's own heading
+  takes one more. So **ten words across all the rows' `alt` and `caption` together** is the
+  whole of the room there is, and the first screenshot that needs more than that needs the page
+  ceiling raised in the same commit that adds it — D188's own rule: the number moves where the
+  need is, and a build that needs more fails until it moves.
 
 The slider's own bytes do **not** move when a screenshot is added: the component's stylesheet is
 inlined into the console page whether or not the slider renders, which is the 1,115 bytes the
@@ -697,6 +699,7 @@ them there.
 website/
   package.json, package-lock.json, astro.config.mjs, tsconfig.json
   data/install.yaml, site.yaml     # hand-written facts, pinned by Go tests
+  data/console-screens.yaml        # the console page's slides: hand-written, ships empty
   data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
   content/                         # generated, do not edit (see the table above)
   src/lib/changelog.mjs            # reads docs/releases/ at build time

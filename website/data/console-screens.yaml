@@ -22,7 +22,10 @@
 #
 # Every byte of every file named here is served by this site and counted by
 # `website/test/budget.mjs`: the picture's bytes are part of the whole-site budget and part
-# of the console page's weight, and the caption and the alt text are words the page ceiling
-# counts. Both ceilings are in website/README.md, with the numbers.
+# of the console page's weight, and a row's `alt` and `caption` are words the page's own
+# word ceiling counts — the console page stands 11 words under D188's 250 today, and the
+# slider's heading takes one of them, so ten words across all the rows is the whole of the
+# room there is and the first row added here is likely to need that ceiling raised, in the
+# commit that adds it. website/README.md, "Adding a console screenshot", has the rule.
 version: 1
 screens: []
