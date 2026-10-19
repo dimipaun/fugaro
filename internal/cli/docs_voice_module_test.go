@@ -779,15 +779,16 @@ func TestDocsVoiceModuleReconciliationCitationsExist(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		// The three branch-only paths, named, with the reason they are dead
-		// links. project-named-oauth-tokens.md is the third: a review caught it
-		// annotated as #584's base when it is on that branch and on neither its
-		// base nor main.
+		// The three paths section 0 accounts for, named. Only ONE is a dead
+		// link now: project-named-oauth-tokens.md lives on #584's branch, which
+		// has not merged. A review found the other two still described as
+		// branch-only after #633 and #634 merged, so the disclosure names one
+		// path as branch-only and the other two as on main now.
 		"../mobile/design/voice-evaluation-switch.md",
 		"../design/console-styling.md",
 		"../design/project-named-oauth-tokens.md",
-		"**Three paths cited below are not on `main`",
-		"will not resolve until their pull requests merge",
+		"**One path cited below is not on `main` and its link will not resolve until its pull request merges**",
+		"**on `main` now**",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s does not disclose its branch-only citations (%q missing)", path, want)
@@ -1069,10 +1070,13 @@ func TestDocsVoiceModuleReconciliationPinsItsBaseline(t *testing.T) {
 		"**Phase 3 is the app and lives under `mobile/src/`, not `shared/`**",
 		"no Phase 3 task writes anything under `shared/`",
 		"**P3.1** (the skeleton and the account store, `mobile/src/skeleton` and `mobile/src/accounts`)",
-		// Which Phase 3 parts are merged, and which are not, with the commits
-		// that merged the two that landed after the baseline.
-		"**P3.2** (the feed reader, PR #590, merged as `ebe6914`)",
-		"**P3.6** (the mailbox client, PR #604, merged as `3d02625`)",
+		// Which Phase 3 parts are merged, and which are not. The two that
+		// landed after the baseline are named by the commit their merge is, in
+		// the same "on main (<short sha>)" form section 0's table uses -- the
+		// branch-only "⊂ PR #n" shorthand is for the pull requests still open.
+		"**on `main` now**, as `ebe69147` and `3d02625d`",
+		"| #590 | `fugaro/20261018-132637-e66c` | `125e1650` | merged, on `main` as `ebe69147` |",
+		"| #604 | `fugaro/20261018-151705-dc83` | `bd8e439b` | merged, on `main` as `3d02625d` |",
 		"**P3.3** (`mobile/src/jobs/`)",
 	} {
 		if !strings.Contains(recon, want) {
@@ -1124,6 +1128,140 @@ func TestDocsVoiceModuleReconciliationPinsItsBaseline(t *testing.T) {
 // voiceModuleFinding returns finding #n's block: its heading up to the next
 // finding or section heading. Findings are addressed by number, so a retitled
 // finding does not move the pin.
+// voiceModuleBranchOnlyPRs matches the branch-only shorthand: "⊂ PR #n" or
+// "⊂ **PR #n**", the notation section 2 defines as "on that pull request's
+// branch and not on `main`". Section 2's own definition and section 0's audit
+// sentence write "⊂ PR #n" with a literal n, which this pattern does not match,
+// so every hit is a real use of the shorthand somewhere in the document.
+var voiceModuleBranchOnlyPRs = regexp.MustCompile(`⊂ \*{0,2}(?:PR )?#([0-9]+)`)
+
+// TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit: the "⊂ PR #n"
+// shorthand means "on that pull request's branch and not on `main`", and a
+// cloud review found it applied to pull requests that had merged -- section 0
+// said #590 (ebe69147) and #604 (3d02625d) were on main now while two later
+// sections still wrote "⊂ PR #590" and "⊂ PR #604". A merged pull request's
+// work is named by the commit its merge landed as, the shorthand is kept for
+// the pull requests still open, and section 0's table says which is which.
+func TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit(t *testing.T) {
+	const path = "docs/voice-module/reconciliation.md"
+	recon := readDoc(t, path)
+	for _, want := range []string{
+		"**\"⊂ PR #n\"** means the artifact is on that pull request's branch and not on `main`",
+		"**\"on `main` (`<short sha>`)\"** means the artifact is on `main` at the commit that merge landed as",
+		"`⊂ PR #n` is now used only for a pull request that is **still open**",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q; section 2 defines the notations the rest of the document is read with", path, want)
+		}
+	}
+	// Every use of the shorthand names a pull request that is still open.
+	open := map[string]bool{"584": true, "592": true}
+	for _, doc := range []string{"docs/voice-module/reconciliation.md", "docs/voice-module/README.md"} {
+		text := readDoc(t, doc)
+		for _, m := range voiceModuleBranchOnlyPRs.FindAllStringSubmatch(text, -1) {
+			if !open[m[1]] {
+				t.Errorf("%s writes %q: #%s has merged, so its artifacts are named as \"on `main` (`<short sha>`)\" rather than as branch-only", doc, m[0], m[1])
+			}
+		}
+	}
+	// And section 0's table gives both halves: the commit each merged pull
+	// request's work is on main as, and the two that are still open.
+	for _, want := range []string{
+		"| #590 | `fugaro/20261018-132637-e66c` | `125e1650` | merged, on `main` as `ebe69147` |",
+		"| #604 | `fugaro/20261018-151705-dc83` | `bd8e439b` | merged, on `main` as `3d02625d` |",
+		"| #602 | `fugaro/20261018-151658-6559` | `130ce03d` | merged, on `main` as `f67753f9` |",
+		"| #633 | `fugaro/20261019-001448-8569` | `9b5cc838` | merged, on `main` as `80f2b7fa` |",
+		"| #634 | `fugaro/20261019-002947-618d` | `9fa0bb57` | merged, on `main` as `721aa091` |",
+		"| #592 | `fugaro/20261018-132817-67ec` | `f36cc429` | **still open**",
+		"| #584 | `fugaro/20261018-130633-f104` | `04ac88f8` | **still open**",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q; section 0's table is where a reader checks whether a branch read is main now", path, want)
+		}
+	}
+}
+
+// voiceModuleDesignBlock returns the block a "**F32 — ...**" heading opens in
+// docs/design/voice.md: the heading line and its body, up to the next bold
+// heading or section heading. An empty string means the heading is gone.
+func voiceModuleDesignBlock(doc string, name string) string {
+	i := strings.Index(doc, "**"+name+" — ")
+	if i < 0 {
+		return ""
+	}
+	block := doc[i:]
+	for _, stop := range []string{"\n**", "\n### ", "\n## "} {
+		if j := strings.Index(block, stop); j >= 0 {
+			block = block[:j]
+		}
+	}
+	return block
+}
+
+// TestDocsVoiceModuleReconciliationAttributesTheSynthesisedFixturesRule: a
+// cloud review found the phrase "synthesised, not captured" credited to
+// voice.md's F32 in five places. It is not F32's sentence. In docs/design/voice.md
+// the phrase appears once, in D52's recommendation cell, and that cell cites F32
+// as the reason a recording is excluded; F32 is the finding that anything
+// recorded needs a redaction check because a recording of a person's voice is
+// stored material no redactor covers. So the phrase is D52's, the exclusion is
+// F32's, and this test pins both ends of that against the source.
+func TestDocsVoiceModuleReconciliationAttributesTheSynthesisedFixturesRule(t *testing.T) {
+	const path = "docs/voice-module/reconciliation.md"
+	recon := readDoc(t, path)
+	const voicePath = "docs/design/voice.md"
+	voice := readDoc(t, voicePath)
+	// The source first: D52's cell carries the phrase and F32's block carries
+	// the exclusion the phrase rests on. If either moves, the document's
+	// attribution is wrong and this test should say so before it reads the
+	// document's own text.
+	flat := voiceModuleQuoteText(voice)
+	if !strings.Contains(flat, "audio fixtures are synthesised, not captured, because a recording of a person's voice is new stored material no redactor covers (F32)") {
+		t.Errorf("%s no longer carries the sentence the reconciliation attributes to D52's recommendation", voicePath)
+	}
+	f32 := voiceModuleDesignBlock(voice, "F32")
+	if f32 == "" {
+		t.Fatalf("%s has no F32 heading", voicePath)
+	}
+	if !strings.Contains(f32, "a person's voice") {
+		t.Errorf("%s: F32 no longer states the exclusion the synthesised-fixtures rule rests on", voicePath)
+	}
+	if strings.Contains(f32, "synthesised, not captured") {
+		t.Errorf("%s: F32 now carries the phrase itself, so the reconciliation's attribution to D52 is stale", voicePath)
+	}
+	// The document: the phrase goes to D52's recommendation, the exclusion to
+	// F32, at all five places a review found it wrong.
+	for _, want := range []string{
+		"`voice.md` **D52**'s recommendation: audio fixtures are *\"**synthesised, not captured**\"*",
+		"the exclusion that recommendation rests on is **F32**'s finding",
+		"the exclusion that reasoning rests on is **F32**'s finding",
+		"**D52** already gives and the exclusion **F32** is behind",
+		"against D118 and D52's synthesised-fixtures rule (F32's exclusion)",
+		"D52's existing rule, over F32's exclusion",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q; the synthesised-fixtures rule is D52's and the exclusion behind it is F32's", path, want)
+		}
+	}
+	// The wrong attribution, in every spelling it could come back in: the
+	// flattened text is what a re-attribution looks like once the markdown is
+	// stripped, so "**F32**" and bare "F32" are caught by one comparison.
+	flatRecon := voiceModuleQuoteText(recon)
+	if strings.Contains(flatRecon, "voice.md F32: audio fixtures") {
+		t.Errorf("%s gives the synthesised-fixtures phrase to F32; it is D52's recommendation cell that carries it", path)
+	}
+	for _, banned := range []string{
+		"`voice.md` F32: audio fixtures are",
+		"(F32's existing rule)",
+		"against D118 and F32.",
+		"no recording, synthesised clips as F32 already gives them",
+	} {
+		if strings.Contains(recon, banned) {
+			t.Errorf("%s carries %q again; that credits F32 with D52's sentence", path, banned)
+		}
+	}
+}
+
 func voiceModuleFinding(t *testing.T, recon string, n int) string {
 	t.Helper()
 	i := strings.Index(recon, "**#"+strconv.Itoa(n)+" — ")
@@ -1321,7 +1459,35 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 	}
 }
 
-// Mutation (verified, run and restored): 63 entries, numbered (1)–(63).
+// Mutation (verified, run and restored): 71 entries, numbered (1)–(71).
+// (64) Giving a merged pull request's work the branch-only shorthand again
+// ("the reader on `main` (`ebe69147`) subscribes" -> "the reader ⊂ PR #590
+// subscribes") fails TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit:
+// the shorthand is defined as "on that pull request's branch and not on `main`",
+// and #590 is on `main`.
+// (65) Dropping the merge commit from section 0's row for #590 ("| merged, on
+// `main` as `ebe69147` |" -> "| still open |") fails it: the table is where a
+// reader checks whether a branch read is main now.
+// (66) Deleting the notation definition's second half ("and **\"on `main`
+// (`<short sha>`)\"** means the artifact is on `main` at the commit that merge
+// landed as") fails it once, with both defined notations missing from any test
+// that reads the document.
+// (67) Writing the synthesised-fixtures phrase back under F32's name ("`voice.md`
+// **D52**'s recommendation: audio fixtures" -> "`voice.md` **F32**: audio
+// fixtures") fails TestDocsVoiceModuleReconciliationAttributesTheSynthesisedFixturesRule:
+// the phrase is D52's cell, and F32 only carries the exclusion it rests on.
+// (68) Reverting Q8's option to "(F32's existing rule)" fails it twice -- the
+// banned form and the missing "D52's existing rule, over F32's exclusion".
+// (69) Replacing "the exclusion that recommendation rests on is **F32**'s
+// finding" with "and F32 says so" fails it on the missing attribution.
+// (70) Writing "**Three paths cited below are not on `main`**" back into
+// section 0 fails TestDocsVoiceModuleReconciliationCitationsExist: only
+// project-named-oauth-tokens.md (⊂ PR #584) is branch-only now.
+// (71) Dropping the reason clause from docs/design/voice.md's D52 cell
+// ("... **synthesised, not captured**, because a recording of a person's voice
+// is new stored material no redactor covers (F32)") fails the same test from the
+// source side, which is why it reads voice.md rather than trusting the
+// document's own words.
 // (53) Reverting #5's consequence to "See #23 for what that costs" fails
 // TestDocsVoiceModuleReconciliationQuotesAreVerbatim: the cost of a nested,
 // separately signed binary is #17, and the document cites #17 for it elsewhere.
