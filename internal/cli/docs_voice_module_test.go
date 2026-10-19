@@ -33,6 +33,16 @@ func TestDocsVoiceModuleFolderIsWritten(t *testing.T) {
 			t.Errorf("docs/voice-module/README.md lacks %q", want)
 		}
 	}
+	// The index must not describe its own artifact falsely. spec.md is the
+	// spec itself, with no wrapper: the delimiters the request used to mark the
+	// text are that request's quoting convention, and neither the file nor the
+	// README describes them as being in it (a review caught the README claiming
+	// the text sat "between the markers", which no file in this repository has).
+	for _, banned := range []string{"SPEC TEXT", "==="} {
+		if strings.Contains(readme, banned) {
+			t.Errorf("docs/voice-module/README.md claims the spec carries %q; spec.md has no marker line and the index must describe the file it indexes", banned)
+		}
+	}
 
 	spec := readDoc(t, "docs/voice-module/spec.md")
 	for _, want := range []string{
@@ -56,6 +66,12 @@ func TestDocsVoiceModuleFolderIsWritten(t *testing.T) {
 	} {
 		if !strings.Contains(spec, want) {
 			t.Errorf("docs/voice-module/spec.md lacks %q (the spec must be verbatim)", want)
+		}
+	}
+	// And nothing else: no delimiter line, no wrapper. The file is the spec.
+	for _, line := range strings.Split(spec, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "===") {
+			t.Errorf("docs/voice-module/spec.md carries the delimiter line %q: the quoting markers belong to the request that carried the text, not to the document", strings.TrimSpace(line))
 		}
 	}
 
@@ -128,8 +144,9 @@ func TestDocsVoiceModuleReconciliationAllocatesNoDecisions(t *testing.T) {
 // on-main path below is stat'ed, not merely required as text, so a document
 // that is renamed out from under §1 or §2 fails here.
 //
-// Two cited paths are deliberately NOT stat'ed: docs/mobile/design/cloud-stt-tts.md
-// (PR #633) and docs/design/console-styling.md (PR #634) exist only on their
+// Three cited paths are deliberately NOT stat'ed: docs/mobile/design/cloud-stt-tts.md
+// (PR #633), docs/design/console-styling.md (PR #634) and
+// docs/design/project-named-oauth-tokens.md (PR #584) exist only on their
 // branches, not on this tree's main. The document says so in its own words and
 // this test pins that disclosure, so a reader who finds the link dead is told
 // why rather than left to guess -- the same convention
@@ -174,18 +191,31 @@ func TestDocsVoiceModuleReconciliationCitationsExist(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		// The two branch-only paths, named, with the reason they are dead links.
+		// The three branch-only paths, named, with the reason they are dead
+		// links. project-named-oauth-tokens.md is the third: a review caught it
+		// annotated as #584's base when it is on that branch and on neither its
+		// base nor main.
 		"../mobile/design/cloud-stt-tts.md",
 		"../design/console-styling.md",
+		"../design/project-named-oauth-tokens.md",
+		"**Three paths cited below are not on `main`",
 		"will not resolve until their pull requests merge",
 	} {
 		if !strings.Contains(recon, want) {
-			t.Errorf("%s does not disclose its two branch-only citations (%q missing)", path, want)
+			t.Errorf("%s does not disclose its branch-only citations (%q missing)", path, want)
 		}
 	}
 }
 
-// Mutation (verified, run and restored): three, one per test.
+// Mutation (verified, run and restored): six, all run and restored.
+// (4) Putting the marker claim back into the README ("the text between the
+// `=== SPEC TEXT ===` markers") fails TestDocsVoiceModuleFolderIsWritten twice,
+// once for each banned string. (5) Wrapping spec.md in "=== SPEC TEXT ===" and
+// "=== END OF SPEC TEXT ===" lines fails it once per delimiter line. (6)
+// Writing "Two paths cited below are not on `main`" back into the
+// reconciliation fails TestDocsVoiceModuleReconciliationCitationsExist.
+//
+// And three older ones, one per test.
 // (1) Paraphrasing "App stays in the foreground while talking (no background
 // listening)." in spec.md fails TestDocsVoiceModuleFolderIsWritten with
 // `docs/voice-module/spec.md lacks "App stays in the foreground while talking

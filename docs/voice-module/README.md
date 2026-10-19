@@ -10,7 +10,7 @@ The owner's voice module spec of 2026-10-18, committed verbatim, and its reconci
 
 | File | What it is |
 |---|---|
-| [spec.md](spec.md) | The owner's spec, **verbatim** — the text between the `=== SPEC TEXT ===` markers, copied unchanged. Committed alone in its own commit (`eea279f1`). |
+| [spec.md](spec.md) | The owner's spec, **verbatim** — the owner's text copied unchanged, and nothing else. Committed alone in its own commit (`eea279f1`). |
 | [reconciliation.md](reconciliation.md) | What the spec asks for, read against `origin/main` and the open pull requests. Findings, resolutions, and the questions that need the owner. |
 
 ## Status of the spec
@@ -37,7 +37,9 @@ The checks this module touches are registered in the [live check register](../gc
 
 ## Typographical corrections
 
-**None.** The spec as received contains no typographical error that needed fixing, so the text between the markers in [spec.md](spec.md) is byte-for-byte the owner's.
+**None.** The spec as received contains no typographical error that needed fixing, so [spec.md](spec.md) is byte-for-byte the owner's.
+
+The delimiter lines that framed the text in the request that carried it are that request's quoting convention, not part of the document, and are not reproduced in [spec.md](spec.md) — the file is the spec itself, with no wrapper. (Same for the earlier [voice-spec.md](../design/voice-spec.md), which was committed verbatim the same way.)
 
 ## Read in this order
 
