@@ -54,11 +54,12 @@ package cli
 //    checks row calls unwritten covers a number the register has written.
 //  * TestDocsCoordinatorFrequentCitationsAreAnchoredByContent -- the other half
 //    of the same rule, on the reconciliation: none of its citations into
-//    `docs/design/` or `docs/mobile/` carries a line number, every one of them is
-//    held to the single line of its document that carries the phrase the citation
-//    turns on, and the anchors are counted against the citations document by
-//    document, so a claim added against a document that already has an anchor
-//    fails until it has one of its own -- the case a document-level check passes.
+//    `docs/design/` or `docs/mobile/` carries a line number, every one of them
+//    that names a file here is held to the single line of its document that
+//    carries the phrase the citation turns on, and the anchors are counted
+//    against the citations document by document, so a claim added against a
+//    document that already has an anchor fails until it has one of its own --
+//    the case a document-level check passes.
 //  * TestDocsCoordinatorQuestionsAreNumberedAndOptioned -- Q1..Q16, contiguous,
 //    each with at least two options, a recommendation and the owner's recorded
 //    answer of 2026-10-19.
@@ -71,7 +72,7 @@ package cli
 //    twenty-four -- which is the same silent-overclaim the citation census
 //    exists to catch in the document.
 //
-// Mutation (verified, run and restored) -- 61, one per way these documents can
+// Mutation (verified, run and restored) -- 62, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -90,10 +91,14 @@ package cli
 //	  approves nothing;
 //	  delete the README's "An answer is not an approval" sentence -> fails;
 //	  revert the README's numbers row to "its open items are Q1–Q16" -> fails;
-//	  widen the README's anchored-citations sentence back to "holds every one of
-//	  them" (dropping the pinned sentence that scopes it to the reconciliation)
-//	  -> fails: an index claiming the content anchors hold the citations it makes
-//	  itself is claiming coverage the test that backs them does not have.
+//	  widen the README's sentence about the anchors back to "holds every one of
+//	  them" -> fails: the sentence is pinned, and the citations it would cover
+//	  include the designs that live only in open pull requests, which have no line
+//	  for an anchor to be held to;
+//	  widen the README's other sentence back over the index's own citations into
+//	  those trees (dropping the words that except its numbers section) -> fails:
+//	  the numbers table's citations into the same trees are held, block by block,
+//	  by this same file, so the sentence would deny coverage this package has.
 //	TestDocsCoordinatorSpecIsVerbatim
 //	  paste a `### Q1 — ` heading into spec.md -> fails;
 //	  delete `## 9. Long-running behaviour` -> fails.
@@ -415,14 +420,14 @@ func TestDocsCoordinatorIsWritten(t *testing.T) {
 		coordinatorCheckedAgainst,
 		"**None.** The spec is copied byte for byte",
 		"its items were **Q1–Q16**",
-		// What the content anchors cover and what they do not. The sentence this replaced
-		// claimed TestDocsCoordinatorFrequentCitationsAreAnchoredByContent "holds every one
-		// of them" -- every citation into either tree, the index's own included -- and that
-		// test reads reconciliation.md and nothing else: the Check 110 row below and the
-		// reading list at the end name a whole document and no sentence in it, so no anchor
-		// is behind them. Pinned whole, on the one line it is written on, so widening the
-		// claim back is a failure rather than something a reader has to check against that
-		// test by hand.
+		// What the content anchors cover and what they do not, each pinned whole on the one
+		// line it is written on, so that widening either back is a failure rather than
+		// something a reader has to check against the tests by hand. Both were wider than
+		// they should have been: the held half said "every one of them" over citations that
+		// name designs living only in open pull requests, and the unheld half claimed the
+		// index's own citations into those trees were all unanchored when the numbers
+		// section's are held by the pins this file carries.
+		coordinatorReadmeHeldCitations,
 		coordinatorReadmeAnchorScope,
 	} {
 		if !strings.Contains(readme, want) {
@@ -1693,11 +1698,14 @@ var coordinatorContentAnchors = []coordinatorContentAnchor{
 //
 //   - no citation under `docs/design/` or `docs/mobile/` carries a line number, so a later edit
 //     cannot put one back and get the old, silently-rotting check;
-//   - every citation under either tree is named by one entry in the table above, counted per
-//     document, and each anchor is carried by exactly one line of its document -- so the claim
-//     and the line behind it are the same fact, a document that stops making the claim fails,
-//     and a claim added against a document that already has an anchor fails until it has one of
-//     its own.
+//   - every citation under either tree that names a file in this repository is named by one
+//     entry in the table above, counted per document, and each anchor is carried by exactly one
+//     line of its document -- so the claim and the line behind it are the same fact, a document
+//     that stops making the claim fails, and a claim added against a document that already has
+//     an anchor fails until it has one of its own. The citations that name something else -- the
+//     designs that live only in open pull requests, and the globs quoted from the brief -- are
+//     excused by name in coordinatorCitationExceptions, and only there: the exemption is an
+//     audit, and it is listed with its reason rather than being a path this check skips quietly.
 //
 // The line each anchor lands on is logged rather than written down, which is the whole
 // difference between this and the numbers it replaced: a citation that names the sentence it
@@ -1768,12 +1776,21 @@ func TestDocsCoordinatorFrequentCitationsAreAnchoredByContent(t *testing.T) {
 		coordinatorReconciled, total, strings.Join(coordinatorContentAnchoredDirs, " and "), len(coordinatorContentAnchors))
 }
 
-// coordinatorReadmeAnchorScope is the README's own statement of what the content-anchor rule
-// does not reach: the index's citations into `docs/design/` and `docs/mobile/` name no phrase,
-// so no anchor holds them. It replaced a sentence claiming the test above "holds every one of
-// them", which was false -- the test reads reconciliation.md and nothing else -- and it is
-// pinned because the scope of a check is exactly what gets widened by accident.
-const coordinatorReadmeAnchorScope = "**This index's own citations into those two trees name no phrase and are held by no anchor**"
+// coordinatorReadmeHeldCitations and coordinatorReadmeAnchorScope are the two halves of what
+// the README says the content-anchor rule covers, and both are pinned, because the scope of a
+// check is exactly the thing that gets widened by accident.
+//
+// The first is the half that IS held: the reconciliation's citations into those two trees, minus
+// the ones that name something other than a file here. The second is the half that is NOT: the
+// index's own citations outside its numbers section. Both were narrower than they claimed
+// before this round, in the two ways this file exists to catch -- the first said "every one of
+// them" while five of them name designs that exist only in open pull requests and one names a
+// glob, none of which has a line to hold an anchor to; the second said the index's own citations
+// were all unanchored while the numbers section's are held, block by block, by this same file.
+const (
+	coordinatorReadmeHeldCitations = "`TestDocsCoordinatorFrequentCitationsAreAnchoredByContent` holds every one of those citations that names a file in this repository to the single line of that document which carries the phrase"
+	coordinatorReadmeAnchorScope   = "**This index's own citations into those two trees outside its numbers section name no phrase and are held by no anchor**"
+)
 
 // coordinatorCount writes a count with its noun, so that a failure reads "three citations" and
 // "one anchor" rather than a bare number a reader has to work out the subject of.

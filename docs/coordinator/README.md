@@ -13,10 +13,8 @@ backs that claim, and the shape of citation it does not cover, are stated in
 and the phrase the citation turns on rather than a line number — those two trees gain
 sections, rows and paragraphs while this work sits in review, and a line number into one of
 them moves under the sentence it was written for without anything looking wrong.
-`TestDocsCoordinatorFrequentCitationsAreAnchoredByContent` holds every one of those citations
-to the single line of that document which carries the phrase — and it reads the reconciliation
-and nothing else.
-**This index's own citations into those two trees name no phrase and are held by no anchor**: the Check 110 row below and the reading list at the end name a whole document each, and no sentence in one.
+`TestDocsCoordinatorFrequentCitationsAreAnchoredByContent` holds every one of those citations that names a file in this repository to the single line of that document which carries the phrase — and it reads the reconciliation and nothing else. The ones it does not hold name something other than a file here: the two designs that are only in open pull requests (PR #632's always-on orchestrator and PR #634's console styling) and the glob §0.3 quotes from the brief — each excused by name, with its reason, in `internal/cli/docs_coordinator_test.go`.
+**This index's own citations into those two trees outside its numbers section name no phrase and are held by no anchor**: the Check 110 row below and the reading list at the end name a whole document each, and no sentence in one.
 
 **All sixteen questions are answered, and none is approved.** The owner answered Q1–Q16 on
 **2026-10-19**, each by taking **option (A)**, the recommended one; each answer is recorded
