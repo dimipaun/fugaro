@@ -208,7 +208,7 @@ These commands become operator-only in effect. They already were operator steps 
 - **`internal/cli`.** A new helper, `operatorWriteErr(url, key string, err error) error`, returns a user error (exit 1) when `errors.Is(err, blobx.ErrForbidden) || isAccessDenied(err)`:
 
   ```
-  nothing was published: writing fugaro/recipes/review.yaml in gs://fugaro-runs-acme needs the operator role (since 0.7.0 launchers read the runs bucket but write only runs/); ask an operator to publish it, or to add you with fugaro init --operator
+  nothing was published: writing fugaro/recipes/review.yaml in gs://fugaro-runs-acme needs the operator role (since 0.7.0 launchers read the runs bucket but write only runs/, and since 0.9.0 tokens/); ask an operator to publish it, or to add you with fugaro init --operator
   ```
 
   Other failures keep today's `remote(...)` (exit 2).

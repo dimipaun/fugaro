@@ -466,7 +466,8 @@ The bare `claude-oauth-token` follows the same rule — project-wide only when `
 
 1. Upgrade the CLI, **per installation machine**: `brew upgrade dimipaun/tap/fugaro && fugaro upgrade`.
 2. Republish the policy, **per installation**: `fugaro project policy show` first and keep its output, then `fugaro project policy publish --delete`, then `fugaro project policy publish`, then read the diff the publish prints. A publish refuses to overwrite a node written in another version, so the older node goes first; with no node to replace, the publish that follows rebuilds `allow_repos` from that installation's config (a repository removed with `fugaro project repos rm` comes back, one added with `repos add` is dropped), and the node's `clone_urls` and any hand-written `routing` block go with it — repair the list with `fugaro project repos add` / `rm`, and expect a shared job's runs to halt in between. `init --firebase` is not a remedy (it deploys the rules and marker and never writes `config/policy/shared`).
-3. Refresh the runner image, **per repository checkout**: `fugaro image refresh` — a project job runs the installation's base image, which can lag the CLI that published the policy.
+3. Refresh the runner image, **per repository checkout**: `fugaro image refresh` — it re-pins `base_images` and moves each repository's own jobs, but not a project job.
+4. Move the shared jobs, **per installation**, on a machine where step 3 ran: `fugaro init --firebase <gcp-project>` — a project job runs the installation's base image, and only this re-apply of the installation moves it onto the pin step 3 recorded; until then it keeps the older runner, which refuses the version-3 node, and neither the launch check nor `fugaro doctor` (both read the pin, not the deployed job) says so.
 
 ## Installations from before M9a
 

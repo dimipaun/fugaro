@@ -109,6 +109,26 @@ func TestReleaseNotesV090FollowsTheFormat(t *testing.T) {
 			t.Errorf("the operators' step %q names no place it is run in: every command is **per machine**, **per repo checkout** or **per installation**, because the three are different objects and a reader who runs one where another belongs changes the wrong thing", step)
 		}
 	}
+	// The shared project jobs run the installation's base image, which only a
+	// re-apply of the installation moves: `fugaro upgrade` and `fugaro image
+	// refresh` never touch them (internal/cli/image_refresh_steps.go moves the
+	// check job and each repository's own clone jobs). So the rollout ends with
+	// that re-apply, per installation, after the images are rebuilt — without
+	// it a shared job keeps a runner that refuses the policy just published
+	// (the review of PR #660).
+	last := steps[len(steps)-1]
+	if !strings.Contains(last, "**Per installation") || !strings.Contains(last, "`fugaro init --firebase <gcp-project>`") {
+		t.Errorf("the operators' last step is %q: it must be the per-installation `fugaro init --firebase <gcp-project>` that moves the shared jobs onto the base image the image step pinned, since no image command touches them", last)
+	}
+	refresh := -1
+	for i, step := range steps {
+		if refresh < 0 && strings.Contains(step, "`fugaro image refresh`") {
+			refresh = i
+		}
+	}
+	if refresh < 0 || refresh >= len(steps)-1 {
+		t.Errorf("the operators' steps rebuild the images (`fugaro image refresh`) at step %d of %d: the shared jobs' re-apply must come after it", refresh+1, len(steps))
+	}
 }
 
 // releaseNotesStepRE is a numbered step of the operators' list, and its number
@@ -299,7 +319,18 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 				t.Errorf("fugaro %s has no --%s flag, and %s tells an operator to run it", c.path, c.flag, releaseNotesV090)
 			}
 		}
-		if !names("`fugaro " + words) {
+		// The command must end where the notes' span or its argument does: a
+		// bare prefix would let "`fugaro upgrade --local`" stand in for the bare
+		// "`fugaro upgrade`" step, and "`fugaro init --repo`" for a longer flag.
+		ends := []string{"`", " <", " ."}
+		if c.flag != "" {
+			ends = append(ends, " ")
+		}
+		found := false
+		for _, end := range ends {
+			found = found || names("`fugaro "+words+end)
+		}
+		if !found {
 			t.Errorf("%s does not name `fugaro %s`, which the tree carries and this release's operators run", releaseNotesV090, words)
 		}
 	}
