@@ -663,6 +663,49 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	}
 }
 
+// The rule Task 6.3 exists for, at the managed Gate: an approval is one
+// delete, not a standing permission to delete whatever is at the address
+// later. The plan removes the object the entry was given for and the removal
+// is admitted; the same plan after that object was re-created — the same
+// address, another id — carries an object the entry is not about, and both
+// halves of the gate refuse it there, naming the object the plan removes,
+// which is what the owner needs to approve the deletion they now mean.
+func TestGateRefusesARemovalAtAnAddressApprovedForAnotherObject(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.fmgd_data"
+	r := newRig(t)
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-data", "id": "fmgd-0001"}))
+	approved := r.approving(t, addr)
+	if v := gate(t, r, spec(t, r, managedCover(), approved)); !v.OK {
+		t.Fatalf("the removal the owner's entry was given for is refused: %v", v.Refusals)
+	}
+	// The address now carries another object: a re-created bucket, whose id is
+	// not the one the entry holds. The entry is about the object that is gone,
+	// so it approves nothing.
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-data", "id": "fmgd-0002"}))
+	v := gate(t, r, spec(t, r, managedCover(), approved))
+	if v.OK {
+		t.Fatal("the entry approved a removal of an object it was not given for")
+	}
+	if len(v.Refusals) == 0 {
+		t.Fatal("the refused removal carried no refusal")
+	}
+	named := false
+	for _, ref := range v.Refusals {
+		if ref.Address == addr && strings.Contains(ref.Why, "another object") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("refusals %v, want one refusing %s for another object", v.Refusals, addr)
+	}
+	// The person who can change the answer is the owner, and the refusal says
+	// what they would approve: the identity the plan removes, which is the
+	// object's own id and not the one the entry holds.
+	if v := gate(t, r, spec(t, r, managedCover(), r.approving(t, addr))); !v.OK {
+		t.Errorf("the entry for the object the plan removes is refused: %v", v.Refusals)
+	}
+}
+
 // A listed address with no resource in the plan changes nothing: the list is
 // read per change, so a stale entry — an address the plan no longer carries —
 // neither admits nor refuses anything.
