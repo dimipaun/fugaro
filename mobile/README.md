@@ -709,6 +709,28 @@ planted dead export, that being the finding that the rule could not fail.
 | the degraded document's notice is discarded | the same test |
 | a refusal code nothing produces is declared again (`BAD_NOW`) | `every member of an exported vocabulary is produced somewhere` |
 
+### The follow-up round: the review's leftovers, checked
+
+The follow-up run of 2026-10-19 was handed what the review was said to have left
+open against #666: a degraded feed folded into `broken`, the degraded document's
+`project` and `notice` discarded, and `LIST_CODES.BAD_NOW` declared and produced
+nowhere. **Each was read against the merged code before anything was changed,
+and all three were already held there** -- the merge carries the three commits
+that closed them, and the tests that close them are the three rows above. A
+finding whose guard is in the tree is dismissed rather than re-fixed to look
+like work, so this round changed no production file and no test.
+
+What the round ran was the table's own instrument, against `main` again: each
+bug planted, the suite seen red, the bug removed.
+
+| Planted against the merged code | Went red |
+| --- | --- |
+| `broken: judged.broken \|\| judged.degraded` (`list.js`) | `a degraded feed is degraded, and not a broken series` |
+| the Series line has no `degraded` word (`lines.js`) | the same test |
+| `project: null` for a degraded read (`list.js`) | `a degraded read still says which project it is about, and why` |
+| the degraded document's `notice` dropped (`list.js`) | the same test |
+| `BAD_NOW` declared beside the five codes that are produced (`fields.js`) | `every member of an exported vocabulary is produced somewhere` |
+
 ## Which files may write a credential
 
 `src/boundary.test.js` is the D54b-clause-(3)-shaped half of P3.1 (reconciliation
