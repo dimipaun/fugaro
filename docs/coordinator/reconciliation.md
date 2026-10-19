@@ -54,7 +54,7 @@ not exist. Recording them here so the next reader does not repeat them.
 | **Intent signals from local orchestrators, before code exists** (§6) | No channel exists. The only per-person fact written today is `launch.json`'s `launched_by` (`internal/runstore/launch.go`), a **self-declared email** (`internal/cli/run.go:1731`, from `localcfg.Config.Me`). See **#11**. |
 | **MCP server over HTTP** (§7) | No MCP server, no MCP dependency. The only HTTP server in the repository is the per-run budget gateway, bound to loopback (`internal/gateway/gateway.go:190-202`, `127.0.0.1:0`). See **#8**. |
 | **Two model tiers; "reuses the project's existing key management and security service"** (§8) | The security service does not exist (`docs/credentials-service/README.md:3` — *"plan only; nothing is implemented"*). Model configuration today is per **slot**, not per tier (`agent.models.coder|reviewer|background`, `docs/design/m10-multi-model.md:62`) plus the routing switch (`internal/config/routing.go:42-61`). See **#21**, **#22**, **#23**. |
-| **Concurrency: Firestore transactions or a per-project lock** (§9) | The Firestore client has **no transactions**; the only lock is per-branch, in GCS (`internal/lock/lock.go:1-5`, key `locks/<slug>/<branch-hash>`). The repo's concurrency idiom is generation-matched GCS writes (`internal/blobx/blobx.go:144,329,363`), RTDB `PutIfMatch` ETag CAS (`internal/budget/kill.go:139`) and deterministic doc IDs with update-time preconditions (`internal/budget/rollover.go:511,526`). See **#16**, **#17**. |
+| **Concurrency: Firestore transactions or a per-project lock** (§9) | The Firestore client has **no transactions**; the only lock is per-branch, in GCS (`internal/lock/lock.go:1-5`, key `locks/<slug>/<branch-hash>`). The repo's concurrency idiom is generation-matched GCS writes (`internal/blobx/blobx.go:238,334,365`), RTDB `PutIfMatch` ETag CAS (`internal/budget/kill.go:141`) and deterministic doc IDs with update-time preconditions (`internal/budget/rollover.go:511,526`). See **#16**, **#17**. |
 | **Daily token-spend cap that "counts toward the project's existing spend caps"** (§9) | The existing caps are **per run**, keyed to a run's Firebase identity (`internal/budget/token/token.go:83-88 Claims`; `internal/budget/evaluate.go:135 Evaluate`). A long-lived service has no run identity. See **#19**. |
 | **Drift reconciliation: a scheduled job via the same Terraform** (§9) | This shape exists: Cloud Scheduler → HTTP POST to the Cloud Run Admin `jobs:run` API (`deploy/terraform/gcp/modules/installation/history.tf:180`, `*/15 * * * *`; a daily rollover at `:223`). It targets a **job**, not a service. See **#18**. |
 | **Console project-wide view; "ask the coordinator"** (§10) | The console's nav is Live / Spend / Projects (`console/src/renderer/entry.ts:490-496`); its data plane is one interface over the `fugaro` CLI as a sidecar (`console/src/source/cli.ts:1-8`), with 14 read operations and no write (`console/src/main/ipc.ts:307-558`). The v2 *spec*'s "Overview" is unbuilt, and v2's ruling is one write only — launch (D22, `docs/design/desktop-console-v2.md:244`). See **#25**, **#26**. |
@@ -128,7 +128,7 @@ And there is nothing to build the alternative from quickly: the CLI authenticate
 **user ADC**, not an ID token (`internal/backend/gcp/gcp.go:86-88` — *"Application Default
 Credentials (`gcloud auth application-default login`)"*), the only ID token minted anywhere
 is the managed deployer's impersonation with audience `fugaro-managed-apply`
-(`internal/cli/managed_apply.go:813-822`), and the console deliberately **holds no
+(`internal/cli/managed_apply.go:810-822`), and the console deliberately **holds no
 credential at all** (`console/src/main/spawn.ts:1-8`).
 *Consequence:* v1 cannot ship without an authentication answer, and the answer is a new
 decision, not a reuse. → **Q2**.
@@ -139,7 +139,7 @@ repository"*, and `docs/gcp-setup.md:638-640` says *"There is no offboarding com
 step 1 is implemented.**"* Removing a **person** means editing the launcher/operator lists
 and re-running `init` with `--allow-delete`, or a hand-run
 `gcloud iam service-accounts remove-iam-policy-binding`
-(`docs/gcp-setup.md:387`). There is no expiry and no per-person audit trail. (The phone's
+(`docs/gcp-setup.md:86,115`). There is no expiry and no per-person audit trail. (The phone's
 identity is the one exception: deleting the Firebase Auth user revokes it,
 `internal/budget/token/token.go:57-58 ErrRevoked`.)
 *Consequence:* every new reachable surface inherits an offboarding story that is a
@@ -305,7 +305,7 @@ compromise of the coordinator is worth. → **Q3**.
 `Commit`, or `RunTransaction`; the package doc lists its operations and they are
 `Get`/`Patch`/`Delete`/`Query`). `internal/rtdb/client.go` likewise: the only conditional
 write is `PutIfMatch` (ETag/If-Match), used by `budget.SetKill`
-(`internal/budget/kill.go:139`) and by the sweeper (`internal/budget/sweep.go:284-295`).
+(`internal/budget/kill.go:141`) and by the sweeper (`internal/budget/sweep.go:284-295`).
 The one distributed lock is per **branch**, not per project: `internal/lock/lock.go:1-5` —
 *"the one-run-per-branch lock … an object `locks/<slug>/<branch-hash>` … Creation is
 create-if-absent; an expired or unreadable lock is taken over with a generation-matched
@@ -317,10 +317,10 @@ in the system. → **Q6**.
 
 **#17 — "The same event delivered twice must be harmless" has a house idiom, and it is not an `Idempotency-Key` header. — Exists (as a pattern).**
 There is no `Idempotency-Key` anywhere in the tree. What exists, and what the coordinator
-should copy: generation-matched GCS writes (`internal/blobx/blobx.go:144,329,363`), the
+should copy: generation-matched GCS writes (`internal/blobx/blobx.go:238,334,365`), the
 publish guard that refuses a lost race rather than overwriting
 (`internal/cli/config_publish.go:94-98,145,151`), RTDB ETag CAS with `SetAttempts = 5`
-(`internal/budget/kill.go:92,139`), deterministic Firestore doc IDs with
+(`internal/budget/kill.go:94,141`), deterministic Firestore doc IDs with
 `MustNotExist()`/`IfUpdateTime` preconditions (`internal/budget/rollover.go:511,526,548`),
 and deterministic run IDs (`internal/task/task.go:328 NewRunID`, shape pinned by
 `internal/runstore/list.go:17 runIDRE`).
