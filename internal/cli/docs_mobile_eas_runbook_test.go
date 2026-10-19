@@ -37,6 +37,17 @@ package cli
 // Check 89's guard want opposite things of mobile/app.json, and both are on the
 // tree), and the directory's own index, which is where a reader finds it.
 //
+// Three tests hold what the page says about the *repository* to the repository:
+// TestDocsMobileEasRunbookNamesEveryProtectedEnvironment derives the protected
+// environments -- and the job each one is declared in -- from the workflow files
+// themselves, so the page's citations are by content and not by line number;
+// TestDocsMobileEasRunbookPlacesExpoTokenInTheEnvironmentSecret holds §7's
+// credential table, §9's environment settings and §10's workflow shape to one
+// placement for the one secret CI may hold, because a repository secret and an
+// environment secret are different fences; and
+// TestDocsMobileEasRunbookSaysP4Dot3IsStagedNotRunning reads ci.yml, so the day
+// the owner copies P4.3's job in, the page has to stop calling it staged.
+//
 // Every check above is mutation-proven -- the bug was planted, the run went
 // red, the bug was removed. The mutations, in the order they were run, each
 // applied to the whole page (a phrase that wraps in the file is the same phrase
@@ -73,6 +84,13 @@ package cli
 //	| "approved on 2026-10-18" dropped from the Phase 6 sentence | TestDocsMobileEasRunbookKeepsPhase6Approved |
 //	| "proposed and NOT APPROVED" planted again | TestDocsMobileEasRunbookKeepsPhase6Approved |
 //	| P4.3's job put back in the present tense | TestDocsMobileEasRunbookSaysP4Dot3IsStagedNotRunning |
+//	| §7's table placed EXPO_TOKEN as the repository secret again | TestDocsMobileEasRunbookPlacesExpoTokenInTheEnvironmentSecret |
+//	| §9's environment-secret wording dropped | TestDocsMobileEasRunbookPlacesExpoTokenInTheEnvironmentSecret |
+//	| §10's environment-secret wording dropped | TestDocsMobileEasRunbookPlacesExpoTokenInTheEnvironmentSecret |
+//	| §9's website-live row named the wrong job (`deploy`) | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
+//	| §9's website-live row dropped the `environment:` content citation | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
+//	| a line number ("(line 70)") put back into §2's citation | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
+//	| a probe workflow declaring website-live in another job (tmp-probe.yml, removed after) | TestDocsMobileEasRunbookNamesEveryProtectedEnvironment |
 
 import (
 	"fmt"
@@ -271,16 +289,37 @@ func TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape(t *t
 // the copy-in). Both are read, so a staged copy cannot hide an environment.
 var workflowEnvironmentDirs = []string{".github/workflows", "docs/pending-workflows"}
 
+// workflowLineCitationRE finds a citation of a file by line number -- "(line
+// 70)", "(lines 60-75)", "line 203 of console-release.yml" -- the shape §2, §9
+// and §15 used to carry for the two environment declarations. The page cites
+// those files by content instead, so a line number reappearing is the
+// regression, whatever file it points at: no parse here can hold a page to a
+// line, and a line moves the moment anything above it grows.
+var workflowLineCitationRE = regexp.MustCompile(`\(lines? \d+[^)]*\)|lines? \d+ of`)
+
+// workflowEnvironment is one declaration of a protected environment: the file
+// that declares it and the **job** that carries the `environment:` key. The job
+// is the half a citation by content needs -- the page names the file *and* the
+// job, never a line number, so the citation cannot rot when a file above it
+// grows.
+type workflowEnvironment struct {
+	File string
+	Job  string
+}
+
+// String renders a declaration the way the page cites it, for error messages.
+func (w workflowEnvironment) String() string { return w.Job + " in " + filepath.Base(w.File) }
+
 // environmentsInDirs reads every `*.yml` under dirs and returns, per
-// environment name, the files whose **jobs** declare it: `environment: name`,
-// or the long form `environment: {name: ...}`. It reads the parsed YAML, not
+// environment name, the declarations whose **jobs** carry `environment: name`
+// -- or the long form `environment: {name: ...}`. It reads the parsed YAML, not
 // the text, so a mention inside a comment -- and both workflows here document
 // their environments in their headers -- is not an environment. The parse is
 // what makes the assertion below evidence about the repository rather than a
 // second copy of a sentence.
-func environmentsInDirs(t *testing.T, dirs []string) map[string][]string {
+func environmentsInDirs(t *testing.T, dirs []string) map[string][]workflowEnvironment {
 	t.Helper()
-	found := map[string][]string{}
+	found := map[string][]workflowEnvironment{}
 	files := 0
 	for _, dir := range dirs {
 		base := dir
@@ -309,7 +348,7 @@ func environmentsInDirs(t *testing.T, dirs []string) map[string][]string {
 			if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
 				t.Fatalf("%s is not valid YAML: %v", rel, err)
 			}
-			for _, job := range wf.Jobs {
+			for jobName, job := range wf.Jobs {
 				var name string
 				switch v := job.Environment.(type) {
 				case string:
@@ -318,7 +357,7 @@ func environmentsInDirs(t *testing.T, dirs []string) map[string][]string {
 					name, _ = v["name"].(string)
 				}
 				if name != "" {
-					found[name] = append(found[name], rel)
+					found[name] = append(found[name], workflowEnvironment{File: rel, Job: jobName})
 				}
 			}
 		}
@@ -329,7 +368,7 @@ func environmentsInDirs(t *testing.T, dirs []string) map[string][]string {
 	return found
 }
 
-func repositoryEnvironments(t *testing.T) map[string][]string {
+func repositoryEnvironments(t *testing.T) map[string][]workflowEnvironment {
 	t.Helper()
 	return environmentsInDirs(t, workflowEnvironmentDirs)
 }
@@ -342,6 +381,31 @@ func tableRow(doc, prefix string) string {
 		if strings.HasPrefix(line, prefix) {
 			return line
 		}
+	}
+	return ""
+}
+
+// blockAt returns the markdown block that begins with prefix -- that line and
+// the lines that continue it, since prose here wraps -- with runs of whitespace
+// collapsed to single spaces, so a phrase that wraps in the file still matches.
+// The block ends at a blank line, at the next list item, at a table row or at a
+// heading.
+func blockAt(doc, prefix string) string {
+	lines := strings.Split(doc, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		block := []string{line}
+		for _, next := range lines[i+1:] {
+			if trim := strings.TrimSpace(next); trim == "" ||
+				strings.HasPrefix(trim, "- ") || strings.HasPrefix(trim, "|") ||
+				strings.HasPrefix(trim, "#") {
+				break
+			}
+			block = append(block, next)
+		}
+		return strings.Join(strings.Fields(strings.Join(block, "\n")), " ")
 	}
 	return ""
 }
@@ -400,20 +464,35 @@ func TestDocsMobileEasRunbookNamesEveryProtectedEnvironment(t *testing.T) {
 	sort.Strings(names)
 	for _, name := range names {
 		// The name has to appear as the row this page's table gives it, and the
-		// workflow that declares it has to be named **in that row**: naming the
-		// string anywhere would be satisfied by a sentence that mentions it in
-		// passing, which is how the earlier revision's claim stayed wrong while
-		// looking checked.
+		// declaration has to be cited **in that row by content** -- the file, the
+		// `environment:` key and its value, and the job that carries it: naming
+		// the string anywhere would be satisfied by a sentence that mentions it
+		// in passing, which is how the earlier revision's claim stayed wrong
+		// while looking checked, and a line number would be satisfied by nothing
+		// at all, since no parse can hold a file to a line.
 		row := tableRow(raw, fmt.Sprintf("| **`%s`** |", name))
 		if row == "" {
 			t.Errorf("%s has no %q row in §9's table: every environment this repository declares gets one", mobileEasRunbook, name)
 			continue
 		}
-		for _, file := range envs[name] {
-			if !strings.Contains(row, filepath.Base(file)) {
-				t.Errorf("%s's %q row does not name %s, the file that declares it: the page's precedent is about these workflows", mobileEasRunbook, name, filepath.Base(file))
+		citation := "`environment: " + name + "`"
+		if !strings.Contains(row, citation) {
+			t.Errorf("%s's %q row does not cite %s, the declaration itself: the page cites the workflow files by content, not by line number", mobileEasRunbook, name, citation)
+		}
+		for _, decl := range envs[name] {
+			if !strings.Contains(row, filepath.Base(decl.File)) {
+				t.Errorf("%s's %q row does not name %s, the file that declares it: the page's precedent is about these workflows", mobileEasRunbook, name, filepath.Base(decl.File))
+			}
+			if !strings.Contains(row, "`"+decl.Job+"` job") {
+				t.Errorf("%s's %q row does not name the job that declares it, %q in %s: the citation is by content -- the environment key and the job -- so it cannot rot when the file grows above them", mobileEasRunbook, name, decl.Job, filepath.Base(decl.File))
 			}
 		}
+	}
+	// And no citation by line number anywhere on the page: a line number is the
+	// one form of citation no parse here can check, and §2 claims the precedent
+	// was read off the files.
+	if m := workflowLineCitationRE.FindString(doc); m != "" {
+		t.Errorf("%s cites a file as %q: the workflow citations are by content (the `environment:` key and the job that declares it), which is what this test can hold them to", mobileEasRunbook, m)
 	}
 	if want := protectedEnvironmentSentence(len(envs)); !strings.Contains(doc, want) {
 		t.Errorf("%s does not say %q (%d environments declared by %v): the count is derived from the files, not written twice",
@@ -423,8 +502,8 @@ func TestDocsMobileEasRunbookNamesEveryProtectedEnvironment(t *testing.T) {
 	// must not exist yet: §10 says no mobile workflow is written, so a
 	// `mobile-release` on the tree would mean this page is describing something
 	// already built.
-	if files, exists := envs["mobile-release"]; exists {
-		t.Errorf("mobile-release is declared by %s: the mobile build workflow §10 describes as not written does exist, and this page has to be rewritten as a description of it", strings.Join(files, " and "))
+	if decls, exists := envs["mobile-release"]; exists {
+		t.Errorf("mobile-release is declared by %v: the mobile build workflow §10 describes as not written does exist, and this page has to be rewritten as a description of it", decls)
 	}
 	want := fmt.Sprintf("this repository's %s protected environment", ordinalWord(len(envs)+1))
 	if !strings.Contains(doc, want) {
@@ -438,6 +517,56 @@ func TestDocsMobileEasRunbookNamesEveryProtectedEnvironment(t *testing.T) {
 	}
 	if !strings.Contains(doc, "keyless") {
 		t.Errorf("%s does not say release.yml signs keyless: it is the workflow an owner would otherwise assume reads a signing secret through an environment, and it does not", mobileEasRunbook)
+	}
+}
+
+// TestDocsMobileEasRunbookPlacesExpoTokenInTheEnvironmentSecret holds the three
+// places the page places `EXPO_TOKEN` to one answer. §7's credential table, §9's
+// environment settings and §10's workflow shape each describe where it may live,
+// and they are different fences: a **repository** secret is readable by every
+// workflow in the repository, whatever job it runs in, while an **environment**
+// secret is readable only by a job that names `environment: mobile-release`, and
+// only after its required reviewer has approved. A page whose table said
+// "repository secret" while its settings said "the only secret that belongs
+// here" would be describing the weaker fence as the stronger one, which is the
+// arrangement §7's own "a key in CI is a key any later workflow change can read"
+// exists to refuse.
+func TestDocsMobileEasRunbookPlacesExpoTokenInTheEnvironmentSecret(t *testing.T) {
+	raw := readDoc(t, mobileEasRunbook)
+	// §7 and §10 state the placement in a table row (one line each); §9 states
+	// it in a bullet that wraps, so its whole block is the unit.
+	places := []struct {
+		section string
+		text    string
+	}{
+		{"§7's credential table", tableRow(raw, "| **Expo access token**")},
+		{"§9's environment settings", blockAt(raw, "- **Environment secrets:**")},
+		{"§10's workflow shape", tableRow(raw, "| **Secrets** |")},
+	}
+	for _, p := range places {
+		if p.text == "" {
+			t.Fatalf("%s has no line this test can read for %s: the section it is about was renamed, and this check has to be repointed at it", mobileEasRunbook, p.section)
+		}
+		for _, want := range []string{"environment secret", "never a repository secret"} {
+			if !strings.Contains(p.text, want) {
+				t.Errorf("%s does not say %q: §7, §9 and §10 have to place EXPO_TOKEN the same way -- the environment secret on mobile-release, reached only through the job's environment:, and never a repository secret", p.section, want)
+			}
+		}
+	}
+	// The stale placement, refused on §7's own row: this is the sentence the
+	// page used to carry, and it is the one a reader would act on.
+	for _, banned := range []string{"stored as the repository secret", "repository secret **`EXPO_TOKEN`**"} {
+		if strings.Contains(places[0].text, banned) {
+			t.Errorf("%s says %q: EXPO_TOKEN is the mobile-release environment secret and not a repository secret", mobileEasRunbook, banned)
+		}
+	}
+	// And the environment itself, named where the token's fence is: §7's row and
+	// §10's shape both have to say which environment, since "an environment
+	// secret" without a name is a setting the owner cannot make.
+	for _, i := range []int{0, 2} {
+		if !strings.Contains(places[i].text, "`mobile-release`") {
+			t.Errorf("%s does not name `mobile-release`, the environment EXPO_TOKEN's fence is on", places[i].section)
+		}
 	}
 }
 
@@ -485,14 +614,17 @@ jobs:
       - run: echo hi
 `)
 	found := environmentsInDirs(t, []string{dir})
-	want := map[string][]string{"alpha": {filepath.Join(dir, "declaring.yml")}, "beta": {filepath.Join(dir, "declaring.yml")}}
+	want := map[string]workflowEnvironment{
+		"alpha": {File: filepath.Join(dir, "declaring.yml"), Job: "sign"},
+		"beta":  {File: filepath.Join(dir, "declaring.yml"), Job: "deploy"},
+	}
 	if len(found) != len(want) {
 		t.Fatalf("the reader found %v, want %v: a comment is not an environment, and neither is a job without one", found, want)
 	}
-	for name, files := range want {
+	for name, decl := range want {
 		got := found[name]
-		if len(got) != 1 || filepath.Base(got[0]) != filepath.Base(files[0]) {
-			t.Errorf("the reader found %q in %v, want %v", name, got, files)
+		if len(got) != 1 || filepath.Base(got[0].File) != filepath.Base(decl.File) || got[0].Job != decl.Job {
+			t.Errorf("the reader found %v for %q, want %v: the job is half of the citation the page makes", got, name, decl)
 		}
 	}
 	for _, name := range []string{"commented-out", "also-only-a-comment"} {

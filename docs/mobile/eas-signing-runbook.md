@@ -81,12 +81,15 @@ register):**
   two items per account, in platform secure storage);
 - the repository-side precedent, read off the tree's own workflow files rather
   than off a plan: **`.github/workflows/website-promote.yml`** carries
-  `environment: website-live` (line 70) and **`.github/workflows/console-release.yml`**
-  carries `environment: console-release` (line 203) — the two protected
-  environments this repository has, both installed and both declared on a
-  **job**, not in a comment (`.github/workflows/release.yml` signs the CLI
-  **keyless**, with no environment at all). §9 names them, says what each one
-  gates, and says which one `mobile-release` would be.
+  `environment: website-live` in its `promote` job, and
+  **`.github/workflows/console-release.yml`** carries `environment:
+  console-release` in its `release` job — the two protected environments this
+  repository has, both installed and both declared on a **job**, not in a
+  comment (`.github/workflows/release.yml` signs the CLI **keyless**, with no
+  environment at all). Every workflow this page cites, it cites by **content** —
+  the `environment:` key and the job that declares it — and never by line
+  number, so the citation cannot rot when a line above it grows. §9 names them,
+  says what each one gates, and says which one `mobile-release` would be.
 
 **Not verified here, and to be checked at run time against the vendor's current
 documentation** (each step below names the page): every exact console **label
@@ -294,7 +297,7 @@ a stylistic preference:
   copying its shape and its refusals even though the mobile path needs neither:
   `.github/workflows/console-release.yml` — the console's signing,
   notarisation and stapling job — reaches all six Apple secrets **only** through
-  `environment: console-release` (line 203), only as `${{ secrets.NAME }}` in the
+  `environment: console-release` in its `release` job, only as `${{ secrets.NAME }}` in the
   `env:` of the single step that signs, never at workflow or job level, never
   on a command line, never in an action's `with:`, and with the key material
   removed on that step's own exit. The rest of the repository's CI holds no
@@ -325,7 +328,7 @@ a stylistic preference:
 | **Android app signing key** | **Play app signing** — **Google's**, not yours, and not something you can export | Google | nowhere: there is no copy of it to place. This is the one credential whose location is not a choice |
 | **App Store Connect API key** (a `.p8` file, a key id and an issuer id) | **owner-held**, on your machine, or in your password manager as the file | you, and `eas submit` reading it | **never in this repository**, **never in CI** for this check, never pasted |
 | **Play service account** (the JSON key) | **owner-held**, on your machine at the path `mobile/eas.json` names — `serviceAccountKeyPath` | you, and `eas submit` reading that path | **never in this repository** (the file Check 89's step 5 looks for is `google-play-service-account.json`), never in CI. Its **contents** are never read by Check 89 |
-| **Expo access token** (the one name CI may hold) | your Expo account's access tokens, on `https://expo.dev/`, under the account's own settings; stored as the repository secret **`EXPO_TOKEN`** only if a workflow needs it | you, and — if and only if a workflow is added — that workflow's job | **never in this repository**, never on a build machine that does not need it |
+| **Expo access token** (the one name CI may hold) | your Expo account's access tokens, on `https://expo.dev/`, under the account's own settings; stored as the **environment secret `EXPO_TOKEN`** **on the `mobile-release` environment** (§9) if and only if a workflow is added — **never a repository secret** | you, and — if and only if a workflow is added — the one job that names `environment: mobile-release` and no other job in the repository | **never in this repository**, never on a build machine that does not need it, never as a repository secret |
 
 **The secret *names* a future build workflow would read, and nothing else.** This
 page names them and holds no value of any of them; a value here would be the
@@ -333,7 +336,7 @@ defect. The names, and whether CI may hold each:
 
 | Name | What it is | CI may hold it? |
 |---|---|---|
-| `EXPO_TOKEN` | an Expo access token that lets a build run under your account | **yes, and only this one** — for a build profile with **no store credential** (D120's ceiling, §10) |
+| `EXPO_TOKEN` | an Expo access token that lets a build run under your account | **yes, and only this one — and only as the `mobile-release` environment secret**, never a repository secret (§9): a repository secret is readable by every workflow in the repository, an environment secret only by a job that names the environment. For a build profile with **no store credential** (D120's ceiling, §10) |
 | `ASC_API_KEY_ID` | the App Store Connect API key's **identifier** (not a secret in itself, but half of the pair a key needs) | **never in CI** — the store path is owner-run |
 | `PLAY_SERVICE_ACCOUNT_JSON` | the Play service-account JSON's contents | **never in CI**, and never in this repository |
 | `APPLE_DISTRIBUTION_CERTIFICATE` | an owner-held iOS distribution certificate (only relevant if you ever chose to sign in CI rather than let EAS hold it) | **never in CI** |
@@ -404,8 +407,8 @@ plan:
 
 | Environment | The workflow that reads it | What it gates |
 |---|---|---|
-| **`website-live`** | `.github/workflows/website-promote.yml` (`environment: website-live`, line 70) | the site's **live promotion**: the job copies an already-reviewed preview channel onto the live channel. `workflow_dispatch`-only, the actor is guarded to you, and its deployment branch policy is **`main`**. It holds repository **variables** — a project id, a provider name, a service-account address — and no secret, because the deploy authenticates by Workload Identity Federation. Its one-time setup is [../website/preview-promote.md](../website/preview-promote.md). |
-| **`console-release`** | `.github/workflows/console-release.yml` (`environment: console-release`, line 203) | the desktop console's **signing, notarisation and stapling job**, on a `v*` tag push, publishing `console-vX.Y.Z`. **This is the closer precedent**: it is a signing job, and it reads its six Apple secrets only through the environment, only as `secrets.NAME` in the one step that signs. |
+| **`website-live`** | `.github/workflows/website-promote.yml` (`environment: website-live`, in its `promote` job) | the site's **live promotion**: the job copies an already-reviewed preview channel onto the live channel. `workflow_dispatch`-only, the actor is guarded to you, and its deployment branch policy is **`main`**. It holds repository **variables** — a project id, a provider name, a service-account address — and no secret, because the deploy authenticates by Workload Identity Federation. Its one-time setup is [../website/preview-promote.md](../website/preview-promote.md). |
+| **`console-release`** | `.github/workflows/console-release.yml` (`environment: console-release`, in its `release` job) | the desktop console's **signing, notarisation and stapling job**, on a `v*` tag push, publishing `console-vX.Y.Z`. **This is the closer precedent**: it is a signing job, and it reads its six Apple secrets only through the environment, only as `secrets.NAME` in the one step that signs. |
 
 **And two things that are not environments, because a reader will expect them to
 be.** `.github/workflows/release.yml` — the CLI's own release — declares **no**
@@ -459,7 +462,15 @@ documentation at `https://docs.github.com/`):
   have to be made together. A policy that excludes the trigger's ref fails
   closed, but it fails at the wrong moment, on the day you need the build.
 - **Environment secrets:** **none today**. If a workflow is ever added, the only
-  secret that belongs here is **`EXPO_TOKEN`**. `ASC_API_KEY_ID`,
+  secret that belongs here is **the environment secret `EXPO_TOKEN`**, and it is
+  **never a repository secret**: §7's table and §10's shape say the same thing,
+  and the difference is the whole reason the environment exists. A **repository**
+  secret is readable by every workflow in the repository, whatever job it runs
+  in; an **environment** secret is readable only by a job that names
+  `environment: mobile-release`, and then only after the required reviewer has
+  approved it. A repository secret under the same name would be the weaker
+  fence — which is what §7's "a key in CI is a key any later workflow change can
+  read" is about. `ASC_API_KEY_ID`,
   `PLAY_SERVICE_ACCOUNT_JSON`, `APPLE_DISTRIBUTION_CERTIFICATE` and
   `ANDROID_UPLOAD_KEYSTORE` do **not** belong here: the store path is owner-run
   (§7), and Check 89's step 5 reads the secret **names** precisely so that one
@@ -495,7 +506,7 @@ have, and the reasons each line is what it is:
 | **What it may do** | build a **test artifact** — the store-credential-free profile of §8 — and nothing else. **Never `eas submit`.** D120's answer is explicit that *"CI at most builds a **test** artifact with no store credential"*, and that sentence is the ceiling: not a store build, not a submission, not a store credential. |
 | **Permissions** | declared explicitly and minimally, at the workflow level **and** on the job: **`permissions:`** with **`contents: read`** and nothing else — no `id-token: write`, no `packages: write`, and never `permissions: write-all`. A build job needs the checkout and a token, not a write scope over the repository. |
 | **Actions** | pinned, every one, to a **full 40-character commit SHA** with a `# vX.Y.Z` comment beside it, as every other workflow in this repository is (a tag is mutable; a commit is not). Before copying the file in, compare the pins against `main`'s, so the copy cannot downgrade one. |
-| **Secrets** | reached **only** through the job-level `environment:` — `secrets.EXPO_TOKEN` and no other secret, and **no literal** beside any reference: no value, no long base64 blob, no `password:` with something after it. |
+| **Secrets** | reached **only** through the job-level `environment:` — `secrets.EXPO_TOKEN`, which is the **`mobile-release` environment secret of §9 and never a repository secret** (a repository secret is readable by any workflow in the repository; an environment secret only by a job that names the environment) — and no other secret, and **no literal** beside any reference: no value, no long base64 blob, no `password:` with something after it. |
 | **The gate** | nothing here is in `scripts/release-gate.sh`, and it must not be: the app is outside the CLI tag's release gate (D125), and a gate that required a check no workflow runs would refuse every tag. |
 
 **What is not in the shape, deliberately:** no `eas submit` step at any point
@@ -742,7 +753,7 @@ what it says, and this page paraphrases none of them as certain):
 | [reconciliation.md](reconciliation.md) | **D111**, **D120**, **D125** and the findings behind them (F24, U6) |
 | [../../mobile/app.json](../../mobile/app.json) and [../../mobile/package.json](../../mobile/package.json) | the app's Expo config and its `engines` (**P3.1**) |
 | [../../mobile/README.md](../../mobile/README.md) | what the app is, where its two secrets live, and what is not verified |
-| [../../.github/workflows/website-promote.yml](../../.github/workflows/website-promote.yml) and [../../.github/workflows/console-release.yml](../../.github/workflows/console-release.yml) | the two protected environments this repository has, read off the files themselves: `environment: website-live` (line 70) and `environment: console-release` (line 203), each declared on a job. [../../.github/workflows/release.yml](../../.github/workflows/release.yml) is there too, as the counter-example: no environment, keyless signing (§2, §9) |
+| [../../.github/workflows/website-promote.yml](../../.github/workflows/website-promote.yml) and [../../.github/workflows/console-release.yml](../../.github/workflows/console-release.yml) | the two protected environments this repository has, read off the files themselves: `environment: website-live` in `website-promote.yml`'s `promote` job and `environment: console-release` in `console-release.yml`'s `release` job, each declared on a job. [../../.github/workflows/release.yml](../../.github/workflows/release.yml) is there too, as the counter-example: no environment, keyless signing (§2, §9) |
 | [../pending-workflows/README.md](../pending-workflows/README.md) | how a staged workflow is copied in, and why an agent may not copy it |
 | [../website/preview-promote.md](../website/preview-promote.md) | the same owner-only shape worked through end to end for `website-live` |
 | [../../SECURITY.md](../../SECURITY.md) | the trust model and its known limits — the reason a credential does not go in an agent's environment |
