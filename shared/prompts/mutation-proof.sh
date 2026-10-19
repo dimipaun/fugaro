@@ -331,8 +331,10 @@ run "an accessor property is refused without being called" \
 # it never wrote. P1.1 and P6.2 answer `missing-field` here, and so does this
 # module -- on the queue's own required fields and on every operation's event.
 run "a missing \`now\` is missing-field, not unknown-field" \
-  "  if (now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');" \
-  "  if (now === undefined) return refuse(REFUSAL.UNKNOWN_FIELD, 'now');"
+  "  const now = values.now;
+  if (now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');" \
+  "  const now = values.now;
+  if (now === undefined) return refuse(REFUSAL.UNKNOWN_FIELD, 'now');"
 
 run "a missing \`account\` is missing-field, not unknown-field" \
   "  if (account === undefined) return refuse(REFUSAL.MISSING_FIELD, 'account');" \
@@ -416,10 +418,9 @@ run "an expiry list is reported oldest first" \
 # The count is across accounts (D168's "Two questions waiting", one sentence for
 # the phone), and nothing waiting is an announcement of nothing.
 run "the cross-account view is not a bag: an unknown field is refused" \
-  "  const time = readFields(event, TIME_ONLY_FIELDS, 'event');
+  "  const time = readClock(event, 'event');
   if (!time.ok) return time;
   const now = time.values.now;
-  if (!isIntegerInRange(now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
 
   const accounts = [];" \
   "  const time = { ok: true, values: { now: event === null || typeof event !== 'object' ? undefined : event.now } };
