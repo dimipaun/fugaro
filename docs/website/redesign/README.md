@@ -761,18 +761,21 @@ changes are cited as the feedback's own.
   reader of the picture.
 - **The measurements, and the check that is still the owner's.** Nothing here was rendered: no
   browser was driven for this round, and no screenshot is committed — this run cannot see one.
-  What the gates read is the artifact and the stylesheet: the homepage is 294 words against the
-  300-word ceiling and its lead 23 against 40 (`budget.mjs`), the section is a named landmark
-  under the page's **sixth** `h2` — the chat's title, the flow's four step names and then this
-  one, with the install heading after it — carrying four `h3`s (`a11y.mjs`), and the homepage's
-  bytes are re-derived from the gates' own build (D192). **Its vertical padding is read out of
-  the built CSS at the three widths the rhythm gate uses, and that reading is the correction of
-  round 6**: the rule that pads the section is the one `Benefits.astro` declares, which is the
-  rule that reaches it, and the page's `.home-benefits` rule that named the class and carried
-  the page's scope never matched the element at all — `base-styles.mjs` reads a selector against
-  the `data-astro-cid-…` the element carries, and a block the stylesheet names and no rule
-  reaches is now a refusal of its own rather than a block read as having no padding. With the
-  section's rule in force, the block pads the gap above it once and not twice. **Whether the
-  page then looks right is the owner's check (70a–70c, D190)** — the two-column grid, the rule
-  above each benefit and the prompt line's bubble are the parts of this round a gate can only
-  say is present.
+  What the gates read is the artifact and the stylesheet: the homepage's words and its lead's
+  against the ceilings (`budget.mjs`), the section as a named landmark with its heading and its
+  `h3`s read out of the built page (`a11y.mjs`), and the homepage's bytes re-derived from the
+  gates' own build (D192). **Its vertical padding is read out of the built CSS at the three
+  widths the rhythm gate uses, so the block pads the gap above it once and not twice
+  (`base-styles.mjs`)** — and that is true of the shipped artifact as of the fix below, which is
+  also what the review of round 6 found wrong with the reading this paragraph carried: it gave
+  the section's heading an ordinal in the page's outline and cited a padding the artifact did
+  not have, and neither of those is a thing to write down here, because both are things the
+  gates read off the built page. The fix is where the rule lives: the rule that pads the section
+  is the one `Benefits.astro` declares, the file that renders it, where the page's own
+  `.home-benefits` rule named the class and carried the page's scope, so it never matched the
+  element at all (Astro scopes a page's rule to the elements the page renders). `base-styles.mjs`
+  reads a selector against the `data-astro-cid-…` the element carries and refuses a block the
+  stylesheet names and no rule reaches, so a dead rule cannot be read as a block's padding
+  again. **Whether the page then looks right is the owner's check (70a–70c, D190)** — the
+  two-column grid, the rule above each benefit and the prompt line's bubble are the parts of
+  this round a gate can only say is present.
