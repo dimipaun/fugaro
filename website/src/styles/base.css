@@ -199,9 +199,13 @@ a.skip-link:focus {
  * of 2026-10-18, item 1: a group's submenu opens when the pointer arrives at it). The query is
  * the pointer's capability and never the viewport's width — a tablet 1280 px wide has no hover
  * to give, and a phone with a mouse attached has one — and `public/scripts/site.js` asks the
- * same query with `matchMedia` before it binds anything, so the mark the pointer sees and the
- * state the pointer sets are decided by one rule rather than two. `test/nav-hover.mjs` holds
- * the two strings to each other, and refuses a width query in either.
+ * same query with `matchMedia` before it binds anything, and again whenever that query's answer
+ * changes, so the mark the pointer sees and the state the pointer sets are decided by one rule
+ * rather than two. The script's half is the finer of the two, because a stylesheet can ask the
+ * device and an event can say which pointer it was: it opens a group for a mouse or a pen and
+ * for nothing else, so a finger's tap on a device that answers this query "yes" — a touch laptop
+ * — still opens and closes the group by the click the `<summary>` already has.
+ * `test/nav-hover.mjs` holds the two strings to each other, and refuses a width query in either.
  *
  * The block is the menu's every `:hover` rule, the drawer's own toggle included, because a
  * `:hover` that sticks after a tap is a mark on a control the reader has not opened: on a touch

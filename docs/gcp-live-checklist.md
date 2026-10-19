@@ -4164,13 +4164,21 @@ sed -n '/^const NAV_GROUPS/,/^]/p' website/src/layouts/Base.astro | grep -o "lab
    instant and it stays open. Do the same for the **last** group and read
    `document.documentElement.scrollWidth` with it open. Then, still on the same page,
    **emulate a touch device** (Chrome's device toolbar, or the responsive mode's touch
-   emulation — a device that answers "no" to the query) or take a phone: moving a finger or a
-   stylus onto a group opens nothing, and a **tap** opens and closes it as it always did.
+   emulation — a device that answers "no" to the query) or take a phone: moving a finger onto
+   a group opens nothing, and a **tap** opens and closes it as it always did. Then the device
+   the query answers **yes** for and a finger still uses — a touch laptop, or a phone with a
+   mouse or a trackpad attached: **tap** a group there too, and it opens (the tap's own pointer
+   arrival is not a hover, so the tap's click is the whole of it), and a second tap closes it;
+   then hover the same group with the machine's own mouse or trackpad and it opens on the
+   pointer's arrival as step 6's first half says. Do the same after unplugging the mouse and
+   again after plugging it back in, without reloading: the page re-decides rather than keeping
+   the answer it loaded with.
    **FACT:** what the pointer's arrival did with no click, whether the list stayed open with
    the pointer inside it, roughly how long the submenu stayed open after the pointer left and
    whether coming back kept it, the document's scroll width with the last group open (not
-   wider than the viewport), and on the emulated touch device that hovering opened nothing and
-   the tap still toggled. **The fix, if a group does not open on hover, is in
+   wider than the viewport), on the emulated touch device that hovering opened nothing and the
+   tap still toggled, and on the touch laptop that a tap opened and a second tap closed the
+   group the query would have called a hover. **The fix, if a group does not open on hover, is in
    `public/scripts/site.js` or `src/styles/base.css`** — the query, the binding or the delay —
    and never in the reader's expectations: this is the behaviour the brief asks for, not a
    bonus.

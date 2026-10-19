@@ -7,7 +7,7 @@
 // group and closes a moment after the pointer leaves it; a click still toggles, the keyboard
 // still reaches every link, and a touch screen keeps the tap it has always had.
 //
-// Three things this file holds, and each of them is a rule rather than a preference:
+// Four things this file holds, and each of them is a rule rather than a preference:
 //
 //   1. **The decision is the pointer's capability, never the viewport's width.** The query is
 //      `(hover: hover) and (pointer: fine)`: a tablet 1280 px wide has no hover to give, and a
@@ -18,15 +18,25 @@
 //      on the trigger's focus, closes `CLOSE_AFTER_MS` after the pointer leaves and not before,
 //      survives a pointer that crosses the seam between the trigger and the list, is left alone
 //      by the click the `<summary>` handles by itself, and says what it is in `aria-expanded`.
-//   3. **The touch path does nothing.** With no hover to answer for, the pointer's events are
-//      bound to nothing at all: the tap is the whole menu, and no close is ever scheduled.
+//   3. **A finger never hovers, whatever the device says.** The query answers for the device's
+//      *primary* pointer, and a touch laptop answers it yes; a tap on one of those still sends a
+//      `pointerenter` of its own, carrying `pointerType: 'touch'`, and a tap that opened a group
+//      on the way in and then closed it again with its own click would be a submenu no finger
+//      could open. So the events decide and not the query alone: a mouse and a pen hover, a
+//      finger does not, and a device that answered no has no hover listeners at all — the tap is
+//      the whole menu there, and no close is ever scheduled.
+//   4. **The answer is watched, not sampled once.** A pointer can arrive after the page did — a
+//      keyboard docked to a tablet brings a trackpad, a mouse is plugged into a phone — and one
+//      taken away leaves a device with no hover to give. The query's `change` is subscribed to,
+//      and each answer binds or unbinds the hover behaviour, without a reload.
 //
 // **There is no browser here.** The page is the built artifact parsed by `lib/html.mjs`, wrapped
-// in the DOM calls `site.js` makes plus the browser behaviour the menu depends on — `mouseenter`
-// and `mouseleave` over a subtree, the `toggle` event a `<details>` fires when its `open`
-// attribute changes, `focusin`, and a `<summary>`'s own activation behaviour (a click toggles
-// its group). Those are the browser's, not the site's, and the stub states each one where it
-// stands. What a real pointer does on a real screen is the owner's live check: the brief's
+// in the DOM calls `site.js` makes plus the browser behaviour the menu depends on — `pointerenter`
+// and `pointerleave` over a subtree, each carrying the pointer type that caused it, the `toggle`
+// event a `<details>` fires when its `open` attribute changes, `focusin`, the `change` a
+// `MediaQueryList` reports when the device's answer changes, and a `<summary>`'s own activation
+// behaviour (a click toggles its group). Those are the browser's, not the site's, and the stub
+// states each one where it stands. What a real pointer does on a real screen is the owner's live check: the brief's
 // acceptance line — "hovering a top-level item on desktop opens its submenu immediately" — is a
 // rendered gesture, and **Check 70a's step 6 in `docs/gcp-live-checklist.md` is where the owner
 // runs it** (the register, not this file: no step of that check is run by an agent).
@@ -107,13 +117,16 @@ class StubEvent {
 
 /**
  * A built page as a document `site.js` can run in, with the browser behaviour the menu depends
- * on: `mouseenter`/`mouseleave` over a subtree, the `toggle` event a `<details>` fires when its
- * `open` attribute changes, `focusin`, and a `<summary>`'s activation behaviour.
+ * on: `pointerenter`/`pointerleave` over a subtree, each carrying the pointer type that caused
+ * it, the `toggle` event a `<details>` fires when its `open` attribute changes, `focusin`, a
+ * `<summary>`'s activation behaviour, and the `change` event a `MediaQueryList` fires when the
+ * device's answer to the pointer query moves.
  *
  * `hover` is the device's answer to the pointer query — a pointer that hovers, or a touch
- * screen's `false`. `matchMedia: false` is a browser old enough to have none. `wide` is the
- * viewport the layout is drawn at: at or above the 48rem breakpoint the drawer is not drawn and
- * the panel is; below it the panel is drawn only while the drawer is open.
+ * screen's `false`; `setPointerHover` changes it under a page that has already loaded.
+ * `matchMedia: false` is a browser old enough to have none. `wide` is the viewport the layout is
+ * drawn at: at or above the 48rem breakpoint the drawer is not drawn and the panel is; below it
+ * the panel is drawn only while the drawer is open.
  */
 function stubPage(html, { hover = true, matchMedia = true, wide = true } = {}) {
   const root = parse(html)
@@ -262,6 +275,11 @@ function stubPage(html, { hover = true, matchMedia = true, wide = true } = {}) {
       if (!this.listeners.has(type)) this.listeners.set(type, [])
       this.listeners.get(type).push({ handler, capture })
     }
+    removeEventListener(type, handler) {
+      const bound = this.listeners.get(type) ?? []
+      const at = bound.findIndex((entry) => entry.handler === handler)
+      if (at >= 0) bound.splice(at, 1)
+    }
     /**
      * Dispatch an event at this element: the capture listeners from the document down, then the
      * element's own, then — for an event that bubbles — the ancestors on the way back up. A
@@ -344,17 +362,40 @@ function stubPage(html, { hover = true, matchMedia = true, wide = true } = {}) {
       return true
     },
   }
+  // The device's answer to the pointer query, and the lists the page asked for it on. The answer
+  // is not fixed: `setPointerHover` below is a mouse plugged in or taken away, and a browser
+  // reports that to every subscribed list as a `change` carrying the new answer.
+  let pointerAnswer = hover
+  const mediaLists = []
   if (matchMedia) {
     window.matchMedia = (query) => {
       queries.push(query)
-      return { media: query, matches: hover && isPointerQuery(query) }
+      const listeners = []
+      const list = {
+        media: query,
+        get matches() {
+          return pointerAnswer && isPointerQuery(query)
+        },
+        addEventListener(type, handler) {
+          if (type === 'change') listeners.push(handler)
+        },
+        // The name a MediaQueryList had for the same subscription before `addEventListener`
+        // reached it. A browser old enough to need this one still reports the change.
+        addListener(handler) {
+          listeners.push(handler)
+        },
+      }
+      mediaLists.push({ list, listeners })
+      return list
     }
   }
 
   vm.runInNewContext(SCRIPT_SOURCE, { window, document, navigator: {}, CustomEvent: StubEvent })
 
-  // The pointer, and where it is: what `moveTo` needs to know which events a move fires.
-  let pointer = null
+  // Where each kind of pointer is: a mouse stays where it was left while a finger taps
+  // somewhere else, so each type has a position of its own and a move fires only the enter and
+  // leave events of the pointer that moved.
+  const pointers = new Map()
   const within = (element, of) => {
     for (let node = element; node; node = node.parentElement) if (node === of) return true
     return false
@@ -373,19 +414,49 @@ function stubPage(html, { hover = true, matchMedia = true, wide = true } = {}) {
     /** Focus an element, as Tab or a click does. */
     focus: (element) => element.focus(),
     /**
-     * Move the pointer to an element, as a browser does: `mouseleave` on every element the
+     * Move the pointer to an element, as a browser does: `pointerleave` on every element the
      * pointer left — the ancestors of where it was that are not ancestors of where it went —
-     * and `mouseenter` on every element it arrived at that it was not inside. A pointer that
+     * and `pointerenter` on every element it arrived at that it was not inside. A pointer that
      * travels from a group's summary into its list is inside the same `<details>` the whole way,
      * so neither fires: that is what keeps a submenu open under a reader on their way to a link.
+     *
+     * The type is the pointer's own — `'mouse'` unless a case says otherwise, `'pen'` for a
+     * stylus, `'touch'` for a finger — and each event carries it, because the device's answer to
+     * the query says nothing about which pointer is moving. A `target` of `null` is the pointer
+     * leaving the page: every element it was inside is left.
      */
-    moveTo(target) {
-      const was = pointer
-      pointer = target
-      for (let node = was; node; node = node.parentElement) if (!target || !within(target, node)) node.dispatch('mouseleave')
+    moveTo(target, type = 'mouse') {
+      const was = pointers.get(type) ?? null
+      pointers.set(type, target)
+      for (let node = was; node; node = node.parentElement) if (!target || !within(target, node)) node.dispatch('pointerleave', { pointerType: type })
       const arrived = []
       for (let node = target; node; node = node.parentElement) if (!was || !within(was, node)) arrived.unshift(node)
-      for (const node of arrived) node.dispatch('mouseenter')
+      for (const node of arrived) node.dispatch('pointerenter', { pointerType: type })
+    },
+    /**
+     * A finger's tap, as a touch screen delivers it: the pointer's arrival carrying
+     * `pointerType: 'touch'`, the press and the lift, the pointer leaving as the finger is
+     * destroyed, and then the click the browser synthesises from all of it — the one the
+     * `<summary>` acts on. A hover-capable touch screen sends every one of these too, which is
+     * the case the script's pointer-type check exists for.
+     */
+    tap(element) {
+      this.moveTo(element, 'touch')
+      element.dispatch('pointerdown', { pointerType: 'touch', bubbles: true, target: element })
+      element.dispatch('pointerup', { pointerType: 'touch', bubbles: true, target: element })
+      this.moveTo(null, 'touch')
+      return this.click(element)
+    },
+    /**
+     * Change the device's answer to the pointer query, as a browser does when a mouse is plugged
+     * in or taken away: every list the page asked on reports the new answer to its `change`
+     * listeners, which is the one subscription the script has for it.
+     */
+    setPointerHover(value) {
+      pointerAnswer = value
+      for (const { list, listeners } of mediaLists) {
+        for (const handler of listeners) handler({ type: 'change', media: list.media, matches: list.matches })
+      }
     },
     /**
      * Click an element, as a browser does: the event, then the element's own activation
@@ -537,9 +608,9 @@ test('the click the menu was built on still toggles a group', () => {
   // On a touch screen, where the click is the whole menu.
   const touch = stubPage(HOME.html, { hover: false })
   const group = touch.groups[0]
-  touch.click(group.querySelector('summary'))
+  touch.tap(group.querySelector('summary'))
   assert.equal(group.open, true, 'a tap no longer opens a submenu')
-  touch.click(group.querySelector('summary'))
+  touch.tap(group.querySelector('summary'))
   assert.equal(group.open, false, 'a tap no longer closes a submenu')
 
   // And on a hovering pointer, where the browser delivers the pointer's arrival before the
@@ -627,13 +698,13 @@ test('every way a submenu opens and closes says so in aria-expanded', () => {
 
   // The touch path says the same thing, by the one gesture it has.
   const touch = stubPage(HOME.html, { hover: false })
-  touch.click(touch.summaries[0])
+  touch.tap(touch.summaries[0])
   assert.equal(touch.summaries[0].getAttribute('aria-expanded'), 'true', 'a tap opened a submenu and the control did not say so')
-  touch.click(touch.summaries[0])
+  touch.tap(touch.summaries[0])
   assert.equal(touch.summaries[0].getAttribute('aria-expanded'), 'false', 'a tap closed a submenu and the control still said it was open')
 })
 
-// ---- 4. the touch screen -----------------------------------------------------------------
+// ---- 4. the touch screen, and the pointers that are not a mouse --------------------------
 
 test('a touch screen gets no hover behaviour at all: the tap is the whole menu', () => {
   const page = stubPage(HOME.html, { hover: false })
@@ -648,10 +719,84 @@ test('a touch screen gets no hover behaviour at all: the tap is the whole menu',
   assert.equal(group.open, false, 'a touch screen closed a submenu on hover')
   assert.equal(page.timers.length, 0, 'the touch path scheduled a close on the way out')
 
-  page.click(summary)
+  page.tap(summary)
   assert.equal(group.open, true, 'the tap that has always opened a submenu no longer does')
-  page.click(summary)
+  page.tap(summary)
   assert.equal(group.open, false, 'the tap that has always closed a submenu no longer does')
+})
+
+test('a finger never hovers, on a device that answers the hover query yes as well', () => {
+  // A touch laptop: the query matches — it has a trackpad — and it also has a screen a finger
+  // uses. Every one of a tap's events arrives here, and the tap's own `pointerenter` comes
+  // before its click: a script that took that arrival for a hover would open the group and then
+  // let the click the `<summary>` acts on close it again, which is a submenu no finger can open.
+  const page = stubPage(HOME.html)
+  const group = page.groups[0]
+  const summary = group.querySelector('summary')
+
+  page.tap(summary)
+  assert.equal(
+    group.open,
+    true,
+    'a tap on a device that also answers the hover query opened nothing: the tap’s own pointerenter was taken for a hover and the click that followed closed what it had opened',
+  )
+  assert.equal(summary.getAttribute('aria-expanded'), 'true', 'a tap opened a submenu and the control did not say so')
+
+  page.tap(summary)
+  assert.equal(group.open, false, 'a second tap did not close the submenu the first one opened')
+  assert.equal(summary.getAttribute('aria-expanded'), 'false', 'a tap closed a submenu and the control still said it was open')
+  assert.equal(page.timers.length, 0, 'a finger scheduled a close: nothing about a tap waits for a pointer to leave')
+
+  // The mouse on the same machine still hovers: the check is the event's pointer, not the
+  // device's one answer for everything a reader might pick up.
+  page.moveTo(summary)
+  assert.equal(group.open, true, 'a mouse on a touch laptop no longer opens a submenu: the device answers the query yes and its mouse is a mouse')
+  page.moveTo(page.find('main')[0])
+  page.runTimers()
+  assert.equal(group.open, false, 'the submenu the mouse left stayed open')
+})
+
+test('a pen hovers like a mouse', () => {
+  const page = stubPage(HOME.html)
+  const group = page.groups[0]
+  const summary = group.querySelector('summary')
+
+  page.moveTo(summary, 'pen')
+  assert.equal(group.open, true, 'a stylus arriving at a group did not open its submenu: the query that admits it asks for a fine pointer, and a pen is one')
+  page.moveTo(page.find('main')[0], 'pen')
+  assert.equal(group.open, true, 'the submenu collapsed the instant the pen left the group')
+  page.runTimers()
+  assert.equal(group.open, false, 'the submenu the pen left stayed open')
+})
+
+test('a pointer that arrives after the page did is answered without a reload', () => {
+  // A phone, at load: there is no hover to answer for, so nothing is bound and the tap is the
+  // whole menu.
+  const page = stubPage(HOME.html, { hover: false })
+  const group = page.groups[0]
+  const summary = group.querySelector('summary')
+
+  page.moveTo(summary)
+  assert.equal(group.open, false, 'a device with no hovering pointer opened a submenu anyway')
+  page.moveTo(page.find('main')[0])
+
+  // A mouse is plugged in. The device's answer changes, and the page — already loaded — has to
+  // hear it: a query asked once at load and never again leaves this reader with no hover at all.
+  page.setPointerHover(true)
+  page.moveTo(summary)
+  assert.equal(group.open, true, 'the pointer that arrived after the page did got no hover: the query was asked once at load and never again')
+  page.moveTo(page.find('main')[0])
+  page.runTimers()
+  assert.equal(group.open, false, 'the submenu the newly arrived pointer left stayed open')
+
+  // And taken away again: the hover behaviour goes with it and the click stays, because the
+  // click is the `<summary>`'s own and never belonged to the hover behaviour.
+  page.setPointerHover(false)
+  page.moveTo(summary)
+  assert.equal(group.open, false, 'the hover behaviour outlived the pointer that hovered: the query’s change did not take it off')
+  page.tap(summary)
+  assert.equal(group.open, true, 'the tap went with the hover behaviour when the pointer left')
+  assert.equal(page.timers.filter((timer) => !timer.cancelled).length, 0, 'a device with no hovering pointer scheduled a close')
 })
 
 test('a browser with no matchMedia to ask keeps the click, and no width is ever the question', () => {

@@ -19,8 +19,11 @@
  *     `<details>` does not do is close when the reader presses Escape or clicks somewhere
  *     else, or open when a pointer merely arrives at it, and those two are what this file
  *     adds: with no script the menu still opens, still closes and still reaches every link.
- *     The hover behaviour is bound only where `matchMedia` says the pointer hovers, so a
- *     touch screen keeps the tap it has always had.
+ *     The hover behaviour is bound only where `matchMedia` says the device's pointer hovers,
+ *     and only for a pointer that says it is a mouse or a pen — a tap sends a pointer of its
+ *     own, and a finger never hovers — so a touch screen keeps the tap it has always had. The
+ *     answer is watched rather than sampled once, so a pointer plugged in or taken away after
+ *     the page loaded is answered too.
  *   - **The consent banner, and the analytics gate behind it (W1.12, W3.2; D93, D106).** The
  *     banner's two buttons write one decision to `localStorage`; this file reveals the banner
  *     when no decision is stored, and — only when that decision is `granted` — loads Google's
@@ -190,11 +193,38 @@
     )
   }
 
-  // Whether this device's pointer hovers. A browser with no `matchMedia` to ask cannot say,
-  // and a menu whose hover behaviour is guessed at is worse than one that keeps the click:
-  // no answer means no hover behaviour.
-  function hovers() {
-    return !!(window.matchMedia && window.matchMedia(HOVER_QUERY).matches)
+  // Whether an event came from a pointer that hovers. The device's answer to `HOVER_QUERY` is
+  // about its *primary* pointer, and a device can answer yes and still have a finger on it: a
+  // touch laptop has a trackpad and a screen, and a tablet with one has both too. What the
+  // event itself says is finer than that — a mouse and a pen hover, and a finger never does —
+  // and it is the event that decides here, because a tap's own pointer arrives at the group
+  // before the tap's click does: taken for a hover, it would open the submenu and the click
+  // that follows would close it again, and a finger could not open a submenu at all. A pointer
+  // that names no type is not a yes either, on the same principle as a browser with no
+  // `matchMedia` to ask: no answer is no.
+  function hoveringPointer(event) {
+    var type = event && event.pointerType
+    return type === 'mouse' || type === 'pen'
+  }
+
+  // The hover behaviour as it is bound right now, and the way to take it off again. The device's
+  // answer is not fixed for the life of the page — see `decideHover` — so what is bound has to
+  // be remembered to be unbound.
+  var unbindHover = null
+
+  // Bind the hover behaviour where the device answers that its pointer hovers, and take it off
+  // where the answer changes (the owner's brief of 2026-10-18, item 1). A tablet docked to a
+  // keyboard gains a trackpad, a mouse is plugged into a phone, a laptop's pointer is taken
+  // away: none of them reloads the page, and a query asked once at load would leave the reader
+  // who arrived after it with the wrong menu either way. So this runs on the answer as it is
+  // now and on every `change` to it, and the click is untouched in both directions.
+  function decideHover(query) {
+    if (query && query.matches) {
+      if (!unbindHover) unbindHover = hoverGroups()
+    } else if (unbindHover) {
+      unbindHover()
+      unbindHover = null
+    }
   }
 
   // The pointer's way in and out of a group (the owner's brief of 2026-10-18, item 1), bound
@@ -202,14 +232,30 @@
   // pointer travelling from the summary into the list never leaves it, so the submenu cannot
   // close under a reader who is on their way to a link.
   //
+  // The events are the pointer's own rather than the mouse's, because a finger's tap is
+  // delivered as a mouse's too — the compatibility events every browser sends after a tap —
+  // and `hoveringPointer` above is what refuses it.
+  //
   // A group opens when the pointer arrives and when its trigger takes the focus — a keyboard
   // reader who tabs to a group has to be able to reach the links inside it, and Tab from the
   // trigger then goes into the list rather than past it — and it closes `CLOSE_AFTER_MS` after
   // the pointer leaves. What this file does not touch is the click: a `<summary>` toggles its
   // own group, so a click on a group the pointer has already opened closes it, which is what
   // the control did before any of this and what a reader pressing it is asking for.
+  //
+  // It returns the way back out: every listener it bound, taken off again. A close that is
+  // already scheduled is left to run, because it was scheduled by a pointer that had left the
+  // group and closing it is what the reader asked for by leaving; taking the listeners off is
+  // about the pointers that have not moved yet.
   function hoverGroups() {
     var groups = document.querySelectorAll(GROUP_DETAILS)
+    var bound = []
+
+    function on(element, type, handler) {
+      element.addEventListener(type, handler)
+      bound.push([element, type, handler])
+    }
+
     for (var i = 0; i < groups.length; i++) {
       ;(function (group) {
         var summary = group.querySelector(SUMMARY)
@@ -233,23 +279,29 @@
           group.open = false
         }
 
-        group.addEventListener('mouseenter', function () {
+        on(group, 'pointerenter', function (event) {
+          if (!hoveringPointer(event)) return
           stopClosing()
           group.open = true
         })
 
-        group.addEventListener('mouseleave', function () {
+        on(group, 'pointerleave', function (event) {
+          if (!hoveringPointer(event)) return
           stopClosing()
           closesAt = window.setTimeout(close, CLOSE_AFTER_MS)
         })
 
-        group.addEventListener('focusin', function (event) {
+        on(group, 'focusin', function (event) {
           var fromClosing = restored
           restored = null
           if (!summary || event.target !== summary || fromClosing === summary) return
           group.open = true
         })
       })(groups[i])
+    }
+
+    return function release() {
+      for (var j = 0; j < bound.length; j++) bound[j][0].removeEventListener(bound[j][1], bound[j][2])
     }
   }
 
@@ -263,7 +315,19 @@
       closeMenus()
     })
     expanded()
-    if (hovers()) hoverGroups()
+
+    // The device's answer to the pointer's question, asked once and then watched. A browser
+    // with no `matchMedia` to ask cannot answer, and a menu whose hover behaviour is guessed at
+    // is worse than one that keeps the click: no answer means no hover behaviour. `addListener`
+    // is the same subscription under the name browsers had for it before `addEventListener`
+    // reached a `MediaQueryList`, and the object a `change` reports carries the new answer in
+    // its own `matches` — which is the one `decideHover` reads, at load and after every change.
+    var query = window.matchMedia ? window.matchMedia(HOVER_QUERY) : null
+    if (query) {
+      if (query.addEventListener) query.addEventListener('change', decideHover)
+      else if (query.addListener) query.addListener(decideHover)
+    }
+    decideHover(query)
   }
 
   // ---- the consent banner, and the analytics gate behind it (W1.12, W3.2) ----------------

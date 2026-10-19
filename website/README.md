@@ -128,30 +128,36 @@ with fixtures that keep its refusals running, and none of them needs the network
   palette in force.
 - `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes). **They are
   deliberately loose, by the owner's ruling of 2026-10-17: size is not a concern yet, so
-  each is three times what the build of 2026-10-18 needs — the build that ships the site's one
+  each is three times what the build of 2026-10-19 needs — the build that ships the site's one
   script and its menu (P6, P3), the homepage's run animation (P7), the How It Works flow (P8),
-  W3.2's consent gate, and the menu's hover-open on a pointer that hovers (the owner's brief
-  of 2026-10-18, item 1) — and a later optimisation pass tightens them.** The gate itself is
-  not loose: a page or a site over the number fails, and the test keeps a case that proves it.
-  The derivation (that build plus 25 %, D192) is in the test's header, and a task that moves
-  the bytes re-derives the numbers here, in the commit that moves them — which is why all
-  three were re-derived in the commit that taught the script the hover behaviour, and why the
-  page and the site moved with the script (a script every page loads is a page's weight as
-  well as its JavaScript):
-  - **JavaScript per page:** 99,651 bytes. Three times 33,217: the one script the site ships,
-    `public/scripts/site.js` (26,573 bytes), plus 25 %. What the file carries is the copy
+  W3.2's consent gate, the menu's hover-open on a pointer that hovers (the owner's brief of
+  2026-10-18, item 1), and that behaviour's own correction of 2026-10-19: the event decides
+  which pointer arrived, and the device's answer is watched rather than sampled once — and a
+  later optimisation pass tightens them.** The gate itself is not loose: a page or a site over
+  the number fails, and the test keeps a case that proves it. The derivation (that build plus
+  25 %, D192) is in the test's header, and a task that moves the bytes re-derives the numbers
+  here, in the commit that moves them — which is why all three were re-derived in the commit
+  that taught the script the hover behaviour, and again in the one that taught it to read the
+  pointer out of the event rather than out of the device's one answer — and why the page and
+  the site move with the script (a script every page loads is a page's weight as well as its
+  JavaScript):
+  - **JavaScript per page:** 113,334 bytes. Three times 37,778: the one script the site ships,
+    `public/scripts/site.js` (30,222 bytes), plus 25 %. What the file carries is the copy
     control of P6 and D183; the menu's Escape/outside-click close of P3; W3.2's consent banner
     and analytics gate, which moved out of the markup and into this one file, with the cookie
     deletion the owner's ruling of 2026-10-18 added to a withdrawal; and, from the same
     ruling's brief, its item 1: a group's submenu opens when the pointer arrives at it on a
-    device whose pointer hovers, and that behaviour is bound only where `matchMedia` says the
-    pointer hovers, so a touch screen keeps the tap it has always had. Every page loads it
+    device whose pointer hovers. That behaviour is bound only where `matchMedia` says the
+    device's pointer hovers and only for a pointer that says it is a mouse or a pen — a tap
+    sends a pointer of its own, and a finger never hovers, so a touch screen keeps the tap it
+    has always had — and the answer is watched rather than sampled once, so a pointer plugged
+    in or taken away after the page has loaded is answered too. Every page loads the file
     once, so it is the whole of a page's JavaScript, and the test keeps a case that says so
     over the built artifact.
-  - **Page weight per page:** 951,354 bytes. Three times 317,118: the heaviest page, the
-    docs hub, at 253,694 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 965,037 bytes. Three times 321,679: the heaviest page, the
+    docs hub, at 257,343 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,056,412 bytes. Three times 1,018,804 (every file in `dist/`, 815,043
+  - **Whole site:** 3,070,095 bytes. Three times 1,023,365 (every file in `dist/`, 818,692
     bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
