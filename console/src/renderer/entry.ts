@@ -52,8 +52,10 @@
 // this module under plain Node, where there is no document and nothing should
 // happen at all.
 
-import { startConsole } from './app'
+import { putReading, putText, startConsole } from './app'
 import type { CompatibilityBridge, MountLike, ScreenGate } from './app'
+import { readNumber, unavailable } from '../shared/availability'
+import type { Reading } from '../shared/availability'
 import { decodeSnapshot } from '../shared/schema'
 import { sanitizeRefusal } from '../shared/sanitize'
 import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
@@ -456,6 +458,259 @@ export function drawInstallation(factory: SkewFactory, reply: unknown): SkewElem
 }
 
 // ---------------------------------------------------------------------------
+// The installation rail (desktop-console plan Task 6.3; design section 4.1).
+// ---------------------------------------------------------------------------
+
+/** RAIL_CLASS and the eleven below it are the rail's **twelve hooks on thirteen
+ * elements** (design sections 2.1 and 4.1): `RAIL_ADD_CLASS` names the foot row
+ * and the button inside it both, because a row and the control in it are one
+ * region and the class names the region. The rules that select them are
+ * `theme/base.css`'s, and they land in this task's commit with these elements --
+ * a hook and the rule that selects it move together, because a stylesheet
+ * written against a tree nothing draws is a rule nothing can see. */
+export const RAIL_CLASS = 'console-rail'
+export const RAIL_HEAD_CLASS = 'console-rail-head'
+export const RAIL_TITLE_CLASS = 'console-rail-title'
+export const RAIL_COLLAPSE_CLASS = 'console-rail-collapse'
+export const RAIL_LIST_CLASS = 'console-rail-list'
+export const RAIL_ROW_CLASS = 'console-rail-row'
+export const RAIL_NAME_CLASS = 'console-rail-name'
+export const RAIL_PROJECT_CLASS = 'console-rail-project'
+export const RAIL_STATE_CLASS = 'console-rail-state'
+export const RAIL_SPEND_CLASS = 'console-rail-spend'
+export const RAIL_ADD_CLASS = 'console-rail-add'
+export const RAIL_HINT_CLASS = 'console-rail-hint'
+
+/** RAIL_LIST_ID is what the collapse control's `aria-controls` names. It is an
+ * `id` and not a hook: `aria-controls` takes an element's id, and no rule in the
+ * stylesheet selects it -- the class above is what a rule may select. */
+export const RAIL_LIST_ID = 'console-rail-list'
+
+/** RAIL_TITLE, RAIL_HINT and RAIL_ADD_LABEL are the rail's own words, drawn
+ * from here rather than from a document: the title names the region, the hint is
+ * the design's own sentence about the shortcut keys (Task 6.5's), and the add
+ * row's label is the design's. */
+export const RAIL_TITLE = 'Installations'
+export const RAIL_HINT = 'Switch with the shortcut keys 1 2 3'
+export const RAIL_ADD_LABEL = '+ Add installation'
+
+/** RAIL_COLLAPSE_LABEL and RAIL_EXPAND_LABEL are the collapse control's
+ * accessible name in the two states it has. The name changes with the state, so
+ * what the control *does* next is announced rather than drawn only (design
+ * section 4.1); the glyph beside it is the drawn half and is never the only
+ * one. */
+export const RAIL_COLLAPSE_LABEL = 'Collapse the installations rail'
+export const RAIL_EXPAND_LABEL = 'Expand the installations rail'
+export const RAIL_COLLAPSE_GLYPH = '‹'
+export const RAIL_EXPAND_GLYPH = '›'
+
+/** RailState is the rail's three words, and the glyph each is drawn beside. The
+ * word is drawn **and** the glyph is drawn, never one instead of the other
+ * (design sections 3.5 and 4.1), and `data-state` carries the same word so the
+ * tone has a hook -- the tone is the redundant second channel, never the only
+ * carrier. `idle` is the stored installation nothing is being read from: it is
+ * the vocabulary's third word and **no read in this phase draws it**, because a
+ * row for a stored installation needs a list read the design withholds
+ * (design section 4.1, section 11). */
+export type RailState = 'running' | 'silent' | 'idle'
+
+/** RAIL_STATE_GLYPHS is the glyph of each word, in the design's own table. */
+export const RAIL_STATE_GLYPHS: Readonly<Record<RailState, string>> = Object.freeze({
+  running: '●',
+  silent: '▲',
+  idle: '○',
+})
+
+/** RAIL_SPEND_UNREAD is what the spend span says before the console has read a
+ * budget: the caps panel's own sentence, so the rail and the panel say the same
+ * thing about the same absence (`screens/spend.ts`). It is a **reason with no
+ * figure** -- `n/a` and never `$0.00`, which would be a spend nobody measured. */
+export const RAIL_SPEND_UNREAD = 'no budget show document was read'
+
+/**
+ * railSpend is the one figure the rail's row draws: `global.counted_usd` from a
+ * `budget.show` document, which is the figure the caps panel counts its caps
+ * against (design section 4.1: "the spend is the console's own budget read ...
+ * whose counted and spent dollars section 2.4's caps panel already draws").
+ *
+ * The path is read here rather than through `screens/spend.ts`'s `capsOf`,
+ * because that function builds a whole caps model for a screen and the rail
+ * draws one number of it. A document that is not an object, or one with no
+ * `global` block, is `n/a` with the field's own reason -- `readNumber`'s rule,
+ * one layer out -- and never a zero.
+ */
+export function railSpend(raw: unknown): Reading {
+  const document = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null
+  const global = document === null ? null : document['global']
+  const block = typeof global === 'object' && global !== null && !Array.isArray(global) ? (global as Record<string, unknown>) : null
+  return readNumber(block === null ? undefined : block['counted_usd'], 'global.counted_usd')
+}
+
+/** RailView is the drawn rail and the three writes this file makes to it. The
+ * rail is drawn once and updated in place, rather than redrawn on every frame:
+ * it is chrome, and a rail rebuilt under the operator's pointer is a rail that
+ * loses its focus. */
+export interface RailView {
+  readonly root: DomElement
+  /** setState writes the state word and its glyph. */
+  setState(state: RailState): void
+  /** setSpend writes the row's spend, from the console's own budget read. */
+  setSpend(reading: Reading): void
+}
+
+/**
+ * drawRail draws the installation rail: the canvas's one structural addition
+ * (design section 4.1, approved by the owner on 2026-10-19), and the body's
+ * first content child -- the grid's first column, appended before the
+ * installation line so the tab order is the order a reader sees.
+ *
+ * **It draws one row per installation the dashboard can read, which is one
+ * row.** `installation.current` is the only installation read this document
+ * has, it takes no argument and names no id, and its answer is the installation
+ * the operator chose -- so the row's name and project are that answer's one
+ * label, drawn twice (the canvas's two-line identity), and a console with no
+ * installation chosen, or one whose store could not be read, draws **no row**
+ * rather than an invented one. A row per *stored* installation needs a bounded
+ * list read on this bridge, which the design withholds (section 4.1, section
+ * 11); this file does not add one, and the rail makes **no read of its own** --
+ * which is also what keeps the entry spec's spawn log at the two spawns a
+ * healthy console makes.
+ *
+ * **The row's state is the rail's own mark, not a field of any read**: the rail
+ * knows whether the console is reading this installation now, so it opens at
+ * `running` and goes `silent` when that read was refused or the feed has gone
+ * quiet. `setState` is how the Live half of this file tells it.
+ *
+ * **The foot row is drawn and not wired.** "+ Add installation" is the design's
+ * control, and the flow it opens is the picker window, which this document
+ * cannot open: the picker is reached from the application menu's `Installations…`
+ * item (ruling C9), the dashboard's fourteen-operation bridge has no operation
+ * that opens a window, and both the design (section 11: no Phase-6 task owns the
+ * preload or the IPC allow-list) and this task's Files keep it that way. So the
+ * control is drawn where the design draws it, with the label the design gives
+ * it, and the click that would open the picker is the one thing this task
+ * cannot add -- said here rather than papered over with a handler that does
+ * nothing. The rows are the same shape for a different reason: a row's
+ * `aria-selected` and its keys are Task 6.5's, and a row selects nothing today
+ * (the console's one choose operation is the picker's).
+ */
+export function drawRail(surface: DomSurface, reply: unknown): RailView {
+  const factory = surface.factory
+  const rail = factory.create('aside')
+  rail.setAttribute('class', RAIL_CLASS)
+
+  const head = factory.create('div')
+  head.setAttribute('class', RAIL_HEAD_CLASS)
+  const title = factory.create('p')
+  title.setAttribute('class', RAIL_TITLE_CLASS)
+  title.textContent = RAIL_TITLE
+  const collapse = factory.create('button')
+  collapse.setAttribute('class', RAIL_COLLAPSE_CLASS)
+  collapse.setAttribute('type', 'button')
+  collapse.setAttribute('aria-controls', RAIL_LIST_ID)
+  collapse.setAttribute('aria-expanded', 'true')
+  collapse.setAttribute('aria-label', RAIL_COLLAPSE_LABEL)
+  collapse.textContent = RAIL_COLLAPSE_GLYPH
+  head.append(title)
+  head.append(collapse)
+
+  const list = factory.create('div')
+  list.setAttribute('class', RAIL_LIST_CLASS)
+  list.setAttribute('id', RAIL_LIST_ID)
+
+  const foot = factory.create('div')
+  foot.setAttribute('class', RAIL_ADD_CLASS)
+  const add = factory.create('button')
+  add.setAttribute('class', RAIL_ADD_CLASS)
+  add.setAttribute('type', 'button')
+  add.textContent = RAIL_ADD_LABEL
+  foot.append(add)
+
+  const hint = factory.create('p')
+  hint.setAttribute('class', RAIL_HINT_CLASS)
+  hint.textContent = RAIL_HINT
+
+  // The one row, when the dashboard can read an installation to draw one for.
+  // Its spans exist either way, so the two setters below are the same code in
+  // both cases -- a rail with no row has nothing to write to, and writing to a
+  // span that is not in the tree is a no-op rather than a branch.
+  const row = factory.create('button')
+  row.setAttribute('class', RAIL_ROW_CLASS)
+  row.setAttribute('type', 'button')
+  const name = factory.create('span')
+  name.setAttribute('class', RAIL_NAME_CLASS)
+  const project = factory.create('span')
+  project.setAttribute('class', RAIL_PROJECT_CLASS)
+  const state = factory.create('span')
+  state.setAttribute('class', RAIL_STATE_CLASS)
+  const spend = factory.create('span')
+  spend.setAttribute('class', RAIL_SPEND_CLASS)
+
+  const envelope = typeof reply === 'object' && reply !== null ? (reply as Record<string, unknown>) : null
+  const data = envelope !== null && envelope['ok'] === true ? envelope['data'] : null
+  const value = typeof data === 'object' && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>) : null
+  const readable = value !== null && value['chosen'] === true
+
+  let word: RailState = 'running'
+  const writeState = (): void => {
+    if (!readable) return
+    state.textContent = `${RAIL_STATE_GLYPHS[word]} ${word}`
+    state.setAttribute('data-state', word)
+  }
+  writeState()
+
+  if (readable && value !== null) {
+    // One label, two spans: `ActiveInstallation` carries no display name, so the
+    // row's identity is the project it names, drawn as the name and again as the
+    // small-text line under it.
+    putText(name, value['project'], 'label', 'the installation’s project')
+    putText(project, value['project'], 'label', 'the installation’s project')
+    putReading(spend, unavailable(RAIL_SPEND_UNREAD), 'usd')
+    row.append(name)
+    row.append(project)
+    row.append(state)
+    row.append(spend)
+    list.append(row)
+  }
+
+  rail.append(head)
+  rail.append(list)
+  rail.append(foot)
+  rail.append(hint)
+
+  // The collapse control is this task's, so its behaviour is too: it flips the
+  // rail's `data-collapsed`, which is the one rule the 216 px and 56 px widths
+  // are selected by, and it keeps `aria-expanded` and its own name in step with
+  // what it drew. Nothing else about the rail moves -- a collapsed rail is the
+  // same tree, drawn narrow.
+  let collapsed = false
+  surface.nodeOf(collapse).addEventListener('click', () => {
+    collapsed = !collapsed
+    rail.setAttribute('data-collapsed', collapsed ? 'true' : 'false')
+    collapse.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
+    collapse.setAttribute('aria-label', collapsed ? RAIL_EXPAND_LABEL : RAIL_COLLAPSE_LABEL)
+    collapse.textContent = collapsed ? RAIL_EXPAND_GLYPH : RAIL_COLLAPSE_GLYPH
+  })
+
+  return {
+    root: rail,
+    setState: (next: RailState): void => {
+      word = next
+      writeState()
+    },
+    setSpend: (reading: Reading): void => {
+      if (!readable) return
+      // The title is cleared first: `putReading` writes one only for a reading
+      // with no value, and the rail is the one drawing this file *updates* in
+      // place rather than redrawing -- so a reason left over from the `n/a` this
+      // span drew a moment ago would sit under a figure that is now measured.
+      spend.removeAttribute('title')
+      putReading(spend, reading, 'usd')
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The dashboard (desktop-console plan Task 3.4c).
 // ---------------------------------------------------------------------------
 
@@ -612,8 +867,10 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
   } catch {
     installation = null
   }
+  const rail = drawRail(surface, installation)
+  surface.mount.append(rail.root)
   surface.mount.append(drawInstallation(surface.factory, installation))
-  await mountDashboard({ document: scope.document, surface, gate, bridge })
+  await mountDashboard({ document: scope.document, surface, gate, bridge, rail })
 }
 
 /** DashboardDeps is what the dashboard half of `bootDashboard` needs, named so
@@ -623,6 +880,10 @@ interface DashboardDeps {
   readonly surface: DomSurface
   readonly gate: ScreenGate
   readonly bridge: ReadBridge
+  /** rail is the installation rail, drawn before the dashboard was mounted and
+   * updated from here: the Live half owns its state word, and the two views that
+   * read the budget fill its spend. */
+  readonly rail: RailView
 }
 
 /**
@@ -632,7 +893,7 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, bridge } = deps
+  const { document, surface, gate, bridge, rail } = deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
 
@@ -799,6 +1060,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     } catch {
       // The same rule `drawLive` keeps: a poll that fails while another view is
       // on screen does not replace the view the operator chose.
+      rail.setState('silent')
       if (currentView === 'live') refuse('live.watch', READ_UNREADABLE)
     } finally {
       live.inFlight = false
@@ -820,16 +1082,23 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (currentView !== 'live') return
     const answer = replyData(reply)
     if (!answer.ok) {
+      rail.setState('silent')
       refuse('live.watch', answer.sentence)
       return
     }
     const envelope = answer.data as Record<string, unknown>
     const decoded = decodeSnapshot(envelope['document'], 'live.watch')
     if (!decoded.ok) {
+      rail.setState('silent')
       refuse('live.watch', decoded.skew.because)
       return
     }
     const feed = feedHealthOf(envelope['receivedAt'], nowStamp())
+    // The rail's state word is this read's own: the console is reading this
+    // installation now (`running`), unless the frame it holds has gone quiet --
+    // which is the second of the two conditions the design gives `silent`
+    // (section 4.1). A read that was refused sets it above.
+    rail.setState(feed.stale ? 'silent' : 'running')
     const model = buildLiveModel(decoded.value, history, feed)
     // The kill banner is the `kill` view. It is asked for through the gate --
     // the one door -- with an empty drawing, because what a reduced console
@@ -879,6 +1148,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let controls: SpendControls = SPEND_DEFAULT_CONTROLS
     let caps: Readonly<Record<string, unknown>> | null = null
     const capsReply = documentOf(await bridge.showBudget({}))
+    // The rail's spend is the console's own budget read -- this one, the read
+    // the caps panel makes -- and the rail makes none of its own (design section
+    // 4.1). It is filled before the staleness check below: the spend is a fact
+    // about the installation rather than about the view the operator chose, so a
+    // read that landed after they moved on still fills the rail.
+    if (capsReply.ok) rail.setSpend(railSpend(capsReply.data))
     if (stale(mine)) return
     if (capsReply.ok) caps = capsReply.data
 
@@ -977,6 +1252,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       return answer.ok ? answer.data : null
     }
     const budget = await read('budget.show', () => bridge.showBudget({}))
+    // The Projects view makes the same budget read, and the rail's spend is that
+    // read's too: one read serves the panel and the rail.
+    if (budget !== null) rail.setSpend(railSpend(budget))
     const runs = await read('runs.list', () => bridge.listRuns({}))
     // Both reads are in, and the operator may have moved on while they were.
     if (stale(mine)) return

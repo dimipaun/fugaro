@@ -471,7 +471,15 @@ export function bundleRenderer(options: BundleOptions): void {
  * *this list*, so the case is true here with two files in it and stays true when
  * 6.3 and 6.4 append theirs.
  */
-export const THEME_STYLESHEETS: readonly string[] = Object.freeze(['tokens.css', 'palette.css'])
+export const THEME_STYLESHEETS: readonly string[] = Object.freeze([
+  'tokens.css',
+  'palette.css',
+  // Task 6.3's: the reset, the document, the chrome and the focus rules. The
+  // entry that landed with the file, in one commit, because the refusal above
+  // fires in both directions -- a listed file that is missing and an unlisted
+  // `.css` that is present are both a build failure.
+  'base.css',
+])
 
 /** StylesheetOptions is what the stylesheet step is given: the theme directory
  * it reads and the one file it writes. Both are absolute paths, like
