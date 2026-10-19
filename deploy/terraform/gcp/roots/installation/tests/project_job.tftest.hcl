@@ -13,11 +13,15 @@
 #      widened condition rather than as the per-slug one;
 #   3. FUGARO_GITHUB_APP_ID in the job's environment, with its precondition
 #      (owner ruling of 2026-10-17, task 3.5 step 4).
-# Nothing here derives a name: the job name, the account id and the condition
-# are what internal/infra wrote into the tfvars, and the assertions read the
-# module's own resources. The two names below are the literals
-# gcp.ProjectJobName/ProjectServiceAccountID produce for (standard, github,
-# personal) and (standard, github, "").
+# Nothing here derives a name: the job name, the account id and the two
+# condition titles are what internal/infra wrote into the tfvars, and the
+# assertions read the module's own resources. The two names below are the
+# literals gcp.ProjectJobName/ProjectServiceAccountID produce for (standard,
+# github, personal) and (standard, github, ""), and each condition title is
+# gcp.BucketConditionTitle / gcp.ProjectTokenBucketConditionTitle of the
+# account id in its own block — the pairing deploy/terraform's
+# TestProjectJobTftestTitlesAreTheOnesInternalInfraWrites derives and checks,
+# so a title internal/infra would never write cannot sit here unchallenged.
 
 mock_provider "google" {}
 
@@ -51,7 +55,7 @@ variables {
     }
     secret_env = {}
     bucket_condition = {
-      title = "fugaro-project-job-runs"
+      title = "fugaro-fugaro-p-standard-git-63f23ec6"
       expression = join(" || ", [
         "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")",
         "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/cache/\")",
@@ -150,7 +154,7 @@ run "project_job" {
     error_message = "a project job's bucket condition must be exactly the three prefix clauses gcp.ProjectBucketCondition writes"
   }
   assert {
-    condition     = google_storage_bucket_iam_member.job.bucket == "fugaro-runs-proj-1234" && google_storage_bucket_iam_member.job.condition[0].title == "fugaro-project-job-runs"
+    condition     = google_storage_bucket_iam_member.job.bucket == "fugaro-runs-proj-1234" && google_storage_bucket_iam_member.job.condition[0].title == "fugaro-fugaro-p-standard-git-63f23ec6"
     error_message = "a project job's bucket grant must be on the runs bucket, under the title internal/infra gave it"
   }
   # The tokens/ grant (the seal, #563): objectViewer, never objectUser, so the
@@ -225,7 +229,7 @@ run "github_job_without_the_app_id_fails_the_plan" {
       }
       secret_env = {}
       bucket_condition = {
-        title      = "fugaro-project-job-runs"
+        title      = "fugaro-fugaro-p-standard-git-0ca96e64"
         expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
       }
       token_condition = {
@@ -269,7 +273,7 @@ run "bitbucket_job_needs_no_app_id" {
       }
       secret_env = {}
       bucket_condition = {
-        title      = "fugaro-project-job-runs"
+        title      = "fugaro-fugaro-p-standard-bit-31e1bbd3"
         expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
       }
       token_condition = {
