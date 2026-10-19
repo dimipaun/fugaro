@@ -1,0 +1,40 @@
+# website/data/release-summaries.yaml -- the end-user summary of every release.
+#
+# One entry per file in docs/releases/, keyed by the release's tag, and the changelog page
+# renders it under the release's heading with the release file's own Highlights collapsed
+# below it (the owner's brief of 2026-10-19: the summary under each release is a product
+# feature a reader understands, and the operator detail of docs/releases/vX.Y.Z.md is one
+# click away). The release files are not edited by this and stay the source of an entry's
+# full text.
+#
+# Each value is ONE line of plain text, and the sentence it carries is the whole of the
+# entry: no colon, no quotes, no block scalar and no second line, so the file's shape is one
+# the site's own YAML reader reads and the site's gates can hold every line to. The words are
+# the site's rather than the release file's -- no task, phase or decision id, no internal
+# file path, and no command-line flag unless the feature IS a command -- and a release the
+# files do not cover is a line the changelog page stops the build for.
+#
+# Read by website/src/content.ts (loadReleaseSummaries), rendered by
+# website/src/components/Changelog.astro, and pinned by website/test/changelog-page.mjs:
+# every release file has an entry here, none is empty, and the page renders it.
+#
+# A new release adds its line here in the same commit as its docs/releases/vX.Y.Z.md: the
+# summary is written for readers who use Fugaro, from what that file says the release does.
+version: 1
+
+summaries:
+  v0.8.7: The desktop console is published reliably again, because Apple's notarisation and stapling now retry the part that fails when Apple's service drops the connection. The command line itself is unchanged from the previous release.
+  v0.8.6: Setup completes again on every installation, after the previous release stopped while creating an account's role. Managed projects and the batch provisioning step are switched off in this release, and both are planned to return after a redesign.
+  v0.8.5: Fugaro can now manage a whole project, where an agent's infrastructure changes are applied by a deterministic gate, a lost project can be rebuilt from zero, and the project's budget alerts are recorded where no run can change them. The desktop console ships as its own signed macOS download, and a run can be given a title that names it in the watch screen and on the pull request it opens.
+  v0.8.1: A project's Claude model claims are judged the way a run judges them, so validation stops halting on configurations that would work. A missing price is reported once, against the model it belongs to, and the watch screen hides pull requests that are already merged or closed when the GitHub CLI is installed.
+  v0.8.0: A project's spending limits and the repositories allowed to run are now the project's own published data, and every run reads them before it starts. An operator can record which Claude models go direct and which go through a provider route, a secret can be stored once for the whole project, and a recipe can deliver a file instead of a pull request.
+  v0.7.5: The base image is served from your registry rather than copied into it, and Fugaro checks a release's signature before it pins that image. A global per-run spending cap now bounds any repository without one of its own, a secret can be stored once for the whole project, and a configuration change that removes a workflow or an account can retire it without hand-run state surgery.
+  v0.7.0: Every project now runs on one base image, so a repository declares the runtimes it needs instead of choosing a language image, and moving to it is a migration with its own steps. Recipes gained a catalog, a review mode for existing pull requests and check steps that gate a run, and the cloud storage that holds run data is hardened so a launcher reads it and writes only its own runs.
+  v0.6.7: Runs on a provider model now report what they really cost, so a spending cap counts the actual amount instead of a worst-case estimate, and the first complete provider run works end to end. Fugaro also tells you when the cloud still carries an old copy of your project configuration.
+  v0.6.6: Runs that drive a non-Anthropic model through OpenRouter now get past their first model call, so a coder and a reviewer on such a model can complete a task. Repositories that use only Claude models are unaffected.
+  v0.6.5: A repository can use several named accounts instead of one, chosen per run or per repository, so a run that reaches an account's usage limit can be relaunched on another. Fugaro also tells you, at most once a day, when a newer release is available.
+  v0.6.0: One command now moves a checkout to the newest Fugaro, pinning the plugin, updating it and refreshing the job images, and it can report what is out of date without changing anything. A project can publish defaults and named profiles that its repositories inherit, so a repository's own configuration file can shrink to a few lines. Fugaro's trust model and known limits are documented in one place.
+  v0.5.1: Work in progress is no longer lost when a run's container dies, because new commits are pushed to the run's own branch within about a minute and a draft pull request opens at the first push. One command moves a repository onto the release's base image, and runs can be watched as they queue, start and finish.
+  v0.5.0: The task loop is now a selectable recipe. You can pick one of the three that ship with Fugaro or write your own and share it with a whole project. A recipe only arranges the loop, so the models, the spending caps and the rule that a pull request is ready only with a passing test and a ship verdict are unchanged.
+  v0.4.1: A checkout can be pointed at its installation's cloud project on its own, so a repository no longer has to be brought fully up to date first. Editors and the schema check accept that setting, and the setup skill now asks which models you want for the coder and for the reviewer.
+  v0.4.0: A teammate can now launch runs in a repository they were merely given access to, because the installation's shared settings come from the cloud instead of from a setup step each person runs. Moving an existing Firebase project into Fugaro no longer needs hand-edited state, and a second project can sit beside the first.
