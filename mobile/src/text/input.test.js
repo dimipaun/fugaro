@@ -246,6 +246,24 @@ test('a clock that stops being a time is a refusal, not a crash', async () => {
   assert.equal(answer.ok, false);
   assert.equal(answer.code, INPUT_CODES.BAD_CLOCK);
   assert.equal(h.inbox().length, 0, 'nothing was stamped with a non-time');
+  // And it is refused HERE rather than by whoever would have stamped it: a
+  // wake-word utterance never reaches the client, so a screen without its own
+  // clock check would answer "what's pending" from a clock that is not a time.
+  const pending = await h.input.submit("Fugaro, what's pending");
+  assert.equal(pending.ok, false);
+  assert.equal(pending.code, INPUT_CODES.BAD_CLOCK);
+  assert.equal((await h.input.awaiting()).code, INPUT_CODES.BAD_CLOCK);
+  assert.equal((await h.input.propose({ text: 'x', verb: 'launch' })).code, INPUT_CODES.BAD_CLOCK);
+});
+
+test('a context field this module does not read is refused, not ignored', async () => {
+  const h = await harness();
+  // A misspelled `target` on a confirmation would be a confirmation against
+  // whatever the module happened to default to.
+  const answer = await h.input.submit('Fugaro, confirm', { targt: RUN_TARGET });
+  assert.equal(answer.ok, false);
+  assert.equal(answer.code, INPUT_CODES.BAD_TEXT);
+  assert.equal(h.inbox().length, 0);
 });
 
 // ---------------------------------------------------------------------------

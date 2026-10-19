@@ -202,8 +202,11 @@ run "a not-understood utterance is answered, never forwarded (D164)" \
 run "the four commands of other screens are named, not answered here" \
   "    return Object.freeze({ ok: true, outcome: INPUT_OUTCOME.ELSEWHERE, command: result.command });" \
   "    return Object.freeze({ ok: true, outcome: INPUT_OUTCOME.PENDING });"
-run "a route this module does not know is a refusal, not a send" \
-  "    return refuse(INPUT_CODES.UNKNOWN_ROUTE, 'route');" "    return send(text);"
+# `UNKNOWN_ROUTE`'s branch is deliberately NOT mutated here: P6.1 has exactly
+# three routes and this module compares against all three, so the branch is
+# unreachable by construction and no test can kill it. That is said rather than
+# hidden -- a mutation that survived because nothing could reach it would read
+# as a guard with no test, and this one is a guard with no reachable input.
 
 # 4. What a typed utterance must not do before it is routed or sent.
 run "an empty or non-text utterance is refused" \
@@ -303,7 +306,7 @@ run "the typed cue is the typed one (P6.2's says \"Say\")" \
 
 # 10. The screen: D170's two halves -- per installation, and never summed.
 run "a mutation of one installation's questions is drawn (the section's list is the one given)" \
-  "        pending.forEach((one, index) => {" "        [].forEach((one, index) => {" \
+  "      pending.forEach((one, index) => {" "      [].forEach((one, index) => {" \
   mobile/src/text/screen.js "$SCREEN_SUITE"
 run "a destructive question is the only one marked" \
   "        if (one.destructive === true) {" "        if (true) {" \
