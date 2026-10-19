@@ -3996,10 +3996,10 @@ It settles the four things no test in the tree can, because Global Constraint 12
 ```bash
 # === Check 68: setup + guard. RE-RUN THE WHOLE BLOCK at the start of every step. ===
 # It is idempotent, and nothing below the four hard stops runs.
-P=${CHK68_PROJECT:?the SANDBOX project's ID, set by you; never belong's, and never read from gcloud}
-L=${L:?the sandbox installation's region, from its local config}
+P=${CHK68_PROJECT:?the SANDBOX project ID, set by you; never belong, and never read from gcloud}
+L=${L:?the region of the sandbox installation, from its local config}
 DEPLOYER="fugaro-deployer@${P:?}.iam.gserviceaccount.com"   # the account D75 creates, one per installation
-RUNS_BUCKET=${RUNS_BUCKET:?the sandbox installation's own runs bucket, from its local config}
+RUNS_BUCKET=${RUNS_BUCKET:?the runs bucket of the sandbox installation itself, from its local config}
 CHK68_TMP=/tmp/chk68
 # ${VAR:?} everywhere: an empty variable is a hard error, never an empty
 # argument gcloud resolves from its ambient configuration.
@@ -4115,12 +4115,12 @@ The same seven actions, against the **sandbox installation's own** resources —
 ```bash
 set -x
 gcloud storage cp "$CHK68_TMP/probe.txt" "gs://${RUNS_BUCKET:?}/chk68-probe.txt" --project="${P:?}" --impersonate-service-account="${DEPLOYER:?}"
-gcloud secrets update "${SANDBOX_SECRET:?the sandbox installation's own secret from step 0}" --project="${P:?}" --update-labels=chk68=1 --impersonate-service-account="${DEPLOYER:?}"
-gcloud iam service-accounts update "${SANDBOX_SA:?the sandbox installation's own account from step 0}" --project="${P:?}" --display-name="chk68" --impersonate-service-account="${DEPLOYER:?}"
-gcloud artifacts repositories update "${SANDBOX_REPO:?the sandbox installation's own repository from step 0}" --project="${P:?}" --location="${L:?}" --description="chk68" --impersonate-service-account="${DEPLOYER:?}"
-gcloud services api-keys update "${SANDBOX_KEY:?the sandbox installation's own key uid from step 0}" --project="${P:?}" --display-name="chk68" --impersonate-service-account="${DEPLOYER:?}"
-gcloud run jobs update "${SANDBOX_JOB:?the sandbox installation's own job from step 0}" --project="${P:?}" --region="${L:?}" --update-env-vars=chk68=1 --impersonate-service-account="${DEPLOYER:?}"
-gcloud scheduler jobs pause "${SANDBOX_SCHED:?the sandbox installation's own scheduler job from step 0}" --project="${P:?}" --location="${L:?}" --impersonate-service-account="${DEPLOYER:?}"
+gcloud secrets update "${SANDBOX_SECRET:?the own secret of the sandbox installation, from step 0}" --project="${P:?}" --update-labels=chk68=1 --impersonate-service-account="${DEPLOYER:?}"
+gcloud iam service-accounts update "${SANDBOX_SA:?the own account of the sandbox installation, from step 0}" --project="${P:?}" --display-name="chk68" --impersonate-service-account="${DEPLOYER:?}"
+gcloud artifacts repositories update "${SANDBOX_REPO:?the own repository of the sandbox installation, from step 0}" --project="${P:?}" --location="${L:?}" --description="chk68" --impersonate-service-account="${DEPLOYER:?}"
+gcloud services api-keys update "${SANDBOX_KEY:?the own key uid of the sandbox installation, from step 0}" --project="${P:?}" --display-name="chk68" --impersonate-service-account="${DEPLOYER:?}"
+gcloud run jobs update "${SANDBOX_JOB:?the own job of the sandbox installation, from step 0}" --project="${P:?}" --region="${L:?}" --update-env-vars=chk68=1 --impersonate-service-account="${DEPLOYER:?}"
+gcloud scheduler jobs pause "${SANDBOX_SCHED:?the own scheduler job of the sandbox installation, from step 0}" --project="${P:?}" --location="${L:?}" --impersonate-service-account="${DEPLOYER:?}"
 set +x
 ```
 
