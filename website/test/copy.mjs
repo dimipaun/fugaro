@@ -289,12 +289,14 @@ test('every copy-control refusal fires on the defect it names', () => {
   }
 })
 
-test('the hero offers `fugaro watch` in one block with one control, and the agent\'s launch in none', () => {
-  // Item 3's shape, held on the built page rather than on a fixture: the hero's one command
-  // block besides the install paths is the watch snippet, and the agent's launch — a line the
-  // reader did not type — is a paragraph in the chat, in no block and with no control. A page
-  // that wrapped the launch in a `[data-copy]` block would be offering the reader a command
-  // they never ran, which is the defect this case is here for.
+test('the homepage offers `fugaro watch` in one block with one control, and the agent\'s launch in none', () => {
+  // Item 3's shape, held on the built page rather than on a fixture: the homepage's one
+  // command block besides the install paths is the watch snippet, and the agent's launch — a
+  // status line the reader did not type — is a paragraph in the chat, in no block and with no
+  // control. A page that wrapped the launch in a `[data-copy]` block would be offering the
+  // reader a command they never ran, which is the defect this case is here for. (The block is
+  // `chat-watch` and the launch is `turn-status`: item 3 asks for the launch as "a subtle
+  // tool-call / status line", so it is not a command block at all.)
   const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const page = parse(html)
   const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
@@ -304,10 +306,10 @@ test('the hero offers `fugaro watch` in one block with one control, and the agen
   assert.equal(words(sourceOf(watch)), 'fugaro watch', `the watch block's control would copy ${JSON.stringify(words(sourceOf(watch)))}, and the block holds the command and nothing else`)
   assert.deepEqual(failuresOf(html), [], 'the built homepage breaks the copy control\'s rule')
 
-  const call = [...walk(page)].find((el) => classes(el).includes('turn-call'))
-  assert.ok(call, "the homepage chat carries no tool-call line, and the agent's launch is a line of the illustration (changes spec 2026-10-18, item 3)")
-  assert.equal(blockOf(call), null, "the agent's launch is inside a [data-copy] block, and the reader did not type it: the hero offers `fugaro watch` to copy, not the launch (changes spec 2026-10-18, item 3)")
-  assert.deepEqual([...walk(call)].filter((el) => el.attrs.has('data-copy-button')), [], "the agent's launch carries a copy control of its own (changes spec 2026-10-18, item 3)")
+  const status = [...walk(page)].find((el) => classes(el).includes('turn-status'))
+  assert.ok(status, "the homepage chat carries no status line, and the agent's launch is a line of the illustration (changes spec 2026-10-18, item 3)")
+  assert.equal(blockOf(status), null, "the agent's launch is inside a [data-copy] block, and the reader did not type it: the homepage offers `fugaro watch` to copy, not the launch (changes spec 2026-10-18, item 3)")
+  assert.deepEqual([...walk(status)].filter((el) => el.attrs.has('data-copy-button')), [], "the agent's launch carries a copy control of its own (changes spec 2026-10-18, item 3)")
 })
 
 // ---- the script itself (P3, P6, D183) -----------------------------------------------------

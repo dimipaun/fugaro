@@ -227,12 +227,17 @@ const STEPS = [
     flex-direction: column;
   }
 
+  /* The centrepiece's card (changes spec item 4's acceptance: the picture is the most
+     visually prominent element in its section). The accent is on every edge and not only
+     along the top — a rail reads as a detail of a card, a bordered card reads as a box the
+     eye lands on — and the top rail is thicker than the sides, so the run still reads left
+     to right. `--accent` on `--surface` is a pair `a11y.mjs` computes at 3:1 for a UI edge. */
   .step-card {
     display: grid;
-    gap: var(--space-2xs);
+    gap: var(--space-xs);
     padding: var(--space-md);
-    border: var(--border-width) solid var(--border);
-    border-top: calc(var(--border-width) * 4) solid var(--accent);
+    border: calc(var(--border-width) * 2) solid var(--accent);
+    border-top: calc(var(--border-width) * 6) solid var(--accent);
     border-radius: var(--radius-lg);
     background: var(--surface);
   }
@@ -253,13 +258,17 @@ const STEPS = [
     align-items: center;
     justify-content: center;
     flex: none;
-    width: 1.75rem;
-    height: 1.75rem;
+    width: 2rem;
+    height: 2rem;
     border-radius: var(--radius-pill);
     background: var(--accent);
     color: var(--ground);
     font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-base);
+    /* The heaviest weight the token layer names: `--weight-semibold` (600) is the top of the
+       scale, so "bold" on this site is this, and a number set in a weight outside the tokens
+       would be a second type scale. `--ground` on the filled accent is the 4.5:1 pair
+       `a11y.mjs` computes for text on the accent. */
     font-weight: var(--weight-semibold);
   }
 
@@ -270,7 +279,12 @@ const STEPS = [
   .step-name {
     margin: 0;
     font-family: var(--font-sans);
-    font-size: var(--font-size-lg);
+    /* 24 px (`--font-size-xl`) and `--weight-semibold`: item 4's "names at least 20 px bold",
+       as large as the row can print them. `website/test/base-styles.mjs` sizes each card
+       against the longest word of these names at the size this rule declares, so the two move
+       together — and 24 px is where that arithmetic says the four-across row still fits:
+       a step further up the scale is a picture whose own labels do not fit it. */
+    font-size: var(--font-size-xl);
     font-weight: var(--weight-semibold);
     letter-spacing: var(--tracking-tight);
     color: var(--text);
@@ -279,10 +293,14 @@ const STEPS = [
     overflow-wrap: anywhere;
   }
 
+  /* The step's one short line, at the body's own size rather than a step below it: the
+     caption is what the name is a name for, and at `--font-size-sm` it read as a footnote to
+     a heading. `--text-muted` on `--surface` is a pair `a11y.mjs` computes at 4.5:1 in all
+     four palettes — the same requirement as body text, not a decorative grey. */
   .step-caption {
     margin: 0;
     color: var(--text-muted);
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-base);
     line-height: var(--leading-normal);
     /* A caption is a sentence with a code span in it, and a long unbroken token would push
        the card wider than the page on a phone: it breaks rather than does that. */
@@ -300,7 +318,9 @@ const STEPS = [
   .arrow-head {
     fill: none;
     stroke: var(--accent);
-    stroke-width: 2;
+    /* A thick stroke in the accent: the arrows are what says the four boxes are a run rather
+       than four facts, so they are drawn at the weight of a rule rather than of a hairline. */
+    stroke-width: 3;
     stroke-linecap: round;
     stroke-linejoin: round;
   }

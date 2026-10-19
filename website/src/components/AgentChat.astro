@@ -4,24 +4,34 @@
  * 2026-10-18, item 3; it replaces `Terminal.astro`, the `fugaro run` transcript of P7/D184).
  *
  * **What it shows.** Fugaro is not a CLI the reader drives from a terminal: it is what the
- * reader's own coding agent reaches for, through the plugin's skills. So the hero shows that
- * — three turns of a chat: the reader asks for three bug fixes fanned out, the agent answers
- * and launches the runs, and a few minutes later it reports the pull requests. The launch is
- * the agent's own tool call, drawn as a subdued line rather than as a command with a prompt
- * in front of it, because the reader did not type it.
+ * reader's own coding agent reaches for, through the plugin's skills. So the figure shows
+ * that — three turns of a chat: the reader asks for three bug fixes fanned out, the agent
+ * answers and launches the runs, and a few minutes later it reports the pull requests. The
+ * launch is the agent's own action, drawn as a subdued **status line** under its answer
+ * rather than as a command with a prompt in front of it, because the reader did not type it
+ * and item 3 asks for exactly that ("shown as a subtle tool-call / status line, not a command
+ * the user typed").
  *
  * **Every line a turn of the chat speaks is a line of a document.** Global Constraint 6 and
- * D102: a page renders a fact and never restates one. (The three result labels are the one
- * thing here that is not a document's line, and the reading below says so.) The request is the
- * spec's own example; the agent's two lines are
+ * D102: a page renders a fact and never restates one. (The status line and the three result
+ * labels are the two things here that are not a document's line, and the reading below says
+ * so.) The request is the spec's own example; the agent's two lines are
  * the `parallelism` and `working` skills' own sentences — what the agent really says, read
  * from the skills rather than imagined (item 3's acceptance: "the agent's lines show the real
- * shape of the skills' behaviour"). The launch line is the invocation the `parallelism`
- * skill's code block documents, with the placeholders it writes (`<name>`, `<id>`): an
- * invented batch name or run id would be a fact about a run that did not happen (D184).
- * Every one of those lines — the request, the agent's two sentences and its launch — is held
- * here at build time to the document it cites, and again from outside by
+ * shape of the skills' behaviour"). Every one of those lines — the request and the agent's two
+ * sentences — is held here at build time to the document it cites, and again from outside by
  * `website/test/home.mjs`.
+ *
+ * **Why the launch is a status line and not the skill's command.** This figure used to print
+ * the invocation the `parallelism` skill's code block documents
+ * (`fugaro run --batch <name> --run-id <id> --task-file -`) as the agent's tool call. Two
+ * things were wrong with it: the owner's item 3 removes `fugaro run` from the homepage's
+ * example (it stays in the documentation as the manual option), and the line is a command —
+ * it wrapped to two lines in a phone's card and read as something to type, which is the
+ * opposite of what the turn is for. What it says now is the illustration's own label for what
+ * the agent did, `Fugaro: launching 3 jobs`, in the same class as the three
+ * `Pull request n of 3` labels: a reader sees the shape of the action without being handed a
+ * command, and the count is the reader's own three pieces rather than a stat about anything.
  *
  * **The pull requests are text, not links, and they are the illustration's own labels.**
  * Item 3 asks the agent to report back with pull request links, and there is no honest link
@@ -70,8 +80,9 @@ const SOURCES: { [name: string]: string } = {
 
 /**
  * The chat, turn by turn: who says it, what they say, and the document each line is quoted
- * from. `call` is the agent's tool call rather than a line of dialogue — the launch the
- * `parallelism` skill documents — and `results` is the list the last turn reports back with.
+ * from. `line` is what the turn says and is held to its document; `status` is the
+ * illustration's own label for what the agent did — the second class of text on this figure,
+ * with `results` — and `results` is the list the last turn reports back with.
  */
 const TURNS = [
   {
@@ -85,7 +96,10 @@ const TURNS = [
     turn: 'agent',
     line: 'One run per piece, each with a self-contained task',
     source: PARALLELISM,
-    call: 'fugaro run --batch <name> --run-id <id> --task-file -',
+    // The status line (changes spec item 3): what the agent did, as the figure's own label.
+    // It names no command — `fugaro run` is the documentation's manual path, and item 3 takes
+    // it out of the homepage's example — and the three is the reader's own three pieces.
+    status: 'Fugaro: launching 3 jobs',
   },
   {
     who: 'Your agent, a few minutes later',
@@ -113,22 +127,23 @@ const WATCH = 'fugaro watch'
 const WATCH_TAIL = 'is the live screen of spend, repositories and running agents.'
 const WATCH_NOTE = `\`${WATCH}\` ${WATCH_TAIL}`
 
-// Hold every line a turn speaks — its `line` and, where it has one, its `call` — to the
-// document it cites, in that document's order, here, so a paraphrase — or a line the skills
-// stopped saying — stops the build naming the file rather than reaching a reader as the
-// agent's own words. `cursor` walks forward through a document, so two lines quoted from one
-// of them can only be quoted in the order it writes them.
+// Hold every line a turn speaks — its `line` — to the document it cites, in that document's
+// order, here, so a paraphrase — or a line the skills stopped saying — stops the build naming
+// the file rather than reaching a reader as the agent's own words. `cursor` walks forward
+// through a document, so two lines quoted from one of them can only be quoted in the order it
+// writes them.
 //
-// `results` is deliberately not in this loop: the three labels are the illustration's own,
-// not a document's lines, and a guard that read them would either fail on the figure the spec
-// asks for or push somebody to write document lines that pretend to be pull requests.
+// `status` and `results` are deliberately not in this loop: they are the illustration's own
+// labels rather than documents' lines, and a guard that read them would either fail on the
+// figure the spec asks for or push somebody to write document lines that pretend to be a
+// status the skills do not print. What they may not be is a line of the document their own
+// turn cites — that would make them quotations, which the caption says they are not — and
+// `website/test/home.mjs` is the case that reads that: the same reading it gives the three
+// result labels.
 {
   const cursors: { [name: string]: number } = {}
   for (const turn of TURNS) {
-    for (const [what, line] of [
-      ['line', turn.line],
-      ['call', turn.call],
-    ] as const) {
+    for (const [what, line] of [['line', turn.line]] as const) {
       if (!line) continue
       const document = comparable(SOURCES[turn.source])
       const quoted = comparable(line)
@@ -140,6 +155,17 @@ const WATCH_NOTE = `\`${WATCH}\` ${WATCH_TAIL}`
         )
       }
       cursors[turn.source] = at + quoted.length
+    }
+  }
+  // The status line is the figure's own, so it may not be one of the skills' sentences: a
+  // label that turned out to be a quotation would make the caption's reading of the figure
+  // false the other way round.
+  for (const turn of TURNS) {
+    if (!turn.status) continue
+    if (comparable(SOURCES[turn.source]).includes(comparable(turn.status))) {
+      throw new Error(
+        `website/src/components/AgentChat.astro: the chat's status line ${JSON.stringify(turn.status)} is a line of ${turn.source}, and the status line is the illustration's own label rather than a quotation: the caption says the figure's labels are the picture's and not the skills' words (changes spec 2026-10-18, item 3).`,
+      )
     }
   }
 }
@@ -169,11 +195,11 @@ if (!source('README.md').includes(WATCH)) {
         <li class="chat-turn" data-turn={turn.turn} data-source={turn.source}>
           <p class="turn-who">{turn.who}</p>
           <p class="turn-line">{turn.line}</p>
-          {/* The agent's own tool call: the invocation the skill documents, drawn as a
-              subdued line rather than as a prompt a reader is meant to type. It is a
-              paragraph and not a `<pre>`, so it carries no copy control — what a reader
-              copies here is `fugaro watch` below, not the agent's launch. */}
-          {turn.call && <p class="turn-call"><code>{turn.call}</code></p>}
+          {/* The agent's own status line: what it did, drawn as a subdued line rather than
+              as a prompt a reader is meant to type. It is a paragraph and not a `<pre>`, so
+              it carries no copy control — what a reader copies here is `fugaro watch` below,
+              not the agent's launch. */}
+          {turn.status && <p class="turn-status">{turn.status}</p>}
           {turn.results && (
             <ul class="turn-results">
               {turn.results.map((result) => (
@@ -222,12 +248,19 @@ if (!source('README.md').includes(WATCH)) {
 </figure>
 
 <style>
-  /* Tokens only (W1.2). The chat is quieter than the install block above it — it is an
-     illustration of what happens next rather than a command to run — and the accent marks
-     the agent's turns, which is where the work leaves the reader's hands. */
+  /* Tokens only (W1.2). The chat is quieter than the diagram above it — it is an illustration
+     of what happens next rather than the picture of the run — and the accent marks the
+     agent's turns, which is where the work leaves the reader's hands.
+
+     **The figure takes the page's column, and its turns take the row.** It used to be a
+     68 ch column with the right two-thirds of the page empty beside it, which is what the
+     review of this branch saw: a figure that is the page's third block should use the page.
+     Three turns fit the row as three cards, so they do; the prose under them (the note and
+     the caption) keeps the measure, because a line of 68 ch is a line a reader can follow and
+     a line of 1000 px is not. */
   .chat {
-    max-width: var(--measure);
-    margin: 0;
+    max-width: var(--page-max);
+    margin: 0 auto;
   }
 
   .chat-title {
@@ -238,8 +271,17 @@ if (!source('README.md').includes(WATCH)) {
     color: var(--text);
   }
 
+  /* The turns as one row of cards wherever there is room for three: `auto-fit` with an 18 rem
+     minimum gives three columns on the page's column and one on a phone's, with no breakpoint
+     of this component's own to keep in step with the layout's. */
   .chat-turns {
+    /* The list is an `<ol>`, and `base.css` caps every `ul`, `ol` and `dl` at `--measure`
+       (68 ch, about 735 px) — narrower than the row the three turns ask for. The cap is
+       invisible on a phone, where the row is one column anyway, and on a wide screen it is a
+       hole where the third turn's card should be: the row has to opt out of it. */
+    max-width: none;
     display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
     gap: var(--space-xs);
     margin: 0;
     padding: 0;
@@ -275,9 +317,11 @@ if (!source('README.md').includes(WATCH)) {
     line-height: var(--leading-normal);
   }
 
-  /* The tool call: no card of its own, no prompt, no control — the smallest thing that says
-     the agent ran something. */
-  .turn-call {
+  /* The agent's status line (changes spec item 3): no card of its own, no prompt, no control —
+     the smallest thing that says the agent did something. It is set in the mono face at the
+     smallest size and in the muted colour, so it reads as a line the tool printed rather than
+     as a thing the reader typed or an instruction to them. */
+  .turn-status {
     margin: 0;
     color: var(--text-muted);
     font-family: var(--font-mono);

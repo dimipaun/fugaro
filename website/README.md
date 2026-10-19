@@ -150,12 +150,20 @@ with fixtures that keep its refusals running, and none of them needs the network
   - **Page weight per page:** 927,195 bytes. Three times 309,065: the heaviest page, the
     docs hub, at 247,252 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,035,742 bytes. Three times 1,011,914 (every file in `dist/`, 809,531
-    bytes across 21 files, plus 25 %). The figure moved 52 bytes with the chat's caption,
-    rewritten so that it says what the figure is rather than claiming every line of it is a
-    quotation — the fix round's two layout declarations (the watch bar's `flex-direction:
-    row-reverse` and the flow's `rotate(-90deg)`) moved it by 29 before that — and it was
-    re-derived in that commit like any other (D192).
+  - **Whole site:** 3,040,455 bytes. Three times 1,013,485 (every file in `dist/`, 810,788
+    bytes across 21 files, plus 25 %). The figure moved 1,242 bytes with the second fix
+    round on this branch: the homepage's order (the promise and its call to action, then the
+    diagram, then the chat, then the install paths — changes spec item 4), the flow's
+    centrepiece treatment, the chat's status line in place of the `fugaro run` command, and
+    the install command's `pre-wrap`/`overflow-wrap` so the `go install` line wraps instead
+    of being clipped; and then 15 with that round's last edit, `max-width: none` on the
+    chat's turns, which is the same cap the flow's list had already opted out of — the turns
+    are an `<ol>` too, and the measure drew them two across with a hole beside the third.
+    Before that it moved 52 bytes with the chat's caption, rewritten so
+    that it says what the figure is rather than claiming every line of it is a quotation —
+    and 29 with the fix round's two layout declarations (the watch bar's `flex-direction:
+    row-reverse` and the flow's `rotate(-90deg)`) — and each time it was re-derived in the
+    commit that moved it, like any other (D192).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte

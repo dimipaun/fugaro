@@ -1,32 +1,46 @@
 ---
 // website/src/pages/index.astro — the site's front page (website plan, Task W1.4; redesign
-// part P8, findings RF20 and RF21).
+// part P8, findings RF20 and RF21; changes spec of 2026-10-18, items 3 and 4).
 //
-// The page is the hero, and under it the flow: the brief's item 5 asks for a picture of how
-// the system works, and the flow How It Works carries is that picture (D185), so the same
-// component is placed here rather than a second drawing built for the front page. Every
-// other thing the front page could say is a section of its own with a section's own facts
-// (W2.x, W3.x), and a placeholder here would be a sentence the product cannot back (F50).
-// What the page reads, it reads through the content pipeline (W1.3) — it holds no fact of
-// its own.
+// **The order is the page's argument**, and the review of this branch asked for it in so
+// many words: the promise and the one thing to do about it, then what a run is — the four
+// steps, drawn — then the example of it through the reader's own agent, then the commands.
+// Item 4's acceptance is that the diagram is the most visually prominent element in its
+// section, and a picture four blocks down is not prominent however loud it is drawn: it sits
+// directly under the promise here, and the chat and the install paths are quieter than it and
+// come after it.
+//
+// Every other thing the front page could say is a section of its own with a section's own
+// facts (W2.x, W3.x), and a placeholder here would be a sentence the product cannot back
+// (F50). What the page reads, it reads through the content pipeline (W1.3) — it holds no fact
+// of its own.
 import Base from '../layouts/Base.astro'
 import Hero from '../components/Hero.astro'
 import ArchitectureDiagram from '../components/ArchitectureDiagram.astro'
+import AgentChat from '../components/AgentChat.astro'
+import HomeInstall from '../components/HomeInstall.astro'
 ---
 
 <Base title="Fugaro">
   <Hero />
-  {/* A div rather than a section: the flow is a figure, and a <section> without a heading
-      of its own would be a landmark a reader has to skip through with no name on it. */}
+  {/* Divs rather than sections: the flow is a figure and the chat is a figure, and a
+      `<section>` around one of them with no heading of its own would be a landmark a reader
+      has to skip through with no name on it. */}
   <div class="home-flow">
     <ArchitectureDiagram />
   </div>
+  <div class="home-chat">
+    <AgentChat />
+  </div>
+  <HomeInstall />
 </Base>
 
 <style>
-  /* The flow sits under the hero, on the same column as everything else (W1.2's tokens;
-     its spacing is the layout's, not a number of this page's own). */
-  .home-flow {
+  /* The two figures sit on the same column as the hero and the install paths (W1.2's tokens;
+     the spacing is the layout's, not a number of this page's own). `main:has(> .hero)` drops
+     `main`'s padding on this page, so each top-level block carries the gutter itself. */
+  .home-flow,
+  .home-chat {
     max-width: var(--page-max);
     margin: 0 auto;
     padding: 0 var(--space-md) var(--space-3xl);

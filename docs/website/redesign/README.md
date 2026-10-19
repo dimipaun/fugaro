@@ -198,8 +198,11 @@ goes stale the way the byte budgets did before D192.
   the flow's stylesheet changes — so all three figures move with it, from the build of
   2026-10-19: **JavaScript per page 76,086** (three times 25,362; `public/scripts/site.js`
   20,289 bytes), **page weight per page 927,195** (three times 309,065; the docs hub
-  247,252 bytes) and **whole site 3,035,742** (three times 1,011,914; 809,531 bytes across 21
-  files). The figures live in `website/README.md` and nowhere else, and
+  247,252 bytes) and **whole site 3,040,455** (three times 1,013,485; 810,788 bytes across 21
+  files — re-derived again in the second fix round on this branch, which moved the homepage's
+  order, the flow's treatment, the chat's launch line, the install command's wrapping and the
+  chat's own turns out of the measure's cap). The
+  figures live in `website/README.md` and nowhere else, and
   `website/test/budget.mjs` reads them from there and holds each to the build it can measure:
   a derivation that names another build fails, which is what stops the page and the site
   figures drifting down as pages grow (they had — page weight and whole site still named the

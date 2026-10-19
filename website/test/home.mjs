@@ -623,18 +623,31 @@ test('the homepage names the promise in its title, its description and its cards
   assert.equal((page.match(/<meta name="twitter:description"/g) ?? []).length, 0)
 })
 
-test('the hero renders the install commands install.yaml carries, and types none of them', () => {
+test('the homepage renders the install commands install.yaml carries, and types none of them', () => {
   const page = builtPage('')
-  // Read as a document rather than sliced with a regex: each path's block now holds a copy
+  // Read as a document rather than sliced with a regex: each path's block holds a copy
   // control as well as its commands (P6), and a non-greedy `<div>…</div>` would stop at the
-  // control's own closing tag and check half a block.
-  const blocks = [...walk(parse(page))].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-install-path'))
+  // control's own closing tag and check half a block. The paths are the homepage's own section
+  // since the changes spec of 2026-10-18 (item 4): they used to be in the hero, and the block
+  // is `HomeInstall.astro`'s now.
+  const blocks = [...walk(parse(page))].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('home-install-path'))
 
-  assert.equal(blocks.length, 2, `the hero renders ${blocks.length} install paths, and it shows the two commands the plan names (W1.4 step 1)`)
+  assert.equal(blocks.length, 2, `the homepage renders ${blocks.length} install paths, and it shows the two commands the plan names (W1.4 step 1)`)
+
+  // And they are not in the hero: item 4 puts the promise and its one call to action above the
+  // picture and the commands below it, so a command back in the hero is the shape the review
+  // of this branch asked to have changed.
+  const hero = findAll(parse(page), (el) => el.name === 'section' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero'))[0]
+  assert.ok(hero, 'the homepage has no hero section, and the promise and its call to action are the hero (P5, D102)')
+  assert.equal(
+    [...walk(hero)].filter((el) => el.name === 'pre').length,
+    0,
+    'the hero prints a command, and item 4 gives the hero the promise and its call to action: the commands are the install section below the picture (changes spec 2026-10-18, item 4)',
+  )
 
   for (const block of blocks) {
     const id = block.attrs.get('data-path')
-    assert.ok(id, 'an install path in the hero names no id, so nothing says which path of install.yaml it is')
+    assert.ok(id, 'an install path on the homepage names no id, so nothing says which path of install.yaml it is')
 
     const commands = [...walk(block)]
       .filter((el) => el.name === 'pre')
@@ -642,7 +655,7 @@ test('the hero renders the install commands install.yaml carries, and types none
     assert.deepEqual(
       commands,
       installPathCommands(id),
-      `the hero's ${id} commands are not the ones website/data/install.yaml carries for that path: a command typed into the component is a second copy of the install text, and the one that drifts (W0.1, W1.4 step 1)`,
+      `the homepage's ${id} commands are not the ones website/data/install.yaml carries for that path: a command typed into the component is a second copy of the install text, and the one that drifts (W0.1, W1.4 step 1)`,
     )
   }
 })
@@ -687,8 +700,13 @@ const CHAT_CLASSES = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
 
 /**
  * The chat a built page renders: its turns in order, each with the lines it carries — the
- * reader's request, the agent's answer and the launch it runs, and the results it reports
- * back with. One array, so the rules below read the chat the way a reader does.
+ * reader's request, the agent's answer and the status line under it, and the results it
+ * reports back with. One array, so the rules below read the chat the way a reader does.
+ *
+ * `line` is what a turn *says* and is held to the document it cites; `status` is the
+ * illustration's own label for what the agent did (changes spec of 2026-10-18, item 3: the
+ * launch is "shown as a subtle tool-call / status line, not a command the user typed"), and
+ * the rule below refuses it as a quotation the same way it refuses the result labels.
  */
 function chat(page) {
   return [...walk(parse(page))]
@@ -703,7 +721,7 @@ function chat(page) {
         source: el.attrs.get('data-source') ?? '',
         who: inside('turn-who'),
         line: inside('turn-line'),
-        call: inside('turn-call'),
+        status: inside('turn-status'),
         results: [...walk(el)]
           .filter((child) => CHAT_CLASSES(child).includes('turn-result'))
           .map((child) => decode(readableText(child)).replace(/\s+/g, ' ').trim()),
@@ -712,18 +730,20 @@ function chat(page) {
 }
 
 /**
- * Every failure of the chat's rule, as the lines a reader of this file sees: every line a turn
- * *speaks* — its `line`, and its `call` where it has one — is a line of the document that turn
- * cites, and the lines of a document come in the order that document writes them. The chat is
- * an illustration drawn from the repository rather than a recording of a session, so a line a
- * skill does not write — or one that moved ahead of the line before it — is the page putting
- * words in the agent's mouth that the agent's own skill does not have (changes spec item 3,
- * Global Constraint 6).
+ * Every failure of the chat's rule, as the lines a reader of this file sees, in two halves:
  *
- * `results` is not read here, and that is the rule rather than an oversight: the
- * `Pull request n of 3` labels are the illustration's own, and the figure is honest about them
- * — the caption labels the picture an illustration — rather than quoting a document that
- * cannot have them. See the caption case below.
+ *   - **every line a turn *speaks* — its `line` — is a line of the document that turn cites**,
+ *     and the lines of a document come in the order that document writes them. The chat is an
+ *     illustration drawn from the repository rather than a recording of a session, so a line a
+ *     skill does not write — or one that moved ahead of the line before it — is the page
+ *     putting words in the agent's mouth that the agent's own skill does not have (changes
+ *     spec item 3, Global Constraint 6);
+ *   - **the figure's own labels are not quotations.** `status` (the agent's launch line) and
+ *     `results` (the `Pull request n of 3` labels) are the illustration's, and the caption
+ *     says so: a run that has not happened has no pull request numbers, and a launch line a
+ *     reader is meant to read as a status is not a sentence either skill prints. So neither
+ *     may be a line of the document its turn cites, which is what would make them quotations
+ *     while the caption denied it.
  *
  * Written as a function over a chat so a fixture can prove it refuses.
  */
@@ -741,20 +761,28 @@ export function chatFailures(turns, sources) {
       out.push(`${where}, cites ${JSON.stringify(turn.source)}, which is not a document this check reads: every line says which document it is quoted from`)
       continue
     }
-    for (const [what, line] of [
-      ['line', turn.line],
-      ['tool call', turn.call],
-    ]) {
-      if (!line) continue
+    const line = turn.line
+    if (line) {
       const quoted = normalize(line)
       const at = normalize(document).indexOf(quoted, reached.get(turn.source) ?? 0)
       if (at === -1) {
         out.push(
-          `the chat's ${what} ${JSON.stringify(line)} does not appear in ${turn.source} at or after the line before it: every line a turn of the chat speaks is the document's own words, in the order it writes them (changes spec 2026-10-18, item 3; Global Constraint 6)`,
+          `the chat's line ${JSON.stringify(line)} does not appear in ${turn.source} at or after the line before it: every line a turn of the chat speaks is the document's own words, in the order it writes them (changes spec 2026-10-18, item 3; Global Constraint 6)`,
         )
-        continue
+      } else {
+        reached.set(turn.source, at + quoted.length)
       }
-      reached.set(turn.source, at + quoted.length)
+    }
+    for (const [what, label] of [
+      ['status line', turn.status],
+      ...(turn.results ?? []).map((result) => ['result label', result]),
+    ]) {
+      if (!label) continue
+      if (normalize(document).includes(normalize(label))) {
+        out.push(
+          `the chat's ${what} ${JSON.stringify(label)} is a line of ${turn.source}, and the figure's own labels are not quotations: the caption says the picture is an illustration, which is what makes it honest about a launch line and three pull request numbers that no skill has printed (changes spec 2026-10-18, item 3; D184)`,
+        )
+      }
     }
   }
   return out
@@ -773,7 +801,7 @@ test('the homepage chat is the workflow, and every line its turns speak is the d
     `the chat's turns are ${JSON.stringify(turns.map((turn) => turn.turn))}, and the reader's request comes first, with the agent answering it (changes spec 2026-10-18, item 3)`,
   )
   assert.ok(turns[0].who, 'the chat does not say who is speaking, and a reader who cannot tell the two voices apart has not been shown the workflow (changes spec 2026-10-18, item 3)')
-  assert.ok(turns[1].call, "the agent's answer carries no tool call, and item 3 asks for the launch to show as a tool-call line rather than as a command the reader typed (changes spec 2026-10-18, item 3)")
+  assert.ok(turns[1].status, "the agent's answer carries no status line, and item 3 asks for the launch to show as a subtle tool-call / status line rather than as a command the reader typed (changes spec 2026-10-18, item 3)")
   assert.equal(
     turns[2].results.length,
     3,
@@ -801,56 +829,83 @@ test('the chat rule refuses a line the document it cites does not write', () => 
   )
   assert.match(chatFailures(elsewhere, sources).join('\n'), /does not appear in plugin\/skills\/working\/SKILL\.md/)
 
-  // The tool call is a line of a document too, and it is the one that would otherwise be
-  // invented: an invocation written for the page, with a batch name of its own.
-  const invented = turns.map((turn, index) =>
-    index === 1 ? { ...turn, call: 'fugaro run --batch three-fixes --run-id fix-1 --task-file -' } : turn,
+  // The other half of the rule, and the half the launch line is about: the figure's own
+  // labels may not be quotations. A status line that turned out to be a sentence of the
+  // skill its turn cites would be a second thing the caption said was an illustration while
+  // the page quoted it — and it is the shape a future edit would take, since the obvious way
+  // to write a launch line is to copy the invocation the skill documents.
+  const quotedStatus = turns.map((turn, index) =>
+    index === 1 ? { ...turn, status: 'fugaro run --batch <name> --run-id <id> --task-file -' } : turn,
   )
-  assert.match(chatFailures(invented, sources).join('\n'), /tool call .* does not appear in plugin\/skills\/parallelism\/SKILL\.md/)
+  assert.match(
+    chatFailures(quotedStatus, sources).join('\n'),
+    /status line .* is a line of plugin\/skills\/parallelism\/SKILL\.md/,
+    'a status line that is a sentence of the skill its turn cites was not refused, and the caption says the figure\'s labels are the illustration\'s own (changes spec 2026-10-18, item 3; D184)',
+  )
 
-  // The same turn's line and tool call, the other way round: both are in the skill, and the
-  // order is the skill's — the sentence that says one run per piece comes before the
-  // invocation that launches them.
-  const swapped = turns.map((turn, index) => (index === 1 ? { ...turn, line: turn.call, call: turn.line } : turn))
-  assert.match(chatFailures(swapped, sources).join('\n'), /at or after the line before it/)
+  // And the same for a result label, the class of text the rule was written for.
+  const quotedResult = turns.map((turn, index) => (index === 2 ? { ...turn, results: [...turn.results, 'It always ends with a pull request'] } : turn))
+  assert.match(
+    chatFailures(quotedResult, sources).join('\n'),
+    /result label .* is a line of plugin\/skills\/working\/SKILL\.md/,
+    'a result label that is a line of the skill its turn cites was not refused (changes spec 2026-10-18, item 3; D184)',
+  )
 
   // A turn citing a document nothing reads, and a turn with no text at all.
   assert.match(chatFailures([{ ...turns[0], source: 'website/content/cli-reference.md' }], sources).join('\n'), /not a document this check reads/)
   assert.match(chatFailures([{ ...turns[0], line: '' }], sources).join('\n'), /has no text/)
 })
 
-test('the hero launches through the agent, and the one command it offers the reader is fugaro watch', () => {
+test('the homepage launches through the agent, and the one command it offers the reader is fugaro watch', () => {
   // Item 3's acceptance, read off the built page: a first-time reader has to come away with
-  // "my agent runs this", and the only command the hero offers to copy besides the install
+  // "my agent runs this", and the only command the page offers to copy besides the install
   // paths is `fugaro watch`. The old hero example — a `fugaro run` line the reader was meant
   // to type — is the thing this case is written to notice coming back.
+  //
+  // **The commands are read off the whole homepage rather than off a `.hero` section.** The
+  // changes spec of 2026-10-18 (item 4, and the review of this branch) takes the chat and the
+  // install paths out of the hero and puts them under the picture, so the hero holds the
+  // promise and its call to action and nothing else; what a reader is offered to copy is a
+  // fact about the page. A case that read a `.hero` section would pass on a page that offered
+  // a `fugaro run` line anywhere else in it.
   const page = parse(builtPage(''))
-  const hero = findAll(page, (el) => el.name === 'section' && CHAT_CLASSES(el).includes('hero'))[0]
-  assert.ok(hero, 'the homepage has no hero section, and the chat and the install block are both in it')
-
-  const commands = [...walk(hero)].filter((el) => el.name === 'pre').map((el) => decode(readableText(el)).trim())
+  const commands = [...walk(page)].filter((el) => el.name === 'pre').map((el) => decode(readableText(el)).trim())
   assert.ok(
     commands.includes('fugaro watch'),
-    `the hero's command blocks are ${JSON.stringify(commands)}, and \`fugaro watch\` is the one command the reader is asked for (changes spec 2026-10-18, item 3)`,
+    `the homepage's command blocks are ${JSON.stringify(commands)}, and \`fugaro watch\` is the one command the reader is asked for (changes spec 2026-10-18, item 3)`,
   )
   assert.ok(
     !commands.some((command) => /^fugaro run\b/.test(command)),
-    `the hero offers ${JSON.stringify(commands)} as commands the reader can copy, and a \`fugaro run\` line is the manual path the documentation keeps rather than what the reader types (changes spec 2026-10-18, item 3)`,
+    `the homepage offers ${JSON.stringify(commands)} as commands the reader can copy, and a \`fugaro run\` line is the manual path the documentation keeps rather than what the reader types (changes spec 2026-10-18, item 3)`,
   )
   assert.ok(
     !text(builtPage('')).includes('add a --verbose flag to the export command'),
     'the homepage still carries the old hero example, the `fugaro run "add a --verbose flag to the export command"` transcript (changes spec 2026-10-18, item 3: "Remove `fugaro run` from the hero example")',
   )
 
-  // The launch is the agent's, drawn as a subdued line: a paragraph inside the turn, with no
-  // copy control of its own — what the reader copies here is `fugaro watch`, not the launch.
-  const call = findAll(hero, (el) => CHAT_CLASSES(el).includes('turn-call'))[0]
-  assert.ok(call, "the hero's chat carries no tool-call line, and item 3 asks for the launch to show as one (changes spec 2026-10-18, item 3)")
-  assert.equal(call.name, 'p', `the tool call is a <${call.name}>, and a command block is what a reader is offered to copy: the agent's launch is a line of the illustration (changes spec 2026-10-18, item 3)`)
+  // The launch is the agent's, drawn as a subdued line: a paragraph with no copy control of
+  // its own — what the reader copies here is `fugaro watch`, not the launch.
+  const status = findAll(page, (el) => CHAT_CLASSES(el).includes('turn-status'))[0]
+  assert.ok(status, "the homepage's chat carries no status line, and item 3 asks for the launch to show as a subtle tool-call / status line (changes spec 2026-10-18, item 3)")
+  assert.equal(status.name, 'p', `the status line is a <${status.name}>, and a command block is what a reader is offered to copy: the agent's launch is a line of the illustration (changes spec 2026-10-18, item 3)`)
   assert.equal(
-    [...walk(call)].filter((el) => el.attrs.has('data-copy-button') || el.attrs.has('data-copy')).length,
+    [...walk(status)].filter((el) => el.attrs.has('data-copy-button') || el.attrs.has('data-copy')).length,
     0,
-    'the tool call carries a copy control, and the reader did not type this line: the hero offers exactly one command to copy (changes spec 2026-10-18, item 3)',
+    'the status line carries a copy control, and the reader did not type this line: the homepage offers exactly one command to copy (changes spec 2026-10-18, item 3)',
+  )
+  // And what it says is a status rather than a command: no `fugaro run` invocation, no flags,
+  // and one short line. The exact words are the illustration's own (item 3 gives
+  // "Fugaro: launching 3 jobs" as an example rather than as a caption to match), so this case
+  // holds the shape and not the sentence.
+  const said = decode(readableText(status)).replace(/\s+/g, ' ').trim()
+  assert.doesNotMatch(
+    said,
+    /\bfugaro\s+run\b|--[a-z]/,
+    `the status line ${JSON.stringify(said)} is a command, and the launch is what the agent did rather than something the reader types (changes spec 2026-10-18, item 3)`,
+  )
+  assert.ok(
+    said.length > 0 && said.length <= 40,
+    `the status line is ${said.length} characters (${JSON.stringify(said)}), and it is one short line under the agent's answer rather than a sentence: the launch is a status (changes spec 2026-10-18, item 3)`,
   )
 })
 
@@ -895,6 +950,19 @@ test('the chat says on the page that it is an illustration, and claims no more t
       `the chat's result ${JSON.stringify(result)} is a line of ${report.source}, and the caption's reading of the figure is that the results are the illustration's own labels rather than quotations (changes spec 2026-10-18, item 3; D184)`,
     )
   }
+
+  // And the same for the status line, the other thing on the figure that is not a quotation:
+  // it is the illustration's label for the launch, so it may not be a sentence of the skill
+  // its turn cites either. `chatFailures` refuses both; this case reads the built page for
+  // the same thing, which is what makes the caption's reading true of the page a reader gets.
+  const launch = chat(page).find((turn) => turn.status)
+  assert.ok(launch, 'the homepage chat renders no status line, and the launch is the line the caption does not claim as a quotation')
+  const launchDocument = chatSources()[launch.source]
+  assert.ok(launchDocument, `the chat's launching turn cites ${JSON.stringify(launch.source)}, which is not a document this check reads`)
+  assert.ok(
+    !normalize(launchDocument).includes(normalize(launch.status)),
+    `the chat's status line ${JSON.stringify(launch.status)} is a line of ${launch.source}, and the caption's reading of the figure is that the launch line is the illustration's own rather than a quotation (changes spec 2026-10-18, item 3; D184)`,
+  )
 })
 
 test('the watch snippet is the command the reader keeps, and it copies itself', () => {

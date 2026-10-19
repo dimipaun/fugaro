@@ -163,7 +163,18 @@ function slug(name: string): string {
   /* Tokens only (W1.2), and the same accent vocabulary the diagram above uses, so the two
      read as one page: the steps are quieter than the picture — the picture is what the
      section is for — and the numbers are outlines rather than fills, which is the whole of
-     the difference. */
+     the difference.
+
+     **The detail takes the page's column, not the measure.** The review of this branch saw
+     the zoom-in below the picture drawn as a narrow left column: the five steps are an
+     `<ol>`, `base.css` holds a list to `--measure` (68 ch, about 578 px at the body's 17 px),
+     and each line inside it carried the same cap again — so two thirds of the column the
+     picture above fills were empty beside the detail of it. The list declares `max-width:
+     none` for the same reason the flow's does (see `ArchitectureDiagram.astro`), and it lays
+     the five steps out as a grid of the page's own width rather than as one column of prose.
+     `repeat(auto-fit, minmax(18rem, 1fr))` is the same rule the chat's turns use: three
+     columns on a desktop, one on a phone, and no breakpoint of this component's own to keep
+     in step with the layout's. */
   .run-detail {
     max-width: var(--page-max);
     margin: 0 auto;
@@ -180,7 +191,11 @@ function slug(name: string): string {
   }
 
   .run-steps {
+    /* See the block comment above: the list is the page's width, and it is a grid of the
+       page's width — an `<ol>` inherits `base.css`'s measure otherwise. */
+    max-width: none;
     display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
     gap: var(--space-md);
     margin: 0;
     padding: 0;

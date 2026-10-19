@@ -300,6 +300,21 @@ function toPx(value, tokens) {
   return px ? Number(px[1]) : NaN
 }
 
+/**
+ * The first component of a shorthand declaration, with a `calc()` kept whole. A `border:
+ * calc(var(--border-width) * 2) solid var(--accent)` is a two-pixel border whose first
+ * component is the `calc(…)`; splitting the shorthand on whitespace takes `calc(var(--border-width)`
+ * instead, which is not a length at all — and a length read as `NaN` is a length nothing
+ * checked (see the refusal for the arithmetic's inputs in `flowLayoutFailures`).
+ */
+function firstToken(value) {
+  if (!value) return value
+  const text = value.trim()
+  if (!text.startsWith('calc(')) return text.split(/\s+/)[0]
+  const end = closingParen(text, text.indexOf('('))
+  return end === -1 ? text : text.slice(0, end + 1)
+}
+
 /** The tokens a stylesheet declares, as `name -> px`. */
 function lengthTokens(css) {
   const out = new Map()
@@ -651,12 +666,14 @@ function capPixels(value, tokens, pxTokens, fontPx) {
 }
 
 /**
- * The `max-width` in force on the flow's list at a viewport width: `{ px, value, selector,
- * query }`, where `px` is `Infinity` for `none` or for no rule at all — or `{ unreadable }`
- * when a rule that reaches the element carries a value or a selector this reader cannot
- * evaluate, which the caller refuses rather than reads past.
+ * The `max-width` in force on a list at a viewport width: `{ px, value, selector, query }`,
+ * where `px` is `Infinity` for `none` or for no rule at all — or `{ unreadable }` when a rule
+ * that reaches the element carries a value or a selector this reader cannot evaluate, which
+ * the caller refuses rather than reads past. It is the flow's list by default and takes any
+ * other list's element (`listElement`), because the cap it reads is `base.css`'s and reaches
+ * every `ul`, `ol` and `dl` on the site.
  */
-export function flowListMaxWidth(css, width, element = FLOW_LIST) {
+export function listMaxWidth(css, width, element = FLOW_LIST) {
   const rules = allRules(css)
   const tokens = tokenText(css)
   const fontPx = elementFontPx(css)
@@ -748,10 +765,32 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
   const nameSize = toPx(declsOf('step-name').map((d) => d['font-size']).filter(Boolean).pop(), tokens)
   const number = toPx(declsOf('step-number').map((d) => d['width']).filter(Boolean).pop(), tokens)
   const headGap = toPx(declsOf('step-head').map((d) => d['gap']).filter(Boolean).pop(), tokens)
-  const cardPad = toPx(declsOf('step-card').map((d) => d['padding']).filter(Boolean).pop()?.split(/\s+/)[0], tokens)
-  const border = toPx(declsOf('step-card').map((d) => d['border']).filter(Boolean).pop()?.split(/\s+/)[0], tokens)
+  const cardPad = toPx(firstToken(declsOf('step-card').map((d) => d['padding']).filter(Boolean).pop()), tokens)
+  const border = toPx(firstToken(declsOf('step-card').map((d) => d['border']).filter(Boolean).pop()), tokens)
   const arrow = toPx(rules.filter((r) => /\.step-arrow(?![\w-])/.test(r.selector)).map(declarations).map((d) => d['width']).filter(Boolean).pop(), tokens)
   const gap = toPx(declarations(row)['gap'], tokens)
+
+  // Every number the arithmetic below is made of, refused here when this reader could not turn
+  // it into pixels rather than carried into the sums. `NaN` is false against every comparison,
+  // so a length read as `NaN` makes both refusals below silent: the row would be reported as
+  // fitting because the check stopped measuring it. That is not hypothetical — the card's
+  // border became `calc(var(--border-width) * 2)` when its edge grew, the reader took the
+  // first whitespace-separated word of the shorthand and read no length from it, and for as
+  // long as that lasted this check proved nothing about the names.
+  const lengths = [
+    ['the size the step names are set in (`.step-name`’s font-size)', nameSize],
+    ['the step number’s box (`.step-number`’s width)', number],
+    ['the gap between the number and the name (`.step-head`’s gap)', headGap],
+    ['the card’s padding (`.step-card`’s padding)', cardPad],
+    ['the card’s border (`.step-card`’s border)', border],
+    ["the arrow's box (`.step-arrow`'s width)", arrow],
+    ["the row's gap (`.flow-steps`'s gap inside its row breakpoint)", gap],
+  ].filter(([, px]) => Number.isNaN(px))
+  if (lengths.length > 0) {
+    return [
+      `the flow-layout arithmetic cannot be read: ${lengths.map(([what]) => what).join(', ')} is not a length this check can turn into pixels, and a length it cannot read is a length nothing checked (\`NaN\` passes every comparison below) — teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (changes spec 2026-10-18, item 4)`,
+    ]
+  }
 
   /** The horizontal padding a rule declares: the second value of a `padding` shorthand. */
   const paddingInline = (rule) => toPx((declarations(rule)['padding'] ?? '').split(/\s+/)[1], tokens)
@@ -785,7 +824,7 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
   // row the smaller of the two boxes rather than the column the card was sized against.
   const column = (width) => Math.min(width, tokens.get('page-max')) - 2 * mainPad(width) - 2 * wrapperPad
   const rowWidth = (width) => {
-    const cap = flowListMaxWidth(css, width, element)
+    const cap = listMaxWidth(css, width, element)
     return Math.min(column(width), Number.isNaN(cap.px) ? 0 : cap.px)
   }
 
@@ -813,7 +852,7 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
     const content = contentBox(width)
     const nameBox = headIsColumn(width) ? content : content - number - headGap
     const needs = textWidth(longestWord(names), nameSize)
-    const cap = flowListMaxWidth(css, width, element)
+    const cap = listMaxWidth(css, width, element)
     if (cap.unreadable) {
       out.push(
         `at ${width / 16} rem the flow's list is reached by a rule this check cannot read — ${cap.unreadable} — and a cap nobody can read is a cap nobody checked: teach \`website/test/base-styles.mjs\`'s cascade reader the construct, or write the rule in a shape it reads`,
@@ -834,6 +873,58 @@ export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIS
   return out
 }
 
+/**
+ * Every way the chat’s row of turns fails to be the row the page asks for. It is the same
+ * defect the flow's list shipped with, in the figure beside it: the turns are an `<ol>`, so
+ * `base.css`'s measure — `:where(p, ul, ol, dl, blockquote, figcaption) { max-width:
+ * var(--measure) }`, 68 ch, about 735 px — reaches the list, and 735 px is narrower than three
+ * cards of at least 18 rem with the gaps between them. The cap is invisible on a phone, where
+ * the row is one column anyway, and on a wide screen it is a hole beside the third turn, which
+ * `auto-fit` puts on a row of its own. So the list has to opt out of the measure itself, and
+ * this is what holds it there: the smallest column and the gap come out of the list's own grid
+ * rule, the number of cards out of the page, and the `max-width` in force out of the cascade.
+ */
+export function chatRowFailures(css, html) {
+  const turns = [...walk(parse(html))].filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('chat-turn'))
+  if (turns.length < 3) {
+    return [
+      `the page prints ${turns.length} chat turn(s), and the figure this check sizes is item 3’s three-turn chat: the row it asks for cannot be read from fewer cards`,
+    ]
+  }
+  const rule = allRules(css).find((r) => /\.chat-turns(?![\w-])/.test(r.selector) && declarations(r)['grid-template-columns'] !== undefined)
+  if (!rule) {
+    return [
+      "no rule lays the chat’s turns out as a grid: three turns in a row is what item 3's figure draws, and without the rule there is no row to size, so a list that is still capped cannot be told from one that is not",
+    ]
+  }
+  const columns = declarations(rule)['grid-template-columns']
+  const gap = declarations(rule)['gap'] ?? '0'
+  const min = /minmax\(\s*([^,()]+?)\s*,/.exec(columns)
+  const tokens = lengthTokens(css)
+  const minPx = min ? toPx(min[1].trim(), tokens) : NaN
+  const gapPx = toPx(firstToken(gap), tokens)
+  if (Number.isNaN(minPx) || Number.isNaN(gapPx)) {
+    return [
+      `the chat’s row cannot be read: ${JSON.stringify(rule.selector)} asks for \`${columns}\` with a gap of \`${gap}\`, and a column or a gap this check cannot turn into pixels is one nothing checked (\`NaN\` passes every comparison below)`,
+    ]
+  }
+  const need = turns.length * minPx + (turns.length - 1) * gapPx
+  const cap = listMaxWidth(css, 80 * 16, listElement(html, 'chat-turns', 'item 3 puts the chat on the homepage'))
+  if (cap.unreadable) {
+    return [
+      `the chat’s turns are reached by a rule this check cannot read — ${cap.unreadable} — and a cap nobody can read is a cap nobody checked: teach the cascade reader in \`website/test/base-styles.mjs\` the construct, or write the rule in a shape it reads`,
+    ]
+  }
+  if (cap.px < need) {
+    return [
+      `the chat’s turns are capped at ${Math.round(cap.px)} px (max-width: ${cap.value}` +
+        `${cap.selector ? `, from ${JSON.stringify(cap.selector)}` : ''}${cap.query ? ` inside ${cap.query}` : ''}), and the ${turns.length} cards with the gaps between them need ${Math.round(need)} px: ` +
+        `the list is an \`<ol>\`, base.css holds lists to the measure, and the row the page asks for is drawn in a box narrower than it — the last turn on a row of its own, with a hole beside it (changes spec 2026-10-18, item 3)`,
+    ]
+  }
+  return []
+}
+
 /** The step names one built page prints, in the flow's order. */
 function stepNames(html) {
   return [...walk(parse(html))]
@@ -842,22 +933,28 @@ function stepNames(html) {
 }
 
 /**
- * The flow's list element on one built page, as `flowListMaxWidth` reads it: its name, its
- * classes, its id and every attribute it carries. The attributes matter because Astro scopes a
- * component's stylesheet by adding one (`data-astro-cid-…`), and a rule the cascade reader
- * could not answer for is a rule it has to refuse.
+ * A list on one built page, as `listMaxWidth` reads it: its name, its classes, its id and every
+ * attribute it carries. The attributes matter because Astro scopes a component's stylesheet by
+ * adding one (`data-astro-cid-…`), and a rule the cascade reader could not answer for is a rule
+ * it has to refuse. `what` is the sentence that says where the list is supposed to be, so the
+ * assertion names the page rather than the class.
  */
-export function flowListElement(html) {
+export function listElement(html, klass, what) {
   const list = [...walk(parse(html))].find(
-    (el) => el.name === 'ol' && (el.attrs.get('class') ?? '').split(/\s+/).includes('flow-steps'),
+    (el) => (el.name === 'ol' || el.name === 'ul') && (el.attrs.get('class') ?? '').split(/\s+/).includes(klass),
   )
-  assert.ok(list, 'the page carries no <ol class="flow-steps">, so the cap on it cannot be read: item 4 puts the flow on the homepage and on How It Works')
+  assert.ok(list, `the page carries no <ol class="${klass}">, so the cap on it cannot be read: ${what}`)
   return {
     name: list.name,
     classes: (list.attrs.get('class') ?? '').split(/\s+/).filter(Boolean),
     id: list.attrs.get('id') ?? null,
     attrs: list.attrs,
   }
+}
+
+/** The flow's list element on one built page. */
+export function flowListElement(html) {
+  return listElement(html, 'flow-steps', 'item 4 puts the flow on the homepage and on How It Works')
 }
 
 /** The classes between `main` and the flow's figure on one built page: the gutters it sits in. */
@@ -883,6 +980,58 @@ test('the four-across flow has room for the step names it prints', () => {
   assert.deepEqual(failures, [], `the flow cannot render its own step names:\n  ${failures.join('\n  ')}`)
 })
 
+test('the chat’s turns are the row the page asks for, not a box the measure squeezes', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    if (!html.includes('class="chat-turn"')) continue
+    checked += 1
+    failures.push(...chatRowFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page carries the chat, and item 3 puts it on the homepage')
+  assert.deepEqual(failures, [], `the chat’s row cannot be drawn as the page asks for it:\n  ${failures.join('\n  ')}`)
+})
+
+test('every chat-row refusal fires on the defect it names', () => {
+  const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const cases = [
+    // The defect this check was written for: the measure reaching the chat’s list, which is an
+    // `<ol>` like the flow's, so `auto-fit` fits the two columns the cap leaves and the third
+    // turn's card lands on a row of its own with a hole beside it.
+    [
+      'the measure’s cap on the chat’s turns',
+      {
+        css: plant(
+          'grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));max-width:none',
+          'grid-template-columns:repeat(auto-fit,minmax(18rem,1fr))',
+        ),
+        html: home,
+      },
+      /the chat’s turns are capped at \d+ px/,
+    ],
+    // A grid that asks for no minimum column, or a gap this reader cannot turn into pixels, is
+    // refused rather than carried into the sum as `NaN` — which passes every comparison below.
+    [
+      'a grid rule this reader cannot turn into pixels',
+      { css: plant('repeat(auto-fit,minmax(18rem,1fr))', 'repeat(auto-fit,minmax(0,1fr))'), html: home },
+      /the chat’s row cannot be read/,
+    ],
+    // And the page's own side: fewer than the three turns item 3's figure draws.
+    [
+      'a page whose chat is not the figure’s three turns',
+      { css: pageCss(home), html: home.replace('class="chat-turn"', 'class="chat-turn-solo"') },
+      /prints 2 chat turn\(s\)/,
+    ],
+  ]
+  for (const [what, { css, html }, expected] of cases) {
+    assert.deepEqual(
+      chatRowFailures(css, html).map((line) => (expected.test(line) ? 'fired' : line)),
+      ['fired'],
+      `${what}: the refusal did not fire, and this is what it said instead`,
+    )
+  }
+})
+
 test('every flow-layout refusal fires on the defect it names', () => {
   const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const names = stepNames(home)
@@ -895,7 +1044,22 @@ test('every flow-layout refusal fires on the defect it names', () => {
     // var(--measure) }` — reaching the flow's own list, because the list is an `<ol>`. A card
     // is sized against the page's column and the browser gives the row 578 px, so the four
     // cards and their arrows are drawn in a box narrower than they need.
-    ['the measure’s cap on the flow’s list', plant(';max-width:none', ''), /is capped at \d+ px/],
+    [
+      'the measure’s cap on the flow’s list',
+      plant('flex-direction:column;max-width:none', 'flex-direction:column'),
+      /is capped at \d+ px/,
+    ],
+    // A length the reader cannot turn into pixels is refused rather than carried into the sums:
+    // `clamp()` is a font size a browser resolves and this check cannot, and reading it as
+    // `NaN` would make every comparison below pass without measuring anything.
+    [
+      'a step-name font size this reader cannot turn into pixels',
+      plant(
+        'font-size:var(--font-size-xl);font-weight:var(--weight-semibold)',
+        'font-size:clamp(1rem,2vw,1.5rem);font-weight:var(--weight-semibold)',
+      ),
+      /is not a length this check can turn into pixels/,
+    ],
     // A cap written in a shape the reader cannot evaluate is refused rather than skipped: a
     // selector it cannot read may be the one that squeezes the list.
     [
@@ -1182,6 +1346,94 @@ test('the copy-control placement rule reads the blocks it is about, and refuses 
     copyControlPlacementFailures(ordered, home),
     [],
     'a row whose control is ordered after its command is refused, and that is how base.css states the control belongs on the right',
+  )
+})
+
+// ---- an install command wraps rather than being cut off (changes spec item 4) ------------
+
+/**
+ * Every way the homepage's install commands can be cut off rather than read, for one built
+ * page's stylesheet.
+ *
+ * The commands are `website/data/install.yaml`'s, and one of them is a single 44-character
+ * token: `go install github.com/dimipaun/fugaro/cmd/fugaro@latest`. Set the way a command is
+ * usually set — `white-space: pre` — that token runs past the card it sits in, and the reader
+ * gets `…@late`: the defect the review of this branch found on the homepage at both sizes. So
+ * the rule here is the one the page follows, and it has two parts, because a wrapping
+ * declaration alone is not enough for a line with no spaces in it:
+ *
+ *   - **the command wraps** — `pre-wrap`, `pre-line` or the default rather than `pre` or
+ *     `nowrap` — so its own line structure is kept and a line longer than the card still
+ *     comes round;
+ *   - **a long token has somewhere to break** — `overflow-wrap: anywhere`/`break-word`, or
+ *     `word-break: break-all` — because `github.com/dimipaun/fugaro/cmd/fugaro@latest` has no
+ *     break opportunity a wrapping algorithm has to take, and a token with nowhere to break
+ *     runs past the card's edge however willing the block is to wrap.
+ *
+ * A block that scrolls instead — `white-space: pre` with `overflow-x: auto` — is refused
+ * rather than allowed: whether a reader can see that a command block scrolls (a fade, or the
+ * overlay scrollbars most platforms draw only while scrolling) is a rendered question no
+ * hermetic check can answer, and a command a reader cannot tell is incomplete is the defect
+ * the rule is about.
+ */
+export function installCommandFailures(css) {
+  const out = []
+  const rules = allRules(css).filter((rule) => /\.home-install-command(?![\w-])/.test(rule.selector))
+  if (rules.length === 0) return out
+  const declared = (property) => rules.map(declarations).map((d) => d[property]).filter(Boolean).pop() ?? ''
+  // A `<pre>`'s own default when the stylesheet declares nothing: the command keeps the single
+  // line it is written on, which is what the first refusal below is about.
+  const whiteSpace = declared('white-space') || 'pre'
+  const wrap = [declared('overflow-wrap'), declared('word-break')]
+
+  if (!whiteSpace.split(/\s+/).some((value) => value === 'pre-wrap' || value === 'pre-line' || value === 'normal')) {
+    out.push(
+      `the install command is set with white-space: ${whiteSpace}, which keeps every line the command is written on and does not wrap it: \`go install github.com/dimipaun/fugaro/cmd/fugaro@latest\` is one 44-character token in a card near 22 rem wide, so a block that cannot wrap it either clips it at the card's edge or scrolls it out of sight (changes spec 2026-10-18, item 4)`,
+    )
+  }
+  if (!wrap.includes('anywhere') && !wrap.includes('break-word') && !wrap.includes('break-all')) {
+    out.push(
+      `the install command wraps but nothing breaks its long token (overflow-wrap: ${declared('overflow-wrap') || '(nothing declared)'}, word-break: ${declared('word-break') || '(nothing declared)'}): \`go install github.com/dimipaun/fugaro/cmd/fugaro@latest\` has no break opportunity a wrapping algorithm has to take, and a token with nowhere to break runs past the card's edge (changes spec 2026-10-18, item 4)`,
+    )
+  }
+  return out
+}
+
+test('the homepage’s install commands wrap rather than being cut off', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    if (!html.includes('home-install-command')) continue
+    checked += 1
+    failures.push(...installCommandFailures(pageCss(html)).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page carries an install command, and the homepage offers the two ways to install the CLI (changes spec 2026-10-18, item 4)')
+  assert.deepEqual(failures, [], `an install command is cut off rather than read:\n  ${failures.join('\n  ')}`)
+})
+
+test('every install-command refusal fires on the defect it names', () => {
+  const css = TODAY()
+  assert.ok(css.includes('home-install-command'), 'the homepage carries no install command, so the cases below would pass without reading the block they are about')
+  assert.deepEqual(installCommandFailures(css), [], 'the install-command rule fails on the built stylesheet, so the cases below are not proving what they name')
+
+  // The defect as it shipped: a `<pre>` that keeps the command on its line and scrolls the
+  // rest out of the card, which is the `…@late` the review of this branch found.
+  const clipped = css.replace('white-space:pre-wrap;overflow-wrap:anywhere', 'white-space:pre;overflow-x:auto')
+  assert.notEqual(clipped, css, 'this fixture rewrites the install command’s own declarations, and the built stylesheet no longer carries them')
+  const clippedFailures = installCommandFailures(clipped)
+  assert.ok(
+    clippedFailures.some((f) => /does not wrap it/.test(f)),
+    `the command that shipped clipped was not refused; the check said:\n  ${clippedFailures.join('\n  ') || '(nothing)'}`,
+  )
+
+  // And the other half of the rule: a block that wraps but leaves the long token nowhere to
+  // break, which is the same defect one declaration later.
+  const unbreakable = css.replace('white-space:pre-wrap;overflow-wrap:anywhere', 'white-space:pre-wrap')
+  assert.notEqual(unbreakable, css, 'this fixture rewrites the install command’s own declarations, and the built stylesheet no longer carries them')
+  const unbreakableFailures = installCommandFailures(unbreakable)
+  assert.ok(
+    unbreakableFailures.some((f) => /nothing breaks its long token/.test(f)),
+    `a command that wraps without a break opportunity was not refused; the check said:\n  ${unbreakableFailures.join('\n  ') || '(nothing)'}`,
   )
 })
 
