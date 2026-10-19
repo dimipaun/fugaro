@@ -14,6 +14,14 @@ Realtime Database, the document they add up to, and the screen's rules over it),
 and the phone's mailbox client -- which is the only place in the app that writes
 to the database.
 
+**The store path is here too (Task P4.4, added 2026-10-19).** The MVP is
+voice-less and goes to **internal testing** first, so `app.config.js` (the
+build-time config that resolves the two release identities from EAS
+environment variables) and `eas.json` (the `development`, `preview` and
+`internal` profiles) are in the tree, with their tests — see "Building for
+internal testing". **Nothing is built or submitted by any of this**: Check 89
+is owner-run, and no `eas` command has been run here.
+
 **P3.4 is not merged, so P3.6 defines the one audio seam it needs** —
 `src/mailbox/speaker.js`, `speak(text)` answering whether the utterance was
 spoken, which is what the ack's rule is written against. The secure store is
@@ -46,12 +54,92 @@ module plugged in by `index.js` at the bottom of the tree.
 | --- | --- |
 | `index.js` | The entry. The one file that knows what a device is: it imports `expo`, `expo-secure-store`, `@react-native-async-storage/async-storage`, `react` and `react-native`, builds the two ports and the store, and registers the root. No decisions of its own, and no test (see "What is not verified"). |
 | `app.json` | The Expo config. No credential, no installation, no bundle identifier, no Android package — see `src/app-config.test.js`. |
+| `app.config.js` | **The build-time config** (P4.4), and the one place the two release identities come from: it resolves `FUGARO_IOS_BUNDLE_ID` and `FUGARO_ANDROID_PACKAGE` from the environment over `app.json`'s `expo` object — see "Building for internal testing" and `src/app-config.ids.test.js`. |
+| `eas.json` | The EAS profiles: `development`, `preview` and `internal` (the store profile Check 89 builds and submits with). No credential path, no credential value and no identity value — see `src/eas-config.test.js`. |
 | `src/accounts/` | The account store: the installation tuple (`account.js`), the two items (`secret.js`), the secure store (`secure-store.js`), the settings store and its fences (`settings.js`), the per-account listeners and caches (`resources.js`), the store itself (`store.js`), and the two device ports (`expo-secure-store.js`, `expo-async-storage.js`). `index.js` is the one door. |
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from. |
 | `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
 | `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
 | `src/skeleton/` | The trivial module and test that proved the runner runs (P3.1's red step). |
+
+## Building for internal testing
+
+The MVP is **voice-less** and goes to **internal testing first** (the owner's
+ruling, 2026-10-19): TestFlight internal testers on iOS, the Play
+internal-testing track on Android. Nothing public is intended or asked for — a
+public release is not reversible in the way an internal one is (C8), and **no
+agent runs any of the commands below**: each needs the owner's Expo, Apple and
+Google accounts, and no Expo token, App Store Connect key or Play
+service-account key goes into an agent's session (D120, Global Constraint 9).
+
+**The two identities, and where they are not.** The iOS bundle identifier and
+the Android package name are one public reverse-DNS name each — the same name
+for both stores, per the ruling. They are **not in `app.json`** (D125: they are
+the owner's and differ per installation, and `src/app-config.test.js` refuses
+them there) and **not in `eas.json`** (`src/eas-config.test.js` refuses them
+there too). A build reads them from two **EAS environment variables**, through
+`mobile/app.config.js`, Expo's dynamic config — the `({ config }) => ({ ...config, ... })`
+form Expo calls with the `expo` object it read from `app.json`:
+
+| Variable | What it is |
+| --- | --- |
+| `FUGARO_IOS_BUNDLE_ID` | the iOS bundle identifier (`expo.ios.bundleIdentifier`) |
+| `FUGARO_ANDROID_PACKAGE` | the Android package name (`expo.android.package`); **it can never change** once the app exists on Play, which is why a digit-starting segment is refused rather than sent |
+
+**The owner sets them, once per environment, in the EAS project** — the Expo
+account that owns it, which is the owner's. Both values are the one public
+reverse-DNS name the ruling gives; the commands below write it as
+`<reverse-dns-name>`, because the identity is **not a value this repository
+commits** — not in a build file, and not here — and the pull request that added
+this section carries the two commands with the name in them for the owner to
+paste.
+
+```sh
+# --- as the owner, signed in as the Expo account that owns the EAS project ---
+# Both environments: whichever one a build profile resolves to must hold them.
+for env in production preview; do
+  eas env:create --environment "$env" --name FUGARO_IOS_BUNDLE_ID --value <reverse-dns-name> --visibility plaintext
+  eas env:create --environment "$env" --name FUGARO_ANDROID_PACKAGE --value <reverse-dns-name> --visibility plaintext
+done
+```
+
+`--visibility plaintext` is deliberate and is not a mistake to correct: these
+are public identifiers, not credentials, and a value that is not secret gains
+nothing from being hidden and loses the readability that makes a wrong one
+obvious. **No credential goes into an environment variable, a profile or a
+file of this repository** — the signing keys and the store credentials stay on
+the EAS project (server-side, under the owner's account) or on the owner's own
+machine, and `eas.json` names no key, no key path and no credential file
+(`src/eas-config.test.js` walks it for exactly that).
+
+```sh
+# --- as the owner, at your own terminal: Check 89 (P4.4), owner-run ---
+eas build --platform all --profile internal --non-interactive
+eas submit --platform ios --profile internal --latest
+eas submit --platform android --profile internal --latest
+```
+
+`internal` is the store profile: `distribution: store`, an Android
+`app-bundle` (the Play app-signing path) and `submit.internal.android.track`
+**exactly `internal`** — C8's whole content is that one value. The iOS submit
+side names nothing at all: EAS prompts for it. `cli.appVersionSource` is
+`remote` (the store version is EAS's to move, not a file's) and
+`cli.requireCommit` is `true` (a store build records the commit it was made
+from). `development` is a dev client on internal distribution, and `preview` is
+an internal-distribution build — neither reaches a store.
+
+**What `app.config.js` refuses, and what it does not ask for.** Under a build —
+`EAS_BUILD` is set on EAS's build servers, or the owner asks for the same check
+locally with `FUGARO_REQUIRE_IDS=1` — a variable that is missing or malformed
+is a **thrown error naming the variable and the fix**, so a build cannot
+quietly produce an artifact with no identity or with a typo'd one; the message
+describes the shape the value must have and **never repeats the value** (a
+build log is the last place a mistyped variable should print). With neither
+switch set — a developer's `expo start`, and `npm test` — the config comes back
+**without** the identities, so no store account is needed to run anything here.
+The file reads the two variables and the two switches, and **nothing else in
+the environment reaches the config**: it holds no credential, and it cannot.
 
 ## The mailbox client, and the app's write set
 
@@ -483,6 +571,14 @@ a class rather than as an incident:**
   which is asserted, so the manifest cannot quietly grow one. There has been no
   `expo start`, no `expo lint`, no `eas build` and no device or simulator run.
   `package.json`'s `test` script is the whole of the verified surface.
+  **This includes P4.4's two files**: `app.config.js` is exercised as a
+  function of a base config and an environment (which is what its tests call
+  it with), and **Expo's own loader has never read it** — the `({ config }) =>`
+  form and the ESM `export default` are the documented shape for a
+  `"type": "module"` package, and neither has been checked against a real
+  `expo start`. `eas.json` is parsed and asserted as JSON; **no `eas` command
+  has been run**, so the profiles are as correct as the register's text says
+  they must be and not as correct as a build would show.
 * **The SDKs themselves.** `expo`, `expo-secure-store`,
   `@react-native-async-storage/async-storage`, `react` and `react-native` are
   faked in every test that touches them: what is tested is the shape of the
@@ -501,7 +597,9 @@ a class rather than as an incident:**
   read answers with the other's value, no listener survives a switch — and that
   is a statement about this code, not about a phone. No iOS bundle identifier or
   Android package is committed: those are the owner's, and they differ per
-  installation (D125).
+  installation (D125) — they reach a build from the EAS environment through
+  `app.config.js` (P4.4, "Building for internal testing"), and **the value in a
+  variable has never been through a real build here**.
 * **The two limits the module names.** `src/mailbox/README.md` records them with
   their decisions: the phone does not check how old an outbox message is (a
   signed one with an old `at` is spoken; a replay needs the consumer's identity,
