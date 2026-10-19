@@ -269,8 +269,10 @@ added or removed without this sentence moving fails there:
     text node between them is what Astro's compression drops, and the row read "macOS
     .dmga434f3…". The space is written into the component now, one byte for each of the two
     assets, and the site figure is 930,614 → **930,616**. The gate reads every built page and
-    takes a class the page's own stylesheet lays out as a block — the docs hub's `.path` — as a
-    boundary a reader sees, so the seams the hub makes on purpose are not refused; `test/spacing.mjs`
+    takes a class the page's own stylesheet lays out as a block — the docs hub's `.path` — and a
+    child of a container it lays out as flex or grid, which blockifies its children — the
+    homepage's `.hero-actions` row — as a
+    boundary a reader sees, so the seams the design makes on purpose are not refused; `test/spacing.mjs`
     measures that count over the artifact, and this list does not keep it.
   - **A cross-reference the document has no heading for renders as its own text** (the same
     review round). Every cross-reference in `SECURITY.md`'s "In short" is rewritten to a link
@@ -415,20 +417,23 @@ added or removed without this sentence moving fails there:
   a defect the source does not show and a reader cannot report without the word being quoted
   back. The gate reads every built page the way a browser does, through the shared
   `runTogether()`/`verbatimText()` in `test/lib/html.mjs`: each direct text child is its own run,
-  nothing is invented between two neighbours, and a run ending in a lowercase letter directly
-  against one starting with a lowercase letter is one word. What counts as a boundary a reader
-  sees is read from the artifact rather than listed by name — a block element, plus any class the
-  page's own inlined stylesheet lays out with a block-level `display` (the docs hub's `.path`
-  under a guide's title does today) — because without it the gate would refuse the seams the
-  design makes on purpose, and a gate that cries wolf is a gate somebody turns off. How many
+  nothing is invented between two neighbours, and a run ending in a letter directly against one
+  starting with a letter is one word, in either case (`back andfugaro secrets` and `see
+  thePrivacy` are the same defect). What counts as a boundary a reader sees is read from the
+  artifact rather than listed by name: a block element, any class the page's own inlined
+  stylesheet lays out with a block-level `display` (the docs hub's `.path` under a guide's title
+  does today), and any element inside a container that stylesheet lays out as flex or grid,
+  which blockifies its children (the homepage's `.hero-actions` row does today) — because without
+  them the gate would refuse the seams the design makes on purpose, and a gate that cries wolf is
+  a gate somebody turns off. How many
   seams the design makes and how many the rule refuses are `test/spacing.mjs`'s to measure over
   the artifact; this list does not keep the count. It
   found one real defect when it landed: the console's download row put each artifact's published
   name and its SHA-256 in two inline siblings on two source lines, so the row read
   "macOS .dmga434f3…"; the space is in `src/components/Downloads.astro` now. The refusal is
-  mutation-proved both ways, and the last case proves the boundary rule is read from the page: a
+  mutation-proved both ways, and the last cases prove each boundary is read from the page: a
   seam the stylesheet lays apart is not refused, and the same seam is refused the moment the
-  stylesheet lays it out inline.
+  stylesheet lays it out inline, for the block class and for the flex row alike.
 - `test/nav-hover.mjs` — the menu's hover behaviour (the owner's brief of 2026-10-18, item 1).
   A `<details>` hides its own closed content in a way author CSS cannot portably override, so
   opening a group on hover is the script's work and not the stylesheet's: the gate runs the

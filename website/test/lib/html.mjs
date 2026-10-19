@@ -259,8 +259,8 @@ export const BLOCK = new Set([
  * The runs of text a reader sees inside a node, in document order, as a flat list of strings:
  * each direct text child, and the text a leaf element carries, with **no space invented
  * between them**. Two runs that end up next to each other in this list are adjacent on the
- * page, so a run that ends in a word character directly followed by one that starts in a word
- * character is one glued word — `back and<code>fugaro secrets</code>` reads as "andfugaro".
+ * page, so a run that ends in a letter directly followed by one that starts in a letter is one
+ * glued word — `back and<code>fugaro secrets</code>` reads as "andfugaro", in either case.
  * That defect is invisible in the built file's source and invisible to a reader that joins a
  * node's children with a space as well, because the space it invents is the space that went
  * missing (see `spacing.mjs`, whose rule this is).
@@ -301,10 +301,19 @@ export function verbatimText(node, isBlock) {
 }
 
 /**
- * The places a text run ends in a word character and the next one starts in a word character:
- * the two runs are one word to a reader, and the page did not write the space between them.
- * Each finding is `{ before, after, glued }`, where `glued` is the word a reader reads — the
- * word characters on either side of the seam, since a hyphen or a slash ends a word.
+ * The places two runs of text are one word to a reader, because the page wrote no space
+ * between them: a run ending in a letter directly against one starting with a letter, in
+ * **either case**. Each finding is `{ before, after, glued }`, where `glued` is the word a
+ * reader reads — the letters on either side of the seam, since a hyphen, a slash or a digit
+ * ends a word.
+ *
+ * **The seam is about letters, not about lower case.** An earlier version of this rule read
+ * only `a`–`z` on both sides, which misses the same defect wherever the element the space was
+ * lost in front of starts a word with a capital — `see the<a>Privacy</a>` reads "thePrivacy"
+ * and passed. That narrowing was not a safety property: it was hiding a hole in what the
+ * caller hands in as `isBlock`, because the site's own flex rows put two capitalised links
+ * side by side (`spacing.mjs` reads the page's stylesheet and treats a flex or grid parent's
+ * children as the boundaries they are, which is what the wide rule needs to stay quiet).
  */
 export function runTogether(node, isBlock) {
   const runs = textRuns(node, isBlock)
@@ -315,9 +324,9 @@ export function runTogether(node, isBlock) {
     if (before === ' ' || after === ' ') continue
     const left = before.slice(-1)
     const right = after.slice(0, 1)
-    if (!/[a-z]/.test(left) || !/[a-z]/.test(right)) continue
-    const tail = /[a-z]+$/.exec(before)?.[0] ?? left
-    const head = /^[a-z]+/.exec(after)?.[0] ?? right
+    if (!/[A-Za-z]/.test(left) || !/[A-Za-z]/.test(right)) continue
+    const tail = /[A-Za-z]+$/.exec(before)?.[0] ?? left
+    const head = /^[A-Za-z]+/.exec(after)?.[0] ?? right
     out.push({ before, after, glued: tail + head })
   }
   return out
