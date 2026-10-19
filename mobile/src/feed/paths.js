@@ -24,7 +24,8 @@
 // repositories** from the database. That is the same limitation as the missing
 // run titles, seen from the other side, and it is why the reader is given the
 // owner's slug list rather than discovering one (D114's rule for accounts: "a
-// list the owner maintains, not a discovery result"). `config/caps/limits`,
+// list the owner maintains, not a discovery result"). `config/limits`
+// (`budget.PathLimits`, a sibling of `caps` and not a child of it),
 // `config/mode`, `config/policy/**`, `spend/$day/meta` and
 // `spend/$day/runs/$slug/$run`'s siblings are refused for the same reason:
 // only the shapes listed in `GRANTED` are granted.

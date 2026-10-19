@@ -51,9 +51,54 @@ function wire(overrides = {}) {
 }
 
 /** The plan's degraded sentence, verbatim from `internal/cli/watch.go`'s
- * `runWatchDegraded` -- the line that is not JSON on the document stream. */
+ * `runDegraded` -- the line that is not JSON on the document stream. */
 const DEGRADED_SENTENCE =
   'no budget backend: showing run records only\nrun records unavailable (retrying): the database refused the read';
+
+/** The degraded document's own notice, verbatim from `internal/cli/watch.go`'s
+ * `degradedNotice`. */
+const DEGRADED_NOTICE = 'no budget backend: showing run records only';
+
+/**
+ * §2 fact (iii)'s document, built the way the CLI builds it.
+ *
+ * `watchDegradedDoc` is `lsDoc` **embedded** plus two fields, and `lsDoc`
+ * (`internal/cli/runs.go`) is `project`, `runs[]`, `totals` and `warnings[]`.
+ * The row is `runview.Row`'s shape and the total `runview.Totals`', because
+ * that is what the CLI writes on the wire: a fixture with only `project`,
+ * `degraded` and `notice` would be a document the CLI never emits, and a
+ * validator tested against it proves nothing about the real one.
+ */
+function degradedDoc(overrides = {}) {
+  return {
+    project: 'fugaro',
+    runs: [
+      {
+        run: 'run-1',
+        repo: 'example-one',
+        run_id: 'run-1',
+        status: 'running',
+        created: '2025-11-09T11:00:00Z',
+        cost: { model_usd: 0.2, compute_usd: 0.05, compute_estimated: true, total_usd: 0.25, estimate: false, model_basis: 'api-list' },
+        terminal: false,
+        settled: false,
+        pushed: true,
+      },
+    ],
+    totals: {
+      runs: 1,
+      model_usd: 0.2,
+      model_notional_usd: 0.05,
+      compute_usd: 0.05,
+      total_usd: 0.25,
+      compute_not_estimated: 0,
+    },
+    warnings: [],
+    degraded: true,
+    notice: DEGRADED_NOTICE,
+    ...overrides,
+  };
+}
 
 test('a line that is not a JSON object is skipped, and never thrown on', () => {
   for (const line of [
@@ -179,27 +224,55 @@ test('the runs bucket is not the phone\'s, and an empty array is not a run title
 });
 
 test('the degraded shape is its own shape, recognised by its own key', () => {
-  const degraded = { project: 'fugaro', degraded: true, notice: 'no budget backend: showing run records only' };
-  const judged = validateDocument(degraded);
-  assert.equal(judged.ok, true);
+  const judged = validateDocument(degradedDoc());
+  assert.equal(judged.ok, true, JSON.stringify(judged));
   assert.equal(judged.document.degraded, true);
-  assert.equal(judged.document.notice, 'no budget backend: showing run records only');
+  assert.equal(judged.document.notice, DEGRADED_NOTICE);
   // It carries no half of the other shape, and it has no figures at all -- so
   // there is nothing for a screen to render as a zero spend.
   assert.equal(judged.document.total, undefined);
   assert.equal(judged.document.connection, undefined);
   assert.deepEqual(figures(judged.document), []);
   assert.ok(isDocument(judged.document));
+  // **The `lsDoc` half is judged and dropped.** The rows are the runs bucket's
+  // (`--json`'s `runs[]`, kept by the grant out of this app's reach), so the
+  // judged document carries no run title, no repository and no total: the shape
+  // is recognised without any of it reaching a screen.
+  assert.equal(JSON.stringify(judged.document).includes('run-1'), false);
+  assert.equal(JSON.stringify(judged.document).includes('example-one'), false);
 
-  // A document that claims to be degraded *and* carries the other half is not
+  // The two field lists are kept apart: `totals` and `warnings` belong to the
+  // degraded document alone, and `notice` belongs to it alone too, so a **live**
+  // document carrying any of them is an unknown field rather than a shape that
+  // slipped through.
+  for (const key of ['totals', 'warnings', 'notice']) {
+    const live = validateDocument(wire({ [key]: degradedDoc()[key] }));
+    assert.equal(live.code, DOCUMENT_CODES.UNKNOWN_FIELD, key);
+  }
+  // `degraded` never reaches the live field list -- it is the discriminator,
+  // and any value but `true` is refused as the wrong type rather than ignored.
+  assert.equal(validateDocument(wire({ degraded: false })).code, DOCUMENT_CODES.BAD_TYPE);
+
+  // A document that claims to be degraded *and* carries the live half is not
   // one thing, and half-rendering it is the bug this refusal prevents.
   for (const key of ['connection', 'total', 'repos']) {
-    const contradictory = validateDocument({ ...degraded, [key]: wire()[key] });
+    const contradictory = validateDocument(degradedDoc({ [key]: wire()[key] }));
     assert.equal(contradictory.ok, false, key);
     assert.equal(contradictory.code, DOCUMENT_CODES.CONTRADICTORY, key);
   }
-  assert.equal(validateDocument({ ...degraded, notice: '' }).code, DOCUMENT_CODES.MISSING_FIELD);
-  assert.equal(validateDocument({ project: 'fugaro', degraded: 'yes', notice: 'x' }).code, DOCUMENT_CODES.BAD_TYPE);
+  assert.equal(validateDocument(degradedDoc({ notice: '' })).code, DOCUMENT_CODES.MISSING_FIELD);
+  assert.equal(validateDocument(degradedDoc({ degraded: 'yes' })).code, DOCUMENT_CODES.BAD_TYPE);
+  // The `lsDoc` fields are judged for their type: `runs[]` and `warnings[]` are
+  // arrays and `totals` is an object in the shape the CLI emits.
+  assert.equal(validateDocument(degradedDoc({ runs: 'run-1' })).code, DOCUMENT_CODES.BAD_TYPE);
+  assert.equal(validateDocument(degradedDoc({ warnings: 'none' })).code, DOCUMENT_CODES.BAD_TYPE);
+  assert.equal(validateDocument(degradedDoc({ totals: 0 })).code, DOCUMENT_CODES.BAD_TYPE);
+  // ... and §2 (iii)'s document carries no `finished` or `ready` either: those
+  // are the live JSONDoc's, not `lsDoc`'s.
+  assert.equal(validateDocument(degradedDoc({ finished: [] })).code, DOCUMENT_CODES.UNKNOWN_FIELD);
+  // A degraded document with no rows at all is still one (`degradedSince` may
+  // bound a day that has no runs in it).
+  assert.equal(validateDocument(degradedDoc({ runs: [], warnings: [], totals: { runs: 0 } })).ok, true);
 });
 
 test('a document that is not one this reader can render is refused, field by field', () => {

@@ -40,12 +40,23 @@
 // here so that no screen can render a run title the phone is not allowed to
 // read. `queued_note` is the same family's field and is not read at all.
 //
-// **The degraded shape is its own shape** (§2 fact (iii), §10.8): `degraded:
-// true` plus `notice`, and *none* of `connection`, `total` or `repos`, because
-// the document is what the CLI emits when it has no budget backend. It is
-// recognised by that key -- "the `degraded` key is the discriminator" -- and a
-// document that claims to be degraded and carries the other half anyway is
-// refused rather than half-rendered. What the view does with it is
+// **The degraded shape is its own shape** (§2 fact (iii), §10.8): the CLI's
+// `watchDegradedDoc` is `lsDoc` **embedded** -- `project`, `runs[]`, `totals`,
+// `warnings[]` -- plus `degraded` and `notice`, and *none* of `connection`,
+// `total` or `repos`, because the document is what the CLI emits when it has no
+// budget backend. It is recognised by that key -- "the `degraded` key is the
+// discriminator" -- and a document that claims to be degraded and carries the
+// live half anyway is refused rather than half-rendered.
+//
+// **The `lsDoc` half is judged and dropped, not refused.** An earlier version
+// of this file accepted only `project`, `degraded` and `notice` and refused
+// everything else -- which meant §2 (iii)'s own document was refused as
+// `UNKNOWN_FIELD: totals` before the discriminator was ever looked at, so the
+// shape this module claimed to recognise was a shape the CLI never emits. The
+// two halves are now judged separately, and the `lsDoc` fields are read for
+// their **type** and then dropped: this app renders no run row (the grant does
+// not cover the runs bucket), so the rows are a fact this document cannot use
+// and must not carry. What the view does with a degraded document is
 // `view.js`'s rule: degraded renders as degraded, never as a zero spend.
 
 import { isFigure, measured, notional, unavailable } from './availability.js';
@@ -74,7 +85,13 @@ export const CONNECTION_STATES = Object.freeze(['live', 'stale', 'offline', 'ref
  * that can carry `""`, and the phone reads no `budget show` document. */
 export const MODES = Object.freeze(['observe', 'enforce']);
 
-/** The document's own top-level fields, and the ones the phone reads of them. */
+/** The **live** document's own top-level fields, and the ones the phone reads
+ * of them. `degraded` and `notice` are not here: they belong to the other
+ * shape, which is judged by `DEGRADED_FIELDS` before this list is ever
+ * consulted (`degraded` would not reach it anyway -- it is the discriminator),
+ * and a document carrying `notice` and no `degraded` is a document from neither
+ * shape. The live JSONDoc has no such field (`internal/cli/testdata/
+ * watch_json_keys.golden`). */
 const DOC_FIELDS = Object.freeze([
   'project',
   'mode',
@@ -87,12 +104,27 @@ const DOC_FIELDS = Object.freeze([
   'finished',
   'ready',
   'queued_note',
+]);
+
+/** The runs-bucket fields of the **live** document: accepted empty, refused
+ * with content. The degraded document is the exception, and §2 (iii) is why:
+ * its `runs[]` is `lsDoc`'s own list, bounded by `degradedSince`, and the shape
+ * cannot be recognised at all if the field is refused. */
+const RUN_BUCKET_FIELDS = Object.freeze(['runs', 'finished', 'ready']);
+
+/** §2 (iii)'s document, in full: `lsDoc` embedded (`internal/cli/runs.go`) plus
+ * its two own fields. `totals` and `warnings` are here and **not** in
+ * `DOC_FIELDS`, because the live document carries neither -- keeping them apart
+ * is what makes "a live document with a `totals` block" an unknown field rather
+ * than a shape that slipped in. */
+const DEGRADED_FIELDS = Object.freeze([
+  'project',
+  'runs',
+  'totals',
+  'warnings',
   'degraded',
   'notice',
 ]);
-
-/** The runs-bucket fields: accepted empty, refused with content. */
-const RUN_BUCKET_FIELDS = Object.freeze(['runs', 'finished', 'ready']);
 
 const TOTAL_FIELDS = Object.freeze([
   'counted_usd',
@@ -171,6 +203,31 @@ function text(value) {
   return value;
 }
 
+/**
+ * A database-derived string made safe to print, the way the CLI makes one.
+ *
+ * `internal/watch/build.go`'s `clean` is `clip(safetext.Strip(s))`, and
+ * `State.kill` passes **both** `by` and `reason` through it: `safetext.Strip`
+ * drops escape sequences (ESC, CSI, OSC, DCS), every other C0/C1 control, the
+ * bidi and zero-width characters and the line/paragraph separators, and `clip`
+ * bounds the runes that are left. Those two fields are the operator's own tools
+ * writing into a database node -- the same untrusted source the CLI is careful
+ * about -- and this app's `text()` bounds the length and nothing else, so a
+ * right-to-left override or a terminal escape in a kill reason would have
+ * reached the screen intact.
+ *
+ * Stripping rather than refusing is the CLI's own choice, and it is kept here:
+ * a kill switch is a state this app must render whatever its `reason` looks
+ * like, and the switch's on-ness is the load-bearing part. The character set is
+ * `account.js`'s `UNSAFE_TEXT_RE` plus the surrogates a lone half leaves.
+ */
+const UNSAFE_TEXT_RE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu;
+
+function cleanText(value) {
+  if (typeof value !== 'string') return null;
+  return text(value.replace(UNSAFE_TEXT_RE, ''));
+}
+
 /** A figure from a wire number: absent, `null` and a non-number are all
  * `unavailable`, and a number is measured. This is rule 5, in one place. */
 function numberFigure(value, state = measured) {
@@ -198,11 +255,14 @@ function killOf(value) {
   if (value === undefined || value === null) return null;
   if (typeof value !== 'object' || Array.isArray(value)) return undefined;
   for (const key of Object.keys(value)) if (!KILL_FIELDS.includes(key)) return undefined;
+  // All three strings are database-derived -- `by`, `at` and `reason` are the
+  // kill node's own fields -- so all three are cleaned, which is what
+  // `State.kill` does to the two it prints.
   return Object.freeze({
     on: true,
-    by: text(value.by),
-    at: text(value.at),
-    reason: text(value.reason),
+    by: cleanText(value.by),
+    at: cleanText(value.at),
+    reason: cleanText(value.reason),
   });
 }
 
@@ -258,6 +318,44 @@ function connectionOf(value) {
 }
 
 /**
+ * §2 (iii)'s document: `lsDoc` embedded plus `degraded` and `notice`.
+ *
+ * Judged **before** the live document's field list, because the discriminator
+ * decides which field list applies: `totals` and `warnings` are §2 (iii)'s and
+ * the live document has neither, and running the live check first is what made
+ * this branch unreachable for the CLI's own document.
+ *
+ * The `lsDoc` half is read for its **type** and then **dropped**. `runs[]` is
+ * the runs bucket's (the grant does not cover it, and this app renders no run
+ * title), and `totals` and `warnings` are `ls`'s own reporting, which this
+ * document has no field for. Judging their types is what keeps a document that
+ * is `lsDoc`-shaped from being a document that merely says `degraded`.
+ */
+function validateDegraded(value) {
+  if (value.degraded !== true) return refuse(DOCUMENT_CODES.BAD_TYPE, 'degraded');
+  // The contradiction is judged before the field list, so the refusal names the
+  // real fault: a live half beside `degraded` is a document claiming two shapes
+  // at once, not a document with an unknown key.
+  for (const key of ['connection', 'total', 'repos']) {
+    if (value[key] !== undefined) return refuse(DOCUMENT_CODES.CONTRADICTORY, key);
+  }
+  for (const key of Object.keys(value)) {
+    if (!DEGRADED_FIELDS.includes(key)) return refuse(DOCUMENT_CODES.UNKNOWN_FIELD, key);
+  }
+  const notice = text(value.notice);
+  if (notice === null) return refuse(DOCUMENT_CODES.MISSING_FIELD, 'notice');
+  if (value.runs !== undefined && !Array.isArray(value.runs)) return refuse(DOCUMENT_CODES.BAD_TYPE, 'runs');
+  if (value.warnings !== undefined && !Array.isArray(value.warnings)) return refuse(DOCUMENT_CODES.BAD_TYPE, 'warnings');
+  if (value.totals !== undefined && (value.totals === null || typeof value.totals !== 'object' || Array.isArray(value.totals))) {
+    return refuse(DOCUMENT_CODES.BAD_TYPE, 'totals');
+  }
+  return Object.freeze({
+    ok: true,
+    document: Object.freeze({ degraded: true, notice, project: text(value.project) }),
+  });
+}
+
+/**
  * Judge one document. Returns `{ ok: true, document }` -- normalised, every
  * number a figure -- or a refusal with the code and the field at fault.
  *
@@ -270,27 +368,14 @@ export function validateDocument(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return refuse(DOCUMENT_CODES.NOT_AN_OBJECT, 'document');
   }
+
+  // The degraded shape first, and by its own field list: it is the one document
+  // that carries neither a connection nor a total, and a document that carries
+  // both halves is not a shape this reader can render as one thing.
+  if (value.degraded !== undefined) return validateDegraded(value);
+
   for (const key of Object.keys(value)) {
     if (!DOC_FIELDS.includes(key)) return refuse(DOCUMENT_CODES.UNKNOWN_FIELD, key);
-  }
-
-  // The degraded shape first, because it is the one document that carries
-  // neither a connection nor a total, and a document that carries both halves
-  // is not a shape this reader can render as one thing.
-  if (value.degraded !== undefined) {
-    if (value.degraded !== true) return refuse(DOCUMENT_CODES.BAD_TYPE, 'degraded');
-    const notice = text(value.notice);
-    if (notice === null) return refuse(DOCUMENT_CODES.MISSING_FIELD, 'notice');
-    for (const key of ['connection', 'total', 'repos']) {
-      if (value[key] !== undefined) return refuse(DOCUMENT_CODES.CONTRADICTORY, key);
-    }
-    for (const key of RUN_BUCKET_FIELDS) {
-      if (Array.isArray(value[key]) && value[key].length > 0) return refuse(DOCUMENT_CODES.NOT_GRANTED, key);
-    }
-    return Object.freeze({
-      ok: true,
-      document: Object.freeze({ degraded: true, notice, project: text(value.project) }),
-    });
   }
 
   const project = text(value.project);
@@ -327,7 +412,8 @@ export function validateDocument(value) {
   // `runs` and `run_hours` are the total's alone (a repository block has
   // neither). The phone cannot read either of them -- no granted family counts
   // a day's runs or its hours -- so they are `unavailable` in every document
-  // `nodes.js` assembles, which is what "or not shown" means for them.
+  // `reader.js`'s `#assemble` builds, which is what "or not shown" means for
+  // them.
   const totals = Object.freeze({
     ...figures.figures,
     runs: numberFigure(total.runs),

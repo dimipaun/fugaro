@@ -6,9 +6,8 @@
 // **The choice, stated.** P3.2 recomputes them. The alternative -- not showing
 // them -- would leave the live screen without the two numbers it exists for,
 // and the inputs are both in the grant: the day's counter (`spend/$day/**`) and
-// the cap (`config/caps/**`). What is recomputed is recomputed **exactly as the
-// CLI computes it**, from the same constants, so the phone and the console
-// cannot disagree about the same tree:
+// the cap (`config/caps/**`). What is recomputed is recomputed from the CLI's
+// own constants and formulas, so the two cannot drift apart on the arithmetic:
 //
 //   * **the cap fraction** is `internal/watch/build.go`'s `bar`: `used/cap*100`
 //     over the **counted** total ("Only counted feeds it; notional counts
@@ -26,6 +25,29 @@
 //     `Spent+Notional` into the window while `bar` is fed `Counted`.
 //   * **`fast`** is `burnOf`: `perMin*60 > dailyCap/DefaultBurnHours`, with
 //     `DefaultBurnHours = 8`. No cap means no alert threshold and so no `fast`.
+//
+// **Two places the phone cannot follow, and they are the grant's doing, not the
+// arithmetic's.** `Build` does two things this module has no input for:
+//
+//   * `internal/watch/build.go`'s `if len(b.Runs) == 0 { b.Burn = Burn{} }`
+//     (and `v.Project.Runs == 0` for the project) **clears** the burn when no
+//     run is live, because a trailing value that decays is not a rate. "Is a run
+//     live" is `agents/<slug>/<run>` -- `State.Agents` -- and the grant does not
+//     cover `agents/**`, so the phone has no way to know. It reports the
+//     window's slope whenever the window can speak, which is what the CLI does
+//     while runs are live; the divergence is a rate that outlives its runs by up
+//     to `BurnWindow` on a screen that cannot see the runs.
+//   * `burnOf`'s alert threshold is `cfg.BurnAlertPerHour` **when the operator
+//     set it** (`internal/localcfg`'s `watch.burn_alert_usd_per_hour`), and the
+//     `daily/8` fallback only when it is unset. That setting is in the
+//     operator's local YAML on the machine running the CLI; it is not in the
+//     database and no granted family carries it, so the phone can only ever
+//     compute the fallback. A project with a custom alert rate therefore shows
+//     `fast` from `daily/8` here and from the operator's number in the console.
+//
+// Both are stated rather than hidden: the phone's document is a phone's, and the
+// two divergences are the same shape -- a rule that needs a read the grant does
+// not give.
 //
 // **A restart of the window reports unknown, not zero** (§10.9): `SetDay`
 // empties the burn windows at UTC midnight, and a reconnect starts a new one,

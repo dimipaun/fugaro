@@ -320,14 +320,21 @@ export class FeedReader {
   /**
    * One node's value, as the port delivers it.
    *
-   * A path that is not one of the granted shapes is refused and **not stored**:
-   * a value for a path this reader never asked for is a value it must not
-   * render, whatever it contains.
+   * A value is taken only for a path this reader actually asked for: it must be
+   * one of the granted shapes **and** one of the paths in this reader's plan.
+   * The gate alone is not enough. `spend/<a day the reader is not on>/global`
+   * and `spend/<day>/runs/<slug>/<run>` are granted by shape and are not in the
+   * plan -- no listener was ever attached to them -- and a value for one of
+   * them would be stored, counted as a delivery and recorded in `#lastEvent`,
+   * which is the map `#connection` reads to decide whether the plan has answered
+   * at all. A path nobody asked for cannot answer for the plan, so it is refused
+   * and **not stored**, whatever it contains.
    */
   ingest(path, value, nowMs) {
     if (!isNow(nowMs)) return refuse(READER_CODES.BAD_NOW, 'nowMs');
     const judged = request(path);
     if (!judged.ok) return refuse(READER_CODES.NOT_GRANTED, typeof path === 'string' ? path : 'path');
+    if (!this.#paths.includes(path)) return refuse(READER_CODES.NOT_GRANTED, path);
     this.#nodes.set(path, value);
     this.#delivered.add(path);
     this.#lastEvent.set(path, nowMs);
@@ -373,6 +380,15 @@ export class FeedReader {
    * (`SetDay` empties the windows), so the new day's rate is unknown for
    * `BurnWarmup` rather than zero. The old day's spend nodes are dropped: the
    * store holds the day being shown, not a history of days.
+   *
+   * **The rollover is a break in the view as well as in the store.** Moving to
+   * the new day and leaving the screen alone would leave yesterday's document
+   * on it under today's date -- `snapshot()` reports the reader's own `#day`, so
+   * the date would say today while the figures said yesterday, and the view
+   * would still call them a measurement because the old day's counter had
+   * arrived. §10.7 forbids exactly that. The assembly below is the same one a
+   * delivery would trigger, with `measured` false, so the new day starts as the
+   * gap it is.
    */
   refresh(nowMs) {
     if (!this.#started) return refuse(READER_CODES.NOT_STARTED, 'refresh');
@@ -382,14 +398,21 @@ export class FeedReader {
     if (!isNow(nowMs)) return refuse(READER_CODES.BAD_NOW, 'nowMs');
     const day = dayKey(nowMs);
     if (day === this.#day) return Object.freeze({ ok: true, dayChanged: false, day });
-    for (const path of [...this.#nodes.keys()]) {
-      if (path.startsWith('spend/')) {
-        this.#nodes.delete(path);
-        this.#delivered.delete(path);
-        this.#lastEvent.delete(path);
-        this.#refused.delete(path);
-        this.#errored.delete(path);
-      }
+    // The paths are cleared by walking the **plan**, not the store. A spend path
+    // that was refused or that failed its read is in `#refused`/`#errored`
+    // without ever having delivered, so it is in no `#nodes` key -- and a stale
+    // entry there is permanent: the path is not re-subscribed for the new day
+    // (its name carries the day), so no delivery can ever clear it, and
+    // `#connection` would report the feed refused forever after one permission
+    // error on one path. `#paths` is every path this reader asked for, which is
+    // exactly the set that must be forgotten.
+    for (const path of this.#paths) {
+      if (!path.startsWith('spend/')) continue;
+      this.#nodes.delete(path);
+      this.#delivered.delete(path);
+      this.#lastEvent.delete(path);
+      this.#refused.delete(path);
+      this.#errored.delete(path);
     }
     this.#sampler.reset();
     const planned = this.plan(nowMs);
@@ -399,6 +422,15 @@ export class FeedReader {
     // their values are kept.
     const wanted = planned.paths.filter((path) => path.startsWith('spend/'));
     const held = new Set(this.#paths.filter((path) => path.startsWith('spend/')));
+    // Before the first subscription, for `start()`'s reason and not a weaker
+    // one: a Realtime Database listener delivers the node's current value the
+    // moment it is attached, and that delivery runs `ingest` -> `#assemble` with
+    // whatever `#day` and `#paths` say at that instant. Setting them afterwards
+    // assembles against the day just left, whose counters were deleted two
+    // statements ago -- a document about yesterday carrying a zero, which the
+    // view would ingest as a break before the new day had said anything.
+    this.#paths = planned.paths;
+    this.#day = day;
     for (const path of wanted) {
       if (held.has(path)) continue;
       const handle = this.#subscribe(path);
@@ -417,8 +449,8 @@ export class FeedReader {
       this.#stopOne(this.#handles.get(path));
       this.#handles.delete(path);
     }
-    this.#paths = planned.paths;
-    this.#day = day;
+    // The break, made visible now rather than at the next delivery.
+    this.#assemble(nowMs);
     return Object.freeze({ ok: true, dayChanged: true, day });
   }
 

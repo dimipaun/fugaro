@@ -24,9 +24,9 @@
 //
 // **What this module does not do.** It does not read the wire, decide which
 // field is which state, or compute anything: `document.js` reads the wire and
-// `nodes.js` assembles it. This file knows only the five states and the two
-// ways a figure can be wrong (a number of the wrong shape, and a value on a
-// state that has none).
+// `reader.js`'s `#assemble` builds the document `document.js` then judges. This
+// file knows only the five states and the two ways a figure can be wrong (a
+// number of the wrong shape, and a value on a state that has none).
 //
 // The `estimated` state is part of the contract's §1 and has no producer in
 // this task: the contract's only estimated field is `report`'s
@@ -34,6 +34,16 @@
 // here because the state set is §1's, and `document.test.js` asserts the feed
 // never marks a figure estimated -- a state this app could not produce would
 // otherwise be a state nobody ever checked.
+//
+// **`gap` has no producer either, and it is kept for the same reason.**
+// `document.test.js` asserts the feed never marks a figure `gap`; the day break
+// `gap` names (§10.7) is drawn as `drawable: null` by `view.js` rather than as
+// a figure, because there is no number to carry and a figure is a number's
+// shape. `STATE.GAP`, `GAP_MARK`, `shown` and `isEmpty` are load-bearing -- the
+// mark and the two functions are how a gap would be printed if one ever
+// existed -- while the `gap()` constructor has no caller in P3.2. It is here so
+// the state set stays §1's five, and so a later task does not have to add a
+// constructor to a frozen vocabulary in order to use it.
 
 /**
  * The five states, spelled as the contract spells them. Nothing else is a

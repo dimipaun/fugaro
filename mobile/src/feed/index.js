@@ -11,15 +11,19 @@
 //     not be: `reader.js` takes a `{ subscribe(path, { onValue, onError }) }`
 //     and hands the handles to the account's `ResourceRegistry`. The one file
 //     that knows what a device is is `mobile/index.js` (P3.1's entry), which
-//     builds the client and the reader together -- a screen that could import a
-//     port could open a second subscription to the same project, authenticated
-//     as whichever account was last signed in, which is D114's "no
-//     cross-leakage" undone by an import.
-//   * **The path composers.** `capsPaths`, `killPaths`, `spendPaths` and
-//     `mailboxPaths` are how the plan is built; a screen that composed a path
-//     itself would be composing a read. `isGranted`/`request` stay off the door
-//     for the same reason: the judgement is the reader's to make, once, before
-//     anything is asked for.
+//     builds the account store and mounts the root component; nothing anywhere
+//     constructs a `FeedReader` or a database client yet, and that wiring is
+//     **P3.3's** (the job list is the first screen that needs a feed). A screen
+//     that could import a port could open a second subscription to the same
+//     project, authenticated as whichever account was last signed in, which is
+//     D114's "no cross-leakage" undone by an import.
+//   * **The path composers, and the path judgements.** `capsPaths`,
+//     `killPaths`, `spendPaths` and `mailboxPaths` are how the plan is built; a
+//     screen that composed a path itself would be composing a read. `request`
+//     (the gate) and `isGranted` (the same judgement as a boolean) stay off the
+//     door for that reason and for the header's own: a screen that can **judge**
+//     a path is one refactor from composing one, and the judgement is the
+//     reader's to make, once, before anything is asked for.
 //   * **The `--repo` flag and a repository list built by discovery.** The
 //     repository list is the owner's (`reader.js`'s constructor), because the
 //     grant does not cover `config/caps/repos` and the phone cannot enumerate.
@@ -32,7 +36,7 @@
 
 export { AVAILABILITY_CODES, GAP_MARK, STATE, isFigure, isEmpty, measured, notional, unavailable } from './availability.js';
 
-export { FAMILIES, PATH_CODES, dayDate, dayKey, familyOf, isGranted } from './paths.js';
+export { FAMILIES, PATH_CODES, dayDate, dayKey, familyOf } from './paths.js';
 
 export {
   CONNECTION_STATES,
@@ -51,7 +55,6 @@ export { MICROS_PER_USD, NODE_CODES, usd } from './nodes.js';
 export { BURN_WARMUP_MS, BURN_WINDOW_MS, DEFAULT_BURN_HOURS, BurnSampler, fast, percent, recompute } from './recompute.js';
 
 export {
-  FIRST_FRAME_MS,
   LIVENESS,
   REFUSED_NOTICE,
   SKIP_NOTICE,

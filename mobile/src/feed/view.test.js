@@ -20,7 +20,7 @@ import test from 'node:test';
 
 import { STATE, isFigure, shown } from './availability.js';
 import { decode, validateDocument } from './document.js';
-import { FIRST_FRAME_MS, LIVENESS, SKIP_NOTICE, STALE_AFTER_MS, FeedView } from './view.js';
+import { LIVENESS, SKIP_NOTICE, STALE_AFTER_MS, FeedView } from './view.js';
 import * as viewModule from './view.js';
 
 const T0 = Date.parse('2025-11-09T12:00:00Z');
@@ -73,13 +73,18 @@ test('the thresholds are the CLI\'s own, and the run\'s is not one of them', () 
   // §10.9's table. A test that only used the imported constants could not catch
   // a constant that had drifted from the console's.
   assert.equal(STALE_AFTER_MS, 45_000);
-  assert.equal(FIRST_FRAME_MS, 5_000);
   // `watch.LostAfter` (180 s) is §10.9's too, and it is **not** this module's:
   // the table calls it a property of a *run* (`State.health`), and the phone is
   // subscribed to no run. A connection that used it would say a quiet feed was
   // `offline` while `State.conn`, reading the same tree, still said `stale`.
   assert.equal('LOST_AFTER_MS' in viewModule, false);
   assert.equal('SILENT_AFTER_MS' in viewModule, false);
+  // `watchFirstFrame` (5 s) is §10.9's as well, and it is about a **child
+  // process's** start-up -- the head start the CLI's four streams get before its
+  // first document. The phone has no child and no four streams to start, and
+  // nothing here read the constant: a number on the door that decides nothing
+  // reads as a rule, so it is gone rather than kept for a later task.
+  assert.equal('FIRST_FRAME_MS' in viewModule, false);
 });
 
 test('the newest document replaces the last one, and nothing is accumulated', () => {
@@ -228,7 +233,7 @@ test('a feed that stops arriving is a silence, not a death', () => {
   // A feed that has never arrived is not offline and not dead: nothing has been
   // said yet.
   const empty = new FeedView();
-  const nothing = empty.snapshot({ nowMs: T0 + FIRST_FRAME_MS * 10 });
+  const nothing = empty.snapshot({ nowMs: T0 + 50_000 });
   assert.equal(nothing.liveness, 'no-document');
   assert.equal(nothing.document, null);
   assert.equal(nothing.drawable, null);

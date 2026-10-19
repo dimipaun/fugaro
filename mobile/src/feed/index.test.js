@@ -33,7 +33,6 @@ test('the door exports the reader, the view, the document rules and the vocabula
     'DEFAULT_BURN_HOURS',
     'DOCUMENT_CODES',
     'FAMILIES',
-    'FIRST_FRAME_MS',
     'FeedReader',
     'FeedView',
     'GAP_MARK',
@@ -58,7 +57,6 @@ test('the door exports the reader, the view, the document rules and the vocabula
     'isDocument',
     'isEmpty',
     'isFigure',
-    'isGranted',
     'isPermissionError',
     'isPort',
     'isUnavailable',
@@ -72,10 +70,14 @@ test('the door exports the reader, the view, the document rules and the vocabula
   ]);
 });
 
-test('the door carries no port and no path composer', () => {
+test('the door carries no port, no path composer and no path judgement', () => {
   // A screen that could compose a path could compose a read: the plan is the
-  // reader's to build, and it is judged before the port sees it.
-  for (const name of ['capsPaths', 'killPaths', 'spendPaths', 'mailboxPaths', 'request', 'checkRepositories', 'slugOf']) {
+  // reader's to build, and it is judged before the port sees it. `isGranted` is
+  // the gate's own answer as a boolean, and it is off the door for the header's
+  // reason: a screen that can **judge** a path is one refactor from composing
+  // one, and this module's own header said it stayed off while the export was
+  // still there.
+  for (const name of ['capsPaths', 'killPaths', 'spendPaths', 'mailboxPaths', 'request', 'isGranted', 'checkRepositories', 'slugOf']) {
     assert.equal(name in feed, false, name);
   }
   // ... and there is no client on the door, because there is none in this

@@ -209,10 +209,16 @@ export const MAX_INSTANT_MS = 8_640_000_000_000_000;
  * A wire instant in epoch milliseconds, or `null` when it is not one this app
  * can render: not an integer, not positive, or past `MAX_INSTANT_MS`.
  *
- * A non-positive instant is Go's own "no instant": `budget.Kill.At` is a
- * `time.Time`, and `jsonKill` omits `at` for its zero value, so a wire `0` and
- * an absent field mean the same thing to the console. `null` is that absence --
- * never the epoch, which would be a kill at a time nobody named.
+ * **A non-positive instant is this app's own "no instant", and it is a stated
+ * divergence.** `budget.Kill.At` is an `int64` (not a `time.Time`), and
+ * `State.kill` wraps it with `time.UnixMilli`, so a wire `0` -- which is also
+ * what an absent field decodes to, `At` being `omitempty` -- becomes
+ * 1970-01-01T00:00:00Z, which is **not** `IsZero()` and which `jsonKill`
+ * therefore prints. The console shows a kill at the epoch; this app shows none.
+ * That is deliberate and it is §1's rule rather than Go's: a kill at a time
+ * nobody named is exactly the "implicit zero" this app must never print, and
+ * `null` is the honest absence. The divergence is in the *instant field only* --
+ * both implementations agree that the switch is **on**.
  */
 export function epochMs(value) {
   if (typeof value !== 'number' || !Number.isInteger(value)) return null;

@@ -61,9 +61,13 @@ export const STALE_AFTER_MS = 45_000;
 // app's `offline` is the reader's own: a port that errored, or a plan whose
 // paths have not all answered yet.
 
-/** `watchFirstFrame` (§10.9): the head start the CLI's four streams get before
- * its first document. Before it, a quiet feed is still starting up. */
-export const FIRST_FRAME_MS = 5_000;
+// **`watchFirstFrame` is deliberately not here.** §10.9 lists it as the head
+// start the CLI's four streams get ("the four streams' head start before the
+// first document, readable or not") -- a constant about a **child process's**
+// start-up, which the phone does not have. An earlier version exported it as a
+// threshold nothing read: a number on the door that looked load-bearing and
+// decided nothing. The phone's "nothing has arrived yet" is `no-document`, and
+// it needs no clock.
 
 /** What the screen says when a line or a node value was not a document. A
  * **static** sentence: the thing that was skipped was not parsed, so nothing
@@ -121,13 +125,22 @@ export class FeedView {
     if (document.degraded !== true) {
       this.#day = document.day;
       this.#measured = measured === true;
+      // The break is **sticky until the new day has measured something**.
+      // §10.7's gap lasts from the rollover until the day's counter arrives,
+      // and the reader assembles more than once inside that gap -- the rollover
+      // itself, then whatever else the tree delivers (a cap, a kill switch)
+      // before the counter does. A flag that the first of those cleared would
+      // report a day break that nothing could ever observe, which is the same
+      // as not reporting it at all.
+      this.#dayChanged = changed || (this.#dayChanged && !this.#measured);
+    } else {
+      this.#dayChanged = false;
     }
     this.#document = document;
     this.#arrivedAt = nowMs;
-    this.#dayChanged = changed;
     this.#note = null;
     this.#ingests += 1;
-    return Object.freeze({ ok: true, dayChanged: changed });
+    return Object.freeze({ ok: true, dayChanged: this.#dayChanged });
   }
 
   /**
