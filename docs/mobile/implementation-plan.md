@@ -45,7 +45,7 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 | **4 — The other end, the checks, the release** | The consumer beside the orchestrator, checks 80–89, the CI job, the store path | P4.1–P4.4, P4.2a | P4.1 yes — **D113c** answered it a new `fugaro` command, so it merges from a CLI plan (D19); P4.2a and P4.2 write the register, and **the checks they write, P4.3 and P4.4 are owner-run** |
 | **5 — Later, unscheduled** | Phase 2 hosting, push, the local/remote voice evaluation switch, the conversational front agent | P5.1–P5.4 | Unscheduled by construction |
 | **6 — APPROVED 2026-10-18 (functional spec v0.1)** | Wake-word routing and the app-command grammar, the spoken-confirmation machine, the schema and rules for agents/prompts/action records/the MAC, the prompt queue, `fugaro pair`, the consumer's enforcement, pairing and overview in the app, the text screen, the offline gate, checks 100–104 | P6.1–P6.13 | Yes, each — **the owner approved all of Phase 6 on 2026-10-18**, and each still waits on the D160–D172 rows its line names |
-| **7 — PROPOSED 2026-10-19, NOT APPROVED (telemetry)** | Firebase Crashlytics and Firebase Analytics in the app, reporting to a Firebase project **Fugaro operates and not an installation's**: the config plugin and the never-committed native files, the consent gate and the two SDK switches, the closed event allow-list and the scan that holds it, the store labels and the website's paragraph, checks 105–107 | P7.1–P7.5 | Yes, each — but **the owner has approved nothing here**: Phase 7 is **proposed**, every task waits on the **D193–D200** rows its line names, and D194 is an **owner step** (the Firebase project does not exist). Its plan is [../plans/2026-10-19-mobile-telemetry.md](../plans/2026-10-19-mobile-telemetry.md) |
+| **7 — PROPOSED 2026-10-19, NOT APPROVED (telemetry)** | Firebase Crashlytics and Firebase Analytics in the app, reporting to a Firebase project **Fugaro operates and not an installation's**: the config plugin and the never-committed native files, the consent gate and the two SDK switches, the closed event allow-list and the scan that holds it, the store labels and the website's paragraph, checks 111–113 | P7.1–P7.5 | Yes, each — but **the owner has approved nothing here**: Phase 7 is **proposed**, every task waits on the **D193–D200** rows its line names, and D194 is an **owner step** (the Firebase project does not exist). Its plan is [../plans/2026-10-19-mobile-telemetry.md](../plans/2026-10-19-mobile-telemetry.md) |
 
 ---
 
@@ -68,9 +68,9 @@ This plan builds on what is already on `main`, and it **reuses** rather than reb
 | **88** | Push delivery — **only on the owner's later yes to push (P5.2)** (D121 was answered "no push in v1" on 2026-10-17) | P5.2 | Needs a real push service |
 | **89** | A signed EAS build, and the store's internal track | written by P4.2a; run at P4.4 | Needs the owner's signing keys and store accounts |
 
-**Checks 100–109 (approved 2026-10-18).** The functional-spec reconciliation took a second block, **100–109**, after reading every number in use on `main` and in every open pull request (credentials-service holds 90–99). Phase 6 proposes **100** (QR pairing end to end, with the code confirmation), **101** (revocation: deleting the device node denies the next read; the Auth user's token timing), **102** (the wake word's recognition rate on the oldest supported device), **103** (a spoken cancel and a spoken merge on the **sandbox repository only**, each with its read-back and "confirm", and the refusals: a misheard confirm, a replayed confirm, a confirm for another target), **104** (offline: no command is sent or queued while disconnected). **105–109 are reserved and unused.** All are owner-run; P6.11 writes 100–104 into the register.
+**Checks 100–109 (approved 2026-10-18).** The functional-spec reconciliation took a second block, **100–109**, after reading every number in use on `main` and in every open pull request (credentials-service holds 90–99). Phase 6 proposes **100** (QR pairing end to end, with the code confirmation), **101** (revocation: deleting the device node denies the next read; the Auth user's token timing), **102** (the wake word's recognition rate on the oldest supported device), **103** (a spoken cancel and a spoken merge on the **sandbox repository only**, each with its read-back and "confirm", and the refusals: a misheard confirm, a replayed confirm, a confirm for another target), **104** (offline: no command is sent or queued while disconnected). **105–109 are reserved and unused** — **P6.11 writes 100–104 and is open as PR #667** — and the telemetry plan below **takes none of them** (*an unused number is not a free number*). All are owner-run; P6.11 writes 100–104 into the register.
 
-**Checks 105, 106 and 107 (proposed 2026-10-19, NOT approved).** The telemetry plan ([../plans/2026-10-19-mobile-telemetry.md](../plans/2026-10-19-mobile-telemetry.md), Phase 7) takes **three** numbers out of the free block after 104 — **105** (nothing is collected before consent, on a device, with the Firebase console as the second half of the proof), **106** (a real crash reaches the Fugaro-operated project with nothing that names anything in it, and with consent off produces no report at all) and **107** (the two store forms match what the app sends, category by category, and the site's privacy page carries the app's paragraph on the day the first SDK-carrying build is submitted). **It leaves 108 and 109 free, and it does not touch 110**, which is named by [design/voice-evaluation-switch.md](design/voice-evaluation-switch.md) (P5.3) and written by nobody. All three are **owner-run** — no agent performs any step of any of them — and **all three are proposed, not approved**: they are written by **P7.5** and run by the owner, and a check is never run before its text is in the register. The amendment of the 100–109 row above is recorded there as a **dated note**, so the original reading stays visible.
+**Checks 111, 112 and 113 (proposed 2026-10-19, NOT approved).** The telemetry plan ([../plans/2026-10-19-mobile-telemetry.md](../plans/2026-10-19-mobile-telemetry.md), Phase 7) takes **three** numbers — **111** (nothing is collected before consent, on a device, with the Firebase console as the second half of the proof), **112** (a real crash reaches the Fugaro-operated project with nothing that names anything in it, and with consent off produces no report at all) and **113** (the two store forms match what the app sends, category by category, and the site's privacy page carries the app's paragraph on the day the first SDK-carrying build is submitted). **They are the first free numbers after every claim, and not the first gap in the register**: 105–109 are **reserved and unused** — an unused number is not a free number, the rule this work applies to D79–D89 and D174–D179 — and 110 is claimed by the always-on orchestrator design (open PR #632), which [design/voice-evaluation-switch.md](design/voice-evaluation-switch.md) (P5.3) also names and nobody writes. **The plan takes nothing out of 100–109** — that block is what **P6.11 writes, open as PR #667** — and **nothing above 113**: **114 onward stays free**. All three are **owner-run** — no agent performs any step of any of them — and **all three are proposed, not approved**: they are written by **P7.5** and run by the owner, and a check is never run before its text is in the register. The amendment of the 100–109 row above is recorded there as a **dated note**, so the original reading stays visible.
 
 **Checks 81, 82 and 89 are written into the register by P4.2a — before P2.3 and P4.4 run them — and checks 80 and 83–88 by P4.2; all ten are run by the owner.** A check is never run before its text is in the register. Until they are run, the app's live behaviour is **unverified**, and no task below may claim otherwise.
 
@@ -683,8 +683,8 @@ registration.
 
 **The numbers it takes.** **D193–D200** — the next free decision block (D192 is the highest
 number written anywhere in `docs/`), D193 answered by the ruling and **D194–D200 open for the
-owner with a recommendation each**. **Checks 105, 106 and 107**, out of the free block after
-104, leaving 108 and 109 free and 110 alone. **A reserved number is never reused and never
+owner with a recommendation each**. **Checks 111, 112 and 113** — the first free numbers after
+every claim, since 105–109 are reserved and 110 is claimed — leaving 114 onward free. **A reserved number is never reused and never
 renumbered**, and this phase renumbers nothing.
 
 **Three things this phase is not.** It is **not approved** (the gate below still stands, and
@@ -762,12 +762,12 @@ no Go test and no agent can see the Play console or App Store Connect.
 **Reviewer tier.** **standard** for the website change; **owner** for the two store forms,
 which no agent fills in.
 
-### Task P7.5: Checks 105–107, written into the register
+### Task P7.5: Checks 111–113, written into the register
 
 **Files.** `docs/gcp-live-checklist.md`. **Depends on.** P7.1, P7.2, P7.3.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`.
 **Reviewer tier.** **standard** for the writing; **owner** for the running. **No agent runs
-any step of 105, 106 or 107.**
+any step of 111, 112 or 113.**
 
 ### What holds Phase 7, and what each task cannot verify
 
@@ -783,7 +783,7 @@ decides whether one is wanted when the first task lands.
 |---|---|---|
 | P7.1 | the tracked-file rules, the ignore rules, the `AIza…` walk, the guard's pure part | that the plugin applies or a development build is produced — `expo prebuild` and `eas build` need a toolchain this repository's CI does not have |
 | P7.2 | the choice machine, the flag table, the link's validator path | that the sheet renders, and that the runtime enable calls reach the native SDK |
-| P7.3 | the scan, the never-send test, the existing fences | that the **native** SDK collects nothing before consent — only check 105 can show that |
+| P7.3 | the scan, the never-send test, the existing fences | that the **native** SDK collects nothing before consent — only check 111 can show that |
 | P7.4 | the website's own gates | the two store forms (owner) |
 | P7.5 | the register's own docs tests | the three checks (owner) |
 

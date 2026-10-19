@@ -1252,9 +1252,13 @@ var coordinatorDecisionBlocks = []coordinatorNumberBlock{
 	// precedent — the most recent work to take a block registered it here, in the one table
 	// in this repository that lists every work's block, and the telemetry plan does the same.
 	// The row that read "**D193 onward** — free" now reads "**D201 onward**": the block it
-	// gave away is taken, and a range the table calls free must not cover one the allocation
-	// records as held (the rule below checks exactly that, and it is what would have failed
-	// had this row stayed where it was).
+	// gave away is taken, and leaving it where it was would have made this table claim the
+	// block twice. **The rule below is not what would have caught that**, and a comment here
+	// saying it would was simply wrong: it reads dash ranges (`coordinatorDRangeRE` is
+	// `D([0-9]+)[a-z]?–D?([0-9]+)`), so a row reading "D193 onward" does not match it at all
+	// and the rule never runs. The rule that does catch it is the telemetry plan's own block
+	// walk (docs_mobile_telemetry_test.go), which reads an onward row as unbounded and would
+	// have reported a second block covering D193–D200.
 	{"D193–D200", coordinatorMobileReadme, "| **D193–D200** | **the telemetry plan**", "**D193–D200** the telemetry plan's, taken **2026-10-19**"},
 }
 

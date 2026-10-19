@@ -58,7 +58,7 @@ inferred from a plan.
 | `mobile/app.json` carries the **EAS project id** and nothing Firebase-shaped | `mobile/app.json` (`expo.extra.eas.projectId = "70e67d4a-77d3-4110-9db6-e600266db345"`) | The EAS project the native config files would be delivered into already exists. |
 | **`mobile/app.config.js` and `mobile/eas.json` are not on `main`** — they are PR #675's, which the owner holds for the store path (P4.4, check 89) | `ls mobile/` on this base: `README.md`, `app.json`, `index.js`, `package-lock.json`, `package.json`, `src/` | Every task below that edits `app.config.js` or `eas.json` **depends on #675 merging first**, and says so. Neither file is written by this change. |
 | The app's account tuple is **four fields and holds no connection value** | `mobile/src/accounts/account.js` — `ACCOUNT_FIELDS = ['id', 'firebaseProjectId', 'authUid', 'fugaroProject']` | There is no `rtdbURL` and no web API key in an account today. D199 is the row that has to add them, and §3 explains why. |
-| The settings store **refuses an `AIza…` value outright**, and refuses the *word* `apiKey` as a key segment | `mobile/src/accounts/settings.js:107-114` (`SECRET_SHAPES`, `['google-api-key', /^AIza[0-9A-Za-z_-]{35}$/]`), `:147-150` (`judge` → `SECRET_VALUE`), `:245-260` (`FORBIDDEN_KEY_SEGMENTS`, `apiKey` among them) | **This is the repository rule the brief names**: the Firebase web API key appears nowhere the app stores or the app ships. It is why D199's recommendation puts the installation's connection values in **secure storage**, not in the tuple's settings entry. |
+| The settings store **refuses an `AIza…` value outright**, and refuses the *word* `apiKey` as a key segment | `mobile/src/accounts/settings.js` — `SECRET_SHAPES` (whose Google entry is `['google-api-key', /^AIza[0-9A-Za-z_-]{35}$/]`), `judge` (which returns `SECRET_VALUE` for a match) and **`FORBIDDEN_KEY_SEGMENTS`**, the frozen list `apiKey` is a member of. **Cited by symbol, not by line**: a line number into a file this plan does not edit goes stale silently, and the symbols are what a reader greps for. | **This is the repository rule the brief names**: the Firebase web API key appears nowhere the app stores or the app ships. It is why D199's recommendation puts the installation's connection values in **secure storage**, not in the tuple's settings entry. |
 | The app's own config test already holds that rule for `app.json`, **with a planted `AIza…` value as its positive control** | `mobile/src/app-config.test.js:66` (the planted `expo.extra.firebase.apiKey`), `:71` (`['$.expo.extra.firebase.apiKey', 'google-api-key']`), `:98-99` (no `bundleIdentifier`, no `package`) | The fence exists and is mutation-proven. P7.1 extends it to the two **native** config files and to `app.config.js`; it does not invent a new rule. |
 | The app's source is already scanned for a `firebase` SDK import, and the scan's pattern **does not match `@react-native-firebase/…`** | `mobile/src/mailbox/write-path.test.js:82-97`: rule 2 is `pattern: /['"]@?firebase\/[a-z-]+['"]/`, `allow: ['index.js']` | A screen could import `@react-native-firebase/analytics` today and no fence would catch it. P7.3 adds that rule; it is a **real gap**, not a hypothetical one. |
 | The app writes to the database in exactly one file, and the fence is a scan with a positive control | `mobile/src/mailbox/write-path.test.js` (rules 1–3), `mobile/src/boundary.test.js` | The shape P7.3's allow-list scan copies, deliberately. |
@@ -106,31 +106,57 @@ unused number is not a free number"*).
 are recommendations with an empty answer column**, and the owner can approve all seven in one
 pass (§3 is written to be read that way).
 
-### 2.2 Checks: **105, 106 and 107**, and why those
+### 2.2 Checks: **111, 112 and 113**, and why those
 
-The brief's instruction is *"new check numbers from the free block after 104"*. Read from the
-register ([gcp-live-checklist.md](../gcp-live-checklist.md)):
+**The rule is the one §2.1 already applies to the decision numbers: an *unused* number is not a
+free number.** A block another document records as **reserved** — even with nothing written in
+it — is already spoken for, and the next writer takes the first number **after every claim**, not
+the first gap in the register. The number is read from the register and from the two allocation
+documents rather than remembered:
 
-- The **highest check section written** is `## Check 89` (`docs/gcp-live-checklist.md`, the
-  *"a signed EAS build, and the store's internal track"* section). Checks **80–89** all have
-  summary rows in the register (written by mobile tasks P4.2a and P4.2), and **three of them —
-  81, 82 and 89 — also have a written section**, which is why the register's last written
-  section is 89 and not 70c. *(This paragraph said "the highest check section written is
-  `## Check 70c`" and that none of 80–89 had a section. That was false and it read as if the
-  register stopped at 70c: `## Check 81`, `## Check 82` and `## Check 89` were all written by
-  P4.2a before this plan, and the coordinator's own table carried the same stale reading,
-  which this change corrects there too.)*
-- **90–99** are the credentials service's, **100–104** are the functional spec v0.1's
-  (approved 2026-10-18, to be written by P6.11), and **105–109** are **reserved and unused**
-  ([mobile/README.md](../mobile/README.md): *"**105–109 reserved and unused**"*).
-- **110 is claimed by another open design** — the always-on orchestrator
-  (`docs/coordinator/README.md`, its *"Check 110"* row) — and the register's own rule is that *whichever of two
-  open claims merges second renumbers itself*. **This plan does not touch 110.**
+- **1–89 are taken.** 1–18 carry summary rows, 19–47 have written sections, 48–58 are the
+  project-centric, artifact-runs and compute-backend blocks, 59 is the console's, 60–61 are
+  owner-allocated (the budget-token channel and the monorepo folder export), 62–63 the console v2
+  pair, 64–66 this voice work's, 67–68 managed projects', 69a–69c and 70a–70c the website's,
+  **71–79 sit inside the website work's held range** with no check written in them, and **80–89
+  are the mobile plan's, fully allocated**.
+- **90–99 are the credentials service's** and **100–104 the functional spec v0.1's**, approved by
+  the owner on 2026-10-18. **P6.11 writes 100–104**, and P6.11 is open as **PR #667**.
+- **105–109 are *reserved and unused*** ([mobile/README.md](../mobile/README.md): *"**105–109
+  reserved and unused**"*). **This plan takes none of them.** They are reserved, so "an unused
+  number is not a free number" applies to them exactly as it applies to D79–D89 and D174–D179 —
+  a plan that took 105 because the register has no `## Check 105` section would be reusing a
+  number another work holds.
+- **110 is claimed** by the always-on orchestrator design (open **PR #632**;
+  `docs/coordinator/README.md`, its *"Check 110"* row), and the register's own rule is that
+  *whichever of two open claims merges second renumbers itself*. **This plan does not touch 110.**
 
-So this work takes **three** numbers out of the free block after 104 — **105, 106 and 107** —
-and **leaves 108 and 109 free**. All three are **owner-run**, none is a CI job, and **none is
-run by an agent**. §12 writes their text. **Check numbers 80–89 stay the mobile plan's**: this
-work adds no row to that block, because a reserved number is never reused.
+**So the first free number is 111**, and it is 111 **before and after #667 merges**: 105–109 stay
+reserved and 110 stays claimed either way, so the block does not move. **This plan takes 111, 112
+and 113** — three numbers, one per check, and **nothing above them** — leaving **114 onward
+free**. All three are **owner-run**, none is a CI job, and **none is run by an agent**. §12 writes
+their text. **Check numbers 80–89 stay the mobile plan's**: this work adds no row to that block,
+because a reserved number is never reused.
+
+**The highest check section written is a reading, and it is read rather than remembered.** The
+highest check section written is `## Check 89` **at this reading** — `## Check 81`, `## Check 82`
+and `## Check 89` are P4.2a's, and all of 80–89 carry summary rows — which is why the last written
+section is 89 and not 70c. **P6.11 (#667) appends `## Check 100`–`## Check 104`**, which raises
+that reading to 104 the day it merges, and **moves nothing this plan takes**: the block is chosen
+from the claims above, not from the register's highest written number, so the reading can move
+without the block moving. *(This paragraph said "the highest check section written is
+`## Check 70c`" and that none of 80–89 had a section. That was false: `## Check 81`, `## Check 82`
+and `## Check 89` were all written by P4.2a before this plan, and the coordinator's own table
+carried the same stale reading, which this change corrects there too.)*
+
+**The open pull requests this plan lands against.** Four, and each one edits lines this plan
+edits: **#675** (`mobile/app.config.js` and `mobile/eas.json` — §4.3 and P7.1), **#689** (the
+website's privacy page — §8.3 and P7.4), **#632** (the orchestrator's check 110 — this section and
+the coordinator's numbers table) and **#667** (P6.11: it writes `## Check 100`–`## Check 104` and
+their summary rows into the register, and edits the same check rows in `docs/coordinator/README.md`
+and `docs/mobile/README.md` that this plan edits). **#667 is the reason this plan takes nothing out
+of 100–109** — that block is the one its own pull request writes — and naming it beside the other
+three is what keeps the two changes from colliding whichever merges second.
 
 ---
 
@@ -446,10 +472,13 @@ stores cannot be answered differently, which is the failure a reader would never
 
 ### 8.3 The website — what changes, and when
 
-**Today** `website/src/pages/privacy.astro` describes the **website**: with
-`site.facts.analytics.enabled` on (`website/data/site.yaml:99`) it names Google Analytics 4,
+**Today** `website/src/pages/privacy.astro` describes the **website**: with the key
+`site.facts.analytics.enabled` on (it is a key in `website/data/site.yaml`; the page reads it, and
+neither is cited here by line number, because a line number into a file this plan does not edit
+goes stale silently) it names Google Analytics 4,
 one page view, no event and no user id, behind the site's consent banner; with the flag off it
-says *"This site has no analytics at all"* (`:118-120`). **Neither branch says anything about
+says *"This site has no analytics at all"* (the page's own off-branch). **Neither branch says
+anything about
 the app.** The site's "nothing phones home" check (`## Check 69b`) is a check about the
 **page's network panel**, and it stays true: the page itself loads nothing new.
 
@@ -579,7 +608,7 @@ here.**
 **Reviewer tier.** standard for the website change; **owner** for the two store forms, which
 no agent fills in.
 
-### Task P7.5: Checks 105–107, written into the register
+### Task P7.5: Checks 111–113, written into the register
 
 **Files.** `docs/gcp-live-checklist.md`.
 **Depends on.** P7.1, P7.2, P7.3 (a check is never run before its text is in the register).
@@ -587,7 +616,7 @@ no agent fills in.
 `internal/cli/docs_mobile_telemetry_test.go` (this change) held to the new section's summary
 rows.
 **Reviewer tier.** standard for the writing; **owner** for the running. **No agent runs any
-step of 105, 106 or 107.**
+step of 111, 112 or 113.**
 
 ### 10.1 Order and levels
 
@@ -607,8 +636,8 @@ PR #675 ──► P7.1            PR #689 ──► P7.4
 | **0** | **P7.1** the plugin, the native files, the development build | **SECURITY-SENSITIVE** | `mobile/app.config.js`, `mobile/eas.json`, `mobile/firebase.json`, `mobile/.gitignore`, `mobile/package.json`, `mobile/README.md`, `mobile/src/app-config.test.js` |
 | **1** | **P7.2** the consent gate · **P7.3** the allow-list and the scan | **both SECURITY-SENSITIVE** | `shared/telemetry-consent/`, `mobile/src/telemetry/consent.js`, `mobile/src/app/root.js` · `mobile/src/telemetry/` (the event module and its two tests), one entry in `mobile/src/mailbox/write-path.test.js` |
 | **2** | **P7.4** the labels and the website's paragraph | standard (website) / **owner** (the forms) | `website/src/pages/privacy.astro`, the website's gates |
-| **3** | **P7.5** checks 105–107 written | standard | `docs/gcp-live-checklist.md` |
-| **owner** | the checks **run** — P7.5 writes 105–107 and the owner runs them. **This is not a task and has no number**: running a check merges nothing, so the phase is five tasks and not six | owner | none |
+| **3** | **P7.5** checks 111–113 written | standard | `docs/gcp-live-checklist.md` |
+| **owner** | the checks **run** — P7.5 writes 111–113 and the owner runs them. **This is not a task and has no number**: running a check merges nothing, so the phase is five tasks and not six | owner | none |
 
 **P7.2 and P7.3 are parallel** — different directories, and the only shared file between them
 is none. **P7.4 waits on P7.3** because the labels are answered from the allow-list, not from
@@ -626,7 +655,7 @@ this phase is additive and nothing in the app's existing tasks waits on it.
 |---|---|---|
 | P7.1 | the tracked-file rules, the ignore rules, the `AIza…` walk, the guard's pure part | that the plugin applies, that a development build is produced, that the SDKs initialise — **`npx expo prebuild` and `eas build` need a toolchain this repository's CI does not have** |
 | P7.2 | the choice machine, the flag table, the link's validator path | that the sheet renders, that the runtime enable calls reach the native SDK |
-| P7.3 | the scan, the never-send test, the existing fences | that the *native* SDK collects nothing before consent — **only Check 105 can show that**, on a device |
+| P7.3 | the scan, the never-send test, the existing fences | that the *native* SDK collects nothing before consent — **only Check 111 can show that**, on a device |
 | P7.4 | the website's own gates | the two store forms (owner) |
 | P7.5 | the register's own docs tests | the three checks (owner) |
 
@@ -655,7 +684,7 @@ none** (§13): the owner decides whether one is wanted when the first task lands
 
 ---
 
-## 12. Checks this plan takes (105, 106, 107)
+## 12. Checks this plan takes (111, 112, 113)
 
 **Three numbers out of the free block after 104, owner-run, none of them a CI job, and no
 agent runs any step of any of them.** They are **written by P7.5 and run by the owner**, and
@@ -663,12 +692,13 @@ agent runs any step of any of them.** They are **written by P7.5 and run by the 
 
 | # | The check | Task | Why it cannot be a test |
 |---|---|---|---|
-| **105** | **Nothing is collected before consent.** On a device, with both stores' internal builds, the app's first launch shows the consent sheet and **no request to any Firebase or Crashlytics origin appears** in the device's network panel (or in the Firebase console's realtime view) until the switch is turned on; after it is on, the app's own `app_launch` and `consent_set` events appear, and the console's debug view shows them arriving for **the Fugaro-operated project and no other**. The negative control is the one that matters: **turn the switch off again and no further event is collected.** | P7.5 writes it; **the owner runs it** | Needs a real device, a real store build, a real network and the Firebase console. No hermetic test can see a native SDK's own socket. |
-| **106** | **A real crash reaches the Fugaro-operated project, with nothing that names anything in it.** Crash the app deliberately from the debug menu on a device whose consent is on; the report appears in Crashlytics under the Fugaro-operated project; **its breadcrumbs, its custom keys, its logs and its device fields contain no message text, no mailbox key, no account id, no `authUid`, no project id, no token and no MAC**; and `setUserId` is absent from the report. Then the second half: **with consent off, the same crash produces no report at all.** | P7.5 writes it; **the owner runs it** | Needs a real device, a real crash and the Crashlytics console — the redaction is a property of a report that only exists after a crash. |
-| **107** | **The two store forms match what the app sends, and the page says it too.** The Play **Data safety** form and the App Store **privacy label** are the answers of §8.1 and §8.2, category by category, and **each ticked category is justified by traffic observed in 105 and 106** — with the two over-declared categories (`User IDs`, `Other in-app messages`) recorded **as** over-declared, in the owner's own words; and `https://fugaro.dev/privacy/` carries the app's paragraph (§8.3) **on the same day the first SDK-carrying build is submitted**. | P7.5 writes it; **the owner runs it** | Needs the two consoles, the live site and the owner's own accounts. |
+| **111** | **Nothing is collected before consent.** On a device, with both stores' internal builds, the app's first launch shows the consent sheet and **no request to any Firebase or Crashlytics origin appears** in the device's network panel (or in the Firebase console's realtime view) until the switch is turned on; after it is on, the app's own `app_launch` and `consent_set` events appear, and the console's debug view shows them arriving for **the Fugaro-operated project and no other**. The negative control is the one that matters: **turn the switch off again and no further event is collected.** | P7.5 writes it; **the owner runs it** | Needs a real device, a real store build, a real network and the Firebase console. No hermetic test can see a native SDK's own socket. |
+| **112** | **A real crash reaches the Fugaro-operated project, with nothing that names anything in it.** Crash the app deliberately from the debug menu on a device whose consent is on; the report appears in Crashlytics under the Fugaro-operated project; **its breadcrumbs, its custom keys, its logs and its device fields contain no message text, no mailbox key, no account id, no `authUid`, no project id, no token and no MAC**; and `setUserId` is absent from the report. Then the second half: **with consent off, the same crash produces no report at all.** | P7.5 writes it; **the owner runs it** | Needs a real device, a real crash and the Crashlytics console — the redaction is a property of a report that only exists after a crash. |
+| **113** | **The two store forms match what the app sends, and the page says it too.** The Play **Data safety** form and the App Store **privacy label** are the answers of §8.1 and §8.2, category by category, and **each ticked category is justified by traffic observed in 111 and 112** — with the two over-declared categories (`User IDs`, `Other in-app messages`) recorded **as** over-declared, in the owner's own words; and `https://fugaro.dev/privacy/` carries the app's paragraph (§8.3) **on the same day the first SDK-carrying build is submitted**. | P7.5 writes it; **the owner runs it** | Needs the two consoles, the live site and the owner's own accounts. |
 
-**105, 106 and 107 are owner-run. 108 and 109 stay free and are not taken by this plan. 110
-is another work's claim and is not touched.**
+**111, 112 and 113 are owner-run. 105–109 are reserved, not free, and this plan takes none of
+them; 114 onward is free and is not taken either. 110 is another work's claim and is not
+touched.**
 
 ---
 
@@ -681,20 +711,20 @@ is another work's claim and is not touched.**
 | Path | What it is |
 |---|---|
 | `docs/plans/2026-10-19-mobile-telemetry.md` | **This document — the plan, and the only deliverable of the work the brief asks for.** |
-| `internal/cli/docs_mobile_telemetry_test.go` | The pin: this document's own claims — the D-block it takes (D193–D200) and the statement that it is the next free block, the check numbers it takes (105–107) and 108/109/110 left alone, the flag names it states exactly, the never-commit rule for the two native config files, and the registration of this plan in `docs/mobile/`'s two documents. It writes no code and asserts no behaviour of an app that does not exist. |
+| `internal/cli/docs_mobile_telemetry_test.go` | The pin: this document's own claims — the D-block it takes (D193–D200) and the statement that it is the next free block, the check numbers it takes (111–113), the reserved block it takes none of (105–109) and 110 left alone, the flag names it states exactly, the never-commit rule for the two native config files, and the registration of this plan in `docs/mobile/`'s two documents. It writes no code and asserts no behaviour of an app that does not exist. |
 
 **Edited:**
 
 | Path | The edit |
 |---|---|
-| `docs/mobile/README.md` | The index: one row for this plan in the file table, and a status sentence saying the plan exists, that it is **plan only**, that **D193 is answered** and **D194–D200 are open**, and that this work takes **D193–D200** and **checks 105–107**. The "numbers this work holds" table gains the two rows. |
+| `docs/mobile/README.md` | The index: one row for this plan in the file table, and a status sentence saying the plan exists, that it is **plan only**, that **D193 is answered** and **D194–D200 are open**, and that this work takes **D193–D200** and **checks 111–113**. The "numbers this work holds" table gains the two rows. |
 | `docs/mobile/implementation-plan.md` | **Phase 7 — PROPOSED, not approved**: the phase summary row, the five tasks with their files, dependencies, verification and reviewer tier, the level table, and the check rows; a step **7b** in the approval gate; an open item; and the cross-task dependency rows. |
-| `docs/coordinator/README.md` | The **numbers table** — the one table in this repository that lists every work's block. The telemetry plan's block is registered there the way the website redesign's is, and the row that read *"**D193 onward** — free"* now reads *"**D201 onward**"*, keeping the original words visible in a dated parenthetical (D129's habit). Its checks row gains the dated note that **105, 106 and 107** were taken on 2026-10-19 and that **108 and 109** are still free. |
+| `docs/coordinator/README.md` | The **numbers table** — the one table in this repository that lists every work's block. The telemetry plan's block is registered there the way the website redesign's is, and the row that read *"**D193 onward** — free"* now reads *"**D201 onward**"*, keeping the original words visible in a dated parenthetical (D129's habit). Its checks row gains the dated note that **111, 112 and 113** were taken on 2026-10-19 from the first free number after every claim — **105–109 are reserved and 110 is claimed**, so none of either is taken and **114 onward stays free**. |
 | `internal/cli/docs_mobile_plan_test.go` | The Phase 6 status pin, **rescoped rather than dodged**. Its flag-word half banned `NOT APPROVED` anywhere in the plan, which was a stand-in for *"no approved phase may still claim to be unapproved"* and held only while Phase 6 was the last phase written. Phase 7 is written and genuinely unapproved, so the ban is now applied **per line** to the lines naming `Phase 6` or `P6.`, and the **converse** is asserted for Phase 7 (its heading carries `PROPOSED 2026-10-19` and `NOT APPROVED`; each `P7.n` row carries its own tag). All four mutations were run. |
 | `internal/cli/docs_coordinator_test.go` | The coordinator's block table gains the `D193–D200` entry, read from `docs/mobile/README.md` the way the redesign's is read from its own README. |
 
 **Not touched by this change:** every file under `mobile/`, `shared/`, `website/`,
-`docs/design/`, and the `docs/website/` documents; `docs/gcp-live-checklist.md` (checks 105–107
+`docs/design/`, and the `docs/website/` documents; `docs/gcp-live-checklist.md` (checks 111–113
 are **written by P7.5**, after approval, and no row or section for them exists today — the pin
 asserts that); and **anything under `.github/workflows/`** — no workflow is written by this
 change and none is staged in `docs/pending-workflows/`, because **no part of this plan's first
@@ -745,7 +775,7 @@ line below is a claim this plan makes **without** a source in this tree:
    text.
 7. **The two store forms' current contents.** The six Play categories are the owner's own
    description of what was ticked, not a reading of the console. §8.1 answers them from §7's
-   allow-list and says which two are over-declared; **only Check 107 confirms what the console
+   allow-list and says which two are over-declared; **only Check 113 confirms what the console
    actually holds.**
 8. **No latency, cost, retention or volume number.** Firebase Analytics and Crashlytics are
    free at this scale, and the plan states no figure it has not read. **D194's answer records
@@ -762,8 +792,9 @@ line below is a claim this plan makes **without** a source in this tree:
 configuration or workflow is written by the change that adds it. **D193 is the owner's ruling
 of 2026-10-19** (Crashlytics and Analytics, reporting to a Fugaro-operated Firebase project);
 **D194–D200 are open for the owner, each with a recommendation**; this work takes
-**D193–D200** — the next free decision block — and **checks 105, 106 and 107** out of the free
-block after 104, leaving 108 and 109 free and 110 alone. Cheers: none of the three checks has
+**D193–D200** — the next free decision block — and **checks 111, 112 and 113**, the first free
+numbers after every claim (105–109 are reserved and 110 is claimed), leaving 114 onward free.
+Cheers: none of the three checks has
 been run. Related: [mobile/README.md](../mobile/README.md) ·
 [mobile/implementation-plan.md](../mobile/implementation-plan.md) ·
 [gcp-live-checklist.md](../gcp-live-checklist.md).*
