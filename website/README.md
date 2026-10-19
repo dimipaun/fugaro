@@ -238,7 +238,8 @@ with fixtures that keep its refusals running, and none of them needs the network
   `docs/website/redesign/reconciliation.md` names, so the exemption cannot widen without
   failing a case. **The generated CLI reference still carries the old wording**, and that is
   the item's ruling rather than a miss: the tagline change reaches the CLI's help, the
-  generated reference and the two plugin skills in 0.9.0, not here.
+  generated reference and the three plugin skills that carry it (`routing`, `working` and
+  `parallelism`) in 0.9.0, not here.
 
 **Lighthouse is the owner-run check** (D105's targets: performance ≥ 95, accessibility 100,
 best practices 100, SEO 100), run against the built artifact by hand: there is no CI on pull

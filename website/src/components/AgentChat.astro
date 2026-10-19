@@ -314,8 +314,10 @@ if (!source('README.md').includes(WATCH)) {
      against `base.css`'s rule that the control is right-aligned on the block it belongs to and
      against the shape of every other block here. `row-reverse` is the one declaration that
      settles it: the main axis starts at the right, so the first child in the markup lands at
-     the right end and the command takes the left. `website/test/base-styles.mjs` checks every
-     `[data-copy]` block on the built pages for it. */
+     the right end and the command takes the left. `website/test/base-styles.mjs` reads every
+     `[data-copy]` block on the built pages whose control and command share a row — this one,
+     the site's only such block — and refuses a row that draws the control first, which is
+     what a plain row does here. */
   .chat-watch {
     display: flex;
     flex-direction: row-reverse;

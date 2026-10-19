@@ -705,9 +705,11 @@ export function sideBySideCopyBlocks(css, html, width = 80 * 16) {
 }
 
 /**
- * Every command block on one built page that draws its copy control on the wrong side of the
- * command it belongs to. `base.css` states the rule — "the control is a row above the block it
- * belongs to and right-aligned on it" — and every block but one follows it by doing nothing:
+ * Every command block on one built page that puts its control on the same row as its command
+ * and draws that control on the wrong side of it — the only blocks where "which side is the
+ * control drawn on" is a question at all (`sideBySideCopyBlocks` above). `base.css` states
+ * the rule — "the control is a row above the block it belongs to and right-aligned on it" —
+ * and every block but one follows it by doing nothing:
  * the control is in the flow above its command, and its own `justify-content: flex-end` puts
  * the button at the right of the column. A block that puts the two on one row owes that
  * `flex-direction: row-reverse`, because the control comes **first in the markup** (it is
@@ -727,7 +729,7 @@ export function copyControlPlacementFailures(css, html) {
   return out
 }
 
-test('every command block draws its copy control at the right of the command it belongs to', () => {
+test('a command block that shares a row with its control draws the control at the right', () => {
   const failures = []
   for (const { rel, html } of builtPages()) failures.push(...copyControlPlacementFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
   assert.deepEqual(failures, [], `a command block draws its control on the wrong side:\n  ${failures.join('\n  ')}`)

@@ -4,10 +4,11 @@
 // metadata or README").
 //
 // **The rule: a run's unit of work is a job, and "worker" is retired from the site's own
-// copy.** The old tagline — "fleeting workers in the cloud for coding agents" — described
-// the product in a word the reader has to decode, and item 2 replaced it with the headline
-// and the subline (`Lambdas for coding agents` / `Ephemeral cloud jobs that turn tasks into
-// pull requests.`). The word is the part a hero rewrite cannot retire on its own: it lives
+// copy.** The old tagline — "Fleeting cloud workers for coding agents", the line under the
+// README's `# Fugaro` title — described the product in a word the reader has to decode, and
+// item 2 replaced it on the site with the headline and the subline (`Lambdas for coding
+// agents` / `Ephemeral cloud jobs that turn tasks into pull requests.`). The word is the part
+// a hero rewrite cannot retire on its own: it lives
 // in a data file's answer, in a page's caption, in a README line and in a card. So this is
 // a gate and not a search somebody ran once, in three parts:
 //
@@ -26,8 +27,10 @@
 // generated CLI reference, whose first paragraph is the root command's own help text, and
 // that help text still reads "Fleeting cloud workers for coding agents". The owner's ruling
 // of 2026-10-18 takes that on purpose: the wording in the CLI's help, in the generated
-// `website/content/cli-reference.md` and in the two plugin skills (`routing`, `working`)
-// moves in the 0.9.0 work, not in this one, and the generated file may not be hand-edited.
+// `website/content/cli-reference.md` and in the plugin skills that carry it — `routing`,
+// `working` (its reference files too) and `parallelism`, the three
+// `SKILLS_THAT_CARRY_IT` below names — moves in the 0.9.0 work, not in this one, and the
+// generated file may not be hand-edited.
 // The exemption is exactly D188's three pages and no others, and the word is still refused
 // everywhere else — including `website/data/faq.yaml`, whose answer said "a fleet of
 // ephemeral cloud workers" and whose page `/faq/` is not exempt.
@@ -48,7 +51,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DIST, REPO, SITE, builtPages, parse, textOf } from './lib/html.mjs'
@@ -59,6 +62,21 @@ import { DOCUMENT_PAGES, RECONCILIATION, documentPagesNamedIn, readReconciliatio
  * a longer word. Case is not a distinction a reader makes.
  */
 export const RETIRED = /\bworkers?\b/i
+
+/**
+ * The plugin skills whose own `SKILL.md` carries the retired word, which is the half of the
+ * exemption the documents that describe it name — `website/README.md` and
+ * `docs/website/redesign/README.md` both list them. They are the skills the ruling leaves
+ * untouched until 0.9.0, so the word is expected in them and the case below holds this list
+ * to the tree: a skill that starts or stops carrying it is a change the documents naming
+ * these three have to make in the same commit, and this case is what says so.
+ *
+ * `setup` is neither in the list nor missing from it: its occurrences are a CI test suite's
+ * own parallel workers — somebody else's build step, described in the skill's reference files
+ * rather than about this product — and not the word item 2 retires, which is why the list is
+ * read from each skill's own `SKILL.md` rather than from every file beneath it.
+ */
+export const SKILLS_THAT_CARRY_IT = ['parallelism', 'routing', 'working']
 
 /**
  * The claim the hero's chat caption may not make again, in the two halves a rewording would
@@ -219,6 +237,28 @@ test('the pages this rule skips are D188’s own list, and no wider', () => {
     [...DOCUMENT_PAGES].sort(),
     named.sort(),
     `the pages this rule skips, ${JSON.stringify([...DOCUMENT_PAGES].sort())}, are not the pages ${RECONCILIATION}'s D188 row names, ${JSON.stringify(named.sort())}: the exemption is that ruling's list, and the ceiling in test/budget.mjs reads the same set (D188)`,
+  )
+})
+
+test('the plugin skills the documents name as carrying the old wording are the ones that do', () => {
+  // The exemption is written down in three places — this file's header, `website/README.md`
+  // and the redesign's README — as the skills whose wording the working spec's item 2 leaves
+  // alone until 0.9.0. A list in prose is a list nobody re-reads, so the prose names three and
+  // this reads the tree: the word is where they say, and a fourth skill carrying it (or one of
+  // these three losing it) fails here rather than in a reader's head.
+  const dir = path.join(REPO, 'plugin', 'skills')
+  const carrying = readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((name) => {
+      const skill = path.join(dir, name, 'SKILL.md')
+      return existsSync(skill) && RETIRED.test(readFileSync(skill, 'utf8'))
+    })
+    .sort()
+  assert.deepEqual(
+    carrying,
+    [...SKILLS_THAT_CARRY_IT].sort(),
+    `the plugin skills whose own SKILL.md carries ${RETIRED}, ${JSON.stringify(carrying)}, are not the ones the site's documents name, ${JSON.stringify([...SKILLS_THAT_CARRY_IT].sort())}: the word stays in those skills until 0.9.0 and the documents that name them move in the same commit (changes spec 2026-10-18, item 2)`,
   )
 })
 
