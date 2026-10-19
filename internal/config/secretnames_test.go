@@ -264,3 +264,58 @@ func TestConventionNeverReservesAPlatformName(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckWorkflowProviderSecrets: a workflow secret named after a
+// configured provider's key is refused, with the same wording family the
+// sibling reservations in Validate use and at the same path. The name belongs
+// to that provider's key whatever its .secret is written as today
+// (ReservedProviderSecret), so a value a workflow stored under it would be
+// read as the provider's credential the day the key is renamed to the
+// convention — and `fugaro secrets set` refuses to store one, so the job would
+// mount a name that can have no version.
+func TestCheckWorkflowProviderSecrets(t *testing.T) {
+	providers := map[string]ModelProvider{
+		"openrouter": {Secret: "openrouter-api-key"},
+		"deepseek":   {Secret: "ds-key"}, // off convention: its name is still reserved for it
+	}
+	cfg := &Config{Workflows: map[string]Workflow{
+		"web": {Secrets: []Secret{
+			{Name: "openrouter-api-key", Env: "OPENROUTER_KEY"},
+			{Name: "deepseek-api-key", Env: "DEEPSEEK_KEY"},
+			{Name: "my-own-secret", Env: "MINE"},
+		}},
+	}}
+	ps := CheckWorkflowProviderSecrets(cfg, providers)
+	if len(ps) != 2 {
+		t.Fatalf("problems = %s", problemsText(ps))
+	}
+	if !hasProblem(ps, "workflows.web.secrets[0].name", "reserved for model provider openrouter's key", 0) {
+		t.Errorf("problems = %s", problemsText(ps))
+	}
+	if !hasProblem(ps, "workflows.web.secrets[1].name", "reserved for model provider deepseek's key", 0) {
+		t.Errorf("problems = %s", problemsText(ps))
+	}
+	// The refusal names the provider, the conventional name and the way out,
+	// and never a value.
+	msg := ps[0].Message
+	for _, want := range []string{"openrouter", "openrouter-api-key"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not name %q: %s", want, msg)
+		}
+	}
+
+	// A name no configured provider's convention gives it is an ordinary
+	// workflow secret, and with no providers at all nothing is reserved.
+	own := &Config{Workflows: map[string]Workflow{"web": {Secrets: []Secret{{Name: "openrouter-api-key", Env: "K"}}}}}
+	if ps := CheckWorkflowProviderSecrets(own, nil); len(ps) != 0 {
+		t.Errorf("with no providers configured nothing is reserved: %s", problemsText(ps))
+	}
+	// The platform's own name is not a provider's reservation
+	// (conventionUsable): an entry named anthropic does not reserve
+	// anthropic-api-key from a workflow, whose refusal is Validate's own
+	// (ReservedSecrets) and not this rule's.
+	anthropic := map[string]ModelProvider{"anthropic": {Secret: "anthropic-proxy-key"}}
+	if ps := CheckWorkflowProviderSecrets(own, anthropic); len(ps) != 0 {
+		t.Errorf("a platform name was reserved for a provider: %s", problemsText(ps))
+	}
+}

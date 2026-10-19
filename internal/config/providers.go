@@ -568,6 +568,49 @@ func conventionUsable(name string) bool {
 	return !reservedSecretName(c) && !HarnessOAuthSecret(c)
 }
 
+// CheckWorkflowProviderSecrets refuses a workflow secret named after a
+// configured provider's key: the <entry>-api-key convention's name belongs to
+// that provider (ReservedProviderSecret) whatever its .secret is written as
+// today, so no workflow may declare it.
+//
+// It is Validate's own rule for the other reserved names
+// (workflows.<name>.secrets[i].name, the same path and the same sentence
+// shape), and it lives here rather than in Validate for one reason: the
+// reservation is relative to the owner's providers, which are in the local
+// config and never in a fugaro.yaml — Validate(c *Config) has no table to
+// judge a name against, and the callers that hold both (fugaro validate, and
+// the job spec's own SecretMounts, which refuses the same name when a job is
+// built) call this.
+//
+// Why it is a refusal and not a warning: a value a workflow stored under this
+// name would be read as the provider's credential the day that key is renamed
+// to the convention — the rename would hand the provider a credential somebody
+// else wrote — and `fugaro secrets set` refuses to store one under it, so the
+// job would mount a name that can have no version. The refusal names the
+// provider and the name, and never a value: a workflow secret's Name is a
+// name, but the same field is a place a value has been typed before
+// (CheckSecretName's rule).
+func CheckWorkflowProviderSecrets(c *Config, providers map[string]ModelProvider) []Problem {
+	var ps []Problem
+	if len(providers) == 0 {
+		return nil
+	}
+	for _, name := range sortedKeys(c.Workflows) {
+		for i, s := range c.Workflows[name].Secrets {
+			p, ok := ReservedProviderSecret(providers, s.Name)
+			if !ok {
+				continue
+			}
+			ps = append(ps, Problem{
+				Path: fmt.Sprintf("workflows.%s.secrets[%d].name", showKey(name), i),
+				Message: fmt.Sprintf("%s is reserved for model provider %s's key: the convention names a provider's key after its entry in the local config (%s), and that name belongs to that provider whatever its .secret is written as today, so a value stored under it would become the provider's credential the day the key is renamed to the convention. Name the workflow's own secret something else",
+					showKey(s.Name), showKey(p), showKey(ProviderSecretConvention(p))),
+			})
+		}
+	}
+	return ps
+}
+
 // ProviderSecretWarnings are the providers whose key is stored under a name
 // the convention does not give it, one Problem per provider, in name order.
 // They are warnings and never refusals (the owner's ruling of 2026-10-18):

@@ -294,9 +294,19 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	if lc == nil || lc.Name != cfg.Project {
 		return nil, nil, nil
 	}
+	// The reserved provider-key names, before anything that can return early
+	// and independently of the budget, the prices and the pins: a workflow
+	// secret named <entry>-api-key is a name the job's own spec refuses
+	// (infra.SecretMounts) and `fugaro secrets set` refuses to store
+	// (config.ReservedProviderSecret), and it is judged against the owner's
+	// providers, which is why Validate itself cannot make this call. claimed
+	// is the owner's whole table with the layer's claims written over the
+	// entries the run carries, so its key set is lc.Providers' — the same
+	// names, and so the same reservations.
+	problems = append(problems, config.CheckWorkflowProviderSecrets(cfg, claimed)...)
 	o, err := lc.Overrides()
 	if err != nil {
-		return nil, nil, nil // budgetProblems says so
+		return problems, nil, nil // budgetProblems says so
 	}
 	prices, err := priceTableFor(lc.Providers, o, budgetNow())
 	if err != nil {
