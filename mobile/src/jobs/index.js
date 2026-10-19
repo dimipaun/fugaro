@@ -33,7 +33,6 @@ export {
   LIST_CODES,
   NOTHING,
   ROW_FIELDS,
-  jobField,
 } from './fields.js';
 
 export { killState, projectRow } from './row.js';

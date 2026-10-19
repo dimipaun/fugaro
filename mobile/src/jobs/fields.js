@@ -95,11 +95,6 @@ export const JOB_FAMILIES = Object.freeze(
 /** The row's field names, in the table's order. */
 export const ROW_FIELDS = Object.freeze(JOB_FIELDS.map((field) => field.name));
 
-/** The field table's entry for a name, or `undefined`. */
-export function jobField(name) {
-  return JOB_FIELDS.find((field) => field.name === name);
-}
-
 /**
  * The kill switch's two states, as the screen spells them. A switch is on or
  * off and there is nothing else it can be: `jsonKill` returns a nil pointer

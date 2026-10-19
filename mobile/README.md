@@ -4,15 +4,16 @@ The Expo (React Native) app for the phone. It is **its own artifact**: outside
 the Go module, with its own release path, and it merges without touching the
 CLI (mobile plan D125, Phase 3).
 
-**Status.** Phase 3: tasks **P3.1** (the app skeleton and the account store), **P3.2**
-(the feed reader and the contract's document rules) and **P3.6** (the mailbox
-client) are here ([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)).
-P3.3 (the job list), P3.4 (the audio interfaces) and P3.5 (the voice screen) are
-not. What exists is the shell, the account model, the two device ports, the
-fences around them, the feed (the four granted families read directly from the
-Realtime Database, the document they add up to, and the screen's rules over it),
-and the phone's mailbox client -- which is the only place in the app that writes
-to the database.
+**Status.** Phase 3: tasks **P3.1** (the app skeleton and the account store),
+**P3.2** (the feed reader and the contract's document rules), **P3.3** (the job
+list) and **P3.6** (the mailbox client) are here
+([`docs/mobile/implementation-plan.md`](../docs/mobile/implementation-plan.md)).
+P3.4 (the audio interfaces) and P3.5 (the voice screen) are not. What exists is
+the shell, the account model, the two device ports, the fences around them, the
+feed (the four granted families read directly from the Realtime Database, the
+document they add up to, and the screen's rules over it), the job list (numbers
+and states, and no run row), and the phone's mailbox client -- which is the only
+place in the app that writes to the database.
 
 **P3.4 is not merged, so P3.6 defines the one audio seam it needs** —
 `src/mailbox/speaker.js`, `speak(text)` answering whether the utterance was
@@ -490,14 +491,25 @@ so a mistyped pattern cannot pass for a clean tree, and with test files exempt
 | `pr_url`, `prUrl`, `pr_number`, `prNumber`, `Linking`, `openURL`, `openExternal`, `WebBrowser` | the runs bucket's fields, and every way of opening a link |
 | `../feed/` other than `../feed/index.js` | the feed is reached through its **door**: `paths.js`'s gate and `nodes.js`'s raw readers are the feed's business, and a screen that composed a path would be composing a read |
 
+One rule is not a token rule: the door's surface is asserted as an **exact set**
+(the rule P3.2's `index.test.js` gives) and **no name on it may be dead** — used
+nowhere. The first version of that rule counted a name's own declaration as a use
+and the scan file's own enumeration of the names as another, so it could not fail
+and three dead exports (`NO_VALUE`, `PRINTED_FIELDS`, `jobField`) were on the door
+behind it. The declarations are stripped before the search now, the scan file is
+excluded from it, and the rule's three controls are the two shapes a dead export
+has (declared-and-unused, and declared nowhere) and the shape that must not be
+flagged (declared and used).
+
 ### The job list's mutations
 
 Each was planted, the run went red, the bug was removed. Three were planted
 **after** the rest and found claims with no test behind them: the tests they
 went red against did not exist yet, so fixing that was writing them. The last
-three are the review's own pass over the module's surface: two dead exports
-(`NO_VALUE`, `PRINTED_FIELDS`, both gone) and a caption mark spelled the same as
-the contract's gap mark.
+four are the review's own pass over the module's surface: three dead exports
+(`NO_VALUE`, `PRINTED_FIELDS`, `jobField`, all gone), a caption mark spelled the
+same as the contract's gap mark, and the dead-name rule itself — which passed a
+planted dead export, that being the finding that the rule could not fail.
 
 | Mutation | Went red |
 | --- | --- |
@@ -519,6 +531,7 @@ the contract's gap mark.
 | the kill switch's two words are swapped (`KILL_STATES`) | `a kill switch is on or off…` |
 | the caption mark becomes the gap mark | `the three absences are three different strings` |
 | the door re-exports a name nothing uses | `the door carries the module's surface, and no dead name` |
+| a declared-and-unused export on the door survives the rule | the same test, whose control asserts the two shapes are flagged |
 
 ## Which files may write a credential
 

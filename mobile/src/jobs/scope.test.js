@@ -225,10 +225,36 @@ function doorNames(text) {
   return [...names].sort();
 }
 
-/** The names in `names` that no file other than the door uses. */
-function deadNames(names, files, door = 'src/jobs/index.js') {
-  const rest = [...files].filter(([file]) => file !== door);
-  return names.filter((name) => !rest.some(([, text]) => new RegExp(`\\b${name}\\b`).test(code(text))));
+/** Is `name` **used** in this file's code?
+ *
+ * A name's own declaration is not a use: `export const FOO = …` and
+ * `export function FOO(…)` say where `FOO` comes from, not that anything reads
+ * it. Counting the declaration is how a scan that exists to catch a dead export
+ * passes one -- the first version of this rule did exactly that, and `jobField`
+ * (declared in `fields.js`, re-exported on the door, called by nothing) shipped
+ * behind it. So the declaration is removed before the search, in every form
+ * this tree declares with.
+ */
+function uses(name, text) {
+  const src = code(text).replace(
+    new RegExp(`\\b(?:export\\s+)?(?:async\\s+)?(?:function|const|let|var|class)\\s+${name}\\b`, 'g'),
+    '',
+  );
+  return new RegExp(`\\b${name}\\b`).test(src);
+}
+
+/** The names in `names` that nothing uses.
+ *
+ * **What counts as a user.** Any file of the module except two: the door, whose
+ * re-export is not a use either, and **this file**, which enumerates the names
+ * as string literals in the assertion below -- counting that would make every
+ * name used by the act of listing it. A test file is a user: importing a name
+ * from the door is what a consumer does, and the app's screen (P3.5) is not
+ * written yet.
+ */
+function deadNames(names, files, { door = 'src/jobs/index.js', self = SELF } = {}) {
+  const rest = [...files].filter(([file]) => file !== door && file !== self);
+  return names.filter((name) => !rest.some(([, text]) => uses(name, text)));
 }
 
 test('the door carries the module\'s surface, and no dead name', () => {
@@ -254,7 +280,6 @@ test('the door carries the module\'s surface, and no dead name', () => {
     'SERIES',
     'createJobList',
     'heartbeatRow',
-    'jobField',
     'jobList',
     'killState',
     'lines',
@@ -262,16 +287,22 @@ test('the door carries the module\'s surface, and no dead name', () => {
     'text',
   ]);
 
-  // ... and a positive control for the rule below, before it is applied: a name
-  // on the door that nothing else uses is exactly what that rule is for.
+  // Three positive controls, before the rule is applied to the module: the two
+  // shapes a dead export has, and the shape that must **not** be flagged.
   const planted = new Map([
-    ['src/jobs/index.js', "export { GHOST } from './fields.js';\n"],
-    ['src/jobs/fields.js', 'const x = 1;\n'],
+    ['src/jobs/index.js', "export { GHOST, ORPHAN } from './fields.js';\nexport { CALLED } from './row.js';\n"],
+    // Whole-file: defined and re-exported, read by nothing. This is the case the
+    // first version of the rule missed, because the declaration counted.
+    ['src/jobs/fields.js', 'export const ORPHAN = 1;\n'],
+    // Declared and used, both in this file -- so the rule is not merely
+    // "something is exported".
+    ['src/jobs/row.js', 'export function CALLED(x) { return CALLED(x - 1); }\n'],
   ]);
-  assert.deepEqual(deadNames(['GHOST'], [...planted]), ['GHOST']);
+  assert.deepEqual(deadNames(['GHOST', 'ORPHAN', 'CALLED'], [...planted]), ['GHOST', 'ORPHAN']);
 
-  // Every name the door carries is used somewhere that is not the door. A dead
-  // export is a name a reviewer has to check is still true: `PRINTED_FIELDS`
-  // and `NO_VALUE` were both, and both are gone.
+  // ... and every name the door carries is used somewhere that is not the door.
+  // A dead export is a name a reviewer has to check is still true:
+  // `PRINTED_FIELDS`, `NO_VALUE` and `jobField` were all three, and all three
+  // are gone.
   assert.deepEqual(deadNames(doorNames(door), files), []);
 });
