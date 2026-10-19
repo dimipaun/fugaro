@@ -12,9 +12,11 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 var (
@@ -44,12 +46,36 @@ func BranchRunID(branch string) (string, bool) {
 
 // Spec is the task spec stored as runs/<repo-slug>/<run-id>/task.json.
 type Spec struct {
-	Version     int       `json:"version"`
-	RunID       string    `json:"run_id"`
-	Repo        string    `json:"repo"`
-	Ref         string    `json:"ref"`
-	Workflow    string    `json:"workflow,omitempty"`
-	Task        string    `json:"task,omitempty"`
+	Version  int    `json:"version"`
+	RunID    string `json:"run_id"`
+	Repo     string `json:"repo"`
+	Ref      string `json:"ref"`
+	Workflow string `json:"workflow,omitempty"`
+	Task     string `json:"task,omitempty"`
+	// Title is the run's own job title, from fugaro run --title: the one
+	// line every surface that names a run shows — fugaro watch's live,
+	// queued and finished rows, the budget registry's entry, the title and
+	// the body's first heading of the pull request the run opens when the
+	// agent wrote no pr.md of its own, runs ls --json's row. Empty (the
+	// common case, and every spec written before this release) means "the
+	// task prompt's own first line", exactly the rule those surfaces
+	// followed before the flag existed; TitleLine is that one rule, and no
+	// surface derives the title itself any more.
+	//
+	// A runner before the release that reads this field refuses the whole
+	// spec (Parse decodes with DisallowUnknownFields), so the launcher
+	// gates a launch that would set it (titlesSince, internal/cli/
+	// recipes_skew.go) rather than let the run fail at bootstrap after the
+	// task was written. A spec without a title is byte-identical to what
+	// the previous release wrote, so the field costs nothing until the
+	// flag is used.
+	//
+	// It is refused unless it is one non-empty line of at most
+	// MaxTitleRunes runes with no control character in it (TitleProblem,
+	// applied by the launcher and by Validate below): it becomes a
+	// terminal line and a pull request's title, and neither may be forged
+	// by the text of a title.
+	Title       string    `json:"title,omitempty"`
 	Branch      string    `json:"branch,omitempty"`
 	PR          int       `json:"pr,omitempty"`
 	PreviousRun string    `json:"previous_run,omitempty"`
@@ -119,6 +145,76 @@ type Spec struct {
 	// launcher's image gate refuses an --attach launch at such a job before
 	// this field is ever set (plan P9).
 	Inputs []InputFile `json:"inputs,omitempty"`
+}
+
+// MaxTitleRunes bounds a task's own title (Spec.Title, fugaro run
+// --title): a title is one line naming a run in a terminal and in a pull
+// request's title, not a brief. The cap is deliberately well under what
+// every provider accepts in a title (GitHub's is 256 characters), so the
+// surfaces that clip for their own column (watch's 80 runes, the pull
+// request's 72) are the ones that shorten it, and never the storage. A
+// title over the cap is a refusal, not a truncation: two jobs told apart by
+// their titles must not be told apart by the part that was cut off.
+const MaxTitleRunes = 100
+
+// TitleProblem reports what is wrong with a run's own title t — "" when
+// nothing is — for the two places one is accepted: the launcher, at fugaro
+// run --title, and the runner, reading a stored task back (Spec.Validate).
+// One list with two callers, the rule InputNameProblem and InputNameBlank
+// already follow in this package, and for the same reason: a title the
+// launcher accepts has to be one the runner accepts, or the launch writes a
+// task the run then refuses at bootstrap, bytes in the bucket under a run
+// that never starts.
+//
+// The rules are: not empty (and not nothing but whitespace), one line — no
+// newline, CR, NEL or any other Unicode line break, since the title is
+// shown as one line of a terminal and written as one line of a pull
+// request — no C0, DEL or C1 control character, valid UTF-8, and at most
+// MaxTitleRunes runes. Bidi controls and zero-width characters are NOT
+// refused here: they are legal text in some languages. They are stripped
+// where the title is taken in (safetext.Field, the launcher's own
+// sanitisation) and where an untrusted one is shown (watch.clean), which is
+// the treatment every other string these surfaces display gets.
+func TitleProblem(t string) string {
+	if strings.TrimSpace(t) == "" {
+		return "is empty (or nothing but whitespace)"
+	}
+	if !utf8.ValidString(t) {
+		return "is not valid UTF-8"
+	}
+	if n := utf8.RuneCountInString(t); n > MaxTitleRunes {
+		return fmt.Sprintf("is longer than %d characters (%d)", MaxTitleRunes, n)
+	}
+	for _, r := range t {
+		switch {
+		case r == '\n' || r == '\r' || r == 0x85 || r == 0x2028 || r == 0x2029:
+			return "must be one line, without a line break in it"
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
+			return fmt.Sprintf("holds a control character (U+%04X)", r)
+		}
+	}
+	return ""
+}
+
+// TitleLine is the run's one-line title: the title its launcher stored
+// (Spec.Title), else the task prompt's own first line — the ONE rule every
+// surface that names a run follows, so a brief that starts with a shared
+// preamble is told apart wherever the run is listed. Callers clip it for
+// their own column (fugaro watch's 80 runes, the pull request's title) and
+// sanitise it for their own medium; none of them derives the text itself.
+//
+// A nil spec — a run whose task.json was absent or unreadable — has no
+// title, and nil is a real case here: runs ls and watch read runs whose
+// task they could not parse.
+func (s *Spec) TitleLine() string {
+	if s == nil {
+		return ""
+	}
+	if title := strings.TrimSpace(s.Title); title != "" {
+		return title
+	}
+	line, _, _ := strings.Cut(strings.TrimSpace(s.Task), "\n")
+	return line
 }
 
 // InputFile is one attached file, as the launcher recorded it: the name it
@@ -384,6 +480,25 @@ func (s *Spec) Validate() error {
 	}
 	if s.Batch != "" && !BatchRE.MatchString(s.Batch) {
 		bad("task spec: batch %q must be 1-63 lower-case letters, digits, '.', '_' or '-'", s.Batch)
+	}
+	// The title's own shape, through the one list the launcher applies to
+	// --title (TitleProblem): a title is shown as one line of a terminal
+	// and written as a pull request's title, so a hand-written task.json
+	// carrying a newline in it is refused here rather than shown.
+	// An absent title is legal (TitleLine falls back to the task's first
+	// line, as every run before this field did); one that is present has to
+	// be a title.
+	if s.Title != "" {
+		if p := TitleProblem(s.Title); p != "" {
+			bad("task spec: title %s", p)
+		} else if safetext.Field(s.Title) != s.Title {
+			// The launcher stores only safetext.Field's form of a title
+			// (titleFlag), so one holding what that drops — a bidi
+			// override, a zero-width character, untrimmed or repeated
+			// spaces — was not written by it, and would otherwise reach
+			// the pull request's title (rawPRText) verbatim.
+			bad("task spec: title %q is not in its sanitised form (bidi, zero-width or other invisible characters, or untrimmed or repeated spaces)", s.Title)
+		}
 	}
 	// config.ClaudeAccountNameRE and config.MaxClaudeAccountNameLen are the
 	// single source of truth for a named account's shape (internal/config/

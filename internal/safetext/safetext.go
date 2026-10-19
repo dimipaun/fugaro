@@ -4,6 +4,7 @@
 package safetext
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -209,4 +210,88 @@ func Field(s string) string {
 		s = Clip(s, FieldMax-1) + "…"
 	}
 	return s
+}
+
+// FieldListMax is how many entries of a list of untrusted values a listing
+// this program prints shows before it counts the rest instead.
+const FieldListMax = 20
+
+// FieldList is a list of untrusted values — the addresses an owner's own
+// object approves, the addresses a session's own command line named — as a
+// listing fit to print: the first FieldListMax entries, each one Field, and
+// the number of entries left out.
+//
+// Both bounds are needed and neither is enough. Field bounds one entry, so no
+// entry can add a line, a control or a screenful of its own; the cap bounds
+// the count, because a list is as long as whoever wrote it made it — the
+// object in the bucket holds as many addresses as it was written with, and a
+// command line holds as many arguments as the session passed — and a listing
+// that grew with its input would push this program's own words off the screen.
+//
+// The count is the honest half: a caller prints the entries it was given and
+// says how many it did not print (FieldListNote), because a listing that
+// silently stopped at twenty would read as a list of twenty, and the whole
+// list is what its reader acts on.
+func FieldList(items []string) (shown []string, omitted int) {
+	if len(items) > FieldListMax {
+		omitted = len(items) - FieldListMax
+	} else {
+		omitted = 0
+	}
+	shown = make([]string, 0, min(len(items), FieldListMax))
+	for i, v := range items {
+		if i == FieldListMax {
+			break
+		}
+		shown = append(shown, Field(v))
+	}
+	return shown, omitted
+}
+
+// FieldListNote is what a caller prints after a FieldList listing when entries
+// were left out: this program's own words and never the values', so it says
+// how many are not shown without being able to be written by one of them. It
+// is empty when nothing was left out.
+func FieldListNote(omitted int) string {
+	if omitted <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("and %d more, not listed here", omitted)
+}
+
+// FieldListLine is FieldList's listing as one line: the bounded entries joined
+// by ", ", and FieldListNote appended in brackets when anything was left out.
+// It is for a listing that sits inside one sentence of this program's own (a
+// refusal that names what it refused) rather than under a header of its own.
+func FieldListLine(items []string) string {
+	shown, omitted := FieldList(items)
+	line := strings.Join(shown, ", ")
+	if note := FieldListNote(omitted); note != "" {
+		line += " (" + note + ")"
+	}
+	return line
+}
+
+// fieldErr is an error whose message is a field (Field) and whose cause is
+// still the error it was made from.
+type fieldErr struct{ err error }
+
+func (e fieldErr) Error() string { return Field(e.err.Error()) }
+
+func (e fieldErr) Unwrap() error { return e.err }
+
+// FieldErr is err with Field applied to its message: the words an error
+// carries are as often another program's as this one's — a provider's, an
+// API's, terraform's own output — and a sentence a person reads must not take
+// that error's lines, controls or length from it. The bound is on the text and
+// never on the identity: errors.Is and errors.As still reach err through
+// Unwrap, so a caller that reads an exit code off a typed error inside it (a
+// *tf.ExitError, say) keeps reading it.
+//
+// A nil error stays nil, so a returning site can wrap unconditionally.
+func FieldErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fieldErr{err}
 }

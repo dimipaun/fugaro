@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The accounted side of the whole-project inventory (Task 4.5, design D59).
@@ -59,7 +61,7 @@ import (
 func AccountsOfState(data []byte) ([]StateResource, error) {
 	var st stateDocument
 	if err := json.Unmarshal(data, &st); err != nil {
-		return nil, fmt.Errorf("reading a Terraform state document: %w", err)
+		return nil, fmt.Errorf("reading a Terraform state document: %w", safetext.FieldErr(err))
 	}
 	if st.Version != stateFormatVersion {
 		return nil, fmt.Errorf("the state document is format version %d, and this build reads only %d", st.Version, stateFormatVersion)
@@ -83,7 +85,10 @@ func AccountsOfState(data []byte) ([]StateResource, error) {
 		for _, inst := range r.Instances {
 			name, err := stateAssetName(r.Type, inst.Attributes)
 			if err != nil {
-				return nil, fmt.Errorf("the state's %s.%s: %w", r.Type, r.Name, err)
+				// The type and the name are the state's own, and the error under
+				// them quotes the state's content: both are bounded, because this
+				// sentence is what a person reads when the accounting fails.
+				return nil, fmt.Errorf("the state's %s.%s: %w", safetext.Field(r.Type), safetext.Field(r.Name), safetext.FieldErr(err))
 			}
 			out = append(out, StateResource{Type: typ, Name: name})
 		}

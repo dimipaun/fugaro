@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -127,6 +128,16 @@ type runOptions struct {
 	// review-mode recipe (the last already refused by chooseRecipe, since
 	// a batch never sets --pr).
 	attempts int
+	// title is --title, as the task stores it: the run's own job title
+	// (task.Spec.Title), the one line every surface that names a run shows
+	// — fugaro watch's rows, the budget registry's entry, the pull
+	// request's title, runs ls. runRun validates and sanitises it once
+	// (titleFlag), so every spec builder below writes the same value and
+	// the follow-up comparison reads it back. Empty (the default) is no
+	// title at all: the task prompt's first line is the title, exactly as
+	// before the flag existed. A follow-up (--pr) inherits its previous
+	// run's title unless this is given (newFollowUpSpec).
+	title string
 	// token is the named Claude account (docs/design/named-oauth-tokens.md)
 	// this run uses: fugaro run --token. A follow-up (--pr) inherits its
 	// previous run's account when this is empty; an explicit value overrides
@@ -155,7 +166,14 @@ func newRunCmd() *cobra.Command {
 			"--attempts N (2 to 4) launches N independent runs of the same task as a best-of-N\n" +
 			"batch, under one batch label (bestof-<first run id> unless --batch is given); once\n" +
 			"they have all opened a pull request, compare them with fugaro run --recipe pick.\n" +
-			"It takes no --pr, --run-id or --retry.",
+			"It takes no --pr, --run-id or --retry.\n\n" +
+			"--title TEXT names the run: one line, at most 100 characters. It is what\n" +
+			"fugaro watch and runs ls list the run by, and the title (with the body's first\n" +
+			"heading) of the pull request the run opens when the agent writes no pr.md of\n" +
+			"its own. Without it the run is named by the task's first line, so briefs that\n" +
+			"start with the same preamble all read alike. A follow-up (--pr) keeps its run's\n" +
+			"title unless --title is given, and --retry takes none (the stored task keeps its\n" +
+			"own).",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runRun(cmd, &o, args) },
 	}
@@ -165,6 +183,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
 	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro runs ls")
+	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
 	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
@@ -180,7 +199,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout", "pr", "recipe", "token", "attach"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "task-file", "total-timeout", "pr", "recipe", "token", "attach"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -225,6 +244,12 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		}
 	} else {
 		var err error
+		// --title, resolved once for every launch shape below (a first run,
+		// a best-of-N batch, a review, a follow-up): o.title then holds the
+		// title exactly as the task stores it, or "" for no title at all.
+		if err = titleFlag(cmd, o); err != nil {
+			return err
+		}
 		if text, err = taskText(cmd, o.tf, args, prSet); err != nil {
 			return err
 		}
@@ -451,6 +476,12 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					return launchResult{}, err
 				}
 			}
+			if spec.Title != "" {
+				if err := checkCloneImageSince(env.lc, spec, titlesSince,
+					"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
 		} else {
 			if needsRecipeImage(spec, agentRecipe) {
 				if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -465,6 +496,18 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if spec.OAuthToken != "" {
 				if err := checkImageSince(ctx, env, slug, spec, kind, namedTokensSince,
 					"Claude account "+pluginwire.Printable(spec.OAuthToken), "named Claude accounts", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			// The job title's own gate, for the same reason as the two
+			// above: task.Parse decodes with DisallowUnknownFields, so a
+			// runner older than titlesSince refuses a task carrying a title
+			// outright. A launch with no --title carries no such field (the
+			// spec is byte-identical to what the previous release wrote) and
+			// is never gated: the check is the field's, not the flag's.
+			if spec.Title != "" {
+				if err := checkImageSince(ctx, env, slug, spec, kind, titlesSince,
+					"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
 					return launchResult{}, err
 				}
 			}
@@ -595,6 +638,38 @@ func taskText(cmd *cobra.Command, file string, args []string, optional bool) (st
 	return text, nil
 }
 
+// titleFlag resolves fugaro run --title into the title the task stores, in
+// o.title: the flag trimmed, checked against task's ONE list of what a
+// title may be (task.TitleProblem, the same list the runner applies when it
+// reads a task back, so a title this accepts is never one the run refuses
+// at bootstrap) and sanitised the way every other string this program shows
+// is (safetext.Field: bidi and zero-width characters dropped, runs of
+// whitespace collapsed to one space).
+//
+// The flag's absence is not a title, and leaves o.title empty — every
+// surface then falls back to the task's first line, exactly as before the
+// flag existed. Its PRESENCE with nothing in it is a mistake and is
+// refused: --title "" would otherwise be silently the same as no --title at
+// all, which is the one reading nobody meant. The emptiness check runs
+// again on the sanitised value, because the characters safetext.Field drops
+// (zero-width spaces and joiners, bidi embeddings and overrides, word
+// joiners, soft hyphens, the BOM) are not whitespace: a title made only of
+// them passes the trim and the check, and would otherwise be stored as no
+// title at all — the same silent no-op, one layer down.
+func titleFlag(cmd *cobra.Command, o *runOptions) error {
+	if !cmd.Flags().Changed("title") {
+		return nil
+	}
+	title := strings.TrimSpace(o.title)
+	if p := task.TitleProblem(title); p != "" {
+		return userErr("--title: %s", p)
+	}
+	if o.title = safetext.Field(title); strings.TrimSpace(o.title) == "" {
+		return userErr("--title: %s", "is empty (or nothing but whitespace and invisible characters)")
+	}
+	return nil
+}
+
 // attemptPlan is everything a new run's attempts share, resolved once: the
 // repository, workflow, ref, account and recipe. newSpec (a single launch)
 // and runAttempts (every attempt of a best-of-N batch) both build one, then
@@ -686,7 +761,8 @@ func buildAttemptSpec(plan *attemptPlan, o *runOptions, text string) (string, *t
 			return "", nil, err
 		}
 	}
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, Workflow: plan.workflow, Task: text, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode}
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, Workflow: plan.workflow, Task: text, Title: o.title,
+		RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode}
 	if plan.totalOverride != "" {
 		spec.Overrides.TotalTimeout = plan.totalOverride
 	}
@@ -927,7 +1003,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 		return "", nil, err
 	}
 	printRecipeNote(warn, rr, true)
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text,
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text, Title: o.title,
 		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...)}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()

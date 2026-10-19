@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -69,16 +70,35 @@ const cloneShipped = true
 
 // policySince is the first fugaro release whose launcher and runner read the
 // project's policy (the release phase 1 of the project-centric model ships
-// in, R4), and the release named by the launch gate launchPolicyGates
-// (run_allowlist.go), which refuses a policy newer than this binary: a
-// policy whose version is above what this binary understands is a policy
-// written by a newer Fugaro, and this release is what the message quotes
-// beside it. Like cloneSince and unlike the policy's own integer `version`
-// or the rules marker's RulesVersion, it is a *release*, and it is bumped by
-// the release that ships the model and by nothing else: docs/release.md's
-// ("Before you tag") checklist verifies it equals that release, the same way
-// it does for recipesSince, layeredSince and namedTokensSince.
+// in, R4). Like cloneSince and unlike the policy's own integer `version` or
+// the rules marker's RulesVersion, it is a *release*, and it is bumped by the
+// release that ships the model and by nothing else: docs/release.md's ("Before
+// you tag") checklist verifies it equals that release, the same way it does for
+// recipesSince, layeredSince and namedTokensSince.
+//
+// The launch gate (launchPolicyGates, run_allowlist.go) and doctor's checks
+// quote it where the subject is the model: the rules a policy is read under,
+// the marker that records them, and the release a node *behind* this binary was
+// written by. They never quote it where the subject is a policy version above
+// what this binary understands — that answer is the row of
+// projectpolicy.VersionSince for that version, which stopped being this
+// constant the moment the version was bumped past 1.
 const policySince = "0.8.0"
+
+// policyTooNewFix is doctor's fix line for a policy node ahead of this binary:
+// the upgrade, naming the release that introduced the version on the node when
+// projectpolicy.VersionSince knows it, and the plain upgrade when it does not —
+// the same table, and the same rule, as every too-new refusal
+// (projectpolicy.SkewSentence). A version no row names came from a
+// release newer than any this binary has heard of, and borrowing a row's
+// release for it would name one that is already installed, which is the fault
+// the table exists to fix.
+func policyTooNewFix(version int) string {
+	if rel, ok := projectpolicy.VersionRelease(version); ok {
+		return fmt.Sprintf("upgrade Fugaro to fugaro %s or later, the release that introduced policy version %d", rel, version)
+	}
+	return fmt.Sprintf("upgrade Fugaro to a release that understands version %d", version)
+}
 
 // catalogSince names the release whose runner reads a route's require_zdr
 // and price_policy (price-catalog plan Task 4, design D11): a runner before
@@ -192,6 +212,18 @@ const sealSince = "0.9.0"
 // cannot show (built_at is not the base's build time): that one is only
 // warned about.
 var sealRunnerIntroduced = time.Date(2026, 10, 17, 17, 45, 33, 0, time.UTC)
+
+// titlesSince is the first fugaro release whose runner reads a task's title
+// (task.Spec.Title, fugaro run --title): an older runner refuses the field
+// outright, since task.Parse decodes with DisallowUnknownFields, and the
+// run would fail at bootstrap on a task nobody can read. It must equal the
+// release that ships task.Spec.Title: docs/release.md ("Before you tag")
+// has the release checklist verify it. internal/cli/run.go gates a launch
+// that would set a title against an older build record, exactly as it does
+// for a named Claude account (namedTokensSince) and for mode: artifact
+// (artifactsSince); a launch with no --title writes no such field and is
+// never gated.
+const titlesSince = "0.8.5"
 
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets

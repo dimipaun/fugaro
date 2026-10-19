@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // projectProfilesLCBlock is the local config block the project-job tests and
@@ -200,8 +201,12 @@ func TestProjectJobEnvIsTheInstallationsAlone(t *testing.T) {
 	// The App's ID is the one non-installation variable a job carries, and it
 	// is not per-repository: one App serves the project (owner ruling of
 	// 2026-10-17, plan task 3.5 step 4), so it is resolved once and is the
-	// same in every job.
-	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, RTDBURLEnv, FirebaseAPIKeyEnv, providers.EnvGitHubAppID}
+	// same in every job. runner.SecretEnvsVar is the second, and it is the
+	// list of the variables the job mounts secrets as — the profile's mounts,
+	// which a repository's own config does not decide (a profile is what a
+	// repository selects), computed per job from that job's own SecretEnv and
+	// pinned by TestProjectJobRegistersItsMountedSecretsForRedaction.
+	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, RTDBURLEnv, FirebaseAPIKeyEnv, providers.EnvGitHubAppID, runner.SecretEnvsVar}
 	for name, j := range jobs {
 		keys := slices.Sorted(maps.Keys(j.Env))
 		for _, k := range keys {
@@ -248,8 +253,8 @@ budget: { rtdb_url: https://aurora-default-rtdb.firebaseio.com, firebase_api_key
 		if j.Env[RTDBURLEnv] != "https://aurora-default-rtdb.firebaseio.com" || j.Env[FirebaseAPIKeyEnv] != "AIzaSyA1234567890abcdefghijklmnopqrstu" {
 			t.Errorf("job %s backend env = %v", name, j.Env)
 		}
-		if len(j.Env) != 7 {
-			t.Errorf("job %s sets %d variables, want the four identity ones, the two backend ones and the App's ID: %v", name, len(j.Env), j.Env)
+		if len(j.Env) != 8 {
+			t.Errorf("job %s sets %d variables, want the four identity ones, the two backend ones, the App's ID and the redaction list: %v", name, len(j.Env), j.Env)
 		}
 		if j.Env[providers.EnvGitHubAppID] != "123456789" {
 			t.Errorf("job %s carries %s=%q, want the App ID the local config records", name, providers.EnvGitHubAppID, j.Env[providers.EnvGitHubAppID])
@@ -359,9 +364,9 @@ func TestProjectJobsOnVertexCarryTheVertexEnvironment(t *testing.T) {
 	if len(jobs) != 2 {
 		t.Fatalf("%d jobs, want 2", len(jobs))
 	}
-	// The four identity variables plus Vertex's two — no budget backend in
-	// this fixture, so nothing else may appear.
-	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, VertexRegionEnv, VertexProjectEnv, providers.EnvGitHubAppID}
+	// The four identity variables plus Vertex's two and the redaction list — no
+	// budget backend in this fixture, so nothing else may appear.
+	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, VertexRegionEnv, VertexProjectEnv, providers.EnvGitHubAppID, runner.SecretEnvsVar}
 	for name, j := range jobs {
 		if !j.Vertex {
 			t.Errorf("job %s is on Vertex: grant and environment disagree", name)
@@ -498,20 +503,92 @@ profiles:
 // project's repositories; plan Task 3.0 step 2, D5 amended). So a shared job
 // never serves Bitbucket and never mounts the Bitbucket token, whatever
 // provider the profile names.
-func TestProjectJobsRefuseBitbucket(t *testing.T) {
-	for _, c := range []struct{ name, lc, want string }{
-		{"a Bitbucket profile", `profiles:
+//
+// A Bitbucket profile is skipped and not refused, which is the whole of this
+// test: the policy layer admits such a profile (projectpolicy.validProfiles,
+// and TestProfileAdmitsOnlyItsOwnProvider), a Bitbucket repository's workflow
+// may select it, and the runner only requires a selected profile to be
+// defined — so an installation whose local config names one must deploy, and
+// the profile simply gets no job. Refusing the installation whole, as this
+// function used to, made `fugaro init` fail on a document `fugaro project
+// policy publish` accepts.
+//
+// Mutation (verified, run and restored): put the refusal back (return nil,
+// userErr(...) for !SharedJobProvider) — the first case below stops with an
+// error instead of deploying the GitHub profile. Mutation: drop the
+// SharedJobProvider skip — the first case deploys a job for the Bitbucket
+// profile, which no credential may serve.
+func TestProjectJobsSkipBitbucketProfiles(t *testing.T) {
+	// A project with repositories on both providers defines both profiles
+	// (the plan's own example, standard and standard-bitbucket): the GitHub
+	// one is deployed, the Bitbucket one is not, and the call succeeds.
+	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+`profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h }
+  standard-bitbucket: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }
+`)
+	if got := slices.Sorted(maps.Keys(jobs)); !slices.Equal(got, []string{gcp.ProjectJobName("standard", "github", "")}) {
+		t.Errorf("jobs = %v, want the GitHub profile's alone: a shared job never serves Bitbucket", got)
+	}
+	// The Bitbucket profile is still held to the policy's rules — CheckProfiles
+	// runs over every profile before any of them is skipped, so a skip is not
+	// a way to deploy an installation around a profile the policy would refuse.
+	// The Bitbucket profile here is valid, so nothing is refused; the
+	// assertion is that the GitHub one beside it is deployed in full.
+	for _, j := range jobs {
+		if j.Provider != "github" {
+			t.Errorf("a job was deployed for the %s provider: %+v", j.Provider, j)
+		}
+	}
+	// A local config naming the Bitbucket profile alone deploys nothing at all,
+	// rather than refusing: the map is empty, the tfvars key is left out and
+	// the root creates nothing, exactly as for an installation with no
+	// profiles. The config records no GitHub repository and so no GitHub App
+	// ID (m4LocalConfig's repository is a Bitbucket one): the App ID is
+	// required only when some profile gets a shared job, and none does here
+	// (TestProjectJobsNeedAGitHubAppID is the GitHub side of that).
+	if jobs := projectJobsFor(t, m4LocalConfig+m5Additions+`profiles:
   standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }
-`, "profiles.standard.provider: a shared job never serves bitbucket"},
-		{"the Bitbucket token on a GitHub profile", `project_secrets:
+`); len(jobs) != 0 {
+		t.Errorf("jobs = %v, want none: no shared job serves Bitbucket", slices.Sorted(maps.Keys(jobs)))
+	}
+	// The token is the other half of the ruling and is still refused: a shared
+	// job that serves GitHub may not mount a credential that reaches every
+	// repository of a Bitbucket workspace (ProjectJobs' own check, which a
+	// skip does not reach).
+	if _, err := ProjectJobs(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+`project_secrets:
   bitbucket-token: { allow_data_to: [acme/sandbox] }
 profiles:
   standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [bitbucket-token] }
-`, "profiles.standard.secrets[0]: \"bitbucket-token\" is the Bitbucket credential"},
-	} {
-		_, err := ProjectJobs(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+c.lc), "fugaro-runs-proj-1234", false)
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("%s: err = %v, want one naming %q", c.name, err, c.want)
+`), "fugaro-runs-proj-1234", false); err == nil ||
+		!strings.Contains(err.Error(), `profiles.standard.secrets[0]: "bitbucket-token" is the Bitbucket credential`) {
+		t.Errorf("err = %v, want the Bitbucket token refused on a GitHub profile", err)
+	}
+}
+
+// TestSharedJobProviderIsTheProvidersList: SharedJobProvider is the one place
+// "a shared project job serves this provider" is decided, and both sides of it
+// ask — the deployer skips a profile it does not serve and the launcher keeps
+// such a repository on its per-repository job — so the two can never disagree
+// about which jobs exist. Every kind a repository may use is answered, and the
+// served list holds kinds of config.Providers: a provider added to that list is
+// not silently given a shared job by a forgotten line here, which is the
+// mutation this test is for.
+func TestSharedJobProviderIsTheProvidersList(t *testing.T) {
+	for _, kind := range config.Providers {
+		want := kind == "github"
+		if got := SharedJobProvider(kind); got != want {
+			t.Errorf("SharedJobProvider(%q) = %v, want %v", kind, got, want)
+		}
+	}
+	if SharedJobProvider("") || SharedJobProvider("fake") || SharedJobProvider("gitlab") {
+		t.Error("SharedJobProvider answers true for a kind that is not a provider: a run with no provider, the tests' fake kind and a host nobody serves must all keep their per-repository job")
+	}
+	if len(sharedJobProviders) == 0 {
+		t.Fatal("no provider is served, so every profile is skipped and no project job is ever deployed")
+	}
+	for _, kind := range sharedJobProviders {
+		if !slices.Contains(config.Providers, kind) {
+			t.Errorf("sharedJobProviders names %q, which is not a provider kind of config.Providers (%v)", kind, config.Providers)
 		}
 	}
 }
@@ -768,6 +845,76 @@ func TestAccountJobMountsOnlyItsOwnToken(t *testing.T) {
 		}
 		if got := j.SecretEnv[config.ReservedSecrets["github-app-key"]]; got != "github-app-key" {
 			t.Errorf("job %s mounts github-app-key = %q, want the profile's own mount beside its account's token", name, got)
+		}
+	}
+}
+
+// TestProjectJobRegistersItsMountedSecretsForRedaction: every variable a
+// project job mounts a secret as is named in that job's own
+// runner.SecretEnvsVar, which is what the runner registers with its redactor
+// before bootstrap (internal/runner's addMountedSecrets).
+//
+// It is the project path's half of what the per-repository path has done since
+// the redactor existed (internal/infra/spec.go sets the variable there), and it
+// is load-bearing for an account job whatever the run's agent.auth is: the
+// token is in the job's environment, so an api-key or Vertex run of a profile
+// that lists the default account holds a credential the agent can read and the
+// run can print. SECURITY.md states the redactor masks what Fugaro publishes of
+// such a run; without this variable it does not.
+//
+// One source, per job: the list is the job's own SecretEnv keys — the same map
+// the module turns into secret_key_refs — and never a second list kept beside
+// it, so a mount added or dropped for one account cannot leave the redaction
+// list behind. The account jobs of one profile differ (each mounts its own
+// token, or none), which is why the list is computed per job and not once per
+// profile.
+//
+// Mutation (run, restore): drop the assignment in ProjectJobs (the pre-fix
+// code), which leaves every project job with no FUGARO_SECRET_ENVS at all, or
+// set it once from the profile's mounts before the loop, which gives the
+// account job a list that does not name its own token.
+func TestProjectJobRegistersItsMountedSecretsForRedaction(t *testing.T) {
+	// The account axis's own fixture: the profile serves the named account and
+	// the default one, so both jobs mount a token beside the profile's mount.
+	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountAxisLC)
+	v := config.ReservedSecrets[config.ClaudeOAuthToken]
+	for name, j := range jobs {
+		want := strings.Join(slices.Sorted(maps.Keys(j.SecretEnv)), ",")
+		if got := j.Env[runner.SecretEnvsVar]; got != want {
+			t.Errorf("job %s sets %s = %q, want %q: the variables it mounts secrets as are what the runner redacts", name, runner.SecretEnvsVar, got, want)
+		}
+		if got := j.Env[runner.SecretEnvsVar]; got == "" || !strings.Contains(got, v) {
+			t.Errorf("job %s sets %s = %q, which does not name %s, the variable its token is mounted as: a run in this job that printed its environment would publish the account's token", name, runner.SecretEnvsVar, got, v)
+		}
+		if _, dup := j.SecretEnv[runner.SecretEnvsVar]; dup {
+			t.Errorf("job %s mounts a secret as %s, which is the redaction list's own variable", name, runner.SecretEnvsVar)
+		}
+	}
+
+	// And the list is the job's own: a profile that serves a named account
+	// without the default one mounts no token on its no-account job, so that
+	// job's list names the profile's mount alone while the account job's names
+	// both. The profile is the account axis's with `default` dropped.
+	const namedOnly = `claude_accounts:
+  acme-personal: { allow_data_to: [acme/webapp] }
+project_secrets:
+  claude-oauth-token: { allow_data_to: [acme/webapp] }
+  github-app-key: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [acme-personal], secrets: [github-app-key] }
+`
+	appKey := config.ReservedSecrets["github-app-key"]
+	one := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+namedOnly)
+	want := map[string]string{
+		gcp.ProjectJobName("standard", "github", ""):              appKey,
+		gcp.ProjectJobName("standard", "github", "acme-personal"): v + "," + appKey,
+	}
+	if len(one) != len(want) {
+		t.Fatalf("the profile listed acme-personal alone and deployed %v, want its two jobs", sortedJobNames(one))
+	}
+	for name, w := range want {
+		if got := one[name].Env[runner.SecretEnvsVar]; got != w {
+			t.Errorf("job %s sets %s = %q, want %q", name, runner.SecretEnvsVar, got, w)
 		}
 	}
 }
