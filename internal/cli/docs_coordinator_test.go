@@ -17,8 +17,9 @@ package cli
 // checked against).
 //
 //  * TestDocsCoordinatorIsWritten -- the three files exist and carry the
-//    load-bearing sentences: the status line, the owner, the date, and the
-//    commit the reconciliation was run against.
+//    load-bearing sentences: the status line, the owner, the date, the commit
+//    the reconciliation was run against, and the fact that no question has been
+//    answered.
 //  * TestDocsCoordinatorSpecIsVerbatim -- spec.md carries the spec's own title,
 //    status and eleven sections, and carries none of the reconciliation's
 //    apparatus: the two documents have not been mixed.
@@ -26,15 +27,19 @@ package cli
 //    decision number, and both say so.
 //  * TestDocsCoordinatorCitationsExist -- every repository path reconciliation.md
 //    cites resolves on disk, in either the full form or the
-//    deploy/terraform/gcp/-relative form the Terraform modules are cited in.
+//    deploy/terraform/gcp/-relative form the Terraform modules are cited in, in
+//    every citation shape the document uses, and the check is measured against
+//    an independent count of the document's path-looking tokens.
 //  * TestDocsCoordinatorQuestionsAreNumberedAndOptioned -- Q1..Q16, contiguous,
 //    each with at least two options and a recommendation.
 //
-// Mutation (verified, run and restored) -- nine, one per way these documents can
-// rot, each planted and reverted when this file was added:
+// Mutation (verified, run and restored) -- thirteen, one per way these documents
+// can rot, each planted and reverted:
 //
 //	TestDocsCoordinatorIsWritten
-//	  delete the README's status sentence -> fails, naming it.
+//	  delete the README's status sentence -> fails, naming it;
+//	  delete the reconciliation's "All sixteen are still OPEN" sentence -> fails;
+//	  delete the README's "Q1–Q16 are all unanswered" -> fails.
 //	TestDocsCoordinatorSpecIsVerbatim
 //	  paste a `### Q1 — ` heading into spec.md -> fails;
 //	  delete `## 9. Long-running behaviour` -> fails.
@@ -42,7 +47,12 @@ package cli
 //	  add a `| **D193** | ... |` row to reconciliation.md -> fails;
 //	  drop its "It allocates no decision number" sentence -> fails.
 //	TestDocsCoordinatorCitationsExist
-//	  rename a cited path to `internal/budget/modelX.go` -> fails, naming it.
+//	  rename a cited path to `internal/budget/modelX.go` -> fails, naming it;
+//	  cite a nonexistent path in the `path:line Symbol` shape the old regexp
+//	  missed (`internal/task/taskNOPE.go:328 NewRunID`) -> fails, naming it,
+//	  where before this file's fix it passed;
+//	  restore the old shape-blind regexp -> the census assertion fails,
+//	  reporting "196 path-looking tokens and the citation check matched 163".
 //	TestDocsCoordinatorQuestionsAreNumberedAndOptioned
 //	  delete Q9 -> fails on every question after it;
 //	  leave Q12 with one option -> fails;
@@ -58,7 +68,12 @@ package cli
 // is declared in internal/budget/model.go -- evaluate.go:31 is
 // ReasonRepoDailyCap. The claim the reconciliation makes about itself ("every
 // path and symbol was read at that commit") is therefore only as strong as the
-// reading; this test does not back it.
+// reading; this test does not back it. A second review round found the other
+// half of the same problem in the extractor itself: the regexp required the
+// closing backtick to follow the path or its `:line` suffix, so the document's
+// `path:line Symbol` shape never matched and nine cited paths were never
+// checked. Both are why the census count is here: a check that silently sees
+// less is the failure mode, and a count is what turns it into a failure.
 //
 // A checker for that was prototyped and deliberately not shipped: pairing
 // identifiers with citations needs a notion of scope the prose does not carry
@@ -138,6 +153,20 @@ func TestDocsCoordinatorIsWritten(t *testing.T) {
 	if !strings.Contains(reconciled, "2026-10-19") {
 		t.Errorf("%s never states the date it was written", coordinatorReconciled)
 	}
+	// Both documents say, in their own words, that no question has been
+	// answered. This is the one fact in the package that no other check can
+	// see and that a later edit can quietly invert -- a reconciliation whose
+	// recommendations start reading as rulings is the failure this work's
+	// no-D-number rule exists to prevent, and it would arrive as prose rather
+	// than as a table row.
+	for path, want := range map[string]string{
+		coordinatorReadme:     "Q1–Q16 are all unanswered",
+		coordinatorReconciled: "**All sixteen are still OPEN.** The owner has answered none of them.",
+	} {
+		if !strings.Contains(readDoc(t, path), want) {
+			t.Errorf("%s no longer says the questions are unanswered: it lacks %q. The owner has not answered any of Q1–Q16, and a document that stops saying so reads as though they were decided", path, want)
+		}
+	}
 }
 
 // TestDocsCoordinatorSpecIsVerbatim: spec.md is the owner's document and
@@ -209,14 +238,47 @@ func TestDocsCoordinatorTakesNoDecisionNumber(t *testing.T) {
 	}
 }
 
-// coordinatorCitationRE finds a backtick-quoted repository path, with or
-// without a trailing line or line-range suffix: `internal/budget/model.go:1-2`,
-// `SECURITY.md:40`, `internal/budget/rules/rules.json.tmpl`, and the console's
-// own files (the renderer's CSP module, the IPC table). The extension set is the one this
-// repository's cited files use; a backticked token without one (a node path
-// such as `config/policy/shared`, a package name, a symbol) is not a citation
-// of a file and is left alone.
-var coordinatorCitationRE = regexp.MustCompile("`([A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|md|ts|js|json|tmpl|yaml|yml|tf))(?::[0-9]+(?:[-,][0-9]+)*)?`")
+// coordinatorCitationRE finds a backtick-quoted repository path, in EVERY shape
+// the reconciliation cites one in:
+//
+//	`internal/budget/model.go:1-2`         path, line range
+//	`SECURITY.md:40`                      path and one line
+//	`internal/task/task.go:328 NewRunID`  path, line, and the symbol there
+//	`internal/cli/init.go:1494 installRoot`
+//	the console's `main/spawn.ts:326+`        a line and an open end
+//	`internal/budget/model.go:151,164`    a list of lines
+//	`internal/pricing/table.go Embedded()` a path and a symbol, no line
+//	`internal/budget/rules/rules.json.tmpl` a path alone
+//
+// The shapes after the path are the document's dominant ones and the reason
+// this regexp is written the way it is. An earlier version required the closing
+// backtick to follow the path (or its `:line` suffix) immediately, which is
+// true of two of those shapes and false of the rest: `path:line Symbol` never
+// matched, so nine cited paths were never checked at all, and no test could
+// see it because the check simply found fewer citations and said nothing. The
+// shape after the path is therefore written as "whatever is not a backtick or
+// a newline", and coordinatorPathCensusRE below is the independent count that
+// makes a regexp which matches nothing a failure rather than a silence.
+//
+// The extension set is the one this repository's cited files use; a backticked
+// token without one (a node path such as `config/policy/shared`, a package
+// name, a symbol on its own) is not a citation of a file and is left alone.
+// The path character class carries `*` for the two globs the document names
+// (`internal/cli/docs_*_test.go`, `docs/design/credentials-service*.md`); both
+// are audited exceptions below, not files.
+var coordinatorCitationRE = regexp.MustCompile("`([A-Za-z0-9_.][A-Za-z0-9_./*-]*\\.(?:go|md|ts|json|js|tmpl|yaml|yml|tf)\\b)(?::[0-9]+(?:[-,+][0-9]*)*)?[^`\\n]*`")
+
+// coordinatorPathCensusRE is the independent count of how many path-looking
+// tokens the document holds, and it is deliberately dumber than the citation
+// regexp: any backticked token that carries a known extension anywhere in it,
+// whether the path starts the token or not, and whatever follows it. It is the
+// floor the citation check is measured against, so that a regexp which has
+// stopped matching the document's shapes fails the test instead of passing it
+// vacuously -- the failure mode that hid the `path:line Symbol` gap.
+//
+// Two regexps rather than one on purpose: a census computed with the same
+// regexp as the check would shrink with it and could never catch it.
+var coordinatorPathCensusRE = regexp.MustCompile("`[^`\\n]*\\.(?:go|md|ts|json|js|tmpl|yaml|yml|tf)\\b[^`\\n]*`")
 
 // coordinatorCitationPrefixes are the directories a citation may be relative to
 // besides the repository root. The Terraform modules are cited the way
@@ -241,7 +303,9 @@ var coordinatorCitationExceptions = map[string]string{
 	"CLAUDE.md":                             "§0 records that there is NO root CLAUDE.md; naming the absent file is the point of the sentence",
 	"docs/design/always-on-orchestrator.md": "the always-on orchestrator design, in open PR #632 and not on main; §2 #29 says so",
 	"docs/design/console-styling.md":        "the console styling design, in open PR #634 and not on main; U7 says so",
+	"docs/design/credentials-service*.md":   "§0.3 quotes the brief's own glob, which names no file: the documents are at docs/credentials-service/, and the point of the sentence is that docs/design/ has no such subdirectory",
 	"docs/releases/vX.Y.Z.md":               "the naming pattern of the release notes, not one file",
+	"internal/cli/docs_*_test.go":           "§0.4 names the pattern of the docs packages' pinning tests -- `*.go` is not a filename -- as the shape this file's tests were written from",
 }
 
 // TestDocsCoordinatorCitationsExist: every repository path reconciliation.md
@@ -250,10 +314,20 @@ var coordinatorCitationExceptions = map[string]string{
 // turns a checked finding into an unchecked one without any other symptom.
 func TestDocsCoordinatorCitationsExist(t *testing.T) {
 	doc := readDoc(t, coordinatorReconciled)
+	// The census first, and independently: how many path-looking tokens the
+	// document holds at all. The citation check below has to see at least that
+	// many, so a regexp that stopped matching a shape the prose uses fails
+	// rather than quietly checking less.
+	census := len(coordinatorPathCensusRE.FindAllString(doc, -1))
+	matches := coordinatorCitationRE.FindAllStringSubmatch(doc, -1)
+	if len(matches) < census {
+		t.Fatalf("%s holds %d path-looking tokens and the citation check matched %d of them: the document cites a shape coordinatorCitationRE no longer knows, so those citations are unchecked",
+			coordinatorReconciled, census, len(matches))
+	}
 	seen := map[string]bool{}
 	used := map[string]bool{}
 	cites := 0
-	for _, m := range coordinatorCitationRE.FindAllStringSubmatch(doc, -1) {
+	for _, m := range matches {
 		path := m[1]
 		if seen[path] {
 			continue
@@ -294,11 +368,11 @@ func TestDocsCoordinatorCitationsExist(t *testing.T) {
 			t.Errorf("%s no longer cites %q, but coordinatorCitationExceptions still excuses it: delete the entry, or the next citation of that name is unchecked", coordinatorReconciled, path)
 		}
 	}
-	// A regex that stopped matching would make this test pass vacuously, which
-	// is the one way a citation check fails silently.
-	if cites < 60 {
-		t.Fatalf("read only %d citations out of %s: the citation shape has moved, so this check saw almost nothing", cites, coordinatorReconciled)
-	}
+	// The number this test checked, said out loud, so that the count is
+	// visible in the run rather than a fact nobody reads: a later edit that
+	// halves it is a line in the log, and the census assertion above is what
+	// makes it a failure when it should be.
+	t.Logf("%s: %d citations checked, against a census of %d path-looking tokens in the document", coordinatorReconciled, cites, census)
 }
 
 // coordinatorQuestionRE finds a question heading in the reconciliation's

@@ -58,7 +58,7 @@ not exist. Recording them here so the next reader does not repeat them.
 | **Daily token-spend cap that "counts toward the project's existing spend caps"** (§9) | The existing caps are **per run**, keyed to a run's Firebase identity (`internal/budget/token/token.go:83-88 Claims`; `internal/budget/evaluate.go:135 Evaluate`). A long-lived service has no run identity. See **#25**. |
 | **Drift reconciliation: a scheduled job via the same Terraform** (§9) | This shape exists: Cloud Scheduler → HTTP POST to the Cloud Run Admin `jobs:run` API (`deploy/terraform/gcp/modules/installation/history.tf:180`, `*/15 * * * *`; a daily rollover at `:223`). It targets a **job**, not a service. See **#18**. |
 | **Console project-wide view; "ask the coordinator"** (§10) | The console's nav is Live / Spend / Projects (`console/src/renderer/entry.ts:490-496`); its data plane is one interface over the `fugaro` CLI as a sidecar (`console/src/source/cli.ts:1-8`), with thirteen read operations and one `link.openExternal` (`console/src/main/ipc.ts:307-558`, fourteen entries). The v2 *spec*'s "Overview" is unbuilt, and v2's ruling is one write only — launch (D22, `docs/design/desktop-console-v2.md:244`). See **#27**, **#28**. |
-| **Advisory, not authoritative; "never blocks or reorders merges"** (§3) | Consistent with the repo, and it has a hard consequence: the coordinator must hold **no GitHub write permission**. The App's per-run token asks for `contents: write, pull_requests: write, issues: read, metadata: read` (`internal/gitprov/github/apptoken.go:83`); a read-only set is expressible (`MintInstallationToken` takes the perms map) but no caller mints one. See **#9**, **Q3**. |
+| **Advisory, not authoritative; "never blocks or reorders merges"** (§3) | Consistent with the repo, and it has a hard consequence: the coordinator must hold **no GitHub write permission**. The App's per-run token asks for `contents: write, pull_requests: write, issues: read, metadata: read` (`internal/gitprov/github/apptoken.go:83`); a read-only set is not merely expressible, it is **minted today** — `{contents: read, metadata: read}` (`:89 buildTokenPermissions`, exported at `:93`) — by two callers, both of which only clone (`internal/cli/gitcred.go:107`, `internal/cli/imagecheck.go:517`). See **#9**, **Q3**. |
 | **Self-hosted; no Fugaro-operated central service** (§3) | Consistent: everything is per-installation, and managed projects are gated off in this release (`internal/cli/recipes_skew.go:169 managedDeployerShipped = false`). |
 | **"Works with any MCP-capable agent, not only Claude"** (§7) | The repository drives **only Claude Code** (`docs/base-image.md`). A front door for arbitrary MCP clients is a new integration and a new untrusted-input surface. See **#8**, **#13**. |
 
@@ -93,9 +93,24 @@ listed here, so adding one is a decision, not an accident."* The grant table bes
 present for a service.
 *Consequence:* the coordinator would be **the first request-serving workload in Fugaro**.
 It needs a new allowlisted type, a new grant row, and a decision about which `fugaro init`
-confirmation covers it. It also needs everything a service needs that a job does not:
-ingress, an invoker grant, `min_instance_count = 0`, a request timeout, and a concurrency
-setting — none of which exists anywhere in the tree today. → **Q1**.
+confirmation covers it. It also needs everything a service needs that a job does not: an
+ingress setting, an invoker grant on a *service*, `min_instance_count`, a request timeout,
+and a concurrency setting. Three of those five are not wholly absent, and the distinction is
+the difference between "the tree has never heard of this" and "the tree knows it and has no
+resource that states it":
+`internal/infra/tf/managed_cost.go` already names `min_instance_count` **and**
+`manual_instance_count` on `google_cloud_run_v2_service` — the first entry of the managed
+cost guard, whose line is stated once as `managedCostMaxMinInstances = 0` and whose comment
+says *"Zero is the provider's own default"*. The knob, its zero, and what it costs are all
+in the tree; what is missing is a module that sets it. An invoker grant exists as a
+mechanism but only ever on a job: `google_cloud_run_v2_job_iam_member` is on the plan
+allowlist (`internal/infra/tf/cover.go:28`) and in the grant table (`:145`), and three
+modules use it (`modules/installation/history.tf:154`, `modules/project/iam.tf:7`,
+`modules/repo/check.tf:102`). `ingress` appears in the tree only as the run VMs' **firewall**
+deny-ingress rule (`modules/compute/network.tf:58`), which is network ingress rather than
+Cloud Run's own. A timeout exists as a job's *task* timeout
+(`internal/backend/backend.go:336 DefaultTaskTimeout`, ten minutes), not as a service's
+request timeout. A concurrency setting has no precedent anywhere. → **Q1**.
 
 **#3 — "Part of project init's existing Terraform" is the right shape with the wrong noun, and the plan gate is an allowlist that a new service breaks. — Wrong (the noun) / Rule (the gate).**
 `fugaro init` applies the **installation** root (`internal/cli/init.go:1494 installRoot`,
@@ -185,9 +200,16 @@ frame-ancestors 'none'; object-src 'none'`, and the comment at `:126-128` says w
 *"`connect-src 'none'` is the load-bearing one: the renderer never talks to the network,
 because every byte it draws arrives over IPC from the main process."* The renderer reaches
 data only through `window.fugaro` → `ipcRenderer.invoke` (`console/src/preload/index.ts:238`)
-→ a fixed table of fourteen operations, thirteen of them reads, each of which spawns the
-`fugaro` binary with an exact argv (`console/src/main/ipc.ts:307-558`,
-`console/src/main/spawn.ts:326+`).
+→ a fixed table of fourteen operations, thirteen of them reads plus `link.openExternal`
+(`console/src/main/ipc.ts:307-558`). **Eleven** of the fourteen spawn the `fugaro` binary
+with an exact argv (`console/src/main/spawn.ts:326+`); the other three carry `command: null`
+and never spawn anything: `startup.compatibility` and `installation.current` are reads of
+the console's *own* state, answered in the main process
+(`console/src/main/ipc.ts:526-548` — the source comment says of the first that *"it is the
+one read that is not a read of the CLI"*), and `link.openExternal` is the one path to the
+user's browser. So the coordinator's console view joins an eleven-command data plane, not
+fourteen, and two of the three exceptions are the console's own handshake rather than the
+project's data.
 *Consequence:* live updates in the console are a **CLI-sidecar polling** problem, exactly
 like today's `live.watch` (`['watch','--json']`), not a listener problem. Whatever the
 coordinator stores, the console sees it only if a `fugaro` command can read it. → **Q8**.
@@ -206,12 +228,20 @@ endpoint**, so an MCP-conformant authorization story is new work, not a reuse. A
 spec's own §7 says the front door is open to *"any MCP-capable agent, not only Claude"*,
 which widens the untrusted-input surface beyond Fugaro's own runs. → **Q2**, **Q16**.
 
-**#9 — A project-wide GitHub reader is expressible, but the code has never minted one, and the per-repository scope is baked into the token call. — Exists / Gap.**
+**#9 — A read-only installation token exists and is minted today; what does not exist is a *project-wide* one, and the per-repository scope is baked into the token call. — Exists / Gap.**
 `github.MintInstallationToken(ctx, o, perms)` takes the permissions as an argument
-(`internal/gitprov/github/apptoken.go:105`), so a read-only set is a one-line change: the
-existing `buildTokenPermissions` is already `{contents: read, metadata: read}`
-(`:89`), while a run's `tokenPermissions` asks for `contents: write, pull_requests: write`
-(`:83`). But the body posted to GitHub is
+(`internal/gitprov/github/apptoken.go:105`), and the read-only set is not a proposal: it is
+`buildTokenPermissions`, `{contents: read, metadata: read}` (`:89`), exported as
+`BuildTokenPermissions()` (`:93`) for the callers that keep a copy. Two callers mint with
+it — `internal/cli/gitcred.go:107` (the image build's credential step, `mintBuildToken`,
+whose doc says the token *"can only read the one repository"*) and
+`internal/cli/imagecheck.go:517` (the daily image check, which also only clones) — against a
+run's `tokenPermissions`, which asks for `contents: write, pull_requests: write` (`:83`).
+So the coordinator's read-only credential is a **reuse of a mechanism that already runs in
+production**, not a new one: the named-set pattern, the accessor, and the two call sites are
+all there, and the change is to name a third set wide enough to read pull requests
+(`pull_requests: read`, `issues: read` beside the build's two) and call it. What the existing
+read-only token cannot give is reach across repositories: the body posted to GitHub is
 `{"repositories": []string{s.repo}, "permissions": perms}` (`:174`) — **one repository per
 token**. A project-wide reader therefore needs either N tokens (one per repository) or a
 project-wide installation token with `repositories` omitted, which `tokenSource` cannot
@@ -282,10 +312,13 @@ GitHub, and may never call a tool because a document told it to. → **Q4**, **Q
 Spec §3: *"Advisory, not authoritative … It never blocks or reorders merges."* The
 mechanical form of that sentence is a read-only GitHub credential. `MintInstallationToken`
 already takes the permission set as an argument (`internal/gitprov/github/apptoken.go:105`),
-so the rule is enforceable by never minting anything but a read-only set — and the repo has
-the precedent for a named, narrower set beside the run's: `buildTokenPermissions`
-(`:89`, `{contents: read, metadata: read}`) exists precisely because *"it only clones the
-repository."*
+so the rule is enforceable by never minting anything but a read-only set — and the repo does
+not merely have the precedent for a named, narrower set beside the run's, it **runs one
+today**: `buildTokenPermissions` (`:89`, `{contents: read, metadata: read}`) exists
+precisely because *"it only clones the repository"*, and it is minted by two callers
+(`internal/cli/gitcred.go:107`, `internal/cli/imagecheck.go:517`). A coordinator that holds
+no write permission is therefore not asking for a new kind of credential; it is asking for a
+third named set in a pattern the tree already uses.
 What could **not** be verified from here: the permissions the App itself has been granted on
 GitHub. `tokenPermissions` is what a run *asks for*, and GitHub caps it at the App's own
 grant; the App's grant is configured in GitHub's UI, not in this repository.
@@ -459,8 +492,10 @@ From the price catalog the repo ships (`internal/pricing/catalog/catalog.json`,
 input tokens and $0.18–$2.40 per million output; the catalog's own note is that *"a run
 that charges $5 may really cost up to about $189"* under the cheapest-endpoint
 undercharge (`docs/design/provider-price-catalog.md:12`). The built-in Claude table
-(`internal/pricing/table.go:44-57 Embedded()`) is Haiku 4.5 $1/$5, Sonnet 5.5 $2/$10,
-Opus 5.5 $4/$20, Fable 5.1 $10/$50.
+(`internal/pricing/table.go Embedded()`) is Haiku 4.5 $1/$5, Sonnet 5.5 $2/$10,
+Opus 5.5 $4/$20, Fable 5.1 $10/$50 (cited by symbol rather than by line: the function's body
+is a list that gains a model at a time, and a line range here was already wrong once — Fable
+5.1 sits at `:61-62`, outside the range this sentence used to name).
 A rough arithmetic, stated as arithmetic and not as a quote:
 - **Events per day.** 10 developers, each opening or updating a handful of PRs a day, plus
   branches, labels and merges: call it **50–200 events/day** at the project scale the spec
@@ -554,6 +589,12 @@ Sixteen questions. Each names what it changes in [spec.md](spec.md). They are qu
 not decisions: this work allocates no D-number, and no task starts before the owner answers
 them and then approves a plan.
 
+**All sixteen are still OPEN.** The owner has answered none of them. Every "Recommended"
+below is this document's own proposal, written to be easy to reject, and none of them is a
+ruling: no part of this reconciliation has been accepted, no D-number was allocated when it
+was written, and no review round since has changed that. A reader who finds one of these
+described elsewhere as decided should treat that as an error in the other document.
+
 ### Q1 — Where does the coordinator run, given Fugaro has never run a request-serving Cloud Run service?
 **Changes spec §4.**
 - **(A) Recommended — a Cloud Run *service* in the installation root for the front door, with the aggregation running as a Cloud Run *job* on a schedule.** The MCP front door must answer a caller synchronously, and only a service can; the aggregation is the part that has an existing pattern (finding **#18**) and no reason to be request-driven. This adds `google_cloud_run_v2_service` and its `*_iam_member` to `internal/infra/tf/cover.go` (a decision the test enforces, finding **#2**), and it means the first service-shaped knobs in the tree: ingress, invoker grants, `min_instance_count = 0`, a request timeout, concurrency.
@@ -570,7 +611,7 @@ them and then approves a plan.
 
 ### Q3 — What GitHub credential does the coordinator hold, and is read-only a hard rule?
 **Changes spec §3, §6, §7.**
-- **(A) Recommended — reuse the existing App (`github-app-key`) and mint a read-only installation token with a new named permission set `{contents: read, pull_requests: read, issues: read, metadata: read}`, and never a `write`.** The App key is already project-scoped by the owner's 2026-10-15 ruling (finding **#30**), and `MintInstallationToken` takes the set as an argument (finding **#9**). Cost: the same private key then sits in two places with two ceilings (finding **#15**), and the App's own grant on GitHub has to include `pull_requests: read` — which could not be verified from this container.
+- **(A) Recommended — reuse the existing App (`github-app-key`) and mint a read-only installation token with a new named permission set `{contents: read, pull_requests: read, issues: read, metadata: read}`, and never a `write`.** This is the smallest step of the three, because the mechanism is already built and running: `BuildTokenPermissions()` (`internal/gitprov/github/apptoken.go:93`) hands out `{contents: read, metadata: read}` and two callers mint with it today (`internal/cli/gitcred.go:107`, `internal/cli/imagecheck.go:517`), so the coordinator's set is a second var beside `buildTokenPermissions` plus the two read permissions it needs beyond a clone, and its call site is a third caller of the same function. The App key is already project-scoped by the owner's 2026-10-15 ruling (finding **#30**), and `MintInstallationToken` takes the set as an argument (finding **#9**). Cost: the same private key then sits in three places with two ceilings (finding **#15**), the token is still scoped to **one repository** (`apptoken.go:174`), so a project-wide reader is N tokens, and the App's own grant on GitHub has to include `pull_requests: read` — which could not be verified from this container.
 - **(B) A second, read-only GitHub App, used only by the coordinator.** Cleanest blast radius: a compromise of the coordinator cannot mint a write-capable token at all. Cost: a second App to create, install on every repository, and rotate — and a second secret to manage.
 - **(C) A fine-grained personal access token per project.** Cost: a long-lived human credential, no per-repository scoping guarantee, and it dies with the person who made it.
 *Consequence:* under any option, "the coordinator holds no GitHub write power" becomes a **hard rule** the code enforces by never asking for a write permission — the mechanical form of spec §3's "advisory, not authoritative".

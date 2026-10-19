@@ -5,7 +5,13 @@ reconciliation of that spec against the code at `origin/main` `c6009b5f` (`relea
 v0.8.6 (#637)`), and the questions the reconciliation could not answer on its own. No Go,
 no TypeScript, no Terraform, no rules change and no live action follows from these
 documents. **Owner: Dimi Paun. Date: 2026-10-19.** The reconciliation was run against
-`c6009b5f`, and every path and symbol in it was read at that commit.
+`c6009b5f`, and every path and symbol in it was read at that commit; the citation check that
+backs that claim, and the shape of citation it does not cover, are stated in
+`internal/cli/docs_coordinator_test.go`'s own comment rather than left implied.
+
+**Every question is still open. Q1–Q16 are all unanswered — the owner has answered none of
+them**, and nothing in this directory has been accepted, approved or given a decision number.
+The recommendations inside are proposals written to be rejected, not rulings.
 
 A coordinator is a **per-project service** that aggregates what every local orchestrator is
 doing, owns project-level state, detects conflicts early and suggests sequencing — advisory,
