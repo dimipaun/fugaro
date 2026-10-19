@@ -91,6 +91,9 @@ type GCS struct {
 	// (FailListings), as GCS does for a principal without
 	// storage.objects.list or for a bucket that is not there.
 	failList map[string]bool
+	// noList maps a bucket to the prefixes under which a read of a missing
+	// object answers 403, not 404 (AnswerMissingAs403).
+	noList map[string][]string
 	// denied maps a bucket to the prefixes DenyWrites has closed.
 	denied map[string][]string
 	// refusedPolicy makes a bucket's getIamPolicy answer 403.
@@ -141,7 +144,7 @@ func NewGCS(t *testing.T) *GCS {
 	g := &GCS{gen: 1_700_000_000_000_000, buckets: map[string]map[string]*object{}, meta: map[string]*bucketMeta{},
 		uploads: map[string]*upload{}, projects: map[string]uint64{}, denied: map[string][]string{},
 		refusedPolicy: map[string]bool{}, failedPolicy: map[string]bool{}, held: map[string][]string{},
-		failObject: map[string]int{}, reads: map[string]int{}, failList: map[string]bool{}}
+		failObject: map[string]int{}, reads: map[string]int{}, failList: map[string]bool{}, noList: map[string][]string{}}
 	g.Server = newServer(t, g.handle)
 	return g
 }
@@ -219,6 +222,19 @@ func (g *GCS) FailObjectGetsAfter(bucket, name string, skip int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.failObject[bucket+"/"+name] = skip + 1
+}
+
+// AnswerMissingAs403 makes a read (content or metadata) of a missing object
+// under prefix in bucket answer 403 PERMISSION_DENIED instead of 404, as GCS
+// answers a caller that holds storage.objects.get on the name but not
+// storage.objects.list — every job and build account, whose grants are
+// conditioned on a prefix (docs/design/bucket-iam.md §2.3, live check 7). A
+// present object still answers as it would; FailObjectGetsAfter is what
+// refuses a present one.
+func (g *GCS) AnswerMissingAs403(bucket, prefix string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.noList[bucket] = append(g.noList[bucket], prefix)
 }
 
 // AddProject lets bucket inserts name project id, whose number new buckets
@@ -755,6 +771,12 @@ func (g *GCS) notFound(w http.ResponseWriter, bucket, name string) {
 func (g *GCS) get(w http.ResponseWriter, bucket, name string, media bool) {
 	o := g.buckets[bucket][name]
 	if o == nil {
+		for _, p := range g.noList[bucket] {
+			if strings.HasPrefix(name, p) {
+				writeError(w, http.StatusForbidden, "PERMISSION_DENIED", fmt.Sprintf("caller does not have storage.objects.get access to the Google Cloud Storage object. Permission 'storage.objects.get' denied on resource (or it may not exist): %s/%s", bucket, name))
+				return
+			}
+		}
 		g.notFound(w, bucket, name)
 		return
 	}
