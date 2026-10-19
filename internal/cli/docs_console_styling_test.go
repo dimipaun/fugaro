@@ -2391,7 +2391,7 @@ func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 	// and a guard on either fixed string passes over the other — which is what
 	// §7.7 claims cannot happen. Both documents are read, because the claim was
 	// written in both (the plan's `J4` row carried a third wording).
-	exclusive := regexp.MustCompile(`\b(?:only|sole|one)\s+tasks?\s+(?:that\s+|to\s+)?touch(?:es)?\s+the\s+entry\b`)
+	exclusive := regexp.MustCompile(`\b(?:only|sole|one)\s+tasks?\s+(?:that\s+|to\s+)?touch(?:es)?\s+(?:the\s+)?(?:renderer\s+)?entry\b`)
 	for _, d := range []struct{ path, text string }{{path, doc}, {planPath, planDoc}} {
 		if m := exclusive.FindString(mdFlat(d.text)); m != "" {
 			t.Errorf("%s: the document still calls one task the sole owner of the entry (%q); two do — the rail's elements are Task 6.3's and the attributes and keys are Task 6.5's", d.path, m)
