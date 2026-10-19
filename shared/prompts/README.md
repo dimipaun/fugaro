@@ -50,7 +50,13 @@ announcedAt }`:
   in it, and the schema is what makes that structural rather than a convention: `validateMessage`
   refuses any field it does not name, so a classification cannot reach the bytes
   `canonicalBytes` covers, and it cannot reach the database. D127's reasoning — per-device state
-  stays on the device — is the same argument;
+  stays on the device — is the same argument. **`enqueue` defaults `destructive` to `false`, and
+  that default is the caller's obligation, not this module's safety net:** nothing on the wire says
+  whether a prompt's effect is destructive (it is never signed, so it cannot), and this module
+  cannot tell a misclassified prompt from a quiet one. P6.7 — the only writer — must pass the flag
+  explicitly for every prompt it queues, and it is P6.7's own card (§3.5) that refuses an answer to
+  a destructive prompt in any other shape. The default exists for a caller that has established
+  there is nothing destructive to flag;
 - `announcedAt` is the phone's own record of when the user last **heard** the question, `null`
   until they have. It is local for the same reason, and it is what makes a redelivery of a *held*
   prompt harmless: a duplicate is answered from the queue it is already in, so the announcement
@@ -102,7 +108,11 @@ is past its 72-hour TTL. The two cross-account reads (`pendingAcross`, `announce
 interrupt policy take their `now` without this bound, deliberately: they hold no watermark and write
 nothing, so a far-future `now` there is a read that reports everything expired rather than a state
 a caller has to recover from — and a jump bound per installation would refuse a legitimate pause
-across installations whose queues were last seen at different times.
+across installations whose queues were last seen at different times. They do apply the **backwards**
+rule (`now-went-backwards`, against every queue they read), because reading a queue at a time before
+its own watermark is a contradiction whatever the caller does with it. **If any of those three ever
+grows a write, it takes this bound with it** — `open()` is the only door a watermark moves through,
+and a second door would have to argue for itself here.
 
 ## Two windows, and which one an answer takes (D173, §3.6)
 
@@ -298,7 +308,11 @@ the two ends of one rule: the **write path** will not store a prompt the read pa
 the ceiling holds on both sides of a queue's life), and a **plain `answer` to a destructive prompt**
 is `not-a-confirmation` while an **action record** answers it, is judged from the confirmation's own
 time and is checked as an action record rather than merely accepted by kind. Three tests pin the
-rules that were *removed* rather than kept: `reminderStage` is monotone in `at` (which
+rules that were *removed* rather than kept, and two more pin the rule the whole clock section
+rests on: every operation that accepts a reading **writes it into the queue it hands back** — so a
+clock that steps back after an `enqueue`, an `expire`, an `answer` or an `announce` is refused
+`now-went-backwards`, one case per path — and the count across installations refuses a reading
+behind any installation it read. `reminderStage` is monotone in `at` (which
 is why the listing needs no stage rule of its own), an expiry list comes back oldest-first (which is
 why `expire` needs no sort), and `digest.severity` is read through its own descriptor (which is why
 `readKill` has no plain property access). One test is not about values at all: it scans `index.js`
@@ -314,7 +328,7 @@ P6.13 have one — so that sentence is the task's *Verification* clause, and thi
 step the plan named. It is still written first and kept as `mutation-proof.sh`'s first guard: it is
 the clause the task is verified by, and re-running it costs nothing.
 
-`mutation-proof.sh` plants 81 one-line bugs in `index.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 86 one-line bugs in `index.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. It

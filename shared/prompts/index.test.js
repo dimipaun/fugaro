@@ -595,6 +595,53 @@ test('a clock that leaps forward is refused, and the watermark does not move', (
   assert.equal(expire(queue, { now: T0 - 1 }).code, REFUSAL.NOW_WENT_BACKWARDS);
 });
 
+test('every operation that accepts a clock reading writes it into the queue it hands back', () => {
+  // The monotone rule is not only a check on the way in: an accepted `now`
+  // becomes the queue's watermark, which is what makes the NEXT call's
+  // `now-went-backwards` possible. One path that forgot to write it would let a
+  // clock step back after an enqueue, an answer or an announce -- re-arming
+  // reminders and reviving a prompt's due state -- while looking exactly like a
+  // queue that had never heard of the later reading.
+  const queue = enqueueOne(makeQueue()).queue;
+  assert.equal(queue.now, T0);
+  const later = T0 + HOUR;
+  const paths = [
+    ['enqueue', (q, now) => enqueue(q, { now, prompt: promptMessage({ id: 'p2', at: now }) })],
+    ['expire', (q, now) => expire(q, { now })],
+    ['answer', (q, now) => answer(q, { now, answer: answerMessage({ at: now }) })],
+    ['announce', (q, now) => announce(q, { now })],
+  ];
+  for (const [name, act] of paths) {
+    const moved = act(queue, later);
+    assert.equal(moved.ok, true, `${name}: ${JSON.stringify(moved)}`);
+    assert.equal(moved.queue.now, later, `${name} writes the reading it accepted`);
+    // And the rule that write is for, on the queue it just handed back.
+    assert.equal(act(moved.queue, later - 1).code, REFUSAL.NOW_WENT_BACKWARDS, name);
+  }
+});
+
+test('the count across installations refuses a clock behind an installation it read', () => {
+  // `announcement`'s own check is pinned beside it; this is the same rule in
+  // the other cross-account read, reached one loop in. The count is of a world
+  // that has already moved on otherwise -- and the check is per installation,
+  // not once for the list, so one queue ahead is enough.
+  const queues = twoAccounts();
+  const ahead = queues.map((q, index) => (index === 1 ? { ...q, now: T0 + MINUTE } : q));
+  const refused = pendingAcross(ahead, { now: T0 });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, REFUSAL.NOW_WENT_BACKWARDS);
+  assert.equal(refused.field, 'now');
+  assert.ok(Object.isFrozen(refused));
+  // At the reading the installation was last seen at, the same list is read.
+  assert.equal(pendingAcross(ahead, { now: T0 + MINUTE }).ok, true);
+  // One installation, behind: the same rule, the same code.
+  const single = [{ ...queues[0], now: T0 + MINUTE }];
+  assert.equal(pendingAcross(single, { now: T0 }).code, REFUSAL.NOW_WENT_BACKWARDS);
+  // And the forward jump is deliberately NOT bounded here: nothing is written,
+  // so a far-future reading is a listing, not a fault.
+  assert.equal(pendingAcross(queues, { now: T0 + MAX_JUMP_MS + 1 }).ok, true);
+});
+
 test('a stored prompt is re-checked against the `at` bound on every read', () => {
   // The schema accepts `at: 0` (and `at: -0`, which is numerically zero) and
   // any safe integer up to `Number.MAX_SAFE_INTEGER`; this module will not

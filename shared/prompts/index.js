@@ -885,6 +885,14 @@ function readClock(event, where) {
  * defaults to false; `safe` is its non-destructive answer, or omitted when the
  * prompt has none.
  *
+ * The default is the CALLER's obligation, not this module's safety net: whether
+ * a prompt's effect is destructive is phone-local and never signed (D127), so
+ * nothing on the wire says it and this module cannot tell a misclassified
+ * prompt from a quiet one. P6.7 -- the only writer -- passes the flag
+ * explicitly for every prompt it queues, and P6.7's own card (§3.5) is what
+ * refuses an answer to a destructive prompt in any other shape. `false` is for
+ * a caller that has established there is nothing to flag.
+ *
  * Outcomes, and why each is not the other:
  *
  *   queued      accepted, in canonical order.

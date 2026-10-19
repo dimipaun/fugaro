@@ -374,6 +374,45 @@ run "a clock that went backwards is refused" \
   "  if (read.values.now < current.queue.now) return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');" \
   "  if (false) return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');"
 
+# The rule is not only a check on the way in: an accepted `now` is WRITTEN into
+# the queue the operation hands back, and that write is what makes the next
+# call's `now-went-backwards` possible. A path that accepted a reading and did
+# not record it would let the clock step back afterwards -- re-arming reminders
+# and reviving a `due` state -- while looking like a queue that never heard the
+# later time. One guard per path that moves the watermark, because one path
+# forgetting it is the whole fault.
+run "enqueue writes the reading it accepted" \
+  "      ...current,
+      now: values.now,
+      prompts: insert(current.prompts, entry)," \
+  "      ...current,
+      prompts: insert(current.prompts, entry),"
+
+run "expire writes the reading it accepted" \
+  "    queue: freezeQueue({ ...current, now: values.now, prompts: kept })," \
+  "    queue: freezeQueue({ ...current, prompts: kept }),"
+
+run "answer writes the reading it accepted" \
+  "    destructive: entry.destructive,
+    queue: freezeQueue({ ...current, now: values.now, prompts })," \
+  "    destructive: entry.destructive,
+    queue: freezeQueue({ ...current, prompts }),"
+
+run "announce writes the reading it accepted" \
+  "    queue: freezeQueue({ ...current, now: values.now, prompts }),
+    spoken: Object.freeze(due.map((entry) => spokenItem(marked.get(entry.prompt.id), values.now)))," \
+  "    queue: freezeQueue({ ...current, prompts }),
+    spoken: Object.freeze(due.map((entry) => spokenItem(marked.get(entry.prompt.id), values.now))),"
+
+# The cross-account reads hold no watermark, so they apply the backwards rule
+# and NOT the jump bound -- but they do apply the backwards rule, per
+# installation, over every queue they were handed.
+run "the count across installations refuses a clock behind one of them" \
+  "    if (now < queue.now) return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');
+    const list = queue.prompts" \
+  "    if (false) return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');
+    const list = queue.prompts"
+
 # The other direction of the same rule: an unbounded leap forward would be
 # written as the watermark, and every honest `now` afterwards would come back
 # `now-went-backwards`, so one bad reading would brick the queue.
