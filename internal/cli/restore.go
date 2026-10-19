@@ -397,25 +397,11 @@ func (rr *restoreRun) refuseExisting(ctx context.Context) error {
 // verifyCreated is the creation's postcondition, checked before anything
 // else moves, and it is bound to THIS run rather than to whatever is in the
 // cloud: the creating run's own account (made, filled by init's markCreated)
-// must say it created NEW_PROJECT_ID, did not find it already there, wrote
-// its creation fact — a write managed.WriteMarker makes create-only
+// must say it created NEW_PROJECT_ID, did not find it already there, and
+// wrote its creation fact — a write managed.WriteMarker makes create-only
 // (ifGenerationMatch=0), so a fact somebody planted first makes that write
-// fail and is never this run's — and set D77's managed state bucket up. Only
-// then is the fact read back through the fail-closed read every managed
-// command uses.
-//
-// The state bucket is part of the postcondition and not a detail of the
-// apply: markCreated sets Marked before it runs EnsureManagedStateBucket,
-// whose failure is a warning, so "created and marked" is a project the
-// managed apply at the end of this command would refuse — it has nowhere to
-// keep its state, and no command reaches that step again (a second
-// init --create-project adopts the project, and markCreated is guarded by
-// the run having created one). A restore that accepted it would move the
-// committed gcp_project: line and print its NOT-restored list claiming the
-// state bucket is the one thing RE-CREATED, and a retry with the same
-// NEW_PROJECT_ID could not adopt it either. It is refused here, while the
-// config can still go back, and it is a plain refusal rather than a
-// createdNotOpenError: the project is not one this command can finish.
+// fail and is never this run's. Only then is the fact read back through the
+// fail-closed read every managed command uses.
 func (rr *restoreRun) verifyCreated(ctx context.Context, c *infra.Clients, made initCreation) error {
 	switch {
 	case made.Existed:
@@ -424,8 +410,6 @@ func (rr *restoreRun) verifyCreated(ctx context.Context, c *infra.Clients, made 
 		return userErr("the creating path did not create %s (it created %q)", rr.newID, made.Created)
 	case !made.Marked:
 		return userErr("the creating path created %s but did not write its creation fact, so it is not managed", rr.newID)
-	case !made.StateBucket:
-		return userErr("the creating path created %s and wrote its creation fact, but its managed state bucket (gs://%s) was not set up, so a managed apply has nowhere to keep its state. Nothing was restored and the project config is back as it was; the project %s stays (run gcloud projects delete %s to shut it down), and retry with another NEW_PROJECT_ID: a managed creation writes the state bucket, and a rerun of one that is already there adopts the project without ever reaching that step", rr.newID, managedmode.ManagedStateBucketName(rr.newID), rr.newID, rr.newID)
 	}
 	var s *storage.Service
 	var r *crm.Service

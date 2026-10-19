@@ -688,8 +688,8 @@ func TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer(t *testing.T
 		t.Fatalf("the creating path: %v\n%s", err, out.String())
 	}
 	// The creating run's own account, which verifyCreated binds to.
-	if made != (initCreation{Created: newProj, Marked: true, StateBucket: true}) {
-		t.Errorf("the creating run reported %+v, want it created %s, did not find it there, wrote its fact, and set up its managed state bucket", made, newProj)
+	if made != (initCreation{Created: newProj, Marked: true}) {
+		t.Errorf("the creating run reported %+v, want it created %s, did not find it there, and wrote its fact", made, newProj)
 	}
 	if strings.Contains(out.String(), "left for you") {
 		t.Errorf("the creating path left a typed step for the user: it was not given the user's terminal\n%s", out.String())
@@ -1428,58 +1428,13 @@ func TestRestoreACreationThatEndsUnmarkedStopsBeforeTheCheckout(t *testing.T) {
 	}
 }
 
-// TestRestoreACreationWithNoStateBucketStopsBeforeTheCheckout: D77's state
-// bucket is the other half of a managed creation, and markCreated sets
-// Marked before it runs EnsureManagedStateBucket — whose failure is a
-// warning, not a failed run. So a creating run can end with a project that
-// is created and marked and still has nowhere to keep a managed apply's
-// state, and no command reaches that step again: a second init
-// --create-project adopts the project (markCreated is guarded by the run
-// having created one) and fugaro managed apply only ever applies. The
-// restore must refuse that project before the checkout's gcp_project: line
-// moves and before the apply, put the config back, and say what it left —
-// never claim the state bucket is the one thing RE-CREATED and send the
-// operator after a command that cannot create it.
-func TestRestoreACreationWithNoStateBucketStopsBeforeTheCheckout(t *testing.T) {
-	r, _ := newRestoreRig(t)
-	restoreManagedOld(r)
-	// The state bucket step fails as a transient backend error would: the
-	// bucket is created and its policy read answers 500, so the deployer is
-	// never bound on it.
-	r.gcs.FailBucketPolicy(managedmode.ManagedStateBucketName(newProj))
-	calls := recordRestoreApply(t, r)
-	checkout, root := restoreCheckout(t)
-	before, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
-	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
-	if err == nil || !strings.Contains(err.Error(), "managed state bucket") {
-		t.Fatalf("want the creation's verification to refuse a project with no state bucket, got %v\n%s", err, out)
-	}
-	if len(r.crm.Creates()) != 1 {
-		t.Errorf("%d creation(s), want 1: the case is a creation that ran and lost its state bucket step", len(r.crm.Creates()))
-	}
-	if len(*calls) != 0 {
-		t.Errorf("a project with no state bucket reached the apply %d time(s)", len(*calls))
-	}
-	if !bytes.Equal(mustRead(t, r.cfg), before) || !bytes.Equal(mustRead(t, filepath.Join(checkout, "fugaro.yaml")), yaml) {
-		t.Error("a creation with no state bucket left the project config or the checkout moved")
-	}
-	// The refused project is not one this command can finish, so the failure
-	// must not say the config stayed moved or advise an apply on it.
-	if strings.Contains(err.Error(), "fugaro managed apply") && !strings.Contains(err.Error(), "retry with another NEW_PROJECT_ID") {
-		t.Errorf("the refusal advises a managed apply on a project that has no state bucket: %v", err)
-	}
-	if strings.Contains(out, "RE-CREATED") {
-		t.Errorf("the NOT-restored list was printed for a creation that never finished:\n%s", out)
-	}
-}
-
 // TestRestoreVerifiesTheCreatedProjectIsManaged: the check between the
 // creation and the move of the checkout reads the new project's fact
 // fail-closed — a fact about another project (the mismatch infra/managed's
 // own suite refuses) fails the restore here too, and the right one passes.
 func TestRestoreVerifiesTheCreatedProjectIsManaged(t *testing.T) {
 	good := `{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"USD"}}`
-	ours := initCreation{Created: newProj, Marked: true, StateBucket: true}
+	ours := initCreation{Created: newProj, Marked: true}
 	for name, tc := range map[string]struct {
 		fact string
 		made initCreation
@@ -1500,13 +1455,8 @@ func TestRestoreVerifiesTheCreatedProjectIsManaged(t *testing.T) {
 		"a planted fact, the project adopted":      {good, initCreation{Existed: true, Marked: false}, false},
 		"a planted fact, nothing created":          {good, initCreation{}, false},
 		"a planted fact, created but write failed": {good, initCreation{Created: newProj}, false},
-		"a planted fact, another project created":  {good, initCreation{Created: "other-proj-1", Marked: true, StateBucket: true}, false},
-		"the run says it found the project there":  {good, initCreation{Created: newProj, Existed: true, Marked: true, StateBucket: true}, false},
-		// D77's state bucket is part of the creation: markCreated sets
-		// Marked before EnsureManagedStateBucket runs, and that step's
-		// failure is a warning, so a run that got that far and no further
-		// leaves a project the apply at the end of the restore would refuse.
-		"a created and marked project with no state bucket": {good, initCreation{Created: newProj, Marked: true}, false},
+		"a planted fact, another project created":  {good, initCreation{Created: "other-proj-1", Marked: true}, false},
+		"the run says it found the project there":  {good, initCreation{Created: newProj, Existed: true, Marked: true}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r, lc := newRestoreRig(t)
