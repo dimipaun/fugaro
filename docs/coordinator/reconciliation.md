@@ -236,14 +236,16 @@ which widens the untrusted-input surface beyond Fugaro's own runs. → **Q2**, *
 it — `internal/cli/gitcred.go:107` (the image build's credential step, `mintBuildToken`,
 whose doc says the token *"can only read the one repository"*) and
 `internal/cli/imagecheck.go:517` (the daily image check, which also only clones) — against a
-run's `tokenPermissions`, which asks for `contents: write, pull_requests: write` (`:83`).
+run's own `tokenPermissions` set, which asks for `contents: write, pull_requests: write`
+(`internal/gitprov/github/apptoken.go:83`).
 So the coordinator's read-only credential is a **reuse of a mechanism that already runs in
 production**, not a new one: the named-set pattern, the accessor, and the two call sites are
 all there, and the change is to name a third set wide enough to read pull requests
 (`pull_requests: read`, `issues: read` beside the build's two) and call it. What the existing
 read-only token cannot give is reach across repositories: the body posted to GitHub is
-`{"repositories": []string{s.repo}, "permissions": perms}` (`:174`) — **one repository per
-token**. A project-wide reader therefore needs either N tokens (one per repository) or a
+`{"repositories": []string{s.repo}, "permissions": perms}`
+(`internal/gitprov/github/apptoken.go:174`) — **one repository per token**.
+A project-wide reader therefore needs either N tokens (one per repository) or a
 project-wide installation token with `repositories` omitted, which `tokenSource` cannot
 express.
 The credential is already project-scoped, and this is decided, not incidental:
@@ -331,9 +333,10 @@ Reuse is plausible for three reasons: `github-app-key` is already the project-sc
 credential (finding **#9**), the App is already one App per team's repositories
 (`internal/infra/secretmounts_test.go:97`), and the token call takes its permissions as an
 argument. The caveat: **the App is also the credential a run uses to write pull requests**
-(`tokenPermissions`, `:83`), so the same private key would sit in two places with two
-different permission ceilings, and the coordinator would hold a key that *can* mint a
-write-capable token even if it never does. The alternative is a second, read-only App.
+(`internal/gitprov/github/apptoken.go:83 tokenPermissions`), so the same private key would
+sit in two places with two different permission ceilings, and the coordinator would hold a
+key that *can* mint a write-capable token even if it never does. The alternative is a
+second, read-only App.
 *Consequence:* this is a blast-radius question, not a convenience one — it decides what a
 compromise of the coordinator is worth. → **Q3**.
 
@@ -431,7 +434,7 @@ The governing pair, from `docs/credentials-service/reconciliation.md`:
   key (slice 3)"*.
 Neither says "a long-lived service may hold a model credential for its **own** use". D143
 bounds a service that issues credentials **to runs**; the coordinator would spend a model
-credential **itself**. The nearest other statement is F36 (`:...`), which keeps the service
+credential **itself**. The nearest other statement is F36 (`:154`), which keeps the service
 *"secrets-only"* and sends other always-on features to sibling services that call it.
 *Consequence:* the coordinator is either a **second** long-lived secret holder (a new
 decision, with its own D143-style bounds) or a **client** of the credentials service (a

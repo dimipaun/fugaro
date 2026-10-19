@@ -11,7 +11,7 @@ package cli
 // The reconciliation's whole value is that every claim in it is checkable, and
 // the three things a later edit can silently break are: the spec stops being
 // verbatim, a citation drifts to a path that no longer exists, or the work
-// starts allocating decision numbers the owner never gave it. Each of the five
+// starts allocating decision numbers the owner never gave it. Each of the six
 // tests below is one of those, plus the two structural facts (the questions are
 // numbered and optioned; the index states the status, the owner and the commit
 // checked against).
@@ -30,10 +30,15 @@ package cli
 //    deploy/terraform/gcp/-relative form the Terraform modules are cited in, in
 //    every citation shape the document uses, and the check is measured against
 //    an independent count of the document's path-looking tokens.
+//  * TestDocsCoordinatorRelativeCitationsResolve -- every relative second
+//    reference (`:89`, `:14-24`, `:127 notCovered`) resolves against the
+//    nearest full-path citation before it in its own paragraph, to a line that
+//    exists, and -- where a symbol is named -- to a symbol within a few lines
+//    of it.
 //  * TestDocsCoordinatorQuestionsAreNumberedAndOptioned -- Q1..Q16, contiguous,
 //    each with at least two options and a recommendation.
 //
-// Mutation (verified, run and restored) -- thirteen, one per way these documents
+// Mutation (verified, run and restored) -- twenty, one per way these documents
 // can rot, each planted and reverted:
 //
 //	TestDocsCoordinatorIsWritten
@@ -52,47 +57,84 @@ package cli
 //	  missed (`internal/task/taskNOPE.go:328 NewRunID`) -> fails, naming it,
 //	  where before this file's fix it passed;
 //	  restore the old shape-blind regexp -> the census assertion fails,
-//	  reporting "214 path-looking tokens and the citation check matched 180".
+//	  reporting "217 path-looking tokens and the citation check matched 186";
+//	  make the regexp line-bounded again -> fails in the relative check below,
+//	  because that loses the anchor `:127 notCovered` resolves against.
+//	TestDocsCoordinatorRelativeCitationsResolve
+//	  put the literal `:...` back where the F36 line reference is -> fails: a
+//	  placeholder is not a line number;
+//	  cite `:14024` against a 410-line file -> fails, past the end of the file;
+//	  cite `:1190 Start` for the same -> fails, and does not slice out of range;
+//	  name `:209 denyWindowGone` -> fails: no such symbol near the line;
+//	  write the same reference as a bare `:83 tokenPermissions` after an anchor
+//	  that is another file (secretmounts_test.go) -> fails on the symbol. This
+//	  is the document defect this check was written for, reproduced: the
+//	  paragraph's last full path before the reference was not the file the
+//	  reference meant, and nothing could see it;
+//	  delete the full-path citation that anchors the D143/D145 bullets ->
+//	  fails three times, naming the references with no anchor.
 //	TestDocsCoordinatorQuestionsAreNumberedAndOptioned
 //	  delete Q9 -> fails on every question after it;
 //	  leave Q12 with one option -> fails;
 //	  rename Q14's "Recommended" -> fails.
 //
 // The numbers above are a reading of the document at the commit that last
-// edited this comment, not a constant, and they went stale once already: the
-// census figures were recorded as 196/163 when the document was smaller, and
-// three commits of edits later the same mutation reports 214/180. Anyone
-// re-running a mutation here should
-// read the count from the assertion's own message and from the check's log line
-// ("N citations checked, against a census of M path-looking tokens") rather
-// than from this comment, and update the comment to whatever it says. A number
-// quoted here is a witness that the mutation fires, not a fact about the test.
+// edited this comment, not a constant, and they have gone stale every time the
+// document has grown: the census figures were recorded as 196/163 when the
+// document was smaller, then as 214/180 three commits later, and the same
+// mutation now reports 217/186. The live readings are the assertion's own
+// message and the two log lines -- "N citations checked, against a census of M
+// path-looking tokens" and "N relative citations resolved against their
+// paragraph's anchor". Anyone re-running a mutation should read the numbers
+// there rather than here, and update this comment to whatever they say: a
+// number quoted here is a witness that the mutation fires, not a fact about the
+// test.
 //
 // The exception list is the one thing here a mutation cannot prove by itself,
 // so it is checked the other way: the test fails when an entry goes unused.
 //
-// KNOWN BLIND SPOT, found by review: TestDocsCoordinatorCitationsExist checks
-// that a cited PATH resolves, not that the SYMBOL named beside it is declared
-// at the cited line. A sentence reading "`DailyMicros` at
-// `internal/budget/evaluate.go:31`" passed the whole package while DailyMicros
-// is declared in internal/budget/model.go -- evaluate.go:31 is
-// ReasonRepoDailyCap. The claim the reconciliation makes about itself ("every
-// path and symbol was read at that commit") is therefore only as strong as the
-// reading; this test does not back it. A second review round found the other
-// half of the same problem in the extractor itself: the regexp required the
-// closing backtick to follow the path or its `:line` suffix, so the document's
-// `path:line Symbol` shape never matched and nine cited paths were never
-// checked. Both are why the census count is here: a check that silently sees
-// less is the failure mode, and a count is what turns it into a failure.
+// THREE HOLES, FOUND BY REVIEW IN THREE ROUNDS, each closed by the round that
+// found it or recorded here as still open. They are worth keeping together
+// because they are the same failure -- a check that silently sees less than it
+// claims to -- arriving three times.
 //
-// A checker for that was prototyped and deliberately not shipped: pairing
-// identifiers with citations needs a notion of scope the prose does not carry
-// (one parenthetical may cite a single file for a list drawn from three, and a
-// paragraph names symbols belonging to other citations in it), and the coarse
-// version reported hundreds of false positives -- every symbol in a paragraph
-// paired with every path in it. Doing it properly means reading the sentences,
-// which is what a reviewer does. Until then this is a partial check, and it is
-// documented as one rather than presented as a complete one.
+//  1. The symbol named BESIDE a citation was not checked. A sentence reading
+//     "`DailyMicros` at `internal/budget/evaluate.go:31`" passed the whole
+//     package while DailyMicros is declared in internal/budget/model.go:
+//     evaluate.go:31 is ReasonRepoDailyCap. STILL OPEN, and the reason is
+//     scope: the symbol sits outside the backticks, so pairing it with a path
+//     means reading the sentence. The relative-reference check below does test
+//     the symbol where the document names one, and that is the half of this
+//     that is mechanical -- the symbol there is inside the reference's own
+//     token.
+//  2. The extractor's regexp required the closing backtick to follow the path
+//     or its `:line` suffix, so the document's dominant `path:line Symbol`
+//     shape never matched and nine cited paths were never checked. CLOSED, and
+//     the census count is what keeps it closed: a check that silently sees
+//     less is the failure mode, and a count is what turns it into a failure.
+//  3. That same regexp stopped at a newline, so the three files the document
+//     cites in a shape whose symbol wraps were invisible -- and two of them
+//     were the anchor a relative reference resolved against. CLOSED; the
+//     relative check is what makes it matter, since a lost anchor silently
+//     re-points the reference at another file.
+//
+// A general checker for (1) was prototyped and deliberately not shipped:
+// pairing identifiers with citations needs a notion of scope the prose does not
+// carry (one parenthetical may cite a single file for a list drawn from three,
+// and a paragraph names symbols belonging to other citations in it), and the
+// coarse version reported hundreds of false positives -- every symbol in a
+// paragraph paired with every path in it. Doing it properly means reading the
+// sentences, which is what a reviewer does. The narrow version that IS
+// mechanical -- a symbol inside the same backticked token as the line it is
+// attached to, in any shape the document uses -- was also tried against the
+// whole document and rejected as too loose to trust: three citations name a Go
+// selector (`Claims.RB`), a terraform resource type or a slash-joined list of
+// constants, none of which appears literally at the line named, so the check
+// would have had to accept one of several candidate substrings and would have
+// passed almost everything. The relative references below do not have that
+// problem: each names exactly one symbol. So this file checks symbols where the
+// document's own grammar makes the pairing unambiguous, and says so, rather
+// than presenting a fuzzy check as a complete one.
 
 import (
 	"os"
@@ -266,9 +308,22 @@ func TestDocsCoordinatorTakesNoDecisionNumber(t *testing.T) {
 // true of two of those shapes and false of the rest: `path:line Symbol` never
 // matched, so nine cited paths were never checked at all, and no test could
 // see it because the check simply found fewer citations and said nothing. The
-// shape after the path is therefore written as "whatever is not a backtick or
-// a newline", and coordinatorPathCensusRE below is the independent count that
-// makes a regexp which matches nothing a failure rather than a silence.
+// shape after the path is therefore written as "whatever is not a backtick",
+// and coordinatorPathCensusRE below is the independent count that makes a
+// regexp which matches nothing a failure rather than a silence.
+//
+// "Whatever is not a backtick" rather than "whatever is not a backtick or a
+// newline" on purpose, and that is a correction of its own: the document cites
+// three files in a shape whose symbol wraps onto the next line, as
+// `modules/installation/history.tf:70 google_cloud_run_v2_job` does. A citation
+// regexp that stopped at the newline did not see those three, which is the same
+// silent-shortfall failure the paragraph above describes, one line further in.
+// They matter beyond themselves: two of them are the anchor that the relative
+// second references (`:223`, `:127 notCovered`) resolve against below, so a
+// reader -- or a resolver -- that cannot see the anchor cannot check the
+// reference. coordinatorPathCensusRE stays line-bounded, deliberately: it is a
+// floor, not an exact count, and a census that stretched across newlines would
+// manufacture giant "tokens" wherever the prose has an unpaired backtick.
 //
 // The extension set is the one this repository's cited files use; a backticked
 // token without one (a node path such as `config/policy/shared`, a package
@@ -276,7 +331,7 @@ func TestDocsCoordinatorTakesNoDecisionNumber(t *testing.T) {
 // The path character class carries `*` for the two globs the document names
 // (`internal/cli/docs_*_test.go`, `docs/design/credentials-service*.md`); both
 // are audited exceptions below, not files.
-var coordinatorCitationRE = regexp.MustCompile("`([A-Za-z0-9_.][A-Za-z0-9_./*-]*\\.(?:go|md|ts|json|js|tmpl|yaml|yml|tf)\\b)(?::[0-9]+(?:[-,+][0-9]*)*)?[^`\\n]*`")
+var coordinatorCitationRE = regexp.MustCompile("`([A-Za-z0-9_.][A-Za-z0-9_./*-]*\\.(?:go|md|ts|json|js|tmpl|yaml|yml|tf)\\b)(?::[0-9]+(?:[-,+][0-9]*)*)?[^`]*`")
 
 // coordinatorPathCensusRE is the independent count of how many path-looking
 // tokens the document holds, and it is deliberately dumber than the citation
@@ -357,19 +412,9 @@ func TestDocsCoordinatorCitationsExist(t *testing.T) {
 			continue
 		}
 		cites++
-		var tried []string
-		ok := false
-		for _, prefix := range coordinatorCitationPrefixes {
-			full := prefix + path
-			tried = append(tried, full)
-			if _, err := os.Stat("../../" + filepath.FromSlash(full)); err == nil {
-				ok = true
-				break
-			}
-		}
-		if !ok {
+		if _, ok := coordinatorResolveCitation(path); !ok {
 			t.Errorf("%s cites %q, which does not exist (tried %s): a reconciliation whose citations have moved is a reconciliation nobody can check",
-				coordinatorReconciled, path, strings.Join(tried, ", "))
+				coordinatorReconciled, path, strings.Join(coordinatorTriedCitations(path), ", "))
 		}
 	}
 	// An exception nobody uses is a hole in this check that no one is watching.
@@ -383,6 +428,201 @@ func TestDocsCoordinatorCitationsExist(t *testing.T) {
 	// halves it is a line in the log, and the census assertion above is what
 	// makes it a failure when it should be.
 	t.Logf("%s: %d citations checked, against a census of %d path-looking tokens in the document", coordinatorReconciled, cites, census)
+}
+
+// coordinatorResolveCitation resolves a cited path against the two forms the
+// document cites one in: from the repository root, and from
+// deploy/terraform/gcp/ (the way SECURITY.md cites the Terraform modules). It
+// returns the repository-relative path that exists, and whether one did.
+func coordinatorResolveCitation(path string) (string, bool) {
+	for _, prefix := range coordinatorCitationPrefixes {
+		full := prefix + path
+		if _, err := os.Stat("../../" + filepath.FromSlash(full)); err == nil {
+			return full, true
+		}
+	}
+	return "", false
+}
+
+// coordinatorTriedCitations names every spelling coordinatorResolveCitation
+// tried, so a failure says what was looked for rather than only what was not.
+func coordinatorTriedCitations(path string) []string {
+	tried := make([]string, 0, len(coordinatorCitationPrefixes))
+	for _, prefix := range coordinatorCitationPrefixes {
+		tried = append(tried, prefix+path)
+	}
+	return tried
+}
+
+// coordinatorBareRefRE finds a relative second reference: a backticked token
+// that begins with `:` and carries no path of its own.
+//
+//	`:89`                  one line
+//	`:14-24`               a range
+//	`:124,138,159,174`     a list
+//	`:127 notCovered`      a line, and the symbol to find beside it
+//
+// It is line-bounded, where coordinatorCitationRE deliberately is not: this
+// shape is short by nature, and a version that crossed newlines would read the
+// colon that merely ENDS a citation -- `.../reconciliation.md`:` then a newline
+// then `- **D143**` -- as a reference with a whole sentence for a line number.
+//
+// The colon has to be followed by a non-space, which keeps out the token that
+// falls between two adjacent citations in the prose -- the colon and the space
+// in "`job`: `path`" -- because that one is punctuation, not a reference.
+var coordinatorBareRefRE = regexp.MustCompile("`(:[^ `\n][^`\n]*)`")
+
+// coordinatorLineSpecRE is what may follow a relative reference's colon: a line
+// number, or numbers joined by `-` or `,`, with an empty tail allowed for the
+// open-ended `:326+` form. Anything else -- `:...`, `:N`, `:later` -- is a
+// placeholder that resolves to nothing, and that is the failure this whole
+// check exists for: the document carried a literal `:...` in a parenthetical no
+// test could see, because a reference with no path in it was skipped by the
+// citation check rather than failed by it.
+var coordinatorLineSpecRE = regexp.MustCompile(`^[0-9]+(?:[-,+][0-9]*)*$`)
+
+// coordinatorDigitsRE pulls the numbers out of a spec coordinatorLineSpecRE has
+// already accepted.
+var coordinatorDigitsRE = regexp.MustCompile(`[0-9]+`)
+
+// coordinatorSymbolWindow is how far from a relative reference's line a symbol
+// named beside it may sit, in either direction. A doc comment sits a few lines
+// above the declaration it belongs to and a call site a line or two either
+// side, so the window has to be a few lines wide; it is far too narrow to
+// accept a symbol that lives in another part of the file.
+const coordinatorSymbolWindow = 5
+
+// coordinatorParagraphSeparatorRE finds the blank line that ends a paragraph.
+var coordinatorParagraphSeparatorRE = regexp.MustCompile(`\n[ \t]*\n`)
+
+// coordinatorParagraph returns the blank-line-delimited block of text holding
+// offset i. A relative reference is resolved inside one block and no further: a
+// bare `:89` belongs to the sentence it sits in, and a search that ran back
+// through the document would happily resolve it against a path from three
+// findings earlier. A markdown table counts as one block, which is right -- a
+// row's own citations are the row's anchor.
+func coordinatorParagraph(doc string, i int) (int, int) {
+	start, end := 0, len(doc)
+	for _, sep := range coordinatorParagraphSeparatorRE.FindAllStringIndex(doc, -1) {
+		if sep[1] <= i {
+			start = sep[1]
+			continue
+		}
+		if sep[0] >= i {
+			end = sep[0]
+			break
+		}
+	}
+	return start, end
+}
+
+// TestDocsCoordinatorRelativeCitationsResolve: the document's second references
+// -- a bare `:89`, `:145`, `:183`, `:209` -- are citations too, and are checked
+// like ones. Each resolves against the nearest full-path citation before it in
+// its own paragraph; the line it names has to exist in that file; and where the
+// reference also names a symbol, the symbol has to be within a few lines of the
+// line it is attached to.
+//
+// This is the check the document needed and did not have. A reference of this
+// shape carries no path, so TestDocsCoordinatorCitationsExist skips it
+// entirely, and a placeholder line number, a line past the end of the file and
+// a symbol the file does not have all read exactly like a correct one. The
+// document carried a literal `:...` for exactly that reason.
+func TestDocsCoordinatorRelativeCitationsResolve(t *testing.T) {
+	doc := readDoc(t, coordinatorReconciled)
+	refs := coordinatorBareRefRE.FindAllStringSubmatchIndex(doc, -1)
+	if len(refs) == 0 {
+		t.Fatal("the document carries no relative reference of the `:N` shape: this test would otherwise check nothing")
+	}
+	checked := 0
+	for _, m := range refs {
+		ref := doc[m[2]:m[3]]                       // `:127 notCovered`
+		line := 1 + strings.Count(doc[:m[0]], "\n") // where the reference is, for the messages
+		start, _ := coordinatorParagraph(doc, m[0])
+		// The anchor: the last full-path citation before this reference in the
+		// same paragraph. It is allowed to wrap onto the next line, which is
+		// why coordinatorCitationRE does not stop at a newline.
+		anchor := ""
+		for _, c := range coordinatorCitationRE.FindAllStringSubmatchIndex(doc[start:m[0]], -1) {
+			anchor = doc[start+c[2] : start+c[3]]
+		}
+		if anchor == "" {
+			t.Errorf("%s:%d cites %q with no full-path citation before it in the same paragraph: a relative reference is resolvable only against an anchor, so a reader has no file to open. Name the path at the reference, or put the reference beside a citation",
+				coordinatorReconciled, line, ref)
+			continue
+		}
+		file, ok := coordinatorResolveCitation(anchor)
+		if !ok {
+			t.Errorf("%s:%d cites %q against %q, which does not exist (tried %s): the anchor has to resolve here too, or the reference resolves to nothing",
+				coordinatorReconciled, line, ref, anchor, strings.Join(coordinatorTriedCitations(anchor), ", "))
+			continue
+		}
+		spec, symbol, _ := strings.Cut(strings.TrimPrefix(ref, ":"), " ")
+		if !coordinatorLineSpecRE.MatchString(spec) {
+			t.Errorf("%s:%d cites %q: %q is not a line number, a range or a list of them. A placeholder that resolves to nothing is a citation no reader can follow, and this document's contract is that every one of them can be",
+				coordinatorReconciled, line, ref, spec)
+			continue
+		}
+		body, err := os.ReadFile("../../" + filepath.FromSlash(file))
+		if err != nil {
+			t.Errorf("%s:%d cites %q against %q, which could not be read: %v", coordinatorReconciled, line, ref, file, err)
+			continue
+		}
+		lines := strings.Split(string(body), "\n")
+		checked++
+		nums := coordinatorLineNumbers(spec)
+		lo, hi, past := nums[0], nums[0], false
+		for _, n := range nums {
+			if n < lo {
+				lo = n
+			}
+			if n > hi {
+				hi = n
+			}
+			if n < 1 || n > len(lines) {
+				past = true
+				t.Errorf("%s:%d cites %q against %q, which holds %d lines: line %d is past the end of the file",
+					coordinatorReconciled, line, ref, file, len(lines), n)
+			}
+		}
+		// Nothing more to check, and nothing safe to check either: the window
+		// below is an index into lines, and a past-the-end line would make it
+		// an out-of-range slice.
+		if symbol == "" || past {
+			continue
+		}
+		from, to := lo-coordinatorSymbolWindow, hi+coordinatorSymbolWindow
+		if from < 1 {
+			from = 1
+		}
+		if to > len(lines) {
+			to = len(lines)
+		}
+		found := false
+		for _, l := range lines[from-1 : to] {
+			if strings.Contains(l, strings.TrimSuffix(symbol, "()")) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s:%d cites %q against %q, but %q is nowhere in lines %d-%d: the reference names a symbol the file does not have beside the line it is attached to",
+				coordinatorReconciled, line, ref, file, symbol, from, to)
+		}
+	}
+	t.Logf("%s: %d relative citations resolved against their paragraph's anchor, of %d found", coordinatorReconciled, checked, len(refs))
+}
+
+// coordinatorLineNumbers reads the line numbers out of a spec that
+// coordinatorLineSpecRE has already accepted; there is always at least one.
+func coordinatorLineNumbers(spec string) []int {
+	var out []int
+	for _, f := range coordinatorDigitsRE.FindAllString(spec, -1) {
+		if n, err := strconv.Atoi(f); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // coordinatorQuestionRE finds a question heading in the reconciliation's
