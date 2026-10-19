@@ -272,6 +272,33 @@ test('entering again while an abandoned run is still in flight starts the demo',
   assert.equal(a.active, true);
 });
 
+test('a run ending does not clear the run that replaced it', async () => {
+  // The handover, made deterministic: the reviewer leaves the instant the demo
+  // appears and taps "Try the demo" again, so run 2 starts while run 1 is still
+  // finishing. Run 1 ending must clear only its OWN place in flight -- clearing
+  // whatever is there would let the next tap start a third demo, and the reviewer
+  // would have two demos from two taps.
+  const demo = createDemoMode();
+  let handed = false;
+  let second = null;
+  const stop = demo.subscribe(() => {
+    if (handed) return;
+    handed = true;
+    demo.leave();
+    second = demo.enter();
+  });
+
+  await demo.enter(); // run 1 lands, and hands over to run 2 in the listener
+  assert.notEqual(second, null);
+  const third = demo.enter(); // a tap while run 2 is still going
+  const [a, b] = await Promise.all([second, third]);
+  stop();
+
+  assert.equal(a, b, 'the run that ended took the new run\'s place in flight with it');
+  assert.equal(b.active, true);
+  assert.equal(demo.active(), true);
+});
+
 test('leaving the demo drops everything, and entering again starts fresh', async () => {
   const { demo, state } = await entered();
   await demo.confirm();
