@@ -1033,8 +1033,9 @@ func TestDocsGuardPreamblesNameAConstructTheyUse(t *testing.T) {
 	}
 }
 
-// TestDocsCheck81Step5CountsItsTokLines: step 5's FACT line says how many
-// statuses its block produces and points at two of them by position ("the
+// TestDocsCheck81Step5CountsItsTokLines: steps 3, 4, 5 and 7 state how many
+// statuses their blocks produce, and the counts are the blocks' own `TOK`
+// lines. Step 5's FACT line also points at two of its lines by position ("the
 // third line ... the value guard", "the fifth line ... its own parent"). The
 // block is one IAM `curl` (the seed) and five `TOK` lines, so the count and
 // both positions have to be counted the same way -- and step 4, whose block is
@@ -1058,6 +1059,20 @@ func TestDocsCheck81Step5CountsItsTokLines(t *testing.T) {
 			}
 		}
 		return out
+	}
+
+	// Step 3: ten refusals, counted by `TOK` line. Its FACT line said "these
+	// eleven refusals" over a block of ten, and nothing read it -- steps 4, 5
+	// and 7 were counted here and step 3 was not.
+	step3 := stepText(t, section, "3. **The fence's negative half", "4. **The user reads")
+	toks3 := tokLines(step3, "ID2=$(printf 'chk81-%s'")
+	if len(toks3) != 10 {
+		t.Fatalf("check 81 step 3's block has %d `TOK` lines, and this test counts the refusals its FACT line states by them: the count cannot be checked against a block it does not read", len(toks3))
+	}
+	for _, phrase := range []string{"the ten statuses", "these ten refusals"} {
+		if !strings.Contains(step3, phrase) {
+			t.Errorf("check 81 step 3's block is %d `TOK` lines and its FACT line does not say %q: the review of PR #580 found it saying \"these eleven refusals\" over a block of ten, so both the count at the top of the FACT line and the one in the read-back sentence are the block's own", len(toks3), phrase)
+		}
 	}
 
 	step4 := stepText(t, section, "4. **The user reads", "5. **The user's second write")
@@ -1381,6 +1396,414 @@ func TestDocsCheck82NamesTheTestsThatCoverTheRefusal(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("check 82 step 7 names %s as the test for the marker-above refusal, and %s has no `func %s(t *testing.T)`: the FACT line asks the owner to record the name, so a renamed or deleted test leaves the checklist sending them to a name that does not exist -- the same defect as the sentence that named no test at all", name, pkg, name)
+		}
+	}
+}
+
+// TestDocsCheck81StatedCountsMatchTheirBlocks: the rest of check 81's stated
+// counts -- step 2's four wrong shapes, step 4's two 200s, step 6's three
+// reads by the second user, step 7's two tokens and the Restore's two deletes.
+// Each counts something in the step's own block, so each is read from the
+// block here: the review of PR #580 found step 3 stating "these eleven
+// refusals" over a block of ten, and that is the shape a count nothing derives
+// has wherever it sits -- a number in a FACT line that no command in the step
+// produces, which is what the owner is asked to record.
+func TestDocsCheck81StatedCountsMatchTheirBlocks(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+
+	// A `TOK` call, in either form the check uses: a line of its own (`TOK -X
+	// PUT ...`) or inside a `$(...)` in a `printf` (`$(TOK "..." )`, which is
+	// how step 6's two columns are built).
+	toks := func(step, carrying string) int {
+		n := 0
+		for _, line := range strings.Split(step, "\n") {
+			if strings.Contains(line, "TOK ") && strings.Contains(line, carrying) {
+				n++
+			}
+		}
+		return n
+	}
+
+	// Step 2: the wrong shapes, each on an id of its own, all 401.
+	step2 := stepText(t, section, "2. **The fence's positive half", "3. **The fence's negative half")
+	if n := toks(step2, "inbox/$BAD.json"); n != 4 {
+		t.Errorf("check 81 step 2's block makes %d refused writes of the wrong shapes (`TOK` lines writing `inbox/$BAD.json`) and the step counts them as four (\"All four are 401\", \"the four wrong shapes' status (401)\"): the count is the block's, and a step that adds a shape without the count reads as a check that made one more refusal than it did", n)
+	}
+	for _, want := range []string{"All four are 401", "the four wrong shapes"} {
+		if !strings.Contains(step2, want) {
+			t.Errorf("check 81 step 2 does not say %q: it is one of the two places the step counts its four wrong shapes, and the count is read against the block", want)
+		}
+	}
+
+	// Step 4: the two 200s, the grants that hold content.
+	step4 := stepText(t, section, "4. **The user reads", "5. **The user's second write")
+	if n := toks(step4, "# 200"); n != 2 {
+		t.Errorf("check 81 step 4's block has %d `TOK` reads marked 200 and its FACT line says \"the six statuses, and -- for the two 200s -- the bodies\": the two 200s are the outbox and the heartbeat, and a third 200 (or one fewer) is what the sentence about the seeded content is about", n)
+	}
+	// The step says it twice (the FACT line's "for the two 200s" and its
+	// closing "the seeding here is what makes the two 200s hold content"), so
+	// every count of 200s in it is read, not just the first.
+	for _, m := range regexp.MustCompile(`(\w+) 200s\b`).FindAllStringSubmatch(step4, -1) {
+		if m[1] != "two" {
+			t.Errorf("check 81 step 4 says \"%s 200s\" and its block has two `TOK` reads marked 200 (the outbox and the heartbeat): the two are the nodes the IAM seeding fills, so the count is the block's", m[1])
+		}
+	}
+
+	// Step 6: the second user's three reads, which close the binding.
+	step6 := stepText(t, section, "6. **The granted read nodes", "7. **A token whose")
+	if n := toks(step6, "?auth=$BO"); n != 3 {
+		t.Errorf("check 81 step 6's block has %d reads made with the second user's token (`TOK` lines carrying `?auth=$BO`) and the step counts them as three (\"closes the binding with three more\", \"**FACT:** those three\"): the three are the binding's other half -- the granted node is 200 for BOB and ALICE's mailbox nodes are not -- so a count that drifts from the block is a claim about a read the check does not make", n)
+	}
+	for _, want := range []string{"closes the binding with three more", "**FACT:** those three"} {
+		if !strings.Contains(step6, want) {
+			t.Errorf("check 81 step 6 does not say %q: it counts the second user's reads, and the count is the block's", want)
+		}
+	}
+
+	// Step 7: two tokens, minted and exchanged only there.
+	step7 := stepText(t, section, "7. **A token whose", "8. **The fence is the deployed")
+	if n := strings.Count(step7, `signin "$`); n != 2 {
+		t.Errorf("check 81 step 7's block mints %d tokens (`signin \"$...\"` calls) and the step says \"Two tokens, minted and exchanged only here\": the second is the residual P2.2 accepted, which needs a signer of its own, and the count of what the step mints is the block's", n)
+	}
+	if !strings.Contains(step7, "Two tokens, minted and exchanged only here") {
+		t.Errorf("check 81 step 7 does not say \"Two tokens, minted and exchanged only here\": its block makes two `signin` calls, and the sentence is what tells the owner how many custom tokens this step handles")
+	}
+
+	// The Restore: two RTDB deletes, one per mailbox.
+	restore := section[strings.Index(section, "**Restore.**"):]
+	loops := forInLoops(restore)
+	if len(loops) != 1 || len(loops[0]) != 2 {
+		t.Fatalf("check 81's Restore has %d `for p in` loops of %v paths, and its FACT line says \"the two RTDB deletes' statuses (200 each)\": the deletes are the two mailboxes, so the loop is what the count is read from", len(loops), loops)
+	}
+	if !strings.Contains(restore, "the two RTDB deletes") {
+		t.Errorf("check 81's Restore does not say \"the two RTDB deletes\": its loop deletes two paths (`%s`), and the FACT line is what the owner pastes back", strings.Join(loops[0], " "))
+	}
+}
+
+// TestDocsGeneratorSizeAndMailboxCountAreTheGoldens: check 81 step 8 and check
+// 82 step 5 both state the generated document's size (42687) and check 82
+// states the mailbox subtree's count (1). The three `grep -o` counts of check
+// 81 step 8 are held to the golden document; these two numbers, which the
+// owner pastes back as the deployment's fingerprint, were not. Both are read
+// out of the file the checks name -- `rules.Generate()`'s own document, which
+// `internal/budget/rules/testdata/rules.golden.json` holds byte for byte -- so
+// a template change moves them together.
+func TestDocsGeneratorSizeAndMailboxCountAreTheGoldens(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	golden, err := os.ReadFile("../budget/rules/testdata/rules.golden.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range []struct {
+		heading string
+		re      string
+		what    string
+		want    int
+	}{
+		{"## Check 81:", `generator's own \*\*(\d+)\*\* bytes`, "the generated document's size", len(golden)},
+		{"## Check 82:", `\*\*(\d+) is the generator's own size\*\*`, "the generated document's size", len(golden)},
+		{"## Check 82:", "its `mailbox` count \\(\\*\\*(\\d+)\\*\\*", "the mailbox subtree's count", strings.Count(string(golden), "mailbox")},
+	} {
+		section := docSection(t, path, doc, c.heading)
+		m := regexp.MustCompile(c.re).FindStringSubmatch(section)
+		if m == nil {
+			t.Fatalf("%s: does not carry %s in the form this test reads (`%s`): the number is the check's own fingerprint of the deployed document, so the sentence that states it is what the test holds to the golden", c.heading, c.what, c.re)
+		}
+		if m[1] != fmt.Sprint(c.want) {
+			t.Errorf("%s: states %s as %s, and `rules.Generate()`'s own document (internal/budget/rules/testdata/rules.golden.json) gives %d: the number is a FACT line the owner pastes back, so a template change has to move it here too", c.heading, c.what, m[1], c.want)
+		}
+	}
+}
+
+// TestDocsCheck89StatedCountsMatchItsCommands: check 89's counts are counts of
+// its own commands and of the app files the scan allows -- the two submissions
+// (one per platform), the two lists the credential scan reads, and the app's
+// own four JSON files. Nothing derived them, and the same defect sits in all
+// three: a number in a FACT line that no command in the step produces.
+func TestDocsCheck89StatedCountsMatchItsCommands(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 89:")
+
+	// Step 3: one submission per platform.
+	step3 := stepText(t, section, "3. **The internal track", "4. **The build installs")
+	if n := strings.Count(step3, "eas submit --platform"); n != 2 {
+		t.Errorf("check 89 step 3 names %d `eas submit --platform` commands and its FACT line asks for \"the two submission ids, the two track names\": the submissions are the two platforms, so the count of what the owner records is the count of the commands", n)
+	}
+	for _, want := range []string{"the two submission ids", "the two track names"} {
+		if !strings.Contains(step3, want) {
+			t.Errorf("check 89 step 3 does not say %q: it names two `eas submit --platform` commands, and the FACT line is the list the owner pastes back", want)
+		}
+	}
+
+	// Step 5: two lists, and the four files the JSON scan allows.
+	step5 := stepText(t, section, "5. **No store credential", "\n\n**Passes when:**")
+	if n := strings.Count(step5, "git -C .. ls-files mobile"); n != 2 {
+		t.Errorf("check 89 step 5 runs `git -C .. ls-files mobile` %d times and its FACT line asks for \"the two file lists\": one list is the credential-shaped files and the other the JSON beyond the app's own, so the count is the block's", n)
+	}
+	if !strings.Contains(step5, "the two file lists") {
+		t.Errorf("check 89 step 5 does not say \"the two file lists\": its block runs the scan twice, and the FACT line is what the owner pastes back")
+	}
+	m := regexp.MustCompile(`\^mobile/\(([^)]+)\)\\\.json\$`).FindStringSubmatch(step5)
+	if m == nil {
+		t.Fatalf("check 89 step 5's JSON scan no longer carries a `^mobile/(...)\\.json$` allow-list: this test reads the app's own files out of that pattern")
+	}
+	allowed := strings.Split(m[1], "|")
+	if len(allowed) != 4 {
+		t.Errorf("check 89 step 5's JSON scan allows %d app files (`%s`) and the step says \"the app's own four files\": the pattern is the list the scan exempts, so a file added to one without the other is a scan that reports a file the step says is allowed (or the reverse)", len(allowed), m[1])
+	}
+	for _, name := range allowed {
+		if !strings.Contains(step5, name+".json") {
+			t.Errorf("check 89 step 5's JSON scan allows %s.json and the step does not name it among \"the app's own four files\": the pattern and the list have to be the same files", name)
+		}
+	}
+}
+
+// TestDocsCheck81GuardPreambleCountsTheValuesItReads: the paragraph above check
+// 81's guard block says the guard "reads the four backend values out of the
+// project's own config rather than from memory, and refuses to start without
+// any of them". It said three, and three was right while the loop read DB, KEY
+// and SA; FP joined the loop later (the Firebase project id, which step 1's
+// sign-in and the Restore's batchDelete address) and the sentence stayed at
+// three -- the same stale count the review of PR #580 found in step 3, in a
+// sentence no test read. The count is taken from the loop here, so a value
+// added to or dropped from the guard fails this test until the sentence says
+// the new number.
+func TestDocsCheck81GuardPreambleCountsTheValuesItReads(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+
+	guard := codeBlockAfter(t, section, "# === Check 81: setup + guard")
+	m := regexp.MustCompile(`for v in ([A-Z][A-Z ]*); do`).FindStringSubmatch(guard)
+	if m == nil {
+		t.Fatalf("## Check 81: the guard block has no `for v in ...; do` loop: that loop is the emptiness check whose values the paragraph counts")
+	}
+	vals := strings.Fields(m[1])
+	word, ok := map[int]string{1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}[len(vals)]
+	if !ok {
+		t.Fatalf("check 81's guard reads %d values (%s) and this test has no word for that count: write one", len(vals), strings.Join(vals, " "))
+	}
+
+	var para string
+	for _, p := range paragraphsOf(section) {
+		if !strings.Contains(p, "backend values") {
+			continue
+		}
+		if para != "" {
+			t.Fatalf("## Check 81: more than one paragraph says \"backend values\": this test holds the guard paragraph's count to the loop, so it cannot pick the sentence")
+		}
+		para = p
+	}
+	if para == "" {
+		t.Fatalf("## Check 81: no paragraph says \"backend values\": this test holds that sentence's count to the guard's loop")
+	}
+	if !strings.Contains(para, "the "+word+" backend values") {
+		t.Errorf("## Check 81: the guard paragraph does not count the values as %q, and the guard's loop reads %d (`for v in %s; do`): the paragraph is how the owner knows what the guard refuses to start without, so a count below the loop's hides a value the guard stops for and one above it names a read the block does not make", "the "+word+" backend values", len(vals), m[1])
+	}
+}
+
+// TestDocsCheck81PredicateCountNamesTheTemplatesCases: check 81's "What the
+// deployed rules are" says "Three predicates decide everything
+// (`internal/budget/rules/rules.go`): `USER` ..., `MAILBOX` ...,
+// `CONSUMER` ...". The three are the mailbox's whole vocabulary, and the
+// sentence is the owner's index into the rules the check reads back, so the
+// names are held to the switch that implements them (`wordMacro`,
+// internal/budget/rules/rules.go) and the count to the names.
+func TestDocsCheck81PredicateCountNamesTheTemplatesCases(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+
+	var para string
+	for _, p := range paragraphsOf(section) {
+		if strings.Contains(p, "predicates decide everything") {
+			para = p
+			break
+		}
+	}
+	if para == "" {
+		t.Fatalf("## Check 81: no paragraph says \"predicates decide everything\": this test holds its names and its count to the switch that implements them")
+	}
+
+	// The sentence's end is the first "). " after it: each predicate is
+	// backticked and followed by its definition in parentheses, and the last
+	// definition is what closes the sentence.
+	sentence := para[strings.Index(para, "predicates decide everything"):]
+	j := strings.Index(sentence, "). ")
+	if j < 0 {
+		t.Fatalf("## Check 81: the sentence naming the predicates has no \"). \" ending it: this test reads the predicate list out of that sentence")
+	}
+	names := regexp.MustCompile("`([A-Z]+)` \\(").FindAllStringSubmatch(sentence[:j], -1)
+	word, ok := map[int]string{1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}[len(names)]
+	if !ok {
+		t.Fatalf("check 81 names %d predicates and this test has no word for that count: write one", len(names))
+	}
+	if !strings.Contains(para, word+" predicates decide everything") {
+		t.Errorf("## Check 81: the sentence names %d predicates and does not open with %q: the count is what tells the owner the sentence is the whole vocabulary the mailbox is written in", len(names), word+" predicates decide everything")
+	}
+	src := readSrc(t, "../budget/rules/rules.go")
+	for _, n := range names {
+		if !strings.Contains(src, "case \""+n[1]+"\":") {
+			t.Errorf("## Check 81: the paragraph names `%s` as one of the predicates that decide the mailbox, and internal/budget/rules/rules.go has no `case \"%s\":`: the paragraph is the owner's index into the rules the check reads back, so a name the switch does not have points at a predicate that does not exist", n[1], n[1])
+		}
+	}
+}
+
+// TestDocsCheck81TemplateCountsMatchTheTemplate: the paragraph that lists what
+// a mu token may read counts two things out of the rules template -- the
+// mailbox's own "two nodes" (the outbox and the heartbeat, the two `.read`
+// lines the `MAILBOX` predicate gates) and the grant's "three `repos/$slug`
+// entries" (the `(TOKEN && auth.token.fs == $slug) || USER` reads under caps,
+// kill and the day). Both counts are the template's own, so a grant added to
+// or removed from it fails this test until the paragraph counts the new one.
+func TestDocsCheck81TemplateCountsMatchTheTemplate(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+
+	var para string
+	for _, p := range paragraphsOf(section) {
+		if strings.Contains(p, "D112's grant sits at") {
+			para = p
+			break
+		}
+	}
+	if para == "" {
+		t.Fatalf("## Check 81: no paragraph says \"D112's grant sits at\": this test counts the template's grants against that paragraph")
+	}
+
+	tmpl := readSrc(t, "../budget/rules/rules.json.tmpl")
+	for _, c := range []struct {
+		counts int
+		phrase string
+		what   string
+	}{
+		{strings.Count(tmpl, `".read": "MAILBOX"`), "its own mailbox's %s nodes", "the mailbox's own reads (`\".read\": \"MAILBOX\"` in rules.json.tmpl: the outbox and the heartbeat)"},
+		{strings.Count(tmpl, `".read": "(TOKEN && auth.token.fs == $slug) || USER"`), "their %s `repos/$slug` entries", "the `repos/$slug` reads that carry the fs claim (`(TOKEN && auth.token.fs == $slug) || USER`: caps, kill and the day)"},
+	} {
+		word, ok := map[int]string{1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}[c.counts]
+		if !ok {
+			t.Fatalf("rules.json.tmpl carries %d of %s and this test has no word for that count: write one", c.counts, c.what)
+		}
+		if want := fmt.Sprintf(c.phrase, word); !strings.Contains(para, want) {
+			t.Errorf("## Check 81: the paragraph listing D112's grant does not say %q, and rules.json.tmpl carries %d of %s: the paragraph is the owner's map of what a mu token may read, so a count that is not the template's sends them looking for a grant the template does not make -- or hides one it does", want, c.counts, c.what)
+		}
+	}
+}
+
+// TestDocsCheck81Step6CountsItsReadColumns: step 6's FACT line counts its two
+// columns -- "the first thirteen are **200** ... the second twenty-one are
+// **401**" -- and the Passes paragraph above the section repeats both numbers.
+// The counts are the step's own two `for p in ...; do` loops, and nothing
+// derived them, so a path added to one column would leave the prose counting
+// the old one: the owner would record a column of the wrong size and a
+// refusal the check never made would read as one it did.
+func TestDocsCheck81Step6CountsItsReadColumns(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+
+	step6 := stepText(t, section, "6. **The granted read nodes", "7. **A token whose `mu` is not its own uid")
+	loops := forInLoops(step6)
+	if len(loops) != 2 {
+		t.Fatalf("check 81 step 6 has %d `for p in ...; do` loops and its FACT line counts two columns: this test reads the granted column and the denied one out of those loops", len(loops))
+	}
+	granted, denied := len(loops[0]), len(loops[1])
+	words := map[int]string{13: "thirteen", 21: "twenty-one"}
+	gw, ok := words[granted]
+	if !ok {
+		t.Fatalf("check 81 step 6's first loop reads %d paths and this test has no word for that count: write one", granted)
+	}
+	dw, ok := words[denied]
+	if !ok {
+		t.Fatalf("check 81 step 6's second loop reads %d paths and this test has no word for that count: write one", denied)
+	}
+
+	i := strings.Index(section, "**Passes when:**")
+	if i < 0 {
+		t.Fatalf("## Check 81: has no \"**Passes when:**\" paragraph: it repeats step 6's two counts, and this test holds it to them")
+	}
+	passes := section[i:]
+	if j := strings.Index(passes, "\n\n"); j >= 0 {
+		passes = passes[:j]
+	}
+
+	for _, c := range []struct{ text, want, where string }{
+		{step6, fmt.Sprintf("The first %s are **200**", gw), "step 6's FACT line"},
+		{step6, fmt.Sprintf("the second %s are **401**", dw), "step 6's FACT line"},
+		{passes, fmt.Sprintf("step 6's first %s reads answer 200", gw), "the Passes paragraph"},
+		{passes, fmt.Sprintf("its second %s 401", dw), "the Passes paragraph"},
+	} {
+		if !strings.Contains(c.text, c.want) {
+			t.Errorf("## Check 81: %s does not say %q, and step 6's loops read %d granted paths and %d denied ones: the loops are the columns, so a count that is not theirs makes the owner record a column of the wrong size", c.where, c.want, granted, denied)
+		}
+	}
+}
+
+// TestDocsCheck81AccountCountIsTheRestores: check 81's cost paragraph says
+// "Two Firebase Auth accounts (`chk81-alice`, the user, and `chk81-bob`, a
+// second user to prove the binding)", added by hand before step 1 (D114) and
+// removed by the Restore. The Restore's `accounts:batchDelete` is the one
+// place the check names the accounts, so the paragraph's count is read out of
+// that list: an account added to the check without the paragraph (or the
+// reverse) leaves the owner adding a user nothing signs in as, or leaving one
+// behind in the project.
+func TestDocsCheck81AccountCountIsTheRestores(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+
+	i := strings.Index(section, "**Restore.**")
+	if i < 0 {
+		t.Fatalf("## Check 81: has no \"**Restore.**\" paragraph: this test reads the accounts out of its `accounts:batchDelete`")
+	}
+	m := regexp.MustCompile(`\\"localIds\\":\[([^\]]*)\]`).FindStringSubmatch(section[i:])
+	if m == nil {
+		t.Fatalf("## Check 81: the Restore has no `\"localIds\":[...]` in its `accounts:batchDelete`: this test counts the accounts the check used from that list")
+	}
+	uids := strings.Split(m[1], ",")
+	word, ok := map[int]string{1: "One", 2: "Two", 3: "Three"}[len(uids)]
+	if !ok {
+		t.Fatalf("check 81's Restore deletes %d Auth accounts and this test has no word for that count: write one", len(uids))
+	}
+	if !strings.Contains(section, word+" Firebase Auth accounts") {
+		t.Errorf("## Check 81: the cost paragraph does not say %q, and the Restore's `accounts:batchDelete` deletes %d (`%s`): the paragraph is how the owner knows how many accounts to add by hand before step 1, and the Restore is what removes them", word+" Firebase Auth accounts", len(uids), m[1])
+	}
+}
+
+// TestDocsCheck82PlansOneRulesDeploy: check 82's cost paragraph and its
+// register row both say one rules deploy ("**one rules deploy** of about 42
+// KB", "One rules deploy of about 42 KB and at most the marker write beside
+// it"). One is what the plan holds: `DB.Plan` appends a single
+// `Path: "rules"` action and then the marker's write. Nothing derived it, so a
+// second rules action would leave both sentences promising a run that writes
+// the document once.
+func TestDocsCheck82PlansOneRulesDeploy(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	src := readSrc(t, "../infra/firebasedb.go")
+	n := strings.Count(src, `Path: "rules"`)
+	if n == 0 {
+		t.Fatalf("internal/infra/firebasedb.go has no `Path: \"rules\"` action: the rules deploy this test counts is gone from the plan, so the sentences cannot be checked against it")
+	}
+	word, ok := map[int]string{1: "one", 2: "two", 3: "three"}[n]
+	if !ok {
+		t.Fatalf("DB.Plan appends %d rules actions and this test has no word for that count: write one", n)
+	}
+	cap := strings.ToUpper(word[:1]) + word[1:]
+
+	for _, c := range []struct{ text, want, where string }{
+		{docSection(t, path, doc, "## Check 82:"), "**" + word + " rules deploy**", "the section's cost paragraph"},
+		{registerRow(t, doc, "82"), cap + " rules deploy", "the register row"},
+	} {
+		if !strings.Contains(c.text, c.want) {
+			t.Errorf("## Check 82: %s does not say %q, and `DB.Plan` appends %d `Path: \"rules\"` actions (internal/infra/firebasedb.go): the two sentences are what the owner reads to know how much the run writes", c.where, c.want, n)
 		}
 	}
 }

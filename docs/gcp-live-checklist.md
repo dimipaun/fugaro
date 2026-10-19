@@ -4289,7 +4289,7 @@ The emulator (P2.2, build tag `firebase`, `go test -tags firebase ./internal/bud
 
 **No credential is printed, and the only one that reaches a file is a one-hour custom token.** `$KEY` is the project's restricted web API key and every ID token below is a credential: none is printed, pasted into a `FACT` line or pasted into a pull request, and neither is written to a file — the key and the ID tokens live in the shell's variables, and the custom tokens this check mints are written to `$W/jwt-$uid.txt` under `/tmp/chk81` for the length of the run. **That directory is mode 700** (the guard makes it so before anything is minted into it): a custom token is a bearer credential for as long as its `exp` says, and a world-readable `/tmp/chk81` would hand it to any other local user for the length of the run — the same reason docs/gcp-live-checklist.md:1159 writes its credential-bearing file as `(umask 077; terraform state pull > …)`.
 
-**Guard block — re-run this before every step.** It hard-stops unless the installation is the `fugaro` one on GCP project `fugaro-dev` (never `belong`), reads the three backend values out of the project's own config rather than from memory, and refuses to start without any of them. **Paste it into a file and `source` it, not into an interactive zsh**: the block is bash — the construct that makes it so is `${!v}` in the `for v in DB KEY SA FP` loop below, indirect expansion, which zsh spells `${(P)v}`.
+**Guard block — re-run this before every step.** It hard-stops unless the installation is the `fugaro` one on GCP project `fugaro-dev` (never `belong`), reads the four backend values out of the project's own config rather than from memory, and refuses to start without any of them. **Paste it into a file and `source` it, not into an interactive zsh**: the block is bash — the construct that makes it so is `${!v}` in the `for v in DB KEY SA FP` loop below, indirect expansion, which zsh spells `${(P)v}`.
 
 ```bash
 # === Check 81: setup + guard. RE-RUN THIS BLOCK BEFORE EVERY STEP. ===
@@ -4441,7 +4441,7 @@ TOK() { curl -sS -w '\nHTTP %{http_code}\n' "$@"; }
    curl -sS -H "Authorization: Bearer $AT" "https://$DB/config/limits/maxReserveMicros.json"; echo
    curl -sS -H "Authorization: Bearer $AT" "https://$DB/fugaro/mark.json"; echo
    ```
-   **FACT:** each status with its refused body (`Permission denied`), and — read back with the operator's credentials, since `config/mode` is `TOKEN`-only and a `mu` token cannot even read it — that `config/mode`, `config/limits/maxReserveMicros` and `fugaro/mark` are unchanged: the three bodies above, which hold the values the installation had before these eleven refusals.
+   **FACT:** the ten statuses, each with its refused body (`Permission denied`), and — read back with the operator's credentials, since `config/mode` is `TOKEN`-only and a `mu` token cannot even read it — that `config/mode`, `config/limits/maxReserveMicros` and `fugaro/mark` are unchanged: the three bodies above, which hold the values the installation had before these ten refusals.
 
 4. **The user reads its own outbox and heartbeat — and reads its own inbox no way at all.** *(Guard block, helpers, tokens, operator credentials for the seeding.)* The outbox and the heartbeat carry `".read": "MAILBOX"`; the inbox carries **no** read grant, and neither does `mailbox/$mb` itself. **The two nodes are seeded here by IAM**, which bypasses the rules — the consumer's own write of them is check 80's, and this seeding proves nothing about the rules:
 
