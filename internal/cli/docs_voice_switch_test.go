@@ -5,20 +5,26 @@ import (
 	"testing"
 )
 
-// TestDocsVoiceSwitchRegisterClaims pins §13's register reading in the P5.3
-// design (docs/mobile/design/voice-evaluation-switch.md) against the register
-// it reads (docs/gcp-live-checklist.md), because a review round found the
-// table describing an allocation as a written check: the row for 67–68 said
-// "67 is written as 67a and 67b" while the checklist carries no `## Check 67a`,
-// no `## Check 67b` and no `## Check 68` section and no summary row for any of
-// them — the managed-projects plan reserves the numbers and its Task 5.3 is
-// what writes them.
+// TestDocsVoiceSwitchRegisterClaims pins the claims the P5.3 design
+// (docs/mobile/design/voice-evaluation-switch.md) makes about other files,
+// against those files: §13's register reading against the register it reads
+// (docs/gcp-live-checklist.md), §2's account of the mailbox's required fields
+// against the rules template, and §3/§5's redaction sentences against each
+// other. Each half exists because a review round found the design contradicting
+// the file it cited — §13's 67–68 row said "67 is written as 67a and 67b" while
+// the checklist carries no `## Check 67a`, no `## Check 67b` and no
+// `## Check 68` section and no summary row for any of them (the
+// managed-projects plan reserves the numbers and its Task 5.3 writes them);
+// §2 called `mac` and `kind` "not shipped" when P6.4 (#601, `371038f`) is
+// merged into this branch; and §5 rule 4 promised a redaction gate on the STT
+// path that §3's own table says cannot exist.
 //
-// Two halves, because the same mistake can be made in either direction: every
-// number the design names as written must have a `## Check` section in the
-// register (a design that drops one is a design whose count no longer adds
-// up), and the two the design names as reserved here must not have one (a
-// design that invents a section it did not write is the bug this pins).
+// The register half is two-sided, because the same mistake can be made in
+// either direction: every number the design names as written must have a
+// `## Check` section in the register (a design that drops one is a design whose
+// count no longer adds up), and the numbers it names as reserved here must not
+// have one (a design that invents a section it did not write is the bug this
+// pins).
 //
 // The written list is deliberately the design's own claims rather than "every
 // number in the register": a later check written elsewhere in the repository
@@ -26,9 +32,10 @@ import (
 // the count it gives ("36 `## Check` sections, counted at `07022b1`") is a
 // historical statement about a named commit, so it is not recounted here.
 //
-// Mutation (verified): put "67 is written as 67a and 67b" back into §13's
-// row, or add "58" to the reserved list below, and this test fails, both ways;
-// remove the `## Check 49:` heading from the checklist and it fails too.
+// Mutation (verified, each run and restored): put "67 is written as 67a and
+// 67b" back into §13's row, or put rule 4's "on the STT path a hit means the
+// utterance is not sent" back, or rename a `## Check 49:` heading in the
+// checklist, or restore §2's "not shipped" — each fails this test.
 func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	const designPath = "docs/mobile/design/voice-evaluation-switch.md"
 	const checklistPath = "docs/gcp-live-checklist.md"
@@ -36,8 +43,9 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	checklist := readDoc(t, checklistPath)
 
 	// 1. The numbers the design names as written, each a summary row and a
-	// `## Check` section: the eight written since the baseline a573870, and
-	// the two the design's own count leans on for its "as it stands" reading.
+	// `## Check` section: the eight written since the baseline a573870 (49,
+	// 50, 52, 58, 69a, 69b, 70a, 70c), which is every number §13 names as
+	// written and so the whole list this half pins.
 	for _, n := range []string{"49", "50", "52", "58", "69a", "69b", "70a", "70c"} {
 		if !strings.Contains(checklist, "## Check "+n+":") {
 			t.Errorf("%s has no `## Check %s:` section, but %s §13 names %s as written; correct the design's reading or this test's list", checklistPath, n, designPath, n)
@@ -89,5 +97,39 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	rules := docSection(t, designPath, design, "## 5. What the app must never send")
 	if strings.Contains(rules, "on the STT path a hit means the utterance is not sent") {
 		t.Errorf("%s's §5 rule 4 promises the STT path is gated by the redactor, which §3's own table says it cannot be", designPath)
+	}
+
+	// 4. The mailbox rules §2 says are shipped. P6.4 (#601, 371038f) is merged
+	// into this branch, so the rules template requires `mac` on the inbox, the
+	// outbox and the heartbeat; a §2 that calls those fields "not shipped"
+	// contradicts the rules it cites, as an earlier revision's did.
+	tmpl := readDoc(t, "internal/budget/rules/rules.json.tmpl")
+	// Counted rather than merely found: `mac` is required on the inbox *and*
+	// the outbox, so the string appears twice, and a template that dropped it
+	// from one of the two would still satisfy a plain Contains.
+	for _, want := range []struct {
+		s   string
+		min int
+	}{
+		{"hasChildren(['id', 'sender', 'text', 'at', 'mac'])", 2},
+		{"hasChildren(['at', 'boot', 'mac'])", 1},
+	} {
+		if got := strings.Count(tmpl, want.s); got < want.min {
+			t.Errorf("internal/budget/rules/rules.json.tmpl carries %q %d times, want at least %d, so %s §2's account of the mailbox's required fields is stale", want.s, got, want.min, designPath)
+		}
+	}
+	// The design's own sentence, which is the half that went stale: §2 must
+	// name the fields as shipped and carry the rules' two required sets. (The
+	// withdrawn wording is quoted in §11's round-11 entry, so only §2 is read
+	// here — a whole-document search would trip on that quotation.)
+	exists := docSection(t, designPath, design, "## 2. What exists today")
+	for _, want := range []string{
+		"['id', 'sender', 'text', 'at', 'mac']",
+		"['at', 'boot', 'mac']",
+		"the fields P6.4 added are in it",
+	} {
+		if !strings.Contains(exists, want) {
+			t.Errorf("%s's §2 does not say %q, so it no longer states the mailbox fields the rules require on this branch", designPath, want)
+		}
 	}
 }
