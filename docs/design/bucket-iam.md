@@ -234,6 +234,7 @@ The 0.6 CLI keeps working for launchers after the apply, because a 0.6 launch wr
    |---|---|---|
    | A non-operator member holds a write-capable role with no condition (`objectAdmin`, `objectUser`, `objectCreator`, `legacyBucketWriter`, `legacyBucketOwner`, `storage.admin`, or any custom role, which is flagged as "cannot tell") | warning | `fugaro init` (0.7.0) when the member is a launcher; else `gcloud storage buckets remove-iam-policy-binding gs://<b> --member=<m> --role=<r>` |
    | A conditional write grant to a person that is not the launcher condition | warning | the same command with `--condition-from-file` / `--all` |
+   | A launcher who is not an operator holds `objectUser` under the pre-0.9.0 runs/-only condition (`fugaro-launchers-runs`, before the sealed budget token moved to `tokens/`) | warning | `fugaro init` (0.9.0 or later), which replaces the grant — never the remove command: the binding is the launcher's own, and removing it takes the launcher's `runs/` writes with it |
    | A launcher who is not an operator lacks `runs_reader` or `runs_launcher` | warning | `fugaro init` |
    | `projectOwner:`/`projectEditor:` convenience `legacyBucketOwner` | info: "project Owners and Editors can write fugaro/; treat them as operators" | none |
 

@@ -63,6 +63,39 @@ func TestRunsBucketFindings(t *testing.T) {
 			t.Fatalf("a launcher without the tokens/ write is not reported: %+v", fs)
 		}
 	})
+	// And that binding is not a stranger's conditional write: the pre-seal
+	// condition is a launcher's own, in the shape 0.7.0 through 0.8.x wrote,
+	// so the finding about it must not tell the operator to remove the
+	// launcher's grant — the launcher would lose its read of runs/ as well as
+	// its writes. Its fix is the same one the missing tokens/ write has: an
+	// operator runs fugaro init, which replaces the whole binding.
+	t.Run("the previous launcher condition is not foreign", func(t *testing.T) {
+		old := &storage.Expr{Title: "fugaro-launchers-runs", Expression: `resource.name.startsWith("projects/_/buckets/` + b + `/objects/runs/")`}
+		p := &storage.Policy{Bindings: slices.Clone(hardened)}
+		p.Bindings[2] = &storage.PolicyBindings{Role: "roles/storage.objectUser", Members: []string{a}, Condition: old}
+		fs := RunsBucketFindings(p, b, hardeningProject, []string{a, o}, []string{o})
+		var about int
+		for _, f := range fs {
+			if f.Member != a {
+				continue
+			}
+			if strings.Contains(f.Fix, "remove-iam-policy-binding") {
+				t.Errorf("a launcher on the previous runs/-only condition is told to remove its grant: %+v", f)
+			}
+			if f.Severity == "warning" && strings.Contains(f.Problem, "not the launchers'") {
+				t.Errorf("the previous launcher condition is reported as somebody else's: %+v", f)
+			}
+			if f.Severity == "warning" && strings.Contains(f.Problem, "predates") && !strings.Contains(f.Fix, "fugaro init") {
+				t.Errorf("the previous launcher condition's fix is not fugaro init: %+v", f)
+			}
+			if f.Severity == "warning" && strings.Contains(f.Problem, "predates") {
+				about++
+			}
+		}
+		if about == 0 {
+			t.Errorf("the previous launcher condition is not named for what it is: %+v", fs)
+		}
+	})
 	t.Run("not hardened: a launcher with objectAdmin and no launcher grants", func(t *testing.T) {
 		p := &storage.Policy{Bindings: []*storage.PolicyBindings{{Role: "roles/storage.objectAdmin", Members: []string{a, o}}}}
 		fs := RunsBucketFindings(p, b, hardeningProject, []string{a, o}, []string{o})

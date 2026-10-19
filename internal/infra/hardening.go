@@ -25,6 +25,20 @@ type BucketFinding struct{ Severity, Member, Role, Problem, Fix string }
 // the runs/-only one. It names the release the seal ships in.
 const sealRelease = "0.9.0"
 
+// previousLauncherConditionTitle and previousLauncherCondition are the
+// launchers' objectUser condition as releases 0.7.0 through 0.8.x wrote it:
+// runs/ alone, before the sealed budget token moved to tokens/
+// (gcp.LauncherBucketConditionTitle names both prefixes since). An
+// installation that has not been re-initialised still carries this binding,
+// and it is a launcher's own: doctor tells the operator to run fugaro init,
+// which replaces the grant, and never to remove it — removing it would take
+// the launcher's writes with it, and the launcher's read of runs/ as well.
+const previousLauncherConditionTitle = "fugaro-launchers-runs"
+
+func previousLauncherCondition(bucket string) string {
+	return `resource.name.startsWith("projects/_/buckets/` + bucket + `/objects/runs/")`
+}
+
 // bucketWriteRoles are the predefined roles that write objects.
 var bucketWriteRoles = []string{"roles/storage.objectAdmin", "roles/storage.objectUser", "roles/storage.objectCreator",
 	"roles/storage.legacyBucketWriter", "roles/storage.legacyBucketOwner", "roles/storage.admin"}
@@ -77,6 +91,16 @@ func RunsBucketFindings(p *storage.Policy, bucket, project string, launchers, op
 			case bd.Condition != nil && bd.Role == "roles/storage.objectUser" && bd.Condition.Title == gcp.LauncherBucketConditionTitle &&
 				bd.Condition.Expression == gcp.LauncherBucketCondition(bucket) && bd.Condition.Description == "":
 				writer[m] = true
+			case bd.Condition != nil && bd.Role == "roles/storage.objectUser" && launcherOnly(m) &&
+				bd.Condition.Title == previousLauncherConditionTitle && bd.Condition.Expression == previousLauncherCondition(bucket) && bd.Condition.Description == "":
+				// The 0.7.0-0.8.x launcher binding, still in place: the
+				// launcher's own grant, one release older than the one that
+				// writes the sealed token. The missing tokens/ write is
+				// reported by the loop below; this is the binding itself, and
+				// its fix is the same run of fugaro init.
+				out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: bd.Role,
+					Problem: "launcher " + pm + " holds " + bd.Role + " on gs://" + bucket + " under the runs/-only condition: the installation predates the " + sealRelease + " widening that lets a launcher write the sealed budget token in tokens/",
+					Fix:     "an operator runs fugaro init (" + sealRelease + " or later), which replaces the grant"})
 			case bd.Condition != nil && fugaroAccountMember.MatchString(m) && bd.Role == "roles/storage.objectUser":
 				// A job or build account under its own prefixes (the guard checks the shape).
 			case bd.Condition != nil:
