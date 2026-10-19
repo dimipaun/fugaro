@@ -319,14 +319,16 @@ func keyMaterial(s string) bool {
 //   - and nothing the installation already runs is replaced. The rollout adds
 //     the account's job — its scenario is the new golden
 //     `installation-accounts.plan.json` — and six of the nine goldens that
-//     already existed each moved in place, which is what they now record (the
-//     three firebase ones are untouched):
+//     already existed moved (relative to 0.8.x; the three firebase ones are
+//     untouched), by additions and in-place updates only:
 //     `google_storage_bucket_iam_member.job_tokens`, a read-only
 //     `roles/storage.objectViewer` binding on the run's sealed budget token,
 //     added to every job account (each workflow's job account on its own
 //     `tokens/<slug>/` — `repo.plan.json`, `repo-adopt.plan.json`,
 //     `repo-scope-move.plan.json` — and each project job account on the whole
-//     `tokens/` prefix, in the four installation scenarios); the runs bucket's
+//     `tokens/` prefix, in the three existing installation scenarios —
+//     `installation.plan.json`, `installation-adopt.plan.json`,
+//     `installation-managed.plan.json` — as in the new one); the runs bucket's
 //     one-day `/budget-token` cleanup rule now matching `tokens/` beside
 //     `runs/`; and each project job's environment gaining this release's
 //     variables, `FUGARO_GITHUB_APP_ID` and `FUGARO_SECRET_ENVS` (D9). Every
