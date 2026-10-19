@@ -255,6 +255,12 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 				t.Errorf("the refusal does not say %q: %v", want, err)
 			}
 		}
+		// Substrings are not enough: the sentence interpolates one grant whose
+		// aside is a parenthetical, and an unbalanced one reads wrong while
+		// every substring above is still there (it did: the grant's "(" never
+		// closed, so the remedy and the second cause were swallowed into the
+		// aside). The parentheses are read here, not searched for.
+		assertBalancedParens(t, err.Error())
 		if strings.Contains(err.Error(), "already taken") {
 			t.Errorf("the refusal blames a take that no longer deletes: %v", err)
 		}
@@ -283,6 +289,62 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 			t.Fatalf("an unmarked run with its budget off made %d database requests", n)
 		}
 	})
+}
+
+// The other half of the same refusal: a budget-on job whose token object
+// cannot be read and whose launch records no marker. It carries the same grant
+// and the same remedy, and this is the sentence the unbalanced parenthesis was
+// in for the other case too — one constant, two sentences, so a test of one of
+// them pins the shape of both.
+func TestTheMissingTokenRefusalWithoutTheMarkerReadsRight(t *testing.T) {
+	const policy = `{"version":3,"budget":{"mode":"enforce","per_run_usd":0.09}}`
+	b := policyRun(t, gwConfig(t, ""), "enforce", "5", policy, capScript(3)...)
+	b.unmarked()
+	if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := b.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a budget-on run whose token cannot be read must stop: rec = %+v", rec)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "was not launched with one") {
+		t.Fatalf("err = %v, want the refusal a launch with no marker gets", err)
+	}
+	for _, want := range []string{"tokens/", "read grant", "fugaro init --repo", "start a new run (fugaro run with the same task)"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	assertBalancedParens(t, msg)
+	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+		t.Fatalf("the run went on without its token: calls = %d, rec = %+v", len(b.agent.calls), rec)
+	}
+}
+
+// assertBalancedParens fails unless every "(" in s closes, and none closes
+// what it did not open: an unbalanced parenthesis does not make a sentence
+// unreadable, it makes it say something else — the rest of the sentence ends up
+// inside an aside, and every word of the intended text is still there for a
+// substring assertion to find.
+func assertBalancedParens(t *testing.T, s string) {
+	t.Helper()
+	depth := 0
+	for i, r := range s {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth < 0 {
+				t.Errorf("a \")\" at %d closes nothing: %s", i, s)
+				return
+			}
+		}
+	}
+	if depth != 0 {
+		t.Errorf("%d \"(\" left open: %s", depth, s)
+	}
 }
 
 // The marker also closes the job that was never re-applied: the launcher
