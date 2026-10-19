@@ -427,13 +427,16 @@ func setManagedPlan(t *testing.T, r *initRig) {
 	r.save(t)
 }
 
-// The two buckets the accounted side comes from are functions of the project
-// and nothing else: a state bucket a flag, a config or a caller could name is
-// a bucket this command would believe instead of the project's own.
+// The installation's state bucket is read from the name the project's config
+// gives it, and D77's is a function of the project id alone: only the deployer
+// creates D77's and grants on it, so a caller cannot name another and be
+// believed; the installation's own bucket is the project's choice
+// (`fugaro init --state-bucket` writes it into the config), so reading the
+// default name for it would read the wrong bucket.
 func TestManagedAccountedReadsTheProjectsOwnStateBuckets(t *testing.T) {
 	r, _, _ := inventoryRig(t)
-	_, c := inventoryClients(t, r)
-	got, err := managedAccounted(context.Background(), c, initProject)
+	lc, c := inventoryClients(t, r)
+	got, err := managedAccounted(context.Background(), c, initProject, installationStateBucket(lc))
 	if err != nil {
 		t.Fatalf("managedAccounted: %v", err)
 	}
@@ -456,8 +459,65 @@ func TestManagedAccountedReadsTheProjectsOwnStateBuckets(t *testing.T) {
 	}
 }
 
+// A project that named its own state bucket reads THAT bucket. `fugaro init
+// --state-bucket my-state` writes the name back into the project's config
+// (init.go), and the installation's state is then in it: reading the default
+// fugaro-tfstate-<gcp_project> instead would 404 (CauseStateUnread, and every
+// managed apply falls back to its confirmations) while the real bucket read as
+// foreign beside it.
+//
+// Mutation (run, restore): pass managedmode.InstallationsStateBucket(lc.GCPProject)
+// instead of installationStateBucket(lc) — the read lists the default bucket's
+// state (initRunsBucket) and the assertion below fails on it. Mutation: drop
+// StateBucket from the Inventory the caller builds — the ignored side stops
+// covering the configured bucket, which the second half asserts.
+func TestManagedAccountedReadsTheStateBucketTheConfigNames(t *testing.T) {
+	r, _, _ := inventoryRig(t)
+	// The same project, with the state bucket it was created with.
+	r.appendConfig(t, "terraform: { state_bucket: my-state }\n")
+	const configured = "my-state"
+	named := stateObject(t, "google_storage_bucket", "named", "fugaro-data-my-state")
+	r.gcs.AddBucket(configured, initProjectNumber, map[string]string{"fugaro": "tfstate"})
+	r.gcs.Put(configured, infra.StatePrefixInstallation+"/default.tfstate", named)
+
+	lc, c := inventoryClients(t, r)
+	if got := installationStateBucket(lc); got != configured {
+		t.Fatalf("installationStateBucket = %q, want %q (the name the config writes)", got, configured)
+	}
+	got, err := managedAccounted(context.Background(), c, initProject, installationStateBucket(lc))
+	if err != nil {
+		t.Fatalf("managedAccounted: %v", err)
+	}
+	want := []managedmode.StateResource{
+		{Type: "storage.googleapis.com/Bucket", Name: "fugaro-data-my-state"},
+		{Type: "storage.googleapis.com/Bucket", Name: "fmgd-data"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("accounted = %+v, want %+v: the configured state bucket's state, not the default bucket's", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("entry %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	// And the ignored side covers the same bucket: a project whose configured
+	// state bucket is listed by the whole-project read must not read as
+	// foreign, or the gate still never opens.
+	in := managedmode.Inventory{
+		Project: initProjectName, GCPProject: initProject, ProjectNumber: initProjectNumber,
+		Assets: &fakeManagedAssets{assets: []managedmode.Asset{
+			{Name: "//storage.googleapis.com/" + configured, Type: "storage.googleapis.com/Bucket"},
+			{Name: "//storage.googleapis.com/fmgd-data", Type: "storage.googleapis.com/Bucket"},
+		}},
+		Accounted:   got,
+		StateBucket: installationStateBucket(lc),
+	}
+	if d := in.Check(context.Background()); d.Fallback {
+		t.Errorf("the inventory fell back on a project that is its own: %s", d.Why)
+	}
+}
+
 // The security-relevant part of the wiring is WHERE the read is made: with the
-// operator's own credential, before the deployer is assumed. The Cloud Asset
 // read role is granted to the operators and to nobody else (iam.tf's
 // operator_cloud_asset_reader), and the deployer the command assumes holds
 // neither it nor the installation's own state bucket the accounted side is
