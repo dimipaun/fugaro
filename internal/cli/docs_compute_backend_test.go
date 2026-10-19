@@ -1404,3 +1404,69 @@ func TestDocsComputeBackendPlanStatusMatchesTheTree(t *testing.T) {
 		t.Errorf("%s's OWNER APPROVAL GATE still opens with UNAPPROVED while the tree carries Task 9's landed work: a gate that forbids every task while a task has landed is the contradiction this check is for", computeBackendPlan)
 	}
 }
+
+// TestDocsComputeBackendQueueDeadlineKeepsLaunchJSON: the design justifies
+// deleting a job that never left `QUEUED` — rather than cancelling it, which the
+// reaper's five-permission role cannot do — on what such a job leaves behind,
+// and an earlier draft of that argument said "there is no `launch.json`", which
+// is false: `fugaro run` writes `launch.json` to the runs bucket as `Launch`
+// returns (`internal/cli/run.go`: `be.Launch`, then `WriteLaunch`), and a job
+// that has been created is `QUEUED` before it is anything else, so the run does
+// not vanish from `fugaro ls` when the job's record is deleted. The claim is
+// read here against the code it rests on and against the reaper's own header,
+// so the false shape cannot come back silently in either.
+//
+// Mutations (verified, run and restored): put "there is no `launch.json`" back
+// into §1.4's amended paragraph — this fails naming it; and put "nothing an
+// operator reads back is lost with the record" back into the reaper's
+// deleteQueued comment — this fails on that phrase, which is the false half of
+// the argument in the place a reader of the code meets it.
+func TestDocsComputeBackendQueueDeadlineKeepsLaunchJSON(t *testing.T) {
+	// The code fact the argument rests on: launch.json is the launcher's write,
+	// made after the create returns, so it is not the job's record.
+	run := readDoc(t, "internal/cli/run.go")
+	launch := strings.Index(run, "env.be.Launch(lctx, lspec)")
+	write := strings.Index(run, "s.WriteLaunch(hctx, l)")
+	if launch < 0 || write < 0 || write < launch {
+		t.Fatalf("internal/cli/run.go no longer launches and then writes launch.json (%d, %d): the design's argument that a QUEUED job's run survives the reaper's delete rests on that order", launch, write)
+	}
+	for _, path := range []string{"docs/design/compute-backend.md", "internal/backend/batch/reap.go", "docs/backends.md"} {
+		text := flattenDoc(readDoc(t, path))
+		for _, bad := range []string{"no `launch.json`", "no launch.json", "no launch.json and"} {
+			if strings.Contains(text, bad) {
+				t.Errorf("%s says %q about a job that never left QUEUED: launch.json is written by the launcher as the create returns, so it survives the delete and the run stays readable by fugaro ls, diagnose and watch", path, bad)
+			}
+		}
+	}
+	// And the amended passage has to say what the delete does not touch, not
+	// only what it costs.
+	design := readDoc(t, "docs/design/compute-backend.md")
+	const amended = "**Amended by Task 9: the deadline deletes, not cancels**"
+	i := strings.Index(design, amended)
+	if i < 0 {
+		t.Fatalf("docs/design/compute-backend.md no longer carries §1.4's %q paragraph: that paragraph is where the delete is justified", amended)
+	}
+	passage := design[i:]
+	if end := strings.Index(passage, "\n  **Built**"); end >= 0 {
+		passage = passage[:end]
+	}
+	if !strings.Contains(passage, "`launch.json`") || !strings.Contains(passage, "survives") {
+		t.Errorf("docs/design/compute-backend.md's §1.4 amendment names no surviving `launch.json`: a reader is left with \"the delete destroys nothing that matters\" and no statement of what it does destroy, which is the shape a false claim grew in")
+	}
+	// The other side of the same claim: the delete is affordable because of
+	// what it costs as well as what it spares, and the job's own record --
+	// status message included -- is what it costs. A comment that says
+	// "nothing an operator reads back is lost" is the false half back again.
+	reap := flattenDoc(readDoc(t, "internal/backend/batch/reap.go"))
+	for _, bad := range []string{
+		"nothing an operator reads back is lost",
+		"nothing an operator reads back is lost with the record",
+	} {
+		if strings.Contains(reap, bad) {
+			t.Errorf("internal/backend/batch/reap.go's queue-deadline comment says %q: the job's own record and the status message Batch attaches go with the delete (design §1.4), so what is affordable is the delete, not a claim that nothing is lost", bad)
+		}
+	}
+	if !strings.Contains(reap, "status message") {
+		t.Errorf("internal/backend/batch/reap.go's queue-deadline comment never names the job's status message as what the delete costs: the design §1.4 amendment says that is the price of jobs.cancel not existing")
+	}
+}

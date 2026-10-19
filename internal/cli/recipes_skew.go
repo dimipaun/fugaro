@@ -180,7 +180,7 @@ func refuseManagedNotShipped() error {
 // There is deliberately no batchProvisionOpen, no batchProvisionDisabled and
 // no refuseBatchProvisionNotShipped beside it: an open gate nothing closes and
 // a refusal nothing can reach are names a later reader re-opens, which is
-// exactly what the pair existed to prevent. The managed gate below keeps its
+// exactly what the pair existed to prevent. The managed gate above keeps its
 // pair because it is still closed.
 const batchProvisionShipped = true
 

@@ -458,10 +458,12 @@ func TestReaperDecidesEveryBatchState(t *testing.T) {
 
 // TestReaperQueueDeadline: a job that has sat in QUEUED past the deadline is
 // DELETED -- the queue deadline's verb since jobs.cancel turned out not to be
-// a permission Google has, and the one case where the record does not matter:
-// a job that never left QUEUED never ran a task, and its run's launch.json and
-// result.json in the runs bucket are what ls, diagnose and watch read for it
-// (design §1.4) -- and one within the deadline is left alone.
+// a permission Google has, and the one case where the delete is affordable:
+// a job that never left QUEUED never ran a task, so it has no result.json and
+// no VM, and its run's launch.json is the launcher's own write to the runs
+// bucket (cli/run.go), which the delete leaves in place -- which is what ls,
+// diagnose and watch read for it (design §1.4) -- and one within the deadline
+// is left alone.
 func TestReaperQueueDeadline(t *testing.T) {
 	rt := newReaperTest(t, nil)
 	// 40 minutes: past the 32-minute queue deadline, on a 30-minute workflow.
@@ -483,9 +485,12 @@ func TestReaperQueueDeadline(t *testing.T) {
 	if !hasAction(rep, ActionDeleteJob, rt.name(old)) {
 		t.Fatalf("report = %v, want a delete of %s", rep.Lines(), old)
 	}
-	// The record is gone, not assumed gone: a job that never left QUEUED has
-	// no execution record worth keeping, and this is the assertion that says
-	// so rather than the comment above it.
+	// The job's record is gone, not assumed gone: a job that never left QUEUED
+	// has no result.json and no VM to lose (it never ran a task), so the job's
+	// own record is all the delete erases -- the run's launch.json is the
+	// launcher's object in the runs bucket, which is why ls, diagnose and
+	// watch keep showing the run (design §1.4). This is the assertion that
+	// says so rather than the comment above it.
 	if got := rt.bf.IDs(); len(got) != 1 || got[0] != JobID(backendtest.Slug, backendtest.Workflow, "20260927-100001-abcd") {
 		t.Fatalf("jobs = %v, want the deleted job's record gone and the young one's left", got)
 	}
@@ -1491,7 +1496,10 @@ func TestReaperFailsClosedWhenTheListingsFail(t *testing.T) {
 }
 
 // TestReaperQueueDeadlineErasesTheRecordAndAStartedJobKeepsIt: the queue
-// deadline's delete erases the record of a job that never ran a task -- and it
+// deadline's delete erases the job's own record -- its state and the status
+// message Batch attaches, and nothing the run's readers depend on, because the
+// run's launch.json is the launcher's object in the runs bucket -- for a job
+// that never ran a task -- and it
 // must not touch a job that DID leave QUEUED, whatever the listing said when
 // the pass decided. The second half is the promise §1.4 makes about ls,
 // diagnose and watch: a run that ran keeps its record.

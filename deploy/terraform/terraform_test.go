@@ -1454,7 +1454,7 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 				}
 				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
 					if !strings.HasPrefix(p[1], "compute.") && !strings.HasPrefix(p[1], "batch.jobs.") {
-						t.Errorf("%s: %s holds %s, which is neither the reaper's six nor the preload builder's build", path, blk.name, p[1])
+						t.Errorf("%s: %s holds %s, which is neither the reaper's five nor the preload builder's build", path, blk.name, p[1])
 					}
 				}
 				continue

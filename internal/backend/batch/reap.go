@@ -45,11 +45,16 @@ import (
 //     queue deadline (§1.4). jobs.delete is the only verb available for it:
 //     jobs.cancel is not a permission Google has (see the permissions below),
 //     so a role that named it could never be created. That is the one case
-//     where erasing the record costs nothing, because a job that never left
-//     QUEUED never ran a task: the run's own launch.json and result.json are
-//     what fugaro ls, diagnose, watch and the sweeper read for it. A job that
-//     DID leave QUEUED keeps its record, and the queue deadline never deletes
-//     one (deleteQueued reads the job back before it acts).
+//     where erasing the record is affordable, because a job that never left
+//     QUEUED never ran a task -- but the run is NOT what is erased with it:
+//     launch.json is written by the launcher, not by the job (cli/run.go:
+//     Launch, then WriteLaunch), so it survives the delete and fugaro ls,
+//     diagnose and watch, which read the runs bucket, keep showing the run.
+//     What the job's record did hold is its own state and status message, and
+//     those go with it. result.json never existed (the runner writes it in
+//     finalize) and no VM ever did (Batch creates them at SCHEDULED). A job
+//     that DID leave QUEUED keeps its record, and the queue deadline never
+//     deletes one (deleteQueued reads the job back before it acts).
 //   - It never deletes a finished job's record. That record is history, and
 //     the VM of a finished job is Batch's own teardown; §3.4's "the reaper
 //     deletes the job" is about the jobs it has decided must go (a stuck
@@ -525,7 +530,10 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		}
 		// Deleted, not cancelled: jobs.cancel is not a permission Google has
 		// (see this file's header), and a job that never left QUEUED never ran
-		// a task, so there is no execution record to keep. deleteQueued owns
+		// a task, so there is no result.json and no VM to lose -- what the
+		// delete does take with it is the job's own record, its status message
+		// included, and the run's launch.json is the launcher's own object and
+		// stays. deleteQueued owns
 		// the run as well -- Batch tears a deleted job's VMs down itself, so
 		// the VM is left to the pass after this one -- and it reads the job
 		// back before it acts, because "never left QUEUED" is the fact the
@@ -703,8 +711,10 @@ func stateEventPostdatesQueueDeadline(j *batch.Job, created time.Time, queueDead
 
 // deleteQueued is the queue deadline: a job that has not reached SCHEDULED or
 // RUNNING within the deadline is deleted (§1.4's queue deadline is
-// Fugaro-side, and a job that never left QUEUED never ran a task, so nothing
-// an operator reads back is lost with the record).
+// Fugaro-side, and a job that never left QUEUED never ran a task, so what is
+// erased is the job's own record -- its state and the status message Batch
+// attaches -- and nothing else: the run's launch.json is the launcher's, not
+// the job's, and survives, so ls, diagnose and watch keep showing the run).
 //
 // It is a delete and not a cancel because jobs.cancel is not a permission
 // Google has: the role this package's header used to describe -- six

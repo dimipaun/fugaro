@@ -436,12 +436,36 @@ does not add a charge.
   credential, which carries the editor role that call needs (§3.7), and
   `backendtest`'s cancel case requires the record to survive. The queue
   deadline is the one caller that cannot act that way, because it runs as the
-  reaper's deliberately narrow account — and it is also the one caller that
-  **may** delete rather than cancel, because a job that never left `QUEUED`
-  never ran a task: there is no `launch.json`, no `result.json`, no VM and no
-  history for the delete to destroy. What the deadline must never do is delete
-  a job that *did* leave `QUEUED`; the built rules below are how it tells the
-  two apart.
+  reaper's deliberately narrow account — and it is the one caller that **may**
+  delete rather than cancel, because of what such a job can and cannot leave
+  behind. **What survives is the run, and `launch.json` is not the job's
+  record**: `fugaro run` writes `launch.json` into the runs bucket the moment
+  `Launch` returns (`internal/cli/run.go`: `be.Launch`, then `WriteLaunch`),
+  and a job that has been created is `QUEUED` before it is anything else — so
+  a job the deadline can act on, which has been `QUEUED` for at least the
+  launcher's own task timeout, has had one for far longer than the gap between
+  the create and the write. The delete removes the *job*; the bucket object is
+  not the job's, which is why the run does not vanish from `fugaro ls`,
+  `diagnose` or `watch` — they read the runs bucket — and it is what §3.7
+  means when it says the run's own `launch.json`/`result.json` are the
+  authority for what happened.
+  **Nothing else is left behind**: `result.json` is written by the runner's
+  `finalize` (`internal/runner/runner.go`), and a job that never left `QUEUED`
+  never ran a task, so there is none to lose; and no VM ever existed for it,
+  because Batch creates a job's VMs when it reaches `SCHEDULED`, not when it
+  is created — so nothing is left to bill, nothing can leak, and the instance
+  pass has nothing to find. **What the delete does cost is the job's own
+  record**: its state, its labels and the status message Batch attaches to it,
+  which is where the quota-derived reason this bullet's outcome line wants
+  named would have been. That reason therefore has to be read from the job
+  **while it is still there** — whoever writes the `queue-timeout` outcome
+  reads it before the deadline acts — and what the reaper itself reports for
+  such a job is the wait and the job's name (the Built note below). That is
+  the price of `batch.jobs.cancel` not existing (§3.7, P2), and it is the only
+  price. What the deadline must never do is delete a job that *did* leave
+  `QUEUED` — that job ran, or was about to, and its record is where its own
+  status message and outcome live; the built rules below are how the two are
+  told apart.
   **Built** (Task 5): the deadline lives in the reaper
   (`internal/backend/batch/reap.go`); it **deletes** a job that has never left
   `QUEUED` (`jobs.delete` — the only verb its account holds for a job, the
@@ -1471,9 +1495,14 @@ the teardown is assumed rather than read:
   this section's prose: the job pass runs before the instance pass; a job
   `QUEUED` past the queue deadline is **deleted** (`jobs.delete`) — Task 9's
   amendment of §1.4, because `batch.jobs.cancel` is not a permission Google
-  defines and the role that named it could not be created, and because a job
-  that never left `QUEUED` has no history a delete destroys: no task ever ran,
-  so there is no `launch.json`, no `result.json` and no VM — and a job still
+  defines and the role that named it could not be created, and because of what
+  a job that never left `QUEUED` leaves behind: no `result.json` (the runner
+  writes it in `finalize`, and no task ran), no VM (Batch creates a job's VMs
+  at `SCHEDULED`), and a `launch.json` that **is not the job's record and
+  survives the delete** — `fugaro run` writes it to the runs bucket as the
+  create returns (`internal/cli/run.go`), so the run stays readable by
+  `fugaro ls`, `diagnose` and `watch` and the delete costs only the job's own
+  record, its status message included (§1.4) — and a job still
   `SCHEDULED`/`RUNNING`, or already in
   `DELETION_IN_PROGRESS`, that has been in that state longer than the **run
   budget** is **deleted** (the delete *is* its VMs' teardown). Stuckness is
@@ -1718,10 +1747,15 @@ What follows, plainly:
   `--provision-batch` was refused from 0.8.6 until **Task 9**. That task
   renames the queue deadline's action: **a job that never left `QUEUED` past the
   queue deadline is *deleted*, not cancelled** (`jobs.delete`), which is the
-  strictly more destructive verb the reaper already held — a job that never left
-  `QUEUED` never ran a task, so there is no execution record to keep, and the
-  run's own `launch.json`/`result.json` in the runs bucket are the authority for
-  what happened. `internal/backend/batch/reap.go` carries no cancel action at
+  strictly more destructive verb the reaper already held — and it is safe for
+  the one case it is used on, because a job that never left `QUEUED` never ran
+  a task: there is no `result.json` and no VM to lose, and the run's own
+  `launch.json`/`result.json` in the runs bucket are the authority for what
+  happened. **`launch.json` in particular is written by the launcher and not by
+  the job** (`internal/cli/run.go`: `Launch`, then `WriteLaunch`), so it
+  survives the delete and the run does not disappear from `fugaro ls`; what the
+  delete does erase is the job's own record and its status message (§1.4).
+  `internal/backend/batch/reap.go` carries no cancel action at
   all now, and `deploy/terraform/terraform_test.go`'s `knownInvalid` map is
   empty because the entry it held for that permission is gone.
   **The grant is a custom role carrying exactly those five — `fugaroReaper`,
