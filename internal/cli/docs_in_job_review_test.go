@@ -275,25 +275,7 @@ func TestDocsInJobReviewAllocatesNoDecisionsOrChecks(t *testing.T) {
 // substance is asserted, not just its presence.
 func TestDocsInJobReviewRecordsTheOwnersAnswers(t *testing.T) {
 	recon := readDoc(t, inJobReviewRecon)
-
-	// Each question's own block: from its heading to the next question's heading.
-	blocks := map[int]string{}
-	head := regexp.MustCompile(`(?m)^\*\*Q([0-9]+)\.`)
-	locs := head.FindAllStringSubmatchIndex(recon, -1)
-	for i, m := range locs {
-		n, err := strconv.Atoi(recon[m[2]:m[3]])
-		if err != nil {
-			t.Fatalf("question label %q does not carry a number", recon[m[0]:m[1]])
-		}
-		end := len(recon)
-		if i+1 < len(locs) {
-			end = locs[i+1][0]
-		}
-		blocks[n] = recon[m[0]:end]
-	}
-	if len(blocks) == 0 {
-		t.Fatalf("%s states no question of the form **QN.", inJobReviewRecon)
-	}
+	blocks := questionBlocks(t, recon)
 
 	// The answered set, exactly: the three the owner answered on 2026-10-19 and
 	// no others, each marked in place with the date.
@@ -336,6 +318,171 @@ func TestDocsInJobReviewRecordsTheOwnersAnswers(t *testing.T) {
 	}
 }
 
+// questionBlocks splits §4 into each question's own block: from its **QN.
+// heading to the next question's heading. Anything a question carries — its
+// answer marker, its "Constrained by" line — is found inside its own block, so
+// a marker that lands in the neighbouring question is seen as such.
+func questionBlocks(t *testing.T, recon string) map[int]string {
+	t.Helper()
+	blocks := map[int]string{}
+	head := regexp.MustCompile(`(?m)^\*\*Q([0-9]+)\.`)
+	locs := head.FindAllStringSubmatchIndex(recon, -1)
+	for i, m := range locs {
+		n, err := strconv.Atoi(recon[m[2]:m[3]])
+		if err != nil {
+			t.Fatalf("question label %q does not carry a number", recon[m[0]:m[1]])
+		}
+		end := len(recon)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		blocks[n] = recon[m[0]:end]
+	}
+	if len(blocks) == 0 {
+		t.Fatalf("%s states no question of the form **QN.", inJobReviewRecon)
+	}
+	return blocks
+}
+
+// constrainedLine returns a question block's own "Constrained by" line, empty
+// when it carries none. It is a line and not the whole block because a block
+// mentions other questions in its prose; what says which answer constrains it
+// is the line that says so.
+func constrainedLine(block string) string {
+	for _, line := range strings.Split(block, "\n") {
+		if strings.HasPrefix(line, "**Constrained by") {
+			return line
+		}
+	}
+	return ""
+}
+
+// countWord renders a small count the way the documents spell it in prose. The
+// prose counts are asserted against the lists they describe, so the pin has to
+// compare words with a count and not one literal with another.
+func countWord(n int) string {
+	words := []string{"zero", "one", "two", "three", "four", "five", "six",
+		"seven", "eight", "nine", "ten", "eleven", "twelve"}
+	if n >= 0 && n < len(words) {
+		return words[n]
+	}
+	return strconv.Itoa(n)
+}
+
+// bulletWith returns the body of the bullet starting with prefix: from that
+// line to the next bullet or blank line. A count stated inside a bullet belongs
+// to that bullet's own list, so it is read from the bullet and not the section.
+func bulletWith(doc, prefix string) string {
+	i := strings.Index(doc, prefix)
+	if i < 0 {
+		return ""
+	}
+	rest := doc[i+len(prefix):]
+	end := len(rest)
+	for _, cut := range []string{"\n- ", "\n\n"} {
+		if j := strings.Index(rest, cut); j >= 0 && j < end {
+			end = j
+		}
+	}
+	return rest[:end]
+}
+
+// TestDocsInJobReviewProseCountsMatchTheBlocks: the documents state their own
+// numbers in prose — how many questions Q9 constrains, how many resolutions
+// there are, how many rows the UNVERIFIED table has — and a count in prose
+// drifts silently when the list it describes gains or loses an item. That is
+// how §5's list came to name eight of the nine questions Q9 constrains while
+// three sentences also said eight. Each count is computed from the text it
+// describes and compared with the word the prose uses, so a list and its count
+// can no longer disagree.
+func TestDocsInJobReviewProseCountsMatchTheBlocks(t *testing.T) {
+	recon := readDoc(t, inJobReviewRecon)
+	readme := readDoc(t, inJobReviewREADME)
+
+	// The questions Q9 constrains, from the questions' own lines — the answer
+	// marked in place is the authority, not the summary of it.
+	q9 := []int{}
+	for n, b := range questionBlocks(t, recon) {
+		if strings.Contains(constrainedLine(b), "Q9") {
+			q9 = append(q9, n)
+		}
+	}
+	sort.Ints(q9)
+
+	// §5's own list has to name exactly those, no more and no fewer.
+	named := []int{}
+	for _, m := range regexp.MustCompile(`\*\*Q([0-9]+)\*\*`).FindAllStringSubmatch(bulletWith(recon, "- **Which questions it changes.**"), -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatalf("§5's list names %q, which is not a number", m[1])
+		}
+		named = append(named, n)
+	}
+	sort.Ints(named)
+	if got, want := numbers(named), numbers(q9); got != want {
+		t.Errorf("§5 lists %s as the questions Q9 changes, but %s carry a line naming Q9: the list and the questions it describes have to agree",
+			got, want)
+	}
+
+	// And the two sentences that count them, in words.
+	word := countWord(len(q9))
+	if !strings.Contains(readme, "the "+word+" questions Q9 constrains") {
+		t.Errorf("%s does not say Q9 constrains %s questions: %d carry a line naming Q9",
+			inJobReviewREADME, word, len(q9))
+	}
+	if !strings.Contains(recon, "Q9 constrains "+word+" of them") {
+		t.Errorf("%s does not say Q9 constrains %s of the open questions: %d carry a line naming Q9",
+			inJobReviewRecon, word, len(q9))
+	}
+
+	// The other two counts the index states, each against its own range there.
+	res := len(regexp.MustCompile(`(?m)^\*\*R[0-9]+\.`).FindAllString(recon, -1))
+	if !strings.Contains(readme, countWord(res)+" **resolutions**") {
+		t.Errorf("%s does not call the %d resolutions by that count", inJobReviewREADME, res)
+	}
+	if !strings.Contains(readme, "R1–R"+strconv.Itoa(res)+")") {
+		t.Errorf("%s does not state the resolutions' range as R1–R%d", inJobReviewREADME, res)
+	}
+	u := len(regexp.MustCompile(`(?m)^\| U[0-9]+ \|`).FindAllString(recon, -1))
+	if !strings.Contains(readme, "U1–U"+strconv.Itoa(u)+")") {
+		t.Errorf("%s does not state the UNVERIFIED table's range as U1–U%d", inJobReviewREADME, u)
+	}
+}
+
+// TestDocsInJobReviewLinksResolve: every relative link in the two documents
+// resolves to a file that is in the tree. The citations test checks that a
+// citation is *mentioned*, and a link one directory short is mentioned and dead
+// at the same time — [SECURITY.md](../SECURITY.md) from docs/in-job-review/
+// resolves to docs/SECURITY.md, which does not exist — so the target is
+// resolved here, against the document that carries the link.
+func TestDocsInJobReviewLinksResolve(t *testing.T) {
+	link := regexp.MustCompile(`\]\(([^()]+)\)`)
+	for _, doc := range []string{inJobReviewREADME, inJobReviewRecon} {
+		src := readDoc(t, doc)
+		dir := filepath.Dir(doc)
+		rel := 0
+		for _, m := range link.FindAllStringSubmatch(src, -1) {
+			target := m[1]
+			if i := strings.IndexByte(target, '#'); i >= 0 {
+				target = target[:i]
+			}
+			// External links are not this test's business: only a target
+			// relative to the document can be one directory short.
+			if target == "" || strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
+				continue
+			}
+			rel++
+			if _, err := os.Stat(filepath.Join("../../", dir, target)); err != nil {
+				t.Errorf("%s links %q, which resolves to %s from that document and is not in the tree: %v",
+					doc, m[1], filepath.Join(dir, target), err)
+			}
+		}
+		if rel == 0 {
+			t.Errorf("%s carries no relative link, so this pin checks nothing", doc)
+		}
+	}
+}
+
 // numbers renders a sorted question-number list for a comparison message.
 func numbers(ns []int) string {
 	parts := make([]string, 0, len(ns))
@@ -364,6 +511,11 @@ func TestDocsInJobReviewStatesTheAuthenticityEvidence(t *testing.T) {
 		"internal/gcpfake/iamcredentials.go",
 		"internal/gcpfake/identitytoolkit.go",
 		"schemas/result.schema.json` has no field that is a signature",
+		// Which search found what: the `pathMacro` substring is only a match
+		// case-insensitively, so the sentence has to name the command a reader
+		// would run rather than leave the case to be guessed.
+		"the case-sensitive `git grep hmac -- internal/`",
+		"`git grep -i hmac -- internal/`",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q: finding #40 rests on the record carrying no signature, and the evidence has to say where the tree's MACs are instead",
