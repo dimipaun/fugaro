@@ -190,3 +190,31 @@ test('a path that is not a path is refused rather than stored under nothing', as
   }
   assert.deepEqual(store.reads(), [], 'nothing was read');
 });
+
+test('a delivery is the other end\'s write: it lands, and is not a phone write', async () => {
+  // The double is also the substrate a harness plants the OTHER end in (the
+  // demo's simulated consumer, and the mailbox's own cases that need a reply
+  // already in the outbox). A delivery must land like any node -- the client's
+  // read and the ack's parent rule are both about the tree, not about who put
+  // the node there -- and must NOT appear in `writes()`, which is the record of
+  // what the CLIENT asked for. A delivery logged as a phone write would make
+  // the one-write-path assertion in `client.test.js` a statement about the
+  // harness rather than about the client.
+  const store = new MemoryMailboxStore();
+  assert.deepEqual(store.deliver(`${OUTBOX}/r-1`, message('r-1')), { ok: true });
+  assert.deepEqual(await store.read(`${OUTBOX}/r-1`), { ok: true, value: message('r-1') });
+  assert.deepEqual(store.writes(), [], 'a delivery is not a phone write');
+
+  // The tree is the tree: the phone's own ack of a delivered message is
+  // allowed (its parent is there), and a later phone write of a delivered
+  // node is refused by the rule the template carries.
+  assert.deepEqual(await store.write(`${OUTBOX}/r-1/acked`, true), { ok: true });
+  const again = await store.write(`${OUTBOX}/r-1`, message('r-1'));
+  assert.equal(again.code, STORE_CODES.EXISTS);
+
+  // ... and a delivery needs a path: a pathless one is refused rather than
+  // stored under nothing.
+  for (const path of ['', undefined, null, 42]) {
+    assert.equal(store.deliver(path, message('m-1')).ok, false, String(path));
+  }
+});
