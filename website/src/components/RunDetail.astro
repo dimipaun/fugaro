@@ -35,9 +35,10 @@
  * stop at the last step: the geometry is `top` at the marker's own height and `bottom` at the
  * step's, so the segment between two steps is exactly the step's own bottom padding — and the
  * last step draws none. `website/test/base-styles.mjs` reads the three claims that shape makes
- * (one column at 360, 768 and 1280; a line that joins the steps and stops at the last one; and
- * nothing in the section wider than a phone's content box) and refuses each of them being
- * broken.
+ * (one column at 360, 768 and 1280; a line that joins the steps and stops at the last one —
+ * every declaration that makes it exist, take it out of the flow and land it on the rail
+ * included; and nothing in the section wider than a phone's content box) and refuses each of
+ * them being broken.
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -215,6 +216,14 @@ function slug(name: string): string {
     padding: var(--space-2xl) 0 var(--space-3xl);
   }
 
+  /* The heading over the timeline. Its room under it is `--space-lg`, the same 32 px that
+     separates two steps, so the heading sits in the run's own rhythm rather than in one of its
+     own: the title, the five markers and the note then read down one column at one spacing.
+     This was `--space-md` while the steps were a grid, where the title opened a row of boxes
+     rather than a sequence. **It is written down here rather than gated**, because a gap
+     between 24 and 32 px is a preference and not a defect a reader would see — the claims
+     `website/test/base-styles.mjs` reads are all of the second kind — and this is the one place
+     a later round can find the reason for the value. */
   .run-detail-title {
     margin: 0 0 var(--space-lg);
     font-family: var(--font-sans);

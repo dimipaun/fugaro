@@ -693,13 +693,23 @@ goes stale the way the byte budgets did before D192.
   refusal fires.
 - **The shape is a gate, and each claim has a fixture.** `test/base-styles.mjs` gains
   `runTimelineFailures`, which reads the built stylesheet for three things: one column in force
-  at **360, 768 and 1280 px**; a connector on `.run-step`'s `::before` that is conditional on
-  the step not being the last, is no wider than `--border-width`, declares both its `top` and
-  its `bottom` and paints a token; and no `width`, `min-width` or `white-space: nowrap` in the
-  section wider than a phone's content box — **328 px**, derived as 360 minus `main`'s own
-  inline padding at that width, read from `base.css` rather than assumed. Seven fixtures plant
+  at **360, 768 and 1280 px** — every `repeat(…)` is refused, counted or not, because a definite
+  `repeat(5, 1fr)` hides its tracks in parentheses a top-level split cannot see into and so read
+  as one column; a connector on `.run-step`'s `::before` that exists and lands on the rail —
+  `content`, `position: absolute` on the line, `position: relative` on the step it is measured
+  from, a `left` that resolves to half the marker's own width, a `background` that is declared
+  and is a token, a width no wider than `--border-width`, a condition on the step not being the
+  last, and both a `top` and a `bottom`; and no `width`, `min-width` or `white-space: nowrap` in
+  the section wider than a phone's content box — **328 px**, derived as 360 minus `main`'s own
+  inline padding at that width, read from `base.css` rather than assumed. Thirteen fixtures plant
   each defect and read the refusal back, and the check was proved red by hand against the old
   stylesheet, which it refuses four times over.
+- **The heading sits in the run's own rhythm.** `.run-detail-title`'s margin under it moved with
+  the section, `--space-md` (24 px) → `--space-lg` (32 px) — the gap that separates two steps —
+  so the title, the five markers and the note read down one column at one spacing, where the
+  wider gap used to open a row of boxes. It is written down in the component rather than gated:
+  a gap between 24 and 32 px is a preference, and every claim `runTimelineFailures` reads is a
+  defect a reader would see.
 - **The widths were read, not looked at.** The built HTML and CSS were examined at 360, 768
   and 1280 px for the causes of horizontal overflow — a fixed width, a `nowrap`, an absolutely
   positioned element outside the rail — and there are none: the grid's track is
