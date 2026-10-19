@@ -290,7 +290,7 @@ func TestChecklistHasCheck67a(t *testing.T) {
 	for _, tag := range []string{
 		"**(1) The throwaway managed project and its installation** — **once per installation.**",
 		"**(2) The managed installation's own checkout, and the root every later step applies** — **once per repo checkout",
-		"**(3) An apply the gate admits, with no confirmation** — **once per repo checkout",
+		"**(3) An apply the gate admits — prompt-free under the coding agent's marker, and asked without it** — **once per repo checkout",
 		"**(4) A marker that names another project reads as not managed** — **once per repo checkout.**",
 		"**(5) A project that is not managed still asks** — **once per repo checkout",
 		"**(6) A plan that names a second project is refused** — **once per repo checkout, in the managed checkout.**",
@@ -308,7 +308,8 @@ func TestChecklistHasCheck67a(t *testing.T) {
 	// answer: the gate removes the confirmation, the delete list decides a
 	// delete, the marker is the authority, and the run's own credential fails.
 	for _, want := range []string{
-		"with no confirmation and no prompt",
+		"prompt-free under the coding agent's marker",
+		"asked and was not confirmed",
 		"`fmgd-`",
 		"`fugaro/managed.json`",
 		"fugaro/allow-delete.json",
@@ -876,10 +877,10 @@ func TestChecklistHasCheck68(t *testing.T) {
 		t.Error("Check 68's 4b no longer builds its chain as ONE comma-separated value")
 	}
 	for _, want := range []string{
-		"**The chain in 4b, and which account needs which grant for it to mean what it says.**",
+		"**4b proves less than it looks like it proves, and 4c is the probe that tests the fence.**",
 		"the operator needs `roles/iam.serviceAccountTokenCreator` on the deployer account",
-		"the deployer needs `roles/iam.serviceAccountTokenCreator` (or write-level `iam.serviceAccounts.actAs`) on `${NUM}-compute@developer.gserviceaccount.com`",
-		"which is why the chain is one comma-separated flag and not two flags",
+		"`iam.serviceAccounts.actAs` is not that authority",
+		"one comma-separated flag and not two flags",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 68 does not say %q, so the chain's failing hop is not the one the step is about", want)
@@ -945,14 +946,14 @@ func TestChecklistHasCheck68(t *testing.T) {
 		}
 	}
 	mkperm := strings.Index(section, "mkdir -p ./managed-root-perm")
-	firstPermApply := strings.Index(section, "fugaro managed apply ./managed-root-perm --project \"${F:?}\"")
+	firstPermApply := strings.Index(section, `fugaro managed apply "$RUN" --project "${F:?}"`)
 	switch {
 	case mkperm < 0:
 		t.Error("no step of Check 68 writes ./managed-root-perm, so its permission rows apply a root that does not exist")
 	case firstPermApply < 0:
-		t.Error("Check 68 no longer applies ./managed-root-perm")
+		t.Error("Check 68 no longer applies a root built from ./managed-root-perm, so its permission rows measure nothing")
 	case mkperm > firstPermApply:
-		t.Error("Check 68 applies ./managed-root-perm before any step authors it")
+		t.Error("Check 68 applies a permission root before any step authors the library it is built from")
 	}
 	// And every step names the directory it runs from, as 67a's do: the guard
 	// block's stops hold in the sandbox checkout, not in the clone.
@@ -999,7 +1000,7 @@ func TestChecklistHasCheck68(t *testing.T) {
 	// And every file the section writes is in the Restore's own rm line, as one
 	// command: a record file left in /tmp is a file the Restore's count of what
 	// is gone cannot be right about.
-	if !strings.Contains(section, "rm -f /tmp/chk68-deployer.txt /tmp/chk68-scoped.txt /tmp/chk68-operator.txt \\\n  /tmp/chk68-probe.txt /tmp/chk68-probe2.txt /tmp/chk68-marker.orig.json") {
+	if !strings.Contains(section, "rm -f /tmp/chk68-deployer.txt /tmp/chk68-scoped.txt /tmp/chk68-operator.txt \\\n  /tmp/chk68-probe.txt /tmp/chk68-probe2.txt /tmp/chk68-probe3.txt /tmp/chk68-marker.orig.json") {
 		t.Error("Check 68's Restore does not remove every file the check wrote")
 	}
 	assertProjectFlags(t, "68", blocks, 10, 1)
@@ -1226,21 +1227,17 @@ func TestManagedChecklistSectionsArePinned(t *testing.T) {
 		}
 	}
 
-	// The line citations, in a document that cites exactly: `managed_apply.go`'s
-	// `applied …` print is pinned a line below the statement above it,
-	// `restoreGCPProjectLine`'s citation is pinned against the line restore.go
-	// declares it on (TestManagedChecklistCitationsNameSymbols), and the
-	// operator's grant is `google_service_account_iam_member.operator` with
-	// its `role` line after it. A citation one line out sends a reader to the
-	// blank line above the thing.
+	// The citations. Three of them are the SYMBOL, because 0.8.6 and 0.8.7
+	// moved every line number this section used to carry — each was six to
+	// twelve lines out on the merged tree — and a number that was true when it
+	// was written is a number a reader is sent to the wrong place by. The one
+	// line citation that stays is the Terraform one,
+	// which names a resource and the `role` line in it; that file has not
+	// moved, and a misplaced line there is checked below.
 	for _, want := range []string{
-		"internal/cli/managed_apply.go:289",
-		// The restore.go citation is derived from the source rather than
-		// written here: the line is what a reader is sent to, so it is
-		// checked against the line restore.go declares the symbol on, and an
-		// edit that moves either one fails here instead of leaving a number
-		// that was true once.
-		"internal/cli/" + declaredLine(t, "restore.go", "func restoreGCPProjectLine("),
+		"`managedApply` in `internal/cli/managed_apply.go`",
+		"`restoreGCPProjectLine`",
+		"`loadInitConfig`",
 		"deploy/terraform/gcp/modules/workflow/sa.tf:12",
 	} {
 		found := false
@@ -1253,15 +1250,31 @@ func TestManagedChecklistSectionsArePinned(t *testing.T) {
 			t.Errorf("no managed section carries the corrected citation %q", want)
 		}
 	}
+	// The needles for restore.go are split, exactly as the check below splits
+	// its own: this file is read by that test for the shape `restore.go:<n>`,
+	// so writing one here would fail it.
 	for _, bad := range []string{
+		// The numbers these sections carried before the merge, each one a
+		// line off or more on the tree this branch now stands on.
+		"internal/cli/managed_apply.go:289",
 		"internal/cli/managed_apply.go:288",
+		"internal/cli/restore.go:" + "1015",
+		"restore.go:" + "1042",
+		"internal/cli/init.go:1070",
 		"deploy/terraform/gcp/modules/workflow/sa.tf:13",
 	} {
 		for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
 			if strings.Contains(docSection(t, path, doc, h), bad) {
-				t.Errorf("%s cites %q, which is a line off", h, bad)
+				t.Errorf("%s cites %q, which is a stale line citation", h, bad)
 			}
 		}
+	}
+	// And the Terraform line citation that stays is the right one: the
+	// operator's grant is `google_service_account_iam_member.operator`, and
+	// its `role` line follows the resource. A citation one line out sends the
+	// reader to a blank line, so both halves are checked against the file.
+	if l := declaredLine(t, "../../deploy/terraform/gcp/modules/workflow/sa.tf", `resource "google_service_account_iam_member" "operator"`); !strings.HasSuffix(l, "sa.tf:12") {
+		t.Errorf("the checklist cites deploy/terraform/gcp/modules/workflow/sa.tf:12 for the operator's grant, and that file declares it on %s now", l)
 	}
 
 	// No secret-shaped literal, in a section whose whole subject is IAM: the
@@ -1346,13 +1359,15 @@ func TestManagedChecklistSectionsUseDocSection(t *testing.T) {
 	}
 }
 
-// TestManagedChecklistCitationsNameSymbols is the review's first finding: the
-// comment in this file cited restoreGCPProjectLine by line number, and the
-// number was stale by two — the declaration and the refusal are far enough
-// apart that the next edit above either one moves it again. The rule now is
-// the symbol, in this file and in the section that makes the same claim; the
-// one place a line is the subject (the `applied …` print) keeps its line,
-// which is the line the review that asked for it named.
+// TestManagedChecklistCitationsNameSymbols is the review's first finding, twice
+// over: the comment in this file cited restoreGCPProjectLine by line number and
+// the number was stale by two, and then the 0.8.6 merge showed the same thing
+// about every line citation the managed sections carried — the restore.go one
+// moved by six lines, the managed-apply print and the init refusal by five and
+// twelve. The rule now is
+// the symbol for all three, in this file and in the sections that make the same
+// claims; the one place a line is still the subject is the Terraform resource,
+// whose file has not moved, and that citation is checked against the file.
 func TestManagedChecklistCitationsNameSymbols(t *testing.T) {
 	line := regexp.MustCompile(`restore\.go:\d+`)
 
@@ -1373,29 +1388,34 @@ func TestManagedChecklistCitationsNameSymbols(t *testing.T) {
 	if !strings.Contains(section, "`restoreGCPProjectLine`") {
 		t.Error("Check 67a no longer cites restoreGCPProjectLine by name")
 	}
-	// The doc keeps its line citation for this one -- an earlier review asked
-	// the file to cite exactly -- so "exactly" has to be checked against the
-	// source rather than trusted: whatever line Check 67a gives for
-	// restoreGCPProjectLine must be the line restore.go declares it on. A
-	// citation that drifts fails here instead of at the reader.
-	want := declaredLine(t, "restore.go", "func restoreGCPProjectLine(")
-	cited := false
+	// The doc cited this by line, and the line was stale the moment 0.8.6
+	// landed: the symbol is what the file can be read by, and the symbol is
+	// what the section names now. The declaration is still read out of the
+	// source, so a rename fails here rather than leaving a name in the doc
+	// that the tree no longer carries.
+	declaredLine(t, "restore.go", "func restoreGCPProjectLine(")
 	for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
-		for _, m := range line.FindAllString(docSection(t, path, doc, h), -1) {
-			cited = true
-			if m != want {
-				t.Errorf("%s cites %s; restore.go declares restoreGCPProjectLine on %s", h, m, want)
-			}
+		if got := line.FindAllString(docSection(t, path, doc, h), -1); len(got) > 0 {
+			t.Errorf("%s cites restore.go by line (%v): cite restoreGCPProjectLine, the symbol", h, got)
 		}
 	}
-	if !cited {
-		t.Error("no managed section cites restore.go by line any more: if the citation was dropped rather than corrected, drop this half of the test with it")
+	// And the line citation that stays is the Terraform one, which names a
+	// resource: Check 67a keeps it, and it is still the resource's own line.
+	if !strings.Contains(section, "deploy/terraform/gcp/modules/workflow/sa.tf:12") {
+		t.Error("Check 67a no longer carries the line citation deploy/terraform/gcp/modules/workflow/sa.tf:12")
 	}
-	// The line citation the earlier review asked to be exact stays exact: it
-	// names a print, and the line is what the reader is sent to.
-	for _, want := range []string{"internal/cli/managed_apply.go:289", "deploy/terraform/gcp/modules/workflow/sa.tf:12"} {
-		if !strings.Contains(section, want) {
-			t.Errorf("Check 67a no longer carries the line citation %q", want)
+	// The three citations that moved are symbols in every one of the three
+	// sections that carries them: a reader following them is not sent to a
+	// line that was true for one release.
+	for _, want := range []string{"`managedApply`", "`restoreGCPProjectLine`", "`loadInitConfig`"} {
+		found := false
+		for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
+			if strings.Contains(docSection(t, path, doc, h), want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no managed section names %s, so the citation that moved is neither a line nor a symbol", want)
 		}
 	}
 }
@@ -1848,88 +1868,170 @@ func TestChecklistHasCheck68NegativeProbesAreNonDestructive(t *testing.T) {
 }
 
 // TestChecklistHasCheck68RowAloneExampleIsolatesTheRow is the review's second
-// finding: the section says a row can be measured on its own by moving the
-// others aside, and the example moved `key.tf` and `repo.tf` while leaving
-// `job.tf` and `service.tf` in the root — so the "bucket-grant row alone" was
-// three rows, and the PERMISSION_DENIED it produces need not be the grant's.
-// The example now moves every OTHER row aside, names each file, and confirms
-// what the root declares before it applies.
+// finding, twice over. The first version moved three of the five rows aside and
+// measured a "bucket-grant row alone" that was really two rows; the second moved
+// every other row aside after applying them all, which the shared state makes
+// worse than wrong: every root of a managed project writes the SAME state object
+// (infra.StatePrefixManaged is "fugaro/managed", one key, no per-root suffix), so
+// the files moved aside are planned DELETES, and the delete gate runs BEFORE the
+// cover — the refusal recorded against the row would be the delete gate's, and
+// the row would not have been measured at all. A row is now measured in its own
+// FRESH root, built from the library of fixtures and row files, with the state
+// read before and after it and the owner's delete list used (only) when the row
+// applied.
 func TestChecklistHasCheck68RowAloneExampleIsolatesTheRow(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
 	section := docSection(t, path, doc, "## Check 68:")
 	step := check68Step(t, section, "**(5) What the two roles are known to LACK, measured per type**")
 
-	// The root is one file per row of the table, and the isolation is the
-	// moves: the row being measured stays, every other row goes aside.
-	rows := []string{"bucket-grant.tf", "job.tf", "service.tf", "key.tf", "repo.tf"}
-	for _, r := range rows {
-		if !strings.Contains(step, "./managed-root-perm/"+r) {
-			t.Errorf("Check 68's step 5 no longer writes ./managed-root-perm/%s, so the table's rows and the root's files have drifted apart", r)
-		}
-	}
-	var aside []string
+	var cmds []string
 	for _, b := range bashBlocks(step) {
-		for _, c := range logicalCommands(b) {
-			if strings.HasPrefix(c, "mv ") && strings.Contains(c, "/tmp/chk67-perm-aside/") && !strings.Contains(c, "/tmp/chk67-perm-aside/*") {
-				// the restoring direction moves FROM the aside directory
-				if strings.Index(c, "/tmp/chk67-perm-aside/") < strings.Index(c, "./managed-root-perm/") {
-					continue
-				}
-				aside = append(aside, c)
-			}
+		cmds = append(cmds, logicalCommands(b)...)
+	}
+	code := strings.Join(cmds, "\n")
+
+	// 1. The five rows of the table are authored as a LIBRARY, one file each.
+	for _, r := range []string{"bucket-grant", "job", "service", "key", "repo"} {
+		if !strings.Contains(step, "cat > ./managed-root-perm/"+r+".tf <<EOF") {
+			t.Errorf("Check 68's step 5 no longer authors ./managed-root-perm/%s.tf, so the table's rows and the library have drifted apart", r)
+		}
+		if !strings.Contains(step, "./managed-root-perm/"+r+".tf") {
+			t.Errorf("Check 68's step 5 loses ./managed-root-perm/%s.tf between the table and the library that is moved into rows/", r)
 		}
 	}
-	if len(aside) == 0 {
-		t.Fatal("Check 68's step 5 has no example that moves rows aside, so the row-alone claim has nothing behind it")
-	}
-	// The example isolates the grant row: it moves the FOUR other rows.
-	isolating := ""
-	for _, c := range aside {
-		n := 0
-		for _, r := range []string{"job.tf", "service.tf", "key.tf", "repo.tf"} {
-			if strings.Contains(c, "./managed-root-perm/"+r) {
-				n++
-			}
-		}
-		if n == 4 {
-			isolating = c
-		}
-	}
-	if isolating == "" {
-		t.Errorf("Check 68's step 5 moves rows aside without ever isolating one: no example moves all four other rows (job.tf, service.tf, key.tf, repo.tf), so the row it claims to measure is not the only row in the root:\n  %s", strings.Join(aside, "\n  "))
-	}
-	// And what remains is confirmed, locally, before the apply.
-	for _, want := range []string{
-		"ls ./managed-root-perm/*.tf",
-		"grep -H '^resource' ./managed-root-perm/*.tf",
-	} {
-		if !strings.Contains(step, want) {
-			t.Errorf("Check 68's step 5 does not confirm which resources the root holds before applying (%q)", want)
-		}
-	}
-	// The rotation has to say the same number as the example: five rows, one left
-	// in the root, so FOUR move aside. "The other three" would leave a second row
-	// standing and describe an isolation the example above does not perform.
-	if !strings.Contains(step, "move the other four rows aside") {
-		t.Error("Check 68's step 5 does not say the rotation moves the FOUR other rows aside, so its arithmetic disagrees with the five-row table")
-	}
-	if strings.Contains(step, "move the other three rows aside") {
-		t.Error("Check 68's step 5 says the rotation moves three rows aside, which leaves a second row in the root and measures two")
-	}
-	// Same for what the confirming read is said to print: the root keeps the
-	// provider (no resource), the account, the bucket and the grant.
-	if !strings.Contains(step, "the three resources the root still declares") {
-		t.Error("Check 68's step 5 does not say how many resources the isolated root still declares, so the `grep -H` above has nothing to be checked against")
+	if !strings.Contains(step, "mkdir -p ./managed-root-perm/rows") {
+		t.Error("Check 68's step 5 has no library directory, so a row's file and the fixtures are not separated from what is applied")
 	}
 
-	// The comment that made the example wrong: the grant IS one of the table's
-	// rows, so it cannot be listed among the files that "stay in every run".
-	// The comment is wrapped across lines in the doc, so it is compared with
-	// the wrapping taken out — otherwise a re-flowed paragraph would slip past.
-	flat := strings.ToLower(strings.NewReplacer("\n# ", " ", "\n", " ", "# ", "").Replace(step))
-	if strings.Contains(flat, "the account, the bucket, the grant and the api enable stay in every run") {
-		t.Error("Check 68's step 5 still says the grant and the API enable stay in every run, and both are rows of the table it measures")
+	// 2. And a row is measured in a FRESH root holding the fixtures and that row:
+	// the directory is removed and rebuilt, the two fixtures and the row are
+	// copied in, and the local reads say what the root holds before it applies.
+	for _, want := range []string{
+		`RUN="./managed-root-perm/run-$ROW"`,
+		`rm -rf "$RUN"; mkdir -p "$RUN"`,
+		`cp "./managed-root-perm/rows/$ROW.tf" "$RUN/row.tf"`,
+		`ls "$RUN"/*.tf`,
+		`grep -H '^resource' "$RUN"/*.tf`,
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("Check 68's step 5 does not carry %q, so a row is not measured in a fresh root of its own", want)
+		}
+	}
+	if strings.Contains(step, "managed-root-perm/*.tf") {
+		t.Error("Check 68's step 5 still confirms the library directory itself, which is not the root a row is applied from")
+	}
+
+	// 3. The apply is made against THAT root, with the coding agent's marker
+	// inline: without it the operator is asked to type the installation's name
+	// (managed.Request.confirm), which would be read as a refused row.
+	apply := ""
+	for _, c := range cmds {
+		if strings.Contains(c, "fugaro managed apply") {
+			apply = c
+		}
+	}
+	if apply == "" {
+		t.Fatal("Check 68's step 5 has no `fugaro managed apply` command, so nothing measures a row")
+	}
+	if !strings.Contains(apply, `"$RUN"`) {
+		t.Errorf("Check 68's step 5 applies something other than the row's own fresh root:\n  %s", apply)
+	}
+	if !strings.HasPrefix(apply, "AI_AGENT=chk67 ") {
+		t.Errorf("Check 68's step 5 applies without the coding agent's marker, so a person at a terminal is asked to confirm and a refused row is recorded:\n  %s", apply)
+	}
+	if strings.Contains(code, "export AI_AGENT") {
+		t.Error("Check 68's step 5 exports the agent marker, and `fugaro allow-delete` refuses to run in a session that carries one")
+	}
+
+	// 4. Nothing is moved aside any more, and the aside directory the earlier
+	// design used is gone from the section — including from its Restore.
+	if strings.Contains(section, "chk67-perm-aside") {
+		t.Error("Check 68 still names the aside directory of the design that measured a row by moving the others out of an already-applied root")
+	}
+	for _, c := range cmds {
+		if !strings.HasPrefix(c, "mv ") {
+			continue
+		}
+		// One move is legitimate: the authored files become the library. What
+		// must not come back is a move of a ROW in or out of a root that has
+		// already been applied.
+		if strings.Contains(c, "run-") || strings.Contains(c, "managed-root-perm/*.tf") {
+			t.Errorf("Check 68's step 5 moves files about to isolate a row, and the shared state turns that into planned deletes:\n  %s", c)
+		}
+	}
+
+	// 5. The reason is stated, and it is the one state every root writes.
+	for _, want := range []string{
+		"infra.StatePrefixManaged",
+		"one key with no per-root suffix",
+		"runs BEFORE the cover",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("Check 68's step 5 does not say %q, so the fresh root per row looks like tidiness rather than the fix for the wrong refusal", want)
+		}
+	}
+
+	// 6. The state is read AS THE DEPLOYER, by address, before the first row and
+	// after every row — that read is what says whether a row created anything.
+	for _, want := range []string{
+		`STATE="gs://fugaro-managed-tfstate-${M:?}/fugaro/managed/default.tfstate"`,
+		`gcloud storage cat "$STATE" --impersonate-service-account="${D:?}" --project="${M:?}"`,
+		`'.resources[]? | .type + "." + .name'`,
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("Check 68's step 5 does not carry %q, so what the one state holds is read from nowhere", want)
+		}
+	}
+	if n := strings.Count(code, `gcloud storage cat "$STATE"`); n < 2 {
+		t.Errorf("Check 68's step 5 reads the managed state %d time(s): it must be read before the rows and again after each one", n)
+	}
+
+	// 7. What to do when a row APPLIES is a rule with commands behind it, and the
+	// command that records the approval REPLACES the list — so an invocation that
+	// names only the new address drops every approval already in it.
+	for _, want := range []string{
+		"IF THAT ROW APPLIED",
+		"REPLACES the list",
+		"plus the one this row just added",
+		"nothing is approved",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("Check 68's step 5 does not carry %q, so a row that applied leaves an address the next row's plan would delete", want)
+		}
+	}
+	allowDeletes := 0
+	for _, c := range cmds {
+		if strings.Contains(c, "fugaro allow-delete") {
+			allowDeletes++
+		}
+	}
+	if allowDeletes < 2 {
+		t.Errorf("Check 68's step 5 runs `fugaro allow-delete` %d time(s): the list has to be read before it is written, and the write is what makes the next row measurable", allowDeletes)
+	}
+
+	// 8. The rotation says the same thing as the example, in the same arithmetic:
+	// five rows, one per fresh root, so FOUR are named as the others.
+	if !strings.Contains(step, "the other four rows") {
+		t.Error("Check 68's step 5 does not say the rotation covers the FOUR other rows, so its arithmetic disagrees with the five-row table")
+	}
+	if strings.Contains(step, "move the other four rows aside") || strings.Contains(step, "move the other three rows aside") {
+		t.Error("Check 68's step 5 still describes the rotation as moving rows aside, which the shared state turns into planned deletes")
+	}
+	if !strings.Contains(step, "each in its own fresh run-<row> directory") {
+		t.Error("Check 68's step 5 does not say every other row is measured in a fresh directory of its own")
+	}
+
+	// 9. The prose says what each row records, and that a fresh root per row is
+	// what makes the refusal the row's.
+	for _, want := range []string{
+		"What each row records",
+		"its own fresh root",
+		"the wrong cause",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("Check 68's step 5 does not carry %q, so what a row records is left to the reader", want)
+		}
 	}
 }
 
@@ -2066,5 +2168,513 @@ func TestChecklistHasCheck68Step5FixtureAccountIsNotARow(t *testing.T) {
 	}
 	if !strings.Contains(flat, "not one of the table's rows") {
 		t.Error("Check 68's step 5 does not say the account is a fixture kept in every run rather than a row of the table it measures")
+	}
+}
+
+// shellGuardedDelete finds the fenced block that carries name and returns the
+// line indexes of the guard, of the delete and of the else branch, so a test
+// reads the ORDER off the block's own lines instead of trusting the prose above
+// it. A comment beside a delete is not a guard, and the review's surviving
+// mutation was exactly that: replacing the "ONLY if ..." sentence with a bare
+// `⚠ CONFIRM` changed nothing a reader or a shell would notice.
+func shellGuardedDelete(t *testing.T, section, name, deleteNeedle string) (guard, del, els int, block []string) {
+	t.Helper()
+	for _, b := range bashBlocks(section) {
+		for _, l := range b {
+			if strings.Contains(l, name+"=") || strings.Contains(l, "${"+name+"}") {
+				block = b
+			}
+		}
+	}
+	if block == nil {
+		t.Fatalf("%s: no fenced block carries %s", name, name)
+	}
+	guard, del, els = -1, -1, -1
+	for i, l := range block {
+		switch {
+		case strings.Contains(l, `if [ "${`+name+`}" = yes ]; then`):
+			guard = i
+		case strings.Contains(l, deleteNeedle):
+			del = i
+		case strings.TrimSpace(l) == "else":
+			els = i
+		}
+	}
+	return guard, del, els, block
+}
+
+// TestChecklistHasCheck67aRestoreIsGuardedInTheShell and its Check 68 sibling
+// pin the guard, not its description. Both Restores delete a whole GCP project,
+// and both said in a comment that the delete ran "ONLY if" a later check was not
+// going to run — a condition a pasted block would not honour, and one the
+// project's own checkout and the reserved-for-30-days project ID make expensive
+// rather than merely untidy. The delete is now inside a shell `if` on a variable
+// that is EMPTY by default, with an `else` that reports what was left.
+func TestChecklistHasCheck67aRestoreIsGuardedInTheShell(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 67a:")
+
+	guard, del, els, block := shellGuardedDelete(t, section, "CHK67_CLEANUP", "gcloud projects delete")
+	if guard < 0 {
+		t.Fatalf("Check 67a's Restore has no `if [ \"${CHK67_CLEANUP}\" = yes ]; then`, so its project delete is not conditional in the shell:\n  %s", strings.Join(block, "\n  "))
+	}
+	if del < 0 {
+		t.Fatal("Check 67a's Restore no longer deletes the throwaway project at all")
+	}
+	if els < 0 {
+		t.Fatal("Check 67a's Restore guard has no `else` branch, so an unset variable deletes in silence or reports nothing")
+	}
+	if !(guard < del && del < els) {
+		t.Errorf("Check 67a's `gcloud projects delete` is not inside the guarded branch (guard at line %d, delete at %d, else at %d of the block)", guard, del, els)
+	}
+	for _, want := range []string{"⚠ CONFIRM", "${M:?}"} {
+		if !strings.Contains(block[del], want) {
+			t.Errorf("Check 67a's guarded delete does not carry %q:\n  %s", want, block[del])
+		}
+	}
+	// The default is empty: a guard whose variable defaults to `yes` deletes on
+	// a paste, which is the whole thing this guard exists to stop.
+	setLine := ""
+	for _, l := range block {
+		if strings.HasPrefix(strings.TrimSpace(l), "CHK67_CLEANUP=") {
+			setLine = strings.TrimSpace(l)
+		}
+	}
+	if setLine == "" {
+		t.Fatal("Check 67a's Restore never assigns CHK67_CLEANUP, so the variable its guard reads comes from nowhere")
+	}
+	if got := strings.TrimSpace(strings.SplitN(setLine, "#", 2)[0]); got != "CHK67_CLEANUP=" {
+		t.Errorf("Check 67a's Restore defaults CHK67_CLEANUP to something (%q): the default has to be empty, so a pasted block deletes nothing", got)
+	}
+	if !strings.Contains(strings.Join(block, "\n"), "so NOTHING was deleted") {
+		t.Error("Check 67a's else branch does not report that nothing was deleted, so an unset variable looks like a clean run")
+	}
+	if !strings.Contains(section, "30 days") {
+		t.Error("Check 67a's Restore does not warn that a deleted project ID stays reserved for about 30 days")
+	}
+}
+
+func TestChecklistHasCheck68RestoreIsGuardedInTheShell(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+
+	guard, del, els, block := shellGuardedDelete(t, section, "CHK68_CLEANUP", "gcloud projects delete")
+	if guard < 0 {
+		t.Fatalf("Check 68's Restore has no `if [ \"${CHK68_CLEANUP}\" = yes ]; then`, so its project delete is not conditional in the shell:\n  %s", strings.Join(block, "\n  "))
+	}
+	if del < 0 || els < 0 {
+		t.Fatal("Check 68's Restore has no guarded delete, or no else branch to report what was left")
+	}
+	if !(guard < del && del < els) {
+		t.Errorf("Check 68's `gcloud projects delete` is not inside the guarded branch (guard at %d, delete at %d, else at %d)", guard, del, els)
+	}
+	if !strings.Contains(block[del], "⚠ CONFIRM") {
+		t.Errorf("Check 68's guarded delete carries no ⚠ CONFIRM:\n  %s", block[del])
+	}
+	setLine := ""
+	for _, l := range block {
+		if strings.HasPrefix(strings.TrimSpace(l), "CHK68_CLEANUP=") {
+			setLine = strings.TrimSpace(l)
+		}
+	}
+	if setLine == "" || strings.TrimSpace(strings.SplitN(setLine, "#", 2)[0]) != "CHK68_CLEANUP=" {
+		t.Errorf("Check 68's Restore does not default CHK68_CLEANUP to empty (%q): the default has to delete nothing", setLine)
+	}
+	if !strings.Contains(strings.Join(block, "\n"), "was NOT deleted") {
+		t.Error("Check 68's else branch does not report that the project was left standing, and Check 67b needs it")
+	}
+	// The other half of the same rule: the reason this default is the safe one.
+	if !strings.Contains(section, "67b needs it") {
+		t.Error("Check 68's Restore does not say why the default direction is not to delete: Check 67b needs the project")
+	}
+}
+
+// TestManagedChecklistSectionsCarryThe086Banner is the round-6 blocking finding:
+// release 0.8.6 turned managed projects off until 0.9.0
+// (managedDeployerShipped is false), so every command the three sections rest on
+// refuses before any cloud call and the deployer's scoped role is never created.
+// A page that reads as runnable today sends an operator into three checks that
+// cannot start — and into Check 68 step 2, whose assertions are about a fence
+// IAM rejects as written.
+func TestManagedChecklistSectionsCarryThe086Banner(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	sections := []struct{ heading, firstStep string }{
+		{"## Check 67a:", "**(1) "},
+		{"## Check 67b:", "**(1) "},
+		{"## Check 68:", "**(1) "},
+	}
+	for _, s := range sections {
+		section := docSection(t, path, doc, s.heading)
+		if !strings.Contains(section, "⛔ **CANNOT RUN BEFORE 0.9.0") {
+			t.Errorf("%s carries no 0.8.6 banner, so it reads as runnable on this release", s.heading)
+			continue
+		}
+		if i, j := strings.Index(section, "CANNOT RUN BEFORE 0.9.0"), strings.Index(section, s.firstStep); j >= 0 && i > j {
+			t.Errorf("%s puts the banner after its first step, so the steps come before the warning", s.heading)
+		}
+		for _, want := range []string{
+			"managedDeployerShipped",
+			"0.9.0 or later",
+			"managed-deployer-disabled",
+		} {
+			if !strings.Contains(section, want) {
+				t.Errorf("%s's banner does not carry %q", s.heading, want)
+			}
+		}
+	}
+
+	// The summary rows are what a reader meets first.
+	rows := map[string]string{}
+	for _, line := range strings.Split(doc, "\n") {
+		for _, id := range []string{"67a", "67b", "68"} {
+			if strings.HasPrefix(line, "| "+id+" |") {
+				rows[id] = line
+			}
+		}
+	}
+	for _, id := range []string{"67a", "67b", "68"} {
+		row, ok := rows[id]
+		if !ok {
+			t.Fatalf("the checklist has no `| %s |` table row", id)
+		}
+		for _, want := range []string{"⛔ CANNOT RUN BEFORE 0.9.0", "managedDeployerShipped", "USER-RUN, NOT RUN"} {
+			if !strings.Contains(row, want) {
+				t.Errorf("the `| %s |` summary row does not carry %q, so a reader who stops at the table thinks the row is runnable", id, want)
+			}
+		}
+	}
+
+	// Check 68's banner, and step 2's own paragraph, must not present the
+	// condition the tree carries as the expected truth: it is the specification
+	// the 0.9.0 redesign is written against and rewritten by.
+	s68 := docSection(t, path, doc, "## Check 68:")
+	for _, want := range []string{
+		"not as the expected truth",
+		"rewritten when the redesign lands",
+		"17 logical operators",
+		"resource.name.contains()",
+		"resource.name` on types that do not support it",
+	} {
+		if !strings.Contains(s68, want) {
+			t.Errorf("Check 68 does not carry %q, so the invalid condition is left reading as the fence that should exist", want)
+		}
+	}
+	if strings.Contains(s68, "as the expected truth of the fence") {
+		t.Error("Check 68 still calls the condition in this tree the expected truth")
+	}
+	// Step 2 itself — not only the banner above it — has to say that what it
+	// reads is the condition as the tree stands and the specification the
+	// redesign is written against. The banner alone is not enough: the reader
+	// who reaches step 2 has already passed it.
+	step2 := check68Step(t, s68, "**(2) The two roles, permission by permission, read live**")
+	for _, want := range []string{
+		"not as the expected truth",
+		"specification the 0.9.0 redesign has to satisfy",
+		"rewritten against the new fence",
+	} {
+		if !strings.Contains(step2, want) {
+			t.Errorf("Check 68's step 2 does not carry %q, so the condition it counts clause by clause reads as the expected truth", want)
+		}
+	}
+}
+
+// TestChecklistHasCheck67aConfirmationIsAskedWithoutTheMarker is the round-6
+// blocking finding about the confirmation: `managed.Request.confirm` asks a
+// person at a terminal to TYPE the installation's name, and only a coding
+// agent's marker skips the question — there is no --yes and no
+// --non-interactive on the command. The section said the applies ran "with no
+// confirmation and no prompt" and counted a prompt as a failure, which is the
+// opposite of what the operator sees.
+func TestChecklistHasCheck67aConfirmationIsAskedWithoutTheMarker(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 67a:")
+
+	if strings.Contains(section, "with no confirmation and no prompt") {
+		t.Error("Check 67a still says its applies run with no confirmation and no prompt, and a person at a terminal without the marker IS asked")
+	}
+
+	var cmds []string
+	for _, b := range bashBlocks(section) {
+		cmds = append(cmds, logicalCommands(b)...)
+	}
+	marked, asked := 0, 0
+	for _, c := range cmds {
+		if !strings.Contains(c, "fugaro managed apply") {
+			continue
+		}
+		if strings.HasPrefix(c, "AI_AGENT=chk67 ") {
+			marked++
+			continue
+		}
+		// An apply that never reaches the confirmation — refused by the gate, by
+		// the checkout rule, or as not managed — needs no marker. One that is
+		// expected to APPLY and carries none would stop at the prompt, and one
+		// unmarked apply is the run this step records: the person who IS asked.
+		if strings.Contains(c, "APPLIED") {
+			t.Errorf("Check 67a has an apply expected to succeed without the coding agent's marker, so it stops at the confirmation prompt:\n  %s", c)
+		}
+		if strings.Contains(c, `./managed-root --project "${F:?}"`) && !strings.Contains(c, "expect") {
+			asked++
+		}
+	}
+	if marked < 2 {
+		t.Errorf("Check 67a marks %d of its applies with the coding agent's marker: step 3b and step 7 both apply a plan, and without the marker the operator is asked to type the installation's name", marked)
+	}
+	if asked != 1 {
+		t.Errorf("Check 67a has %d applies of ./managed-root without the marker: step 3a is the ONE that must be asked, and it is the FACT the other half of D55 rests on", asked)
+	}
+
+	// The unmarked run is expected to ASK, on the exact text the binary prints,
+	// and to apply nothing when it is answered wrongly.
+	for _, want := range []string{
+		"⚠ CONFIRM (project fugaro-managed):",
+		"Type fugaro-managed to confirm:",
+		"the saved plan of … was not confirmed, so nothing is applied",
+		"answer it wrongly",
+		"If this run APPLIES",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 67a's unmarked run does not carry %q, so the prompt it is supposed to record is not specified", want)
+		}
+	}
+
+	// And the two criteria say the same thing.
+	passes := section[strings.Index(section, "**Passes when:**"):]
+	passes = passes[:strings.Index(passes, "**Fails when:**")]
+	if !strings.Contains(passes, "prompt-free under the coding agent's marker") || !strings.Contains(passes, "asked and was not confirmed") {
+		t.Error("Check 67a's Passes-when does not require both halves: a marked apply that did not prompt, and an unmarked one that asked and was refused")
+	}
+	fails := section[strings.Index(section, "**Fails when:**"):]
+	if !strings.Contains(fails, "prompted while the coding agent's marker was set") {
+		t.Error("Check 67a's Fails-when no longer counts a prompt under the marker as the failure it is")
+	}
+	if !strings.Contains(fails, "a prompt **without** the marker is not a failure") {
+		t.Error("Check 67a's Fails-when does not say that a prompt WITHOUT the marker is the FACT the step records rather than a failure")
+	}
+
+	// The same rule in the other two sections: an apply that is expected to
+	// APPLY and carries no marker stops at the confirmation instead — and 67b's
+	// step 5 is an apply in a project whose delete list is empty.
+	for _, heading := range []string{"## Check 67b:", "## Check 68:"} {
+		sec := docSection(t, path, doc, heading)
+		var apply []string
+		for _, b := range bashBlocks(sec) {
+			apply = append(apply, logicalCommands(b)...)
+		}
+		for _, c := range apply {
+			if !strings.Contains(c, "fugaro managed apply") || !strings.Contains(c, "APPLIED") {
+				continue
+			}
+			if !strings.HasPrefix(c, "AI_AGENT=chk67 ") {
+				t.Errorf("%s applies a plan it expects to succeed without the coding agent's marker, so the operator is asked to type the installation's name first:\n  %s", heading, c)
+			}
+		}
+	}
+}
+
+// TestChecklistHasCheck68Step4NegativesAreReversible is the round-6 finding
+// about step 4: every one of the five negatives is a real command that must
+// fail, none had an undo if one succeeded, and the one command that mints a
+// token printed a LIVE credential to the terminal. It also corrects what 4b
+// proves — actAs does not mint a token and neither role holds getAccessToken,
+// so its chain says nothing about the fence; 4c is the probe that tests it —
+// and gives the positive half (the deployer CAN write its own state bucket) the
+// command it never had.
+func TestChecklistHasCheck68Step4NegativesAreReversible(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+	step := check68Step(t, section, "**(4) The transitive reach")
+
+	var cmds []string
+	for _, b := range bashBlocks(step) {
+		cmds = append(cmds, logicalCommands(b)...)
+	}
+	code := strings.Join(cmds, "\n")
+
+	// 1. No command prints a token: the only mint is redirected to /dev/null,
+	// and nothing captures it for display.
+	tokens := 0
+	for _, c := range cmds {
+		if !strings.Contains(c, "print-access-token") {
+			continue
+		}
+		tokens++
+		if !strings.Contains(c, ">/dev/null") {
+			t.Errorf("Check 68's step 4 mints a token without discarding it, so a successful mint prints a live credential:\n  %s", c)
+		}
+		if strings.Contains(c, "$(") {
+			t.Errorf("Check 68's step 4 captures the minted token into a variable that something could print:\n  %s", c)
+		}
+	}
+	if tokens != 1 {
+		t.Errorf("Check 68's step 4 has %d token-minting commands: 4b's chain is the one, and every one of them must discard what it mints", tokens)
+	}
+
+	// 2. Every negative has an undo, each carries its own ⚠ CONFIRM, and every
+	// undo runs as the operator — none of them impersonates the deployer, which
+	// is the identity whose refusal is being measured.
+	undos := map[string]string{
+		"4a": "--remove-permissions=storage.objects.create",
+		"4b": "gcloud projects remove-iam-policy-binding",
+		"4c": "gcloud run jobs delete chk68-foreign",
+		"4d": `gcloud storage buckets remove-iam-policy-binding "gs://${B:?}"`,
+		"4e": `gcloud storage rm "gs://fugaro-tfstate-${M:?}/fugaro/installation/probe.json"`,
+	}
+	for id, want := range undos {
+		found := false
+		for _, c := range cmds {
+			if !strings.Contains(c, want) {
+				continue
+			}
+			found = true
+			if !strings.Contains(c, "⚠ CONFIRM") {
+				t.Errorf("Check 68's undo of %s carries no ⚠ CONFIRM, and it changes live IAM or deletes something:\n  %s", id, c)
+			}
+			if strings.Contains(c, "--impersonate-service-account") {
+				t.Errorf("Check 68's undo of %s runs as the deployer, which cannot undo what it could not do:\n  %s", id, c)
+			}
+		}
+		if !found {
+			t.Errorf("Check 68's step 4 has no undo for %s, so a negative that succeeds leaves its effect standing", id)
+		}
+	}
+	if !strings.Contains(step, "IF ONE OF THE FIVE NEGATIVES SUCCEEDS") {
+		t.Error("Check 68's step 4 does not introduce its undos as a block to run when a negative succeeds")
+	}
+	// 4d binds two buckets and 4a widens two roles: both halves of each.
+	if strings.Count(code, "--remove-permissions=storage.objects.create") < 2 {
+		t.Error("Check 68's undo of 4a covers one role: that negative updates both")
+	}
+	if !strings.Contains(code, `gcloud storage buckets remove-iam-policy-binding "gs://fugaro-tfstate-${M:?}"`) {
+		t.Error("Check 68's undo of 4d covers one bucket: that negative binds both the runs and the state bucket")
+	}
+
+	// 3. What 4b proves, corrected: actAs is not a way to mint, getAccessToken
+	// is, and 4c is the probe about the fence.
+	for _, want := range []string{
+		"`iam.serviceAccounts.actAs` is not that authority",
+		"iam.serviceAccounts.getAccessToken",
+		"even if the binding were unconditioned",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("Check 68's step 4 does not carry %q, so 4b is still read as evidence about the fence", want)
+		}
+	}
+	if !strings.Contains(step, "THIS is the probe that tests the fence") {
+		t.Error("Check 68's 4c is not named as the probe that tests the condition: it is the only command there that needs actAs on a name outside the prefix")
+	}
+
+	// 4. The positive half is a command that must SUCCEED, and its object is
+	// this check's own — not the state the applies write.
+	if !strings.Contains(step, "THE POSITIVE HALF") {
+		t.Error("Check 68's step 4 does not measure the positive half: the deployer CAN write its own state bucket")
+	}
+	positive := ""
+	for _, c := range cmds {
+		if strings.Contains(c, "chk68-probe3.txt") && strings.Contains(c, "gcloud storage cp") {
+			positive = c
+		}
+	}
+	if positive == "" {
+		t.Fatal("Check 68's step 4 has no command that writes D77's state bucket as the deployer, so the positive half of the sentence is asserted and never measured")
+	}
+	if !strings.Contains(positive, "fugaro-managed-tfstate-${M:?}") {
+		t.Errorf("Check 68's positive probe does not write the managed state bucket:\n  %s", positive)
+	}
+	if !strings.Contains(positive, `--impersonate-service-account="${D:?}"`) {
+		t.Errorf("Check 68's positive probe does not run as the deployer:\n  %s", positive)
+	}
+	// Its own undo, as the identity that wrote it, and the read-back that says
+	// the bucket was left as it was found.
+	if !strings.Contains(code, `gcloud storage rm "gs://fugaro-managed-tfstate-${M:?}/chk68-probe.json"`) {
+		t.Error("Check 68's positive probe leaves its object in the state bucket: the probe removes what it wrote")
+	}
+	// And the Restore removes its scratch file.
+	if !strings.Contains(section, "chk68-probe3.txt") {
+		t.Error("Check 68's Restore does not remove /tmp/chk68-probe3.txt, which step 4's positive probe writes")
+	}
+}
+
+// TestChecklistHasCheck67aDoesNotAskForAnUnelicitedRefusal is the round-6
+// finding about claims nothing produces: the step's FACT line asked the
+// operator to record the refusal a root without the `fmgd-` prefix (or one
+// writing on the runs bucket) gets, and no command in the section feeds the
+// gate such a root. Eliciting it live is not free — every root of a managed
+// project writes ONE state object, so a root declaring less than the applied
+// one is refused by the delete gate FIRST — so the claim is dropped and the
+// rules are cited where they are pinned.
+func TestChecklistHasCheck67aDoesNotAskForAnUnelicitedRefusal(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 67a:")
+
+	if strings.Contains(section, "record that refusal's text too") {
+		t.Error("Check 67a still asks for a refusal its commands do not produce")
+	}
+	for _, want := range []string{
+		"the two refusals this step does NOT elicit",
+		"TestManagedCoverRefusesNamesOutsideThePrefix",
+		"TestManagedCoverRefusesTheRunsBucketByName",
+		"TestManagedCoverRefusesTheStateBucketByThePrefix",
+		"one object per project",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 67a does not carry %q, so dropping the claim looks like an omission rather than a decision", want)
+		}
+	}
+}
+
+// TestChecklistHasCheck67bRestoreDoesNotClaimDatabasesComeBack is the round-6
+// finding about the restore's own report: the step's not-restored bullet said
+// the Firestore and RTDB databases are re-created and only their contents are
+// not. They are not re-created at all — restoreConfig strips the budget
+// backend and names `fugaro init --firebase` as the way to build one again, the
+// Firestore database has no Terraform resource anywhere in the tree, and the
+// RTDB instance's resource lives in the firebase root, which a restore never
+// applies.
+func TestChecklistHasCheck67bRestoreDoesNotClaimDatabasesComeBack(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 67b:")
+
+	if strings.Contains(section, "the databases are re-created") {
+		t.Error("Check 67b still says the restore re-creates the databases, and a restore creates neither")
+	}
+	for _, want := range []string{
+		"the databases are NOT re-created",
+		"restoreConfig",
+		"TestNoFirestoreDatabaseResource",
+		"fugaro init --firebase",
+		"the budget backend",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 67b's not-restored list does not carry %q, so what a restore hands back is left vague", want)
+		}
+	}
+	// The command the step lists is named by symbol, not by a line number that
+	// has already moved once.
+	for _, bad := range []string{"restore.go:" + "726", "restore.go: "} {
+		if strings.Contains(section, bad) {
+			t.Errorf("Check 67b cites the restore by %q, and the line moved in 0.8.6", bad)
+		}
+	}
+	// The summary row a reader meets first says the same thing.
+	row := ""
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| 67b |") {
+			row = line
+		}
+	}
+	if row == "" {
+		t.Fatal("the checklist has no `| 67b |` table row")
+	}
+	if strings.Contains(row, "the databases are re-created") {
+		t.Error("the `| 67b |` row still says the restore re-creates the databases")
 	}
 }
