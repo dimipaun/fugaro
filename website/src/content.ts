@@ -808,7 +808,13 @@ export function loadConsoleScreens(): ConsoleScreensFacts {
         `${file}: ${what}.file is ${JSON.stringify(name)}, and it is the file's NAME under website/public/${SCREENS_DIR}/ — letters, digits, dots, dashes and underscores, with no directory, no scheme and no space. The site path the browser fetches is derived from the name, so a name that is a path or a URL is a fact this file is not allowed to carry (Global Constraint 9).`,
       )
     }
-    const format = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
+    // The dot is required before the format is read. With no dot at all `lastIndexOf` answers
+    // -1 and `slice(0)` hands back the whole name, so a name that IS a served format — `png`,
+    // `jpg`, `webp` — would pass a check that only asks whether the extension is one of them,
+    // and the row would render a picture at `/images/console/png`. There is no dot, so there is
+    // no extension and no picture either.
+    const dot = name.lastIndexOf('.')
+    const format = dot === -1 ? '' : name.slice(dot + 1).toLowerCase()
     if (!SCREEN_FORMATS.includes(format)) {
       throw new Error(
         `${file}: ${what}.file is ${JSON.stringify(name)}, and the slider serves ${SCREEN_FORMATS.join(', ')} — the raster formats a browser renders as a picture. An SVG is a document that can carry script and references, and a name with no extension at all is not a picture either.`,

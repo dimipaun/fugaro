@@ -622,9 +622,11 @@ Adding the first one is two edits:
    picture does not arrive and what a screen reader reads instead of it, and the caption is the
    line under the picture. `width` and `height` are the file's own pixels, which is what lets
    the browser reserve the box before the file lands. `src/content.ts`'s `loadConsoleScreens()`
-   refuses a name that is a path or a URL, a format the slider does not serve, an empty `alt` or
-   caption, a size that is not a positive whole number, and any key no reader reads; every
-   refusal names the row it refused, and the build stops.
+   refuses a name that is a path or a URL, a name with no extension at all, a format the slider
+   does not serve, an empty `alt` or caption, a size that is not a positive whole number, and
+   any key no reader reads — at the document's root or in a row, which is what keeps a URL out
+   of the data file's own `src` line as well as out of `file`; every refusal names the row it
+   refused, and the build stops.
 
 **What a screenshot costs, against the three numbers the budget above states:**
 

@@ -23,10 +23,15 @@
 //      and the stylesheet are what makes the slider work — and it is the half that would
 //      rot silently, because a slider that needs a script to move is a slider that does
 //      nothing at all on a page the site's own rule keeps script-free.
-//   4. **The refusals.** A URL where a file name belongs, a format the slider does not
-//      serve, an empty `alt`, an empty caption and a non-positive size each stop the build
-//      naming the row — so the data file cannot carry a second copy of a URL (Global
-//      Constraint 9) and cannot render a picture nobody can identify.
+//   4. **The refusals.** A URL where a file name belongs, a name with no extension at all, a
+//      format the slider does not serve, an empty `alt`, an empty caption, a width, a height
+//      or a whole-number size that is not one, and a key no page reads — at the document's
+//      root and in a row — each stop the build naming the row. Between them they are the two
+//      halves of Global Constraint 9: the name-shape rule keeps a URL out of `file`, and the
+//      row's own key list keeps a URL out of a `src:` line, because the slide's path is
+//      DERIVED from the name and a row may not carry a second copy of it. And the data file
+//      cannot render a picture nobody can identify (`alt`, caption) or a box the browser
+//      cannot reserve (the two sizes).
 //
 // **The fixture's text is this file's own, and that is the console page's tight spot.** The
 // page stands at 239 of the 250 words D188 allows it, and the page ceiling counts a row's
@@ -113,15 +118,27 @@ const FIXTURE = [
   },
 ]
 
+/**
+ * One row, as the data file writes it, plus whatever lines a case adds to it: the refusal
+ * cases below are about one wrong line in an otherwise good row, so the good row is written
+ * once and the case appends its own.
+ */
+function rowLines(row, extra = []) {
+  return [
+    `  - file: ${row.file}`,
+    `    alt: ${JSON.stringify(row.alt)}`,
+    `    caption: ${JSON.stringify(row.caption)}`,
+    `    width: ${row.width}`,
+    `    height: ${row.height}`,
+    ...extra,
+  ]
+}
+
 /** The fixture's rows, written as the data file writes them. */
-function fixtureYAML(rows) {
+function fixtureYAML(rows, extra = []) {
   const lines = ['version: 1', 'screens:']
-  for (const row of rows) {
-    lines.push(`  - file: ${row.file}`)
-    lines.push(`    alt: ${JSON.stringify(row.alt)}`)
-    lines.push(`    caption: ${JSON.stringify(row.caption)}`)
-    lines.push(`    width: ${row.width}`)
-    lines.push(`    height: ${row.height}`)
+  for (const [index, row] of rows.entries()) {
+    lines.push(...rowLines(row, index === rows.length - 1 ? extra : []))
   }
   return `${lines.join('\n')}\n`
 }
@@ -313,7 +330,9 @@ test('the slider is the browser\'s own scrolling, with no script and no timer', 
 })
 
 // ---------------------------------------------------------------------------------------
-// 4. The refusals: the data file cannot carry a URL, a foreign format or an empty text.
+// 4. The refusals: the data file cannot carry a URL, a foreign format, an empty text, a size
+//    that is not a whole number of pixels, or a key no page reads — at the document's root or
+//    in a row.
 // ---------------------------------------------------------------------------------------
 
 test('the build refuses a data file that would render a picture nobody can reach or read', async (t) => {
@@ -329,6 +348,15 @@ test('the build refuses a data file that would render a picture nobody can reach
       wants: [/console-screens\.yaml/, /svg/],
     },
     {
+      // A name that is exactly a served format: there is no dot in it, so there is no
+      // extension either — `lastIndexOf('.')` is -1 and the whole name would be read as one.
+      // The row would render `<img src="/images/console/png">` while the refusal's own message
+      // says a name with no extension is not a picture, which is the defect this case is for.
+      what: 'a served format as the whole name, with no extension at all',
+      yaml: fixtureYAML([{ ...FIXTURE[0], file: 'png' }]),
+      wants: [/console-screens\.yaml/, /file/, /extension/],
+    },
+    {
       what: 'an empty alt',
       yaml: fixtureYAML([{ ...FIXTURE[0], alt: '' }]),
       wants: [/console-screens\.yaml/, /alt/],
@@ -339,14 +367,38 @@ test('the build refuses a data file that would render a picture nobody can reach
       wants: [/console-screens\.yaml/, /caption/],
     },
     {
-      what: 'a size that is not a positive whole number',
+      what: 'a width that is zero',
       yaml: fixtureYAML([{ ...FIXTURE[0], width: 0 }]),
       wants: [/console-screens\.yaml/, /width/],
     },
     {
-      what: 'a key nobody reads',
+      what: 'a height that is zero, which is the other half of the box the browser reserves',
+      yaml: fixtureYAML([{ ...FIXTURE[0], height: 0 }]),
+      wants: [/console-screens\.yaml/, /height/],
+    },
+    {
+      what: 'a size that is not a whole number of pixels',
+      yaml: fixtureYAML([{ ...FIXTURE[0], width: 1440.5 }]),
+      wants: [/console-screens\.yaml/, /width/],
+    },
+    {
+      what: 'a key nobody reads, at the document root',
       yaml: `${fixtureYAML([FIXTURE[0]])}slidelabel: nope\n`,
       wants: [/console-screens\.yaml/, /slidelabel/],
+    },
+    {
+      // The row's own allow-list, which is the row-level half of Global Constraint 9: the
+      // slide's `src` is DERIVED from the file name by the loader, so a row carrying one is a
+      // second copy of a URL — and this is the case that makes the row's key list the thing
+      // that refuses it, rather than the name-shape check happening to catch a URL.
+      what: 'a row that carries a slide\'s src, which the build derives from the file name',
+      yaml: fixtureYAML([FIXTURE[0]], ['    src: /images/console/runs-list.png']),
+      wants: [/console-screens\.yaml/, /screens\[0\]/, /src/],
+    },
+    {
+      what: 'a row that carries a key nobody reads',
+      yaml: fixtureYAML([FIXTURE[0]], ['    slidelabel: nope']),
+      wants: [/console-screens\.yaml/, /screens\[0\]/, /slidelabel/],
     },
   ]
 
