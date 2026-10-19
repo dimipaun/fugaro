@@ -9,6 +9,7 @@ import (
 	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // D77's dedicated state bucket: where the agent-authored root's Terraform
@@ -102,7 +103,7 @@ func (s InfraStore) Policy(ctx context.Context, bucket string) (*storage.Policy,
 
 func (s InfraStore) SetPolicy(ctx context.Context, bucket string, p *storage.Policy) error {
 	if _, err := s.Clients.Storage.Buckets.SetIamPolicy(bucket, p).Context(ctx).Do(); err != nil {
-		return fmt.Errorf("setting the IAM policy of gs://%s: %w", bucket, err)
+		return fmt.Errorf("setting the IAM policy of gs://%s: %w", safetext.Field(bucket), safetext.FieldErr(err))
 	}
 	return nil
 }
@@ -122,25 +123,25 @@ func (s InfraStore) SetPolicy(ctx context.Context, bucket string, p *storage.Pol
 func EnsureManagedStateBucket(ctx context.Context, s StateStore, project, region string) error {
 	switch {
 	case s == nil:
-		return fmt.Errorf("no storage to create the managed state bucket of %s with", project)
+		return fmt.Errorf("no storage to create the managed state bucket of %s with", safetext.Field(project))
 	case project == "":
 		return fmt.Errorf("no project: the managed state bucket's name is the project's, and an empty one would read as the state bucket of no project")
 	case region == "":
-		return fmt.Errorf("no region for the managed state bucket of %s: without one there is nowhere to create it", project)
+		return fmt.Errorf("no region for the managed state bucket of %s: without one there is nowhere to create it", safetext.Field(project))
 	}
 	bucket := ManagedStateBucketName(project)
 	if bucket == InstallationsStateBucket(project) {
 		// Unreachable while the two prefixes differ; a change that made them
 		// equal would otherwise bind the deployer on the installation's state.
-		return fmt.Errorf("refusing to manage gs://%s as the managed state bucket: %s is the installation's own state bucket", bucket, bucket)
+		return fmt.Errorf("refusing to manage gs://%s as the managed state bucket: %s is the installation's own state bucket", safetext.Field(bucket), safetext.Field(bucket))
 	}
 	ok, err := s.Check(ctx, project, bucket)
 	switch {
 	case err != nil:
-		return fmt.Errorf("reading the managed state bucket gs://%s: %w", bucket, err)
+		return fmt.Errorf("reading the managed state bucket gs://%s: %w", safetext.Field(bucket), safetext.FieldErr(err))
 	case !ok:
 		if err := s.Create(ctx, project, region, bucket); err != nil {
-			return fmt.Errorf("creating the managed state bucket gs://%s: %w", bucket, err)
+			return fmt.Errorf("creating the managed state bucket gs://%s: %w", safetext.Field(bucket), safetext.FieldErr(err))
 		}
 	}
 	p, err := s.Policy(ctx, bucket)
@@ -150,7 +151,7 @@ func EnsureManagedStateBucket(ctx context.Context, s StateStore, project, region
 	member := "serviceAccount:" + DeployerAccount(project)
 	bindings, changed, err := withDeployerGrant(p.Bindings, DeployerStateRole, member)
 	if err != nil {
-		return fmt.Errorf("granting %s on gs://%s: %w", DeployerStateRole, bucket, err)
+		return fmt.Errorf("granting %s on gs://%s: %w", DeployerStateRole, safetext.Field(bucket), safetext.FieldErr(err))
 	}
 	if !changed {
 		return nil
@@ -178,7 +179,7 @@ func EnsureManagedStateBucket(ctx context.Context, s StateStore, project, region
 func withDeployerGrant(p []*storage.PolicyBindings, role, member string) ([]*storage.PolicyBindings, bool, error) {
 	acct, ok := strings.CutPrefix(member, "serviceAccount:")
 	if !ok || acct == "" {
-		return nil, false, fmt.Errorf("%q is not a service account member: the deployer's grant names serviceAccount:<address>, and anything else is a grant to nobody", member)
+		return nil, false, fmt.Errorf("%q is not a service account member: the deployer's grant names serviceAccount:<address>, and anything else is a grant to nobody", safetext.Field(member))
 	}
 	out := make([]*storage.PolicyBindings, 0, len(p)+1)
 	for _, b := range p {
