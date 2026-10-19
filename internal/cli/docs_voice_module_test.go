@@ -1500,7 +1500,13 @@ func TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit(t *testing.T) {
 		// 0.9.5, so "merged with this change" -- defined above as on `main` as
 		// of #592 -- would be false of it. Without this notation the list had
 		// no true cell to put in P3.5's row.
-		"**\"merged in this revision's tree, draft\"** means the artifact is **in the tree of the pull request that carries this revision**",
+		"**\"merged in this revision's tree, draft\"** means the artifact is **in the tree of the pull request that carries this revision of the document**",
+		// And the disambiguation a review asked for: "the pull request that
+		// carries this revision" is #592 two notations above, and #592's tree
+		// has no `mobile/src/voice/`, so the fourth notation has to say which
+		// revision's pull request it means rather than leaving a reader to
+		// pick the one the sentence before it named.
+		"and that is the **0.9.5 voice-screen draft, not #592**",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q; section 2 defines the notations the rest of the document is read with", path, want)
@@ -1979,7 +1985,7 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 	}
 }
 
-// Mutation (verified, run and restored): 115 entries, numbered (1)–(115).
+// Mutation (verified, run and restored): 116 entries, numbered (1)–(116).
 // And twelve for the merged-phase-3 round: the documents said P3.4 was not
 // merged and PR #592 was still open, which the merge made false, and the list
 // of what is not merged was checked against the tree from a copy of itself
@@ -2096,6 +2102,14 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 // change" is defined as *on `main` as of PR #592*, and P3.5's own pull request
 // is a draft for 0.9.5 that has not merged. Before the ban it failed only the
 // pin, which is why the notation is stated in both halves.
+// (116) Dropping the fourth notation's disambiguation -- the clause "and that
+// is the **0.9.5 voice-screen draft, not #592**", or the notation's own "this
+// revision of the document" -- fails
+// TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit: two notations
+// above it, "the pull request that carries this revision" is #592, whose tree
+// holds no `mobile/src/voice/`, so a reader left to pick between them reads the
+// fourth as a claim about #592 -- which is false. A review found exactly that
+// ambiguity in the wording this entry's round corrects.
 // (64) Giving a merged pull request's work the branch-only shorthand again
 // ("the reader on `main` (`ebe69147`) subscribes" -> "the reader ⊂ PR #590
 // subscribes") fails TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit:
