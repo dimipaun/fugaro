@@ -109,7 +109,7 @@ planted second copy fails. The id, the audit trail and the choices behind them:
 
 ## The gates
 
-Nine checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
+Ten checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
 with fixtures that keep its refusals running, and none of them needs the network. The count is
 a fact about the list under it, and `website/test/readme.mjs` holds it to that list: a gate
 added or removed without this sentence moving fails there:
@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **1,035,063 bytes in a checkout with no tags** and to **1,035,063 bytes with the
+  commit builds to **972,415 bytes in a checkout with no tags** and to **972,415 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -371,6 +371,53 @@ added or removed without this sentence moving fails there:
     re-derived with it, 842 → **919**. The page weight, the script and the number of files did
     not move. The clone figure moved by the same bytes as each of these rounds.
 
+  - **The security page was cut to three things** (the owner's brief of 2026-10-19), and it is
+    the round this build's site figure comes from. The page rendered `SECURITY.md` byte for
+    byte; it now renders three things and nothing else, and all three are the document's own:
+    the policy's *In short* section as the page's summary, its *Reporting a vulnerability*
+    section, and a link to the policy — which `website/test/security.mjs` holds it to, bullet
+    for bullet and word for word. The summary is rendered and not written on the page, which is
+    what D189 asks of every long page and what the first cut of this page did not do:
+    re-deriving it from `SECURITY.md`'s own section moved the page to **18,183 bytes**, which
+    is **62,524 bytes** below the 80,707 it weighed on `main` once the 0.9.0 merge had extended
+    the policy, so the site figure falls 1,035,063 → **972,539**. The bullets after it name the rest of this build's figure. The
+    page weight and the script did not move: the page renders neither the script's behaviour nor
+    the docs hub, which is still the heaviest page.
+  - **The new spacing gate found a row glued together** (`test/spacing.mjs`, added by the same
+    review round), and the fix is the last 2 bytes of this build's site figure. The console
+    page's download row puts each artifact's published name in a link and its SHA-256 in a
+    `<code>` beside it, and the two are inline elements on two source lines — so the whitespace
+    text node between them is what Astro's compression drops, and the row read "macOS
+    .dmga434f3…". The space is written into the component now, one byte for each of the two
+    assets, and the site figure is 972,539 → **972,541**. The gate reads every built page and
+    takes a class the page's own stylesheet lays out as a block — the docs hub's `.path` — and a
+    child of a container it lays out as flex or grid, which blockifies its children — the
+    homepage's `.hero-actions` row — as a
+    boundary a reader sees, so the seams the design makes on purpose are not refused; `test/spacing.mjs`
+    measures that count over the artifact, and this list does not keep it.
+  - **A cross-reference the document has no heading for renders as its own text** (the same
+    review round). Every cross-reference in `SECURITY.md`'s "In short" is rewritten to a link
+    into the document at the section it names, and one of them — `[Money](#money)` — names a
+    bold lead in a bullet rather than a heading. Rendered as a link it read like every other
+    cross-reference on the page and landed at the top of the file, a section away from what it
+    named, so the page now renders that one as plain text: **71 bytes off the security page**,
+    18,183 → **18,112**, and off the site figure, 972,541 → **972,470**. The page weight and the
+    script did not move: the page changes no file every page loads, and the docs hub is still the
+    heaviest page.
+  - **A cross-reference into a section the page renders itself links the page** (round 5 of the
+    same review). `SECURITY.md`'s summary points at "Reporting a vulnerability", and `/security/`
+    renders that very section under that very id — but the page resolved every fragment against
+    the document, so the one reference whose section is on the page sent the reader to GitHub for
+    it, and the page's own `reporting-a-vulnerability` anchor was linked from nowhere. The page
+    resolves a fragment it renders to its own anchor now: **56 bytes off the security page**,
+    18,112 → **18,056**, and off the site figure, 972,470 → **972,414** (the document URL is 82
+    bytes, the page's own anchor 26). The page weight and the script did not move.
+  - **The spacing gate found a second row glued together once `main` came in** (the merge of
+    `main`'s Getting Started rework into this branch): the "Set up your installation" step
+    rendered "fugaro initin your own terminal.", the link ending one source line and the
+    sentence starting the next. The space is written into the line now, **1 byte**, and the
+    site figure is 972,414 → **972,415**. The page weight and the script did not move. The
+    clone figure moved by the same bytes as each of the security page's rounds.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -397,7 +444,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,265 bytes. Three times 350,755: the heaviest page, the
     docs hub, at 280,604 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,881,487 bytes. Three times 1,293,829 (every file in `dist/`, 1,035,063
+  - **Whole site:** 3,646,557 bytes. Three times 1,215,519 (every file in `dist/`, 972,415
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -425,7 +472,8 @@ added or removed without this sentence moving fails there:
     with no `h2` at all has no such region, and its lead is the paragraphs that follow its
     `h1`. A page whose `h1` is followed straight by its first `h2` has no lead region
     either, and 0 words is inside the ceiling: `/security/` is shaped that way (its `h1` is
-    the rendered document's own title, and the page's lead line comes before it) and so is
+    the page's own title and its first `h2` is the model summary's, with nothing between them)
+    and so is
     `/changelog/` (whose summary is its first section, under the heading that names it).
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
@@ -439,8 +487,15 @@ added or removed without this sentence moving fails there:
     `hidden` elements, the skip link and the consent banner, sit outside it — so that rule
     is what stops a page that starts hiding a control from being counted for words nobody
     sees. `/docs/`, `/security/`
-    and `/changelog/` are exempt, which is D188's own list: each renders a document of this
-    repository rather than a page of the site, and the brief allows those to stay long.
+    and `/changelog/` are exempt, which is D188's own list: `/docs/` and `/changelog/` render a
+    document of this repository, and `/security/` renders two sections of the policy document
+    and links to the rest of it, so the three carry text the repository wrote rather
+    than a page of the site, and the brief allows those to stay long. The exemption is the
+    owner's and this change did not touch it: the page is much shorter than the document it
+    used to render whole and is still well over this ceiling, so it stays on the list — and
+    `test/security.mjs` holds it to a ceiling of its own. How many words the page carries is
+    `budget.mjs`'s own reader's to say, over the built artifact; this list does not keep the
+    count, and the figure it kept here once did not match what the reader measures.
     **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
@@ -518,6 +573,30 @@ added or removed without this sentence moving fails there:
   the item's ruling rather than a miss: the tagline change reaches the CLI's help, the
   generated reference and the three plugin skills that carry it (`routing`, `working` and
   `parallelism`) in 0.9.0, not here.
+- `test/spacing.mjs` — the site's words are separated by spaces (round 3 of the security page
+  review). Astro's HTML compression drops a text node that is nothing but whitespace, so an
+  inline element written at the start of a source line sits flush against the word before it and
+  a reader gets `back andfugaro secrets` where the page meant `back and` + `fugaro secrets` —
+  a defect the source does not show and a reader cannot report without the word being quoted
+  back. The gate reads every built page the way a browser does, through the shared
+  `runTogether()`/`verbatimText()` in `test/lib/html.mjs`: each direct text child is its own run,
+  nothing is invented between two neighbours, and a run ending in a letter directly against one
+  starting with a letter is one word, in either case (`back andfugaro secrets` and `see
+  thePrivacy` are the same defect). What counts as a boundary a reader sees is read from the
+  artifact rather than listed by name: a block element, any class the page's own inlined
+  stylesheet lays out with a block-level `display` (the docs hub's `.path` under a guide's title
+  does today), and any element inside a container that stylesheet lays out as flex or grid,
+  which blockifies its children (the homepage's `.hero-actions` row does today) — because without
+  them the gate would refuse the seams the design makes on purpose, and a gate that cries wolf is
+  a gate somebody turns off. How many
+  seams the design makes and how many the rule refuses are `test/spacing.mjs`'s to measure over
+  the artifact; this list does not keep the count. It
+  found one real defect when it landed: the console's download row put each artifact's published
+  name and its SHA-256 in two inline siblings on two source lines, so the row read
+  "macOS .dmga434f3…"; the space is in `src/components/Downloads.astro` now. The refusal is
+  mutation-proved both ways, and the last cases prove each boundary is read from the page: a
+  seam the stylesheet lays apart is not refused, and the same seam is refused the moment the
+  stylesheet lays it out inline, for the block class and for the flex row alike.
 - `test/nav-hover.mjs` — the menu's hover behaviour (the owner's brief of 2026-10-18, item 1).
   A `<details>` hides its own closed content in a way author CSS cannot portably override, so
   opening a group on hover is the script's work and not the stylesheet's: the gate runs the

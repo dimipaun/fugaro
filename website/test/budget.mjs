@@ -22,7 +22,11 @@
 // labels in the header's row (item 1), and the console's link in the homepage's call to
 // action (item 6), which renders from the console's flag — and the console's release (W3.1),
 // which turned that flag on and so put the link, the console's downloads and Getting Started's
-// console option into this build — plus 25 %, which is D192's rule and the rule the README's
+// console option into this build — and, from the same brief, the security page's cut to three
+// things (the policy document's own *In short* section, its own reporting section and a link to
+// the document), which is the round this build's site figure comes from and the one named in the
+// list below, together with the 2 bytes the new spacing gate's own find cost the console page —
+// plus 25 %, which is D192's rule and the rule the README's
 // loose figures are three times.
 //
 // The count below is read off **the gates' own build of the site**, which is the artifact the
@@ -95,8 +99,9 @@
 // Getting Started's three bands; the console's screenshot slider; the run on How It Works
 // becoming one vertical timeline; the caps-and-costs rework; the changelog's product
 // summaries; the homepage's prompt line, benefits, pull request caption and the benefits'
-// block rule; and the privacy statement's software part, the phone app's reporting written into
-// it and the deletion section carved out from under it — each re-derived in the commit that
+// block rule; the privacy statement's software part, the phone app's reporting written into
+// it and the deletion section carved out from under it; and the security page cut to three
+// things, with its review rounds — each re-derived in the commit that
 // moved it (D192). None of those figures is
 // repeated here, because a figure in a comment is a figure that moves with
 // nothing when the build moves, which is what happened to the copy that used to be in this one;
