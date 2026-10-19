@@ -593,7 +593,7 @@ gcloud projects update <gcp-project> --update-labels fugaro_managed=true
 gcloud projects describe <gcp-project>          # read the labels back
 ```
 
-**Removing the label takes the project out of managed mode** — the read is fail-closed, so it is enough to unset it (`gcloud projects update <gcp-project> --remove-labels fugaro_managed`) — and the runs bucket's creation fact and its recorded budget stay where they are.
+**Removing the label takes the project out of managed mode** — the read is fail-closed, so it is enough to unset it (`gcloud projects update <gcp-project> --remove-labels=fugaro_managed`), and the runs bucket's creation fact and its recorded budget stay where they are. **UNVERIFIED until it is run live**, for the same reason as the line above — it is a write to a real project with the owner's own credential, so it is marked here until an operator has run it and pasted the result back. It is the removal `fugaro managed flag` prints, beside the object to delete, as the undo of what that command wrote.
 
 ## Restoring a managed project
 

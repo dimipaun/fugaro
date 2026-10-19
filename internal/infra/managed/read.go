@@ -233,7 +233,15 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	// told apart, and neither is a failure: a caller prints both.
 	labelWhy := ""
 	if v, ok := labels[ProjectLabelKey]; !ok {
-		labelWhy = fmt.Sprintf("GCP project %s carries no %s label, so %s is not managed: the label goes on with the creation fact, by the run that creates the project or by the owner's own `fugaro managed flag` on a project that already exists, and a project that has the fact without it is marked again by hand, on the account that owns it (docs/gcp-setup.md)", gcpProject, ProjectLabelKey, project)
+		// The condition and not a command: this string is the one piece of
+		// the label that reaches a coding agent's session, and a sentence
+		// naming the write would invite it from the side that must never make
+		// it. That is the settled, VETOABLE decision §5 of
+		// docs/plans/2026-10-18-managed-projects-task-3.0-decisions.md, and
+		// TestTheNoLabelReasonNamesNoCommand pins it. The line a person runs
+		// is in the setup document, which the reason names, and neither
+		// writer of the label is this string's to name.
+		labelWhy = fmt.Sprintf("GCP project %s carries no %s label, so %s is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/gcp-setup.md)", gcpProject, ProjectLabelKey, project)
 	} else if v != ProjectLabelValue {
 		labelWhy = fmt.Sprintf("GCP project %s carries %s=%s, not %s, so %s is not managed", gcpProject, ProjectLabelKey, v, ProjectLabelValue, project)
 	}

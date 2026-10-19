@@ -384,13 +384,13 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 				c, _ := labelledCRM(t, map[string]string{"environment": "prod"})
 				return s, c
 			},
-			// Both writers of the label, because the reason is where a person
-			// who has the fact and no label is sent to the thing that
-			// completes it: the creating run, and the owner's own flag on a
-			// project that already exists. Naming only the first is what the
-			// round-2 review found here, and the flag is the one that applies
-			// to a project whose run is long over.
-			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: the label goes on with the creation fact, by the run that creates the project or by the owner's own `fugaro managed flag`",
+			// The condition, whole: both marks, this one missing, and the
+			// guidance left to docs/gcp-setup.md — no command is named here
+			// (decisions §5, and TestTheNoLabelReasonNamesNoCommand pins
+			// that half). It attributes the label to neither writer alone,
+			// which is what the round-2 review found in the sentence this
+			// replaced.
+			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/gcp-setup.md)",
 		},
 		"a project whose fugaro_managed label says something else": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
@@ -807,6 +807,38 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 				t.Errorf("err = %v, want the refusal to be an answer rather than a failure", err)
 			}
 		})
+	}
+}
+
+// The no-label reason states the CONDITION and not a command, which is this
+// PR's own settled decision (§5 of
+// docs/plans/2026-10-18-managed-projects-task-3.0-decisions.md) and the one
+// point in it the owner may veto: the reason is the one piece of the label
+// that reaches a coding agent's session, and a sentence naming the write
+// (gcloud projects update, or the owner's flag) invites the boundary write
+// from the side that must never make it. The guidance stays in
+// docs/gcp-setup.md, which the reason names — so this test asserts both
+// halves: the condition is stated, and no command is.
+func TestTheNoLabelReasonNamesNoCommand(t *testing.T) {
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	f.Put(testBucket, MarkerObject, []byte(markerJSON))
+	c, _ := labelledCRM(t, map[string]string{"environment": "prod"})
+
+	ok, reason, err := IsManaged(context.Background(), s, c, testFugaroProject, testProject)
+	if err != nil || ok {
+		t.Fatalf("IsManaged = %v, %q, %v; want false, a reason, and no failure", ok, reason, err)
+	}
+	if !strings.Contains(reason, ProjectLabelKey) || !strings.Contains(reason, "docs/gcp-setup.md") {
+		t.Errorf("reason = %q, want the condition (the missing %s label) and where a person reads the guidance", reason, ProjectLabelKey)
+	}
+	// The commands that write the label, and the one that removes it, by the
+	// names a session would copy out of the string: none of them is this
+	// reason's to give.
+	for _, cmd := range []string{"gcloud", "managed flag", "managed apply", "projects update", "--update-labels", "--remove-labels"} {
+		if strings.Contains(reason, cmd) {
+			t.Errorf("reason = %q names %q: the refusal states the condition and not a command (decisions §5)", reason, cmd)
+		}
 	}
 }
 

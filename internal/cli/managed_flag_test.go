@@ -159,6 +159,30 @@ func TestManagedFlagWritesTheLabelToo(t *testing.T) {
 	if !managedFlagIsManaged(t, r) {
 		t.Error("the managed read does not believe a project this command flagged")
 	}
+	// And the undo is about both writes, because this command made both: the
+	// object in the runs bucket and the label on the project. It said only
+	// the first, which is half an undo for a command whose whole point is
+	// that the two go together — and either one alone does make the project
+	// unmanaged again, because the read requires both.
+	if !strings.Contains(out, "undo:") {
+		t.Fatalf("the command prints no undo for what it just wrote:\n%s", out)
+	}
+	for _, want := range []string{
+		"delete the object gs://" + initRunsBucket + "/" + managed.MarkerObject,
+		"no command of ours removes the marker in this release",
+		"gcloud projects update " + initProject + " --remove-labels=" + managed.ProjectLabelKey,
+		"UNVERIFIED",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the undo does not say %q:\n%s", want, out)
+		}
+	}
+	// The one line of it no test can run live says so itself, rather than
+	// reading like the half of the undo that is a command of ours.
+	undo := out[strings.Index(out, "undo:"):]
+	if line := strings.SplitN(undo, "\n", 2)[0]; !strings.Contains(line, "UNVERIFIED") {
+		t.Errorf("the undo's live-unverified line is not marked as such: %q", line)
+	}
 }
 
 // TestManagedFlagSaysWhichHalfIsMissingWhenTheLabelIsRefused: the two writes

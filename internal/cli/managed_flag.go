@@ -317,7 +317,14 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	}
 	fmt.Fprintf(w, "%s, and its applies no longer stop for the typed confirmation; the gate, the owner's delete list and the recorded budget %d %s are what replace it\n",
 		wrote, amount, safetext.Field(currency))
-	fmt.Fprintf(w, "undo: there is no command that removes the marker in this release — delete gs://%s/%s yourself as the operator to make the project unmanaged again\n", safetext.Field(bucket), managed.MarkerObject)
+	// The undo names both writes, because this command made both (Task 3.0):
+	// the object in the runs bucket and the label on the project. Either one
+	// alone makes the project unmanaged again — the read requires both — and
+	// they come off differently: the object has no command of ours, and the
+	// label has a gcloud line that no test can run, so it is marked
+	// UNVERIFIED as the backfill in docs/gcp-setup.md is.
+	fmt.Fprintf(w, "undo: this command wrote two things, and either one alone makes the project unmanaged again, because the read requires both — delete the object gs://%s/%s yourself as the operator, since no command of ours removes the marker in this release, and take the label %s=%s off the project itself with gcloud projects update %s --remove-labels=%s, which is UNVERIFIED until an operator has run it live (docs/gcp-setup.md carries the same line)\n",
+		safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), managed.ProjectLabelKey)
 	return nil
 }
 

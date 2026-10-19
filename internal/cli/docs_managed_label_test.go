@@ -39,6 +39,10 @@ func TestDocsGCPManagedLabelSaysItsClaims(t *testing.T) {
 		// And the backfill a project marked before the label needs, still
 		// marked as unverified live.
 		"the backfill line": "gcloud projects update <gcp-project> --update-labels fugaro_managed=true",
+		// The other direction, which the flag's undo line prints and which no
+		// test can run live either: the same command form, so the two texts
+		// an operator copies are one text.
+		"the label removal line": "gcloud projects update <gcp-project> --remove-labels=fugaro_managed",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the managed-label section does not say %s: no %q", what, want)
