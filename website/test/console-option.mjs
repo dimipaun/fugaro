@@ -1,5 +1,5 @@
-// website/test/console-option.mjs — the console, offered on Getting Started (the owner's
-// changes spec of 2026-10-18, item 6).
+// website/test/console-option.mjs — the console, offered from the site's own pages (the
+// owner's changes spec of 2026-10-18, item 6).
 //
 // Getting Started presents installation as two options side by side: the CLI — the install
 // paths `install.yaml` carries, the Homebrew cask first, each command with its copy control —
@@ -8,7 +8,13 @@
 // console without leaving the page" — and, while `features.console_downloads` is false, that
 // the console option offers nothing to download at all.
 //
-// Five things are checked here, and the last three build a copy of the site with the flag
+// **The homepage's call to action is the other place the flag decides** (item 6: the console
+// is findable from the home page's call to action). The hero's row of links gains the way to
+// `/console/` when the flag is true and carries nothing about the console when it is false —
+// the flag-off half is `home.mjs`'s, read off the build `npm run check` makes, and the
+// flag-on half is the case below, read off the copy with the flag flipped.
+//
+// Six things are checked here, and the last four build a copy of the site with the flag
 // FLIPPED, because the state the owner's flip produces is not the state `npm run check`
 // builds: a gate that only ever saw the flag-off page would say nothing about the day the
 // console ships.
@@ -28,12 +34,17 @@
 //      name — the same URLs the console page's section renders, from the same reader — and
 //      the CLI option is untouched. That last part is the point of deriving the URLs: the
 //      flip is the whole change, so it must not move anything else.
-//   4. **The flag-on build passes the gates that read the artifact.** The two-option page is
+//   4. **The released homepage offers the console from its call to action.** With the flag
+//      true the hero's row of links carries one more link — the way to `/console/`, labelled
+//      the way Getting Started's option labels the console — and the two links a reader met
+//      before the release are the two they meet after it, in the same order.
+//   5. **The flag-on build passes the gates that read the artifact.** The two-option page is
 //      eight words longer than the one-option page, and Getting Started sits close to D188's
 //      250-word ceiling, so the budget gate is run over the flag-on build rather than assumed:
 //      the owner's flip is a one-line change, and it may not be the change that breaks the
-//      ceiling.
-//   5. **A flag and an `available` that disagree stop the build.** While the repository's own
+//      ceiling. The homepage gains two words with it, and the same run holds its lead and its
+//      whole page to their ceilings.
+//   6. **A flag and an `available` that disagree stop the build.** While the repository's own
 //      rule says the console is unreleased, a data file that says it has shipped is refused,
 //      naming both files: rendering downloads requires the flag, not only the data file.
 //
@@ -238,6 +249,50 @@ test('with the console released, the option renders the release\'s own assets an
     commandsWithin(optionNamed(page, 'cli')),
     commandsWithin(optionNamed(gettingStarted(), 'cli')),
     'the CLI option changed when the console was released: the owner\'s change is the flag and a version bump, and it may not move the CLI',
+  )
+})
+
+test("with the console released, the homepage's call to action offers it and moves nothing else", (t) => {
+  // Item 6's other half: the console is findable from the home page's call to action, and the
+  // link is rendered from the same flag the rest of the console's offering is. The homepage is
+  // read from the flag-on copy, because the state `npm run check` builds is the unreleased one
+  // (`home.mjs` holds that half): this is the build the owner's flip produces, and what it has
+  // to show is that the hero gained the way to the console and that nothing else on it moved.
+  const built = releasedBuild(t)
+  assert.equal(built.status, 0, `the build of the released site failed:\n${built.output}`)
+
+  const actions = (dist) => {
+    const page = readFileSync(path.join(dist, 'index.html'), 'utf8')
+    const hero = [...walk(parse(page))].find(
+      (el) => el.name === 'section' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero'),
+    )
+    assert.ok(hero, 'the homepage carries no hero section, and the call to action is in the hero (W1.4)')
+    const row = [...walk(hero)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-actions'))
+    assert.ok(row, 'the hero carries no action row, and the call to action is what a reader does next (W1.4)')
+    return linksWithin(row).map((el) => [textOf(el).trim(), el.attrs.get('href')])
+  }
+
+  const released = actions(built.dist)
+  assert.deepEqual(
+    released,
+    [
+      ['Get started', '/getting-started/'],
+      ['How it works', '/how-it-works/'],
+      // The console's own name, as Getting Started's option calls it, and the page that says
+      // what the console is — not a download URL: the URL a reader downloads from is derived
+      // from the release in `src/lib/console-downloads.mjs`, and the hero names the way there
+      // (Global Constraint 9).
+      ['Desktop console', '/console/'],
+    ],
+    "the homepage's call to action does not offer the console with features.console_downloads true: item 6 asks that the console be findable from it, and the flag is what renders the link (changes spec 2026-10-18, item 6)",
+  )
+
+  // And the flip moves nothing else about the row: the two links a reader met before the
+  // console shipped are the two links they meet after it, in the same order.
+  assert.deepEqual(
+    released.slice(0, 2),
+    actions(DIST).slice(0, 2),
+    'the homepage\'s existing call to action changed when the console was released: the owner\'s change is the flag and a version bump, and it may not move what was already there',
   )
 })
 

@@ -31,10 +31,21 @@
  * page can put them where its own shape wants them.
  *
  * **The one line the hero writes itself.** The headline and the promise are documents' lines;
- * the two links under them are the site's own labels for what a reader does next — a link
+ * the links under them are the site's own labels for what a reader does next — a link
  * label is not a sentence about the product, and there is no document that names a call to
  * action. They are held to the pages they point at by `linkcheck.mjs` like every other
  * internal link, and to the vocabulary by `website/test/wording.mjs`.
+ *
+ * **The console is the call to action's third link, and the flag is what renders it**
+ * (changes spec of 2026-10-18, item 6). The spec asks that the console be findable from the
+ * home page's call to action, and `site.yaml`'s `features.console_downloads` is what decides:
+ * while it is false this component renders nothing about the console at all — no link, no
+ * sentence, no placeholder — so the unreleased state is structural here exactly as it is in
+ * Getting Started's console option, and the link arrives in the same commit that flips the
+ * flag for the console's own release (W3.1). It points at `/console/`, the page that says
+ * what the console is and carries its downloads: the hero names the way there, and the URL a
+ * reader downloads from stays derived from the release in one reader
+ * (`src/lib/console-downloads.mjs`, Global Constraint 9).
  */
 import { loadSite } from '../content.ts'
 
@@ -55,6 +66,12 @@ const LEAD = site.subline
 // The video slot's flag. Read from site.yaml rather than assumed, so the day the video
 // exists this component changes in one place and the flag is what decides (D107).
 const videoExists = facts.features.video
+
+// The console's flag, read the same way and for the same reason: the console's link is
+// rendered from `site.yaml`'s `features.console_downloads` — `consoleDownloads` once
+// `content.ts` has read it — and from nothing else, so the day the console is released the
+// flag is the whole change on this page (changes spec item 6, W3.1).
+const consoleExists = facts.features.consoleDownloads
 ---
 
 <section class="hero" aria-labelledby="hero-tagline">
@@ -69,6 +86,18 @@ const videoExists = facts.features.video
   <p class="hero-actions">
     <a class="hero-cta" href="/getting-started/">Get started</a>
     <a class="hero-cta-quiet" href="/how-it-works/">How it works</a>
+    {
+      // The console, while the repository says it has shipped (item 6). A quiet link like
+      // "How it works" and not a second filled button: two primaries are two primaries, and
+      // the console is a second way to run Fugaro rather than the thing to do next. Its
+      // label is the name Getting Started's option carries, so the site calls the console
+      // one thing in the two places a reader meets it.
+      consoleExists && (
+        <a class="hero-cta-quiet" href="/console/">
+          Desktop console
+        </a>
+      )
+    }
   </p>
 
   {
