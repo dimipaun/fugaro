@@ -44,8 +44,8 @@ const (
 	// a run of the same repository could delete a queued run's token object
 	// (before the seal moved it to tokens/, read-only for a job, D16), and a
 	// token object a run cannot read is still possible (a job account without
-	// its tokens/ grant used to read it as missing; the strict read, token.ObjectPresent,
-	// now refuses it and stops the run), and a job whose own mode is off
+	// its tokens/ grant reads it the way it reads a missing one: GCS answers
+	// both with 403, since the grant carries no list permission), and a job whose own mode is off
 	// read that as "this project has published no
 	// policy" and ran with no session, no cap and no kill switch — while the
 	// launcher had minted a token precisely because a policy exists. With the
@@ -217,18 +217,31 @@ func (r *run) haltExternal(h runstore.Halt) bool {
 }
 
 // refuseStrayToken ends a budget-on run that has no backend in its job
-// environment but was launched with a budget token: the job was not
-// re-applied after the shared budget was turned on, and the run would
+// environment and no marker, but whose token object the job can read: a
+// launcher minted for it and the job cannot use the token, so the run would
 // otherwise go on outside the shared caps without a word. One bucket read,
-// only for budget-on runs without a backend; with no token object (every
-// install that never turned the shared budget on) it changes nothing.
+// only for budget-on runs without a backend (startBudgetBackend has already
+// refused a marked one, before any read).
 //
-// A refused read stops the run as well, and it is the same state: the job's
-// service account holds no grant on tokens/ — the re-apply that adds the
-// grant is the one that puts the backend in this job's environment — and a
-// read that cannot be told from absence must not be read as absence
-// (token.ObjectPresent). Going on would be the fail-open this function exists
-// to close.
+// The read's answers, and what each means here:
+//
+//   - the object (200): a stray token, refused;
+//   - 404: no object, the run goes on;
+//   - 403 (blobx.ErrForbidden): the run goes on. The job account's grant on
+//     tokens/ is a conditioned objectViewer with no storage.objects.list, so
+//     GCS answers its read of a missing object with 403
+//     (docs/design/bucket-iam.md §2.3, live check 7): that is what every run
+//     of an installation without Firebase meets, since no launcher minted
+//     for it. A job with no tokens/ grant gets the same 403 for a present
+//     object, and no answer of the bucket tells the two apart, so the
+//     bucket is not the evidence of a mint here: the marker is
+//     (budget-token-channel.md §4 principle 3). Every launcher that writes
+//     under tokens/ seals the object and hands the key to the execution as
+//     the marker, so a minted run reaches this function only with no
+//     object to find;
+//   - anything else (a 401, a 400, a 5xx after the client's retries, a
+//     driver's fs.ErrPermission, an oversized object): a check that cannot
+//     be made, refused.
 func (r *run) refuseStrayToken(ctx context.Context) error {
 	slug, runID := r.d.Store.Slug(), r.d.Store.RunID()
 	if r.d.Bucket == nil || budget.Key(slug) != slug || budget.Key(runID) != runID || slug == "" || runID == "" {
@@ -239,7 +252,11 @@ func (r *run) refuseStrayToken(ctx context.Context) error {
 	// tokens/ is read-only, so the object stays for the lifecycle rule.
 	present, err := token.ObjectPresent(ctx, r.d.Bucket, slug, runID)
 	if errors.Is(err, blobx.ErrForbidden) {
-		return fmt.Errorf("this job's read of its repository's token objects was refused, and it has no budget backend either (%s is not set in its environment): the job holds no grant on tokens/ — a job not re-applied since the budget token moved there — so the run cannot tell a token object from a refused read and stops rather than going on without a session. Run fugaro init --repo for this repository, which writes both grants, then launch the run again", RTDBURLEnv)
+		// A missing object's answer to a caller without list permission:
+		// see the doc comment. Logged, so an operator can see the check met
+		// it; no object name and nothing of the error's text.
+		r.d.Log.Info("budget: the token check was answered 403, which is how GCS answers this job for a missing object; no marker, so no token was minted for this run")
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("checking for a budget token in the runs bucket: %s", r.redact(err.Error()))
