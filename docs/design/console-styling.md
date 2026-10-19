@@ -1409,7 +1409,8 @@ should reuse the arithmetic of rather than re-derive):
   with Task 6.1** (the file Task 6.1 wrote carries eight cases, and this list is the design
   the file is measured against), each for one of two reasons: the **two-set vocabulary case**
   is *replaced* — with one value set it would compare a set with itself, so the shipped case
-  asserts the vocabulary is complete and that neither layer carries what the other owns —
+  asserts the vocabulary is declared **exactly** (§3.1's tokens, and no name outside them)
+  and that neither layer carries what the other owns —
   while the other **two read a file other than `palette.css`, and each lands in the task that
   writes what it reads** (the `--border` scan, which reads `base.css` and `screens.css`, in
   Task 6.4; the window background, which reads the main process's window module, in Task 6.5).
@@ -1423,10 +1424,11 @@ should reuse the arithmetic of rather than re-derive):
   names of one set are exactly the token names of the other, and every token of §3.1–§3.3
   is present — so a token added to light and not to dark fails by name. **Under the owner's
   Q1 ruling there is one set, so this case cannot be written as designed and Task 6.1
-  replaces it with the case the file carries**: the vocabulary is complete (§3.1's every
-  token is declared, by name), neither layer carries what the other owns (no colour in
-  `tokens.css`, no step in `palette.css`), and each of those two directions is a case a
-  mutation fails by name;
+  replaces it with the case the file carries**: the vocabulary is declared **exactly** —
+  every token of §3.1's table is present, *and* no name outside it is, so a step added to
+  `tokens.css` on its own fails by name — neither layer carries what the other owns (no
+  colour in `tokens.css`, no step in `palette.css`), and each of those two directions is a
+  case a mutation fails by name;
 - a case asserts `--border` is **only** used decoratively: no rule in `base.css` or
   `screens.css` uses `--border` where the property is `outline` or where the border marks
   a control (a scan of the CSS text, in the spirit of `screen-literals.test.ts`). **This
@@ -1538,8 +1540,10 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    **still below** 3:1, because a hairline that cleared it would be a boundary this design
    should have named as one;
 6. a **state-separation test** that the ten pairs of state colours are the ten
-   the literals make — **one set, the dark one, under the owner's Q1 ruling of 2026-10-19;
-   the light set's ten are §3.4's record and no case reads them** — that every one clears §3.4's minimum, and that each row says which
+   the literals make — **both tables below are read, because §3.4 keeps both: the dark
+   table's ten are the set that ships, and the light table's ten are the record of the set
+   the owner's Q1 ruling of 2026-10-19 deferred (§3.3), asserted as that record rather than
+   as a set anything paints** — that every one clears §3.4's minimum, and that each row says which
    arm of §3.4's disjunction it took — 50° of hue, **or** 3:1 of luminance contrast where
    hue cannot separate a pair — so a pair that missed both fails the test and a row that
    tabulated a fallback pair as if hue had separated it fails too. It does **not** demand
