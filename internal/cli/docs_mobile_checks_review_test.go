@@ -906,6 +906,115 @@ func TestDocsGuardPreamblesNameAConstructTheyUse(t *testing.T) {
 	}
 }
 
+// TestDocsCheck81Step5CountsItsTokLines: step 5's FACT line says how many
+// statuses its block produces and points at two of them by position ("the
+// third line ... the value guard", "the fifth line ... its own parent"). The
+// block is one IAM `curl` (the seed) and five `TOK` lines, so the count and
+// both positions have to be counted the same way -- and step 4, whose block is
+// two seeds and six `TOK` lines, counts by `TOK` line too. The review of
+// PR #580 found the count and the second position bumped to six and fifth
+// while "the third line" was left, so the sentence contradicted itself under
+// either numbering; a position is only worth naming if it is the line the
+// FACT line describes, which is what this test holds it to.
+func TestDocsCheck81Step5CountsItsTokLines(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+
+	tokLines := func(step, marker string) []string {
+		t.Helper()
+		block := codeBlockAfter(t, step, marker)
+		var out []string
+		for _, line := range strings.Split(block, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "TOK ") {
+				out = append(out, line)
+			}
+		}
+		return out
+	}
+
+	step4 := stepText(t, section, "4. **The user reads", "5. **The user's second write")
+	toks4 := tokLines(step4, "AT=$(gcloud auth print-access-token)")
+	if len(toks4) != 6 || !strings.Contains(step4, "the six statuses") {
+		t.Errorf("check 81 step 4's block has %d `TOK` lines and its FACT line does not say `the six statuses`: the two steps count their statuses the same way -- by `TOK` line, not by the IAM seeds -- and step 5's count is read against this one", len(toks4))
+	}
+
+	step5 := stepText(t, section, "5. **The user's second write", "6. **The granted read nodes")
+	toks5 := tokLines(step5, "AT=$(gcloud auth print-access-token)")
+	if len(toks5) != 5 {
+		t.Fatalf("check 81 step 5's block has %d `TOK` lines, and this test counts the block's statuses by them (the IAM seed is a `curl`, and step 4 counts its own six the same way): the positions its FACT line names cannot be checked against the block", len(toks5))
+	}
+	if !strings.Contains(step5, "the five `TOK` statuses") {
+		t.Errorf("check 81 step 5's FACT line does not say `the five `TOK` statuses`: its block is %d `TOK` lines and one IAM seed, and step 4 counts its own six `TOK` lines the same way, so a count of six is the seed counted in or the TOK lines miscounted", len(toks5))
+	}
+	for _, want := range []struct {
+		ord string
+		n   int
+		cmd string
+	}{
+		{"The third `TOK` line", 3, `'false'`},
+		{"The fourth `TOK` line", 4, "chk81-absent"},
+	} {
+		if !strings.Contains(step5, want.ord) {
+			t.Errorf("check 81 step 5's FACT line does not say %q: it points at two of the block's lines by position, and a position that is not named cannot be read against the block", want.ord)
+		}
+		if !strings.Contains(toks5[want.n-1], want.cmd) {
+			t.Errorf("check 81 step 5's %s is\n%s\nwhich does not carry %s: the position the FACT line names and the command it describes have to be the same line", want.ord, strings.TrimSpace(toks5[want.n-1]), want.cmd)
+		}
+	}
+}
+
+// TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates: the paragraph that
+// states what a `mu` token may read cites rules.json.tmpl by line number, and
+// invites the owner to open those lines. The review of PR #580 found line 132
+// -- spend/$day/runs/$slug/$run -- lumped into a `TOKEN || USER` list when the
+// template gates it with `RUN || USER`, and the sentence after it filing
+// runs/** and agents/** under `TOKEN` when the template gates them with `RUN`.
+// The effect asserted (USER is what admits a mu token) was right; the evidence
+// named for it, at numbers the owner is told to open, was not.
+func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+
+	var para string
+	for _, p := range paragraphsOf(section) {
+		if strings.Contains(p, "D112's grant sits at") {
+			para = p
+			break
+		}
+	}
+	if para == "" {
+		t.Fatalf("## Check 81: no paragraph names the locations D112's grant sits at: this test reads the paragraph that lists them, so it cannot check what it says")
+	}
+
+	// The template's own predicates, at the lines the paragraph cites.
+	lines := strings.Split(readSrc(t, "../budget/rules/rules.json.tmpl"), "\n")
+	for _, want := range []struct {
+		n    int
+		pred string
+	}{
+		{11, `"TOKEN || USER"`}, {12, `"TOKEN || USER"`},
+		{22, `"TOKEN || USER"`}, {65, `"TOKEN || USER"`},
+		{132, `"RUN || USER"`},
+		{30, `"RUN"`}, {153, `"RUN"`},
+		{207, `"MAILBOX"`}, {223, `"MAILBOX"`},
+	} {
+		if want.n < 1 || want.n > len(lines) {
+			t.Fatalf("rules.json.tmpl has %d lines and the paragraph cites line %d", len(lines), want.n)
+		}
+		if got := lines[want.n-1]; !strings.Contains(got, want.pred) {
+			t.Errorf("rules.json.tmpl line %d is %s and the paragraph cites it as %s: the paragraph hands the owner line numbers to open, so a number that does not hold the predicate claimed is evidence for something else", want.n, strings.TrimSpace(got), want.pred)
+		}
+	}
+	if !strings.Contains(para, "`RUN || USER`") {
+		t.Errorf("## Check 81: the paragraph listing D112's grants does not name `RUN || USER` for the day's per-run node (rules.json.tmpl line 132): a mu token reads it because USER is in that disjunction, and a citation that says `TOKEN || USER` there is not what the template says")
+	}
+	if !strings.Contains(para, "`RUN`") {
+		t.Errorf("## Check 81: the paragraph does not file runs/** and agents/** under `RUN`: the template gates both with it (lines 30 and 153), and calling them `TOKEN` names a predicate a mu token fails for another reason than the one the sentence is making")
+	}
+}
+
 // codeLines returns a block's command lines without its comments: a comment
 // inside a block quotes the broken form to warn about it (`?key=$KEY here
 // answers 401`), and a claim about what the block does is about its commands.
