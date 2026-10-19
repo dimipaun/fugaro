@@ -27,7 +27,10 @@
 //      sentence of the document its turn cites. The hero offers one command to
 //      copy besides the install paths, `fugaro watch`, and the old `fugaro run` example is
 //      asserted gone; the slot for the screenshot a separate task adds is asserted to be
-//      marked and empty, and the page to carry no picture but its wordmark.
+//      marked, and **the owner's real capture is asserted to be in it** (owner spec of
+//      2026-10-18, item 5; PR #622) — the slot's own hook, a non-empty `alt`, the capture's
+//      declared dimensions and a same-origin path, so the page carries the wordmark and the
+//      working terminal and nothing else.
 //   4. **The flow carries the changes spec's four steps, in order**, one short line each,
 //      from one component on both pages: the names, and the caption of each step, are read
 //      out of the spec's own item 4 and of the section of README.md the step cites, in that
@@ -1066,21 +1069,19 @@ test('the watch snippet is the command the reader keeps, and it copies itself', 
   )
 })
 
-test('the slot for the watch screenshot is marked, empty, and adds no image', () => {
-  // Item 3 asks for a clearly marked slot right after the chat, and for the image itself to
-  // be a separate task's: so the slot is here, it is empty, and this page adds no picture of
-  // a screen the run does not have (Global Constraint 9, D107's rule for the hero's video).
+test('the watch screenshot is in the slot the changes spec marks, named, sized and served from here', () => {
+  // Item 3 asks for a clearly marked slot right after the chat; the owner's spec of
+  // 2026-10-18 item 5 and PR #622 supply the picture, and it is the owner's real capture of
+  // `fugaro watch` running on their own installation, published as it was taken (D190 waived
+  // by the owner for this one image, `docs/website/redesign/README.md`). So the slot holds the
+  // image now, and what this case is about is that it holds THE image and holds it so it can
+  // be read: a picture no reader can identify, or one that shifts the block under it when the
+  // file lands, or one fetched from somebody else's host, are the three ways this goes wrong.
   const page = parse(builtPage(''))
   const slot = findAll(page, (el) => el.attrs.get('data-slot') === 'watch-screenshot')[0]
   assert.ok(slot, 'the homepage carries no [data-slot="watch-screenshot"], and item 3 asks for a clearly marked slot for the `fugaro watch` screenshot (changes spec 2026-10-18, item 3)')
-  assert.deepEqual(
-    [...walk(slot)].map((el) => el.name),
-    [],
-    'the slot for the watch screenshot carries elements of its own: it is the place a later task puts the image, and until then it holds nothing (changes spec 2026-10-18, item 3)',
-  )
-  assert.equal(textOf(slot).trim(), '', `the slot carries the text ${JSON.stringify(textOf(slot).trim())}, and a slot is not a caption (changes spec 2026-10-18, item 3)`)
   for (const attribute of ['src', 'srcset', 'href', 'style', 'aria-label', 'role']) {
-    assert.ok(!slot.attrs.has(attribute), `the slot carries ${attribute}, and the hook a task and this check read is \`data-slot\` alone (changes spec 2026-10-18, item 3)`)
+    assert.ok(!slot.attrs.has(attribute), `the slot carries ${attribute}, and the hook this check reads is \`data-slot\` alone (changes spec 2026-10-18, item 3)`)
   }
 
   // "right after the chat": the slot opens the block under the conversation, directly beneath
@@ -1097,25 +1098,92 @@ test('the slot for the watch screenshot is marked, empty, and adds no image', ()
     slot,
     'the slot for the watch screenshot is not the element after the `fugaro watch` heading, and item 3 puts it right after the chat, with the command bar below it (changes spec 2026-10-18, item 3)',
   )
-  const figure = findAll(page, (el) => el.name === 'figure' && CHAT_CLASSES(el).includes('chat'))[0]
+  const figure = findAll((page), (el) => el.name === 'figure' && CHAT_CLASSES(el).includes('chat'))[0]
   assert.ok(figure, 'the homepage renders no <figure class="chat">, and the conversation and its caption are the figure (changes spec 2026-10-18, item 3)')
   for (let parent = slot.parent; parent; parent = parent.parent) {
     assert.notEqual(
       parent,
       figure,
-      "the watch screenshot's slot is inside the chat's figure, and the caption under the conversation is the figure's last child: a slot after it is markup the HTML content model rejects, and the slot belongs to the `fugaro watch` block the screenshot is of (changes spec 2026-10-18, item 3a)",
+      "the watch screenshot is inside the chat's figure, and the caption under the conversation is the figure's last child: an image after it is markup the HTML content model rejects, and the picture belongs to the `fugaro watch` block it is of (changes spec 2026-10-18, item 3a)",
     )
   }
 
-  // And no image came with it: the wordmark is the homepage's only picture, so a screenshot
-  // committed by mistake — the one thing this run must not add — is this failure.
+  // **The picture is IN the slot**, exactly one of it: the slot is where item 3 put the
+  // screenshot, and an image beside the slot is a picture this page renders outside the place
+  // the page says it renders it.
+  const images = [...walk(slot)].filter((el) => el.name === 'img')
+  assert.equal(
+    images.length,
+    1,
+    `the watch screenshot's slot holds ${images.length} <img> element(s), and it is the one place the homepage shows the \`fugaro watch\` screen (owner spec 2026-10-18, item 5)`,
+  )
+  const image = images[0]
+
+  // **The path is this site's own**: a root-relative path under `/images/`, which is the file
+  // PR #622 committed, and not a URL — of any scheme, or a protocol-relative `//host/path`.
+  // This is the origins gate's rule read from the page side: the picture a reader is shown is
+  // served from the site that shows it (Global Constraint 9, D93).
+  const src = image.attrs.get('src') ?? ''
+  assert.equal(
+    src,
+    '/images/fugaro-watch.png',
+    `the homepage's watch screenshot is ${JSON.stringify(src)}, and the asset PR #622 committed and this site serves is /images/fugaro-watch.png (owner spec 2026-10-18, item 5)`,
+  )
+  assert.ok(
+    !/^[a-z][a-z0-9+.-]*:/i.test(src) && !src.startsWith('//') && !image.attrs.has('srcset'),
+    `the watch screenshot is loaded as ${JSON.stringify(src)}${image.attrs.has('srcset') ? ' with a srcset' : ''}, and a page that fetches its own picture does not name another host for it: no scheme, no protocol-relative URL, no candidate list this check cannot follow (Global Constraint 9; \`test/origins.mjs\`)`,
+  )
+
+  // **The alt names what the picture is**, because the picture is a terminal full of the
+  // owner's own run titles and numbers: a reader who cannot see it gets the transcription's
+  // gist (`public/images/fugaro-watch.txt` ships beside the image for exactly that), and
+  // `alt=""` would mark a reader's only account of a page's one photograph as decoration
+  // (the a11y gate refuses a missing `alt`; this refuses an empty one here).
+  const alt = (image.attrs.get('alt') ?? '').trim()
+  assert.ok(
+    alt.length >= 40,
+    `the watch screenshot's alt is ${JSON.stringify(alt)}, and the picture is the owner's real \`fugaro watch\` screen: a reader who cannot see it is owed what it shows, not a label of four words (owner spec 2026-10-18, item 5; \`public/images/fugaro-watch.txt\`)`,
+  )
+
+  // **And the dimensions are the capture's own**, so the browser reserves the box before the
+  // file arrives and the command bar under it does not jump — which is the whole reason the
+  // attributes are there. They are held to the capture `docs/website/redesign/README.md`
+  // records rather than to themselves: a declared box of the wrong SHAPE (1459 x 440, a
+  // transposed pair) reserves the wrong box and squashes the picture to fit it, and that is
+  // this failure. The file the page names is the one the record is about.
+  const record = /`website\/public\/images\/fugaro-watch\.png` \((\d+) x (\d+) px, a 2x retina capture, so (\d+) x (\d+) logical\)/.exec(
+    repoFile('docs/website/redesign/README.md'),
+  )
+  assert.ok(record, 'docs/website/redesign/README.md no longer records the capture\'s pixel size and its logical size, so the declared dimensions cannot be held to the file they are about (owner spec 2026-10-18, item 5)')
+  const [, captureW, captureH, logicalW, logicalH] = record.map(Number)
+  const width = Number(image.attrs.get('width'))
+  const height = Number(image.attrs.get('height'))
+  assert.ok(
+    Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0,
+    `the watch screenshot declares ${JSON.stringify(image.attrs.get('width'))} x ${JSON.stringify(image.attrs.get('height'))}, and a pair of positive integers is what reserves the picture's box before the file arrives (owner spec 2026-10-18, item 5)`,
+  )
+  assert.equal(
+    width / height,
+    captureW / captureH,
+    `the watch screenshot declares ${width} x ${height} and the capture is ${captureW} x ${captureH} (${logicalW} x ${logicalH} logical): the declared box has to be the file's own shape, or the browser reserves the wrong space and scales the picture into it (owner spec 2026-10-18, item 5)`,
+  )
+  assert.deepEqual(
+    [width, height],
+    [logicalW, logicalH],
+    `the watch screenshot declares ${width} x ${height} and the capture is ${logicalW} x ${logicalH} at its logical size: a 2x capture is declared at the size it occupies on the page, which is what stops the box it reserves being twice the height of the one the CSS lays it out in (owner spec 2026-10-18, item 5)`,
+  )
+
+  // **The page's pictures are these two and no others**: the wordmark in the header and the
+  // owner's screenshot. A homepage that grew a third `<img>` — an illustration, an icon, a
+  // picture of a screen the run does not have — is what this last assertion is for (Global
+  // Constraint 9; D107's rule for the hero's video).
   const pictures = [...walk(page)]
     .filter((el) => ['img', 'picture', 'video', 'source'].includes(el.name))
     .map((el) => el.attrs.get('src') ?? el.attrs.get('srcset') ?? '')
   assert.deepEqual(
     pictures,
-    ['/logo.png'],
-    `the homepage renders the pictures ${JSON.stringify(pictures)}, and this run adds none: the wordmark is the page's only image, and the screenshot is a separate task's (changes spec 2026-10-18, item 3)`,
+    ['/logo.png', '/images/fugaro-watch.png'],
+    `the homepage renders the pictures ${JSON.stringify(pictures)}, and it renders two: the wordmark beside the site's name, and the owner's \`fugaro watch\` screenshot (owner spec 2026-10-18, item 5)`,
   )
 })
 

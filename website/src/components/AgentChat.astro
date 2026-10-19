@@ -43,9 +43,14 @@
  * The sentence above them is the skill's own line about what a run ends with. `fugaro watch`
  * is the one command the reader is asked for, and it is the one they can copy.
  *
- * **The slot.** Under the chat, a marked, empty element sits where the `fugaro watch`
- * screenshot goes: a separate task adds the image, and until it exists there is nothing to
- * show (the rule the hero's video slot follows, D107). No binary file is added here.
+ * **The screenshot.** Under the chat, the slot the earlier task marked now holds the owner's
+ * real `fugaro watch` capture (`public/images/fugaro-watch.png`, PR #622), published as is:
+ * the owner's own run titles, spend and pull request links, at the size the owner took it.
+ * It is the one picture on the homepage that is a RECORDING rather than an illustration, and
+ * the caption under the conversation says which of the two the conversation is. The image is
+ * served from this site — no third-party host (the origins gate) — and its `alt` is the gist
+ * of the transcription that ships beside it (`public/images/fugaro-watch.txt`), which is the
+ * text a reader gets when the picture does not arrive.
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -257,14 +262,28 @@ if (!source('README.md').includes(WATCH)) {
 <div class="chat-watch-block">
   <h3 class="chat-watch-title">Watch it run</h3>
 
-  {/* Where the `fugaro watch` screenshot goes (changes spec item 3): a separate task adds the
-      image, and until it exists this element carries nothing at all — no placeholder, no
-      empty frame, no request for a file the build does not produce. `data-slot` is the hook
-      that task and `website/test/home.mjs` read; it is deliberately not a class, so it is not
-      something the stylesheet can start drawing. The rule below sizes the image the moment
-      the slot holds one, and an empty slot takes no space at all, so adding the image is
-      `<img src="…" alt="…">` on the line inside this element and nothing else. */}
-  <div class="chat-shot" data-slot="watch-screenshot"></div>
+  {/* The `fugaro watch` screenshot (changes spec item 3; owner spec of 2026-10-18, item 5):
+      the owner's real capture, and it is the asset the slot above waits for. `data-slot` is
+      the hook `website/test/home.mjs` reads; it is deliberately not a class, so it is not
+      something the stylesheet draws.
+      **The declared dimensions are the capture's logical size** — 2918 x 882 px taken at 2x,
+      so 1459 x 441 — which is what lets the browser reserve the right box before the file
+      arrives: the markup is what a reader pays for the picture's absence, and the command bar
+      under it does not jump when the file lands. The aspect ratio is the image's own, so the
+      CSS (`width: 100%; height: auto`) scales it down to the column without distorting it.
+      **`loading="lazy"` is the position's answer**: the block sits under the whole
+      conversation — the heading "Watch it run" is three blocks below the promise — so it is
+      far below the first screen and nothing above the fold waits on the file. */}
+  <div class="chat-shot" data-slot="watch-screenshot">
+    <img
+      src="/images/fugaro-watch.png"
+      alt="The fugaro watch screen: a spend bar at $55.44 counted of $100.00, a burn flagged FAST, a table of seven runs with their stage, age and spend, and four runs ready for review."
+      width="1459"
+      height="441"
+      loading="lazy"
+      decoding="async"
+    />
+  </div>
 
   <div class="chat-watch command-block" data-copy>
     <Fragment set:html={copyControlHTML('Copy the command')} />
@@ -458,14 +477,15 @@ if (!source('README.md').includes(WATCH)) {
   }
 
   /* The slot the `fugaro watch` screenshot goes into, and **a slot that takes no space until
-     the image lands** (review round 3, item 3b). `:empty` is
-     what makes that true: the element is written empty and stays empty until a later task puts
-     the screenshot in it, and a slot that reserved a height, a frame or a background would be
-     a blank rectangle on the page in the meantime — about 140 px of it, which is what the
-     review saw. `website/test/home.mjs` reads the rules that reach this slot and refuses any
-     that gives it a box of its own, so a placeholder cannot come back.
-     The rule under it is the other half: what sizes the image the moment the slot holds one,
-     so adding it is `<img src="…" alt="…">` inside the element and no CSS at all. */
+     the image lands** (review round 3, item 3b). `:empty` is what makes that true, and it is
+     kept now that the image is in the slot: it is the rule that made the slot cost nothing
+     while the asset was a separate task's, and it is the rule that keeps a placeholder from
+     coming back if the image is ever taken out again — a slot that reserved a height, a frame
+     or a background would be a blank rectangle on the page, about 140 px of it, which is what
+     the review saw. `website/test/base-styles.mjs` reads the rules that reach this slot and
+     refuses any that gives it a box of its own.
+     The rule under it is the other half: what sizes the image now that the slot holds one,
+     which is why the markup that added it is one `<img>` and no CSS at all. */
   .chat-shot:empty {
     display: none;
   }

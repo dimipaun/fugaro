@@ -230,8 +230,8 @@ here goes stale the way the byte budgets did before D192.
   produces, which is the only account of them that is true of the site that ships:
   **JavaScript per page 149,172** (three times 49,724; `public/scripts/site.js` 39,779 bytes),
   **page weight per page 1,001,607** (three times 333,869; the docs hub 267,095 bytes) and
-  **whole site 3,169,137** (three times 1,056,379; the gates' own build of the site, 845,103
-  bytes across 21 files). The fix
+  **whole site 3,672,369** (three times 1,224,123; the gates' own build of the site, 979,298
+  bytes across 23 files, the `fugaro watch` assets below included). The fix
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
   card edges became the site's separator and the footer's link label is the repository's name
@@ -251,7 +251,14 @@ here goes stale the way the byte budgets did before D192.
   turns out of the measure's cap; the third's four commits moved the site figure to 814,455,
   815,116 and 815,212 bytes and the page figure with it; and the fourth's fix for the
   two-by-two's wrap arrow moved it 626 bytes on the two pages that draw the flow — and each was
-  re-derived in the commit that shipped the bytes. The
+  re-derived in the commit that shipped the bytes. **And this round is the screenshot landing**,
+  which is the sixth: the site figure alone moves, 1,056,379 to 1,224,123 tight and 3,169,137
+  to 3,672,369 stated, because PR #622's two `public/images/` assets (the 130,533-byte capture
+  and its 3,363-byte transcription) were already in every build of the site and unplaced, and
+  the `<img>` that puts the picture on the homepage adds 299 bytes of its markup. The page
+  weight does not move — the picture is on the homepage, and the ceiling is derived from the
+  docs hub, which renders neither the chat nor the screenshot — and nor does the JavaScript.
+  The
   figures live in `website/README.md` and nowhere else, and
   `website/test/budget.mjs` reads them from there and holds each to the build it can measure:
   a derivation that names another build fails, which is what stops the page and the site
@@ -263,8 +270,8 @@ here goes stale the way the byte budgets did before D192.
   `website/dist`, which is the checkout's own build. The reason is that one page of the site
   reads the checkout's git state: the changelog renders each release file's "not yet released"
   state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
-  to **845,103 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
-  and so the deployed site — and to **843,588 with the tags this repository's clone carries**,
+  to **979,298 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
+  and so the deployed site — and to **977,783 with the tags this repository's clone carries**,
   the 1,515-byte changelog page being the whole of the difference. A figure derived from one is
   refused by the other, which is what happened: the gate could not measure the build `main`'s
   README named, and `website-preview` could not deploy. A derivation is likewise not held to
@@ -515,5 +522,16 @@ The only processing is a lossless-to-near-lossless size reduction: the PNG was q
 without dithering and stripped of metadata (ImageMagick), from 510,664 bytes to 130,533 bytes. The text
 stays sharp and the green and yellow words keep their colours. No row or text was cropped or edited.
 
-Size: 130,533 bytes, inside the enforced byte budgets (`website/test/budget.mjs`: 853,602 per page,
-2,941,224 for the site). It is not yet placed on any page.
+Size: 130,533 bytes, inside the enforced byte budgets (`website/README.md`, re-derived over the gates'
+own build in the commit that placed it: 1,001,607 per page, 3,672,369 for the site — the two assets and
+the `<img>` moved the site figure and nothing else, above).
+
+**It is on the homepage now** (`website/src/components/AgentChat.astro`): the slot
+`[data-slot="watch-screenshot"]` under the chat holds it, so the block that was empty until the asset
+existed is the picture the owner took. The markup declares the capture's logical size (1459 x 441, the
+2x file's own ratio) so the box is reserved before the file arrives, `loading="lazy"` because the block
+sits under the whole conversation and nothing above the fold waits on it, and the `alt` is the gist of
+`fugaro-watch.txt` — the transcription ships as the text a reader gets when the picture does not.
+`website/test/home.mjs` holds all four (in the slot, a non-empty `alt`, the declared dimensions, and no
+external URL); whether the rendered page matches the owner's design is the owner's check (70a-70c, D190),
+as no gate here can see an image.
