@@ -45,10 +45,11 @@
 // `verify` is the one kept value whose middle the CLI fills from the repository
 // it ran in, so it has two rules: `isVerifySummary`, which the scrub applies and
 // which takes any text in those slots, and `isKnownVerifySummary`, which the
-// fixture's own scan applies and which pins them to a name list and a glob list.
-// The scrub's rule has to be the open one: a real recording's test names are the
-// writer's own output, and a vocabulary that refused one would refuse an
-// ordinary run, which is the failure the lists below exist to avoid.
+// fixture's own scan applies and which pins the glob list to the CLI's own
+// vocabulary (a test name has none -- see VERIFY_SLOTS). The scrub's rule has to
+// be the open one: a real recording's test names are the writer's own output,
+// and a vocabulary that refused one would refuse an ordinary run, which is the
+// failure the lists below exist to avoid.
 //
 // Nothing about a removed value is ever persisted, not even a hash: a bare hash of
 // a low-entropy value (a small integer, an amount, a repo-style name) is recovered
@@ -215,24 +216,31 @@ function isGlobList(value: string, cut: boolean): boolean {
 }
 
 /**
- * VERIFY_SLOTS is what the CLI can put in each free slot, twice over: `full`
- * matches a whole piece, `cut` one the clip stopped inside. `names` is a list of
- * test names as the reporters write them -- `go-junit-report` names a duplicated
- * subtest `TestFoo#01`, so `#` is in the vocabulary with the reporters' own
- * separators; `globs` is the comma-separated list of report globs
- * `internal/verify/verify.go` joins into its warning (VERIFY_REPORT_GLOBS).
+ * VERIFY_SLOTS is the vocabulary of the slots that HAVE one, twice over: `full`
+ * matches a whole piece, `cut` one the clip stopped inside.
  *
- * Only `isKnownVerifySummary` uses them. `isVerifySummary` -- the rule the scrub
- * itself applies -- takes any text in a slot on purpose: a real recording's test
- * names are the writer's own output, and its report globs come from its own
- * configuration, so a vocabulary that refused either would refuse an ordinary
- * run, which is the failure this file's lists exist to avoid.
+ * Only the report globs are such a slot. They are the two `commands.reports`
+ * defaults (VERIFY_REPORT_GLOBS), so a glob the CLI was not given is refused.
+ *
+ * The test-name slots are not in this table, and cannot be. A name is the
+ * report's own text: `internal/verify/junit.go` builds each ID as
+ * `classname + "." + name`, verbatim from the JUnit XML, so a pytest
+ * parametrisation (`test_mod.py::test_add[1-2]`), a name carrying a space or a
+ * bare comma, the `#01` `go-junit-report` appends to a duplicated subtest, and
+ * the escape `internal/pluginwire`'s Printable writes in place of a control or
+ * bidi character are all ordinary names. Any character class narrow enough to
+ * look like a test name refuses real ones, and a recording this matcher refuses
+ * cannot be committed -- so the name slots are OPEN in both matchers, and the
+ * guard for them is the fixture scan's forbidden-substring pass, which runs over
+ * the whole verify value, name list included.
+ *
+ * Only `isKnownVerifySummary` uses this table, and only for the globs slot. The
+ * scrub's own rule (`isVerifySummary`) takes any text in either slot on purpose:
+ * a real recording's report globs come from its own configuration, so a
+ * vocabulary that refused them would refuse an ordinary run, which is the
+ * failure this file's lists exist to avoid.
  */
-const VERIFY_SLOTS: Record<VerifySlot, { full: (v: string) => boolean; cut: (v: string) => boolean }> = {
-  names: {
-    full: (v) => /^[A-Za-z0-9_][A-Za-z0-9_.:/\-#]*(?:, [A-Za-z0-9_][A-Za-z0-9_.:/\-#]*)*$/.test(v),
-    cut: (v) => /^[A-Za-z0-9_][A-Za-z0-9_.:/\-#]*(?:, [A-Za-z0-9_][A-Za-z0-9_.:/\-#]*)*(?:, ?)?$/.test(v),
-  },
+const VERIFY_SLOTS: Record<'globs', { full: (v: string) => boolean; cut: (v: string) => boolean }> = {
   globs: {
     full: (v) => isGlobList(v, false),
     cut: (v) => isGlobList(v, true),
@@ -276,14 +284,14 @@ export function isVerifySummary(value: string): boolean {
 }
 
 /**
- * isKnownVerifySummary is the same question with the slots pinned to the
- * vocabularies the CLI writes into them (VERIFY_SLOTS): a test-name list, and
- * the report globs after the warning sentence.
+ * isKnownVerifySummary is the same question with the one pinnable slot pinned
+ * (VERIFY_SLOTS): the report globs after the warning sentence are held to the
+ * CLI's own vocabulary. The name list is not, and cannot be -- see VERIFY_SLOTS.
  *
  * The scrub does not use it, for the reason VERIFY_SLOTS gives. The fixture's
- * own scan does, because there the slots are the one place a value could carry
- * text this file never vouched for: `isVerifySummary` alone would let an
- * identifying string ride in a `: <names>` or `; warning:` slot and pass the
+ * own scan does, because the globs slot is the one place a value could carry
+ * text this file never vouched for: `isVerifySummary` alone would let a glob the
+ * CLI was not configured with ride in the `; warning:` slot and pass the
  * positive allow-list.
  */
 export function isKnownVerifySummary(value: string): boolean {
@@ -342,11 +350,15 @@ function isPrefixOfTail(groups: readonly (readonly VerifyPart[])[], rest: string
       for (let n = 1; n <= run.length; n++) if (walkPart(group, part + 1, at + n)) return true
       return false
     }
-    if (!pinned) {
+    // A free slot is open -- it absorbs whatever the repository put there --
+    // unless the slot has a vocabulary and this is the pinned matcher: only the
+    // globs slot does (VERIFY_SLOTS), because a test ID is the report's own text
+    // and no character class can hold it without refusing real ones.
+    const slot = pinned && piece.free === 'globs' ? VERIFY_SLOTS.globs : undefined
+    if (slot === undefined) {
       for (let n = 0; n <= tail.length; n++) if (walkPart(group, part + 1, at + n)) return true
       return false
     }
-    const slot = VERIFY_SLOTS[piece.free]
     // A whole piece of the slot's vocabulary, then the rest of the line.
     for (let n = tail.length; n > 0; n--) {
       if (slot.full(tail.slice(0, n)) && walkPart(group, part + 1, at + n)) return true

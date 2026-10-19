@@ -220,15 +220,6 @@ describe('the scrub: the verify line verify.go writes', () => {
   })
 
   it('refuses, when pinned, the text the CLI does not write into a slot', () => {
-    for (const line of [
-      'fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: the Acme Payroll suite)',
-      'fugaro verify test #5: passed (exit 0, 2 tests, 0 failures; flaky: Acme Payroll, whatever)',
-    ]) {
-      // The scrub's own rule takes it: it is the writer's grammar, and the
-      // writer fills these slots from the repository it ran in.
-      expect(isVerifySummary(line), line).toBe(true)
-      expect(isKnownVerifySummary(line), line).toBe(false)
-    }
     // The warning sentence is the CLI's own text, not a slot: `Record.Summary`
     // writes one sentence there (`no JUnit reports found under ` + the repo's
     // globs), so both matchers refuse a warning the CLI cannot write, and the
@@ -239,6 +230,14 @@ describe('the scrub: the verify line verify.go writes', () => {
     const globs = 'fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under **/junit*.xml)'
     expect(isVerifySummary(globs)).toBe(true)
     expect(isKnownVerifySummary(globs)).toBe(true)
+    // The name slots are NOT like this: a name is the report's own text, so
+    // prose there is a name someone could have written, and the pinned matcher
+    // takes it too. What guards that slot is the fixture scan's
+    // forbidden-substring pass over the whole value -- see the test below and
+    // `normal-fixture.test.ts`.
+    const named = 'fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: the Acme Payroll suite)'
+    expect(isVerifySummary(named)).toBe(true)
+    expect(isKnownVerifySummary(named)).toBe(true)
   })
 
   it('takes the # go-junit-report puts on a duplicated subtest name', () => {
@@ -250,8 +249,35 @@ describe('the scrub: the verify line verify.go writes', () => {
     expect(isKnownVerifySummary(line)).toBe(true)
     const cut = 'fugaro verify test #5: FAILED (exit 1, 2 tests, 1 failures: TestFoo#'
     expect(isKnownVerifySummary(cut)).toBe(true)
-    // ...and it is still a name list, not a place for prose.
-    expect(isKnownVerifySummary('fugaro verify test #5: FAILED (exit 1, 2 tests, 1 failures: the Acme Payroll suite)')).toBe(false)
+  })
+
+  it('takes the test IDs junit.go builds verbatim, not just Go-style names', () => {
+    // internal/verify/junit.go builds every ID as `classname + "." + name`,
+    // straight out of the JUnit XML, so the name list is the report's own text:
+    // a pytest parametrisation carries brackets and an `=`, and a name may carry
+    // a space, a bare comma or the escape pluginwire.Printable writes in place of
+    // a bidi character. A vocabulary narrow enough to look like test names
+    // refuses real ones -- and a recording the scan refuses cannot be committed,
+    // which is why the name slots are open in both matchers.
+    for (const names of [
+      'test_mod.py::test_add[1-2]',
+      'test_mod.py::test_add[a=1, b=2]',
+      'TestFoo/sub test with spaces',
+      'pkg.TestX.\\u202e', // a bidi character as Printable escapes it
+      'TestA, pkg/sub.TestB_and-more:2',
+    ]) {
+      const line = `fugaro verify test #5: FAILED (exit 1, 2 tests, 1 failures: ${names})`
+      expect(isKnownVerifySummary(line), names).toBe(true)
+      const flaky = `fugaro verify test #5: passed (exit 0, 2 tests, 0 failures; flaky: ${names}; timed out)`
+      expect(isKnownVerifySummary(flaky), names).toBe(true)
+      // and a clip landing inside one is still a prefix
+      const cut = `fugaro verify test #5: FAILED (exit 1, 2 tests, 1 failures: ${names}`.slice(0, 60)
+      expect(isKnownVerifySummary(cut), names).toBe(true)
+    }
+    // The one thing the slot still refuses is a control character, which
+    // internal/runner's Printable never emits raw.
+    expect(isKnownVerifySummary('fugaro verify test #5: FAILED (exit 1, 2 tests, 1 failures: TestA\u0007)')).toBe(false)
+    expect(isKnownVerifySummary('fugaro verify test #5: FAILED (exit 1, 2 tests, 1 failures: TestA\u007f)')).toBe(false)
   })
 
   it('pins the warning globs to the vocabulary the CLI writes there', () => {

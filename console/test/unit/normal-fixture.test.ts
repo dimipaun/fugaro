@@ -137,9 +137,12 @@ function normalise(text: string): string {
  * The verify line is a matcher rather than a regular expression because it is a
  * PREFIX of what verify.go writes (the registry clips it); see scrub.ts. It is
  * the PINNED matcher, `isKnownVerifySummary`, not the scrub's own
- * `isVerifySummary`: the open one takes any text in the failed-name, flaky-name
- * and warning-globs slots, so a string this file never vouched for could ride in
- * one of them and still pass this list. */
+ * `isVerifySummary`: the warning-globs slot is a finite vocabulary (the two
+ * `commands.reports` defaults the CLI installs), so a glob the CLI was never
+ * given cannot pass this list. The test-name slots are NOT pinned that way --
+ * junit.go builds an ID verbatim from the report, so no vocabulary can hold it,
+ * and the guard there is the FORBIDDEN pass below, which runs over the whole
+ * value including the name list. */
 const SHAPES: ReadonlyArray<(value: string) => boolean> = [
   /^(<project>|\[redacted-url\])$/,
   /^r-[0-9a-f]{8}\/r-[0-9a-f]{8}$/,
@@ -251,14 +254,26 @@ describe('the normal fixture: nothing real is in it', () => {
   it('refuses a verify line whose slots carry text the CLI does not write there', () => {
     // The verify line is the one value whose middle the CLI fills from the
     // repository: the test names its reports carry and the globs it reads. A
-    // line shaped like the writer's is not enough -- what sits in those slots
-    // has to be a name list or a glob list, or the positive allow-list would
-    // wave through an identifying string wearing a verify line's clothes.
-    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: the Acme Payroll suite)'))).toContain('a string outside the allow-list')
-    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures; flaky: Acme Payroll, whatever))'))).toContain('a string outside the allow-list')
+    // line shaped like the writer's is not enough for the glob slot -- what sits
+    // there has to be one of the globs the CLI itself installs, or the positive
+    // allow-list would wave through a pattern the CLI was never given.
     expect(scan(line('fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: the Acme Payroll build was slow)'))).toContain('a string outside the allow-list')
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under **/acme-payroll/*.xml)'))).toContain('a string outside the allow-list')
+    // The NAME slot is different, and deliberately: internal/verify/junit.go
+    // builds each ID as `classname + "." + name` verbatim from the report, so
+    // there is no vocabulary to hold it to -- prose there is a name somebody
+    // could have written, and refusing it would make a real recording
+    // uncommittable. So a name-list slot passes the shapes even when it reads
+    // like prose...
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: the Acme Payroll suite)'))).toEqual([])
+    // ...and what guards that slot is the forbidden-substring pass, which runs
+    // over the whole verify value, name list included. This is the case that
+    // matters: an identifying name inside a legitimately shaped line.
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: dimipaun/fugaro)'))).toContain('forbidden substring dimipaun')
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures; flaky: belong)'))).toContain('forbidden substring belong')
     // ...and the slots the CLI really fills still pass, cut or whole.
     expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: TestA, pkg/sub.TestB)'))).toEqual([])
+    expect(scan(line('fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: test_mod.py::test_add[1-2])'))).toEqual([])
     expect(scan(line('fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under **/junit*.xml, **/buil'))).toEqual([])
   })
 

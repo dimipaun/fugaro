@@ -734,7 +734,7 @@ deleted after the scrub. **It is not reproducible from this repository, by
 design:** the committed fixture is the only artefact, and nothing is kept that
 could lead back to a removed value (no list, no hash, no salt). *A file of
 digests of the removed values was in PR #643's branch until review removed it;
-the paragraph three below says what that leaves exposed, and it is not nothing.*
+the paragraph below says what that leaves exposed, and it is not nothing.*
 
 ```
 node node_modules/typescript/bin/tsc -p tsconfig.record-fixture.json
@@ -742,32 +742,27 @@ node .record-fixture/tools/scrub-fixture/index.js --in <raw.json, outside the re
   --out test/fixtures/normal.ndjson --cli 0.8.6
 ```
 
-The command prints the COUNT of values it replaced and nothing else. A file of
-hashes of the removed values was in the first push of PR #643's branch and was
-removed: a bare hash of a low-entropy value (a small integer, a dollar amount, a
-repo-style name) is recovered by a dictionary, so such a list leaks what it
-hides. The test instead gets the removed values in memory, through a callback the
-scrub run is given, on a scrub of a synthetic input; nothing derived from a
-removed value is written anywhere.
-
-**That file is still in the pull request's history, and this is the honest
-account of it.** PR #643's first commit (`d41f726b`) added
-`console/tools/scrub-fixture/normal.scrubbed.json`, a JSON array of the unsalted
-SHA-256 digests of the values the scrub had replaced, and a later commit on the
-same branch (`2fc37c7fd8`) removed it again. The PR was **squash-merged**, so
-neither commit is on `main` and no commit on `main` ever held the file — but the
-pull request's own history on GitHub still does, and a squash does not delete
-anything from the remote. (Those two commits are not in a clone of `main` either:
-`git cat-file` does not know them, and this branch was created after the squash,
-so nothing was ever in its history either. So this paragraph is the account of
-what the PR's history holds, and a reader here cannot read the file itself to
-check it.)
-The file held unsalted SHA-256 digests, which are a dictionary: a small integer, a
-dollar amount or a repository name is recovered from a bare digest by trying
-candidates, so the values it covered must be treated as **exposed**, not merely
-removed. Those values were a public repository's name, the project's name and
-some development spend figures. Nothing here undoes that; the note is here
-because a reader of this file is the person most likely to believe the opposite.
+The command prints the COUNT of values it replaced and nothing else, and the test
+gets the removed values in memory, through a callback the scrub run is given, on a
+scrub of a synthetic input: nothing derived from a removed value is written
+anywhere. One file of digests did exist on PR #643's branch, and **it is still in
+the pull request's history — this is the honest account of it.** PR #643's first
+commit (`d41f726b`) added `console/tools/scrub-fixture/normal.scrubbed.json`, a
+JSON array of the unsalted SHA-256 digests of the values the scrub had replaced,
+and a later commit on the same branch (`2fc37c7fd8`) removed it again. The PR was
+**squash-merged**, so neither commit is on `main` and no commit on `main` ever
+held the file — but the pull request's own history on GitHub still does, and a
+squash does not delete anything from the remote. (Those two commits are not in a
+clone of `main` either: `git cat-file` does not know them, and this branch was
+created after the squash, so nothing was ever in its history either. So this
+paragraph is the account of what the PR's history holds, and a reader here cannot
+read the file itself to check it.) An unsalted SHA-256 digest is a dictionary: a
+small integer, a dollar amount or a repository name is recovered from a bare
+digest by trying candidates, so the values that file covered must be treated as
+**exposed**, not merely removed. Those values were a public repository's name, the
+project's name and some development spend figures. Nothing here undoes that; the
+note is here because a reader of this file is the person most likely to believe
+the opposite.
 
 The scrub (`scrub.ts`) is fail-closed: an unknown key is a refusal, and every key
 it copies has its own typed rule (numbers are copied; an enum is copied only if
@@ -821,11 +816,19 @@ out of the file, fills its `${...}` interpolations with the values it derived,
 compiles it and tries it against lines built from `verify.go`'s own format
 string — with the exit code `internal/procgroup/procgroup.go` leaves for a
 process it killed, which is `-1`, so a timed-out verify writes `(exit -1; timed
-out)` and a pattern narrowed to `\d+` fails there. The list that was too *short*
-is the failure that review found: a stage the runner writes and the scrub does
+out)` and a pattern narrowed to `\d+` fails there. The *tail* is held the same
+way, and was the gap this round closed: the test renders `Record.Summary`'s
+segments and the file's `VERIFY_TAIL` from their own sources — a literal as
+written, the writer's `%d` as a digits marker, each `strings.Join` as a
+test-names marker, and `r.Warning` as the warning sentence the Go source builds
+plus the globs marker — and compares them segment by segment, in order. So a
+segment added to `verify.go` (a `; N skipped` for the `Skipped` count the summary
+does not print today, say) fails here instead of leaving the scrub refusing an
+ordinary recording. The list that was too *short* is
+the failure that review found: a stage the runner writes and the scrub does
 not know is not a leak, it is a recorder that throws on an ordinary run.
-`bootstrap`, `provision`, `review_first` and `finalize` were missing from
-`stage`, `vertex` from `auth`, and `warn` was a mode no CLI writes.
+`bootstrap`, `review_first` and `finalize` were missing from `stage`, `vertex`
+from `auth`, and `warn` was a mode no CLI writes.
 
 **Not recorded, and stay invented**: `silent-then-lost`, `kill-mid-feed` and
 `repo-at-cap` (they need cloud writes), and the other cases still await a
@@ -845,27 +848,40 @@ refusals, each mutation-proven. Held by `test/unit/scrub-vocabulary.test.ts`: th
 the scrub accepts every stage, auth and mode the CLI writes and refuses what it
 does not, that the verify shape is the one `internal/verify/verify.go` writes
 (every tail variant, the `FAILED` spelling, the `exit -1` a killed process
-leaves, and the 120-rune clip) and refuses a line it cannot, that the nullable Go
+leaves, and the 120-rune clip) and refuses a line it cannot, that the pinned
+matcher takes the IDs `junit.go` builds verbatim — pytest parametrisations, names
+with spaces or a bare comma, `TestFoo#01`, an escaped bidi character — and holds
+the warning globs to the CLI's own two, that the nullable Go
 fields may be null, and that the clock shift is drawn per run — all
 mutation-proven, and the vocabularies themselves pinned against the Go source by
 the drift test named above.
 
-**The scan pins the verify line's slots; the scrub does not.** The verify line is
-the one value whose middle the CLI fills from the repository it ran in — the test
-names its reports carry and the globs it was configured to read — so `scrub.ts`
-has two matchers for it. `isVerifySummary` is the scrub's rule and leaves those
-slots open on purpose: a real recording's test names are the writer's own output,
-and a vocabulary that refused one would refuse an ordinary run. The fixture's
-scan uses `isKnownVerifySummary`, the same grammar with the slots pinned to a
-name list and a glob list, because there the slots are the one place a string
-this file never vouched for could ride: with the open matcher in the allow-list,
-`fugaro verify test #5: passed (exit 0, 2 tests, 0 failures: the Acme Payroll
-suite)` passed the scan. The glob slot is pinned to the two `commands.reports`
-defaults the CLI writes there with no configuration — any other glob is text the
-CLI was never given, and with an open slot `**/acme-payroll/*.xml` passed the
-scan too — and the name list carries the `#` that `go-junit-report` appends to a
-duplicated subtest (`TestFoo#01`), so a legitimate recording is not refused for
-being legitimate. The warning sentence is not a slot in either matcher —
+**The scan pins the verify line's globs slot; nothing can pin its name slots.**
+The verify line is the one value whose middle the CLI fills from the repository
+it ran in — the test names its reports carry and the globs it was configured to
+read — so `scrub.ts` has two matchers for it. `isVerifySummary` is the scrub's
+rule and leaves those slots open on purpose: a real recording's test names are
+the writer's own output, and a vocabulary that refused one would refuse an
+ordinary run. The fixture's scan uses `isKnownVerifySummary`, the same grammar
+with the **globs** slot pinned to the two `commands.reports` defaults the CLI
+writes there with no configuration — any other glob is text the CLI was never
+given, and with an open slot `**/acme-payroll/*.xml` passed the scan too.
+
+The name slots are open in **both** matchers, and that is not a leftover: an
+earlier round pinned them to a character class that looked like Go test names
+(`[A-Za-z0-9_.:/\-#]` and `, `), which was wrong twice over. `internal/verify/
+junit.go` builds each ID as `classname + "." + name`, verbatim from the JUnit
+XML, so a pytest parametrisation (`test_mod.py::test_add[1-2]`, and one carrying
+`, ` of its own), a name with a space, the `#01` `go-junit-report` appends to a
+duplicated subtest, and the escape `internal/pluginwire` writes in place of a
+control or bidi character are all ordinary names — and a recording the pinned
+matcher refuses cannot be committed, which is the failure these vocabularies
+exist to avoid. What guards that slot is the fixture scan's forbidden-substring
+pass, which runs over the **whole** verify value, name list included: a
+`dimipaun/fugaro` planted in a failed-name slot is caught by that pass, not by
+the shape matcher.
+
+The warning sentence is not a slot in either matcher —
 `Record.Summary` writes one sentence there, and the drift test fails first if
 `verify.go` ever gains a second one.
 

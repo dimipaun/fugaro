@@ -5024,6 +5024,159 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 			t.Errorf("%s: VERIFY_HEAD (%s) does not match the line verify.go writes: %q", scrubTS, head, line)
 		}
 	}
+
+	// The tail, segment by segment and in order. The head was held above and the
+	// tail's literals were held to nothing, which is the rot this test exists to
+	// prevent: scrub.ts spells `Record.Summary`'s tail out part by part, so a
+	// segment ADDED to verify.go -- a `; N skipped` for the Skipped count the
+	// summary does not print today, say -- would leave the scrub refusing an
+	// ordinary recording while this test stayed green.
+	//
+	// Both sides are rendered to one string per segment, from their own sources:
+	// a literal as written (with the writer's `%d` as the digits marker), the
+	// test-name joins as the names marker, and `r.Warning` -- which verify.go
+	// builds as the sentence below plus the repository's reports -- as that
+	// sentence followed by the globs marker. Nothing is retyped here, so a
+	// reworded, dropped, reordered or added segment fails on the two renderings.
+	warning := sourceValues(t, "internal/verify/verify.go", verifyGo, `rec\.Warning = "([^"]*)"`)[0]
+	goTail := summaryTail(t, verifyGo, warning+"\x02globs")
+	tsTail := verifyTailRendered(t, scrub)
+	if len(goTail) == 0 || len(tsTail) == 0 {
+		t.Fatalf("%s: the tail scan read nothing (verify.go %q, scrub.ts %q); the sources have moved", scrubTS, goTail, tsTail)
+	}
+	if !slices.Equal(goTail, tsTail) {
+		t.Errorf("%s: Record.Summary appends %q, the scrub's VERIFY_TAIL renders %q: a tail segment added, reworded, dropped or reordered in verify.go has to move the scrub with it", scrubTS, goTail, tsTail)
+	}
+}
+
+// tailDigits, tailNames and tailGlobs mark, in the two renderings compared
+// above, the places a segment is not literal text: a `%d`, the test-name lists
+// verify.go joins with ", ", and the report globs inside its warning.
+const (
+	tailDigits = "\x03"
+	tailNames  = "\x02names"
+	tailGlobs  = "\x02globs"
+)
+
+// summaryTail renders the statements Record.Summary appends, in order, one string
+// each: literal text as written (`%d` becoming tailDigits), every
+// strings.Join(...) as tailNames, and r.Warning as `warning`. The head's own
+// fmt.Sprintf is excluded -- VERIFY_HEAD is compared with it -- by starting after
+// the r.ExitCode argument that closes it.
+func summaryTail(t *testing.T, verifyGo, warning string) []string {
+	t.Helper()
+	fn := regexp.MustCompile(`(?s)func \(r Record\) Summary\(\) string \{(.*?)\n\}`).FindStringSubmatch(verifyGo)
+	if fn == nil {
+		t.Fatalf("internal/verify/verify.go: Record.Summary is not a function this test can read")
+	}
+	tail := fn[1]
+	at := strings.Index(tail, "r.ExitCode)")
+	if at < 0 {
+		t.Fatalf("internal/verify/verify.go: Record.Summary no longer builds its head from r.ExitCode; this test reads the statements after it")
+	}
+	tail = tail[at+len("r.ExitCode)"):]
+	var out []string
+	var b strings.Builder
+	flush := func() {
+		if b.Len() > 0 {
+			out = append(out, b.String())
+			b.Reset()
+		}
+	}
+	for i := 0; i < len(tail); {
+		switch {
+		case strings.HasPrefix(tail[i:], "if "):
+			// A condition names what it guards without writing it: `if r.Warning
+			// != ""` must not count as the warning's own segment.
+			nl := strings.IndexByte(tail[i:], '\n')
+			if nl < 0 {
+				i = len(tail)
+				break
+			}
+			i += nl
+		case strings.HasPrefix(tail[i:], "strings.Join("):
+			// The join's separator is ", ", which is the slot's own internal
+			// separator in scrub.ts, not a literal of the tail.
+			end := strings.Index(tail[i:], ")")
+			if end < 0 {
+				t.Fatalf("internal/verify/verify.go: a strings.Join call in Record.Summary is not closed")
+			}
+			b.WriteString(tailNames)
+			i += end + 1
+		case strings.HasPrefix(tail[i:], "r.Warning"):
+			b.WriteString(warning)
+			i += len("r.Warning")
+		case tail[i] == '"':
+			end := strings.Index(tail[i+1:], `"`)
+			if end < 0 {
+				t.Fatalf("internal/verify/verify.go: an unterminated literal in Record.Summary")
+			}
+			b.WriteString(strings.ReplaceAll(tail[i+1:i+1+end], "%d", tailDigits))
+			i += end + 2
+		case tail[i] == '\n':
+			flush()
+			i++
+		default:
+			i++
+		}
+	}
+	flush()
+	return out
+}
+
+// verifyTailRendered renders scrub.ts's VERIFY_TAIL the way summaryTail renders
+// verify.go's: one string per segment, `text` parts as the value they spell out
+// (a quoted literal, or a constant this test already compares), `digits` as
+// tailDigits and every free slot as its own marker.
+func verifyTailRendered(t *testing.T, scrub string) []string {
+	t.Helper()
+	block := regexp.MustCompile(`(?s)const VERIFY_TAIL[^=]*= \[(.*?)\n\]`).FindStringSubmatch(scrub)
+	if block == nil {
+		t.Fatalf("%s: VERIFY_TAIL is not a list this test can read", scrubTS)
+	}
+	partRE := regexp.MustCompile(`text: ([^}]*?)\}|digits: true|free: '([a-z]+)'`)
+	var out []string
+	for _, line := range strings.Split(block[1], "\n") {
+		parts := partRE.FindAllStringSubmatch(line, -1)
+		if len(parts) == 0 {
+			continue
+		}
+		var b strings.Builder
+		for _, part := range parts {
+			switch {
+			case part[2] != "":
+				b.WriteString("\x02" + part[2])
+			case part[1] != "":
+				b.WriteString(tsTextValue(t, scrub, part[1]))
+			default:
+				b.WriteString(tailDigits)
+			}
+		}
+		out = append(out, b.String())
+	}
+	return out
+}
+
+// tsTextValue resolves one `text:` expression of VERIFY_TAIL: each ` + `-joined
+// part is a single-quoted literal or the name of a const this test reads out of
+// the file. Anything else is a failure rather than a silent pass, so a part
+// rewritten into an expression this test cannot follow cannot slip through.
+func tsTextValue(t *testing.T, scrub, expr string) string {
+	t.Helper()
+	var b strings.Builder
+	for _, part := range strings.Split(strings.TrimSpace(expr), "+") {
+		part = strings.TrimSpace(part)
+		if m := regexp.MustCompile(`^'([^']*)'$`).FindStringSubmatch(part); m != nil {
+			b.WriteString(m[1])
+			continue
+		}
+		if regexp.MustCompile(`^[A-Z][A-Z_]*$`).MatchString(part) {
+			b.WriteString(tsConst(t, scrub, part))
+			continue
+		}
+		t.Fatalf("%s: VERIFY_TAIL has a text part this test cannot read: %q", scrubTS, part)
+	}
+	return b.String()
 }
 
 // tsConst returns the single-quoted value of one `const NAME = '...'` in
