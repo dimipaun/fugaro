@@ -183,7 +183,9 @@ const DIGEST_WITH_A_DIGIT_RUN = 'abcdef' + '123456789012' + 'ab'.repeat(23)
  * the shifted `kill.at` back on the recording's own date while the shifted
  * `now` lands on the next one, and the scan read the removed day inside
  * `kill.at`. One draw in 19200, so about one run in sixty of the 300 draws
- * below; CLOCK_SEED's walk holds one, and the regression case below names it.
+ * below; CLOCK_SEED's walk holds one of that kind, and the regression case
+ * below names that one (CI's own offset was never recorded, so no seed can
+ * name it).
  *
  * The exemption is the shape of the value the FIXTURE CARRIES, never which
  * removed value it is: a removed day that survives where a day does not belong
@@ -429,8 +431,10 @@ const RAW_KILL = '2026-10-19T01:00:00Z'
  * walk's own two counts, so this cannot quietly become a walk of 300 draws that
  * test nothing. */
 const CLOCK_SEED = 0xf0
-/** CROSSING_ITERATION is where CLOCK_SEED's walk crosses the date, which the
- * named regression case uses: the draw CI run 39231293918 failed on. */
+/** CROSSING_ITERATION is where CLOCK_SEED's walk crosses the date, and the
+ * named regression case holds it: a draw of the KIND CI run 39231293918 failed
+ * on, not that draw -- CI's offset was drawn at random and never recorded (its
+ * message printed the iteration alone), so no seed can name it. */
 const CROSSING_ITERATION = 13
 
 /**
@@ -678,13 +682,16 @@ describe('the scrub', () => {
   })
 
   it('does not read the recording day, inside the shifted kill.at, as a removed value', () => {
-    // The draw CI run 39231293918 failed on (`iteration 252: expected [ "a
-    // removed value" ] to deeply equal []`): the offset puts the shifted
+    // A draw of the kind CI run 39231293918 failed on (`iteration 252: expected
+    // [ "a removed value" ] to deeply equal []`): the offset puts the shifted
     // kill.at back on the recording's own day while `now` lands on the next
     // one, so the recording's day is a removed value AND a substring of a
-    // timestamp the scrub drew. The walk above carries the draw; this case
-    // names it, so the rule that reads it right is held by a case that fails
-    // when the rule is restored to the substring-only one.
+    // timestamp the scrub drew. CI's own offset is not recoverable -- it was
+    // drawn from the crypto random source and only the iteration was printed --
+    // so what this holds is the CLASS of draw (any of the offsets in the
+    // window), the walk above carries one, and this case names that one, so the
+    // rule that reads it right is held by a case that fails when the rule is
+    // restored to the substring-only one.
     const shift = clockShifts(CLOCK_SEED, 300)[CROSSING_ITERATION]!
     const shifted = (iso: string): string => new Date(Date.parse(iso) + shift).toISOString().slice(0, 19) + 'Z'
     // the premise, so this case cannot pass on some other draw: `now` is off the
