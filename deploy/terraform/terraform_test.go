@@ -2702,54 +2702,53 @@ func allResourceBlocks(t *testing.T, path string, src []byte) []block {
 const customRolePermissionsSnapshot = "testdata/custom-role-permissions.txt"
 
 var (
-	permissionsListStart = regexp.MustCompile(`\bpermissions\s*=\s*\[`)
+	customRoleType       = regexp.MustCompile(`^google_[a-z0-9_]*iam_custom_role$`)
+	permissionsAttr      = regexp.MustCompile(`(?m)^\s*permissions\s*=`)
+	permissionsLiteral   = regexp.MustCompile(`(?s)^\s*permissions\s*=\s*\[([^\]]*)\]`)
+	literalPermissionSeq = regexp.MustCompile(`^(?:\s*"[^"\\$]*"\s*,?)*\s*$`)
 	quotedString         = regexp.MustCompile(`"([^"\\]*)"`)
 )
 
-// permissionStrings returns, for each `permissions = [...]` list in a .tf
-// file, the role that owns it (the last resource header before the list) and
-// its quoted entries. Comments are dropped before the entries are read.
-func permissionStrings(src string) (out []struct{ Role, Permission string }) {
-	stripComments := func(s string) string {
-		var b strings.Builder
-		in := false
-		for i := 0; i < len(s); i++ {
-			switch {
-			case s[i] == '"':
-				in = !in
-			case s[i] == '#' && !in:
-				return b.String()
-			}
-			b.WriteByte(s[i])
+// permissionStrings returns, for every custom role resource in a .tf file
+// (google_*_iam_custom_role), the role and the entries of its `permissions`
+// list. Comments of all three kinds (#, // and /* */) are dropped first, by
+// the same stripComments the other tests use, so a permission written in a
+// comment is never read as one.
+//
+// It reads literal lists only, and a role whose permissions are anything else
+// is an error rather than a role with nothing to check: a local, a variable or
+// a concat() could carry any permission past the test. A custom role with no
+// permissions attribute, or with two, is an error too.
+func permissionStrings(src string) (out []struct{ Role, Permission string }, errs []string) {
+	code := stripComments(src)
+	for _, m := range resourceHeader.FindAllStringSubmatchIndex(code, -1) {
+		typ := code[m[2]:m[3]]
+		if !customRoleType.MatchString(typ) {
+			continue
 		}
-		return b.String()
-	}
-	role := ""
-	var inList bool
-	for _, line := range strings.Split(src, "\n") {
-		line = stripComments(line)
-		if m := resourceHeader.FindStringSubmatch(line); m != nil {
-			role = m[1] + "." + m[2]
+		role := typ + "." + code[m[4]:m[5]]
+		open := m[1] - 1
+		end := matchBrace(code, open)
+		if end < 0 {
+			errs = append(errs, role+": unbalanced braces")
+			continue
 		}
-		rest := line
-		if !inList {
-			loc := permissionsListStart.FindStringIndex(line)
-			if loc == nil {
-				continue
-			}
-			inList = true
-			rest = line[loc[1]:]
+		body := code[open+1 : end]
+		attrs := permissionsAttr.FindAllStringIndex(body, -1)
+		if len(attrs) != 1 {
+			errs = append(errs, fmt.Sprintf("%s: %d permissions attributes, want exactly one literal list", role, len(attrs)))
+			continue
 		}
-		end := strings.Index(rest, "]")
-		if end >= 0 {
-			inList = false
-			rest = rest[:end]
+		lit := permissionsLiteral.FindStringSubmatch(body[attrs[0][0]:])
+		if lit == nil || !literalPermissionSeq.MatchString(lit[1]) {
+			errs = append(errs, role+": permissions is not a literal list of quoted permissions (a local, a variable or a concat() cannot be checked)")
+			continue
 		}
-		for _, m := range quotedString.FindAllStringSubmatch(rest, -1) {
-			out = append(out, struct{ Role, Permission string }{role, m[1]})
+		for _, q := range quotedString.FindAllStringSubmatch(lit[1], -1) {
+			out = append(out, struct{ Role, Permission string }{role, q[1]})
 		}
 	}
-	return out
+	return out, errs
 }
 
 func loadPermissionSnapshot(t *testing.T) map[string]bool {
@@ -2775,12 +2774,15 @@ func loadPermissionSnapshot(t *testing.T) map[string]bool {
 // must be one Google allows in a custom role.
 func TestCustomRolePermissionsAreAllowedByGoogle(t *testing.T) {
 	// Known-invalid entries not fixed by this change, keyed "file|permission".
-	// The compute module is not part of the installation root's apply, and
-	// which permission its reaper needs to cancel a Batch job is a design
-	// call (Google lists batch.jobs.create/delete/get/list only). Remove the
-	// entry when the module is fixed: the test fails while it is stale.
+	// The compute module is not part of the installation root's apply: it is
+	// applied only by fugaro init --provision-batch, which refuses before any
+	// cloud call while internal/cli's batchProvisionShipped is false (0.8.6;
+	// the reaper is redesigned for 0.9.0). Which permission its reaper needs
+	// to cancel a Batch job is that design call (Google lists
+	// batch.jobs.create/delete/get/list only). Remove the entry when the
+	// module is fixed: the test fails while it is stale.
 	knownInvalid := map[string]string{
-		"gcp/modules/compute/iam.tf|batch.jobs.cancel": "reaper role, compute backend (unshipped)",
+		"gcp/modules/compute/iam.tf|batch.jobs.cancel": "reaper role, compute module: --provision-batch refuses until 0.9.0 (batchProvisionShipped)",
 	}
 	usedKnown := map[string]bool{}
 	allowed := loadPermissionSnapshot(t)
@@ -2796,7 +2798,11 @@ func TestCustomRolePermissionsAreAllowedByGoogle(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for _, ps := range permissionStrings(string(b)) {
+		perms, errs := permissionStrings(string(b))
+		for _, e := range errs {
+			t.Errorf("%s: %s", p, e)
+		}
+		for _, ps := range perms {
 			checked++
 			key := filepath.ToSlash(p) + "|" + ps.Permission
 			if _, ok := knownInvalid[key]; ok {
@@ -2830,20 +2836,56 @@ func TestPermissionStringsExtraction(t *testing.T) {
 	src := `resource "google_project_iam_custom_role" "a" {
   permissions = [
     "x.y.z", # "no.pe.rm"
-    "x.y.w",
+    "x.y.w", // "no.pe.rm2"
+    /* "no.pe.rm3", */
   ]
 }
+/*
+resource "google_project_iam_custom_role" "commented" {
+  permissions = ["no.pe.rm4"]
+}
+*/
+// resource "google_project_iam_custom_role" "commented2" { permissions = ["no.pe.rm5"] }
 resource "google_project_iam_custom_role" "b" {
   permissions = ["p.q.r", "p.q.s"]
 }
+resource "google_organization_iam_custom_role" "c" {
+  permissions = ["o.r.g"]
+}
+resource "google_storage_bucket" "notarole" {
+  permissions = ["n.o.t"]
+}
 `
-	got := permissionStrings(src)
-	want := []string{"google_project_iam_custom_role.a/x.y.z", "google_project_iam_custom_role.a/x.y.w", "google_project_iam_custom_role.b/p.q.r", "google_project_iam_custom_role.b/p.q.s"}
+	got, errs := permissionStrings(src)
+	if len(errs) != 0 {
+		t.Fatalf("errors on a literal source: %v", errs)
+	}
+	want := []string{"google_project_iam_custom_role.a/x.y.z", "google_project_iam_custom_role.a/x.y.w", "google_project_iam_custom_role.b/p.q.r", "google_project_iam_custom_role.b/p.q.s", "google_organization_iam_custom_role.c/o.r.g"}
 	var have []string
 	for _, g := range got {
 		have = append(have, g.Role+"/"+g.Permission)
 	}
 	if !slices.Equal(have, want) {
 		t.Fatalf("got %v want %v", have, want)
+	}
+
+	// A custom role whose permissions are not a literal list must fail loudly,
+	// never be skipped: each of these once passed the test with an invalid
+	// permission in it.
+	for name, body := range map[string]string{
+		"local":           `permissions = local.sneaky`,
+		"variable":        `permissions = var.perms`,
+		"concat":          `permissions = concat(["run.jobs.get"], ["bogus.perm.x"])`,
+		"list with local": `permissions = ["run.jobs.get", local.more]`,
+		"interpolation":   `permissions = ["${local.p}"]`,
+		"no permissions":  `title = "x"`,
+		"two attributes":  "permissions = [\"a.b.c\"]\n  permissions = [\"d.e.f\"]",
+	} {
+		t.Run(name, func(t *testing.T) {
+			src := "resource \"google_project_iam_custom_role\" \"r\" {\n  " + body + "\n}\n"
+			if _, errs := permissionStrings(src); len(errs) == 0 {
+				t.Errorf("%q was not refused", body)
+			}
+		})
 	}
 }
