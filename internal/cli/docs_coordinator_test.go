@@ -22,7 +22,10 @@ package cli
 //    load-bearing sentences: the status line, the owner, the date, the commit
 //    the reconciliation was run against, and the two facts that arrived with
 //    the owner's answers of 2026-10-19: all sixteen questions are answered, and
-//    none of the answers is an approval.
+//    none of the answers is an approval -- and the sentence that scopes the
+//    content anchors to the reconciliation's citations, so that the index cannot
+//    widen it back over its own links into those trees, which name no phrase and
+//    are held by no anchor.
 //  * TestDocsCoordinatorSpecIsVerbatim -- spec.md carries the spec's own title,
 //    status and eleven sections, and carries none of the reconciliation's
 //    apparatus: the two documents have not been mixed.
@@ -56,9 +59,6 @@ package cli
 //    turns on, and the anchors are counted against the citations document by
 //    document, so a claim added against a document that already has an anchor
 //    fails until it has one of its own -- the case a document-level check passes.
-//    It also holds the index to what it holds: the sentence stating the rule is
-//    pinned, so it cannot widen back to cover the index's own links into those
-//    trees, which name no phrase and are anchored by nothing.
 //  * TestDocsCoordinatorQuestionsAreNumberedAndOptioned -- Q1..Q16, contiguous,
 //    each with at least two options, a recommendation and the owner's recorded
 //    answer of 2026-10-19.
@@ -89,7 +89,11 @@ package cli
 //	  what is left says the questions were answered, not that answering one
 //	  approves nothing;
 //	  delete the README's "An answer is not an approval" sentence -> fails;
-//	  revert the README's numbers row to "its open items are Q1–Q16" -> fails.
+//	  revert the README's numbers row to "its open items are Q1–Q16" -> fails;
+//	  widen the README's anchored-citations sentence back to "holds every one of
+//	  them" (dropping the pinned sentence that scopes it to the reconciliation)
+//	  -> fails: an index claiming the content anchors hold the citations it makes
+//	  itself is claiming coverage the test that backs them does not have.
 //	TestDocsCoordinatorSpecIsVerbatim
 //	  paste a `### Q1 — ` heading into spec.md -> fails;
 //	  delete `## 9. Long-running behaviour` -> fails.
@@ -239,10 +243,6 @@ package cli
 //	  naming the citation count and the anchor count: one anchor holds one
 //	  citation, and a claim added against an already-anchored document is
 //	  exactly what a check comparing documents rather than citations passes;
-//	  widen the README's sentence back to "holds every one of them" (dropping the
-//	  pinned sentence that scopes it to the reconciliation) -> fails: this test
-//	  reads reconciliation.md and nothing else, and the index's own links into
-//	  those two trees name no phrase for an anchor to hold.
 //	TestDocsCoordinatorQuestionsAreNumberedAndOptioned
 //	  delete Q9 -> fails on every question after it;
 //	  leave Q12 with one option -> fails;
@@ -415,6 +415,15 @@ func TestDocsCoordinatorIsWritten(t *testing.T) {
 		coordinatorCheckedAgainst,
 		"**None.** The spec is copied byte for byte",
 		"its items were **Q1–Q16**",
+		// What the content anchors cover and what they do not. The sentence this replaced
+		// claimed TestDocsCoordinatorFrequentCitationsAreAnchoredByContent "holds every one
+		// of them" -- every citation into either tree, the index's own included -- and that
+		// test reads reconciliation.md and nothing else: the Check 110 row below and the
+		// reading list at the end name a whole document and no sentence in it, so no anchor
+		// is behind them. Pinned whole, on the one line it is written on, so widening the
+		// claim back is a failure rather than something a reader has to check against that
+		// test by hand.
+		coordinatorReadmeAnchorScope,
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s lacks %q", coordinatorReadme, want)
@@ -1758,19 +1767,6 @@ func TestDocsCoordinatorFrequentCitationsAreAnchoredByContent(t *testing.T) {
 	t.Logf("%s: %d citations under %s held by %d content anchors, none of them by a line number",
 		coordinatorReconciled, total, strings.Join(coordinatorContentAnchoredDirs, " and "), len(coordinatorContentAnchors))
 
-	// And the index must not claim more of this test than it does. This test reads the
-	// reconciliation and nothing else, so a README sentence saying it "holds every one of
-	// them" -- every citation into either tree, the index's own included -- was false: the
-	// Check 110 row and the reading list name a document and no phrase, and no anchor is
-	// behind them. The sentence that scopes the rule is pinned whole, on the one line it is
-	// written on, so that widening it back is a failure rather than something a reader has to
-	// check against this test by hand -- which is why every other sentence this directory
-	// states about its own checks is pinned too.
-	readme := readDoc(t, coordinatorReadme)
-	if !strings.Contains(readme, coordinatorReadmeAnchorScope) {
-		t.Errorf("%s no longer carries %q: that sentence is what says which citations this test holds and which it does not, and an index claiming this test holds every citation into those two trees would be claiming coverage it does not have",
-			coordinatorReadme, coordinatorReadmeAnchorScope)
-	}
 }
 
 // coordinatorReadmeAnchorScope is the README's own statement of what the content-anchor rule
