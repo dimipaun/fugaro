@@ -583,7 +583,13 @@ div.spend-persons[data-enabled='false'] {
   color: var(--text-muted);
 }
 
-span.spend-persons-state[data-state='off'] {
+/* The knob's own word -- `on` or `off`, and the word is the state (design
+ * section 3.5). `data-enabled` is on the `div.spend-persons` and not on this
+ * span, so the **tone** is the parent's rule above (which mutes the whole block
+ * while the person view is withheld, §2.4's "person view withheld
+ * (`div.spend-persons` with `data-enabled="false"`, the state text `off`")),
+ * and this rule is the span's own type. */
+span.spend-persons-state {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
 }
@@ -636,8 +642,17 @@ span.spend-point-value {
 }
 
 /* `(partial)` and `hollow` are Spend's own honesty states, and both carry the
- * marker text (design section 3.5). */
-span.spend-partial[data-partial='true'],
+ * marker text (design section 3.5).
+ *
+ * **The attributes are on the row, not on the marker.** §2.4 puts
+ * `data-partial` on the points, the rows and `div.spend-totals`, and
+ * `data-hollow` on the points and the rows; `span.spend-partial` inside them
+ * holds the text `(partial)` and carries no attribute at all, so a rule
+ * spelling it `span.spend-partial[data-partial='true']` selects nothing -- the
+ * tone has to be on the element that knows. */
+li.spend-point[data-partial='true'],
+li.spend-row[data-partial='true'],
+div.spend-totals[data-partial='true'],
 li.spend-point[data-hollow='true'],
 li.spend-row[data-hollow='true'] {
   color: var(--warn);
@@ -729,8 +744,17 @@ section.projects-panel[data-state='read'] {
 }
 
 /* The kill panel and a killed repository: `KILLED by <who> <when> "<reason>"`,
- * the word and the tone together. */
-div.projects-kill-row[data-killed='true'] {
+ * the word and the tone together.
+ *
+ * **The row is marked by the banner it holds.** `data-killed` is the
+ * **banner's** attribute and not the row's (§2.5's `data-*` line, and §3.5's
+ * states table: "the attribute is on the banner, and on Live's repository
+ * block itself" -- Live's `li.live-repo` carries it, Projects' row does not),
+ * so a rule spelling the row's own border `div.projects-kill-row[data-killed]`
+ * selects nothing. `:has()` is the one selector that can see the banner inside,
+ * and a row that *has* one is exactly a killed repository: the row without a
+ * kill holds the words `not killed` instead. */
+div.projects-kill-row:has(div.projects-kill) {
   border-left: 3px solid var(--halted);
 }
 
@@ -803,17 +827,20 @@ p.run-ledger-total {
   font-size: var(--font-size-xs);
 }
 
-/* Stages: passed or failed, and a deadline that is ok, near or over -- each
- * with its word (design section 2.6 and 3.5). */
-span.run-stage-passed {
-  color: var(--ok);
-  font-size: var(--font-size-xs);
-}
-
-span.run-stage-passed:not([data-state]) {
-  color: var(--ok);
-}
-
+/* Stages: the stage's name, its word and its deadline -- each with its word
+ * (design section 2.6 and 3.5).
+ *
+ * **`run-stage-passed` is not coloured, and cannot be**: it holds either
+ * `passed` or `failed` in one class with no attribute (§2.6's states: "stage
+ * passed/failed (`run-stage-passed` with `passed`/`failed`)"), so any tone a
+ * rule gives it is right for one of the two words and wrong for the other --
+ * and painting it `--ok`, which is what this rule did, reads a failed stage
+ * green. `--ok` is reserved for measured-and-inside-cap and the rail's running
+ * (§3.5 rule 4), and a stage is neither. The two words are the state, and the
+ * failure's alarm tone is the diagnosis panel's `run-failed-word`, the element
+ * that knows which it is. */
+span.run-stage-name,
+span.run-stage-passed,
 span.run-stage-deadline {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
@@ -1387,7 +1414,7 @@ main p {
   section.projects-panel[data-state='read'],
   section.projects-panel[data-state='unavailable'],
   section.projects-panel[data-state='not-built'],
-  div.projects-kill-row[data-killed='true'],
+  div.projects-kill-row:has(div.projects-kill),
   li.spend-dim-unknown[data-dimension='unknown'],
   div.spend-cap-limit[data-limit='max_reserve'],
   section.console-unavailable[data-kind='refused'],

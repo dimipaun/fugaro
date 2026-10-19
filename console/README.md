@@ -3239,8 +3239,8 @@ whole styling work makes** — the fifth number hook.
 | `src/renderer/theme/screens.css` | **new**: the per-screen rules, in the design's §2 order, ending with the rows' and badges' forced-colors block |
 | `src/renderer/screens/degraded.ts` | `numberCell` prepends `degraded-num`, which is the class §2.10 says this task adds |
 | `tools/bundle-renderer/index.ts` | `THEME_STYLESHEETS` gains `'screens.css'`, in the commit that creates the file — the list is now the theme directory's whole contents and stays still |
-| `test/unit/theme-selectors.test.ts` | the scan covers `screens.css`, and reads §2 **whole** rather than its tables; a second case checks every element-qualified selector against the tags the console draws |
-| `test/unit/theme-tokens.test.ts` | the `--border`-is-decorative scan of `base.css` and `screens.css` |
+| `test/unit/theme-selectors.test.ts` | the scan covers `screens.css`, and reads §2 **whole** rather than its tables; two more cases check every element-qualified selector against the tags the console draws, and every attribute-qualified one against the attributes it sets |
+| `test/unit/theme-tokens.test.ts` | the `--border`-is-decorative scan of `base.css` and `screens.css`, and the case that pins `--ok` to the readings §3.5 rule 4 licenses |
 | `test/unit/degraded.test.ts` | every figure the degraded and unavailable screens draw carries `degraded-num`, and no cell that draws a document string does |
 | `test/unit/bundle.test.ts` | the planted-tree case's unlisted file moves out of the theme directory, because after this task there is no unlisted file in it |
 | `test/e2e/{live,spend,projects,run,degraded}.spec.ts` | the forced-colors smoke's per-screen half |
@@ -3302,6 +3302,42 @@ and `span.run-ledger-model`/`-compute`/`-total` (the labels are `p`s, in both th
 and the forced-colors list). Each kept its rule's intent: the tail line moved beside
 `run-log-message`, its cousin in the log list, and the two diagnosis containers moved to the
 prose rule.
+
+### The attributes that were on another element, and a tone that could not be right
+
+The tag scan has a sibling, and the review that found the eleven tags is why it exists: a rule
+may name a class the code draws **and** an attribute §2 lists, and still select nothing,
+because the attribute is on a **different element**. The new case reads which attributes the
+code sets on which elements — walking each file in source order, because a screen reuses
+`element` in every function it has — and refuses a compound selector whose class does not
+carry the attribute it qualifies the class with. It found four rules:
+
+- `span.spend-partial[data-partial='true']` — §2.4 puts `data-partial` (and `data-hollow`) on
+  `li.spend-point`, `li.spend-row` and `div.spend-totals`; the marker span inside them holds
+  the text `(partial)` and no attribute, so a partial day never got the `--warn` tone the
+  rule intended. The tone is on the three elements that know it now.
+- `span.spend-persons-state[data-state='off']` — the knob writes `on`/`off` as the span's
+  **text** and `data-enabled` on the `div.spend-persons` (§2.4's "person view withheld"), so
+  the span had no rule at all. It carries the type now and the parent's rule carries the tone.
+- `div.projects-kill-row[data-killed='true']`, in the rule and in its forced-colors entry —
+  the attribute is the **banner's** (§2.5's `data-*` line and §3.5's states table: "the
+  attribute is on the banner, and on Live's repository block itself"), so the row's own mark
+  was never drawn. The row is selected by `div.projects-kill-row:has(div.projects-kill)`,
+  which is the one selector that can see the banner inside.
+- `button.console-rail-row[aria-selected='true']` is the **fourth**, and it is deliberate:
+  `base.css`'s header records Task 6.3 writing the design's own rule (§4.1) before the
+  attribute §2.1 hands to Task 6.5. The case carries it in a one-entry `AHEAD_OF_THE_CODE`
+  list rather than failing on it, because a rule ahead of its attribute is this design's own
+  split — and a second entry there would be a rule nothing emits.
+
+**And one tone.** `span.run-stage-passed` was painted `--ok` for both of the stage's words:
+the class holds `passed` **or** `failed` with no attribute (§2.6), so the rule read a failed
+stage green — and `--ok` is reserved for measured-and-inside-cap and the rail's running
+(§3.5 rule 4). No tone can be right for a class that carries two states, so the stage's name,
+word and deadline are labels; the failure's alarm is the diagnosis panel's `run-failed-word`,
+the element that knows which it is. A new case in `theme-tokens.test.ts` pins `--ok` to its
+three licensed readings (the rail's `running`, a `measured` sparkline bar, a `read` Projects
+panel), which is what that mistake would have to get past.
 
 ### The `--border`-is-decorative scan, and the clause that had to be a box
 

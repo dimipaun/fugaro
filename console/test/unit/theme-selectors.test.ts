@@ -315,6 +315,31 @@ function enclosingHelper(text: string, index: number): string | null {
   return last?.[1] ?? last?.[2] ?? null
 }
 
+/** classListsIn is the class lists one file builds before it draws: `const
+ * classes = ['live-run']`, then `classes.push('live-run-queued')`, which is the
+ * list a `make(factory, 'li', ...classes)` spreads. */
+function classListsIn(text: string): ReadonlyMap<string, string> {
+  const lists = new Map<string, string>()
+  for (const match of text.matchAll(/const (\w+)(?:\s*:\s*[\w[\]<>| ]+)?\s*=\s*\[([^\]]*)\]/g)) {
+    lists.set(match[1] ?? '', match[2] ?? '')
+  }
+  for (const match of text.matchAll(/(\w+)\.push\(([^)]*)\)/g)) {
+    const name = match[1] ?? ''
+    if (lists.has(name)) lists.set(name, `${lists.get(name) ?? ''},${match[2] ?? ''}`)
+  }
+  return lists
+}
+
+/** stringConstantsIn is the module's own named strings, because the chrome
+ * stamps a constant rather than a literal (`RAIL_ROW_CLASS`). */
+function stringConstantsIn(text: string): ReadonlyMap<string, string> {
+  const constants = new Map<string, string>()
+  for (const match of text.matchAll(/(?:export )?const (\w+)(?:\s*:\s*string)?\s*=\s*'([^']*)'/g)) {
+    constants.set(match[1] ?? '', match[2] ?? '')
+  }
+  return constants
+}
+
 /** drawnPairs is every `tag.class` pair the renderer can put in the DOM: the
  * two ways a screen draws an element (an emitter call, whose classes are
  * literals or a spread list, and a raw `factory.create` with `setAttribute`). */
@@ -322,22 +347,8 @@ function drawnPairs(): ReadonlySet<string> {
   const pairs = new Set<string>()
   for (const dir of RENDERER) for (const file of sourceFiles(dir)) {
     const text = readFileSync(file, 'utf8')
-    // The class lists a screen builds before it draws: `const classes =
-    // ['live-run']`, then `classes.push('live-run-queued')`, then a spread.
-    const lists = new Map<string, string>()
-    for (const match of text.matchAll(/const (\w+)(?:\s*:\s*[\w[\]<>| ]+)?\s*=\s*\[([^\]]*)\]/g)) {
-      lists.set(match[1] ?? '', match[2] ?? '')
-    }
-    // The chrome names its classes once and stamps the constant, so the
-    // constant's value is what the element gets (`RAIL_ROW_CLASS`).
-    const constants = new Map<string, string>()
-    for (const match of text.matchAll(/(?:export )?const (\w+)(?:\s*:\s*string)?\s*=\s*'([^']*)'/g)) {
-      constants.set(match[1] ?? '', match[2] ?? '')
-    }
-    for (const match of text.matchAll(/(\w+)\.push\(([^)]*)\)/g)) {
-      const name = match[1] ?? ''
-      if (lists.has(name)) lists.set(name, `${lists.get(name) ?? ''},${match[2] ?? ''}`)
-    }
+    const lists = classListsIn(text)
+    const constants = stringConstantsIn(text)
     for (const match of text.matchAll(EMITTER)) {
       const args = callArguments(text, match.index + (match[0]?.length ?? 0) - 1)
       const at = args.findIndex((argument) => argument.trim() === 'factory')
@@ -373,6 +384,180 @@ function drawnPairs(): ReadonlySet<string> {
     }
   }
   return pairs
+}
+
+/** drawnAttributes is which attributes the console sets on which elements, keyed
+ * `tag.class`. It is the second half of §7.4's "a rule that styles a hook
+ * nothing emits": a rule may name a class the code draws and an attribute §2
+ * lists, and still select nothing, because **the attribute is on a different
+ * element** -- `span.spend-partial[data-partial='true']` is that shape, and the
+ * design's own §2.4 puts `data-partial` on the point, the row and the totals
+ * line rather than on the marker span inside them.
+ *
+ * The reading is a walk in source order, because the code reuses its names: a
+ * screen's `element` is an `li.spend-point` in `point()` and an `li.spend-row`
+ * in `rowLine()`, so each `const name = <emitter>` rebinds, a
+ * `setAttribute('class', …)` on the name adds to its classes, and an attribute
+ * write on the name is recorded against every class it then carries. */
+function drawnAttributes(): ReadonlyMap<string, ReadonlySet<string>> {
+  const attributes = new Map<string, Set<string>>()
+  for (const dir of RENDERER) for (const file of sourceFiles(dir)) {
+    const text = readFileSync(file, 'utf8')
+    const lists = classListsIn(text)
+    const constants = stringConstantsIn(text)
+    const bindings = new Map<string, { tag: string; classes: string[] }>()
+    const events: { readonly at: number; readonly apply: () => void }[] = []
+    // The optional wrapper is `literal(cell(element, factory, 'span',
+    // 'degraded-mode'), 'polling')`, which binds the span the same way.
+    for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:\w+\(\s*)?(?:make|cell|textCell|numberCell)\(/g)) {
+      const name = match[1] ?? ''
+      const args = callArguments(text, match.index + (match[0]?.length ?? 0) - 1)
+      const at = args.findIndex((argument) => argument.trim() === 'factory')
+      if (at === -1) continue
+      const tag = literalsIn(args[at + 1] ?? '')[0]
+      if (tag === undefined) continue
+      const classes: string[] = []
+      for (const argument of args.slice(at + 2)) {
+        const trimmed = argument.trim()
+        for (const className of literalsIn(trimmed)) if (CLASS_LITERAL.test(className)) classes.push(className)
+        const spread = /^\.\.\.(\w+)$/.exec(trimmed)?.[1]
+        if (spread === undefined) continue
+        for (const one of (lists.get(spread) ?? '').matchAll(/'([a-z][a-z0-9-]*)'/g)) classes.push(one[1] ?? '')
+      }
+      events.push({ at: match.index, apply: () => bindings.set(name, { tag, classes }) })
+    }
+    for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*factory\.create\('([a-z][a-z0-9]*)'\)/g)) {
+      const name = match[1] ?? ''
+      const tag = match[2] ?? ''
+      events.push({ at: match.index, apply: () => bindings.set(name, { tag, classes: [] }) })
+    }
+    for (const match of text.matchAll(/(\w+)\.setAttribute\('class',\s*(?:'([^']*)'|(\w+))\)/g)) {
+      const name = match[1] ?? ''
+      const stamped = (match[2] ?? constants.get(match[3] ?? '') ?? '').split(/\s+/).filter(Boolean)
+      if (stamped.length === 0) continue
+      events.push({
+        at: match.index,
+        apply: () => {
+          const bound = bindings.get(name)
+          if (bound === undefined) return
+          for (const one of stamped) bound.classes.push(one)
+        },
+      })
+    }
+    for (const match of text.matchAll(/(\w+)\.setAttribute\('([a-z][a-z0-9-]*)'/g)) {
+      const name = match[1] ?? ''
+      const attribute = match[2] ?? ''
+      if (attribute === 'class') continue
+      events.push({
+        at: match.index,
+        apply: () => {
+          const bound = bindings.get(name)
+          if (bound === undefined) return
+          for (const className of new Set(bound.classes)) {
+            const key = `${bound.tag}.${className}`
+            const carried = attributes.get(key) ?? new Set<string>()
+            carried.add(attribute)
+            attributes.set(key, carried)
+          }
+        },
+      })
+    }
+    for (const event of events.sort((left, right) => left.at - right.at)) event.apply()
+  }
+  return attributes
+}
+
+/** AHEAD_OF_THE_CODE is the attribute claims that are deliberately written
+ * before the code that emits them, keyed `tag.class[attribute]`.
+ *
+ * There is one, and `base.css`'s header is where Task 6.3 recorded it: the
+ * selected rail row's `button.console-rail-row[aria-selected='true']` is the
+ * design's own rule (§4.1: "the attribute is the machine-readable mark and the
+ * border is the drawn one"), §2.1 hands `role` and `aria-selected` to Task 6.5,
+ * and the border is Task 6.3's -- so the rule is here before the attribute is,
+ * which is the design's split and not an oversight. The case below says so
+ * instead of failing on it; a **second** entry here would be a rule style
+ * nothing emits, and the list is short enough to read. */
+const AHEAD_OF_THE_CODE: readonly string[] = Object.freeze([
+  "button.console-rail-row[aria-selected]",
+])
+
+/** QualifiedAttribute is one compound selector's claim that an element carrying
+ * a class carries an attribute. */
+interface QualifiedAttribute {
+  readonly className: string
+  /** The tag the selector names, or `null` when it names none. */
+  readonly tag: string | null
+  readonly attribute: string
+  /** The compound as it was written, for the failure message. */
+  readonly written: string
+}
+
+/** compoundSelectors splits one selector into its compounds, so a claim about a
+ * descendant is not read as a claim about its ancestor: in
+ * `aside.console-rail[data-collapsed='true'] span.console-rail-name`, the
+ * attribute is the aside's and the class it is checked against is
+ * `console-rail`. */
+function compoundSelectors(selector: string): readonly string[] {
+  const compounds: string[] = []
+  let depth = 0
+  let start = 0
+  for (let at = 0; at < selector.length; at += 1) {
+    const character = selector[at] ?? ''
+    if (character === '[' || character === '(') depth += 1
+    else if (character === ']' || character === ')') depth -= 1
+    else if (depth === 0 && /[\s>+~]/.test(character)) {
+      compounds.push(selector.slice(start, at))
+      while (at + 1 < selector.length && /[\s>+~]/.test(selector[at + 1] ?? '')) at += 1
+      start = at + 1
+    }
+  }
+  compounds.push(selector.slice(start))
+  return compounds.filter((one) => one !== '')
+}
+
+/** selectorList is every selector a stylesheet writes, comments stripped first
+ * (so the file's own prose claims nothing) and each rule's list split at its
+ * own commas. */
+function selectorList(css: string): readonly string[] {
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const selectors: string[] = []
+  for (const rule of stripped.matchAll(/([^{}]+)\{/g)) {
+    let depth = 0
+    let start = 0
+    const text = rule[1] ?? ''
+    for (let at = 0; at < text.length; at += 1) {
+      const character = text[at] ?? ''
+      if (character === '[' || character === '(') depth += 1
+      else if (character === ']' || character === ')') depth -= 1
+      else if (character === ',' && depth === 0) {
+        selectors.push(text.slice(start, at).trim())
+        start = at + 1
+      }
+    }
+    selectors.push(text.slice(start).trim())
+  }
+  return selectors.filter((one) => one !== '')
+}
+
+/** codedAttributes is every claim the stylesheets make about a class and an
+ * attribute together. A pseudo-class that *contains* a selector (`:not`,
+ * `:is`, `:where`, `:has`) is dropped first: `:not([data-state])` claims the
+ * attribute is **absent**, which is the opposite claim. */
+function codedAttributes(css: string): readonly QualifiedAttribute[] {
+  const claims: QualifiedAttribute[] = []
+  for (const selector of selectorList(css)) {
+    for (const compound of compoundSelectors(selector)) {
+      const bare = compound.replace(/:(?:not|is|where|has)\([^()]*\)/g, '')
+      const className = /\.([a-z][a-z0-9-]*)/.exec(bare)?.[1]
+      if (className === undefined) continue
+      const tag = /^([a-z][a-z0-9]*)\./.exec(bare)?.[1] ?? null
+      for (const attribute of bare.matchAll(/\[([a-z][a-z0-9-]*)/g)) {
+        claims.push({ className, tag, attribute: attribute[1] ?? '', written: compound })
+      }
+    }
+  }
+  return claims
 }
 
 /** elementQualified is every `tag.class` pair the stylesheets select. */
@@ -490,6 +675,34 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
       }
     }
     expect(unknown, 'a rule qualifies a hook with a tag nothing draws').toEqual([])
+  })
+
+  it('carries every attribute it qualifies a hook with on the element that has the class', () => {
+    // The other half of §7.4's "a rule that styles a hook nothing emits", and
+    // the one the class scan and the attribute scan between them cannot see: a
+    // rule may name a class the code draws **and** an attribute §2 lists, and
+    // still match nothing, because the attribute is on a different element.
+    // `span.spend-partial[data-partial='true']` is that shape -- §2.4 puts
+    // `data-partial` on the point, the row and the totals line, and the marker
+    // span inside them carries the text `(partial)` and no attribute at all.
+    const drawn = drawnAttributes()
+    expect(drawn.size, 'the renderer read as setting no attribute').toBeGreaterThan(20)
+    const unknown: string[] = []
+    for (const name of SCANNED) {
+      for (const claim of codedAttributes(readTheme(name))) {
+        // A rule that names no tag (`[data-killed='true']`, a bare class) is a
+        // claim about a class, so any element carrying it may be the one meant.
+        const keys =
+          claim.tag === null
+            ? [...drawn.keys()].filter((key) => key.endsWith(`.${claim.className}`))
+            : [`${claim.tag}.${claim.className}`]
+        const key = `${claim.tag ?? ''}.${claim.className}[${claim.attribute}]`
+        if (AHEAD_OF_THE_CODE.includes(key)) continue
+        if (keys.some((key) => drawn.get(key)?.has(claim.attribute) === true)) continue
+        unknown.push(`${name}: ${claim.written}`)
+      }
+    }
+    expect(unknown, 'a rule qualifies a hook with an attribute the element does not carry').toEqual([])
   })
 
   it('scans the stylesheets the bundler serves, so a layer cannot be added and skipped', () => {

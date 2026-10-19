@@ -272,6 +272,31 @@ function borderOffences(files: ReadonlyMap<string, string>): string[] {
   return offences
 }
 
+// ---- where `--ok` may be painted -------------------------------------------------------
+
+/** OK_SELECTORS are the only selectors a rule may paint `--ok` on. Design section 3.5
+ * rule 4 gives the tone exactly two readings -- "measured and inside the cap" and the
+ * rail's `running` row -- and forbids it decoratively (section 6.1 rule 3), so the licence
+ * is a short list and not a principle a rule can stretch: the rail's `running` state, the
+ * Live sparkline's `measured` bar, and a Projects panel the CLI could `read`. */
+const OK_SELECTORS: readonly string[] = Object.freeze([
+  "div.live-bar[data-state='measured']",
+  "section.projects-panel[data-state='read']",
+  "span.console-rail-state[data-state='running']",
+])
+
+/** okSelectors is every selector of every rule whose body paints `--ok`, in name order. A
+ * rule whose body uses the token for a `border-color` is a painted `--ok` too: the
+ * sparkline's measured bar is a rule rather than a text colour. */
+function okSelectors(css: string): readonly string[] {
+  const out: string[] = []
+  for (const [, selector, body] of stripComments(css).matchAll(RULE)) {
+    if (!/var\(--ok\)/.test(body ?? '')) continue
+    for (const one of (selector ?? '').split(',')) out.push(one.trim())
+  }
+  return out.filter((one) => one !== '').sort()
+}
+
 // ---- colour arithmetic ---------------------------------------------------------------
 
 /** parseColour reads an opaque hex literal. A value that is not one is refused rather
@@ -570,6 +595,30 @@ describe("the console's theme tokens", () => {
       'an outline is a boundary, and --border is decoration',
     ])
     expect(borderOffences(new Map([['clean.css', 'li.row { border-bottom: var(--rule-width) solid var(--border); }']]))).toEqual([])
+  })
+
+  it('paints --ok on the readings section 3.5 rule 4 licenses, and nowhere else', () => {
+    // The regression this keeps out is a colour that *looks* like a state and is not one:
+    // `span.run-stage-passed { color: var(--ok) }` painted a stage green, and that class
+    // holds **both** of the stage's words -- `passed` and `failed`, in one class with no
+    // attribute (design section 2.6) -- so the rule read a failed stage green. `--ok` is
+    // reserved for measured-and-inside-cap and the rail's running (section 3.5 rule 4,
+    // "never decoratively" per section 6.1 rule 3); a stage is neither reading, and no
+    // tone can be right for a class that carries two states.
+    const painted = [...LINE_SHEETS].flatMap((name) => okSelectors(readTheme(name)))
+    expect(painted, 'the scan read no --ok use at all, so this case is vacuous').not.toEqual([])
+    expect(painted.sort(), 'a rule paints --ok where section 3.5 rule 4 does not license it').toEqual(
+      [...OK_SELECTORS].sort(),
+    )
+
+    // And the clause is real: a planted state rule that is not one of the three readings is
+    // refused, which is what the case above would have said about the stage rule.
+    const planted = okSelectors('span.run-stage-passed { color: var(--ok); }')
+    expect(planted).toEqual(['span.run-stage-passed'])
+    expect(
+      planted.filter((one) => !OK_SELECTORS.includes(one)),
+      'a planted --ok use the licence list accepted',
+    ).toEqual(['span.run-stage-passed'])
   })
 
   it('separates the five state colours by hue, so no two fills rely on lightness', () => {
