@@ -561,9 +561,11 @@ export interface RailView {
 
 /**
  * drawRail draws the installation rail: the canvas's one structural addition
- * (design section 4.1, approved by the owner on 2026-10-19), and the body's
- * first content child -- the grid's first column, appended before the
- * installation line so the tab order is the order a reader sees.
+ * (design section 4.1, approved by the owner on 2026-10-19), and the grid's
+ * first column -- the body's first content child when there is no banner, and
+ * its second when there is one, because `startConsole` appends the skew banner
+ * to the same mount first. It is appended before the installation line so the
+ * tab order is the order a reader sees.
  *
  * **It draws one row per installation the dashboard can read, which is one
  * row.** `installation.current` is the only installation read this document

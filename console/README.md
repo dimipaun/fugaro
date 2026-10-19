@@ -2794,12 +2794,14 @@ it is **the directory's whole contents**, which is what makes both of its refusa
   rather than silently dropping a layer of the cascade — and, equally, so the list cannot
   run ahead of the files it names.
 
-**That second refusal is why the list is appended one file per task rather than named all at
-once.** A task that landed a name before the file it names exists would turn `npm run build`
-red the moment it merged. So each task appends the file it creates in the commit that
-creates it, and every intermediate state is a real build of the files that exist.
-`test/unit/bundle.test.ts` reads the list rather than hard-coded names, so its case is true
-of the directory as it stands and stays true as each task appends its file.
+**That second refusal is why the list is introduced with the files the directory already
+holds, and each later task appends its own.** A task that named a file before the file exists
+would turn `npm run build` red the moment it merged, so `THEME_STYLESHEETS` names the files
+Task 6.1 wrote — Task 6.2 introduces the list, and the bundler step with it — and each later
+task appends the file it creates in the commit that creates it: every intermediate state is a
+real build of the files that exist. `test/unit/bundle.test.ts` reads the list rather than
+hard-coded names, so its case is true of the directory as it stands and stays true as each
+task appends its file.
 
 The step also refuses four things in any theme file, and the first is what makes the
 other three hold: a **backslash**, an **`@import`**, a **quoted string that names a URL**

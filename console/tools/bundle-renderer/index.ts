@@ -458,13 +458,15 @@ export function bundleRenderer(options: BundleOptions): void {
  * the cascade needs: the vocabulary, then the values, then the rules that read
  * them (design section 5.2).
  *
- * **The list grows with the files, one entry per task, and the refusal below is
- * what forces that rather than tidiness.** A listed file that is missing is a
- * build failure, so a task that named a file another task has not created yet
- * would turn `npm run build` red the moment it merged. The list is therefore
- * introduced by the task that lands the theme's first files (Task 6.2, this
- * step) and each later task appends the file it creates, in the commit that
- * creates it: every intermediate state is a real build of the files that exist.
+ * **The list grows with the files, and the refusal below is what forces each
+ * task to land its entry beside the file rather than tidiness.** A listed file
+ * that is missing is a build failure, so a task that named a file another task
+ * has not created yet would turn `npm run build` red the moment it merged. The
+ * list is therefore introduced naming the files the directory already holds --
+ * Task 6.1 wrote `tokens.css` and `palette.css` with no list, and Task 6.2 (this
+ * step) introduces the list that names them -- and each later task appends the
+ * file it creates, in the commit that creates it: every intermediate state is a
+ * real build of the files that exist.
  *
  * It is `readonly` and frozen, and it is the list the tests read rather than a
  * second copy of it: `test/unit/bundle.test.ts` checks `console.css` against
