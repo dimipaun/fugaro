@@ -309,73 +309,73 @@ const analyticsEnabled = facts.analytics.enabled
           The link is also the way home: D182 takes Home out of the menu and leaves the
           wordmark as the one link to `/`, marked as the current page when the page being
           read is the home page, so every page still carries exactly one
-          `aria-current="page"` (P3, RF4). */}
+          `aria-current="page"` (P3, RF4).
+
+          The name is in its own `<span>` because on a phone it is the name — and not the
+          three group labels beside it — that gives way (the owner's brief of 2026-10-19,
+          item 1: the menu's labels stay in the header's row at 375 px, and the wordmark's
+          text is hidden below about 380 px, the mark alone standing for the way home).
+          `base.css` hides it from the eye and not from a screen reader, so the link keeps
+          its name at every width. */}
       <a class="site-wordmark" href="/" rel="home" aria-current={isCurrent('/') ? 'page' : undefined}>
-        <img src="/logo.png" alt="" width="47" height="32" decoding="async" />{SITE_NAME}
+        <img src="/logo.png" alt="" width="47" height="32" decoding="async" /><span class="site-wordmark-name">{SITE_NAME}</span>
       </a>
 
-      {/* The menu: three groups of three (P3, D182). On a wide viewport they are three
-          dropdowns in the header's one row; on a narrow one the whole menu is behind the
-          drawer toggle above the panel. Both levels are `<details>`, so both open and close
-          with JavaScript off, need no CSP decision and cost nothing of the JavaScript budget;
-          `public/scripts/site.js` adds only what `<details>` does not do by itself — Escape
-          and a click outside close what is open; on a device whose pointer hovers, a group's
-          submenu opens when the pointer arrives at it (the owner's brief of 2026-10-18, item
-          1); the keyboard's focus arriving at a trigger opens its group, so Tab reaches the
-          links inside a closed one, while the focus a click or a tap moves opens nothing —
-          the click that brought it toggles the group itself; the trigger's `aria-expanded` is
-          kept in step with the group; and a close that would strand the reader's focus hands
-          it back to the trigger. Two things decide the hover, and the script asks both:
-          `matchMedia` for whether the device's pointer hovers at all — watched, not sampled
-          once, so a pointer plugged in or taken away after the page loaded is answered too —
-          and the event's own pointer, so that a mouse or a pen opens the group and a finger
-          never does, whatever the device answers. A tap therefore goes through the click the
-          `<summary>` already has, on every device.
+      {/* The menu: three groups of three (P3, D182). The three group labels are in the
+          header's one row at every width, and each one opens its own panel of links: on a
+          wide viewport a dropdown under its label, on a phone a drawer across the header's
+          full width. There is no toggle standing in front of the whole menu — the owner's
+          brief of 2026-10-19, item 1, took the single "Menu" button away, so a phone reaches
+          any section in one tap rather than two.
 
-          **The panel is the toggle's next sibling, not its child, and that is the one
-          structural decision here.** A closed `<details>` hides its own children in a way
-          author CSS cannot portably override — the engines that hide them with
-          `display: none` and the ones that hide them with `::details-content` need different
-          overrides, and getting it wrong on a wide viewport would hide the whole menu. As
-          siblings, `base.css` reads the toggle's `open` attribute and shows the panel with a
-          sibling combinator: no override, in any engine, below the breakpoint. Up here the
-          panel is not behind the drawer at all — `base.css`'s 48rem block displays it and
-          takes the drawer away in the same breath, so there is no `open` attribute to read
-          and none is wanted: the wide layout shows the same panel without opening anything,
-          because the wide rule says `display: block`. Dropping that one declaration hides
-          the whole menu at every width at or above 48rem, which is the failure
-          `base-styles.mjs` keeps a case for.
+          Both levels are `<details>`, so both open and close with JavaScript off, need no
+          CSP decision and cost nothing of the JavaScript budget; `public/scripts/site.js`
+          adds only what `<details>` does not do by itself — Escape and a click outside close
+          what is open; on a device whose pointer hovers, a group's submenu opens when the
+          pointer arrives at it (the owner's brief of 2026-10-18, item 1); the keyboard's
+          focus arriving at a trigger opens its group, so Tab reaches the links inside a
+          closed one, while the focus a click or a tap moves opens nothing — the click that
+          brought it toggles the group itself; the trigger's `aria-expanded` is kept in step
+          with the group; and a close that would strand the reader's focus hands it back to
+          the trigger. Two things decide the hover, and the script asks both: `matchMedia` for
+          whether the device's pointer hovers at all — watched, not sampled once, so a pointer
+          plugged in or taken away after the page loaded is answered too — and the event's own
+          pointer, so that a mouse or a pen opens the group and a finger never does, whatever
+          the device answers. A tap therefore goes through the click the `<summary>` already
+          has, on every device.
 
-          Because the panel is not inside the toggle, the toggle names it: `aria-controls`
-          is the one programmatic link between the drawer's expanded state (which the
-          `<summary>` exposes by itself) and the panel that state shows. And the three groups
-          share one `name`, which makes them an exclusive set without a line of script:
-          opening *Reference* closes *Product*, so two dropdowns never hang over each other. */}
+          **A group's list is the `<details>`'s own child, and that is the one structural
+          decision here.** A closed `<details>` hides its children in a way author CSS cannot
+          portably override — the engines that hide them with `display: none` and the ones
+          that hide them with `::details-content` need different overrides — so the menu does
+          not fight it: `base.css` positions the list (out of the header's flow, so opening
+          one never grows the header's one row) and lets the `<details>` decide whether it is
+          drawn at all. Nothing has to be shown without an `open` attribute at any width,
+          which is what the toggle-and-sibling-panel arrangement used to need, and the drawer
+          it belonged to is gone with it.
+
+          The three groups share one `name`, which makes them an exclusive set without a line
+          of script: opening *Reference* closes *Product*, so two panels never hang over each
+          other. */}
       <nav class="site-nav" aria-label="Sections">
-        <details class="site-nav-drawer">
-          <summary class="site-nav-toggle" aria-controls="site-nav-panel">Menu</summary>
-        </details>
-
-        <div class="site-nav-panel" id="site-nav-panel">
-          <ul class="site-nav-groups">
-            {NAV_GROUPS.map((group) => (
-              <li class="site-nav-group">
-                <details name="site-nav-group" data-current={group.items.some((item) => isCurrent(item.href)) ? '' : undefined}>
-                  <summary>{group.label}</summary>
-                  <ul>
-                    {group.items.map((item) => (
-                      <li>
-                        <a href={item.href} aria-current={isCurrent(item.href) ? 'page' : undefined}>
-                          {item.label}
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <ul class="site-nav-groups">
+          {NAV_GROUPS.map((group) => (
+            <li class="site-nav-group">
+              <details name="site-nav-group" data-current={group.items.some((item) => isCurrent(item.href)) ? '' : undefined}>
+                <summary>{group.label}</summary>
+                <ul>
+                  {group.items.map((item) => (
+                    <li>
+                      <a href={item.href} aria-current={isCurrent(item.href) ? 'page' : undefined}>
+                        {item.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </li>
+          ))}
+        </ul>
       </nav>
     </header>
 

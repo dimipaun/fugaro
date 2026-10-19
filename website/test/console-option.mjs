@@ -10,7 +10,14 @@
 // console's `console-v0.8.7` release turned it on), so the unreleased state is one the cases
 // below build a copy of the repository into rather than the state `npm run check` builds.
 //
-// Five things are checked here:
+// **The homepage's call to action is the other place the flag decides** (the owner's brief of
+// 2026-10-19, item 6: the console is findable from the home page's call to action; the
+// 2026-10-18 spec's own item 6 is the Getting Started option above, which is not this). The
+// hero's row of links gains the way to `/console/` when the flag is true and carries nothing
+// about the console when it is false. Both halves are the case below: the flag-on half read
+// off the build `npm run check` makes, the flag-off half off the unreleased copy.
+//
+// Six things are checked here:
 //
 //   1. **Two options, CLI first.** `#install` holds a `cli` option and a `console` option, in
 //      that order — the order the stacked layout renders at 390 px — and the CLI option is
@@ -29,12 +36,19 @@
 //      release serves — the same URLs the console page's section renders, from the same
 //      reader — and the CLI option is untouched. That last part is the point of deriving the
 //      URLs: the flip is the whole change, so it must not move anything else.
-//   4. **The unreleased build passes the gates that read the artifact.** The flag adds the
+//   4. **The homepage offers the console from its call to action only while the flag is on**
+//      (the owner's brief of 2026-10-19, item 6). With the flag true — the build `npm run
+//      check` makes — the hero's row of links carries one more link, the way to `/console/`,
+//      labelled the way Getting Started's option labels the console; with the flag false —
+//      the unreleased copy — the row is the two links a reader met before the release and
+//      says nothing about the console at all. The two links are the same, in the same order,
+//      in both states.
+//   5. **The unreleased build passes the gates that read the artifact.** The flag adds the
 //      option's own markup and words to a page that sits close to D188's 250-word ceiling, so
 //      the artifact gates are run over the flag-off build rather than assumed: the state the
 //      site was in before the console's release is held to the same ceilings, and a change
 //      that fits only one of the two states is a change that breaks the other.
-//   5. **A flag and an `available` that disagree stop the build.** Whichever way round they
+//   6. **A flag and an `available` that disagree stop the build.** Whichever way round they
 //      disagree — the data file claiming the console shipped under a flag that says it has
 //      not, or a flag that has promised a release under a data file that still says there is
 //      none — the build refuses the pair, naming both files: the two are one fact, and the
@@ -258,6 +272,74 @@ test('with the console released, the option renders the release\'s own assets an
     commandsWithin(optionNamed(page, 'cli')),
     commandsWithin(optionNamed(gettingStarted(unreleased.dist), 'cli')),
     'the CLI option changed when the console was released: the owner\'s change is the flag and a version bump, and it may not move the CLI',
+  )
+})
+
+test("the homepage's call to action offers the console only while the flag is on, and moves nothing else", (t) => {
+  // Item 6 of the 2026-10-19 brief: the console is findable from the home page's call to
+  // action, and the link is rendered from the same flag the rest of the console's offering is.
+  // The flag-on half is read off the build `npm run check` makes, which is the state this
+  // checkout ships; the flag-off half off the unreleased copy, because a reader of an
+  // unreleased console has nothing to click and the hero may not offer a page with nothing to
+  // download on it — "findable" is item 6's word for the released state.
+  assert.match(
+    repoFile(SITE_YAML),
+    /^\s*console_downloads:\s*true\s*$/m,
+    `${SITE_YAML} does not have features.console_downloads true, and this case reads the flag-on half off the build \`npm run check\` makes`,
+  )
+
+  /** The hero's row of links, as [label, href] pairs, plus the row's own text. */
+  const actions = (dist) => {
+    const page = readFileSync(path.join(dist, 'index.html'), 'utf8')
+    const hero = [...walk(parse(page))].find(
+      (el) => el.name === 'section' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero'),
+    )
+    assert.ok(hero, 'the homepage carries no hero section, and the call to action is in the hero (W1.4)')
+    const row = [...walk(hero)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-actions'))
+    assert.ok(row, 'the hero carries no action row, and the call to action is what a reader does next (W1.4)')
+    return { links: linksWithin(row).map((el) => [textOf(el).trim(), el.attrs.get('href')]), text: textOf(row) }
+  }
+
+  const released = actions(DIST)
+  assert.deepEqual(
+    released.links,
+    [
+      ['Get started', '/getting-started/'],
+      ['How it works', '/how-it-works/'],
+      // The console's own name, as Getting Started's option calls it, and the page that says
+      // what the console is — not a download URL: the URL a reader downloads from is derived
+      // from the release in `src/lib/console-downloads.mjs`, and the hero names the way there
+      // (Global Constraint 9).
+      ['Desktop console', '/console/'],
+    ],
+    "the homepage's call to action does not offer the console with features.console_downloads true: item 6 of the owner's brief of 2026-10-19 asks that the console be findable from it, and the flag is what renders the link",
+  )
+
+  const built = unreleasedBuild(t)
+  assert.equal(built.status, 0, `the build of the unreleased site failed:\n${built.output}`)
+  const unreleased = actions(built.dist)
+
+  // The flag-off row is the two links and nothing else: no console link, no console sentence,
+  // no placeholder where the link would go. The unreleased state is structural.
+  assert.deepEqual(
+    unreleased.links,
+    [
+      ['Get started', '/getting-started/'],
+      ['How it works', '/how-it-works/'],
+    ],
+    "the hero's call to action is not exactly the two links it carries while features.console_downloads is false: the console's link arrives with the flag, and until then the row says nothing about the console (the owner's brief of 2026-10-19, item 6)",
+  )
+  assert.ok(
+    !/console/i.test(unreleased.text),
+    "the hero's call to action mentions the console while features.console_downloads is false, and the unreleased state is structural: nothing about the console renders before its release (item 6)",
+  )
+
+  // And the flip moves nothing else about the row: the two links a reader met before the
+  // console shipped are the two links they meet after it, in the same order.
+  assert.deepEqual(
+    released.links.slice(0, 2),
+    unreleased.links,
+    "the homepage's existing call to action changed when the console was released: the owner's change is the flag and a version bump, and it may not move what was already there",
   )
 })
 
