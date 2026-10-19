@@ -214,23 +214,30 @@ function inline(text: string): string {
 
 /**
  * A section's bullets, in the document's order, each one line joined back together when the
- * file wrapped it. A line that is neither blank nor a bullet stops the build: the summary is
- * the document's "In short" list, and a paragraph added under it is text the page would
- * silently drop.
+ * file wrapped it. A wrap is a line that directly follows a bullet or another wrapped line; a
+ * line that follows a **blank** line is a paragraph of its own, and it stops the build, as does
+ * a line before the first bullet: the summary is the document's "In short" list, and a
+ * paragraph added under it is text the page would otherwise render inside the last bullet's
+ * `<li>`, which is text of the owner's the page has no business reshaping (D189).
  */
 function bulletLines(heading: string): string[] {
   const bullets: string[] = []
+  // Whether the line before this one was a bullet or a wrap of one. A blank line breaks the
+  // run, so the line after it is a block of its own rather than a continuation.
+  let wrapping = false
   for (const line of sectionLines(heading)) {
     const bullet = /^\s*[-*][ \t]+(.*)$/.exec(line)
     if (bullet !== null) {
       bullets.push(bullet[1].trim())
-    } else if (line.trim() !== '') {
-      if (bullets.length === 0) {
-        throw new Error(
-          `${securityDocument.path}'s "## ${heading}" section opens with a line that is not a bullet (${JSON.stringify(line.trim())}), and this page renders the section as the list it is. The document is the page's whole text (D189), and a line this page dropped would be text a reader never sees.`,
-        )
-      }
+      wrapping = true
+    } else if (line.trim() === '') {
+      wrapping = false
+    } else if (wrapping) {
       bullets[bullets.length - 1] += ` ${line.trim()}`
+    } else {
+      throw new Error(
+        `${securityDocument.path}'s "## ${heading}" section carries a line that is not a bullet and does not wrap one (${JSON.stringify(line.trim())}), and this page renders the section as the list it is. The document is the page's whole text (D189), so a paragraph beside the list stops the build rather than being rendered as part of the bullet above it.`,
+      )
     }
   }
   if (bullets.length === 0) {
@@ -251,6 +258,7 @@ const reportingParagraphs = sectionLines(REPORTING)
   .map((paragraph) => paragraph.replace(/\s+/g, ' ').trim())
   .filter((paragraph) => paragraph !== '')
   .map(inline)
+
 ---
 
 <Base

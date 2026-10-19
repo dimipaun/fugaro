@@ -72,13 +72,17 @@
 // case at the end of this file plants them). The regions are found by the marker attributes
 // the page's own markup carries (`data-security-page`, `data-security-summary`,
 // `data-security-reporting`, `data-security-policy`).
-
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DIST, REPO, SITE, findAll, parse, verbatimText } from './lib/html.mjs'
+// The builds the two cases below need: a copy of the repository in a temp directory with one
+// edit planted in it, built with the site's own Astro (`buildCopy`), because the page's
+// refusals are the build's and a refusal nobody has seen fire is a refusal nobody knows the
+// shape of.
+import { buildCopy } from './lib/build.mjs'
 // The page's own slug rule, imported rather than re-implemented: `security.astro` resolves its
 // cross-references with this module and this file resolves them again, so the two have to be
 // the same rule rather than two approximations of it (the note in `docs.astro`).
@@ -560,6 +564,18 @@ function planted(html, re, replacement) {
   return edited
 }
 
+/** One edit planted in a copy's generated document, which is the file the page reads. The edit
+ *  has to land, for the same reason `planted`'s has. */
+function patchGenerated(site, re, replacement) {
+  const file = path.join(site, 'content', 'security.md')
+  const before = readFileSync(file, 'utf8')
+  const after = before.replace(re, replacement)
+  if (after === before) {
+    throw new Error(`the fixture did not land: ${re} is not in the copy's ${GENERATED}, so the build it is meant to stop cannot be the one this case proves`)
+  }
+  writeFileSync(file, after)
+}
+
 // ---------------------------------------------------------------------------------------
 
 test('the built security page is three things and nothing else', () => {
@@ -571,6 +587,7 @@ test('the summary the page renders is SECURITY.md\'s own "In short" section', ()
   const bullets = bulletsOf(document, SUMMARY)
   assert.ok(bullets.length >= 4, `read ${bullets.length} bullets out of ${SOURCE}'s "${SUMMARY}" section: the document has moved, so this check saw nothing`)
   assert.ok(bullets.join(' ').length > 200, `the "${SUMMARY}" section of ${SOURCE} is ${bullets.join(' ').length} characters: the section this page renders is the document's, so a stub would make every check in this file vacuous`)
+
   assert.deepEqual(securityFailures(DIST), [])
 })
 
@@ -591,6 +608,66 @@ test('the summary is rendered from the document, and is not written on the page'
       `website/src/pages/security.astro carries the document's own summary text (${JSON.stringify(opening)}…): the summary is rendered from ${SOURCE}'s "${SUMMARY}" section and never written on the page (D189), because a sentence typed here is one the document does not hold and cannot be kept in step with it`,
     )
   }
+})
+
+test('a document the page cannot render stops the build', (t) => {
+  // The refusal is the **build's**: `npm run check` builds the site first, so a document the
+  // page cannot render stops there rather than shipping a page with the edit rendered in the
+  // wrong place. The plant goes into the copy's generated document —
+  // `website/content/security.md`, the file the page actually reads — because `SECURITY.md`
+  // itself is the owner's file and this gate does not edit it.
+  //
+  // A paragraph written under the summary's list, after a blank line so it is not a wrap. The
+  // page's `bulletLines()` used to append any such line to the bullet above it, so the
+  // paragraph was rendered inside the last bullet's `<li>` — and this file's reader merged
+  // continuations by the same rule, so the two agreed and every check passed (round 5,
+  // finding 1).
+  const paragraph = buildCopy(
+    t,
+    ({ site }) => patchGenerated(site, /^(- Out of scope:.*)$/m, '$1\n\nA paragraph beside the list.\n'),
+    'fugaro-security-paragraph-',
+  )
+  assert.notEqual(
+    paragraph.status,
+    0,
+    `a paragraph written under ${SOURCE}'s "${SUMMARY}" list did not stop the build, so the page renders the document's paragraph inside the last bullet's list item:\n${paragraph.output}`,
+  )
+  assert.match(
+    paragraph.output,
+    /"## In short" section carries a line that is not a bullet and does not wrap one/,
+    `the build failed, but not at the page's own reading of the section: ${paragraph.output}`,
+  )
+  assert.match(paragraph.output, /A paragraph beside the list/, 'the failure does not name the line the document added, so the person editing the document has to find it themselves')
+})
+
+test('a wrapped bullet is one bullet to the page', (t) => {
+  // The other side of (a), and the reason the fix is a rule about blank lines rather than a ban
+  // on the second line of a bullet: `SECURITY.md` wraps its bullets, and a continuation line is
+  // part of the bullet above it. The document is planted wrapped in a copy so that a rule
+  // which refused every line after a bullet would be red here.
+  const wrapped = buildCopy(
+    t,
+    ({ site }) => patchGenerated(site, /^(- Out of scope:[^\n]*)$/m, '$1\n  and this half of the same bullet.\n'),
+    'fugaro-security-wrapped-',
+  )
+  assert.equal(
+    wrapped.status,
+    0,
+    `a wrapped summary bullet stopped the build, so the page refuses the document's own line breaks:\n${wrapped.output}`,
+  )
+  const html = builtPage(wrapped.dist)
+  assert.ok(html !== null, `the copy built no ${BUILT}, so there is nothing to read the wrapped bullet out of`)
+  // The summary region by its own marker, not the page's every list: the menu and the footer
+  // carry `<li>`s of their own.
+  const summary = findAll(parse(html), (el) => el.attrs.has('data-security-summary'))[0]
+  assert.ok(summary !== undefined, `the copy's page carries no "data-security-summary" region, so there is nothing to read the wrapped bullet out of`)
+  const items = findAll(summary, 'li')
+  assert.equal(items.length, 6, `the page renders ${items.length} bullets where the document writes 6: a wrapped bullet is one bullet and its continuation is not a seventh`)
+  assert.match(
+    prose(text(items[items.length - 1])),
+    /and this half of the same bullet/,
+    'the continuation line is not part of the bullet above it, so the page dropped a line the document wrote',
+  )
 })
 
 test('the gate refuses each planted defect', (t) => {
