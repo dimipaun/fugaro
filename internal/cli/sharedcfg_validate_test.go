@@ -167,6 +167,9 @@ func TestParseSharedRefusals(t *testing.T) {
 		{"batch image from another registry", func(s string) string {
 			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "evil.example/fugaro/edgeweb:1", 1)
 		}, "batch.image"},
+		{"batch boot image of another project", func(s string) string {
+			return strings.Replace(s, "projects/fugaro-belong/global/images/family/fugaro-base-1", "projects/evil-proj/global/images/family/fugaro-base-1", 1)
+		}, "batch.boot_image"},
 		{"batch network of another project", func(s string) string {
 			return strings.Replace(s, "projects/fugaro-belong/global/networks/fugaro-runs", "projects/evil-proj/global/networks/fugaro-runs", 1)
 		}, "batch.network"},

@@ -301,8 +301,12 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	// installation's project (design compute-backend.md §4.4, plan
 	// 2026-10-19-compute-backend.md Task 8 step 2).
 	//
-	// What this refuses beyond a foreign image, account and secret: a network
-	// or a subnetwork in another project, although
+	// What this refuses beyond a foreign image, account and secret:
+	// batch.boot_image, which is not the review's list and is the one with the
+	// most behind it — a VM's boot disk is the machine itself, so a boot image
+	// family the writer owns is their kernel and their daemon data root
+	// running as the run's account — and a network or a subnetwork in another
+	// project, although
 	// internal/backend/batch's checkNetwork notes that a shared VPC's network
 	// may live elsewhere. The anchor is a name, a GCP project and a bucket, so
 	// a host project is not something a reader can establish for itself, and
@@ -315,6 +319,11 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 			return bad("batch.image", "%q is not an image of this project's Artifact Registry, <region>-docker.pkg.dev/%s/<repository>/<image>[:tag][@sha256:<digest>]: a Batch run's job image is this installation's own build, and an image from anywhere else would run as the run's service account", b.Image, a.GCPProject)
 		}
 		for _, f := range []struct{ field, value, want string }{
+			// The boot image above the rest for what it is: a VM boots from
+			// it, so an image family of the writer's choosing is the whole
+			// machine — its kernel, its daemon, its Docker data root —
+			// running as the run's service account.
+			{"batch.boot_image", b.BootImage, "projects/" + a.GCPProject + "/global/images/family/<name>"},
 			{"batch.network", b.Network, "projects/" + a.GCPProject + "/global/networks/<name>"},
 			{"batch.subnetwork", b.Subnetwork, "projects/" + a.GCPProject + "/regions/<region>/subnetworks/<name>"},
 		} {
