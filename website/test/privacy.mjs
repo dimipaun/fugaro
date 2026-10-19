@@ -42,7 +42,12 @@
 //      page's "and to nothing the Fugaro project operates" is what fails (`reachFailures`).
 //      Tests are not scanned — a Go test that spells the host in a fixture is testing a rule
 //      rather than reaching anywhere — and the one file in the tree that names it today is
-//      recorded below, so that the exception is written down rather than inferred.
+//      recorded below, so that the exception is written down rather than inferred. The selector
+//      carries `.go`, because the CLI and the server are mostly Go: a scan that reads the tree's
+//      scripts and manifests but not its Go source reads everything except the software this
+//      page is about, and it reads enough files to look busy while doing it. The case below goes
+//      through the selector rather than around it for that reason, and the case above counts the
+//      Go sources it selected.
 //   6. **The contact route, and no address.** The page's contact section points at the issue
 //      tracker and at `SECURITY.md`'s reporting route, and the page carries no e-mail address
 //      anywhere: the owner's ruling of 2026-10-19 is that there is no address to publish, so a
@@ -72,8 +77,9 @@ function repoFile(rel) {
   return readFileSync(path.join(REPO, rel), 'utf8')
 }
 
-/** Every file under the absolute directory `dir` whose NAME matches `re`, with its text. */
-function sourcesUnder(dir, re) {
+/** Every file under the absolute directory `dir` whose NAME matches `re`, with its text. `base` is
+ * what a file's `rel` is relative to — the repository, or a tree a case below built. */
+function sourcesUnder(dir, re, base = REPO) {
   if (!existsSync(dir)) return []
   const out = []
   const walkDir = (at) => {
@@ -83,7 +89,7 @@ function sourcesUnder(dir, re) {
         if (entry.name === 'node_modules' || entry.name === '.git') continue
         walkDir(full)
       } else if (re.test(entry.name)) {
-        out.push({ rel: path.relative(REPO, full), text: readFileSync(full, 'utf8') })
+        out.push({ rel: path.relative(base, full), text: readFileSync(full, 'utf8') })
       }
     }
   }
@@ -181,6 +187,12 @@ export const ADVERTISING_IDENTIFIERS = Object.freeze([
 
 /** The extensions a bundle, a manifest or a lockfile can carry a dependency in. */
 const SDK_BEARING = /\.(?:js|jsx|ts|tsx|mjs|cjs|json|sh)$/
+
+/** The extensions the reach scan below reads: the software's own source in every language the
+ * tree carries, Go first, because the CLI and the server ARE Go — a selector without `.go` would
+ * leave "and to nothing the Fugaro project operates" unenforced for the whole of `cmd/` and
+ * `internal/` while still scanning enough files to look busy. */
+const REACH_BEARING = /\.(?:go|js|jsx|ts|tsx|mjs|cjs|json|sh)$/
 
 /** Every way a scanned file names something that collects, or []. `files` is `[{ rel, text }]`. */
 export function collectingFailures(files) {
@@ -356,11 +368,17 @@ export function updateCheckFailures({ page, updatecheckSource, updatewarnSource,
 // mistaken for it.
 export const HOST_NAMING_TEST = 'internal/cli/docs_website_boundary_test.go'
 
-/** The production sources the reach scan reads: the tool, the console and the phone. */
-export function softwareSources() {
-  const dirs = ['cmd', 'internal', 'console/src', 'mobile/src', 'shared']
-  return dirs
-    .flatMap((dir) => sourcesUnder(path.join(REPO, dir), SDK_BEARING))
+/** The roots of the production sources the reach scan reads, as the repository's own directories. */
+export const SOFTWARE_ROOTS = Object.freeze(['cmd', 'internal', 'console/src', 'mobile/src', 'shared'].map((dir) => path.join(REPO, dir)))
+
+/** The production sources the reach scan reads: the tool, the console and the phone, in every
+ * language the tree carries. `roots` and `base` are the repository's unless a case below points
+ * the selector at a tree it built — the selector is half of what this rule asserts (a source it
+ * does not select is a source that can name the host unseen), so the case goes through it rather
+ * than around it. */
+export function softwareSources(roots = SOFTWARE_ROOTS, base = REPO) {
+  return roots
+    .flatMap((dir) => sourcesUnder(dir, REACH_BEARING, base))
     .filter((file) => !/(?:_test\.go|\.test\.(?:js|ts|jsx|tsx|mjs))$/.test(file.rel))
 }
 
@@ -499,6 +517,11 @@ test('the update check the page describes is the one internal/updatecheck and in
 test('no production source names the host this project operates', () => {
   const files = softwareSources()
   assert.ok(files.length > 100, `only ${files.length} production sources were scanned, so this check is looking at a fraction of the software`)
+  const go = files.filter((file) => file.rel.endsWith('.go'))
+  assert.ok(
+    go.length > 300,
+    `only ${go.length} of the ${files.length} sources scanned are Go, so the reach scan is not reading the CLI and the server — the software this page is about is mostly Go, and a selector without \`.go\` leaves "and to nothing the Fugaro project operates" unenforced for all of it`,
+  )
   assert.ok(
     files.every((file) => file.rel !== HOST_NAMING_TEST),
     `${HOST_NAMING_TEST} is a test file and was scanned as a production source: the recorded exception is that a Go test may spell the host in a fixture, so the filter must skip it`,
@@ -608,6 +631,26 @@ test('a production source that names the host the project operates is refused, a
   assert.equal(failures.length, 1, failures.join('\n'))
   assert.match(failures[0], new RegExp(`^internal/cli/report\\.go names ${host.replace(/\./g, '\\.')}`))
   assert.match(failures[0], /nothing the Fugaro project operates/)
+
+  // The selector is half of the rule, so the case goes through it rather than around it: a tree
+  // with a production Go file and a Go test beside it, BOTH naming the host, is read by
+  // softwareSources itself. The production file is selected and refused; the test is filtered out
+  // — and a selector that lost `.go` would select neither, which is how this rule went unenforced
+  // for the CLI and the server until it was caught.
+  const tree = mkdtempSync(path.join(tmpdir(), 'privacy-reach-'))
+  try {
+    const root = path.join(tree, 'cmd')
+    mkdirSync(root)
+    writeFileSync(path.join(root, 'report.go'), `package cmd\n\nconst report = "https://${host}/v1/telemetry"\n`)
+    writeFileSync(path.join(root, 'report_test.go'), `package cmd\n\nconst fixture = "https://${host}/v1/telemetry"\n`)
+    const scanned = softwareSources([root], tree).map((file) => file.rel)
+    assert.deepEqual(scanned, ['cmd/report.go'], `the reach scan selected ${JSON.stringify(scanned)}: it must select the Go source that names the host and filter out the Go test beside it`)
+    const planted = reachFailures(softwareSources([root], tree), host)
+    assert.equal(planted.length, 1, planted.join('\n'))
+    assert.match(planted[0], /^cmd\/report\.go names /)
+  } finally {
+    rmSync(tree, { recursive: true, force: true })
+  }
 
   // The filter is what keeps the recorded exception out: the test file names the host and is not
   // a finding, and a production file beside it is.
