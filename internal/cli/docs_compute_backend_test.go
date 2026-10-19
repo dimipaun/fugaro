@@ -869,23 +869,28 @@ func TestDocsComputeBackendSaysWhatTheTreeDisagreesWith(t *testing.T) {
 	}
 }
 
-// computeBackendZeroNineZero is every place the tree names 0.9.0 for the work
-// this plan is about, each as the file, the line and the words that line
-// carries: the constant whose comment names the release, the refusal text it
-// feeds, the released note the refusal came from, the rerelease checklist's
-// verifying line, the Terraform pin's two lines, and the shipped-gate test's
-// assertion that the refusal says 0.9.0.
+// computeBackendZeroNineZero is every place in the tree's own code, its tests
+// and its release documents that names 0.9.0 for the work this plan is about,
+// each as the file, the line and the words that line carries: the constant whose
+// comment names the release, the refusal text it feeds, the released note the
+// refusal came from, the rerelease checklist's verifying line, the Terraform
+// pin's two lines, the shipped-gate test's assertion that the refusal says
+// 0.9.0, and the init flag table's entry for the stage the refusal covers.
 //
-// It is a table and not a walk over the tree, because "which line names a
-// release for this work" is a reading rather than a pattern: 0.9.0 is all over
-// this tree for other features (recipes_skew.go's own sealSince, the managed
-// deployer's separate gate at tests 148-149 of shipped_gates_test.go), and a
-// search that cannot tell them apart would either miss one of these or fail on
-// one of those. What the table holds is the half a search could check anyway:
-// every line it names is read and required to carry the words, so a citation
-// that moved, a line rewritten elsewhere, and a count that drifted are all
-// failures here — which is what this fact needed after it said "two places" for
-// a tree that says it eight times.
+// It is a table of lines rather than a walk because the words matter — every
+// entry here is a citation the plan makes, and the assertion below reads the
+// tree's line back, so a citation that moved, a line rewritten elsewhere and a
+// count that drifted are all failures. What a table cannot do is say whether it
+// is complete, and a count nobody can check is how this fact said "two places"
+// for a tree that has nine: so the two walks below are its bounds.
+// TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed searches the tree for a
+// 0.9.x release name beside one of this work's gating identifiers and fails on
+// any line that is not one of these; TestDocsComputeBackendReleaseProseDocumentsAreNamed
+// does the same for the documents under docs/ that place this work in a 0.9.x
+// release in prose. The difference between the two sets is the plan's own and is
+// what Task 9 implements: these are what that task changes, and the documents
+// the second walk finds are the record of an earlier ruling, which no task here
+// rewrites.
 var computeBackendZeroNineZero = []struct {
 	file string
 	line int
@@ -899,6 +904,21 @@ var computeBackendZeroNineZero = []struct {
 	{"deploy/terraform/terraform_test.go", 3103, "the reaper is redesigned for 0.9.0"},
 	{"deploy/terraform/terraform_test.go", 3108, "--provision-batch refuses until 0.9.0 (batchProvisionShipped)"},
 	{"internal/cli/shipped_gates_test.go", 87, `"batch.jobs.cancel", "0.9.0"`},
+	{"internal/cli/managed_test.go", 821, "main's compute stage (0.9.0, init_compute.go)"},
+}
+
+// computeBackendGateIdentifiers are this work's own gating names: the constant
+// the release gate reads, the refusal it feeds, the two names that exist only to
+// make the gate re-openable, the permission GCP does not have (which is why the
+// provisioning is refused), and the flag. A line in the tree that carries one of
+// these beside a 0.9.x release name names this work's release on one of its own
+// surfaces, which is what the walk below requires to be listed.
+var computeBackendGateIdentifiers = []string{
+	"batchProvisionShipped",
+	"batchProvisionDisabled",
+	"refuseBatchProvisionNotShipped",
+	"batch.jobs.cancel",
+	"--provision-batch",
 }
 
 // The count the plan states is the table's length, in words, so the sentence
@@ -915,9 +935,34 @@ func TestDocsComputeBackendNamesWhereTheTreeSaysZeroNineZero(t *testing.T) {
 	if n >= len(computeBackendCountWords) {
 		t.Fatalf("the table holds %d places and this test spells counts up to %d", n, len(computeBackendCountWords)-1)
 	}
-	sentence := fmt.Sprintf("**The tree names 0.9.0 for this work in %s places**", computeBackendCountWords[n])
+	sentence := fmt.Sprintf("**The tree names 0.9.0 for this work in %s places on the surfaces this plan is about**", computeBackendCountWords[n])
 	if !strings.Contains(doc, sentence) {
 		t.Errorf("%s no longer states %q: the count and this table's %d entries are one fact and a reader checks them against each other", computeBackendPlan, sentence, n)
+	}
+	// The count is scoped to these surfaces on purpose, and the scope has to be
+	// in the plan: 0.9.0 is also all over the tree's design and plan prose for
+	// this same work, which no task here rewrites, and a sentence that counted
+	// those would be the "nowhere else" claim this fact used to carry — the one
+	// an implementer of Task 9 read as "the tree agrees with 0.9.5 after my
+	// commit".
+	if !strings.Contains(doc, "states no count over them") {
+		t.Errorf("%s no longer says it states no count over the release prose that places this work in 0.9.0: that scoping is what makes the count checkable, and without it the sentence is a claim about the whole tree again", computeBackendPlan)
+	}
+	// The three shapes this fact has already had and been corrected for, each
+	// of them an overclaim about the whole tree: "two places" was a reading that
+	// missed six, "Nothing else in the tree names a release for this work" was
+	// false when it was written, and "the two lines of that one released note
+	// and nowhere else" is the sentence an implementer of Task 9 reads as the
+	// tree agreeing with 0.9.5 after that one commit. A phrase is a weak thing
+	// to forbid; these three are the ones that were here.
+	for _, claim := range []string{
+		"and nowhere else",
+		"Nothing else in the tree names",
+		"the tree names 0.9.0 for this work in the two lines",
+	} {
+		if strings.Contains(doc, claim) {
+			t.Errorf("%s says %q about the places naming 0.9.0 for this work: the tree's design and plan prose names 0.9.0 in documents %s itself lists, so that claim was false when it was written and is the one an implementer reads as the tree agreeing with 0.9.5", computeBackendPlan, claim, computeBackendPlan)
+		}
 	}
 	for _, want := range computeBackendZeroNineZero {
 		if cite := fmt.Sprintf("`%s:%d`", want.file, want.line); !strings.Contains(doc, cite) {
@@ -931,7 +976,191 @@ func TestDocsComputeBackendNamesWhereTheTreeSaysZeroNineZero(t *testing.T) {
 			t.Fatalf("%s has %d lines and the plan cites line %d", want.file, len(lines), want.line)
 		}
 		if got := lines[want.line-1]; !strings.Contains(got, want.text) {
-			t.Errorf("%s:%d no longer says %q (it reads %q): the release fact lists that line, so a moved or rewritten line means the plan and this table move together — and Task 9 is the commit that retires the six of these that are not the released note's", want.file, want.line, want.text, strings.TrimSpace(got))
+			t.Errorf("%s:%d no longer says %q (it reads %q): the release fact lists that line, so a moved or rewritten line means the plan and this table move together — and Task 9 is the commit that retires the seven of these that are not the released note's", want.file, want.line, want.text, strings.TrimSpace(got))
 		}
+	}
+}
+
+// TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed: fact 1's count is a
+// claim about the tree, and a claim about the tree is only as good as the search
+// behind it. This is that search for the surfaces the plan enumerates: every
+// line in the tree carrying a 0.9.x release name beside one of this work's
+// gating identifiers must be one of the places the plan lists.
+//
+// It is the direction the earlier counts never had. "Two places" and then
+// "eight" were both readings of the tree by eye, and the ninth —
+// internal/cli/managed_test.go's init flag entry — is exactly the kind a reading
+// misses: it breaks no compile, fails no other test, and is a line of prose in a
+// table. A count is only a fact if something searches for the tenth.
+//
+// Two files are skipped by name: this test file, whose table quotes every one of
+// the lines, and the plan, which cites them.
+func TestDocsComputeBackendZeroNineZeroSurfacesAreAllListed(t *testing.T) {
+	listed := map[string]bool{}
+	for _, e := range computeBackendZeroNineZero {
+		listed[fmt.Sprintf("%s:%d", e.file, e.line)] = true
+	}
+	release := regexp.MustCompile(`0\.9\.[0-9]`)
+	found := 0
+	err := filepath.WalkDir("../..", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		rel := strings.TrimPrefix(filepath.ToSlash(p), "../../")
+		if rel == "internal/cli/docs_compute_backend_test.go" || rel == computeBackendPlan {
+			return nil
+		}
+		// Only the kinds of file a gating surface is written in: a release
+		// name beside a gating identifier is a fact about code, Terraform, a
+		// script or a document, and reading every other byte of the tree (a
+		// fixture, an image, an editor's leftover) would match by accident
+		// without ever naming a surface.
+		switch filepath.Ext(rel) {
+		case ".go", ".tf", ".sh", ".md", ".yml", ".yaml", ".json":
+		default:
+			return nil
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			if !release.MatchString(line) {
+				continue
+			}
+			gated := false
+			for _, id := range computeBackendGateIdentifiers {
+				if strings.Contains(line, id) {
+					gated = true
+					break
+				}
+			}
+			if !gated {
+				continue
+			}
+			found++
+			if !listed[fmt.Sprintf("%s:%d", rel, i+1)] {
+				t.Errorf("%s:%d carries a 0.9.x release name beside one of this work's gating identifiers (%s) and is not among the places %s's fact 1 lists: the count there is a claim about this tree, so a tenth surface is either a line the plan has to list or a release name that has to move with the work", rel, i+1, strings.Join(computeBackendGateIdentifiers, ", "), computeBackendPlan)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found < 5 {
+		t.Fatalf("the walk found %d lines carrying a 0.9.x name beside a gating identifier while the table lists %d: the search is matching less than the plan does, so it is a bound that cannot fail", found, len(computeBackendZeroNineZero))
+	}
+}
+
+// computeBackendReleaseProse is every document under docs/ that names a 0.9.x
+// release for this work in prose, listed by document rather than by line and
+// with no count stated anywhere near it. These are the records of the owner's
+// ruling of 2026-10-15, which placed this backend in 0.9.0 and which the brief's
+// placement supersedes: docs/release.md and docs/releases/v0.8.6.md are the two
+// the plan treats as release surfaces (they are in the table above, by line),
+// and the rest are design and plan text no task in this plan rewrites — of which
+// docs/design/compute-backend.md is this work's own design.
+var computeBackendReleaseProse = []string{
+	"docs/release.md",
+	"docs/releases/v0.8.6.md",
+	"docs/design/compute-backend.md",
+	"docs/design/generic-tool.md",
+	"docs/plans/2026-10-08-generic-tool.md",
+	"docs/design/managed-projects.md",
+	"docs/plans/2026-10-16-managed-projects.md",
+	"docs/plans/2026-10-14-project-centric.md",
+	"docs/design/voice.md",
+	"docs/plans/2026-10-16-voice.md",
+	"docs/design/project-named-oauth-tokens.md",
+	"docs/design/named-oauth-tokens.md",
+}
+
+// computeBackendReleaseWords are the names this work goes by in prose. A
+// document under docs/ that carries one of them on a line naming a 0.9.x release
+// is a document placing this work in that release, which is what the walk below
+// requires the plan to name. The list is deliberately this work's own names and
+// not "compute" or "backend" alone: 0.9.0 is all over this tree for other
+// features — the budget token's seal, the managed deployer's separate gate,
+// project-centric's phases — and a rule loose enough to catch those would be a
+// rule that fails on documents this work has nothing to do with.
+var computeBackendReleaseWords = []string{
+	"compute backend",
+	"compute-backend",
+	"compute-instance",
+	"cloud batch",
+	"batch backend",
+	"docker-capable",
+	"docker backend",
+	"vm/batch",
+	"provision-batch",
+	"batchprovision",
+	"this backend",
+	"0.9.0 phases",
+	"0.9.0 phase",
+}
+
+// TestDocsComputeBackendReleaseProseDocumentsAreNamed: the plan states no count
+// over the prose set, so this does not check a number — it checks the set. Every
+// document under docs/ that names a 0.9.x release in this work's context must be
+// one the plan names, and every document the plan names must still be one the
+// walk finds, so a document added to this set and a document that stopped
+// placing the work in that release both fail here rather than at a reader's
+// memory. It is the second bound the plan's fact 1 needs: the table above says
+// what Task 9 changes, this says what Task 9 leaves alone.
+func TestDocsComputeBackendReleaseProseDocumentsAreNamed(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	words := regexp.MustCompile("(?i)" + strings.Join(computeBackendReleaseWords, "|"))
+	release := regexp.MustCompile(`0\.9\.[0-9]`)
+	found := map[string]bool{}
+	err := filepath.WalkDir("../../docs", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(p, ".md") {
+			return nil
+		}
+		rel := strings.TrimPrefix(filepath.ToSlash(p), "../../")
+		if rel == computeBackendPlan {
+			return nil
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if release.MatchString(line) && words.MatchString(line) {
+				found[rel] = true
+				return nil
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	named := map[string]bool{}
+	for _, path := range computeBackendReleaseProse {
+		named[path] = true
+		if !found[path] {
+			t.Errorf("%s is listed as a document placing this work in a 0.9.x release and no line of it does: either the document stopped placing the work in that release, or the work's name moved out of its prose, and either way %s's fact 1 lists it", path, computeBackendPlan)
+		}
+		if !strings.Contains(doc, path) {
+			t.Errorf("%s names no path %q: the prose set is the plan's own statement of what Task 9 leaves alone, so a document in this table and not in the plan is a document an implementer will not know to keep", computeBackendPlan, path)
+		}
+	}
+	for path := range found {
+		if !named[path] {
+			t.Errorf("%s names a 0.9.x release for this work in its prose and is not a document %s lists: an implementer of Task 9 reads the plan's list as what stays, so a document that has joined the set has to join the list", path, computeBackendPlan)
+		}
+	}
+	if len(found) < 8 {
+		t.Fatalf("the walk found %d documents naming a 0.9.x release in this work's context while the table lists %d: the search is matching less than the plan does, so it is a bound that cannot fail", len(found), len(computeBackendReleaseProse))
 	}
 }
