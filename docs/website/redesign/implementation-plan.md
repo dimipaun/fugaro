@@ -191,11 +191,12 @@ openable and closable by keyboard, and the menu usable with JavaScript disabled.
   `CapsCosts.astro:192-194` — the provenance sentences go, replaced by what the page is
   for.
 - The long pages' summaries, **each rendered from a file** under D189's recommendation:
-  `/security/` renders a short "In short" section that the owner adds at the top of
-  `SECURITY.md` (the page stays byte-identical to the file, so
-  `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` does not change; **this needs the
-  owner's text for `SECURITY.md` first**); `/changelog/` renders the first Highlights line
-  of the newest releases above the full list, selected from the release files.
+  `/security/` renders the document's own "In short" section as the page's summary, its own
+  "Reporting a vulnerability" section, and a link to the policy (**this needs the owner's
+  text for `SECURITY.md` first** — and the page it produces is not the byte-for-byte page
+  Global Constraint 12 asks for; **the departure is recorded below**); `/changelog/`
+  renders the first Highlights line of the newest releases above the full list, selected
+  from the release files.
 - Every other page's copy is rewritten short and scannable to D188's numbers: headings
   keep their meaning, the paragraphs under them shrink. FAQ answers stay traceable to the
   document each one names (each answer's `source`, which the page already enforces).
@@ -223,6 +224,42 @@ removed paragraph, that assertion is removed in the same commit and named in its
 If D189 takes alternative (a) instead, Global Constraint 6 is amended in
 `../implementation-plan.md` and `changelog-page.mjs` and the security pin each gain an
 exception for a marked summary block, in this part.
+
+**Departure: Global Constraint 12, and where the security page is held now** (the owner's
+brief of 2026-10-19, D189; recorded 2026-10-19, as shipped on this branch). The first
+plan's Global Constraint 12 says a security claim is never paraphrased, and gives it a
+shape: **the security page is generated from `SECURITY.md`, byte for byte below the title,
+with its headings unchanged so the document's own cross-references keep pointing the right
+way** (`../implementation-plan.md:49`). §5 of this plan turned that into a gate,
+`TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`, and the reconciliation's constraint
+table recorded that D189's recommendation kept it. The brief replaced that shape, and two
+things about the constraint are not what this branch ships:
+
+- **The page is not the document.** `/security/` is the brief's three things and nothing
+  else: the document's own "In short" section as the page's summary, its own "Reporting a
+  vulnerability" section, and a link to the policy. The cross-references those two sections
+  carry are rewritten — `#known-limits` becomes a link into `SECURITY.md` in the repository
+  at that section, because the page does not render the section it names — and a reference
+  whose fragment names no heading of the document is rendered as its own text rather than
+  as a link, which would land the reader at the top of the file under a word that promises
+  a section. So the page is not byte-identical to the document, and its headings are not
+  the document's. **What replaces that half of the constraint is
+  `website/test/security.mjs`**: it holds the page to the document bullet for bullet and
+  word for word, holds each rewritten cross-reference to the section it names, refuses a
+  reference rendered as a link where the document has no heading for it, and refuses a page
+  that is anything other than the three things. That file — not the Go test — is where a
+  change to the page's shape fails.
+- **The Go pin reads the generated copy, and always did.** The constraint's other half
+  survives untouched and is what `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`
+  actually enforces: it reads **`website/content/security.md`**, the file the content
+  pipeline writes from `SECURITY.md` (`go run ./internal/clidoc`, W1.3), which is the
+  document byte for byte below its generated banner — it never reads a page, and it never
+  did. Reading the generated copy is the point (a test written against the generator agrees
+  with whatever the generator does), and its own header records what reads what.
+
+  So Global Constraint 12 holds of the copy and of the pipeline, and the brief of
+  2026-10-19 moved its page-level half from "the page is the document" to "the page is the
+  document's, and `website/test/security.mjs` holds it there".
 
 **Verify.** The two commands of §3, with `meta.mjs`'s and the word-ceiling cases among
 the passes; and the owner reads the rewritten pages (the P9 "after" set is the picture of
@@ -417,7 +454,7 @@ they enforce:
 | `.site-nav ul{display:flex}` and the one-`aria-current` rule | `website/test/base-styles.mjs` | rewritten for the two-level menu, with the page's current marker still exactly one | P3 |
 | provenance phrases | `website/test/meta.mjs` (new) | new gate | P4 |
 | "the page adds no sentence of its own" | `website/test/changelog-page.mjs` | **unchanged rule**; the summary block is release-file text it accepts (D189); an exception only under D189's alternative (a) | P4 |
-| the security page = `SECURITY.md` byte for byte | `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` | **unchanged** under D189's recommendation (the summary is in `SECURITY.md`) | P4 |
+| the security page = `SECURITY.md` byte for byte | `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` (the generated copy) and `website/test/security.mjs` (the page) | **departed from, as shipped**: the Go pin still holds `website/content/security.md` to `SECURITY.md`, and the page is held by `website/test/security.mjs` (P4's departure note) | P4 |
 | copy controls | `website/test/copy.mjs` (new) | new gate | P6 |
 | reduced-motion path per animation | `website/test/a11y.mjs` | **unchanged**, and every new animation must satisfy it | P7, P8 |
 | the homepage transcript | `website/test/home.mjs` | grows from one line to every line | P7 |
@@ -426,8 +463,11 @@ they enforce:
 `website/package.json`'s check script is `node --test test/*.mjs`, so a new test file
 under `website/test/` is picked up with no edit there. The Go pins (`internal/cli`,
 `internal/clidoc`) are untouched by every part: no part changes a generated document, the
-canonical host or the install facts, and the security page stays byte-identical to
-`SECURITY.md` (P4's summary is added to the file itself, by the owner).
+canonical host or the install facts, and the generated `website/content/security.md` stays
+byte-identical to `SECURITY.md` (P4's summary is added to the file itself, by the owner).
+The **page** the brief cuts to three things is a departure from Global Constraint 12's
+byte-for-byte shape, recorded in P4's departure note; it is held by
+`website/test/security.mjs`.
 
 ## 6. Order and the owner's go
 

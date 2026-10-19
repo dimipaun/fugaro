@@ -197,7 +197,9 @@ This repository's site-wide rule is that a page renders a fact and never restate
 and it is enforced by construction: `ArchitectureDiagram.astro` throws, naming the file,
 when a caption is not a line of the document it cites; `docs.astro` renders the generated
 documents rather than quoting them; `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`
-holds a page to a file byte for byte.
+holds the generated copy of `SECURITY.md` to the document byte for byte — the page itself
+is not that copy, and since the brief of 2026-10-19 `website/test/security.mjs` holds the
+page to the document's own words instead (see the Global Constraint 12 row in §3).
 
 A terminal transcript is the easiest place in the site to break that rule: a job
 identifier, an elapsed time, a branch name, a run URL or a pull-request number shown in
@@ -398,10 +400,13 @@ found). Contents today:
   headings (`security.astro`, the `data-security-toc` nav) — measured, the `h1` ends at
   468 px at 1280 and 825 px at 390. A list of headings is not "a short summary of key
   points", and the brief names this very page as its example, so `/security/` needs one.
-  The page is held to `SECURITY.md` byte for byte below its title
-  (`TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`, the first plan's Global
-  Constraint 12: "Security claims are never paraphrased"), so a summary written on the page
-  would be the paraphrase that rule forbids.
+  The page is held to `SECURITY.md` by the first plan's Global Constraint 12 ("Security
+  claims are never paraphrased"), whose shape is a byte-for-byte page under
+  `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`, so a summary written on the page
+  would be the paraphrase that rule forbids. **As shipped** (2026-10-19), that Go pin
+  reads the generated copy `website/content/security.md` and never a page, and the page
+  itself — the brief's three things — is held to the document's own words by
+  `website/test/security.mjs`; the constraint table in §3 records the departure.
 - `/docs/` has a lead and a contents list, but its lead is the internal text of RF6 — so
   removing the meta paragraph removes the only summary the page has, and the part that
   removes it must put a real one in its place, drawn from the documents' own facts.
@@ -453,7 +458,7 @@ Global Constraints collide with the brief as well, and they are the last two row
 | **D107** (a video slot, empty until filled) | `features.video: false` | Untouched: the brief asks for "images or diagrams", and a video is neither, so the slot stays empty |
 | **D108** (four gates; the fourth is the owner's live checks) | Build, link check, drift tests, a11y/origins lint, plus live checks | **Extended, additively:** RF23's fold check and the "no internal text" gate are new gates, not a replacement. Whether the fold check is hermetic, browser-driven-in-repo or owner-run is D187 |
 | **Global Constraint 6** of the first plan ("A page never restates a document; it renders it or links it") | Enforced by construction and by `changelog-page.mjs` | **Collides** with the brief's "each opens with a short summary of key points" on `/security/`, `/changelog/` and `/docs/` (RF24): a summary written on the page is a restatement. **D189** |
-| **Global Constraint 12** ("Security claims are never paraphrased"; the page is `SECURITY.md` byte for byte below the title) | `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` | **Collides** with a `/security/` summary written on the page; D189's recommendation keeps the constraint by putting the summary in `SECURITY.md` itself |
+| **Global Constraint 12** ("Security claims are never paraphrased"; the page is `SECURITY.md` byte for byte below the title) | the generated copy by `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd`; the page by `website/test/security.mjs` | **Collides** with a `/security/` summary written on the page; D189's recommendation keeps the constraint by putting the summary in `SECURITY.md` itself. **As shipped (2026-10-19) the second half of its shape departed**: the Go pin has always read the generated copy `website/content/security.md` rather than a page, and the page — now the brief's three things, with the document's cross-references rewritten into links into the repository and a reference naming no heading rendered as its own text — is held by `website/test/security.mjs`. The constraint's substance is kept: no security claim on the page is a paraphrase, because every word of it is the document's. The departure is recorded in the plan's P4 note |
 | **W1.4's five stage names** (the first spec's `local dispatch`, `cloud job`, `cache`, `security boundary`, `PR or artifact collected back`) | `home.mjs`: "the spec's five stage names and no sixth" | **Changed** if D185 takes the brief's four steps: the test's five-names assertion is rewritten in P8 |
 
 ## 4. The CSP, the origins gate, and what the owner's ruling permits
