@@ -98,10 +98,13 @@ const HEADING = 'Downloads'
             <li>
               <a href={download.url} rel="noopener">
                 {download.label}
-              </a>
+              </a>{' '}
               {/* The published bytes' own checksum, beside the link it belongs to: a
                   reader who has the file can see whether what arrived is what the
-                  release published, without trusting the transfer. */}
+                  release published, without trusting the transfer. The space above is a
+                  fact and not a style: the two elements are inline, so a whitespace-only
+                  text node between them is what Astro's compression drops — and the row
+                  would read "macOS .dmga434f3…" (website/test/spacing.mjs holds it). */}
               <code class="download-sha256">{download.sha256}</code>
             </li>
           ))}

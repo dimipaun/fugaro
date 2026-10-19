@@ -23,9 +23,10 @@
 // action (item 6), which renders from the console's flag — and the console's release (W3.1),
 // which turned that flag on and so put the link, the console's downloads and Getting Started's
 // console option into this build — and, from the same brief, the security page's cut to three
-// things (a short model summary, the policy's own reporting section and a link to the document),
-// which is the last round to move the site figure and the one named in the list below — plus
-// 25 %, which is D192's rule and the rule the README's
+// things (the policy document's own *In short* section, its own reporting section and a link to
+// the document), which is the round this build's site figure comes from and the one named in the
+// list below, together with the 2 bytes the new spacing gate's own find cost the console page —
+// plus 25 %, which is D192's rule and the rule the README's
 // loose figures are three times.
 //
 // The count below is read off **the gates' own build of the site**, which is the artifact the
@@ -35,8 +36,8 @@
 // 1,515 bytes the site's own build moves with the checkout's git state: the changelog renders
 // each release file's "not yet released" state where `git tag --list` finds no tag
 // (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
-// deployed site's — builds 930,153 bytes where this repository's own clone, which carries the
-// tags, builds 928,638.
+// deployed site's — builds 930,616 bytes where this repository's own clone, which carries the
+// tags, builds 929,101.
 //
 //   - JavaScript per page: 49,860 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
@@ -71,7 +72,7 @@
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,162,692 bytes. Every file in `dist/` on that build summed to 930,153
+//   - Whole site: 1,163,270 bytes. Every file in `dist/` on that build summed to 930,616
 //     bytes (23 files: eleven pages, the script, the brand icons, the manifest and the two
 //     `fugaro watch` assets); × 1.25, rounded up. **It is the build with no tags** — the one
 //     the gates make, and the one the deployed site is — and the changelog page's own "not yet
@@ -117,11 +118,18 @@
 //     script did not move with it: the heaviest page is the docs hub, which renders no install
 //     option, no download and no hero.
 //   - **The security page was cut to three things** (the owner's brief of 2026-10-19), and the
-//     site figure of this build comes from it: the page rendered `SECURITY.md` byte for byte and
-//     now carries an eight-bullet summary, the document's own reporting section and a link to the
-//     policy. `dist/security/index.html` is 17,722 bytes where it was 65,490, which is
-//     **47,768 bytes off the site figure**, 977,921 → 930,153. The page weight and the script did
-//     not move: the page is not the docs hub, and it changes no file every page loads.
+//     site figure of this build comes from it. The page rendered `SECURITY.md` byte for byte and
+//     now renders the document's own *In short* section, its own reporting section and a link to
+//     the policy — the summary rendered from the file rather than written on the page, which is
+//     what D189 asks and what the first cut of this page did not do. `dist/security/index.html`
+//     is 18,183 bytes where it was 65,490, which is **47,307 bytes off the site figure**, 977,921
+//     → 930,614. The page weight and the script did not move: the page is not the docs hub, and
+//     it changes no file every page loads.
+//   - **The spacing gate's own find** (`test/spacing.mjs`, added by the same review round) is the
+//     other 2 bytes: the console page's download row had its link and its `<code>` checksum glued
+//     together — "macOS .dmga434f3…" — because the whitespace text node between two inline
+//     elements on two source lines is what Astro's compression drops. One byte per asset, and the
+//     site figure is 930,614 → **930,616**.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:
@@ -575,9 +583,11 @@ test('the README budget lines are read strictly', () => {
 // site was in before the console's release, which the checkout no longer builds — and runs the
 // artifact gates over that copy, so the flag's two states are both held to the ceilings. A
 // derivation held to that copy would be the flag's own bytes rather than the site's: measured on
-// this build, **1,572 bytes smaller** at the site figure — 928,581 against the 930,153 below — the
+// this build, **1,574 bytes smaller** at the site figure — 929,042 against the 930,616 below — the
 // console option's markup on the three pages that render it (the console page's downloads
-// 1,100, Getting Started's option 386 and the homepage's call to action 86), and
+// 1,100, Getting Started's option 386, the homepage's call to action 86, and the 2 bytes of space
+// the download row now carries between its link and its checksum, which the flag-off copy does not
+// render at all), and
 // nothing at all at the page weight. The direction is the flag's own: turning
 // `features.console_downloads` on added those bytes, so the copy that flips it back off is the
 // smaller build. The checkout's own `dist/` is the other artifact the numbers may not name,
@@ -625,7 +635,7 @@ export function derivationFailures(readme, measured) {
  * DIFFERENT build rather than another copy of this one: flipping `features.console_downloads`
  * adds the console option's markup to the three pages that render it (the console page's
  * downloads 1,100, Getting Started's option 386 and the homepage's call to action 86),
- * measured at 1,572 bytes on that copy's site figure — and it is the SMALLER of the two, since the
+ * measured at 1,574 bytes on that copy's site figure — and it is the SMALLER of the two, since the
  * copy is the flag-off state and this build is the flag-on one. The derivation is not held to
  * it.
  *
@@ -634,8 +644,8 @@ export function derivationFailures(readme, measured) {
  * gates are running in, and one page of the site depends on that checkout's git state: the
  * changelog renders each release file's "not yet released" state where `git tag --list` finds no
  * tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the same commit
- * builds to two different site figures — 930,153 bytes in a checkout with no tags, which is what
- * `.github/workflows/website-preview.yml`'s default checkout is, and 928,638 with the tags this
+ * builds to two different site figures — 930,616 bytes in a checkout with no tags, which is what
+ * `.github/workflows/website-preview.yml`'s default checkout is, and 929,101 with the tags this
  * repository's own clone carries, the 1,515-byte changelog page being the whole of the
  * difference. A README figure derived from either one is a figure the other environment refuses,
  * which is exactly what happened: `website-preview` could not deploy, because the derivation
