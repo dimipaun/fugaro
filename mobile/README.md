@@ -50,6 +50,7 @@ module plugged in by `index.js` at the bottom of the tree.
 | `src/app/root.js` | The root shell. Renders the current account's id, and nothing else an installation was built from. |
 | `src/mailbox/` | The mailbox client: the write paths and their key rules (`paths.js`), the app's SHA-256 and HMAC (`sha256.js`, `mac.js`), the redactor's seam (`redact.js`), the database port and its double (`store.js`), the audio stub (`speaker.js`) and the client itself (`client.js`). `index.js` is the one door; `write-path.test.js` is the scan that enforces the one-write-path claim; `mutation-proof.sh` proves the guards; `README.md` is the module's own rule sheet. |
 | `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
+| `src/jobs/` | The job list (P3.3): the field table (`fields.js`), the project's row (`row.js`), the heartbeat line (`heartbeat.js`), the list and its wiring (`list.js`), what the screen says (`lines.js`) and the scope scan (`scope.test.js`). `index.js` is the one door; the section below is the rule sheet. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
 | `src/skeleton/` | The trivial module and test that proved the runner runs (P3.1's red step). |
 
@@ -399,6 +400,115 @@ names five availability states, and `availability.js` now says in place that the
 constructor has no caller in P3.2 and that the day break §10.7 calls a gap is
 drawn as `drawable: null` instead.
 
+## The job list: numbers and states, and nothing else
+
+The list is what the phone is for — the spend, the cap, the kill switch and
+whether the other end is alive — and the resolution of 2026-10-17 fixed its
+scope in one sentence: **numbers and states only**, "with no run titles, no
+repositories, no queued rows, no finished rows and no PR link". `src/jobs/` is
+that screen's module, and its files are:
+
+| File | What it holds |
+| --- | --- |
+| `fields.js` | the table: one entry per field on the row, each carrying the granted family it is read from (`JOB_FIELDS`), plus the closed vocabularies (`KILL_STATES`, `HEARTBEAT_STATES`) and the two marks (`NO_VALUE`, `NOTHING`) |
+| `row.js` | the project's row, built from P3.2's document: every field must be a **figure** the feed built, and a field that is not is a refusal rather than a coerced value |
+| `heartbeat.js` | P3.6's presence reading as one state. `unknown` when nothing has read the mailbox — which is **not** `offline` (rule 3, "silence is not death", seen from this side) |
+| `list.js` | `jobList()` — the pure judgement of a snapshot plus a presence reading — and `createJobList()`, the wiring the feed's door names as this task's |
+| `lines.js` | the screen's lines, printed through the feed's own `shown` |
+| `index.js` | the door |
+| `scope.test.js` | the scan below |
+| `row.test.js`, `heartbeat.test.js`, `list.test.js`, `lines.test.js` | the behavioural half |
+
+### The row, and the two marks that must not be confused
+
+`n/a` is what `shown` says for a field the document **did not carry**
+(`unavailable`); `—` (`GAP_MARK`) is what a screen draws when the **series
+broke**. A `0` is a measurement and appears only where a counter measured zero.
+That difference is the whole of §10.7's "must not draw the zero": on a day
+break the reader assembles the new day's document, which carries a zero counter,
+and `jobList` draws `row: null` for it — so the zero cannot reach a screen that
+forgot to check. A degraded feed (§10.8) is the same: it renders as degraded,
+never as a spend of zero.
+
+### What the list deliberately does not show
+
+**No repository row and no repository name.** This is the reading of "no
+repositories" this task took, and it is the smaller one: `config/caps/repos/$slug`
+and `spend/$day/repos/$slug` *are* granted and P3.2's document carries a block
+built from them, but nothing in `src/jobs/` reads that block — not the slug it is
+keyed by, and not the repository's own name. A reviewer who reads the resolution
+as "per-repository rows, without their identity" would want a row per slug with
+no name on it; that reading needs the document's `repos` block and a screen that
+draws it, and it is a bigger change than this task's text describes. The
+project's own row is what is left, and `scope.test.js` refuses the token `repos`
+in this module's production files so the choice is a line of code a later task
+edits on purpose rather than a drift.
+
+**No link of any kind.** The rows that carry a PR link live in the runs bucket
+and the grant does not cover them — but the sharper reason is P0.3: any link the
+app ever opens goes through `shared/url/index.js`'s validator, so a link built
+here would be a link built around the gate. Nothing in this module imports it,
+because nothing here builds a link. **P0.3 stays a dependency of P3.3**: the day
+a row on this list wants a URL, the door to it is that validator and not a
+`Linking.openURL`.
+
+**No run title, and no code path that asks for one.** The plan's own test case
+for this task, held as a scan (below) and as behaviour: the fake port records
+every path the wiring asks for, and every one of them passes the grant's own
+gate.
+
+### The wiring
+
+`createJobList({ port, account, repositories, registry, readPresence, now })`
+builds P3.2's `FeedReader` from a **port it is handed** — no database SDK and no
+`firebase` module is imported by this module, so a second subscription to the
+same project is not something an import can buy — and takes P3.6's presence
+report as a **function**. `poll()` stores the raw reading and `snapshot()`
+judges it once, so the heartbeat has one judge and not two that can disagree. A
+refusal from the mailbox client is passed through unchanged: its codes are its
+own, and this module does not re-label another module's decision.
+
+### The scan: the resolution's "not shown" as rules
+
+`scope.test.js` holds what no behavioural test can hold on its own — that no
+line reaches for these tomorrow — the way P3.1's boundary scan holds the
+credentials: **tokens that may appear in a named list of files and nowhere
+else**, read over the module's **code and not its prose** (this tree's comments
+discuss the very tokens the rules forbid), with a **positive control per rule**
+so a mistyped pattern cannot pass for a clean tree, and with test files exempt
+(a test that proves a denied family is never requested has to name it).
+
+| Rule | Why |
+| --- | --- |
+| `agents` / `outcomes` | the two families the read grant does not name (tension (b1)) |
+| `repos` | the resolution's "no repositories" |
+| `pr_url`, `prUrl`, `pr_number`, `prNumber`, `Linking`, `openURL`, `openExternal`, `WebBrowser` | the runs bucket's fields, and every way of opening a link |
+| `../feed/` other than `../feed/index.js` | the feed is reached through its **door**: `paths.js`'s gate and `nodes.js`'s raw readers are the feed's business, and a screen that composed a path would be composing a read |
+
+### The job list's mutations
+
+Each was planted, the run went red, the bug was removed. The last three were
+planted **after** the rest and found claims with no test behind them: the tests
+they went red against did not exist yet, so fixing that was writing them.
+
+| Mutation | Went red |
+| --- | --- |
+| a field that is not a figure is put on the row anyway | `a figure the feed did not build is refused, not put on the row` |
+| a rate marked `known` over no number renders as "not shown" | `a rate marked known over no number is refused…` |
+| the kill switch always reads `off` | `a kill switch is on or off…` |
+| a document flagged `degraded` is built into a row | `a row is only built from a live document` |
+| a field with no figure prints a `0` | `a missing field prints n/a, and never a 0` |
+| a field the feed did not build is printed as its bare value | `a field the feed did not build is not printed as a number` |
+| a broken series draws the rollover document | `a broken series draws the gap mark…` |
+| a degraded feed is drawn as a live one | `a degraded feed renders as degraded…` |
+| every snapshot claims the day did not change | `the list is built from the feed and the mailbox…` |
+| an unread mailbox is reported `offline` | `the heartbeat is unknown until something has read it…` |
+| an unsigned reading counts as verified | `an unsigned heartbeat is carried as unverified…` |
+| a negative age is carried | `the fields a caller could smuggle a claim through are judged` |
+| the module reaches for a repository | `no repository row and no repository name` |
+| a screen reaches around the feed's door | `the feed is reached through its door…` |
+| a run is named | `no run is named, and neither family the grant denies is asked for` |
+
 ## Which files may write a credential
 
 `src/boundary.test.js` is the D54b-clause-(3)-shaped half of P3.1 (reconciliation
@@ -548,3 +658,14 @@ a class rather than as an incident:**
   the orchestrator restarted — is check **84** (P4.2)'s rule, which has a real
   clock and a real database. A heartbeat that is not there is a node that is not
   there, and this task does not call that "the orchestrator is down".
+* **The job list on a screen (P3.3).** `src/jobs/` fixes what the list *says*
+  — `lines.js` returns the labelled strings a screen draws — and mounts nothing:
+  no React tree, no component, no device, and no renderer has run. "No run title
+  is on screen" is therefore a fact about a string list and a scan over the
+  module's code, not about pixels. The list's heartbeat is P3.6's **reading**,
+  handed in as a function; no mailbox has been read for it here, and the MAC
+  check behind the reading is the mailbox client's (check **84**'s, owner-run).
+  And **P0.3's validator is a dependency this task does not exercise**: nothing
+  on the list is a link, so nothing calls `shared/url/index.js` — the day a row
+  wants a URL, that module is the gate, and there is no test here that says it
+  works.
