@@ -237,8 +237,8 @@ func TestSchemaVectorDirectionPairs(t *testing.T) {
 func TestSchemaVectorRefusals(t *testing.T) {
 	file := loadVectors(t)
 	refusals := list(t, file["refusals"], "refusals")
-	if len(refusals) != 22 {
-		t.Fatalf("vectors.json carries %d refusals, not 22: the file, not the replay, is what changed", len(refusals))
+	if len(refusals) != 31 {
+		t.Fatalf("vectors.json carries %d refusals, not 31: the file, not the replay, is what changed", len(refusals))
 	}
 	for _, entry := range refusals {
 		vector := object(t, entry, "refusal")
@@ -263,6 +263,186 @@ func TestSchemaVectorRefusals(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestTheRefusalCodesNoRefusalVectorCarries is the other half of the replay
+// above, and it is here because a code with no vector is a code with no test
+// anywhere: TestSchemaVectorRefusals replays what the file carries, so a check
+// whose code the file never names can be deleted from the validator with every
+// test still green. Four were in exactly that state — empty-string, too-few,
+// unknown-kind and duplicate-entry — which is what the review of T1 found.
+//
+// The four are exercised over every field they apply to rather than one apiece,
+// because empty-string is answered by the FIELD: a single row for a sender would
+// leave the same check unheld for a body, an option's label, an agent's spoken
+// name, an id, the tag and each part of an action. vectors.json now carries nine
+// of these values — the two lists, a kind outside the four, and empty-string on
+// the four fields the module answers through stringField — so both ends are held
+// to the same inputs. The rows with no vector stand in for the fields the file
+// does not carry, and the guard at the end is that no code can be missing from
+// both: a code the package declares and neither the file nor this table names is
+// a failing test, which is the state the four were in.
+func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
+	message := func(over Record) Record {
+		record := Record{
+			"id": "m-0001", "sender": "phone", "text": "run 42 finished",
+			"at": number("1700000000000"), "mac": strings.Repeat("f", MACMax),
+		}
+		for key, value := range over {
+			record[key] = value
+		}
+		return record
+	}
+	heartbeat := func(over Record) Record {
+		record := Record{
+			"at": number("1700000000000"), "boot": "boot-01",
+			"agents": []any{agent("orchestrator", "Orchestrator")},
+			"mac":    strings.Repeat("f", MACMax),
+		}
+		for key, value := range over {
+			record[key] = value
+		}
+		return record
+	}
+	cancel := func(over map[string]any) map[string]any {
+		return action(map[string]any{
+			"id": "a-0001", "verb": "cancel",
+			"target":       map[string]any{"run": "20261018-125859-d3c8"},
+			"confirmation": map[string]any{"id": "c-0001", "at": number("1700000000000")},
+		}, over)
+	}
+	merge := func(over map[string]any) map[string]any {
+		return action(map[string]any{
+			"id": "a-0001", "verb": "merge",
+			"target":       map[string]any{"repo": "dimipaun/fugaro", "pr": number("532")},
+			"head_sha":     strings.Repeat("a", SHAMin),
+			"confirmation": map[string]any{"id": "c-0001", "at": number("1700000000000")},
+		}, over)
+	}
+	cancelled := func(over map[string]any) Record {
+		return message(Record{"kind": "action", "action": cancel(over)})
+	}
+
+	table := []struct {
+		name      string
+		record    Record
+		heartbeat bool
+		code      Code
+		field     string
+		why       string
+	}{
+		// empty-string, on each of the four fields the module answers it for out
+		// of stringField, and then on the fields that reach it another way.
+		{"an empty sender", message(Record{"sender": ""}), false, CodeEmptyString, "sender",
+			"a message with no sender cannot be attributed"},
+		{"an empty body", message(Record{"text": ""}), false, CodeEmptyString, "text",
+			"a body of no characters says nothing"},
+		{"an empty option label", message(Record{"kind": "prompt", "options": []any{""}}), false, CodeEmptyString, "options[0]",
+			"an option with no label cannot be read aloud or answered"},
+		{"an empty agent name", heartbeat(Record{"agents": []any{agent("orchestrator", "")}}), true, CodeEmptyString, "agents[0].name",
+			"an agent with no spoken name cannot be named"},
+		{"an empty id", message(Record{"id": ""}), false, CodeEmptyString, "id",
+			"an id is how a message is deduped on (sender, id)"},
+		{"an empty reply_to", message(Record{"kind": "answer", "reply_to": ""}), false, CodeEmptyString, "reply_to",
+			"an answer names the prompt it answers"},
+		{"an empty mac", message(Record{"mac": ""}), false, CodeEmptyString, "mac",
+			"an empty tag is not a tag, and it is not the same as an absent one"},
+		{"an empty action id", cancelled(map[string]any{"id": ""}), false, CodeEmptyString, "action.id",
+			"the action id is what the confirmation names"},
+		{"an empty confirmation id", cancelled(map[string]any{
+			"confirmation": map[string]any{"id": "", "at": number("1700000000000")}}), false, CodeEmptyString, "action.confirmation.id",
+			"a confirmation with no id confirms nothing"},
+		{"an empty run target", cancelled(map[string]any{
+			"target": map[string]any{"run": ""}}), false, CodeEmptyString, "action.target.run",
+			"the consumer runs `fugaro cancel RUN` from this field"},
+		{"an empty repository target", message(Record{"kind": "action", "action": merge(map[string]any{
+			"target": map[string]any{"repo": "", "pr": number("532")}})}), false, CodeEmptyString, "action.target.repo",
+			"the consumer runs `gh pr merge --repo <owner/name>` from this field"},
+
+		// too-few: a list that is present is non-empty. Absent is how a record
+		// says "none"; an empty list says the writer meant to fill one.
+		{"a prompt with no options", message(Record{"kind": "prompt", "options": []any{}}), false, CodeTooFew, "options",
+			"present but empty is not the same as absent"},
+		{"a heartbeat with no agents", heartbeat(Record{"agents": []any{}}), true, CodeTooFew, "agents",
+			"an empty list is offline, which a heartbeat says by carrying no list at all"},
+
+		// unknown-kind: the kind is a closed vocabulary of four.
+		{"a kind outside the four", message(Record{"kind": "nudge"}), false, CodeUnknownKind, "kind",
+			"the kinds are plain, prompt, answer and action, and nothing else"},
+
+		// duplicate-entry: two identical entries are one entry with two answers.
+		{"two identical options", message(Record{"kind": "prompt", "options": []any{"merge it", "merge it"}}), false, CodeDuplicateEntry, "options[1]",
+			"the app answers a prompt by position, so two labels are two right answers"},
+		{"two agents under one id", heartbeat(Record{"agents": []any{
+			agent("orchestrator", "Orchestrator"), agent("orchestrator", "Shadow")}}), true, CodeDuplicateEntry, "agents[1].id",
+			"two agents under one id make \"talk to <agent>\" ambiguous"},
+
+		// The other codes vectors.json carries no refusal for. They are held by
+		// other tests as well, and they are here because the guard below is only
+		// a guard if every code it does not read out of the file is a row.
+		{"an id that is not a database key", message(Record{"id": "m.0001"}), false, CodeBadKey, "id",
+			"a dot opens a path in the database the message is stored in"},
+		{"a character a body cannot carry", message(Record{"text": "a\x01b"}), false, CodeBadCharacter, "text",
+			"a control character is not one the phone can display"},
+		{"an agent that is not an object", heartbeat(Record{"agents": []any{"orchestrator"}}), true, CodeNotAnObject, "agents[0]",
+			"an entry of the list is {id, name}, not a bare id"},
+		{"a merge whose target is a run", message(Record{"kind": "action", "action": merge(map[string]any{
+			"target": map[string]any{"run": "20261018-125859-d3c8"}})}), false, CodeBadTarget, "action.target",
+			"a merge resolves to a repository, whatever the record says"},
+	}
+	for _, tc := range table {
+		t.Run(tc.name, func(t *testing.T) {
+			var refusal *Refusal
+			if tc.heartbeat {
+				_, refusal = ValidateHeartbeat(tc.record)
+			} else {
+				_, refusal = ValidateMessage(tc.record)
+			}
+			if refusal == nil {
+				t.Fatalf("the record is accepted, and it must be refused %s at %s: %s", tc.code, tc.field, tc.why)
+			}
+			if refusal.Code != tc.code || refusal.Field != tc.field {
+				t.Errorf("the refusal is %s at %q, wanted %s at %q: %s", refusal.Code, refusal.Field, tc.code, tc.field, tc.why)
+			}
+		})
+	}
+
+	// The guard, and the reason this table carries eight codes rather than only
+	// the four the review named: every code the package declares is produced by
+	// a refusal in vectors.json or by a row here, so a code that neither holds
+	// is a failing test. That is exactly the state the four were in —
+	// implemented, refusable, and green under the deletion of their checks.
+	held := map[Code]string{}
+	for _, entry := range list(t, loadVectors(t)["refusals"], "refusals") {
+		refusal := object(t, entry, "refusal")
+		held[Code(text(t, refusal["code"], "code"))] = "vectors.json"
+	}
+	for _, tc := range table {
+		held[tc.code] = tc.name
+	}
+	for _, code := range Codes {
+		if _, ok := held[code]; !ok {
+			t.Errorf("the code %s is declared and nothing holds it: no refusal in vectors.json carries it and no row above produces it", code)
+		}
+	}
+}
+
+// agent is one entry of a heartbeat's advertised list.
+func agent(id, name string) map[string]any {
+	return map[string]any{"id": id, "name": name}
+}
+
+// action is a well-formed action record with a change applied, so a row can move
+// one part of it rather than restate the rest.
+func action(base, over map[string]any) map[string]any {
+	record := map[string]any{}
+	for key, value := range base {
+		record[key] = value
+	}
+	for key, value := range over {
+		record[key] = value
+	}
+	return record
 }
 
 // TestValidatedFields pins what the binding is FOR: the typed message a later

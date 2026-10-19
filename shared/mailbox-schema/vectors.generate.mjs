@@ -258,6 +258,35 @@ refused('answer without reply_to', 'an answer names the prompt it answers', 'mes
 refused('float at', 'a time is an integer millisecond', 'message', message({ at: AT + 0.5 }));
 refused('stored direction', 'the direction is the reader\'s to supply, never a field the writer stores', 'message', message({ direction: 'inbox' }));
 refused('stored direction on a heartbeat', 'a heartbeat cannot claim its own direction either', 'heartbeat', heartbeat({ direction: 'heartbeat' }));
+
+// Four codes the refusals above never reached — empty-string, too-few,
+// unknown-kind and duplicate-entry — added by P4.1's T1 (2026-10-19) after a
+// review found the Go consumer implemented them with no vector and no test
+// between the two ends. The gap was the vectors', not the module's: the schema
+// always refused these values, and the reviewer's point is that a code no
+// vector carries is a rule neither end is held to by the file they share.
+//
+// empty-string is exercised on each of the four fields that reach it through
+// stringField — a body, a sender, an agent's spoken name and an option's label
+// — because the code is answered by the field, and a field whose emptiness was
+// never pinned is a field a port could leave open.
+refused('empty sender', 'a message without a sender cannot be attributed, and the field is required', 'message', message({ sender: '' }));
+refused('empty text', 'a body of no characters says nothing, and the schema refuses it rather than storing a blank', 'message', message({ text: '' }));
+refused('empty option label', 'an option with no label is a button the app can neither read aloud nor answer', 'message', message({ kind: 'prompt', options: [''] }));
+refused('empty agent name', 'an advertised agent with no name cannot be spoken, and D163 names agents by it', 'heartbeat', heartbeat({ agents: [{ id: 'orchestrator', name: '' }] }));
+
+// too-few: a list that is present is non-empty. Absent is how a message says
+// "no options"/"no agents"; `[]` says the writer meant to fill one and did not.
+refused('no options', 'a prompt offers at least one option: present but empty is not the same as absent', 'message', message({ kind: 'prompt', options: [] }));
+refused('no agents', 'a heartbeat advertises at least one agent: an empty list is offline, which is said by no list at all', 'heartbeat', heartbeat({ agents: [] }));
+
+// unknown-kind: the kind is a closed vocabulary of four.
+refused('unknown kind', 'the kinds are plain, prompt, answer and action, and nothing else', 'message', message({ kind: 'nudge' }));
+
+// duplicate-entry: two identical entries are one entry with two answers.
+refused('duplicate option', 'two identical options are a question with two right answers, and the app reads the labels aloud', 'message', message({ kind: 'prompt', options: ['merge it', 'merge it'] }));
+refused('duplicate agent', 'two agents under one id make "talk to <agent>" ambiguous, and D163 picks by id', 'heartbeat', heartbeat({ agents: [{ id: 'orchestrator', name: 'Orchestrator' }, { id: 'orchestrator', name: 'Shadow' }] }));
+
 const file = {
   format: 'fugaro mailbox message tag vectors',
   algorithm: 'HMAC-SHA-256 over canonicalBytes(message, direction), lowercase hex (mobile plan §3.5, D171; direction by the owner ruling of 2026-10-18)',

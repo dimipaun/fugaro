@@ -1147,6 +1147,14 @@ test('the vectors carry the schema refusals both ends must agree on', () => {
     'unsigned message', 'unsigned prompt', 'unsigned answer', 'unsigned action', 'unsigned heartbeat',
     'short mac', 'long mac', 'uppercase mac', 'unknown verb', 'short head SHA', 'uppercase head SHA',
     'too many options', 'unknown field', '__proto__ field',
+    // The four codes no refusal carried until P4.1's T1: the Go consumer
+    // implemented them with nothing between the two ends pinning them, so the
+    // file now carries a value for each — empty-string on the four fields it is
+    // answered through, too-few and duplicate-entry on both lists, and a kind
+    // outside the four. A port that leaves one of these checks out is refused
+    // here rather than on a phone.
+    'empty sender', 'empty text', 'empty option label', 'empty agent name',
+    'no options', 'no agents', 'unknown kind', 'duplicate option', 'duplicate agent',
   ]) {
     assert.ok(names.includes(required), `the vectors refuse "${required}": ${names}`);
   }

@@ -1016,6 +1016,155 @@
       },
       "code": "unknown-field",
       "field": "direction"
+    },
+    {
+      "name": "empty sender",
+      "why": "a message without a sender cannot be attributed, and the field is required",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "empty-string",
+      "field": "sender"
+    },
+    {
+      "name": "empty text",
+      "why": "a body of no characters says nothing, and the schema refuses it rather than storing a blank",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "empty-string",
+      "field": "text"
+    },
+    {
+      "name": "empty option label",
+      "why": "an option with no label is a button the app can neither read aloud nor answer",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "prompt",
+        "options": [
+          ""
+        ]
+      },
+      "code": "empty-string",
+      "field": "options[0]"
+    },
+    {
+      "name": "empty agent name",
+      "why": "an advertised agent with no name cannot be spoken, and D163 names agents by it",
+      "record": "heartbeat",
+      "value": {
+        "at": 1700000000000,
+        "boot": "boot-01",
+        "agents": [
+          {
+            "id": "orchestrator",
+            "name": ""
+          }
+        ],
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "empty-string",
+      "field": "agents[0].name"
+    },
+    {
+      "name": "no options",
+      "why": "a prompt offers at least one option: present but empty is not the same as absent",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "prompt",
+        "options": []
+      },
+      "code": "too-few",
+      "field": "options"
+    },
+    {
+      "name": "no agents",
+      "why": "a heartbeat advertises at least one agent: an empty list is offline, which is said by no list at all",
+      "record": "heartbeat",
+      "value": {
+        "at": 1700000000000,
+        "boot": "boot-01",
+        "agents": [],
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "too-few",
+      "field": "agents"
+    },
+    {
+      "name": "unknown kind",
+      "why": "the kinds are plain, prompt, answer and action, and nothing else",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "nudge"
+      },
+      "code": "unknown-kind",
+      "field": "kind"
+    },
+    {
+      "name": "duplicate option",
+      "why": "two identical options are a question with two right answers, and the app reads the labels aloud",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "prompt",
+        "options": [
+          "merge it",
+          "merge it"
+        ]
+      },
+      "code": "duplicate-entry",
+      "field": "options[1]"
+    },
+    {
+      "name": "duplicate agent",
+      "why": "two agents under one id make \"talk to <agent>\" ambiguous, and D163 picks by id",
+      "record": "heartbeat",
+      "value": {
+        "at": 1700000000000,
+        "boot": "boot-01",
+        "agents": [
+          {
+            "id": "orchestrator",
+            "name": "Orchestrator"
+          },
+          {
+            "id": "orchestrator",
+            "name": "Shadow"
+          }
+        ],
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "code": "duplicate-entry",
+      "field": "agents[1].id"
     }
   ]
 }
