@@ -6,33 +6,38 @@
 // release `console-v0.8.7` carries them, `site.yaml`'s `features.console_downloads` is true
 // and the data file's `available` is true with it. The page's Downloads section renders that
 // release, and the placeholder state it renders instead is a state a copy of the repository
-// is built into rather than the state this checkout ships (W3.1). Six things are checked
+// is built into rather than the state this checkout ships (W3.1). Seven things are checked
 // here:
 //
 //   1. **The released section renders the release's own downloads.** One link per published
-//      asset, held to the repository, the release path, the tag and the published name one
-//      part at a time (`test/lib/console-downloads.mjs`), with the checksum the data file
-//      carries beside each — and the data file's own sentence about the shipped console
-//      rather than a copy of it written into the markup.
-//   2. **The unreleased state carries no link, and it is a fixture.** With
+//      asset, held to the repository, the release path, the tag and the **name the release
+//      serves** one part at a time (`test/lib/console-downloads.mjs`), with the checksum the
+//      data file carries beside each — and the data file's own sentence about the shipped
+//      console rather than a copy of it written into the markup.
+//   2. **The link carries the served name, not the name the build wrote.** GitHub rewrites a
+//      space in an uploaded asset's name to a dot, so the release's own files spell
+//      `Fugaro Console-0.8.7-universal.dmg` and the release serves, and the site must link to,
+//      `Fugaro.Console-0.8.7-universal.dmg`: the case below refuses any href carrying `%20`,
+//      which is the 404 every reader would have followed (`servedName` has the rule).
+//   3. **The unreleased state carries no link, and it is a fixture.** With
 //      `features.console_downloads` flipped back to false and the data file's `available`
 //      with it, the built section contains no download URL and no element a reader can
 //      follow — no `<a>`, no `<button>`. That state is not the checkout's own any more, so
 //      the case builds it in a copy of the repository: the refusal stays alive without the
 //      site claiming the console is unreleased (D95, Global Constraint 9).
-//   3. **The page renders its data file and types nothing of its own.** Every sentence in
+//   4. **The page renders its data file and types nothing of its own.** Every sentence in
 //      the built page's article appears in `website/content/downloads.json` — the
 //      mechanical form of the rule this site is written to, "a page renders a fact; it
 //      never restates one" (F37, Global Constraint 6).
-//   4. **Every claim is traceable to a decision.** Each sentence in the data file names the
+//   5. **Every claim is traceable to a decision.** Each sentence in the data file names the
 //      document it came from, that document is in this repository, and every decision id
 //      the source names is a decision that document actually carries (W1.6 step 3) — so a
 //      claim about the console cannot be written without provenance.
-//   5. **The rule the Go test enforces over the tree is wired into the build.** A download
+//   6. **The rule the Go test enforces over the tree is wired into the build.** A download
 //      URL in the data file fails the build here, naming the file, in either state: the
 //      URL is derived from the release's published names and is never written down
 //      (Global Constraint 9).
-//   6. **A checksum the release does not publish fails the build.** The data file's `sha256`
+//   7. **A checksum the release does not publish fails the build.** The data file's `sha256`
 //      values are held to the release's own `console-sha256sums.txt` (copied verbatim into
 //      `website/data/`), so a wrong value is a red build rather than a page printing a
 //      number no reader's download can match — and the case plants a well-formed wrong one,
@@ -66,6 +71,7 @@ import {
   publishedDownloads,
   releaseSums,
   repoFile,
+  servedName,
   workflowAssetRule,
   workflowTagPrefix,
   workflowTagShape,
@@ -675,6 +681,53 @@ test('with the console released, the section renders the downloads the release p
     !page.includes(downloadsData().not_released.text),
     'the section still renders the not-released sentence with the console released',
   )
+})
+
+test('the links carry the name the release serves, not the name the build wrote', async (t) => {
+  // The bug this case exists for is the one no other check here could see, because every one of
+  // them was anchored to a document in this repository: the release's own `console-sha256sums.txt`
+  // and `console/README.md` both spell the artifacts with a space, GitHub serves them with a dot,
+  // and a build that pasted the release's spelling into the URL wrote
+  // `.../Fugaro%20Console-0.8.7-universal.dmg` — a 404 for every reader, with the checksum
+  // verification command failing beside it. So this case is about the SERVED name, and the two
+  // halves of it are the same fact: the href's last segment is the served name, and no href
+  // carries an encoded space at all.
+  const built = buildWith(t, () => {})
+  const page = decode(builtPage(built))
+
+  const hrefs = [...downloadsSection(page).matchAll(/<a[^>]*href="([^"]+)"/g)].map((match) => match[1])
+  assert.ok(hrefs.length >= 2, `the section renders ${hrefs.length} link(s), which is too few to prove the naming rule`)
+
+  for (const [index, download] of publishedDownloads().entries()) {
+    // `assertReleaseURL` holds the whole URL to the release's facts, the served name included;
+    // these two assertions are the ones whose failure message names the bug rather than the
+    // part, so a regression reads as what it is.
+    assertReleaseURL(hrefs[index], download.name)
+    assert.ok(
+      hrefs[index].endsWith(`/${download.name}`),
+      `the link ${hrefs[index]} does not end in ${JSON.stringify(download.name)}, the name the release serves; the release's own files spell that asset ${JSON.stringify(download.releaseName)}, and a link spelled that way is a 404`,
+    )
+    assert.equal(
+      /%20/i.exec(hrefs[index]),
+      null,
+      `the link ${hrefs[index]} carries an encoded space: the release serves a space in an asset's name as a dot, so this href is a 404 for every reader who follows it`,
+    )
+  }
+
+  // And the served name is a real transformation of the release's own, not a second name the
+  // test invented: the two differ only by GitHub's rewrite of a space.
+  for (const download of publishedDownloads()) {
+    assert.notEqual(
+      download.name,
+      download.releaseName,
+      `${download.releaseName} and its served form are the same string, so this case would pass on a build that never applied the rule at all`,
+    )
+    assert.equal(
+      servedName(download.releaseName),
+      download.name,
+      `${download.releaseName}'s served form is not ${JSON.stringify(download.name)}`,
+    )
+  }
 })
 
 test('the page states nothing its data file does not carry', async (t) => {

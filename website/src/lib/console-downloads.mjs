@@ -38,6 +38,18 @@
 // a page that prints a number nothing can match: the cross-check is the release's, and a
 // value that disagrees with it is refused by name.
 //
+// **And the name a reader's link carries is not the name the release's own files print.** GitHub
+// rewrites a space in an uploaded asset's name to a dot: the build writes
+// `Fugaro Console-0.8.7-universal.dmg` on the runner, the release's sums file and its
+// verification record both print that name, and the release page serves the file as
+// `Fugaro.Console-0.8.7-universal.dmg`. So the data file carries the *release's* name — the one
+// its own sums file lists, which is what the checksum above is keyed by — and the URL's last
+// segment is derived from it by `publishedName` below. This is the one fact about the console's
+// release that nothing in this tree can record, because the rename happens after the artifacts
+// leave the runner; it is stated once, there, and confirmed against the published release by the
+// owner's live check (`docs/gcp-live-checklist.md`, check 69a). Getting it wrong is not a
+// cosmetic bug: a link spelled with the build's own name is a 404 for every reader.
+//
 // Standard library only, and no network: this module is imported by the build, and it
 // fetches nothing (Global Constraints 4 and 8).
 
@@ -56,6 +68,26 @@ export const SUMS_FILE = 'website/data/console-sha256sums.txt'
 
 /** The placeholder an asset's `file` carries where the release's version goes. */
 const VERSION_PLACEHOLDER = '{version}'
+
+/**
+ * The name the release serves an asset under, which is the name the URL's last segment has to
+ * carry: GitHub rewrites a space in an uploaded asset's name to a dot, so the file the build
+ * writes as `Fugaro Console-0.8.7-universal.dmg` — the name the release's own
+ * `console-sha256sums.txt` and `console-verification.txt` print — is served, and linked to, as
+ * `Fugaro.Console-0.8.7-universal.dmg`.
+ *
+ * This is the whole of the rule, and it is stated here rather than read from anywhere because
+ * nothing in this tree can carry it: the rename happens on GitHub, after the artifacts leave the
+ * runner, so no document, workflow or checksum list in the repository records it. It was
+ * confirmed against the published `console-v0.8.7` release (2026-10-19: the release's own asset
+ * list carries the dotted names, the dotted URL answers 200 and the `%20` one 404), and the
+ * owner's live check re-confirms it — `docs/gcp-live-checklist.md` check 69a follows every URL
+ * the pages carry. A link that skipped this step is a 404 for every reader, which is what
+ * `website/test/console.mjs` refuses.
+ */
+function publishedName(file) {
+  return file.split(' ').join('.')
+}
 
 /**
  * A build error naming the data file, the way `content.ts` names the file it refused: the
@@ -141,9 +173,9 @@ function asClaim(value, what) {
 }
 
 /**
- * The published name of one asset, with the release's version substituted, and the URL a
- * reader downloads it from — composed from the site's own repository, the release's tag and
- * the published name, and never written down (see the header).
+ * The URL a reader downloads one asset from — composed from the site's own repository, the
+ * release's tag and the name the release SERVES the asset under, and never written down (see
+ * the header and `publishedName`).
  */
 function downloadURL(repository, tag, file) {
   const base = repository.replace(/\/+$/, '')
@@ -360,6 +392,10 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
           'W3.1',
         )
       }
+      // The release's own name is the sums file's key; the name a reader's link carries is the
+      // one GitHub serves, and the one step between them is `publishedName` (its comment has
+      // the rule and the evidence for it).
+      const served = publishedName(published)
       return {
         id: asText(map.id, `downloads[${index}].id`),
         platform,
@@ -368,8 +404,11 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
         // two assets of one platform — the disk image and the archive — are told apart
         // without a second fact to keep in step with the file name.
         label: `${platform} ${path.extname(published)}`,
-        file: published,
-        url: downloadURL(repository, release.tag, published),
+        // The name the release SERVES, which is the URL's last segment and the name a reader's
+        // browser saves the file as: the data file carries the release's own name, and
+        // `publishedName` is the one step between the two.
+        file: served,
+        url: downloadURL(repository, release.tag, served),
       }
     })
   })()

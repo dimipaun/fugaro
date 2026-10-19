@@ -30,8 +30,8 @@
 // 1,515 bytes the site's own build moves with the checkout's git state: the changelog renders
 // each release file's "not yet released" state where `git tag --list` finds no tag
 // (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
-// deployed site's — builds 846,555 bytes where this repository's own clone, which carries the
-// tags, builds 845,040.
+// deployed site's — builds 846,589 bytes where this repository's own clone, which carries the
+// tags, builds 845,074.
 //
 //   - JavaScript per page: 49,724 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
@@ -66,7 +66,7 @@
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,058,194 bytes. Every file in `dist/` on that build summed to 846,555
+//   - Whole site: 1,058,237 bytes. Every file in `dist/` on that build summed to 846,589
 //     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
 //     × 1.25, rounded up. **It is the build with no tags** — the one the gates make, and the
 //     one the deployed site is — and the changelog page's own "not yet released" labels are
@@ -85,7 +85,7 @@
 //     grew by those 44 bytes and the homepage did not, the declarations having left one of its
 //     own rules for the base one: 440 bytes onto the site figure and 44 onto the page weight,
 //     which is derived from the heaviest page — the docs hub — and that page carries the same
-//     inlined rule. **And the round that turned the flag on moved the site figure up by 1,452
+//     inlined rule. **And the round that turned the flag on moved the site figure up by 1,486
 //     bytes**: the console's release turned `features.console_downloads` on, which puts the
 //     console page's downloads section — each artifact's published name as a link, the SHA-256
 //     the release recorded for its bytes beside it, and the command that checks a download
@@ -548,7 +548,10 @@ test('the README budget lines are read strictly', () => {
 // site was in before the console's release, which the checkout no longer builds — and runs the
 // artifact gates over that copy, so the flags' two states are both held to the ceilings. A
 // derivation held to that copy would be the flag's own bytes rather than the site's: measured on
-// this build, **1,452 bytes** at the site figure and nothing at all at the page weight. The
+// this build, **1,486 bytes smaller** at the site figure — 845,103 against the 846,589 below —
+// and nothing at all at the page weight. The direction is the flag's own: turning
+// `features.console_downloads` on added those bytes, so the copy that flips it back off is the
+// smaller build. The
 // checkout's own `dist/` is the other artifact the numbers may not name, because its git state
 // moves it by 1,515 bytes (the changelog's "not yet released" labels, above). What is left is the
 // gates' own build: a copy of the repository with no `.git`, made by `test/lib/build.mjs`'s
@@ -593,15 +596,17 @@ export function derivationFailures(readme, measured) {
  * build with the console's flag flipped off, the state the checkout no longer builds — is a
  * DIFFERENT build rather than another copy of this one: flipping `features.console_downloads`
  * adds the console page's downloads section and the console option's markup on Getting Started,
- * measured at 1,452 bytes on that copy's site figure. The derivation is not held to it.
+ * measured at 1,486 bytes on that copy's site figure — and it is the SMALLER of the two, since
+ * the copy is the flag-off state and this build is the flag-on one. The derivation is not held to
+ * it.
  *
  * Nor is it held to `website/dist`, which `npm run check` builds first — and that is the
  * correction this reading carries (2026-10-19). `dist/` is the site built from the checkout the
  * gates are running in, and one page of the site depends on that checkout's git state: the
  * changelog renders each release file's "not yet released" state where `git tag --list` finds no
  * tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the same commit
- * builds to two different site figures — 846,555 bytes in a checkout with no tags, which is what
- * `.github/workflows/website-preview.yml`'s default checkout is, and 845,040 with the tags this
+ * builds to two different site figures — 846,589 bytes in a checkout with no tags, which is what
+ * `.github/workflows/website-preview.yml`'s default checkout is, and 845,074 with the tags this
  * repository's own clone carries, the 1,515-byte changelog page being the whole of the
  * difference. A README figure derived from either one is a figure the other environment refuses,
  * which is exactly what happened: `website-preview` could not deploy, because the derivation

@@ -170,10 +170,34 @@ export function publishedAssets(data = downloadsData()) {
 }
 
 /**
+ * The name the release SERVES an asset under, which is the name a reader's link carries and the
+ * name the browser saves the file as: GitHub rewrites a space in an uploaded asset's name to a
+ * dot, so the build's `Fugaro Console-0.8.7-universal.dmg` — the name `console/README.md`
+ * documents and the name the release's own `console-sha256sums.txt` lists — is served as
+ * `Fugaro.Console-0.8.7-universal.dmg`.
+ *
+ * It is written out again here rather than imported from `src/lib/console-downloads.mjs` on
+ * purpose, and this is the one place in this file where a second spelling is the point: a test
+ * that asked the build what name it thought it had used would agree with the build even when the
+ * build was wrong, and a link that skipped this step is a 404 for every reader — which is exactly
+ * what happened once, with the space spelled `%20` in every href. The rule cannot be read out of
+ * this tree (the rename happens on GitHub, after the artifacts leave the runner) and the release
+ * is where it was confirmed, so `console.mjs` asserts the hrefs carry these names and check 69a
+ * is what re-confirms it against the published release.
+ */
+export function servedName(name) {
+  return name.split(' ').join('.')
+}
+
+/**
  * What a page should render when the console has shipped: one entry per asset in the data file,
  * paired in order with the release's documented names. The label is the platform the data file
- * states and the extension of the **documented** name, so a label that disagrees with the
- * release disagrees with the test rather than with a copy of the build.
+ * states and the extension of the **served** name, so a label that disagrees with the release
+ * disagrees with the test rather than with a copy of the build.
+ *
+ * `name` is the served name, because that is what the href's last segment must carry; the
+ * release's own name is `releaseName`, which is what the data file and the release's sums file
+ * spell.
  *
  * There is deliberately no `url` here: `assertReleaseURL` below holds the href the page
  * rendered to the release's facts one part at a time, which is the only way a test can see a bug
@@ -187,10 +211,12 @@ export function publishedDownloads(data = downloadsData()) {
     )
   }
   return data.downloads.map((entry, index) => {
-    const name = names[index]
+    const releaseName = names[index]
+    const name = servedName(releaseName)
     return {
       id: entry.id,
       platform: entry.platform,
+      releaseName,
       name,
       label: `${entry.platform} ${name.slice(name.lastIndexOf('.'))}`,
     }
@@ -200,15 +226,26 @@ export function publishedDownloads(data = downloadsData()) {
 /**
  * Hold a rendered href to the release it must come from, part by part: the origin of the
  * repository `site.yaml` links, the release-download path under it, the console's tag, and the
- * asset's documented name — percent-encoded, because the href a reader clicks is a URL.
+ * asset's **served** name (`servedName`) — percent-encoded, because the href a reader clicks is
+ * a URL.
  *
  * Each part is asserted against the fact it comes from (`site.yaml`'s `repository`, the tag the
- * release is cut as, `console/README.md`'s name) rather than against a URL composed here, and
- * the encoding is read off the **raw** string: `new URL()` normalizes what it is handed — a
- * space in a path becomes `%20` once parsed — so only the href as written says whether the build
- * composed a URL or pasted a name into one.
+ * release is cut as, the served form of `console/README.md`'s name) rather than against a URL
+ * composed here, and the encoding is read off the **raw** string: `new URL()` normalizes what it
+ * is handed — a space in a path becomes `%20` once parsed — so only the href as written says
+ * whether the build composed a URL or pasted a name into one. That is also why the space is
+ * refused off the raw string above: normalized, the two spellings are indistinguishable.
  */
 export function assertReleaseURL(actual, name, data = downloadsData()) {
+  // The space bug, named before anything else: the release's own files spell the assets with a
+  // space and the release SERVES them with a dot, so a build that pasted the release's name
+  // into the URL writes `%20` and every reader's download 404s. The check below would catch it
+  // too (the name it is handed has no space), and this is the message that says why.
+  assert.equal(
+    /%20/i.exec(actual),
+    null,
+    `${actual} carries an encoded space, and the release serves a space in an asset's name as a dot: a link spelled with the name the build wrote is a 404 for every reader (see servedName)`,
+  )
   let url
   try {
     url = new URL(actual)

@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **846,555 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **846,589 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **845,040 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **845,074 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -162,10 +162,13 @@ added or removed without this sentence moving fails there:
     "not yet released" labels, which a checkout with no tags prints for every release file;
   - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
     flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
-    moves the **site figure by 1,452 bytes**, the console page's downloads section (each
-    artifact's checksum beside its link, and the verification command) plus the console option's
-    own markup on Getting Started, and moves the **page weight not at all**: the heaviest page is
-    the docs hub, which renders no install option and no download;
+    moves the **site figure up by 1,486 bytes**, from 845,103 with the flag off to 846,589 with
+    it on: the console page's downloads section (each artifact's checksum beside its link, and
+    the verification command) plus the console option's own markup on Getting Started. It moves
+    the **page weight not at all**: the heaviest page is the docs hub, which renders no install
+    option and no download. The copy the gates build of the unreleased state is therefore the
+    smaller of the two, and that is the direction a reader of this list needs: the flag's round
+    is the one that added the bytes;
   - the script and the pages that follow are the figures' own subject, and each moved them in
     the commit that shipped it (D192).
 
@@ -240,7 +243,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,001,607 bytes. Three times 333,869: the heaviest page, the
     docs hub, at 267,095 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,174,582 bytes. Three times 1,058,194 (every file in `dist/`, 846,555
+  - **Whole site:** 3,174,711 bytes. Three times 1,058,237 (every file in `dist/`, 846,589
     bytes across 21 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 

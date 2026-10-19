@@ -6,12 +6,11 @@
 // and the desktop console, whose downloads a reader can reach without leaving the page. The
 // acceptance is exactly that: "from Getting Started a user can install either the CLI or the
 // console without leaving the page" — and, while `features.console_downloads` is false, that
-// the console option offers nothing to download at all.
+// the console option offers nothing to download at all. This checkout ships the flag TRUE (the
+// console's `console-v0.8.7` release turned it on), so the unreleased state is one the cases
+// below build a copy of the repository into rather than the state `npm run check` builds.
 //
-// Five things are checked here, and the last three build a copy of the site with the flag
-// FLIPPED, because the state the owner's flip produces is not the state `npm run check`
-// builds: a gate that only ever saw the flag-off page would say nothing about the day the
-// console ships.
+// Five things are checked here:
 //
 //   1. **Two options, CLI first.** `#install` holds a `cli` option and a `console` option, in
 //      that order — the order the stacked layout renders at 390 px — and the CLI option is
@@ -21,18 +20,20 @@
 //   2. **The unreleased console offers nothing.** No `releases/download/` URL anywhere on the
 //      page, and inside the console option exactly one link — the way to `/console/` — and no
 //      button. This is the rule the Go boundary test enforces over the whole tree while the
-//      flag is false (Global Constraint 9), read off the page a reader gets.
+//      flag is false (Global Constraint 9), read off the page a reader gets — and the page is
+//      the flag-off one this case builds, because that is the state the rule is about.
 //   3. **The released console offers the release's own assets.** With `site.yaml`'s flag and
-//      the data file's `available` both true, the option renders one link per published asset
-//      of `console-vX.Y.Z`, at the URL derived from the repository, the tag and the published
-//      name — the same URLs the console page's section renders, from the same reader — and
-//      the CLI option is untouched. That last part is the point of deriving the URLs: the
-//      flip is the whole change, so it must not move anything else.
-//   4. **The flag-on build passes the gates that read the artifact.** The two-option page is
-//      eight words longer than the one-option page, and Getting Started sits close to D188's
-//      250-word ceiling, so the budget gate is run over the flag-on build rather than assumed:
-//      the owner's flip is a one-line change, and it may not be the change that breaks the
-//      ceiling.
+//      the data file's `available` both true — the state this checkout ships, so the build is
+//      the copy with nothing mutated — the option renders one link per published asset of
+//      `console-vX.Y.Z`, at the URL derived from the repository, the tag and the name the
+//      release serves — the same URLs the console page's section renders, from the same
+//      reader — and the CLI option is untouched. That last part is the point of deriving the
+//      URLs: the flip is the whole change, so it must not move anything else.
+//   4. **The unreleased build passes the gates that read the artifact.** The flag adds the
+//      option's own markup and words to a page that sits close to D188's 250-word ceiling, so
+//      the artifact gates are run over the flag-off build rather than assumed: the state the
+//      site was in before the console's release is held to the same ceilings, and a change
+//      that fits only one of the two states is a change that breaks the other.
 //   5. **A flag and an `available` that disagree stop the build.** Whichever way round they
 //      disagree — the data file claiming the console shipped under a flag that says it has
 //      not, or a flag that has promised a release under a data file that still says there is
@@ -41,8 +42,9 @@
 //
 // The page is read through the same HTML reader the other gates use (`lib/html.mjs`), and the
 // console's facts through `lib/console-downloads.mjs`, so this file carries no second spelling
-// of a URL. The flag-on builds happen in a copy of the repository in a temp directory
-// (`lib/build.mjs`, the shape `console.mjs` and `origins.mjs` use) and are network-free.
+// of a URL. The builds of the unreleased state — and of the flag/`available` disagreement —
+// happen in a copy of the repository in a temp directory (`lib/build.mjs`, the shape
+// `console.mjs` and `origins.mjs` use) and are network-free.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
