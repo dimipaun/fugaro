@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -59,19 +60,19 @@ var check67aGuard = []string{
 
 var check67bGuard = []string{
 	"# === Check 67b: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every",
-	"# step (1 to 5, and the Restore). It is idempotent, and nothing below the",
+	"# step (1 to 6, and the Restore). It is idempotent, and nothing below the",
 	"# three hard stops runs unless all three pass. ===",
 	"P=fugaro-dev                 # HARD-CODED, and never read from gcloud: the sandbox installation's GCP project",
 	"F=fugaro-managed             # this check's throwaway managed installation, created by Check 67a's step 1",
 	"M=fugaro-chk67               # the managed project Check 67a created: the OLD project, destroyed in step 1 here",
-	"N=fugaro-chk67b              # the NEW project ID this restore creates: it MUST NOT exist before step 3",
+	"N=fugaro-chk67b              # the NEW project ID this restore creates: it MUST NOT exist before step 4",
 	"E=                           # an EXISTING GCP project ID you may read and this check does NOT own: not $P, not $M, not $N. Step 2 presents it to watch the restore refuse to ADOPT a project (any other scratch project of your own will do)",
 	"L=us-east5                   # the installation's region",
 	"R=edgeappinc/fugarosandbox   # the sandbox repository, owner/name: the only repository this check touches",
 	"ACCOUNT_ID=                  # the SANDBOX installation's billing account ID, no BILLING_ prefix: the new project is created under it",
 	"AMOUNT=                      # the monthly amount for the new managed project, a number",
-	"TERRAFORM_ADDRESS=           # ONE resource address out of a real plan, in terraform's own form: the single address fugaro allow-delete is given in step 4",
-	"SANDBOX=$(git rev-parse --show-toplevel)   # the sandbox checkout this block is being re-run IN: the only directory where the three stops below hold, and the directory step 5 returns to",
+	"TERRAFORM_ADDRESS=           # ONE resource address out of a real plan, in terraform's own form: the single address fugaro allow-delete is given in step 5",
+	"SANDBOX=$(git rev-parse --show-toplevel)   # the sandbox checkout this block is being re-run IN: the only directory where the three stops below hold, and the directory step 6 returns to",
 	"",
 	"# ${VAR:?} everywhere: an empty variable is a hard error, never an empty",
 	"# argument that gcloud would resolve from its ambient configuration. No",
@@ -636,9 +637,10 @@ func TestChecklistHasCheck67b(t *testing.T) {
 	for _, tag := range []string{
 		"**(1) Destroy the managed project** — **once per installation.**",
 		"**(2) Two existing project IDs, and the two different refusals they earn** — **once per repo checkout.**",
-		"**(3) The restore itself** — **once per installation.**",
-		"**(4) The new project is managed, and the delete list is genuinely gone** — **once per repo checkout.**",
-		"**(5) No state read happened** — **once per repo checkout.**",
+		"**(3) The root moves to the new project before the restore applies it** — **once per repo checkout, in the managed checkout.**",
+		"**(4) The restore itself** — **once per installation.**",
+		"**(5) The new project is managed, and the delete list is genuinely gone** — **once per repo checkout.**",
+		"**(6) No state read happened** — **once per repo checkout.**",
 		"**Restore — once per installation, and it deletes only what this check created.**",
 	} {
 		if !strings.Contains(section, tag) {
@@ -702,7 +704,7 @@ func TestChecklistHasCheck67b(t *testing.T) {
 	// fugaro/allow-delete.json is the one line in the section that can approve
 	// a delete in the new project.
 	if !strings.Contains(section, `fugaro allow-delete ${TERRAFORM_ADDRESS:?} --project "${F:?}"   # ⚠ CONFIRM`) {
-		t.Error("Check 67b's step 4 writes the owner's delete list without its ⚠ CONFIRM")
+		t.Error("Check 67b's step 5 writes the owner's delete list without its ⚠ CONFIRM")
 	}
 	// Every step names the directory it runs from, and the guard block's own
 	// stops are only re-runnable in the sandbox checkout — so a step that acts
@@ -733,7 +735,7 @@ func TestChecklistHasCheck67b(t *testing.T) {
 	// back — a section that expects a delete it never authors cannot run.
 	if !strings.Contains(section, "mv ./managed-root/account.tf /tmp/chk67-root-account.tf") ||
 		!strings.Contains(section, "mv /tmp/chk67-root-account.tf ./managed-root/account.tf") {
-		t.Error("Check 67b's step 4 expects a plan with a delete without any step removing a resource from the root")
+		t.Error("Check 67b's step 5 expects a plan with a delete without any step removing a resource from the root")
 	}
 	// No step of this check may name the sandbox installation's project in a
 	// creating command: the only IDs a restore is ever pointed at here are the
@@ -1478,4 +1480,217 @@ func declaredLine(t *testing.T, file, signature string) string {
 	}
 	t.Fatalf("%s no longer declares %s: the citation this test checks against has moved or gone", file, signature)
 	return ""
+}
+
+// TestChecklist67aDirectoryRuleMatchesItsSteps is the review's finding against
+// Check 67a's Method paragraph: the paragraph is the normative statement of
+// which directory each step runs from, and it listed step 9 among the steps
+// that act in /tmp/chk67-managed — while step 9's own block opens with
+// `cd "${SANDBOX:?}"` and its heading says "once per repo checkout", exactly
+// like steps 5 and 8. A reader who trusts the paragraph runs step 9 where its
+// own guard block cannot be re-run. The paragraph is pinned as the sentence it
+// has to be, and the sentence is pinned against the steps below it: each
+// step's first `cd` decides which side it is on, and the two sets are pinned.
+func TestChecklist67aDirectoryRuleMatchesItsSteps(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 67a:")
+
+	const clause = "steps 2 to 4, 6 and 7 in `/tmp/chk67-managed`, and steps 5, 8 and 9 back in the sandbox checkout"
+	if !strings.Contains(section, clause) {
+		t.Errorf("Check 67a's Method does not state the directory rule as %q, so the paragraph and the steps below it can disagree", clause)
+	}
+
+	// Where each step's own block actually starts: the first `cd` in the
+	// step's own bash. The guard block is the first fenced block of the
+	// section and belongs to no step, so the blocks are read step by step off
+	// the `**(N) ` headings.
+	where := map[string]int{} // step heading number -> 1 managed, 0 sandbox
+	for _, part := range strings.Split(section, "\n**(")[1:] {
+		head, body, ok := strings.Cut(part, "\n")
+		if !ok {
+			continue
+		}
+		n, _, ok := strings.Cut(head, ")")
+		if !ok {
+			continue
+		}
+		if _, err := strconv.Atoi(n); err != nil {
+			continue
+		}
+		for _, block := range bashBlocks(body) {
+			if got := firstCD(block); got != "" {
+				switch got {
+				case `cd "${SANDBOX:?}"`:
+					where[n] = 0
+				case "cd /tmp/chk67-managed":
+					where[n] = 1
+				}
+				break
+			}
+		}
+	}
+	// Step 1 is its own case and the paragraph says so separately -- it starts
+	// in the sandbox checkout and ends in the clone it makes -- so the rule
+	// derived here covers steps 2 to 9.
+	if !strings.Contains(section, "step 1 acts in the managed checkout it clones below") {
+		t.Error("Check 67a's Method no longer gives step 1 its own clause, and step 1 is the one step that moves between the two directories")
+	}
+	var sandbox, managed []string
+	for _, n := range []string{"2", "3", "4", "5", "6", "7", "8", "9"} {
+		switch where[n] {
+		case 0:
+			sandbox = append(sandbox, n)
+		case 1:
+			managed = append(managed, n)
+		default:
+			t.Errorf("Check 67a's step %s names no directory in its first command", n)
+		}
+	}
+	if got, want := strings.Join(sandbox, ","), "5,8,9"; got != want {
+		t.Errorf("Check 67a's steps that run in the sandbox checkout are %s, and the Method's rule has to say so (want %s)", got, want)
+	}
+	if got, want := strings.Join(managed, ","), "2,3,4,6,7"; got != want {
+		t.Errorf("Check 67a's steps that run in the managed checkout are %s, and the Method's rule has to say so (want %s)", got, want)
+	}
+}
+
+// firstCD is the first line of block that is a `cd`, with its trailing
+// comment stripped: a step's own block says where it runs on that line.
+func firstCD(block []string) string {
+	for _, line := range logicalCommands(block) {
+		if strings.HasPrefix(line, "cd ") {
+			if c := strings.Index(line, " #"); c >= 0 {
+				line = strings.TrimSpace(line[:c])
+			}
+			return line
+		}
+	}
+	return ""
+}
+
+// TestChecklistHasCheck67bRootMovesToTheNewProject is the review's major
+// finding: 67a step 2 authors ./managed-root with the project written out, and
+// the literal it writes is the OLD project's. The restore's last act is a
+// managed apply — the same managedApply `fugaro managed apply` runs — and the
+// gate it builds its cover from names the config the restore has just moved,
+// so a root still naming the old project is refused by the gate's own project
+// rule before anything is applied: step 3's from-zero FACT never happens, and
+// step 4's expected delete refusal is masked by this one. The step that
+// rewrites the two files is pinned here, together with the code that makes it
+// necessary — a doc step and the refusal it exists to avoid have to move
+// together.
+func TestChecklistHasCheck67bRootMovesToTheNewProject(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 67b:")
+
+	const heading = "**(3) The root moves to the new project before the restore applies it** — **once per repo checkout"
+	if !strings.Contains(section, heading) {
+		t.Fatalf("Check 67b has no step 3 that moves the root to the new project, so its restore applies a root naming the old one")
+	}
+	// The step is 3 and the restore is 4: the rewrite has to be before the
+	// command whose apply reads it.
+	if strings.Index(section, heading) > strings.Index(section, "**(4) The restore itself**") {
+		t.Error("Check 67b's root rewrite comes after the restore, whose apply is what reads it")
+	}
+	rootMove := docSection(t, path, section, heading)
+	for _, want := range []string{
+		// both files, and the literal, in the portable form 67a step 2 uses.
+		`sed -e 's/project *= *"'"${M:?}"'"/project = "'"${N:?}"'"/' ./managed-root/main.tf`,
+		`sed -e 's/project *= *"'"${M:?}"'"/project = "'"${N:?}"'"/' ./managed-root/account.tf`,
+		"NOT `sed -i`",
+		"terraform -chdir=./managed-root fmt -check",
+		// The edits do not show up in a `git diff`: nothing commits the root.
+		"git status --porcelain ./managed-root",
+		"UNTRACKED",
+		"step 4's `git diff` still shows only",
+	} {
+		if !strings.Contains(rootMove, want) {
+			t.Errorf("Check 67b's root rewrite does not carry %q", want)
+		}
+	}
+	if strings.Contains(rootMove, "cd -") {
+		t.Error("Check 67b's root rewrite returns with `cd -`")
+	}
+
+	// The code the step exists for: the gate names the cover's project, and
+	// the cover is the config's own project — which the restore has moved by
+	// the time the apply runs. The refusal the step quotes has to be the
+	// string the gate prints, not a paraphrase.
+	coverSrc, err := os.ReadFile("managed_apply.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(coverSrc), "Projects: []string{lc.GCPProject}") {
+		t.Error("managedApply no longer builds its cover from the selected config's project: Check 67b's root rewrite may no longer be what the gate reads")
+	}
+	gatesrc, err := os.ReadFile("../../internal/infra/tf/managed_cover.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gatesrc), `", which is not this run's)"`) {
+		t.Error("the gate no longer refuses a provider project that is not this run's, which is the refusal Check 67b's root rewrite avoids")
+	}
+	if !strings.Contains(rootMove, `which is not this run's`) {
+		t.Error("Check 67b's root rewrite does not name the refusal it exists to avoid")
+	}
+	restoreSrc, err := os.ReadFile("restore.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(restoreSrc), "restoreManagedApply = managedApply") {
+		t.Error("the restore's final apply is no longer managedApply, so Check 67b's root rewrite and this test's premise need re-reading")
+	}
+}
+
+// TestChecklistHasCheck67bMissingSecretColumnIsReadNotPrinted is the review's
+// third finding: step 3 listed the missing-secret column among the FACT lines
+// "in the order the command prints them", and `fugaro restore` prints no such
+// column — MISSING belongs to `fugaro secrets ls --repo`, and the creating
+// path the restore runs prints none. A person following the step would write
+// down a FACT the command never printed. The column is now a read of its own,
+// named as one, and the "prints them" list is pinned not to carry it.
+func TestChecklistHasCheck67bMissingSecretColumnIsReadNotPrinted(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 67b:")
+
+	const marker = "**FACT lines, in the order the command prints them:**"
+	idx := strings.Index(section, marker)
+	if idx < 0 {
+		t.Fatalf("Check 67b's restore no longer lists its FACT lines as what the command prints")
+	}
+	printed := section[idx:]
+	if next := strings.Index(printed[len(marker):], "\n\n"); next >= 0 {
+		printed = printed[:len(marker)+next]
+	}
+	for _, bad := range []string{"missing-secret", "MISSING"} {
+		if strings.Contains(printed, bad) {
+			t.Errorf("Check 67b lists %q among the FACT lines the restore prints, and the restore prints no missing-secret column", bad)
+		}
+	}
+	// Where the column is read instead, as a command, after the restore.
+	if !strings.Contains(section, `fugaro secrets ls --project "${F:?}" --repo`) {
+		t.Error("Check 67b does not name the read that carries the missing-secret column")
+	}
+	if !strings.Contains(section, "not printed by the restore") {
+		t.Error("Check 67b does not say the missing-secret column is not printed by the restore")
+	}
+	// And the code's half: the column is the --repo listing's, and no restore
+	// report prints one.
+	secSrc, err := os.ReadFile("secrets.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(secSrc), `"NAME\tSECRET\tSCOPE\tMISSING\tLATEST\tVERSIONS\tCREATED\tLABELS"`) {
+		t.Error("the MISSING column is no longer the --repo listing's header, so the doc's read names the wrong command")
+	}
+	restoreSrc, err := os.ReadFile("restore.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(restoreSrc), "MISSING") {
+		t.Error("the restore now prints a MISSING column, so Check 67b may list it as printed again")
+	}
 }
