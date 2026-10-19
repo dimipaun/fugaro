@@ -1223,7 +1223,7 @@ and each later task appends its own file in the same commit that creates it:
 
 | Task | Creates | `THEME_STYLESHEETS` after it |
 |---|---|---|
-| 6.1 | `tokens.css`, `palette.css` | *(no list yet — nothing reads the directory)* |
+| 6.1 | `tokens.css`, `palette.css` | *(no list yet — nothing reads the directory at this stage; Task 6.2 is the row below)* |
 | 6.2 | the bundler step itself | `tokens.css`, `palette.css` |
 | 6.3 | `base.css` | `tokens.css`, `palette.css`, `base.css` |
 | 6.4 | `screens.css` | `tokens.css`, `palette.css`, `base.css`, `screens.css` |

@@ -33,7 +33,12 @@
 //   - an attribute write (`setAttribute`, `dataset`, `title`, `className`, `id`)
 //     carries a constant shape or an entry on `ATTRIBUTE_VOCABULARY`;
 //   - an entry can be scoped to one function's body (`within`), so the `note`
-//     helper's own parameter is allowed there and nowhere else.
+//     helper's own parameter is allowed there and nowhere else;
+//   - **no module under `src/renderer` writes an inline style** (Task 6.2): the
+//     `.style` property in any spelling, computed keys included, and
+//     `setAttribute('style', ...)` are offences with no vocabulary behind them,
+//     because `style-src 'self'` backs no inline style at all. That block reads
+//     the whole `src/renderer` tree rather than the screens, and says so.
 //
 // **The spellings the second scan is closed against**, named here because they
 // are the review of Task 2.3's finding and each one was a way past the first
@@ -64,6 +69,14 @@ const SCREENS = join(__dirname, '..', '..', 'src', 'renderer', 'screens')
  * drawer (`version.ts`), and a module added there with a `literal` of its own
  * would be a place this scan exists for. */
 const SHARED = join(__dirname, '..', '..', 'src', 'shared')
+
+/** RENDERER is the whole renderer tree. The `literal` scan above reads the
+ * screens and the shared modules, because those are the files that draw text;
+ * the inline-style scan below reads **every** module under `src/renderer`,
+ * because a `.style` write is an offence wherever it is written -- a helper
+ * outside `screens/` is a module the screens call, and a scan that read only the
+ * screens would let one arrive there (Task 6.2; design section 5.5). */
+const RENDERER = join(__dirname, '..', '..', 'src', 'renderer')
 
 /** SINKS are the functions whose argument is written to the screen unsanitized,
  * with the index of that argument. `note` is `projects.ts`'s wrapper around
@@ -481,6 +494,63 @@ const OBJECT_WRITE = /(?<![\w$.])(?:Object\s*\.\s*(?:assign|defineProperty|defin
  * local of the same name is not this. */
 const ATTRIBUTE_NAME = /\.setAttribute\b/g
 
+/**
+ * STYLE_PROPERTY is the element's `style` property, read or written, in any of
+ * the spellings a module can reach it by: `.style.color = x`, `.style = {...}`,
+ * `.style.setProperty(...)`, `el.style` handed on, and the **computed key**
+ * (`el['style']`, ``el[`style`]``), which is the spelling the `literal` scan
+ * above already treats as a way past a scan that reads names. **Every use of it
+ * is an offence**, which is the one scan in this file with no vocabulary behind
+ * it:
+ * `style-src 'self'` is the CSP's third directive and it allows no inline style
+ * at all, so there is no value a `style` write could hold that the policy backs.
+ * The theme travels as classes and as `data-*` attributes the stylesheet keys
+ * on, which is why `class` and `dataset` have vocabularies here and `style` has
+ * none.
+ */
+const STYLE_PROPERTY = /\.style\b/g
+
+/** STYLE_KEY is the same property reached by a **computed key** --
+ * `el['style']`, `el["style"]`, ``el[`style`]``. It is a second constant and not
+ * a second alternative in `STYLE_PROPERTY`, because the key IS a string: the
+ * scan below blanks strings before it reads, so the computed spelling is only
+ * visible in the code with its strings intact -- exactly as `COMPUTED_WRITE`
+ * reads it. */
+const STYLE_KEY = new RegExp(`\\[\\s*(?:'style'|"style"|\`style\`)\\s*\\]`, 'g')
+
+/** STYLE_ATTRIBUTE_NAME is the `style` attribute written by name, in the three
+ * quote styles: what `setAttribute('style', ...)` passes first, and the one
+ * attribute name this scan refuses whatever the value is. */
+const STYLE_ATTRIBUTE_NAME = /^(?:'style'|"style"|`style`)$/
+
+/** styleOffences lists every inline style a module writes, one line each: the
+ * `style` property in any spelling, and the `style` attribute by name. It is
+ * deliberately not a vocabulary: see `STYLE_PROPERTY`. */
+function styleOffences(file: string, source: string): string[] {
+  const code = blankComments(source)
+  const bare = blankComments(source, true)
+  const out: string[] = []
+  for (const match of bare.matchAll(STYLE_PROPERTY)) {
+    out.push(
+      `${file}:${String(lineOf(bare, match.index))} an inline style, which style-src 'self' does not back: ${match[0].trim()}`,
+    )
+  }
+  // Read out of `code` rather than `bare`: the key is a string, and blanking
+  // strings is what would hide it.
+  for (const match of code.matchAll(STYLE_KEY)) {
+    out.push(
+      `${file}:${String(lineOf(code, match.index))} an inline style written through a computed key, which style-src 'self' does not back: ${match[0].trim()}`,
+    )
+  }
+  for (const { at, args } of attributeCalls(bare, code)) {
+    if (!STYLE_ATTRIBUTE_NAME.test(args[0] ?? '')) continue
+    out.push(
+      `${file}:${String(lineOf(bare, at))} setAttribute(${args[0] ?? ''}, ...): an inline style, which style-src 'self' does not back`,
+    )
+  }
+  return out
+}
+
 /** referencesOf is every use of a sink's name that is not a call to it or its
  * declaration -- an alias, a destructuring, the sink passed as a value. Only
  * a sink the file declares is checked: `note` is a plain variable elsewhere. */
@@ -641,6 +711,15 @@ const SHARED_FILES: readonly string[] = Object.freeze(
 
 /** FILES is everything the scan reads: the screens, and the shared modules. */
 const FILES: readonly string[] = Object.freeze([...SCREEN_FILES, ...SHARED_FILES])
+
+/** RENDERER_FILES is every module under `src/renderer`, recursively, as a path
+ * relative to it. It is the reach of the inline-style scan, and it is a walk
+ * rather than a list of the two directories the screens live in for the reason
+ * `walkFiles` exists: a module in a directory nobody listed is a module nobody
+ * scanned. */
+const RENDERER_FILES: readonly string[] = Object.freeze(
+  walkFiles(RENDERER).sort((a, b) => a.localeCompare(b)),
+)
 
 /** SHARED_DRAWER is the shared module that draws today, kept as its own name
  * because the block below is about it. */
@@ -807,5 +886,94 @@ describe('the shared drawer that draws is held to the same rules', () => {
       .filter(([, mutant]) => offences(SHARED_DRAWER, mutant).length <= before)
       .map(([name]) => name)
     expect(missed, 'mutants the scan let through').toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// No module under `src/renderer` writes an inline style (Task 6.2; design
+// section 5.5).
+// ---------------------------------------------------------------------------
+//
+// The `<link rel="stylesheet" href="./console.css">` Task 6.2 adds is admitted
+// by `style-src 'self'`, and that is the whole of what the directive allows: a
+// stylesheet **from this origin**. An inline style -- a `style` attribute, a
+// `<style>` element, a `.style` property write, a `setAttribute('style', ...)`
+// -- is not, and `csp-document.test.ts` refuses the first two in the served
+// documents while this block refuses the last two in the modules that draw them.
+//
+// The scan reads every module under `src/renderer`, not the screens alone: the
+// rule is about the renderer's output rather than about one directory, and the
+// module that could grow a `.style` write is as likely to be `entry.ts` or a
+// helper beside it as it is to be a screen.
+
+describe('no module under src/renderer writes an inline style', () => {
+  it('reads the whole renderer tree, so a module outside the screens is scanned', () => {
+    // Non-vacuity, and the boundary of the claim: the files a narrowed scan
+    // would miss are named, so a walk that had gone back to one directory fails
+    // here rather than passing over fewer files.
+    // The list is written out rather than counted, so a module added to the
+    // renderer is a deliberate edit here -- which is the moment to ask whether
+    // the new module draws. `src/renderer/theme/` holds `.css` and no module, so
+    // the walk has nothing to find there.
+    expect([...RENDERER_FILES]).toEqual([
+      'app.ts',
+      'entry.ts',
+      'installations.ts',
+      'screens/degraded.ts',
+      'screens/live.ts',
+      'screens/projects.ts',
+      'screens/run.ts',
+      'screens/spend.ts',
+    ])
+  })
+
+  it('writes none', () => {
+    const found = RENDERER_FILES.flatMap((file) =>
+      styleOffences(file, readFileSync(join(RENDERER, file), 'utf8')),
+    )
+    expect(found, 'the theme travels as classes and data-* attributes, never as an inline style').toEqual([])
+  })
+
+  it('refuses a style entry in the attribute vocabulary, so one cannot be admitted', () => {
+    // The other vocabularies in this file are lists of reasons a non-constant
+    // value is the console's own word. There is no such reason for `style`: the
+    // policy backs no style attribute at all, so an entry here would be a
+    // permission this file has no business granting. The scan refuses the write
+    // before it ever looks a vocabulary up (`styleOffences`), and this is the
+    // belt to that brace.
+    for (const [file, entries] of Object.entries(ATTRIBUTE_VOCABULARY)) {
+      expect(Object.keys(entries), `${file} admits a style attribute`).not.toContain('style')
+    }
+    // And the control: the vocabulary is not empty, so the loop above is not
+    // vacuous.
+    expect(Object.keys(ATTRIBUTE_VOCABULARY).length).toBeGreaterThan(0)
+  })
+
+  it('fails on each way an inline style could arrive (MUTATION)', () => {
+    // One mutant per spelling, run over a real module so the scan is proved on
+    // the text it actually reads. The `withVocabulary` mutant is the one the
+    // case above is about: even a reasoned entry on ATTRIBUTE_VOCABULARY cannot
+    // admit it.
+    const source = readFileSync(join(RENDERER, 'entry.ts'), 'utf8')
+    const before = styleOffences('entry.ts', source).length
+    const mutants: Record<string, string> = {
+      propertyWrite: `${source}\nfunction m1(node: { style: { color: string } }) {\n  node.style.color = 'red'\n}\n`,
+      wholeStyleObject: `${source}\nfunction m2(node: { style: string }) {\n  node.style = 'color: red'\n}\n`,
+      styleMethod: `${source}\nfunction m3(node: { style: { setProperty(a: string, b: string): void } }) {\n  node.style.setProperty('color', 'red')\n}\n`,
+      styleAttribute: `${source}\nfunction m4(node: ScreenElement) {\n  node.setAttribute('style', 'color: red')\n}\n`,
+      styleAttributeDoubleQuoted: `${source}\nfunction m5(node: ScreenElement) {\n  node.setAttribute("style", 'color: red')\n}\n`,
+      computedStyle: `${source}\nfunction m6(node: ScreenElement) {\n  node['style'].color = 'red'\n}\n`,
+    }
+    const missed = Object.entries(mutants)
+      .filter(([, mutant]) => styleOffences('entry.ts', mutant).length <= before)
+      .map(([name]) => name)
+    expect(missed, 'mutants the scan let through').toEqual([])
+    // A comment that mentions one is not one: the scan blanks comments first,
+    // like every other scan in this file.
+    const commented = `${source}\n// node.style.color = 'red'\n/* node.setAttribute('style', 'color: red') */\n`
+    expect(styleOffences('entry.ts', commented)).toHaveLength(before)
+    // And a string that spells one is not one either.
+    const quoted = `${source}\nconst mention = "node.style.color = 'red'"\n`
+    expect(styleOffences('entry.ts', quoted)).toHaveLength(before)
   })
 })
