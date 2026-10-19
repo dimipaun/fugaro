@@ -423,9 +423,12 @@ run "the constructor's result is frozen, queue and all" \
 
 # The reads do NOT apply the TTL: the queue is one the caller has already
 # expired, and a listing that quietly dropped a dead prompt would destroy the
-# safe answer or the stop the orchestrator is owed exactly once. These two
-# mutations are the "helpful" fix the review offered, planted to show the tests
-# refuse it.
+# safe answer or the stop the orchestrator is owed exactly once. These three
+# mutations are the "helpful" fix the review offered, planted at each of the
+# three place a TTL could be applied to a read, to show the tests refuse it --
+# and the third is `pendingAcross`, which draws the cross-account view's
+# per-installation rows (D170) and could drop a question from one of them
+# without any other read noticing.
 run "a listing does not hide a prompt the caller has not expired" \
   "  const list = current.prompts
     .map((entry) => listing(entry, values.now))
@@ -434,6 +437,15 @@ run "a listing does not hide a prompt the caller has not expired" \
     .filter((entry) => !expiredBy(entry.prompt.at, values.now, current.promptTtlMs))
     .map((entry) => listing(entry, values.now))
     .sort(compareForListing);"
+
+run "a per-installation listing does not hide a prompt the caller has not expired" \
+  "    const list = queue.prompts
+      .map((entry) => listing(entry, now))
+      .sort(compareForListing);" \
+  "    const list = queue.prompts
+      .filter((entry) => !expiredBy(entry.prompt.at, now, queue.promptTtlMs))
+      .map((entry) => listing(entry, now))
+      .sort(compareForListing);"
 
 run "an unswept dead prompt can still raise the widen interrupt" \
   "    due: queue.prompts.some((entry) => isDue(entry, values.now))," \

@@ -42,9 +42,11 @@
 // **The reads are over a swept queue, and that is the caller's ordering.** A
 // held prompt dies while it waits: nothing here kills it on a timer, because
 // `expire` is what kills it and the consumer calls it on its own clock (D168 as
-// amended). So `pending`, `announce`, `announcement` and `evaluateInterrupt`
-// apply **no TTL**: an unswept dead prompt is still listed, still due, still
-// counted and still able to widen the interrupt. That is deliberate, not a
+// amended). So `pending`, `pendingAcross`, `announce`, `announcement` and
+// `evaluateInterrupt` apply **no TTL**: an unswept dead prompt is still listed
+// (in the caller's own queue and in every installation's row of the
+// cross-account view, D170), still due, still counted and still able to widen
+// the interrupt. That is deliberate, not a
 // gap -- a listing that quietly omitted a dead prompt would destroy the answer
 // the orchestrator is owed, which is the one thing this module refuses to do
 // anywhere else (a full queue is refused, never evicted) -- and P6.7 expires
@@ -1457,6 +1459,12 @@ function readQueues(queues, where) {
  * with its own freshness and **no summed total**, and a list that merged two
  * installations' questions would be exactly that total. The installations keep
  * the order the caller gave them, which is the app's own.
+ *
+ * It applies **no TTL** to the queues it reads, like every other read here, so
+ * it is a read over queues the caller has already expired -- see the header's
+ * note on the caller's ordering. Applying the TTL per row would drop a dead
+ * prompt from the very listing the overview is drawn from, hiding the question
+ * whose safe answer or stop is owed exactly once.
  *
  * @returns `{ ok: true, count, accounts: [{ account, pending }] }` or a refusal
  */

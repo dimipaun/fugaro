@@ -697,6 +697,15 @@ test('the reads answer over a queue the caller has already expired, and say what
   assert.equal(announce(queue, { now: dead }).spoken.length, 1, 'and is still read out');
   assert.equal(announcement([queue], { now: dead }).count, 1);
   assert.equal(announcement([queue], { now: dead }).text, 'One question waiting');
+  // `pendingAcross` is a no-TTL read too, and it is the one a cross-account view
+  // draws every installation's row from (D170): a per-installation listing that
+  // dropped a dead prompt would hide the question whose safe answer or stop the
+  // orchestrator is owed -- silently, per installation, which is exactly the
+  // failure this module refuses everywhere else.
+  const across = pendingAcross([queue], { now: dead });
+  assert.equal(across.count, 1);
+  assert.equal(across.accounts[0].pending.length, 1, 'a per-installation listing keeps it');
+  assert.equal(across.accounts[0].pending[0].due, true);
   assert.equal(
     evaluateInterrupt({ queue, now: dead, switch: SWITCH.WIDEN }).reason,
     INTERRUPT.PROMPT,
@@ -708,6 +717,9 @@ test('the reads answer over a queue the caller has already expired, and say what
   assert.equal(announce(swept.queue, { now: dead }).spoken.length, 0);
   assert.equal(announcement([swept.queue], { now: dead }).count, 0);
   assert.equal(announcement([swept.queue], { now: dead }).text, null);
+  const acrossSwept = pendingAcross([swept.queue], { now: dead });
+  assert.equal(acrossSwept.count, 0);
+  assert.equal(acrossSwept.accounts[0].pending.length, 0);
   assert.equal(
     evaluateInterrupt({ queue: swept.queue, now: dead, switch: SWITCH.WIDEN }).reason,
     null,
@@ -1488,13 +1500,17 @@ test('every object the module hands back is frozen, entry point by entry point',
   // rather than sampled. A caller may hold any of these results and keep it in
   // its own state, and a value it could rewrite is a value this module's next
   // call could not predict -- so the claim has to be over EVERY entry point,
-  // not the handful an earlier version of this test happened to name. That
-  // version also asserted `Object.isFrozen` on `evaluateInterrupt`'s `due` and
-  // on `isExpired`'s answer, which are booleans: a primitive is frozen whatever
-  // this module does, so those two asserts could never fail. The rule is about
-  // the objects -- and walking the surface is what found the one object that
-  // was not frozen, `initialQueue`'s result, which is now frozen like the rest
-  // and pinned by its own guard in `mutation-proof.sh`.
+  // not the handful an earlier version of this test happened to name. Two of
+  // that version's five asserts could never fail. `Object.isFrozen(first.due)`
+  // was on `announcement`'s `due`, which is an array `announcement` already
+  // freezes -- so it was redundant with the code it was checking, not evidence
+  // of anything. `Object.isFrozen(isExpired(T0, T0, HOUR))` was on a boolean,
+  // and a primitive is frozen whatever this module does. (It is worth saying
+  // which `due`: `evaluateInterrupt` answers a `due` too, but it is a boolean
+  // and no assertion was ever made on it.) The rule is about the objects -- and
+  // walking the surface is what found the one object that was not frozen,
+  // `initialQueue`'s result, which is now frozen like the rest and pinned by
+  // its own guard in `mutation-proof.sh`.
   const queue = enqueueOne(makeQueue()).queue;
 
   /** Every object at or under `value`, four levels down, must be frozen. */

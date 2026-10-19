@@ -92,9 +92,11 @@ only what it is.
 
 **The reads are over a swept queue, and the ordering is the caller's.** Nothing here kills a
 prompt on a timer: `expire` kills it, and P6.7 calls it on the consumer's own clock (D168 as
-amended) *before* it reads. So `pending`, `announce`, `announcement` and `evaluateInterrupt` apply
-**no TTL** — an unswept dead prompt is still listed (`due: true`), still read out, still counted in
-the cross-account sentence, and still able to raise the `widen` interrupt. That is deliberate: a
+amended) *before* it reads. So `pending`, `pendingAcross`, `announce`, `announcement` and
+`evaluateInterrupt` apply **no TTL** — an unswept dead prompt is still listed (`due: true`), in the
+caller's own queue and in every installation's row of the cross-account view (`pendingAcross`,
+D170, which is the listing D170's overview is drawn from), still read out, still counted in the
+cross-account sentence, and still able to raise the `widen` interrupt. That is deliberate: a
 listing that quietly omitted a dead prompt would throw away the safe answer or the stop the
 orchestrator is owed exactly once, and this module refuses to drop a question anywhere else (a full
 queue is refused, never evicted). The invariant is stated, therefore, as a precondition on the
@@ -317,7 +319,12 @@ halves of one honest limit), the cap at its boundary, and the interrupt table ex
 tests pin the two lines a *code* can draw for the same field — a schema refusal names a field the
 schema defines and never one the writer invented, and a field that is not carried at all is
 `missing-field` rather than `unknown-field` — and one pins `isExpired`'s arguments, argument by
-argument, against the coercion that would answer `false`. Two more tests pin the clock's second
+argument, against the coercion that would answer `false`. One test pins the swept-queue precondition
+on **all five reads**: at a `now` one millisecond past the TTL, an unswept dead prompt is still
+listed by `pending` and by `pendingAcross` (per installation, `due: true`), still read out by
+`announce`, still counted by `announcement`, still raises the `widen` interrupt — and the sweep the
+consumer performs clears every one of them at the same `now`, with `expire` yielding the
+non-destructive answer or the stop that made dropping it unthinkable. Two more tests pin the clock's second
 bound and the read-side one: a `now` that leaps more than a year past the watermark is refused
 `now-jumped` without being written — the exact bound is still an honest advance, and the next honest
 reading after a refused leap is accepted — and a stored prompt whose `at` is outside the module's
@@ -354,7 +361,7 @@ P6.13 have one — so that sentence is the task's *Verification* clause, and thi
 step the plan named. It is still written first and kept as `mutation-proof.sh`'s first guard: it is
 the clause the task is verified by, and re-running it costs nothing.
 
-`mutation-proof.sh` plants 92 one-line bugs in `index.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 93 one-line bugs in `index.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. It
