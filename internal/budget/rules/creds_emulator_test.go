@@ -292,8 +292,16 @@ func TestByTierCountersOwnRunOnly(t *testing.T) {
 	h.mustDeny(c, "another day's counter", map[string]any{budget.PathSpendGlobal(today()-2) + "/byTier/b/spent": int64(usd)})
 
 	// Tier A has no real-spend node: it is accounted as notional on the nodes
-	// that already exist.
-	for _, p := range []string{byTierRun("a"), byTierRun("A"), byTierRun(""), byTierDay("a"), byTierRepo("a"), byTierGlobal("a")} {
+	// that already exist. The empty tier is deliberately not a case here: an
+	// empty key never reaches the rules at all — the client refuses the path
+	// before the request is made (internal/rtdb's validPath: "has an empty or
+	// unescaped key"), so `mustDeny` would see that error rather than a
+	// permission one and fail the test on a path no rule was asked about (it
+	// did: review finding B1, which stopped every case below it from running).
+	// The guard that actually makes an empty or arbitrary tier unwritable is
+	// the `$tier == 'b' || $tier == 'c'` validation the leaves carry, and it is
+	// pinned without the emulator by TestByTierCountersAreValidatedLikeSpent.
+	for _, p := range []string{byTierRun("a"), byTierRun("A"), byTierDay("a"), byTierRepo("a"), byTierGlobal("a")} {
 		h.mustDeny(c, "an unknown tier at "+p, map[string]any{p: int64(usd)})
 	}
 	// And the whole split node is not writable as one value: every leaf carries
