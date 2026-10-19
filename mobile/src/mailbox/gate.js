@@ -33,13 +33,23 @@
 // hours) -- and it is named in `README.md` rather than left to be found.
 //
 // **A state that is not `live` is not a licence to send.** `clock-differs` is
-// P1.4's fourth state and P1.4 is explicit that it is never reported as
-// offline; it means the phone's clock does not agree with the server's, which is
-// the one thing that makes the `at` this phone stamps untrustworthy -- and the
-// consumer (P6.7) refuses a record stamped more than five minutes ahead of its
-// own clock. So it refuses, with its own code, rather than being folded into
-// `consumer-offline`: the owner is told the true thing, and a refusal code is
-// what a screen switches on.
+// P1.4's fourth state and P1.4 is explicit that it is never reported as offline;
+// it means the phone's clock does not agree with the consumer's -- and the
+// direction is worth stating, because the obvious reading of it is backwards.
+// P1.4 produces the state when `ageMs < -futureToleranceMs`, and `ageMs` is
+// `now - at`: the heartbeat's `at` is AHEAD of this phone's `now`, so the
+// phone's clock is BEHIND, and the `at` it will stamp is EARLY rather than late.
+// P6.7's "more than five minutes ahead of the consumer's clock" is therefore
+// **not** the rule that would catch this record -- it is the rule for a clock
+// running fast. A stamp that is early is caught by nothing at the other end
+// either: it only makes the record look older than it is, and every window that
+// judges it (P1.1's replay window, D118's TTL, P6.7's confirmation timeout) is
+// measured on the CONSUMER's clock, so the age the phone believes it stamped is
+// not the age the consumer will compute. The phone cannot fix that by stamping
+// anyway: D117 makes the server's timestamp the authority, and this is the state
+// that says the two ends disagree about what time it is. So it refuses, with its
+// own code, rather than being folded into `consumer-offline`: the owner is told
+// the true thing, and a refusal code is what a screen switches on.
 
 import { STATE } from '../../../shared/presence/index.js';
 

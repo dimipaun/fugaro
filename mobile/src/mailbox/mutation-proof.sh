@@ -100,6 +100,7 @@ require_clean() { # file
 }
 require_clean "$F"
 require_clean mobile/src/mailbox/gate.js
+require_clean mobile/src/mailbox/connection.js
 require_clean mobile/src/mailbox/mac.js
 require_clean mobile/src/mailbox/store.js
 require_clean mobile/src/accounts/secure-store.js
@@ -338,7 +339,7 @@ export function createRoot({ React, store, View, Text }) {" \
   mobile/src/app/root.js src/mailbox/write-path.test.js
 
 # 10. The offline gate (P6.10; D167, G21). Fourteen guards in client.js, four in
-#     gate.js and one in the store's SDK model -- and the store's is proved
+#     gate.js, one in connection.js and one in the store's SDK model -- and the store's is proved
 #     twice, once against its own suite and once against the client's, because
 #     "the SDK queue would have noticed" is the control the client's claim rests
 #     on and a fake that stopped modelling the queue would quietly prove nothing.
@@ -394,6 +395,10 @@ run "a refused flush carries no sentence to render or to speak" \
 run "a refused poll carries no sentence to render or to speak" \
   "    if (!online.ok) return refuse(online.code, online.field);" \
   "    if (!online.ok) return Object.freeze({ ok: false, code: online.code, field: online.field, message: offlineSpeech(online.code), told: false });"
+run "the double's constructor is no more generous than the gate (connection.js)" \
+  "    this.#online = options.online === undefined ? true : options.online === true;" \
+  "    this.#online = options.online !== false;" \
+  mobile/src/mailbox/connection.js src/mailbox/connection.test.js
 run "a connection that is not \`true\` is offline (gate.js)" \
   "  if (online !== true) return refuse(GATE_CODES.NO_CONNECTION, 'connection');" \
   "  if (online !== true && online !== false) return refuse(GATE_CODES.NO_CONNECTION, 'connection');" \

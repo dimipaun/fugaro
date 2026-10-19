@@ -604,7 +604,9 @@ export function createMailboxClient(options = {}) {
     }
     // It did not land. The record is kept VERBATIM for `flush` -- never
     // re-minted, never re-stamped (P1.1's caller duty: "never retry an id with
-    // a new `at`") -- and the refusal lets the screen show it as unsent (D167).
+    // a new `at`") -- and the refusal carries the code the screen switches on.
+    // It is in `pending()`, NOT in `unsent()`: the gate accepted this one, and
+    // the client re-delivers it itself (see `pending()` above).
     // An ACTION is the exception, and the exception is the rule above: a write
     // that did not land is reported and dropped, and the owner confirms again.
     if (!isAction) outbound.set(id, { record, landed: false });
@@ -860,10 +862,18 @@ export function createMailboxClient(options = {}) {
 
   /**
    * What the outbox has not answered: the utterances still being delivered and
-   * the ones already there whose reply has not arrived. `landed: false` is
-   * D167's "unsent text" and is what a screen shows the owner; `landed: true`
-   * is in flight. The text is the REDACTED text, because that is what will be
-   * written.
+   * the ones already there whose reply has not arrived. `landed: false` is a
+   * record the phone HOLDS and is still retrying; `landed: true` is in flight.
+   * The text is the REDACTED text, because that is what will be written.
+   *
+   * **This is not D167's "unsent text the user can resend" -- `unsent()` is.**
+   * The two lists are different things and the difference is the gate: what is
+   * here was ACCEPTED for delivery (the connection was up when it was made) and
+   * this client keeps re-delivering it on its own until the outbox answers or
+   * D118's TTL passes; what is in `unsent()` was REFUSED at the gate, is never
+   * written by this client at all, and waits for the owner to say it again. A
+   * screen resending from here would be a second write of a record already in
+   * flight.
    *
    * @returns {ReadonlyArray<{id: string, at: number, text: string, landed: boolean}>}
    */

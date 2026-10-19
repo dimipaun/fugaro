@@ -195,6 +195,11 @@ async function harness(options = {}) {
       nowMs += ms;
     },
     now: () => nowMs,
+    // How many ids the default source has minted. "The gate is asked before the
+    // id is minted" is an ordering claim about the client, and a claim about an
+    // ordering needs something to count: `minted` is that, the way
+    // `countingKeys`'s `asked()` is for the key.
+    minted: () => minted,
     valueAt: (path) => db.valueAt(path),
   };
 }
@@ -1513,6 +1518,7 @@ test('with no connection nothing is written, and the owner is told why', async (
   // the id sequence that looks like a lost message.
   assert.deepEqual(h.store.writes(), [], 'nothing was written');
   assert.deepEqual(h.store.reads(), [], 'nothing was read');
+  assert.equal(h.minted(), 0, 'no id was minted for a refused utterance');
   // And the owner heard it. "Says why" is D167's own requirement, and the
   // speaker is the one port this directory has for saying anything.
   assert.deepEqual(h.speaker.spoken(), [OFFLINE_SPEECH[GATE_CODES.NO_CONNECTION]]);
@@ -1522,6 +1528,40 @@ test('with no connection nothing is written, and the owner is told why', async (
     { text: 'cancel the docs refactor', at: T0, code: GATE_CODES.NO_CONNECTION },
   ]);
   assert.deepEqual(h.client.pending(), [], 'unsent is not queued');
+});
+
+test('a gated utterance is not delivered when the connection comes back', async () => {
+  // D167's claim is not "it is not sent NOW" but "it is never sent": the phone
+  // holds no queue of its own for a sentence the gate refused. The refusal is
+  // one half of that; this is the other half, and it is the half the SDK's own
+  // queue fails -- a write handed over while offline arrives on reconnect, at a
+  // time nobody chose. The existing queue test does this for an ACTION; a
+  // command is the case the hazard is about, so it is done for one here.
+  const h = await harness();
+  h.connection.setOnline(false);
+  const refused = await h.client.send('cancel the docs refactor');
+  assert.equal(refused.code, GATE_CODES.NO_CONNECTION);
+  assert.equal(h.minted(), 0, 'no id was minted for the refused utterance');
+
+  // The tunnel ends and the phone does a full pass.
+  h.connection.setOnline(true);
+  h.advance(60_000);
+  const flushed = await h.client.flush();
+  const polled = await h.client.poll();
+
+  // Nothing either call did carries the sentence: no write on reconnect, nothing
+  // held for one, nothing in the outbox queue waiting for the TTL.
+  assert.equal(flushed.ok, true, 'the flush itself ran');
+  assert.equal(polled.ok, true, 'and so did the poll');
+  assert.deepEqual(h.store.writes(), [], 'the reconnect writes nothing of it');
+  assert.deepEqual(h.client.pending(), [], 'and never queued it');
+  // The id counter is the sharper witness: `flush` re-sends what `outbound`
+  // holds, and a refused utterance was never put there, so no id was minted for
+  // it even after the connection came back.
+  assert.equal(h.minted(), 0, 'no id was ever minted for it');
+  // What is left of it is the owner's text, waiting to be said again by hand --
+  // this module never resends it.
+  assert.deepEqual(h.client.unsent().map((kept) => kept.text), ['cancel the docs refactor']);
 });
 
 test('the connection is asked before the key is, and before anything is written', async () => {

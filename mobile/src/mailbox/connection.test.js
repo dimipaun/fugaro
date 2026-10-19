@@ -14,8 +14,23 @@ test('the double is connected unless a test says otherwise', () => {
   // A test that is about signing, acking or the outbox must not silently be a
   // test of the offline gate.
   assert.equal(new MemoryConnection().isOnline(), true);
+  assert.equal(new MemoryConnection({}).isOnline(), true);
+  assert.equal(new MemoryConnection({ online: undefined }).isOnline(), true);
   assert.equal(new MemoryConnection({ online: true }).isOnline(), true);
   assert.equal(new MemoryConnection({ online: false }).isOnline(), false);
+});
+
+test('the constructor is no more generous than the gate', () => {
+  // `setOnline`'s rule -- only `true` is connected -- is the constructor's too,
+  // and it was not: `options.online !== false` reported `{online: 0}`,
+  // `{online: null}` and `{online: ''}` as ONLINE, so a test written with a
+  // non-boolean falsy silently built a connected phone and tested the gate's
+  // inverse. `undefined` is the one value that means "not given".
+  for (const value of [0, 1, -1, 'online', 'true', '', {}, [], null, Number.NaN]) {
+    assert.equal(new MemoryConnection({ online: value }).isOnline(), false, String(value));
+  }
+  // And the default is a real default, not a hole: no options at all is online.
+  assert.equal(new MemoryConnection().isOnline(), true);
 });
 
 test('the connection can be cut and restored, and only `true` is online', () => {

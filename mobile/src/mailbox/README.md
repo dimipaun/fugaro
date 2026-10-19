@@ -24,7 +24,8 @@ const client = createMailboxClient({
 await client.send('run 42 finished');   // ONE signed inbox message, fresh id
 await client.flush();                   // re-deliver what the outbox has not answered
 await client.poll();                    // reads, verifies, speaks, acks, reports presence
-client.pending();                       // the utterances not yet answered (D167's unsent text)
+client.pending();                       // the records the outbox has not answered, still retried
+client.unsent();                        // D167's unsent text: what the gate refused (see below)
 ```
 
 ## The write set is exactly two paths (D113)
@@ -253,8 +254,10 @@ client.pending();  // [] -- nothing was queued
   ("I have not sent **that**") have no referent for a re-send of a record the
   owner already spoke. **And the bare shape is not the flush/poll shape alone**:
   every `send` refusal that the gate did not make is bare too -- `bad-text`,
-  `too-long`, the redactor's `leaked`, `bad-clock`, `bad-id`, `id-conflict`,
-  `unsignable`, `no-key`/`key-unreadable`, the schema's and the store's all come
+  `too-long`, the redactor's **`redact-failed`**, `bad-clock`, `bad-id`,
+  `id-conflict`, `unsignable`, `no-key`, `key-unreadable` (which is where the
+  secure store's own `leaked` surfaces, through `keyRefusal` -- so the code a
+  screen sees is never `leaked`), the schema's and the store's all come
   from `refuse` with no sentence attached, because those are failures this
   module has no decided sentence for and inventing one here would be this
   directory speaking for a screen. So the rule a screen must follow is: render

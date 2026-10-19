@@ -39,11 +39,15 @@ export class MemoryConnection {
   #asked = [];
 
   /**
-   * @param {{ online?: boolean }} [options] `online` defaults to true: a test
-   *   that is about something else is not silently a test of the offline gate.
+   * @param {{ online?: boolean }} [options] `online` defaults to true when it is
+   *   not given -- and only then: a test that is about something else is not
+   *   silently a test of the offline gate, and a test that wrote `{online: 0}`
+   *   is not silently a test of an ONLINE phone. The constructor follows
+   *   `setOnline`'s rule (only `true` is connected) rather than testing for
+   *   `false`, so the double cannot be more generous than `evaluateGate`.
    */
   constructor(options = {}) {
-    this.#online = options.online !== false;
+    this.#online = options.online === undefined ? true : options.online === true;
   }
 
   /**
