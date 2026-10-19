@@ -128,13 +128,15 @@ with fixtures that keep its refusals running, and none of them needs the network
   palette in force.
 - `test/budget.mjs` — the byte budget, whose numbers are these (raw bytes). **They are
   deliberately loose, by the owner's ruling of 2026-10-17: size is not a concern yet, so
-  each is three times what the build of 2026-10-18 needs — the build that ships the site's one
-  script and its menu (P6, P3) and the homepage's run animation (P7), with the How It Works
-  flow (P8) merged in — and a later
+  each is three times what the build of 2026-10-19 needs — the build that ships the site's one
+  script and its menu (P6, P3), the homepage's run animation (P7), the How It Works flow (P8)
+  and the long-page cuts (P4), with the changes spec's items 2, 3 and 4 on top of all of it —
+  and a later
   optimisation pass tightens them.** The gate itself is not loose: a page or a site over the
   number fails, and the test keeps a case that proves it. The derivation (that build plus
-  25 %, D192) is in the test's header, and a task that moves the bytes re-derives the numbers
-  here, in the commit that moves them:
+  25 %, D192) is in the test's header, and a task that moves the bytes re-derives **all three
+  numbers** here, in the commit that moves them — the test refuses a derivation that names a
+  build other than the one it can measure, so the figures cannot drift down as pages grow:
   - **JavaScript per page:** 76,086 bytes. Three times 25,362: the one script the site ships,
     `public/scripts/site.js` (20,289 bytes — the copy control of P6 and D183, the menu's
     Escape/outside-click close of P3, and W3.2's consent banner and analytics gate, which
@@ -145,10 +147,10 @@ with fixtures that keep its refusals running, and none of them needs the network
     used to prefer an element a block marked with `data-copy-source`, which only the deleted
     terminal emitted, and it now copies the block's first `pre`/`code` — the command every
     block the site prints is written in.
-  - **Page weight per page:** 853,602 bytes. Three times 284,534: the heaviest page, the
-    docs hub, at 227,627 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 927,195 bytes. Three times 309,065: the heaviest page, the
+    docs hub, at 247,252 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 2,941,224 bytes. Three times 980,408 (every file in `dist/`, 784,326
+  - **Whole site:** 3,035,439 bytes. Three times 1,011,813 (every file in `dist/`, 809,450
     bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core

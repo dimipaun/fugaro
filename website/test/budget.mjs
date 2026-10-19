@@ -11,27 +11,27 @@
 // The README's numbers are DELIBERATELY LOOSE (owner's ruling, 2026-10-17: "ignore them for
 // now and optimize later"): each is three times the tight derivation below, until a later
 // optimisation pass tightens them back towards these figures. The tight derivation is the
-// build of 2026-10-18 — the one that ships the site's script (P6), its menu behaviour (P3),
-// the homepage's run animation (P7), the How It Works flow (P8) and, re-derived for W3.2, the
-// consent gate's analytics bootstrap in that same script — plus 25 %, which is D192's rule and the rule the
-// README's loose figures are three times:
+// build of 2026-10-19 — the one that ships the site's script (P6), its menu behaviour (P3),
+// the homepage's run animation (P7), the How It Works flow (P8), the long-page cuts (P4) and,
+// re-derived for W3.2, the consent gate's analytics bootstrap in that same script, with the
+// changes spec's items 2, 3 and 4 on top of all of it — plus 25 %, which is D192's rule and the
+// rule the README's loose figures are three times:
 //
-//   - JavaScript per page: 25,508 bytes. The one script the site ships,
+//   - JavaScript per page: 25,362 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, and the cookie deletion the owner's
-//     ruling of 2026-10-18 added to a withdrawal), is 20,406 bytes; × 1.25, rounded up. Every
+//     ruling of 2026-10-18 added to a withdrawal), is 20,289 bytes; × 1.25, rounded up. Every
 //     page loads it exactly once, so the file's own size IS the whole of a page's JavaScript —
 //     which is why the case below reads the artifact rather than trusting this line, and why
 //     D192 requires the README's figure to be re-derived in the same commit that changes the
 //     script.
-//   - Page weight per page: 284,534 bytes. The heaviest page on 2026-10-18, `docs/index.html`,
-//     weighed 227,627 bytes: its HTML (the whole generated CLI reference) plus the first-party
-//     files it fetches — the script above and the logo and icons the layout links; × 1.25,
-//     rounded up. One ceiling for every page rather than one per page, so a page that grows
-//     with the product (the changelog, the reference) is held to the same line as the rest
-//     instead of to its own history.
-//   - Whole site: 980,408 bytes. Every file in `dist/` on that build summed to 784,326
-//     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
-//     × 1.25, rounded up.
+//   - Page weight per page: 309,065 bytes. The heaviest page, `docs/index.html`, weighs
+//     247,252 bytes: its HTML (the whole generated CLI reference) plus the first-party files it
+//     fetches — the script above and the logo and icons the layout links; × 1.25, rounded up.
+//     One ceiling for every page rather than one per page, so a page that grows with the
+//     product (the changelog, the reference) is held to the same line as the rest instead of to
+//     its own history.
+//   - Whole site: 1,011,813 bytes. Every file in `dist/` sums to 809,450 bytes (21 files:
+//     eleven pages, the script, the brand icons and the manifest); × 1.25, rounded up.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
 // holds and what a test can compute without guessing a server's compression:
@@ -454,9 +454,17 @@ test('the README budget lines are read strictly', () => {
 // D192: each README number is three times the build it was derived from plus 25 %, and the
 // README says which build. These read the derivation the README writes beside each number and
 // hold the number to it, so raising a ceiling means re-deriving it from a build the artifact
-// can be measured against — not editing the headline figure. The script is one file edited on
-// purpose, so its stated size is its size; the page and the site may grow under the × 3, and
-// may shrink up to a tenth before the stated build is too far above this one to stand.
+// can be measured against — not editing the headline figure.
+//
+// **And the build each number names is this one** (P8's review, and the fixes round on this
+// branch): all three, not only the script's. A derivation that names a build the artifact is
+// not is a number nobody can check against today's build — it drifts down as pages grow, and a
+// budget derived from a smaller build than the site has is a ceiling tighter than the README
+// says it is, which is a lie in the reader's favour that still leaves the × 3 meaningless. So
+// a byte that moves re-derives its figure in the commit that moves it, which is D192's own
+// rule and the plan's ("later parts that add bytes re-derive in their own commit"). The
+// refusal this replaced — a stated build more than a tenth above the real one — is a case of
+// this one, which is why the strictness only ever went up.
 const DERIVATIONS = {
   js: /\*\*JavaScript per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the one script[\s\S]*?\(([\d,]+) bytes/,
   page: /\*\*Page weight per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the heaviest page[\s\S]*? at ([\d,]+) bytes/,
@@ -476,8 +484,11 @@ export function derivationFailures(readme, measured) {
     const [budget, tight, build] = [n(m[1]), n(m[2]), n(m[3])]
     if (budget !== 3 * tight) out.push(`the ${key} budget is ${budget} bytes and three times ${tight} is ${3 * tight} (D192)`)
     if (tight !== Math.ceil(build * 1.25)) out.push(`the ${key} tight figure is ${tight} bytes and ${build} plus 25 % is ${Math.ceil(build * 1.25)} (D192)`)
-    if (key === 'js' && build !== measured.js) out.push(`the README derives the JavaScript budget from a ${build}-byte site.js and the built one is ${measured.js} bytes: re-derive it in the commit that changes the script (D192)`)
-    if (key !== 'js' && build > measured[key] * 1.1) out.push(`the README derives the ${key} budget from a ${build}-byte build and this one is ${measured[key]} bytes: a stated build that far above the real one is a loosened budget (D192)`)
+    if (build !== measured[key]) {
+      out.push(
+        `the README derives the ${key} budget from a ${build}-byte build and this one is ${measured[key]} bytes: re-derive it in the commit that moves those bytes (D192)`,
+      )
+    }
   }
   return out
 }
@@ -501,8 +512,20 @@ test('a budget raised without re-deriving it is refused', () => {
   const now = measuredNow()
   const js = /\*\*JavaScript per page:\*\* ([\d,]+) bytes/.exec(readme)[1]
   assert.match(derivationFailures(readme.replace(`**JavaScript per page:** ${js} bytes`, '**JavaScript per page:** 100,000 bytes'), now).join('\n'), /three times/)
-  assert.match(derivationFailures(readme, { ...now, js: now.js + 1 }).join('\n'), /re-derive it/)
-  assert.match(derivationFailures(readme, { ...now, site: Math.floor(now.site / 2) }).join('\n'), /loosened budget/)
+  // Every one of the three, not only the script's: a build that moves under a stated
+  // derivation — a page that grows, a site that shrinks — is a figure to re-derive.
+  for (const key of ['js', 'page', 'site']) {
+    assert.match(
+      derivationFailures(readme, { ...now, [key]: now[key] + 1 }).join('\n'),
+      /re-derive it/,
+      `the ${key} figure is not held to the build this one can measure`,
+    )
+    assert.match(
+      derivationFailures(readme, { ...now, [key]: Math.floor(now[key] / 2) }).join('\n'),
+      /re-derive it/,
+      `a ${key} derivation far above the real build is not refused`,
+    )
+  }
 })
 
 // ---- the word ceilings' own refusals, kept ----------------------------------------------

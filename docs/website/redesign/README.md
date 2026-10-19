@@ -9,7 +9,7 @@ all of them, and it changes what they built — the hero's headline and its exam
 four-step flow — which the readings under "Implementing items 2, 3 and 4" below record.
 
 The site itself **is** built: `website/` holds an eleven-route Astro site whose hermetic
-gates pass (252 tests, `npm run check`, measured 2026-10-19). The three documents of the
+gates pass (254 tests, `npm run check`, measured 2026-10-19). The three documents of the
 first line of work — [`../README.md`](../README.md) `:3` and `:5`,
 [`../reconciliation.md`](../reconciliation.md) `:3`,
 [`../implementation-plan.md`](../implementation-plan.md) `:3` — still say the opposite,
@@ -147,6 +147,30 @@ does not have to guess them from the markup.
   skill documents, with its own `<name>` and `<id>` placeholders — and the build holds each
   line to its document, in that document's order. A copy of the repository staged for a test
   build therefore carries `plugin/skills/`.
+- **Item 4's row starts at 64 rem, and a step name wraps.** The four cards share the row, so
+  a card is a quarter of the column less the arrows between them: at 48 rem — the breakpoint
+  the chrome switches at — a card's content box is about 100 px, which is narrower than the
+  word `Ephemeral` in the spec's own third step name, and the name was held on one line
+  beside a `flex: none` number, so the flow could not render its own labels at any width below
+  about 79 rem. The row now starts at 64 rem, the name wraps (it is a heading, not a label)
+  and the number sits above it inside the row. The arithmetic is not a reading of a
+  screenshot: `website/test/base-styles.mjs` computes the card's content box from the built
+  stylesheet and holds it against the longest word of the names the built page prints, at the
+  breakpoint and at the page's maximum width, so a name that outgrows its card or a row that
+  starts earlier fails there naming the width. Whether the picture then *looks* right at
+  1280 px is the owner's check (70a–70c), as D190 requires, and this line of work cannot see
+  it.
+- **The byte budgets are re-derived in this branch (D192).** Its items change what the
+  artifact weighs — the terminal's transcript goes, the chat comes, `site.js` loses 117 bytes,
+  the flow's stylesheet changes — so all three figures move with it, from the build of
+  2026-10-19: **JavaScript per page 76,086** (three times 25,362; `public/scripts/site.js`
+  20,289 bytes), **page weight per page 927,195** (three times 309,065; the docs hub
+  247,252 bytes) and **whole site 3,035,439** (three times 1,011,813; 809,450 bytes across 21
+  files). The figures live in `website/README.md` and nowhere else, and
+  `website/test/budget.mjs` reads them from there and holds each to the build it can measure:
+  a derivation that names another build fails, which is what stops the page and the site
+  figures drifting down as pages grow (they had — page weight and whole site still named the
+  build of 2026-10-18 after four parts added bytes to it).
 - **The hero offers one command to copy, and the screenshot's place is empty.** Item 3's
   acceptance is that the only command a reader is likely to type is `fugaro watch`, so the
   `fugaro run` transcript the homepage carried (`Terminal.astro`, D184) is removed from it —
