@@ -486,11 +486,15 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 	}
 	// The rules go in last of the database's own writes, over a database that
 	// is already marked and configured: the mark is written before them. The
-	// one write after them is the rules-generation marker, which exists to say
-	// the deploy above succeeded and must not be there otherwise
-	// (TestRulesMarkerOnlyAfterTheRulesDeploy).
-	if len(puts) < 2 || puts[0] != "/fugaro/mark" || puts[len(puts)-2] != "/.settings/rules" ||
-		puts[len(puts)-1] != "/"+projectpolicy.PathRulesMarker() {
+	// two writes after them are the generation markers, which exist to say the
+	// deploy above succeeded and must not be there otherwise
+	// (TestRulesMarkerOnlyAfterTheRulesDeploy): the document's generation and,
+	// beside it, the credentials children's own (credentials-service plan, task
+	// C1.3), which the same deploy carries because they ride on the same
+	// document.
+	if len(puts) < 3 || puts[0] != "/fugaro/mark" || puts[len(puts)-3] != "/.settings/rules" ||
+		puts[len(puts)-2] != "/"+projectpolicy.PathRulesMarker() ||
+		puts[len(puts)-1] != "/"+rules.PathCredsRulesMarker() {
 		t.Errorf("PUT order = %v", puts)
 	}
 }
@@ -502,8 +506,14 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 // every budget-on run of a database whose rules were never deployed, so the
 // marker is written only after the deploy, and a deploy that fails leaves no
 // marker at all.
+//
+// The credentials children's marker (`config/limits/credsRules`, plan task
+// C1.3) is written by the same deploy and for the same reason, so it is pinned
+// here too: absent after a refused deploy, at this binary's generation after
+// one that succeeded, and beside — never on top of — the largest lease.
 func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	marker := func(r *fbRig) any { return r.db.Value(projectpolicy.PathRulesMarker()) }
+	credsMarker := func(r *fbRig) any { return r.db.Value(rules.PathCredsRulesMarker()) }
 
 	// A refused rules deploy: init fails and leaves no marker.
 	refused := newFBRig(t)
@@ -514,6 +524,13 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	}
 	if got := marker(refused); got != nil {
 		t.Errorf("%s = %#v after a refused rules deploy, want it absent: the runner would read a policy these rules do not protect", projectpolicy.PathRulesMarker(), got)
+	}
+	// The credentials children's marker is the same claim about a different
+	// generation (credentials-service plan, task C1.3): a cascade launch reads it
+	// to know the deployed document carries `/creds` and the entry's new
+	// children, so it must not survive a deploy that did not happen.
+	if got := credsMarker(refused); got != nil {
+		t.Errorf("%s = %#v after a refused rules deploy, want it absent: a cascade launch would pass the marker gate on rules that do not carry the children", rules.PathCredsRulesMarker(), got)
 	}
 	if n := refused.db.RulePuts(); n != 0 {
 		t.Errorf("rules deployed %d times, want 0", n)
@@ -532,10 +549,14 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	if !ok || num.String() != strconv.Itoa(projectpolicy.RulesVersion) {
 		t.Errorf("%s = %#v, want %d (RulesVersion): the runner compares them", projectpolicy.PathRulesMarker(), marker(r), projectpolicy.RulesVersion)
 	}
-	// It sits beside the largest lease, not on top of it.
+	credsNum, ok := credsMarker(r).(json.Number)
+	if !ok || credsNum.String() != strconv.Itoa(rules.CredsRulesVersion) {
+		t.Errorf("%s = %#v, want %d (CredsRulesVersion)", rules.PathCredsRulesMarker(), credsMarker(r), rules.CredsRulesVersion)
+	}
+	// Both sit beside the largest lease, not on top of it.
 	lim, _ := r.db.Value("config/limits").(map[string]any)
-	if len(lim) != 2 || lim["maxReserveMicros"] == nil {
-		t.Errorf("config/limits = %v, want the marker beside maxReserveMicros", lim)
+	if len(lim) != 3 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the two markers beside maxReserveMicros", lim)
 	}
 }
 
