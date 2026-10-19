@@ -304,6 +304,111 @@ func stoppedOnCommandSubstitution(guard string) bool {
 	return strings.HasPrefix(strings.TrimSpace(line), ")") && strings.Contains(line, "|| exit 1")
 }
 
+// TestDocsReadBackIsComparedAsJSONNotBytes: checks 81 and 82 read the deployed
+// document back from `/.settings/rules.json` and compare it with what this
+// binary generates -- and `internal/infra`'s DB.Plan makes that comparison with
+// `SameJSON`, which unmarshals both documents and re-marshals them: the same
+// JSON, **formatting ignored**. The checks said the read-back was 42687 bytes,
+// which is `rules.Generate()`'s own size and nothing the database owes them:
+// a document the API stored with other whitespace is the same document at
+// another byte count, and a check that calls it a failure is a check that fails
+// a correct deployment. The generator's number is right and stays -- it is what
+// the plan's rules line prints and what `testdata/rules.golden.json` holds --
+// so this test holds the two apart instead of dropping it.
+func TestDocsReadBackIsComparedAsJSONNotBytes(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	if !strings.Contains(readSrc(t, "../infra/firebasedb.go"), "if !SameJSON(live, gen) {") {
+		t.Fatalf("internal/infra/firebasedb.go no longer decides the rules action with `if !SameJSON(live, gen) {`: the two checks' account of what a correct deployment is is written against that comparison, so read the code again before changing them")
+	}
+
+	for _, heading := range []string{"## Check 81:", "## Check 82:"} {
+		section := docSection(t, path, doc, heading)
+		if !strings.Contains(section, "SameJSON") ||
+			(!strings.Contains(section, "ignoring formatting") && !strings.Contains(section, "formatting ignored")) {
+			t.Errorf("%s does not say that the read-back is compared with the generated document by `infra.SameJSON`, the same JSON with the formatting ignored: it reads a live document back and compares it with the generated one, and what the CLI compares is the JSON -- a check that does not say so reads a document the API stored with other whitespace as a failed deploy", heading)
+		}
+		for _, para := range paragraphsOf(section) {
+			if !mentionsReadBack(para) {
+				continue
+			}
+			for _, clause := range clausesOf(para) {
+				if strings.Contains(clause, "42687") && mentionsReadBack(clause) {
+					t.Errorf("%s: the same sentence claims a size for the document read back and names 42687:\n%s\n42687 is `rules.Generate()`'s own size, not the read-back document's -- DB.Plan calls the two the same document when SameJSON says so, formatting ignored, so the byte count of what the API stored is the API's to choose and a check that requires this number of it fails a correct deployment", heading, clause)
+				}
+			}
+			if byteIdenticalClaim(para) {
+				t.Errorf("%s: a paragraph about the read-back claims it is byte-identical to the generated document:\n%s\nthe comparison is `infra.SameJSON` -- the same JSON, formatting ignored -- so a read-back that differs in whitespace is the same document and not a failure", heading, para)
+			}
+		}
+	}
+}
+
+// mentionsReadBack reports whether a paragraph is about the **document** read
+// back from the database, by any of the names the checks use for it. The marker
+// node read back from `config/limits/policyRules` is a different thing and is
+// not one of them.
+func mentionsReadBack(para string) bool {
+	for _, marker := range []string{
+		"/.settings/rules.json", "deployed.json", "after.json", "before.json",
+		"deployed document", "read-back document", "read-back's", "read back the",
+	} {
+		if strings.Contains(para, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// clausesOf splits a paragraph into sentences and their semicolon-joined
+// clauses, which is the unit a claim is made in: "the read-back's byte count is
+// X" is a claim about the read-back even when the paragraph also says what the
+// generator produces, and it is the clause that has to be right.
+func clausesOf(para string) []string {
+	return regexp.MustCompile(`[.;]\s+`).Split(para, -1)
+}
+
+func byteIdenticalClaim(para string) bool {
+	for _, phrase := range []string{"byte-identical", "byte for byte", "byte-for-byte", "identical bytes", "the same bytes"} {
+		if strings.Contains(strings.ToLower(para), phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// paragraphsOf returns the text paragraphs of a section, skipping fenced code
+// blocks: a code block is a command to run, not a claim.
+func paragraphsOf(section string) []string {
+	var out []string
+	var cur []string
+	fenced := false
+	flush := func() {
+		if len(cur) > 0 {
+			out = append(out, strings.Join(cur, "\n"))
+			cur = nil
+		}
+	}
+	for _, line := range strings.Split(section, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+			flush()
+			continue
+		}
+		if fenced {
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			flush()
+			continue
+		}
+		cur = append(cur, line)
+	}
+	flush()
+	return out
+}
+
 // TestDocsEachCheckHasOnePasteBackParagraph: a check's "**Paste back:**"
 // paragraph is the register of what the owner reports, so a check carries one
 // and it starts a paragraph of its own. Merge 5965a75 left a second one -- a
@@ -403,6 +508,37 @@ func TestDocsCheck89CredentialScanSkipsTheAppFiles(t *testing.T) {
 	}
 	if lines != 2 {
 		t.Errorf("check 89 step 5 has %d `ls-files mobile` scan lines, want 2 (the credential types, and the JSON that is not one of the app's own files)", lines)
+	}
+}
+
+// TestDocsCheck82DoctorCallsNameTheProject: every `fugaro doctor` in check 82
+// names the installation, as the guard's own call does. A bare `fugaro doctor`
+// reads whichever project the machine's config resolves, so check 82 -- which
+// exists to report whether a deploy landed on `fugaro-dev` -- would record
+// another installation's `policy-rules-skew` state.
+func TestDocsCheck82DoctorCallsNameTheProject(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 82:")
+
+	calls := 0
+	fenced := false
+	for _, line := range strings.Split(section, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+			continue
+		}
+		// Only the commands, not the prose that quotes doctor's own sentences.
+		if !fenced || !strings.Contains(line, "fugaro doctor") {
+			continue
+		}
+		calls++
+		if !strings.Contains(line, "--project fugaro") {
+			t.Errorf("## Check 82: a `fugaro doctor` call does not name the installation:\n%s\nwithout `--project fugaro` it reads whichever project the machine's config resolves, and this check is about the `fugaro-dev` installation's marker", line)
+		}
+	}
+	if calls < 4 {
+		t.Errorf("## Check 82: has %d `fugaro doctor` calls, want the guard's, step 1's and step 6's two: the test only holds the calls it finds", calls)
 	}
 }
 
