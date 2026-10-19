@@ -95,8 +95,10 @@
   /* ---- stacking ----
    * The one place the site numbers a layer, and two names are the whole of it.
    *
-   * `--z-header` is the header's row and the panel a group hangs below it, and it is **the
-   * highest layer a page's own content may use**. A positioned block with no `z-index` paints
+   * `--z-header` is the header's row and the panel a group hangs below it, and **nothing else
+   * names a layer at all**: a page's own content carries no `z-index`, not this one and not a
+   * number of its own, which is what `website/test/stacking.mjs` refuses a content rule. A
+   * positioned block with no `z-index` paints
    * with every other such block in tree order, and the header is the first of them: a page
    * that draws a positioned block after it — `ArchitectureDiagram.astro`'s steps are what
    * its arrows are placed against — had that block painted across an open menu, which is the

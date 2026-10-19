@@ -4225,10 +4225,12 @@ grep -n 'width="47"' website/src/layouts/Base.astro
    click somewhere else on the page: it closes. Open it again and then Tab to a **second** label:
    the first closes, because the three share one `name` and the browser keeps that set exclusive
    — one group open at a time, at every width.
-   **And an open panel is drawn above the page's blocks.** Scroll the page until a block sits
-   directly under the header with the panel open: the panel's own background covers it and every
-   link in it is legible. `/how-it-works/` is the page to read it on — the flow's first card
-   begins a few pixels under the header there — and its steps are `position: relative`, which is
+   **And an open panel is drawn above the page's blocks.** Read it on `/how-it-works/` **at the
+   top of the page, with no scrolling**: the flow's first card begins a few pixels under the
+   header there, so the block the open panel has to be drawn over already sits under it, and the
+   header is `position: relative` rather than sticky, so a scroll only carries the header and its
+   open panel off the screen. The panel's own background must cover that card's band, with every
+   link in it legible. The flow's steps are `position: relative`, which is
    what their arrows are placed against, so a step is a block a page draws after the header. A
    card painted across the panel is the defect the owner read on 2026-10-19 ("How it works: menu
    hidden by the blocks on mobile"): the header's own layer (`--z-header`, `website/src/styles/tokens.css`)

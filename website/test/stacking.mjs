@@ -48,9 +48,10 @@ const CHROME = '--z-chrome'
 
 // The three rules a layer belongs to, and the layer each one is allowed to name. Anything else
 // that declares a `z-index` is a page block or a component taking a place in the paint order,
-// which is the defect: **the header's layer is the highest a page's own content may use**, and
-// the two chrome rules above it exist because the skip link is drawn over the header it skips
-// past and the banner is fixed to the window's foot.
+// which is the defect: **a page's own content names no layer at all** — the header's layer is
+// not a ceiling a block may sit just under, it is the header's own row — and the two chrome
+// rules above it exist because the skip link is drawn over the header it skips past and the
+// banner is fixed to the window's foot.
 const LAYERS = [
   { name: '.site-header', token: HEADER },
   { name: '.skip-link', token: CHROME },
@@ -129,7 +130,11 @@ export function stackingFailures(dist) {
       out.push(
         `${rel} does not position .site-header: a z-index on it would do nothing, and the header could not paint above the page's blocks (src/styles/base.css)`,
       )
-    } else if (layers.headerPosition.every((position) => position === 'static')) {
+    } else if (layers.headerPosition.includes('static')) {
+      // **Any** rule that takes the position off the header, not only a sheet that never
+      // positions it: a later `.site-header` rule — a media block's override is the shape this
+      // takes — wins the cascade, and a static box is one a `z-index` does not apply to, so the
+      // header would paint in the page's own layer again with this gate still reporting success.
       out.push(
         `${rel} leaves .site-header position: static: a z-index on it would do nothing, and the header could not paint above the page's blocks (src/styles/base.css)`,
       )
@@ -282,6 +287,10 @@ test('a header that cannot paint above the page is refused, however it is broken
   // static box is a declaration that does nothing.
   assert.match(failuresOf(t, withReplaced('position:relative', 'position:static')), /leaves \.site-header position: static/)
   assert.match(failuresOf(t, withReplaced('position:relative;', '')), /does not position \.site-header/)
+  // And the position taken off *after* the header's own rule, which the cascade gives the last
+  // word to: a sheet that positions the header somewhere and un-positions it here is a header a
+  // `z-index` does not apply to, and the check may not read it as "somewhere it is positioned".
+  assert.match(failuresOf(t, withRule('.site-header{position:static}')), /leaves \.site-header position: static/)
   // A layer of the header's own, as a number rather than the scale's name.
   assert.match(
     failuresOf(t, withReplaced('var(--z-header)', '99')),
