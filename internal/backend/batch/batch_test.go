@@ -2116,20 +2116,31 @@ func equalJSON(a, b any) bool {
 }
 
 // TestLaunchRefusesASecretEnv is the Batch half of the seal's carrier
-// (docs/design/budget-token-channel.md, the Slice B note): a Batch job has no
-// per-execution override, so the only place a launch's variable can go is the
-// job definition's plain variables, which every launcher (batch.jobsEditor)
-// and the reaper (batch.jobs.get) read back with `gcloud batch jobs describe`
-// for as long as the job is kept — a standing copy, not the Cloud Run
-// override the design prices. So
-// a launch carrying a secret entry (the budget seal key) is refused before
-// the create, definitively (ErrRejected, so the launcher drops its claim and
-// its sealed object), and the refusal does not quote the value. Batch carries
-// a sealed budget run only once a mechanism the design allows exists (an
-// open owner question).
+// (docs/design/budget-token-channel.md, "The Batch backend refuses a sealed
+// launch"): a Batch job has no per-execution override, so the only place a
+// launch's variable can go is the job definition's plain variables, which
+// every launcher (batch.jobsEditor) and the reaper (batch.jobs.get) read back
+// with `gcloud batch jobs describe` for as long as the job is kept — a
+// standing copy, not the Cloud Run override the design prices. So a launch
+// carrying a secret entry (the budget seal key) is refused before the create,
+// definitively (ErrRejected, so the launcher drops its claim and its sealed
+// object), and the refusal does not quote the value.
 //
-// Mutation (run, restored): let jobDefinition merge secret entries into vars
-// like plain ones — the create happens and this test fails.
+// The refusal is the **owner's answer** and not a waiting state (the compute
+// backend plan's P1, 2026-10-19): Batch runs no sealed budget run, and an
+// installation that mints budget tokens runs its budget-on path on Cloud Run.
+// The assertions below therefore hold the refusal's whole operator-facing
+// contract — the entry is named, the value is not, nothing was created, and
+// the message says what the answer is and where it is documented — because a
+// refusal that stopped saying why would send an operator to provision a
+// backend their project cannot use.
+//
+// Mutations (each run, restored):
+//   - let jobDefinition merge secret entries into vars like plain ones — the
+//     create happens and this test fails;
+//   - format kv.Value into the refusal's text — the value assertion fails;
+//   - drop the entry's name from the refusal, or the sentence naming the
+//     budget-on path's backend — the "names" assertions fail.
 func TestLaunchRefusesASecretEnv(t *testing.T) {
 	ctx := context.Background()
 	b, bf, _, _ := newTestBackend(t, nil)
@@ -2143,7 +2154,56 @@ func TestLaunchRefusesASecretEnv(t *testing.T) {
 	if strings.Contains(err.Error(), v) {
 		t.Fatalf("the refusal quotes the secret's value: %v", err)
 	}
+	// The entry's *name* is what an operator is allowed to see, and the
+	// refusal is useless without it: it is the one thing that says which
+	// launch variable was refused.
+	if !strings.Contains(err.Error(), "FUGARO_BUDGET_TOKEN") {
+		t.Errorf("the refusal does not name the entry it refused: %v", err)
+	}
+	// The answer itself, in the operator's words: the reason (a Batch job's
+	// variables are the job's definition), where it is documented, and where
+	// the budget-on path runs instead. These three phrases are the ones the
+	// design documents carry too, and TestDocsBudgetTokenChannelAnswersTheBatchSeal
+	// holds this file and those documents to the same sentence.
+	for _, want := range []string{
+		"the job's definition",
+		"docs/design/budget-token-channel.md",
+		"runs its budget-on path on Cloud Run",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: the answer is a documented limit, and a refusal that stops naming its reason and its alternative sends an operator to provision a backend their project cannot use\n\nmessage: %v", want, err)
+		}
+	}
 	if n := len(bf.Creates()); n != 0 {
 		t.Fatalf("a refused launch created %d job(s)", n)
+	}
+}
+
+// TestLaunchAcceptsTheSameLaunchWithoutASecretEnv is the other half of the
+// same answer: the refusal is about the seal key and nothing else, so the
+// launch it refuses is accepted the moment the entry is a plain one. Without
+// it, a backend that refused every launch carrying FUGARO_BUDGET_TOKEN would
+// pass TestLaunchRefusesASecretEnv and break every budget-*off* run on Batch.
+//
+// Mutation (run, restored): refuse any entry whose name is FUGARO_BUDGET_TOKEN
+// in jobDefinition — this test fails while the one above still passes.
+func TestLaunchAcceptsTheSameLaunchWithoutASecretEnv(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	s := spec()
+	// The pre-seal marker value ("1"), as a plain variable: this is exactly
+	// the launch TestLaunchRefusesASecretEnv uses, with the entry moved out
+	// of SecretEnv and into Env.
+	s.Env = []string{"FUGARO_BUDGET_TOKEN=1"}
+	if _, err := b.Launch(ctx, s); err != nil {
+		t.Fatalf("Launch with the entry as a plain variable = %v, want it accepted", err)
+	}
+	creates := bf.Creates()
+	if len(creates) != 1 {
+		t.Fatalf("the launch created %d job(s), want 1", len(creates))
+	}
+	vars := object(t, creates[0].Job, "taskGroups", "0", "taskSpec", "environment", "variables")
+	if vars["FUGARO_BUDGET_TOKEN"] != "1" {
+		t.Errorf("the task's variables = %v, want the plain entry in them", vars)
 	}
 }

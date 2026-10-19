@@ -106,6 +106,110 @@ func TestDocsBudgetTokenChannelSection1IsTheSealedChannel(t *testing.T) {
 	}
 }
 
+// TestDocsBudgetTokenChannelAnswersTheBatchSeal (compute backend plan task 14,
+// SECURITY-SENSITIVE): the Batch half of the seal's carrier used to be an open
+// owner question — the design's own words were "**Open for the owner:** whether
+// Batch should ever run a budget-on run, and through which carrier — this
+// document names none that satisfies §3's constraints" — and the code refused a
+// sealed launch with a message that said "yet", which reads as a mechanism
+// somebody owes. The owner answered on 2026-10-19 (the plan's P1): keep the
+// refusal and document it as a known limit, because a Batch job's variables are
+// the job's definition and the only alternative carrier this design allows is
+// the rejected C2. This test holds the three places that answer now live in —
+// the design's own paragraph, the compute backend design's §1.6 and its C10
+// row, and the refusal `internal/backend/batch/run.go` emits — to the same
+// sentence, so one of them cannot be rewritten back into a question without the
+// others failing here. It is the docs half of
+// TestLaunchRefusesASecretEnv, which holds the message's own shape.
+func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
+	const design = "docs/design/budget-token-channel.md"
+	doc := readDoc(t, design)
+	i := strings.Index(doc, "**The Batch backend refuses a sealed launch")
+	j := strings.Index(doc, "Every symbol below was read on")
+	if i < 0 || j < i {
+		t.Fatalf("%s has no \"The Batch backend refuses a sealed launch\" paragraph followed by the symbol note: the paragraph that states the seal's Batch answer is gone", design)
+	}
+	// The paragraph is wrapped, so a phrase can straddle a line break: the
+	// assertions below are on prose, not on layout.
+	sec := strings.Join(strings.Fields(doc[i:j]), " ")
+	for _, want := range []string{
+		// The answer, in the operator's words, and its two halves: Batch
+		// runs no sealed budget run, and the budget-on path goes to Cloud Run.
+		"Batch runs no sealed budget run",
+		"runs its budget-on path on Cloud Run",
+		// The reason, which is what makes the answer a limit rather than a
+		// missing mechanism: the key would live in the job's definition.
+		"the job's definition",
+		"documented limit",
+		// The refusal is the code's, and the paragraph says what it is.
+		"ErrRejected",
+	} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("%s's \"refuses a sealed launch\" paragraph does not say %q: the owner answered this question (the compute backend plan's P1, 2026-10-19) and the answer is what an operator reads", design, want)
+		}
+	}
+	// And the question is gone: an "Open for the owner" clause here is what
+	// sends a reader looking for a mechanism that is not coming.
+	for _, refused := range []string{
+		"Open for the owner:** whether Batch should ever run a budget-on run",
+		"an open owner question",
+		"a sealed budget run cannot run on Batch yet",
+	} {
+		if strings.Contains(sec, refused) {
+			t.Errorf("%s's \"refuses a sealed launch\" paragraph still says %q: the question it asked is answered (keep the refusal, documented as a known limit), and a reader who finds it open re-opens a decision the owner closed", design, refused)
+		}
+	}
+
+	// The compute backend design carries the same answer, in §1.6 and in its
+	// C10 row, so a reader of the design that owns the backend finds it there
+	// too rather than only in the seal's own document.
+	const cbDesign = "docs/design/compute-backend.md"
+	cb := readDoc(t, cbDesign)
+	k := strings.Index(cb, "### 1.6 Secrets")
+	l := strings.Index(cb, "### 1.7 Networking")
+	if k < 0 || l < k {
+		t.Fatalf("%s has no §1.6 followed by §1.7: the section that says what Batch does with secrets is gone", cbDesign)
+	}
+	sec16 := strings.Join(strings.Fields(cb[k:l]), " ")
+	for _, want := range []string{"Batch runs no sealed budget run", "runs its budget-on path on Cloud Run"} {
+		if !strings.Contains(sec16, want) {
+			t.Errorf("%s §1.6 does not say %q: §1.6 is where a reader learns what this backend does with a secret, and the seal's answer belongs beside the secretVariables paragraph", cbDesign, want)
+		}
+	}
+	var c10 string
+	for _, line := range strings.Split(cb, "\n") {
+		if strings.HasPrefix(line, "| C10 |") {
+			c10 = line
+			break
+		}
+	}
+	if c10 == "" {
+		t.Fatalf("%s has no C10 row: the decision table the answer has to reach is gone", cbDesign)
+	}
+	for _, want := range []string{"refuse", "sealed launch"} {
+		if !strings.Contains(c10, want) {
+			t.Errorf("%s's C10 row does not say %q: §1.6's answer has to reach the decision table too, or the table reads as though the backend carried every secret the design lists\n\nrow: %s", cbDesign, want, c10)
+		}
+	}
+
+	// And the refusal the code emits says the same sentence — the same two
+	// phrases, read out of the source rather than typed twice.
+	run, err := os.ReadFile("../../internal/backend/batch/run.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := strings.Join(strings.Fields(string(run)), " ")
+	for _, want := range []string{
+		"the job's definition",
+		"docs/design/budget-token-channel.md",
+		"runs its budget-on path on Cloud Run",
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("internal/backend/batch/run.go's refusal does not carry %q, which %s's answer does: the document and the message an operator actually sees have to say the same thing", want, design)
+		}
+	}
+}
+
 // TestDocsBudgetTokenChannelCitationsExist: the design's load-bearing citations
 // are paths a later implementer has to find — the module that grants the prefix,
 // the package the seal will live in, the runner that parses the marker, the

@@ -175,11 +175,20 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 			// run (its account holds only agentReporter and logWriter), but a
 			// standing copy rather than the Cloud Run override the design prices
 			// (docs/design/budget-token-channel.md §7.1 and its Slice B note).
-			// Refused rather than carried, and the value is not quoted, until
-			// a carrier the design allows exists for Batch (an open owner
-			// question; secretVariables would need a per-run secret, which is
-			// the design's rejected C2).
-			return nil, fmt.Errorf("launching %s: the launch carries %s as a secret (the budget token's seal key), and a Batch job has no per-execution override: its variables are the job's definition, which a job reader can see, so the key is not put there and nothing was created; a sealed budget run cannot run on Batch yet", full, kv.Name)
+			//
+			// This refusal is the **answer** and not a waiting state (the
+			// compute backend plan's P1, 2026-10-19): the seal's carrier on
+			// Batch is a documented limit, because the one carrier this
+			// backend could use widens the key's audience to the launchers and
+			// the reaper (the exact set the seal exists to exclude) and the
+			// only other one the design allows is its rejected C2 (a per-run
+			// Secret Manager secret on a shared per-(profile, account)
+			// account). So Batch carries no sealed budget run, and a project
+			// that mints runs its budget-on path on Cloud Run. The message
+			// below says all of that to the operator, and it never quotes the
+			// value (LaunchSpec.SecretEnv's own contract: the value leaves the
+			// launcher once, as the execution's override member).
+			return nil, fmt.Errorf("launching %s: the launch carries %s as a secret (the budget token's seal key), and a Batch job has no per-execution override: its variables are the job's definition, which every launcher the Fugaro job-name condition admits and the reaper can read back for as long as the job is kept, so the key is not put there and nothing was created; this refusal is deliberate, and it is the documented limit (docs/design/budget-token-channel.md, \"The Batch backend refuses a sealed launch\"): an installation that mints budget tokens runs its budget-on path on Cloud Run, and Batch runs no sealed budget run", full, kv.Name)
 		}
 		vars[kv.Name] = kv.Value
 	}
