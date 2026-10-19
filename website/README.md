@@ -144,34 +144,42 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depended on the git state of the checkout the gates run in. The changelog rendered each
   release file's **"not yet released"** state wherever `git tag --list` found no tag
-  (`src/lib/changelog.mjs`), so the same commit built to **977,921 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit built to two site figures a changelog page's
+  own bytes apart — the larger in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to a build 1,515 bytes smaller with the tags this repository's own
-  clone carries, the changelog page's own "not yet released" labels being the whole of the
-  difference. A figure derived from one of those two builds was refused by the other, which is
-  what happened: the gate could not measure the build the README named and `website-preview`
-  could not deploy. So the derivation is read over **the gates' own build of the site**: a copy
-  of the repository in a temp directory, built with the site's installed Astro by
-  `test/lib/build.mjs`'s `buildCopy`, which carries no `.git` at all and so gives every checkout
-  the same three numbers. The site's own `dist/` is held to the ceilings below like any other
-  artifact.
+  deployed site is — and the smaller with the tags this repository's own clone carries, the
+  changelog page's own "not yet released" labels being the whole of the difference. A figure
+  derived from one of those two builds was refused by the other, which is what happened: the
+  gate could not measure the build the README named and `website-preview` could not deploy. So
+  the derivation is read over **the gates' own build of the site**: a copy of the repository in
+  a temp directory, built with the site's installed Astro by `test/lib/build.mjs`'s `buildCopy`,
+  which carries no `.git` at all and so gives every checkout the same three numbers. The site's
+  own `dist/` is held to the ceilings below like any other artifact.
 
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
-  version rather than from a tag, so the two checkout shapes above are one build now. The
-  derivation stays where it is all the same — a copy of the repository built by the gates is the
-  artifact the gates can measure in every environment, `dist/` or no `dist/`.
+  version rather than from a tag, so the two checkout shapes above are one build now — the same
+  commit builds to **1,024,586 bytes in a checkout with no tags** and to **1,024,586 bytes with the
+  tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
+  nowhere else** (a figure copied into the gate's own comments or another document is a second
+  place to forget, and this pair was once copied in two, which is how a clone figure came to sit
+  a round's bytes behind) and refuses it unless the two are one figure. The derivation stays
+  where it is all the same — a copy of the repository built by the gates is the artifact the
+  gates can measure in every environment, `dist/` or no `dist/`.
 
-  **What each cause really moves**, measured on that build rather than argued:
+  **What each cause really moves**, measured on that build rather than argued — and stated as a
+  rule rather than as a figure, because a figure here is a figure that has to be re-derived every
+  time the build moves: the numbers the causes produce are the ones above and in this
+  paragraph, which `test/budget.mjs` reads and holds to the build it makes itself, and the
+  unreleased build's own size is measured by `test/console-option.mjs`:
 
   - flipping **`features.console_downloads`** — the flag the console's release turned on, and the
     flag `test/console-option.mjs` flips back off to prove the unreleased state is still safe —
-    moves the **site figure up by 1,572 bytes**, from 980,303 with the flag off to 981,875 with it on:
-    the console option's own markup on the three pages that render it — the console page's
-    downloads section (each artifact's checksum beside its link, and the verification command)
-    1,100, Getting Started's option 386 and the homepage's call to action 86. It moves
-    the **page weight not at all**: the heaviest page is the docs hub, which renders no install
-    option, no download and no hero. The copy the gates build of the unreleased state is
+    moves the **site figure up** by the console option's own markup on the three pages that
+    render it: the console page's downloads section (each artifact's checksum beside its link,
+    and the verification command), Getting Started's option and the homepage's call to action. It
+    moves the **page weight not at all**: the heaviest page is the docs hub, which renders no
+    install option, no download and no hero. The copy the gates build of the unreleased state is
     therefore the smaller of the two, and that is the direction a reader of this list needs:
     the flag's round is the one that added the bytes;
   - the script and the pages that follow are the figures' own subject, and each moved them in
@@ -253,14 +261,33 @@ added or removed without this sentence moving fails there:
     downloads section, Getting Started's console option and the hero's link to the console.
     The page weight and the script did not move: the heaviest page is the docs hub, which
     renders none of the three.
+  - **Getting Started's three bands** (the owner's feedback of 2026-10-19) moved the site
+    figure alone, 977,921 → **979,575**, by the **1,654 bytes** the rework costs: the install
+    section shows the quick path above the fold with the console option beside it, the page
+    carries a "Set up your installation" list of its own, and the other install paths and the
+    platform list moved into a Details section below them. The page weight does not move: the
+    heaviest page is still the docs hub, which renders none of it, and the page that grew is
+    Getting Started's, at 25,871 bytes.
+
+  - **The 0.9.0 integration branch merged into `main`** (#697) and moved the page weight and
+    the site figure, with the script where it was: it regenerated
+    `website/content/cli-reference.md` for the 0.9.0 CLI and extended `content/security.md`.
+    The docs hub renders the whole CLI reference, so the heaviest page went 266,926 →
+    **280,604** (+13,678), and the site figure 979,575 → **1,019,827** (+40,252: the docs hub
+    and the security page). Getting Started's rework above was derived on a branch cut before
+    that merge, which is why the figures it wrote named a build `main` no longer makes; this
+    re-derivation is the commit that moves them. The clone figure moved by the same bytes, the
+    changelog page between the two shapes being unchanged.
+
   - **The changelog's own round** (the owner's brief of 2026-10-19) moved the site figure
-    977,921 → **981,875**, and its causes are the page's own: each release now carries its
-    product summary line and wraps the release file's own Highlights in a `<details>` block,
-    so fifteen summaries and fifteen notes labels arrive, and the page no longer prints the
-    fifteen "not yet released" labels the checkout with no tags used to draw (which releases
-    are published is the plugin's version now) or the "newest releases" block the summaries
-    replaced. The page weight and the script did not move: the changelog page is not the
-    heaviest page, and nothing outside it changed.
+    alone, 1,019,827 → **1,024,586**, by **4,759 bytes** net, and its causes are the page's own:
+    each release now carries its product summary line and wraps the release file's own
+    Highlights in a `<details>` block, so a summary and a notes label per release arrive, and
+    the page no longer prints a "not yet released" label for every release in the checkout with
+    no tags (which releases are published is the plugin's version now) or the "newest releases"
+    block the summaries replaced. The page weight and the script did not move: the changelog
+    page is not the heaviest page, and nothing outside it changed. It is also the round that
+    made the clone figure the no-tags figure (above).
 
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
@@ -285,12 +312,12 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
-    docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 1,052,265 bytes. Three times 350,755: the heaviest page, the
+    docs hub, at 280,604 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,682,032 bytes. Three times 1,227,344 (every file in `dist/`, 981,875
-    bytes across 23 files, plus 25 %) — the gates' own build of the site, the build of
-    2026-10-19 that carries the changelog's product summaries (above).
+  - **Whole site:** 3,842,199 bytes. Three times 1,280,733 (every file in `dist/`, 1,024,586
+    bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
+    now builds alike, tags or no tags (above).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
   principle is "the gist above the fold on every page with very few words", which no byte
@@ -346,7 +373,11 @@ added or removed without this sentence moving fails there:
   Getting Started's install section opens with its commands, with the
   sentence about them still there after the paths; and on every route that prints a command —
   three of the eleven today, and the other eight are skipped rather than asserted about — the
-  first `h2` precedes the first `pre`. The whole gate is one function over one `dist`, so its
+  first `h2` precedes the first `pre`. Its fourth rule is the owner's feedback of 2026-10-19:
+  Getting Started is three bands in the order a reader reads them — `#install` (the command
+  and the console), `#setup` (what a real installation needs, an `ol` whose every step names
+  the document behind it), `#details` (everything else) — so the two things a reader came for
+  cannot drift back down a page that grows. The whole gate is one function over one `dist`, so its
   refusals are kept the way the other gates keep theirs: a case writes a synthetic `dist` with
   each defect planted beside a page that keeps every rule, and each rule was mutation-proved by
   removing it from the function and watching that case fail.

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 	storage "google.golang.org/api/storage/v1"
@@ -28,7 +27,7 @@ func doctorRunsBucketIAM(ctx context.Context, lc *localcfg.Config, c *crm.Servic
 	unchecked := func(err error) []doctorCheck {
 		return []doctorCheck{{ID: "runs-bucket-iam", Severity: "warning",
 			Problem: "could not check who can write gs://" + bucket + ": " + oneLineCLI(err.Error()),
-			Fix:     "rerun fugaro doctor with access to the project, or as an operator"}}
+			Fix:     "rerun fugaro doctor with access to the project, or as an operator"}, tokenGrantUnchecked(bucket)}
 	}
 	svc, err := storage.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.Storage)...)
 	if err != nil {
@@ -54,36 +53,70 @@ func doctorRunsBucketIAM(ctx context.Context, lc *localcfg.Config, c *crm.Servic
 					Fix:     "rerun fugaro doctor with access to the project, or as an operator"})
 			}
 		}
-		return findingChecks(fs)
+		return append(findingChecks(fs), tokenGrantChecks(infra.JobTokenGrantFindings(p, bucket, lc.GCPProject))...)
 	case isAccessDenied(err):
 		r, terr := svc.Buckets.TestIamPermissions(bucket, []string{"storage.objects.create", "storage.objects.delete"}).Context(ctx).Do()
 		if terr != nil {
 			return unchecked(terr)
 		}
-		return []doctorCheck{selfCheck(bucket, len(r.Permissions) > 0, lc.User, launchers, operators)}
+		return []doctorCheck{selfCheck(bucket, len(r.Permissions) > 0, lc.User, launchers, operators), tokenGrantUnchecked(bucket)}
 	default:
 		return unchecked(err)
 	}
 }
 
 // selfCheck places the caller (only by the local config's self-asserted
-// user) and says what its unconditioned write access means.
+// user) and says what its unconditioned write access means. Which list
+// places it is read off the same two predicates every other command that
+// asks "is this identity an operator of the installation" reads (roles.go).
 func selfCheck(bucket string, held bool, user string, launchers, operators []string) doctorCheck {
 	if !held {
 		return doctorCheck{ID: "runs-bucket-iam", OK: true}
 	}
-	m := "user:" + user
+	m := meMember(user)
 	const text = "your credentials can write anywhere in gs://%s: this installation predates the 0.7.0 bucket hardening"
 	switch {
-	case user != "" && slices.Contains(operators, m):
+	case operatorMember(m, operators):
 		return doctorCheck{ID: "runs-bucket-iam", OK: true}
-	case user != "" && slices.Contains(launchers, m):
+	case launcherMember(m, launchers):
 		return doctorCheck{ID: "runs-bucket-iam", Severity: "warning", Problem: fmt.Sprintf(text, bucket),
 			Fix: "ask an operator to run fugaro init (0.7.0 or later)"}
 	default:
 		return doctorCheck{ID: "runs-bucket-iam", Severity: "info", Problem: "expected for an operator; otherwise " + fmt.Sprintf(text, bucket),
 			Fix: "if you only launch runs, ask an operator to run fugaro init (0.7.0 or later)"}
 	}
+}
+
+// tokenGrantUnchecked is job-token-grant when the bucket's policy cannot be
+// read (a launcher's usual case): never a silent pass, never a failure.
+func tokenGrantUnchecked(bucket string) doctorCheck {
+	return doctorCheck{ID: "job-token-grant", Severity: "info",
+		Problem: "unchecked: cannot read the bucket policy of gs://" + bucket + ", so whether each repository's job account can read its budget token objects under tokens/ is not known",
+		Fix:     "an operator runs fugaro doctor, which can read it"}
+}
+
+// tokenGrantChecks are JobTokenGrantFindings as doctor checks: the
+// job-token-grant summary, a warning when any job account lacks its tokens/
+// grant, then one job-token-grant-N line per account.
+func tokenGrantChecks(fs []infra.BucketFinding) []doctorCheck {
+	sum := doctorCheck{ID: "job-token-grant", OK: true}
+	if len(fs) > 0 {
+		sum.OK, sum.Severity = false, "info"
+		sum.Problem = "a repository's job account could not be checked for its read grant on tokens/ (see the job-token-grant-N lines)"
+		sum.Fix = "an operator runs fugaro init --repo in each repository named"
+		for _, f := range fs {
+			if f.Severity == "warning" {
+				sum.Severity = "warning"
+				sum.Problem = "a repository's job account cannot read its budget token objects under tokens/ (see the job-token-grant-N lines)"
+			}
+		}
+	}
+	out := []doctorCheck{sum}
+	for i, f := range fs {
+		out = append(out, doctorCheck{ID: fmt.Sprintf("job-token-grant-%d", i+1), Severity: f.Severity,
+			Problem: pluginwire.Printable(f.Problem), Fix: pluginwire.Printable(f.Fix)})
+	}
+	return out
 }
 
 // findingChecks are the findings as doctor checks: one per finding, IDs

@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // FinishedRun is a run whose result.json exists, read from the runs bucket
@@ -17,7 +18,10 @@ type FinishedRun struct {
 	Outcome                    string // ready, draft, none, reviewed, artifacts
 	PRNumber                   int
 	PRURL                      string
-	FinishedAt                 time.Time
+	// LaunchedBy is who started the run, as its launch.json recorded it (""
+	// when there is no launch.json, or the one there recorded no launcher).
+	LaunchedBy string
+	FinishedAt time.Time
 }
 
 // cleanURL is url made safe to show: only an https:// URL of at most 200
@@ -49,7 +53,8 @@ func finishedRow(f FinishedRun, now time.Time) RunRow {
 	return RunRow{
 		Run: clean(f.Run), Slug: budget.Key(f.Slug), Title: dash(clean(f.Title)), Stage: clean(f.Status),
 		Round: "-", Verify: "-", Models: "-", Auth: "-", Workflow: clean(f.Workflow),
-		Age: max(now.Sub(f.FinishedAt), 0), HasAge: true,
+		LaunchedBy: safetext.Field(f.LaunchedBy),
+		Age:        max(now.Sub(f.FinishedAt), 0), HasAge: true,
 		Finished: true, Failed: isFailure(f.Status), Outcome: clean(f.Outcome),
 		PRURL: cleanURL(f.PRURL), PRNumber: f.PRNumber, StartedAt: f.FinishedAt.UnixMilli(),
 	}

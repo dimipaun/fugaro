@@ -21,13 +21,47 @@ import (
 // CLI that published the policy. The bump makes that runner refuse the node
 // (RunnerSkew) instead of running past a gate it does not know. The shape is
 // version 1's; only what a runner must enforce changed.
-const Version = 2
+//
+// Version 3 (project-named-oauth-tokens, plan task 1) is the node that names
+// Claude accounts: profiles.<p>.claude_accounts (the accounts a profile
+// serves, one job per (profile, provider, account)) and the accounts block it
+// is gated by (accounts.<name>.allow_repos, the repositories that account's
+// token may be used by). What a version-3 runner enforces and a version-2 one
+// does not is that second list, and the pair of rules that hold a profile to
+// it: the profile writes exact allow_repos, every account it lists covers
+// every repository on that list, and no Anthropic API key is mounted beside
+// them. Such a node carries two keys a version-2 reader does not know, and
+// they are worth telling apart because only one of them is tolerated: the
+// accounts block is a top-level key, which it would merely list in
+// UnknownKeys and decode past (P8), and claude_accounts is a member INSIDE a
+// profile entry, which its Profile carrier does not have and which its own
+// profile decode refuses — entries are decoded with DisallowUnknownFields, the
+// rule the decoder states for a new profile field ("a newer profile field
+// bumps Version, which is what refuses a node this binary cannot read"), and
+// the rule the design's schema section cites for this bump. So a node whose
+// profile names accounts is unreadable to a version-2 reader whether or not
+// its version field said 3: the field is what makes it unreadable, and the
+// bump is what makes that refusal the documented one. The version check
+// answers first, with a VersionError and therefore with the remedy that fits
+// the direction (RunnerSkew on the job side, CLISkew on the operator's),
+// instead of an unknown-field decode error that names a field and no move. It
+// also states in the node which enforcement a reader must have, which is what
+// a version is for. The rules themselves ship in the
+// same release as this constant, and they have two doors: what admits an OAuth
+// launch onto such a job, or refuses it before the claim and before the token,
+// is internal/cli's projectJobAccountFor — with checkProjectJobAccount and
+// checkProjectJobAccountCovers behind it, the two its answer is computed with —
+// and the runner re-decides the same pair from the policy it read itself, in
+// internal/runner's own checkProjectJobAccount, before any stage, lease or
+// budget spend. The shape is version 2's; only what a runner must enforce
+// changed.
+const Version = 3
 
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
-// is the profile gate above (0.8.5). It sits beside Version because a bump of
-// Version adds its row in the same change (TestVersionSinceCoversEveryVersion
-// fails until it does; the 0.9.0 line's version 3 needs one too), and it is
+// is the profile gate above (0.8.5), 3 the account axis (0.9.0). It sits
+// beside Version because a bump of Version adds its row in the same change
+// (TestVersionSinceCoversEveryVersion fails until it does), and it is
 // read by every message about a node *ahead* of its reader (SkewSentence, so
 // the launch gate, the CLI's other reads, `fugaro project policy`, doctor and
 // the runner all answer from it): the release that reads such a node is the
@@ -41,6 +75,7 @@ const Version = 2
 var VersionSince = map[int]string{
 	1: "0.8.0",
 	2: "0.8.5",
+	3: "0.9.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false

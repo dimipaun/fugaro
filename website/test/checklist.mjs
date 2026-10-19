@@ -25,7 +25,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
-import { DIST, REPO, SITE, builtPages, filesUnder } from './lib/html.mjs'
+import { DIST, REPO, SITE, builtPages, filesUnder, find, parse, walk } from './lib/html.mjs'
 
 const CHECKLIST = path.join(REPO, 'docs', 'gcp-live-checklist.md')
 
@@ -103,6 +103,51 @@ test('Check 70a names files the repository has', () => {
       `Check 70a names \`${file}\`, and there is no such file in the repository or in the site: the check points the reader at a path the tree does not have — fix the name in docs/gcp-live-checklist.md in the commit that moves the file`,
     )
   }
+})
+
+test("Check 70b says which side of Getting Started's first command block the citation line sits on, and the page is on that side", () => {
+  // The check tells the reader what they are reading when they measure the fold: the section's
+  // heading above the first command block, and the `From …` line on one side of it or the
+  // other. The branch of 2026-10-19 moved that line under the block — the command is the first
+  // thing under the path's name, and the citation follows what it cites — and the check still
+  // said "above", which is an instruction no reader can follow on the page they are looking at.
+  // The order is read out of the built page here rather than typed, so the two cannot disagree:
+  // whoever moves the line moves the check's sentence in the same commit, and this case is what
+  // says so.
+  const section = checkSection(readFileSync(CHECKLIST, 'utf8'), '70b')
+  const page = parse(readFileSync(path.join(DIST, 'getting-started', 'index.html'), 'utf8'))
+  const main = find(page, 'main')
+  assert.ok(main, 'the built /getting-started/ page has no `main`, so the ordering this case reads cannot be read at all')
+
+  let at = 0
+  const seen = { heading: -1, block: -1, citation: -1 }
+  for (const el of walk(main)) {
+    at += 1
+    const cls = (el.attrs.get('class') ?? '').split(/\s+/)
+    if (seen.heading === -1 && el.name === 'h2') seen.heading = at
+    if (seen.block === -1 && el.name === 'pre') seen.block = at
+    if (seen.citation === -1 && el.name === 'p' && cls.includes('source')) seen.citation = at
+  }
+  assert.notEqual(seen.heading, -1, 'the built /getting-started/ page has no `h2` in its `main`, so the section heading Check 70b names is not on the page')
+  assert.notEqual(seen.block, -1, 'the built /getting-started/ page has no `<pre>` in its `main`, so the first command block Check 70b measures is not on the page')
+  assert.notEqual(
+    seen.citation,
+    -1,
+    'the built /getting-started/ page has no `.source` paragraph in its `main`, so the `From …` line Check 70b names is not on the page: the check cites a line the page does not draw',
+  )
+  assert.ok(
+    seen.heading < seen.block,
+    "the built /getting-started/ page draws the section's heading after its first command block, and Check 70b tells the reader the heading sits above it: fix the page or the check in the same commit (P5)",
+  )
+
+  const where = seen.block < seen.citation ? 'below' : 'above'
+  assert.match(
+    section,
+    // The sentence is read through whatever line breaks the checklist's own wrapping puts in
+    // it, so a reflow of the paragraph is not a failure; the words and the side are.
+    new RegExp(`the section's heading sits above it and the \`From …\`\\s+line sits ${where} it`),
+    `the built /getting-started/ page draws the \`From …\` line ${where} its first command block, and Check 70b does not say so: the check describes the page its reader is looking at, so a page that moves the line moves that sentence in the same commit (the round of 2026-10-19 moved it below and left the check saying "above", which is an instruction nobody could follow)`,
+  )
 })
 
 test('Check 70a names the refusals the website tests make', () => {

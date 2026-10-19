@@ -288,14 +288,14 @@ type Workflow struct {
 	// "" defaults to baked (design generic-tool.md §2, G3, G5). The build
 	// acts on it (generic-tool plan Task 16): a clone workflow's job image
 	// is base_images.base, with no per-repository image build or daily
-	// check. clone is not released yet: the runner side (generic-tool plan
-	// Task 17, in the tree but in no tagged release) is what actually reads
-	// FUGARO_CHECKOUT and makes the
-	// blobless clone, so a checkout: clone launch is refused at launch
-	// until fugaro 0.7.5 (internal/cli/recipes_skew.go's cloneSince) ships
-	// it, whether or not the installation's own base image (fugaro-base)
-	// has been published — a separate, person-run step this plan does not
-	// do. Use checkout: baked to run a workflow today.
+	// check. The runner side is what actually reads FUGARO_CHECKOUT and
+	// makes the blobless clone: it ships at fugaro 0.7.5
+	// (internal/cli/recipes_skew.go's cloneSince), and checkout: clone
+	// itself shipped in 0.9.0, when that flip landed. A launch is still
+	// refused on a job image older than cloneSince, whether or not the
+	// installation's own base image (fugaro-base) has been published — a
+	// separate, person-run step. Use checkout: baked for a workflow that
+	// needs a system package, a service or a Dockerfile.
 	Checkout string `yaml:"checkout,omitempty"`
 	// Inputs caps what a launcher may attach to a run of this workflow
 	// (design artifact-runs.md §4). Binaries before 0.8.0 refuse the key.
@@ -479,11 +479,19 @@ const BitbucketSecret = "bitbucket-token"
 // mapped to the variable each one becomes. A workflow's secrets may not
 // reuse them (design §5.1, §6.1).
 var ReservedSecrets = map[string]string{
-	BitbucketSecret:      "FUGARO_BITBUCKET_TOKEN",
-	"github-app-key":     "FUGARO_GITHUB_APP_PRIVATE_KEY",
-	"claude-oauth-token": "CLAUDE_CODE_OAUTH_TOKEN",
-	AnthropicSecret:      "ANTHROPIC_API_KEY",
+	BitbucketSecret:  "FUGARO_BITBUCKET_TOKEN",
+	"github-app-key": "FUGARO_GITHUB_APP_PRIVATE_KEY",
+	ClaudeOAuthToken: "CLAUDE_CODE_OAUTH_TOKEN",
+	AnthropicSecret:  "ANTHROPIC_API_KEY",
 }
+
+// CodexOAuthToken is reserved for the Codex harness's OAuth credential but is
+// deliberately NOT in ReservedSecrets: this map is the names the platform
+// itself *mounts*, each with the variable it becomes, and nothing mounts a
+// Codex credential yet. What the name needs now is to be refused wherever a
+// secret name is accepted or written (CodexOAuthSecret), which is a different
+// question from this one — and an entry here would claim a mount, a project
+// job variable and a project-scope default that do not exist.
 
 // Resources are the task resources for the workflow's job. The backend checks them against its own limits (Cloud Run: gcp.CheckResources).
 type Resources struct {
@@ -523,6 +531,27 @@ type JobProfile struct {
 	TimeoutClass string   `yaml:"timeout_class" json:"timeout_class"`
 	Secrets      []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 	AllowRepos   []string `yaml:"allow_repos,omitempty" json:"allow_repos,omitempty"`
+	// ClaudeAccounts are the Claude accounts this profile serves, by name
+	// ("default" for the unnamed claude-oauth-token, or a name of the local
+	// config's claude_accounts block). An empty list is the profile that
+	// serves no account, which is every profile today.
+	//
+	// It is a NEW field rather than a secrets: entry, and that is the point
+	// (design project-named-oauth-tokens §4.1, D4): a Claude OAuth token is
+	// never something an operator lists among a profile's mounts — the
+	// secrets: refusal for one stays in force, unchanged
+	// (projectpolicy's isClaudeOAuthSecret) — and the deployer adds the one
+	// mount an account's job carries. So this field names an ACCOUNT, and the
+	// job it selects is one per (profile, provider, account): the account
+	// decides which job a run lands on, and the job's own service account is
+	// the only thing that may read that account's token (D2).
+	//
+	// What it does not say is which repositories the token may be used by:
+	// that is the account's own allow_data_to in the local config, and the
+	// policy's accounts.<name>.allow_repos derived from it. A profile that
+	// names an account admits only repositories that account covers, which
+	// publish and `fugaro init` refuse to violate (§4.1's subset rule).
+	ClaudeAccounts []string `yaml:"claude_accounts,omitempty" json:"claude_accounts,omitempty"`
 	// allowReposWritten records that the document gave allow_repos at all. It
 	// exists because a key written with nothing under it (`allow_repos:`, or
 	// `~`, with every entry commented out) decodes to the same nil slice as an

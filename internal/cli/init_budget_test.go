@@ -122,10 +122,10 @@ func TestManagedBudgetIsRequiredAtCreation(t *testing.T) {
 		noMarker(t, r.gcs, bucket)
 	})
 
-	// --managed is about the project this run creates: a project that already
-	// exists cannot be flagged managed in this release (D58, Task 6.1), and
-	// init --firebase adds Firebase to such a project, which is never what
-	// makes one managed (D73).
+	// --managed is about the project this run creates: an existing project is
+	// flagged by the owner's own command instead, never by init (D58, Task
+	// 6.1), and init --firebase adds Firebase to such a project, which is
+	// never what makes one managed (D73).
 	t.Run("--managed without --create-project", func(t *testing.T) {
 		r := newProjectRig(t)
 		r.existing(true)
@@ -315,6 +315,12 @@ func TestManagedOnAnExistingProjectSaysItWasNotApplied(t *testing.T) {
 	}
 	if !strings.Contains(all, "no creation fact was written") {
 		t.Errorf("the run did not say that no creation fact was written:\n%s", all)
+	}
+	// And the owner is not left with "not managed" as the end of it: since
+	// Task 6.1 there is a command for exactly this project, so the warning
+	// names it with the project ID the owner would type.
+	if want := "fugaro managed flag " + newProj; !strings.Contains(all, want) {
+		t.Errorf("the run did not say how such a project becomes managed (want %q):\n%s", want, all)
 	}
 }
 
