@@ -108,15 +108,21 @@ func TestDoctorLauncherReachCountsOnlyStartableRoles(t *testing.T) {
 }
 
 // The line a person reads: the launcher reach is an *info* line and it is
-// printed. A check that is OK with a Problem is one printDoctorChecks skips
-// (`if c.OK { continue }`), so the surface the owner checks after a migration
-// existed only in --json — the human output said nothing about the jobs a
-// launcher can start, or said "everything checked is ok" over a project whose
-// launcher grants nothing called it.
+// printed. printDoctorChecks prints every check that is not OK, and an OK one
+// too when it carries a Severity; what it prints nothing for is an OK check
+// with no Severity, which is doctor's own bookkeeping (`if c.OK &&
+// c.Severity == "" { continue }`, doctor.go). So this check is *not ok* and
+// Severity "info": it prints for the owner's eyes, and checksFail's "info" arm
+// keeps it out of the exit code. An earlier shape of this check (OK with the
+// Problem) was skipped by the printer as it stood then, and that is why the
+// check looks the way it does — but the printer's rule has moved, and an OK
+// check carrying a Severity would print today.
 //
-// Mutation (run, restore): put OK: true back on the check
-// (doctorLauncherReach) — doctor prints no launcher-jobs line, and
-// "everything checked is ok" comes back.
+// Mutation (run, restore): drop the Severity from doctorLauncherReach (leaving
+// it not ok) — the line still prints, but Severity "" is the arm checksFail
+// fails on, so doctor exits non-zero and the ExitCode assertion below is what
+// catches it. Setting OK: true alone no longer changes what is printed, and
+// that is the rule this comment now states rather than the old one.
 func TestDoctorPrintsTheLauncherReach(t *testing.T) {
 	r := newDoctorRig(t)
 	r.withLaunchers(t)
