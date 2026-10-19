@@ -106,7 +106,8 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 // disagree fail here instead of only the doc.
 //
 // Mutation (run, restore): rename the title back to `fugaro-launchers-runs`,
-// or drop either `tokens/` clause from the bullet — the test fails on each.
+// name the runs/-only title without saying it is the pre-0.9.0 form, or drop
+// either `tokens/` clause from the bullet — the test fails on each.
 func TestBucketIamDocNamesTheWidenedLauncherCondition(t *testing.T) {
 	const path = "../../docs/design/bucket-iam.md"
 	data, err := os.ReadFile(path)
@@ -118,8 +119,28 @@ func TestBucketIamDocNamesTheWidenedLauncherCondition(t *testing.T) {
 	if want := "fugaro-launchers-runs-tokens"; gcp.LauncherBucketConditionTitle != want {
 		t.Fatalf("gcp.LauncherBucketConditionTitle is %q; this guard pins the title %s must carry, so the two have to be updated together", gcp.LauncherBucketConditionTitle, path)
 	}
-	if strings.Contains(doc, "`fugaro-launchers-runs`") {
-		t.Errorf("%s still names the runs/-only launcher condition title `fugaro-launchers-runs`: a binding under that title is not the one every launcher carries", path)
+	// The runs/-only title may stand in this document only where the document
+	// says what pre-0.9.0 releases wrote: the base's f532ee10 added
+	// gcp.LegacyLauncherBucketCondition and the title beside it — `fugaro
+	// doctor` recognises the old binding and replaces it by `fugaro init`
+	// rather than deleting it — and the document names it for that reason. As
+	// *this* document's title it may not appear: what the title is has to be
+	// the constant the code carries.
+	if !strings.Contains(doc, "`gcp.LauncherBucketConditionTitle` is `"+gcp.LauncherBucketConditionTitle+"`") {
+		t.Errorf("%s does not state that the launcher condition's title is %s, which is what gcp.LauncherBucketConditionTitle carries", path, gcp.LauncherBucketConditionTitle)
+	}
+	for _, line := range strings.Split(doc, "\n") {
+		i := strings.Index(line, "`"+gcp.LegacyLauncherBucketConditionTitle+"`")
+		if i == -1 {
+			continue
+		}
+		// The wording that makes it the legacy form has to come before the title
+		// itself: a line that names it first and explains it afterwards reads as
+		// this document's title with a footnote.
+		lower := strings.ToLower(line[:i])
+		if !strings.Contains(lower, "before 0.9.0") && !strings.Contains(lower, "old form") && !strings.Contains(lower, "legacy") {
+			t.Errorf("%s names the runs/-only launcher condition title `%s` without saying it is the pre-0.9.0 form: a binding under that title is not the one every launcher carries now: %.160s", path, gcp.LegacyLauncherBucketConditionTitle, line)
+		}
 	}
 	// Every place this file names it: the end-state table's launcher row, H5's
 	// two bullets, and the install guard's condition row.

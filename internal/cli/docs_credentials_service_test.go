@@ -63,26 +63,72 @@ func stepBlock(t *testing.T, path, check, heading string) string {
 }
 
 // TestChecklistCheck90GuardClearsTheClientCredentialEnvironment: Claude Code
-// reads ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN before anything the check
-// sets, and ANTHROPIC_BASE_URL would decide where the call goes, so a control
-// run in a shell carrying any of them is not a measurement of the setup-token —
-// it can succeed on an API key and be recorded as a swap that works. The guard
-// unsets all three and says so without printing a value.
+// reads CLAUDE_CODE_USE_VERTEX / CLAUDE_CODE_USE_BEDROCK and an apiKeyHelper
+// setting before CLAUDE_CODE_OAUTH_TOKEN, and ANTHROPIC_API_KEY,
+// ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL decide what the call
+// authenticates with and where it goes, so a control run in a shell carrying
+// any of them is not a measurement of the setup-token — it can succeed on a
+// Vertex service account, on an API key or on a helper command and be recorded
+// as a swap that works. The guard unsets all five, stops when a settings file
+// configures an apiKeyHelper, and says so without printing a value.
 func TestChecklistCheck90GuardClearsTheClientCredentialEnvironment(t *testing.T) {
 	doc := readDoc(t, checklistPath)
 	check := docSection(t, checklistPath, doc, chk90Heading)
 	guard := stepBlock(t, checklistPath, check, "### Check 90 step 1: setup and guard")
+	flat := docFlat(guard)
+	// The loop is one shell statement however markdown wraps it, so it is read
+	// from `for v in` to its `; do`: every one of the five names has to be in
+	// it, and each is a way `claude` can answer the control call with something
+	// other than the setup-token.
+	loop := flat[strings.Index(flat, "for v in"):]
+	loop = loop[:strings.Index(loop, "; do")]
+	for _, v := range []string{
+		"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+		"CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_BEDROCK",
+	} {
+		if !strings.Contains(loop, v) {
+			t.Errorf("Check 90's guard does not clear %s, so the control call can succeed on it and be recorded as a swap that works", v)
+		}
+	}
 	for _, want := range []string{
-		"for v in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL; do",
 		`unset "$v"`,
 		"its value is not printed",
 	} {
-		if !strings.Contains(guard, want) {
+		if !strings.Contains(flat, want) {
 			t.Errorf("Check 90's guard does not clear the client's own credential environment: it lacks %q", want)
 		}
 	}
+	// The fourth way in is a setting, not a variable, so nothing above clears
+	// it: each file Claude Code reads one from is checked, and a configured
+	// helper stops the block before the control runs.
+	for _, want := range []string{
+		`jq -e 'has("apiKeyHelper")'`,
+		"$HOME/.claude/settings.json",
+		".claude/settings.local.json",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check 90's guard does not look for an apiKeyHelper where Claude Code reads one: it lacks %q, so a helper can answer the control call", want)
+		}
+	}
+	helper := strings.Index(flat, `has("apiKeyHelper")`)
+	if helper == -1 {
+		t.Fatal("Check 90's guard never checks for an apiKeyHelper")
+	}
+	// The stop has to be the one the helper check itself takes (the sections
+	// have many other stops, so "an exit 1 somewhere after it" would pass a
+	// guard that only warns about the helper).
+	if !strings.Contains(flat, "claude may authenticate with what that helper prints instead of with the setup-token") ||
+		!strings.Contains(flat, `and re-run this block. Its value is not printed." >&2; exit 1; }`) {
+		t.Fatal("Check 90's guard finds an apiKeyHelper but does not stop on it: a configured helper would answer the control call")
+	}
+	if !strings.Contains(flat[helper:], "no apiKeyHelper is configured") {
+		t.Error("Check 90's guard does not report that no apiKeyHelper is configured when it passes, so an unconfigured helper and an unchecked one read the same")
+	}
 	if !strings.Contains(check, "can only succeed on the setup-token") {
 		t.Error("Check 90's section does not say why the client's credential variables are cleared: that the control can only succeed on the setup-token")
+	}
+	if !strings.Contains(docFlat(check), "uses Vertex, which is exactly why this stop is here") {
+		t.Error("Check 90 does not say why the two provider variables are cleared: with CLAUDE_CODE_USE_VERTEX left set (as on the owner's machine) the control measures Vertex")
 	}
 }
 
@@ -171,12 +217,13 @@ func TestChecklistCheck91ScratchDirectoryIsTheChecksOwn(t *testing.T) {
 }
 
 // TestChecklistCheck91NeverAdoptsWhatItDidNotCreate: the Restore deletes the
-// service, its image and (when the baseline said so) the registry repository,
-// so every one of those deletes rests on the check knowing what it created.
-// Hard stop 4 refuses a fugaro-chk91 that is already there unless step 3
-// recorded the deploy in $CHK91/service-mine, and the baseline's repo-existed
-// file is what step 3's create and step 7's delete both read — and it is read
-// before the scratch directory holding it is removed. Deleting either leaves a
+// service, its image and the registry repository, so every one of those deletes
+// rests on the check knowing what it created. Hard stop 4 refuses a fugaro-chk91
+// that is already there unless step 3 recorded the deploy in
+// $CHK91/service-mine, and the baseline stops the check outright on a
+// repository of its own name that is already in the project — it never adopts
+// one — so $CHK91/repo-existed is the ownership record the Restore reads before
+// the scratch directory holding it is removed. Deleting either stop leaves a
 // check that would adopt, write into and then delete a service or repository
 // the installation already had.
 func TestChecklistCheck91NeverAdoptsWhatItDidNotCreate(t *testing.T) {
@@ -200,9 +247,10 @@ func TestChecklistCheck91NeverAdoptsWhatItDidNotCreate(t *testing.T) {
 		t.Error("Check 91's step 3 does not record the service it deployed in $CHK91/service-mine, so hard stop 4 would refuse the service this check itself created")
 	}
 
-	// The baseline: taken once, before anything is created, and it records both
-	// answers rather than only the one that permits a delete.
-	baseStart := strings.Index(check, "**Baseline, once, before anything is created**")
+	// The baseline: taken once, before anything is created, and it is a hard
+	// stop — an existing repository is never adopted, so the only answer the
+	// file ever holds is `no`, and the file itself is the ownership record.
+	baseStart := strings.Index(check, "**Baseline, once, before anything is created — and it is a hard stop.**")
 	baseEnd := strings.Index(check, "### Check 91 step 2")
 	if baseStart == -1 || baseEnd == -1 || baseStart > baseEnd {
 		t.Fatal("Check 91 has no baseline block before step 2, so nothing says whether the registry repository was already there")
@@ -210,18 +258,29 @@ func TestChecklistCheck91NeverAdoptsWhatItDidNotCreate(t *testing.T) {
 	baseline := check[baseStart:baseEnd]
 	for _, want := range []string{
 		`[ ! -e "$CHK91/repo-existed" ]`,
-		`echo yes > "$CHK91/repo-existed"`,
+		`gcloud artifacts repositories describe "${SVC:?}"`,
 		`echo no > "$CHK91/repo-existed"`,
+		`exit 1`,
 	} {
 		if !strings.Contains(baseline, want) {
-			t.Errorf("Check 91's baseline does not snapshot what it found: it lacks %q", want)
+			t.Errorf("Check 91's baseline does not stop on a repository that is already there: it lacks %q", want)
 		}
 	}
+	// The answer that loses the ownership record is gone: a baseline that can
+	// write `yes` is a baseline that lets the check write into, and its Restore
+	// delete, a repository the check did not create.
+	if strings.Contains(baseline, `echo yes`) {
+		t.Error("Check 91's baseline records `yes` for a repository it found, which is the answer that makes it adopt and later delete a repository it did not create")
+	}
+	if !strings.Contains(docFlat(baseline), "never adopts") {
+		t.Error("Check 91's baseline does not say that an existing repository is never adopted")
+	}
 
-	// The Restore reads the baseline before the scratch directory holding it is
-	// gone, and deletes the repository only in the case the baseline recorded.
+	// The Restore reads the ownership record before the scratch directory
+	// holding it is gone, and deletes the repository only on the answer that
+	// says the check created it.
 	restore := stepBlock(t, checklistPath, check, "### Check 91 step 7: Restore")
-	read := strings.Index(restore, `REPO_EXISTED=$(cat "$CHK91/repo-existed")`)
+	read := strings.Index(restore, `REPO_MINE=$(cat "$CHK91/repo-existed")`)
 	rmrf := strings.Index(restore, `rm -rf "$CHK91"`)
 	del := strings.Index(restore, `gcloud artifacts repositories delete "${SVC:?}"`)
 	if read == -1 || rmrf == -1 || del == -1 {
@@ -233,17 +292,16 @@ func TestChecklistCheck91NeverAdoptsWhatItDidNotCreate(t *testing.T) {
 	if read > del {
 		t.Error("Check 91's Restore deletes the registry repository before reading the baseline that says whether it was this check's to delete")
 	}
-	if !strings.Contains(restore, `[ "$REPO_EXISTED" = no ]`) {
-		t.Error("Check 91's Restore deletes the registry repository without the baseline's answer gating it: a repository the installation already had would be deleted")
+	if !strings.Contains(restore, `[ "$REPO_MINE" = no ]`) || !strings.Contains(restore[read:], "exit 1") {
+		t.Error("Check 91's Restore deletes the registry repository without the baseline's answer gating it and stopping it: a repository the installation already had would be deleted")
 	}
 }
 
 // TestChecklistCheck91CreatesItsOwnRegistryRepository: the image tag names an
 // Artifact Registry repository in the project, and nothing created it, so the
 // build failed at its first step. The check creates the repository its own name
-// points at when the baseline said it was not already there — never a
-// repository the installation had — and the Restore deletes it in the same
-// case.
+// points at — the baseline has already stopped it unless that repository was
+// absent, so this one is the check's own — and the Restore deletes it.
 func TestChecklistCheck91CreatesItsOwnRegistryRepository(t *testing.T) {
 	doc := readDoc(t, checklistPath)
 	check := docSection(t, checklistPath, doc, chk91Heading)
@@ -259,8 +317,10 @@ func TestChecklistCheck91CreatesItsOwnRegistryRepository(t *testing.T) {
 	if !strings.Contains(build, `--repository-format=docker`) {
 		t.Error("Check 91's repository is not created as a Docker repository")
 	}
-	if !strings.Contains(build, `"$(cat "$CHK91/repo-existed")" = no`) {
-		t.Error("Check 91 creates its registry repository without consulting the baseline that decides whether it was already there (and so whether the Restore may delete it)")
+	// The describe must come first, or a re-run of the step fails on a
+	// repository that is already this check's own.
+	if desc := strings.Index(build, `gcloud artifacts repositories describe "${SVC:?}"`); desc == -1 || desc > create {
+		t.Error("Check 91 creates its registry repository without describing it first, so a re-run of the step fails on a repository that is already this check's")
 	}
 	// The image tag is the repository's own name, which is what keeps the
 	// creation, the push and the Restore's delete on one repository.
@@ -1119,7 +1179,7 @@ func TestChecklistCheck47IsSupersededNotHeld(t *testing.T) {
 func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	const path = "docs/credentials-service/implementation-plan.md"
 	doc := readDoc(t, path)
-	gc1 := docTail(t, path, doc, "1. **This pull request changes seventeen files")
+	gc1 := docTail(t, path, doc, "1. **This pull request changes nineteen files")
 	if i := strings.Index(gc1, "\n2. **"); i != -1 {
 		gc1 = gc1[:i]
 	}
@@ -1164,15 +1224,28 @@ func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	}
 	// ... and it has to name them: the constraint's "the documents" was four
 	// credential documents, and the pull request's diff
-	// (`git diff origin/integration-0.9.0 --name-status`) is the seventeen
-	// paths below — the eight of the credentials service, the register, the
-	// four D130 and D131 supersede or amend, the four documents this run
-	// corrected where they contradicted the tree, and the five test files.
+	// (`git diff origin/integration-0.9.0 --name-status`) is the nineteen
+	// paths below — the eight of the credentials service and the register, the
+	// four D130 and D131 supersede or amend, the documents the reviews
+	// corrected where they contradicted the tree (this run's SECURITY.md,
+	// docs/design/project-named-oauth-tokens.md and §7 of
+	// docs/design/project-centric.md among them), and the five test files.
 	// `spec.md` is the one document under docs/credentials-service/ that is not
 	// among them — it is already on the base, added by #512 — so a constraint
 	// that claims to add it describes someone else's change, and one that
 	// names four documents leaves the register and the four superseded design
-	// documents out.
+	// documents out. `docs/design/bucket-iam.md` is the one document this
+	// list once carried and no longer does: its corrected text came in with the
+	// base merge, so the pull request carries its guard file and not it.
+	// The documents are enumerated before the sentence about spec.md, which is
+	// the one credential document this pull request leaves alone: a path named
+	// only in the constraint's closing sentence ("no file beyond those
+	// nineteen") would otherwise answer for a document the pull request does
+	// not change.
+	docs := gc1
+	if i := strings.Index(gc1, "`docs/credentials-service/spec.md`"); i != -1 {
+		docs = gc1[:i]
+	}
 	for _, file := range []string{
 		"docs/credentials-service/implementation-plan.md",
 		"docs/credentials-service/README.md",
@@ -1184,18 +1257,34 @@ func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 		"docs/plans/2026-10-14-oauth-reviewer-stage.md",
 		"docs/git-providers.md",
 		"docs/project-layer.md",
-		"docs/design/bucket-iam.md",
 		"docs/checkout.md",
+		"SECURITY.md",
+		"docs/design/project-named-oauth-tokens.md",
+		"website/content/security.md",
 		cliGuard,
 		"internal/cli/docs_project_layer_test.go",
 		"internal/cli/docs_bucket_iam_test.go",
 		"internal/cli/docs_checkout_test.go",
 		rulesGuard,
 	} {
-		if !strings.Contains(gc1, file) {
+		where := gc1
+		if !strings.HasPrefix(file, "internal/") {
+			where = docs
+		}
+		if !strings.Contains(where, file) {
 			t.Errorf("Global Constraint 1 does not name %s, which this pull request changes", file)
 		}
 		readDoc(t, file) // the path it names is one the tree really has
+	}
+	// The documents this round's security review added to the constraint, named
+	// as documents it changes and not only in passing: GC1's closing sentence
+	// names SECURITY.md too ("no file beyond those nineteen"), which is not the
+	// same claim as listing it among the changed documents.
+	if !strings.Contains(docs, "`SECURITY.md`, `docs/design/project-named-oauth-tokens.md`") {
+		t.Error("Global Constraint 1 does not name SECURITY.md and docs/design/project-named-oauth-tokens.md among the documents this pull request changes: the stopgap they promise to replace is stated there")
+	}
+	if !strings.Contains(docs, "`website/content/security.md`") {
+		t.Error("Global Constraint 1 does not name website/content/security.md, the generated page SECURITY.md is the source of")
 	}
 	if !strings.Contains(gc1, "spec.md") || !strings.Contains(gc1, "already on the base") {
 		t.Error("Global Constraint 1 does not say spec.md is already on the base, so the reader cannot tell it is the one credential document this pull request leaves alone")
@@ -1203,8 +1292,8 @@ func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	if strings.Contains(gc1, "it adds and edits `spec.md`") {
 		t.Error("Global Constraint 1 still says this pull request adds spec.md, which the base already carries")
 	}
-	if !strings.Contains(doc, "the twelve documents and the five test files that pin them") {
-		t.Error("the plan's review focus does not say what this pull request is: the twelve documents and the five test files that pin them")
+	if !strings.Contains(doc, "the fourteen documents and the five test files that pin them") {
+		t.Error("the plan's review focus does not say what this pull request is: the fourteen documents and the five test files that pin them")
 	}
 	if strings.Contains(doc, "the four documents and the two test files") {
 		t.Error("the plan's review focus still counts four documents, but the pull request changes eight")
@@ -1449,6 +1538,694 @@ func TestChecklistCheck90StepSevenNamesTheProxyFlagThatRecordsTheErrorType(t *te
 	for _, want := range []string{"step 7 records the status", "the error object's own `type` and `message`", "--error-fields"} {
 		if !strings.Contains(u3, want) {
 			t.Errorf("reconciliation's U3 row does not say how Check 90 records the error type: it lacks %q", want)
+		}
+	}
+}
+
+// gcloudCommands returns every `gcloud` invocation in a section's fenced
+// blocks, one per occurrence, as the command from `gcloud` to the end of the
+// line it stands on. The checklist hard-wraps prose but not code, so a command
+// broken over several lines with backslashes is one line per segment and a flag
+// on a continuation line lands in the segment of the `gcloud` above it.
+func gcloudCommands(section string) []string {
+	var out []string
+	re := regexp.MustCompile(`\bgcloud\b`)
+	for _, b := range fencedBlocks(section) {
+		for _, line := range strings.Split(b, "\n") {
+			// A comment is not a command the owner types, and the register's
+			// own "never `gcloud config get-value project`" warnings are
+			// comments: only what is run has to name the project.
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			// ... and neither is a trailing comment, where the register's own
+			// "never `gcloud config get-value project`" notes live.
+			hash := strings.Index(line, "#")
+			for _, loc := range re.FindAllStringIndex(line, -1) {
+				if hash != -1 && loc[0] > hash {
+					continue
+				}
+				out = append(out, line[loc[0]:])
+			}
+		}
+	}
+	return out
+}
+
+// fencedText is every fenced block of a section, joined: the code the owner
+// copies, with the prose that explains it excluded, so an assertion about a
+// command cannot be satisfied by a sentence about the command.
+func fencedText(section string) string {
+	return strings.Join(fencedBlocks(section), "\n")
+}
+
+// TestChecklistCheck91CommandsPassTheProjectExplicitly: Check 91 deploys a
+// service, pushes an image and deletes both in a Google Cloud project, and the
+// owner's gcloud has a default project that is very often another installation
+// (EdgeWeb's or EdgeServer's). A command without `--project` therefore runs
+// against whatever the default is: it can create a Cloud Run service and a
+// Registry repository in the wrong project, and the Restore's deletes can miss
+// what it made and remove something else. Every command names the project from
+// the guard's own `$P`, and `$P` is `fugaro-dev` — hard stop 1 refuses anything
+// else, hard stop 2 refuses a checkout that is not that installation — so the
+// only project any command of this check can name is the owner's own.
+// `print-identity-token` is the one exception: it mints a token for the caller,
+// and a token is not scoped to a project.
+//
+// Mutation (run, restore): delete `--project="${P:?}"` from the build, the
+// deploy, an image delete or a list, change the guard's `P=fugaro-dev` to
+// `P=belong`, or drop hard stop 1 — the test fails on each.
+func TestChecklistCheck91CommandsPassTheProjectExplicitly(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk91Heading)
+	cmds := gcloudCommands(check)
+	if len(cmds) < 10 {
+		t.Fatalf("Check 91's blocks carry only %d gcloud invocations, which is fewer than the commands this check needs; the section was cut", len(cmds))
+	}
+	for _, cmd := range cmds {
+		if strings.HasPrefix(cmd, "gcloud auth print-identity-token") {
+			continue
+		}
+		if !strings.Contains(cmd, "--project=") {
+			t.Errorf("a command of Check 91 does not name its project, so it runs against the owner's default (which may be another installation): %s", cmd)
+		}
+		// Naming a project is not enough: it has to be the one the guard pinned,
+		// or a literal that is not fugaro-dev would satisfy the check above.
+		if !strings.Contains(cmd, `--project="${P:?}"`) && !strings.Contains(cmd, "--project=${P}") {
+			t.Errorf("a command of Check 91 names a project other than the guard's own $P: %s", cmd)
+		}
+	}
+	guard := stepBlock(t, checklistPath, check, "### Check 91 step 1: setup and guard")
+	flat := docFlat(guard)
+	for _, want := range []string{
+		"P=fugaro-dev",
+		`[ "$P" = fugaro-dev ]`,
+		`fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,'`,
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check 91's guard does not pin the project to the fugaro-dev installation: it lacks %q", want)
+		}
+	}
+	// Hard stop 2 is what makes the check testable against the right
+	// installation at all: without it a checkout of another installation runs
+	// the check against its own default project.
+	if !strings.Contains(flat, "not another one") {
+		t.Error("Check 91's guard does not say hard stop 2 refuses another installation's checkout")
+	}
+}
+
+// TestChecklistChecks90And91NeverNameTheOtherInstallations: the owner's
+// instruction is that these checks never touch the belong installation, EdgeWeb
+// or EdgeServer. The guard runs on the machine that has all three, so a command
+// or a path naming one of them is a live action against a system this work was
+// told to leave alone. In the code the owner copies they may not appear at all;
+// in the prose they may appear only on a line that says the check never touches
+// them, which is what the register's warning lines are.
+//
+// Mutation (run, restore): change `P=fugaro-dev` to `P=belong`, point an image
+// tag at `edgeweb-docker.pkg.dev`, or drop a "never" from the sentence that
+// names them — the test fails on each.
+func TestChecklistChecks90And91NeverNameTheOtherInstallations(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	for _, heading := range []string{chk90Heading, chk91Heading} {
+		check := docSection(t, checklistPath, doc, heading)
+		code := strings.ToLower(fencedText(check))
+		for _, name := range []string{`\bbelong\b`, `\bedgeweb\b`, `\bedgeserver\b`} {
+			if regexp.MustCompile(name).MatchString(code) {
+				t.Errorf("%s's code blocks name %s, which this work may never touch", heading, name)
+			}
+		}
+		for _, line := range strings.Split(check, "\n") {
+			lower := strings.ToLower(line)
+			for _, name := range []string{`\bbelong\b`, `\bedgeweb\b`, `\bedgeserver\b`} {
+				if !regexp.MustCompile(name).MatchString(lower) {
+					continue
+				}
+				if !strings.Contains(lower, "never") && !strings.Contains(lower, "nowhere") {
+					t.Errorf("%s mentions %s without saying it is never touched: %q", heading, name, strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+}
+
+// TestChecklistCheck91ServesAuthenticatedCallsOnly: the check deploys a public
+// Cloud Run service that streams for the better part of an hour and answers
+// arbitrary request bodies. `--allow-unauthenticated` would make that endpoint
+// reachable by anyone who learns the URL — the owner is billed for the
+// requests, and the relay would run for them — while the point of the check is
+// what the owner's own authenticated request does. The deploy has to pass
+// `--no-allow-unauthenticated`, and every request carries a freshly minted
+// identity token.
+//
+// Mutation (run, restore): change `--no-allow-unauthenticated` to
+// `--allow-unauthenticated`, or drop `Authorization: Bearer $(idt)` from a
+// probe — the test fails on each.
+func TestChecklistCheck91ServesAuthenticatedCallsOnly(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk91Heading)
+	flat := docFlat(check)
+	lower := strings.ToLower(flat)
+	for i := 0; ; {
+		j := strings.Index(lower[i:], "allow-unauthenticated")
+		if j == -1 {
+			break
+		}
+		k := i + j
+		if k < 3 || lower[k-3:k] != "no-" {
+			t.Fatalf("Check 91 says allow-unauthenticated without the `no-`, so the service it deploys is open to anyone: %q", flat[k-40:min(k+40, len(flat))])
+		}
+		i = k + 1
+	}
+	build := stepBlock(t, checklistPath, check, "### Check 91 step 3:")
+	if !strings.Contains(build, "--no-allow-unauthenticated") {
+		t.Error("Check 91's deploy does not pass --no-allow-unauthenticated, so the throwaway service it leaves running for an hour is public")
+	}
+	probes := docTail(t, checklistPath, check, "### Check 91 step 4:")
+	if strings.Count(probes, "Authorization: Bearer $(idt)") < 2 {
+		t.Error("Check 91's probes do not carry a freshly minted identity token, and its deploy forbids unauthenticated calls: the requests would be rejected before they measure anything")
+	}
+}
+
+// TestChecklistChecks90And91PrintNoCredentialValue: what the owner types is
+// pasted back into the record, so a command that prints a token prints it into
+// the record. Check 90 reads its setup-token from a file and Check 91 mints
+// identity tokens; neither value may reach stdout — only the file's length and
+// mode, and for Check 91 the commands that mint a token discard it.
+//
+// Mutation (run, restore): add `echo "$TOKEN"` to Check 90's steps, or make a
+// Check 91 command print the identity token (`gcloud auth print-identity-token`
+// with its output kept) — the test fails on each.
+func TestChecklistChecks90And91PrintNoCredentialValue(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check90 := docSection(t, checklistPath, doc, chk90Heading)
+	// In Check 90 the two names a value can hide behind are the file and the
+	// variable the reader types the value into; no line that prints may name
+	// either. (TOKEN_FILE's length and mode are printed, which is why the rule
+	// is about printing TOKEN, not about naming TOKEN_FILE.)
+	prints := regexp.MustCompile(`(^|\s)(echo|printf|print)\b`)
+	// Read one command at a time: step 2's `printf '%s' "$TOKEN" > "$TOKEN_FILE"`
+	// sends the value to a file and is the mechanism the check is built on, while
+	// a print of its own in the same line — `read ... && echo "$TOKEN" && printf
+	// ... > "$TOKEN_FILE"` — is the defect. The redirect has to be in the command
+	// that does the printing.
+	segments := regexp.MustCompile(`[;&]`)
+	toTerminal := func(line string) bool {
+		for _, seg := range segments.Split(line, -1) {
+			if !prints.MatchString(seg) || !regexp.MustCompile(`\bTOKEN\b`).MatchString(seg) {
+				continue
+			}
+			if !strings.Contains(seg, ">") {
+				return true
+			}
+			for _, leak := range []string{"/dev/stdout", "/dev/tty", ">&1", "| tee", "| cat"} {
+				if strings.Contains(seg, leak) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, b := range fencedBlocks(check90) {
+		for _, line := range strings.Split(b, "\n") {
+			if toTerminal(line) {
+				t.Errorf("Check 90 prints the setup-token: %q", strings.TrimSpace(line))
+			}
+		}
+	}
+	if !strings.Contains(check90, "Never paste the token") {
+		t.Error("Check 90 no longer tells the reader that the token's value is never pasted back")
+	}
+	check91 := docSection(t, checklistPath, doc, chk91Heading)
+	mintsToTerminal := regexp.MustCompile(`\b(echo|printf)\b[^;|&]*\$\(idt\)`)
+	for _, b := range fencedBlocks(check91) {
+		for _, line := range strings.Split(b, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			// Only the guard's own helper may mint a token without discarding
+			// it: anywhere else the minted value would land on the terminal, in
+			// the record.
+			if strings.Contains(line, "print-identity-token") &&
+				!strings.Contains(line, "idt()") && !strings.Contains(line, "/dev/null") {
+				t.Errorf("Check 91 mints an identity token outside its own helper, so a command can print it: %q", trimmed)
+			}
+			if mintsToTerminal.MatchString(line) {
+				t.Errorf("Check 91 prints an identity token: %q", trimmed)
+			}
+		}
+	}
+	if !strings.Contains(check91, "Never paste the identity token") {
+		t.Error("Check 91 no longer tells the reader that a minted token is never pasted back")
+	}
+}
+
+// TestChecklistCheck90ProxyRefusesEveryHostButItsOwnLoopback: the proxy listens
+// on loopback, which is reachable from any page the owner's browser loads —
+// with no Host check a page can spend the owner's subscription quota through
+// the proxy and, via DNS rebinding, read the responses it relays. It serves
+// only the client's own address and port, refuses anything else with a 403
+// before reading a body or opening an upstream connection, and says so where
+// the owner reads what the proxy does. The two decisions are pure functions, so
+// the test runs them out of the document itself.
+//
+// Mutation (run, restore): drop the Host check from `forward`, accept any host
+// in `loopback_host`, or move the refusal below `HTTPSConnection` — the test
+// fails on each.
+func TestChecklistCheck90ProxyRefusesEveryHostButItsOwnLoopback(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk90Heading)
+	var src string
+	for _, b := range fencedBlocks(stepBlock(t, checklistPath, check, "### Check 90 step 3:")) {
+		if strings.Contains(b, "def fact(") {
+			src = b
+		}
+	}
+	if src == "" {
+		t.Fatal("Check 90 step 3 no longer fences the proxy program")
+	}
+	// The refusal stands between the Host check and everything else the handler
+	// does, and it is a refusal: the request is not forwarded.
+	host := strings.Index(src, `loopback_host(self.headers.get("Host")`)
+	refuse := strings.Index(src, `self.send_error(403,`)
+	upstream := strings.Index(src, "HTTPSConnection(")
+	if host == -1 {
+		t.Fatal("Check 90's proxy forwards whatever Host it is sent, so any page the owner's browser loads can spend their quota through it")
+	}
+	if refuse == -1 || upstream == -1 || refuse < host || refuse > upstream {
+		t.Error("Check 90's proxy does not refuse a foreign Host before it opens the upstream connection")
+	}
+	// ... and the listener is loopback and nothing else: a proxy bound to every
+	// interface is reachable from the network the machine is on, whatever the
+	// Host check says.
+	if !strings.Contains(src, `("127.0.0.1", ARGS.port)`) {
+		t.Error("Check 90's proxy does not bind its listener to 127.0.0.1, so the port is reachable from the network the machine is on")
+	}
+	if strings.Contains(src, "0.0.0.0") {
+		t.Error("Check 90's proxy names 0.0.0.0, which binds every interface rather than loopback")
+	}
+	step3 := docFlat(stepBlock(t, checklistPath, check, "### Check 90 step 3:"))
+	for _, want := range []string{
+		"refused with 403 and not forwarded",
+		"`Host`",
+		"DNS-rebinding",
+		"records **by name** which credential header the client sent",
+	} {
+		if !strings.Contains(step3, want) {
+			t.Errorf("Check 90's step 3 does not say what its proxy does about the Host header: it lacks %q", want)
+		}
+	}
+
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not on PATH: the behavioural half of this test did not run")
+	}
+	dir := t.TempDir()
+	proxy := filepath.Join(dir, "proxy.py")
+	if err := os.WriteFile(proxy, []byte(src+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	driver := filepath.Join(dir, "driver.py")
+	if err := os.WriteFile(driver, []byte(check90HostDriver), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	out, err := exec.CommandContext(ctx, py, driver, proxy).CombinedOutput()
+	cancel()
+	if err != nil {
+		t.Fatalf("the proxy program's Host decision did not run (%v): %s", err, out)
+	}
+	got := string(out)
+	for _, want := range []string{
+		// Its own listener, in the spellings a client may use.
+		"HOST 127.0.0.1:8787 true",
+		"HOST localhost:8787 true",
+		"HOST [::1]:8787 true",
+		// ... and nothing else: another port, another host, no port, a host that
+		// merely ends in the right one, and a rebinding-style host.
+		"HOST 127.0.0.1:8788 false",
+		"HOST evil.example:8787 false",
+		"HOST (empty) false",
+		"HOST 127.0.0.1 false",
+		"HOST 127.0.0.1:8787.evil.example false",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the proxy's Host decision is wrong for %q; it printed:\n%s", want, got)
+		}
+	}
+}
+
+// TestChecklistCheck90ProxyRecordsTheCredentialHeaderName: clearing the
+// environment is not evidence about what the client sent — a Vertex or
+// apiKeyHelper configuration can be outside it — so the proxy records the NAME
+// of the credential header each request actually carried, and never a value.
+// The control's line says whether the swap ran on the setup-token at all: an
+// `x-api-key` or `(neither)` line means it measured something else.
+//
+// Mutation (run, restore): drop the `FACT credential-header` line, print the
+// header's value instead of its name, or drop it from the two sentences that
+// say what a FACT line may carry — the test fails on each.
+func TestChecklistCheck90ProxyRecordsTheCredentialHeaderName(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk90Heading)
+	var src string
+	for _, b := range fencedBlocks(stepBlock(t, checklistPath, check, "### Check 90 step 3:")) {
+		if strings.Contains(b, "def fact(") {
+			src = b
+		}
+	}
+	if src == "" {
+		t.Fatal("Check 90 step 3 no longer fences the proxy program")
+	}
+	if !strings.Contains(src, `"credential-header"`) || !strings.Contains(src, "credential_headers(self.headers)") {
+		t.Error("Check 90's proxy does not record which credential header the request carried, so the control proves nothing about what the client sent")
+	}
+	if !strings.Contains(src, "never a value") {
+		t.Error("Check 90's proxy does not say that the credential-header line is a name and never a value")
+	}
+	for _, want := range []string{
+		"FACT credential-header",
+		"(neither)",
+		"x-api-key",
+	} {
+		if !strings.Contains(docFlat(check), want) {
+			t.Errorf("Check 90 does not read the proxy's credential-header line where the owner decides the control passed: it lacks %q", want)
+		}
+	}
+	// The line is one of the two facts a step has to carry, so it is pinned in
+	// the step's own FACT and not only in the prose around it.
+	step4 := stepBlock(t, checklistPath, check, "### Check 90 step 4:")
+	if !strings.Contains(step4, "FACT credential-header") {
+		t.Error("Check 90's step 4 FACT does not ask for the credential-header line, so an API-key or Vertex control and a setup-token one read the same")
+	}
+
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not on PATH: the behavioural half of this test did not run")
+	}
+	dir := t.TempDir()
+	proxy := filepath.Join(dir, "proxy.py")
+	if err := os.WriteFile(proxy, []byte(src+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	driver := filepath.Join(dir, "driver.py")
+	if err := os.WriteFile(driver, []byte(check90HostDriver), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	out, err := exec.CommandContext(ctx, py, driver, proxy).CombinedOutput()
+	cancel()
+	if err != nil {
+		t.Fatalf("the proxy program's credential-header decision did not run (%v): %s", err, out)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"CRED Authorization authorization",
+		"CRED x-api-key x-api-key",
+		"CRED both authorization,x-api-key",
+		"CRED neither (neither)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the proxy's credential-header decision is wrong for %q; it printed:\n%s", want, got)
+		}
+	}
+	// The names, and no value: the driver sends "Bearer chk90-name-only", and a
+	// program that echoed a value would put it in the output this test reads.
+	if strings.Contains(got, "chk90-name-only") {
+		t.Error("the proxy's credential-header line carries a value, not only a name")
+	}
+}
+
+// check90HostDriver loads the proxy program out of Check 90 step 3's fenced
+// block and prints its two pre-forward decisions: whether a Host header is this
+// check's own listener, and which credential header a request carried (by NAME,
+// never by value). Loading runs nothing — the server starts only under
+// `if __name__ == "__main__"` — so both are reachable without a port, a network
+// or a token.
+const check90HostDriver = `import email.message, importlib.util, sys
+spec = importlib.util.spec_from_file_location("chk90proxy", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print("HOST (empty) " + str(mod.loopback_host(None, 8787)).lower())
+for host in ["127.0.0.1:8787", "localhost:8787", "[::1]:8787", "127.0.0.1:8788",
+             "evil.example:8787", "127.0.0.1", "127.0.0.1:8787.evil.example"]:
+    print("HOST " + host + " " + str(mod.loopback_host(host, 8787)).lower())
+def headers(**kw):
+    m = email.message.Message()
+    for k, v in kw.items():
+        m[k] = v
+    return m
+for name, m in [("Authorization", headers(Authorization="Bearer chk90-name-only")),
+                ("x-api-key", headers(**{"x-api-key": "chk90-name-only"})),
+                ("both", headers(Authorization="Bearer chk90-name-only",
+                                 **{"x-api-key": "chk90-name-only"})),
+                ("neither", headers(**{"content-type": "application/json"}))]:
+    print("CRED " + name + " " + (",".join(mod.credential_headers(m)) or "(neither)"))
+`
+
+// TestChecklistCheck91RestoreKeepsItsRecordsUntilTheCountsAreZero: the scratch
+// directory holds `service-mine` and `repo-existed`, the two records that say
+// the service and the repository are this check's, and both hard stop 4 and the
+// baseline refuse to touch a resource they do not recognise. So a Restore that
+// removes the directory while something it created is still there (a delete
+// that failed, a service still terminating) is a Restore that turns one failed
+// delete into a check that can never be finished: the next run's stop and stop 4
+// both fire on the check's own leftovers. The directory goes only when all three
+// counts read 0.
+//
+// Mutation (run, restore): move `rm -rf "$CHK91"` above the count guard, or
+// delete the guard — the test fails on each.
+func TestChecklistCheck91RestoreKeepsItsRecordsUntilTheCountsAreZero(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk91Heading)
+	restore := stepBlock(t, checklistPath, check, "### Check 91 step 7: Restore")
+	var counts string
+	if i := strings.Index(restore, "SVC_LEFT="); i != -1 {
+		counts = restore[i:]
+	}
+	if counts == "" {
+		t.Fatal("Check 91's Restore counts nothing, so it cannot know whether what it created is gone")
+	}
+	for _, want := range []string{
+		"SVC_LEFT=", "IMG_LEFT=", "REPO_LEFT=",
+		`if [ "$SVC_LEFT" != 0 ] || [ "$IMG_LEFT" != 0 ] || [ "$REPO_LEFT" != 0 ]; then`,
+		`KEPT on purpose`,
+	} {
+		if !strings.Contains(counts, want) {
+			t.Errorf("Check 91's Restore does not keep its records unless every count is 0: it lacks %q", want)
+		}
+	}
+	guard := strings.Index(counts, `if [ "$SVC_LEFT" != 0 ]`)
+	rmrf := strings.Index(counts, `rm -rf "$CHK91"`)
+	record := strings.Index(counts, `rm -f "$CHK91_RECORD"`)
+	if rmrf == -1 || record == -1 {
+		t.Fatalf("Check 91's Restore does not remove the scratch directory and its record (rm=%d, record=%d)", rmrf, record)
+	}
+	if guard == -1 || guard > rmrf || guard > record {
+		t.Error("Check 91's Restore removes the scratch directory (or the record naming it) before checking that the three counts are 0, so a failed delete loses the records that say what is the check's own")
+	}
+	// ... and what it means is written where the owner reads it, in the FACT and
+	// in what counts as a failure.
+	flat := docFlat(check)
+	if !strings.Contains(flat, "it holds the records that say what is this check's") {
+		t.Error("Check 91's Restore does not say why a non-zero count keeps the scratch directory, so a reader deletes it and cannot re-run the step")
+	}
+	if !strings.Contains(flat, "the directory is then **kept**, with the stop's message saying so") {
+		t.Error("Check 91's FACT does not say that the scratch directory is kept when a count is not 0")
+	}
+}
+
+// TestChecklistCheck91BuildDoesNotAdoptWhatTheInstallationOwns: `gcloud builds
+// submit` stages its source in the project's own `gs://<project>_cloudbuild`
+// bucket and creates it if it is absent, and on a Terraform-managed project it
+// can offer to enable an API. Both belong to the installation — neither is in
+// this project's Terraform — so accepting the prompt would put an
+// unmanaged resource into a managed project, which is a change to live
+// infrastructure that no check of this work may make. The step says to refuse,
+// stop and report.
+//
+// Mutation (run, restore): delete that paragraph, or weaken it to "accept if it
+// asks" — the test fails on each.
+func TestChecklistCheck91BuildDoesNotAdoptWhatTheInstallationOwns(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk91Heading)
+	flat := docFlat(check)
+	for _, want := range []string{
+		"`gs://<project>_cloudbuild`",
+		"creates that bucket if it is not there",
+		"Terraform-managed",
+		"say no, stop the check here and report it",
+		"do not accept on the owner's behalf",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check 91 does not say what to do when the build offers to create the staging bucket or enable an API: it lacks %q", want)
+		}
+	}
+	if strings.Contains(strings.ToLower(flat), "accept the prompt") {
+		t.Error("Check 91 tells the owner to accept a prompt that would create infrastructure outside Terraform")
+	}
+}
+
+// TestChecklistChecksSayTheirHardStopsEndTheShell: both checks are pasted into
+// an interactive shell and stop with `exit 1`, which closes it. That is
+// deliberate — nothing after a stop may run — but a reader who is not told
+// reads the closed window as a fault and works around it, and a "workaround"
+// here means running the steps after a stop. Both sections carry Check 43's
+// paragraphs and the subshell that keeps the window while still stopping the
+// block.
+//
+// Mutation (run, restore): delete either paragraph, or the subshell sentence —
+// the test fails on each.
+func TestChecklistChecksSayTheirHardStopsEndTheShell(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	for _, heading := range []string{chk90Heading, chk91Heading} {
+		check := docFlat(docSection(t, checklistPath, doc, heading))
+		for _, want := range []string{
+			"Hard stops end the shell they are run in, and that is the intended outcome.",
+			"exit 1",
+			"closes the window",
+			"Nothing after a stop may run",
+		} {
+			if !strings.Contains(check, want) {
+				t.Errorf("%s does not tell the reader what a hard stop does to the shell, so a closed window reads as a fault and the steps after the stop get run: it lacks %q", heading, want)
+			}
+		}
+		if !strings.Contains(check, "subshell") {
+			t.Errorf("%s gives the reader no way to keep the window while still stopping the block", heading)
+		}
+	}
+	if !strings.Contains(docSection(t, checklistPath, doc, chk90Heading), "( . ./chk90-env.sh )") {
+		t.Error("Check 90 does not name the subshell form of its own guard, so the reader who wants to keep the window has to invent one")
+	}
+	if !strings.Contains(docFlat(docSection(t, checklistPath, doc, chk91Heading)), "( . ./chk91-env.sh )") {
+		t.Error("Check 91 does not name the subshell form of its own guard, so the reader who wants to keep the window has to invent one")
+	}
+}
+
+// TestTheStopgapIsStatedWithoutAPromisedSlot: the review of #584 found the
+// documents contradicting themselves about the shared job's static token mount.
+// §7 of project-centric.md said it was accepted "precisely because the service
+// replaces it" and, in the next sentence, that the service cannot replace it —
+// and SECURITY.md and project-named-oauth-tokens.md still promised the
+// replacement, while the task that would do it (C3.9) has no slot in any plan.
+// A promise nothing is scheduled to keep is what makes a known stopgap read as
+// already handled. All four documents now say what is true: the mount is a
+// stopgap accepted on its own terms, the service as its plan is written cannot
+// replace it, and it stays until C3.9 is scheduled — with no slot promised.
+//
+// Mutation (run, restore): restore "precisely because the service replaces it"
+// to §7, drop "unscheduled" from the service's constraint, or drop "no slot"
+// from any of the four — the test fails on each.
+func TestTheStopgapIsStatedWithoutAPromisedSlot(t *testing.T) {
+	// project-centric.md §7, where the contradiction was.
+	const section7 = "docs/design/project-centric.md"
+	doc := readDoc(t, section7)
+	sec := docFlat(docSection(t, section7, doc, "## 7. OAuth tokens (phase 5)"))
+	for _, want := range []string{
+		"the owner's ruling of 2026-10-18",
+		"not a replacement date: the credentials service is where this ends, and that work has no slot",
+		"**The service cannot replace this stopgap as its plan is written:**",
+		"unscheduled",
+		"it serves **per-repository runs only**",
+	} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("project-centric.md §7 does not settle what happens to the shared job's token mount: it lacks %q", want)
+		}
+	}
+	for _, gone := range []string{
+		"precisely because the service replaces it",
+		"stays until then",
+	} {
+		if strings.Contains(sec, gone) {
+			t.Errorf("project-centric.md §7 still promises a replacement for the shared job's token mount (%q), which no scheduled work can keep", gone)
+		}
+	}
+
+	// SECURITY.md: the carrier bullet, which is where a reader learns what
+	// protects a shared job's token today.
+	sec2 := docFlat(readDoc(t, "SECURITY.md"))
+	for _, want := range []string{
+		"This carrier is a stopgap, and it stays until the service is built for shared jobs.",
+		"That destination is not a schedule, and no version promises it",
+		"serves **per-repository runs only**",
+		"is **unscheduled**",
+		"it is accepted for its lesser exposure on its own terms rather than against a replacement date",
+		"docs/credentials-service/README.md",
+	} {
+		if !strings.Contains(sec2, want) {
+			t.Errorf("SECURITY.md's shared-job carrier bullet does not state the stopgap honestly: it lacks %q", want)
+		}
+	}
+
+	// The design note that owns the swap: §4.6 is the section that would take
+	// the mount away, and it says so without a slot — the sentence a reader
+	// takes as the plan for the swap.
+	const tokens = "docs/design/project-named-oauth-tokens.md"
+	noteDoc := readDoc(t, tokens)
+	note := docFlat(noteDoc)
+	for _, want := range []string{
+		"**The swap has no slot.**",
+		"unscheduled",
+	} {
+		if !strings.Contains(note, want) {
+			t.Errorf("%s does not say that the work which would replace the mount has no slot: it lacks %q", tokens, want)
+		}
+	}
+	// ... and §6.1's own line, which is where the mount's interim character is
+	// stated beside the tasks that are still planned.
+	sec61 := docTail(t, tokens, noteDoc, "### 6.1")
+	if i := strings.Index(sec61, "\n### "); i != -1 {
+		sec61 = sec61[:i]
+	}
+	if !strings.Contains(docFlat(sec61), "has no slot") {
+		t.Errorf("%s §6.1 does not say that the swap it plans has no slot", tokens)
+	}
+
+	// ... and the service's own plan, where a reader looks for the phase that
+	// does it: its Global Constraint 6 is the constraint the other three cite.
+	plan := docFlat(readDoc(t, "docs/credentials-service/implementation-plan.md"))
+	for _, want := range []string{
+		"the mount stays until C3.9 is given a slot, and no slot is promised",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("the implementation plan does not state the constraint the other documents cite: it lacks %q", want)
+		}
+	}
+}
+
+// TestCredentialsNumbersReserveNoDecisionWithoutTheOwnersWord: the register's
+// number blocks are the owner's to allocate, and this work's own text had
+// claimed D155–D159 — five numbers nobody gave it. They are left free, and both
+// places that describe the blocks say which numbers the owner allocated and that
+// these five are this work's own self-reservation, so a later task cannot read
+// them as allocated-and-unused, as the register's 93 is.
+//
+// Mutation (run, restore): say the owner allocated D130–D159, drop the sentence
+// that the owner has given no word for these five, or claim one of them —
+// the test fails on each.
+func TestCredentialsNumbersReserveNoDecisionWithoutTheOwnersWord(t *testing.T) {
+	const readme = "docs/credentials-service/README.md"
+	readmeFlat := docFlat(readDoc(t, readme))
+	for _, want := range []string{
+		"the owner allocated **D130–D154**",
+		"**D155–D159 stand only in this work's own text: this document reserved them by itself, the owner has given no word for them, and no task here uses one.**",
+	} {
+		if !strings.Contains(readmeFlat, want) {
+			t.Errorf("the credentials service README does not say who allocated the decision numbers it claims: it lacks %q", want)
+		}
+	}
+	if strings.Contains(readmeFlat, "the owner allocated **D130–D159**") {
+		t.Error("the credentials service README claims the owner allocated D155–D159, which the owner never gave")
+	}
+	const recon = "docs/credentials-service/reconciliation.md"
+	reconFlat := docFlat(readDoc(t, recon))
+	for _, want := range []string{
+		"D130–D154 were allocated and are answered",
+		"D155–D159 are unused because this work's own text reserved them, not because the owner allocated them",
+	} {
+		if !strings.Contains(reconFlat, want) {
+			t.Errorf("reconciliation.md does not distinguish the numbers the owner allocated from the ones this work reserved by itself: it lacks %q", want)
 		}
 	}
 }

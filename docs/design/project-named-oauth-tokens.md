@@ -11,12 +11,16 @@ implement those are flagged for an independent review.
 **The carrier is a stopgap.** The token reaches a shared job the way it already reaches a
 per-repository job: the platform mounts the account's secret into the job's environment as a static
 `secret_env` entry, and only that account's job service account can read that one secret. This is
-the simplest carrier and the owner accepted its lesser security (§3) *because it is temporary*: it
-will be replaced by the planned **security service** — the credentials service of
+the simplest carrier and the owner accepted its lesser security (§3): it is temporary in the sense
+that the planned **security service** — the credentials service of
 [../credentials-service/](../credentials-service/README.md) (PR #512), a cascade proxy that is the
-only reader of Secret Manager and gives jobs short-lived keys. §4.6 states what the swap changes
-and what it leaves alone; the policy, the accounts, the profile field and the job set do not change
-when the carrier does.
+only reader of Secret Manager and gives jobs short-lived keys — is where this ends. **That is a
+destination, not a scheduled replacement, and no part of 0.9.0 removes this mount:** the service as
+its plan is written serves **per-repository runs only** (that plan's Global Constraint 6), and the
+task that would admit a shared job's runs to it (its C3.9) is **unscheduled**. So the carrier is
+accepted for its lesser exposure on its own terms, it stays until C3.9 is scheduled and built, and §4.6 — which states what the swap changes and what it leaves alone — describes a swap with no slot
+rather than one that is coming. The policy, the accounts, the profile field and the job set do not
+change when the carrier does.
 
 Every fact in §1 and §2 is cited to code read on `origin/integration-0.9.0` (head `13a5a48`), which
 is what this branch is based on. **No cloud call was made**, no secret was read, and no
@@ -117,15 +121,18 @@ reads it, and the seal is not involved. The cost, stated as the owner accepted i
    a `secret_key_ref`, `JobFullEnv` returns only plain values, and no launcher holds
    `secretAccessor` (row 16). It is **not** readable by another job: the member is per (job service
    account, secret) (row 15), so the job of another profile or another account cannot read it.
-3. **Why it is temporary.** The security service ([../credentials-service/spec.md](../credentials-service/spec.md),
-   "Security service (credential proxy)") makes the job's service account hold no Secret Manager
-   access and gives the job a short-lived per-job token instead; the service is "the single holder
-   of every secret a job needs". That closes point 1's residual for OAuth tokens as it does for
-   every other key, which is why this design does not build a second, intermediate carrier (the
-   seal) that the service would replace as well.
+3. **Why it is temporary — and that nothing is yet scheduled to make it so.** The security service
+   ([../credentials-service/spec.md](../credentials-service/spec.md), "Security service (credential
+   proxy)") is where this ends: it makes the job's service account hold no Secret Manager access and
+   gives the job a short-lived per-job token instead, and it is "the single holder of every secret a
+   job needs". **It does not do that for this carrier today, and no date is promised:** as its plan
+   is written the service serves per-repository runs only (Global Constraint 6), so a shared job's
+   runs never reach it, and the task that would admit them (C3.9) is unscheduled. The residual in
+   point 1 therefore stands for as long as that takes, and this design does not build a second,
+   intermediate carrier (the seal) on the way.
 4. **One path, not two.** The project level uses the per-repository level's own carrier
-   (`spec.go:585-586`), so there is no second delivery path to maintain until the security service
-   replaces both.
+   (`spec.go:585-586`), so there is no second delivery path to maintain while both reach the service
+   (which is not scheduled to take this one over — point 3).
 
 ## 4. The design
 
@@ -279,7 +286,7 @@ follow-ups).
 
 ### 4.6 The swap to the security service
 
-When the security service lands, the carrier changes and nothing else does:
+**The swap has no slot.** It happens when the service admits a shared job's runs — C3.9, unscheduled (§3 point 3) — and until then this section is a statement of what the swap would be, not a plan with a date. If and when it lands, the carrier changes and nothing else does:
 
 | stays | changes |
 | --- | --- |
@@ -332,9 +339,11 @@ one function and that the job name is independent of `secret_env`.
 - **No launcher reads it.** Reading the value still needs `secretAccessor`, which only the job and
   build accounts hold — an account job's service account on its own account's secret, and nothing
   else (SECURITY.md:56's sentence stays true).
-- **This carrier is a stopgap.** It is replaced by the security service
-  ([docs/credentials-service/](../credentials-service/README.md)), after which no job holds the
-  token at all.
+- **This carrier is a stopgap, with no replacement scheduled.** The security service
+  ([docs/credentials-service/](../credentials-service/README.md)) is where it ends, after which no
+  job holds the token at all — and **nothing in 0.9.0 does that**: the service serves per-repository
+  runs only (its Global Constraint 6) and C3.9, the task that would admit a shared job's runs, is
+  unscheduled, so the mount stays until one is given a slot.
 - **Nothing prices an OAuth run the way the gateway prices a provider-key run**
   ([named-oauth-tokens.md](named-oauth-tokens.md) §1); usage limits are the account's own.
 
@@ -370,8 +379,11 @@ documented"), which every reference here calls *project-centric.md's D10*. No de
 
 - **D1. The carrier — RULED: the static `secret_env` mount, a stopgap.** The account's job gets the
   token from the platform (the per-repository path's own carrier); no seal, no second sealed object.
-  Labelled a stopgap, replaced by the security service ([../credentials-service/](../credentials-service/README.md),
-  #512) as a clean swap (§4.6). The lesser security (§3 point 1) is accepted by the owner.
+  Labelled a stopgap, and the security service ([../credentials-service/](../credentials-service/README.md),
+  #512) is where it ends, as a clean swap (§4.6) — **with no slot: the service serves per-repository
+  runs only and C3.9 is unscheduled, so this carrier stays until one is given** (§3 point 3). The
+  lesser security (§3 point 1) is accepted by the owner on its own terms, not against a replacement
+  date.
 - **D2. Who may read the token — RULED: only the account job's own service account, on only its own
   account's secret.** No launcher read, no per-account launcher list.
 - **D3. The policy's gate — RULED as recommended:** `accounts.<name>.allow_repos` derived at publish
@@ -389,7 +401,7 @@ documented"), which every reference here calls *project-centric.md's D10*. No de
   no failed-launch delete and no lifecycle suffix.
 - **D8. SECURITY.md's wording — RULED: rewritten for the static mount:** no launcher read; every
   run of an account's job holds its token; a hostile run can use the token during its own run; the
-  account is the blast radius; a stopgap pending the security service (§6.1).
+  account is the blast radius; a stopgap pending the security service, which has no slot (§6.1).
 - **D9. Sequencing and the job set — RULED:** no dependency on PR #563 or on the seal. A profile
   keeps its no-account job and gains one job per listed account; nothing is renamed or deleted, and
   `RefuseProjectJobDeletes` never fires on the rollout.

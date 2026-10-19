@@ -14,7 +14,7 @@
 
 | Block | State |
 |---|---|
-| **D130–D159** | allocated to this work; D130–D154 are written and answered (2026-10-17); D155–D159 unused and reserved |
+| **D130–D159** | the owner allocated **D130–D154**, which are written and answered (2026-10-17). **D155–D159 stand only in this work's own text: this document reserved them by itself, the owner has given no word for them, and no task here uses one.** They are left free rather than claimed — this work's last written decision is D154 — and nothing in the register's 93-style "reserved and unused" sense should be read into them: 93 is a number this work holds and declines to use, whereas D155–D159 are a range this text wrote down as belonging to it. The plan's C0 tasks name no D155–D159, and no later task here will take one without the owner's word |
 | **Checks 90–99** | reserved for this work's owner-run checks; the plan assigns each number (90 header swap, 91 Cloud Run streaming, 92 and 94–99 later tasks; 93, the declined in-runner cascade's check, reserved and unused); the block is carved out of the website work's 69-and-up range, the way mobile's 80–89 is, and above 99 the register's standing rule applies (a number is chosen at the moment of merge). Task C0.3 wrote Checks 90 and 91 into `docs/gcp-live-checklist.md`; 92 and 94–99 are written by later tasks |
 
 A reserved number is never reused and never renumbered.
