@@ -1,0 +1,1376 @@
+# The console's style: the theme, the layout, and the wiring
+
+**Status: design only; nothing is implemented.** Proposed 2026-10-19, at the owner's
+request ("a console styling task is needed … draft a styling design before anyone builds
+it"). Owner: **@Dimi**. Every claim below was read on `origin/main` at `82ba600` and names
+the file and the symbol it was read from. Nothing here starts until the owner approves it:
+**no `.css` file, no Go, no TypeScript, no change to `console/`, and no change to
+`SERVED_FILES` follows this document on its own.** The build plan it produces is
+[§7](#7-the-build-plan-phase-6-unapproved), added to
+[the desktop-console plan](../plans/2026-10-15-desktop-console.md) as **Phase 6,
+UNAPPROVED**.
+
+Related: [desktop-console.md](desktop-console.md) (§5.1 the hard rules, §6.1 the six
+transfers from tmog.org, §6.2 the four screens, §6.3 how it degrades),
+[desktop-console-v2.md](desktop-console-v2.md),
+[the console's plan](../plans/2026-10-15-desktop-console.md), [console/README.md](../../console/README.md),
+[console/docs/json-contract.md](../../console/docs/json-contract.md),
+[the website's tokens](../../website/src/styles/tokens.css),
+[the website redesign's reconciliation](../website/redesign/reconciliation.md) §5.
+
+---
+
+## 1. The problem, and the evidence
+
+### 1.1 The console ships no stylesheet at all
+
+This is not "the styling is unfinished". There is no stylesheet, and no mechanism that
+could carry one:
+
+| Claim | Read from |
+|---|---|
+| `console/src/renderer/index.html` is script-only: its `<head>` holds one `<script src="./console.js" defer>` and nothing else. There is no `<link rel="stylesheet">` and no `<style>` element. | the file, 60 lines, read whole |
+| The body of `index.html` is **empty on purpose**, and `test/unit/csp-document.test.ts` holds it empty (`expect(bodyMarkup(served('index.html'))).toBe('')`). | the file; the test |
+| `installations.html` and `refusal.html` carry the same CSP `<meta>` and no stylesheet either; `refusal.html` is script-free as well (`expect(scriptElements(served('refusal.html'))).toEqual([])`). | the two documents; `csp-document.test.ts` |
+| There is **no `.css` file anywhere under `console/`**: `find console -name '*.css'` returns nothing. | the tree |
+| `SERVED_FILES` in `console/src/main/protocol.ts` lists five paths — `/console.js`, `/index.html`, `/installations.html`, `/installations.js`, `/refusal.html` — and `test/unit/bundle.test.ts` holds that list equal to the contents of `dist/bundle/` in both directions: `expect(SERVED_FILES.length, …).toBe(5)` and `expect(builtListing('bundle')).toEqual(servedNames())`. | `protocol.ts`; the test |
+| `console/tools/bundle-renderer/index.ts` copies **`.html` only** (`names.filter((name) => name.endsWith('.html')).sort()`) and writes the two scripts. Nothing in it reads, resolves, concatenates or emits CSS. | the tool |
+| `mediaTypeFor` in `protocol.ts` already maps `'.css': 'text/css; charset=utf-8'`, so the handler could serve a stylesheet the day one exists — the type is the only piece that is ready. | `protocol.ts` |
+
+The screens are the other half of the same fact. Every one of them emits **class hooks and
+`data-*` readings and nothing that paints**: `live.ts` writes a class only at
+`element.setAttribute('class', classes.join(' '))` inside its `make` helper, `spend.ts` at
+its own `cell`, `projects.ts` and `run.ts` likewise, and each of the four sets
+`data-theme` on its root and nothing else theme-shaped. The headers of those files say so
+in their own words — `console/src/renderer/screens/live.ts`: "no stylesheet and no
+colour"; `console/src/renderer/app.ts`'s `ElementLike` is deliberately narrower than
+`HTMLElement` with "no style and no event handler", and `entry.ts`'s header repeats it:
+"the element it wraps exposes a text slot and attributes — no markup parsing, no
+navigating attribute, no style and no event handler". Nothing anywhere under
+`console/src/renderer/` sets a `style` attribute, because the CSP admits no inline style
+anyway (below).
+
+### 1.2 The CSP is the reason, and it is not the obstacle
+
+`CONTENT_SECURITY_POLICY` in `console/src/main/protocol.ts` is design §5.1 rule 3,
+directive by directive:
+
+```
+default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;
+font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none';
+frame-ancestors 'none'; object-src 'none'
+```
+
+**`style-src 'self'` is already the directive a stylesheet needs, and it is not being
+used.** `'self'` permits a stylesheet served from `app://console` — the console's own
+bundle — and the policy has no `'unsafe-inline'`, so a `<style>` element and a `style="…"`
+attribute are both refused by the browser whatever the code does. The `<meta
+http-equiv>` copy in each of the three documents is byte-identical to the header, and
+`test/unit/window.test.ts` holds the two equal and asserts the policy contains neither
+`unsafe-inline`, `unsafe-eval` nor `*`.
+
+So this design **adds nothing to the CSP and removes nothing from it**. A stylesheet is
+the one thing `style-src 'self'` was written for and the console has never had.
+
+### 1.3 Why this matters now: the golden frames are pictures of unstyled markup
+
+The four screens take golden screenshots — `live.spec.ts`, `spend.spec.ts`,
+`projects.spec.ts` and `run.spec.ts` each call `toHaveScreenshot` twice, once per theme —
+so the suite names **eight baselines per platform** (`{light,dark}-<platform>.png`, and
+`playwright.config.ts` sets `snapshotPathTemplate: '{testDir}/__screenshots__/{arg}-{platform}{ext}'`
+with `updateSnapshots: 'none'`, so a missing baseline fails rather than being written).
+On this branch **none of them is committed** (`console/test/e2e/__screenshots__` does not
+exist) and the golden tests fail on purpose until an owner records them; the darwin set is
+the subject of the draft PR #629.
+
+A golden frame is a picture of the mount with no stylesheet in it. The two frames of one
+screen are therefore **byte-identical pictures of the same unstyled markup**: dark and
+light differ only in a `data-theme` attribute no rule reads. The baselines that PR #629
+records are, and can only be, a record of the unstyled tree — which is exactly the artefact
+§6.1 of the design exists to avoid ("density as the default, not a setting", "~24 px rows
+with tabular figures … right-aligned numerics"). Recording them before the stylesheet lands
+buys nothing and costs an owner-run recording pass; §7 orders the work so the re-recording
+is one pass, once ([§6.1](#61-the-golden-frames)).
+
+### 1.4 What is decided, and what is not
+
+The design already decided the *shape* of the console's look, and this document does not
+reopen it:
+
+- **§6.1 rule 2** — density as the default: a compact row (~24 px), tabular figures,
+  right-aligned numerics, no whitespace padding between related figures;
+- **§6.1 rule 3** — "live graphics that behave like instruments … a cap bar that changes
+  colour only at a defined threshold (tmog.org's amber/green discipline), never
+  decoratively";
+- **§6.1 rule 5** — "**Themes as a phosphor set, 'Instrument, not ornament'** … a light, a
+  dark, and a small set of low-saturation palettes, **with all colour choices from a single
+  token file** — which is also what makes the screens readable for colour-blind users";
+- **§6.1 rule 1** — every reading carries one of the five availability states, so a
+  missing value is `n/a` and never `0`.
+
+What was never decided, and is what this document decides or puts to the owner:
+
+1. the token file's contents — names, values, light and dark;
+2. how a theme is *chosen* (today `CONSOLE_THEME` in `entry.ts` is the literal `'dark'`,
+   and the file's own header says "no task's Files name the code that would read the
+   operating system's preference");
+3. the layout, the focus rules and the forced-colors behaviour;
+4. **the wiring: the stylesheet does not exist, is not bundled, is not served, and no
+   document links one.** The plan's File Structure tree names `src/renderer/theme/tokens.css`
+   (`docs/plans/2026-10-15-desktop-console.md:118`) and **no task's Files line names it** —
+   it is a file the tree promises and the tasks never create;
+5. the tests that keep all of it honest.
+
+---
+
+## 2. Screen inventory
+
+Every class hook and every `data-*` attribute below was read from the code. The inventory
+is the contract the stylesheet is written against: **a rule may only select a hook this
+table names**, and a task that adds a screen, a state or a reading extends this table in
+the same PR.
+
+Three facts hold across every screen and are stated once:
+
+- **A number is never bare.** Every figure goes through `putReading` (`app.ts`), which
+  calls `formatReading` (`shared/availability.ts`), so the marks are fixed console-wide:
+  `NOTIONAL~` prefix, `est.` prefix, `n/a` (`UNAVAILABLE_MARK`), `—` (`GAP_MARK`), and a
+  `≥` (`LOWER_BOUND_MARK`) in front of a sum that is a lower bound. An element carrying a
+  reading with no value also carries its **reason in `title`** — the console's own
+  sentence, never the value it refused.
+- **A refused string is `n/a` with a `title`.** `putText` draws the console's own `n/a`
+  for a value the sanitizer refused, `putLink` draws the reason instead of a URL, and the
+  URL goes to **`data-href`** and never to the anchor's navigating attribute.
+- **The theme travels as an attribute.** Each screen's root is
+  `<section class="<screen>" data-theme="light|dark">`; nothing else about the drawing
+  depends on the theme today.
+
+### 2.1 The dashboard's chrome — `src/renderer/entry.ts`
+
+The entry draws the body's three children, in this order, all from `domSurface`'s mount:
+`section.console-installation`, `nav.console-views`, `div.console-panel` (asserted by
+`test/e2e/entry.spec.ts`: `expect(shape.bodyChildren).toEqual(['console-installation', 'console-views', 'console-panel'])`).
+
+| Region | Element and hooks | What it holds |
+|---|---|---|
+| Installation line | `section.console-installation`, `data-installation`, `data-mode` | `data-installation="chosen"` with `p.installation-project`, `p.installation-binary`, `p.installation-version` and `data-mode`; `data-installation="none"` with `p.installation-none`; `data-installation="unreadable"` with `p.installation-unreadable`; and `p.installation-store-refusal` |
+| Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, `data-view="live|spend|projects"`, `aria-current="true|false"`, label as text |
+| Panel | `div.console-panel` | the mounted screen's root |
+| Reduced/refused banner | drawn by `renderVersionSkew` into the mount, before the nav | see §2.8 |
+
+- **`VIEWS`** is `live` (label `Live`, never withheld), `spend` (label `Spend`, view
+  `spend`) and `projects` (label `Projects`, view `caps`). A view the mode withholds is
+  **not offered**: no button is created for it.
+- **Run detail has no button.** `currentView` may be `'run'`, reached from a `live-run`
+  row; when it is, every nav button is `aria-current="false"`, "which is the truth about
+  the navigation: none of the offered views is the one on screen".
+- **There is no keyboard handling in `entry.ts` at all**: no `keydown`, no roving tabindex,
+  no focus management. Interaction is `click` plus one `visibilitychange` listener. Tab
+  order is implicit DOM order. **This is the gap [§4.3](#43-keyboard-and-focus) has to
+  close in CSS and in one small entry change.**
+- The only ARIA attribute in the whole renderer is `aria-current`; **no element carries
+  `role=`**.
+
+### 2.2 The installation picker — `src/renderer/installations.html` + `installations.ts`
+
+A **second document** in its own window (owner ruling C9). Its markup is hand-written
+HTML, so it is the one screen whose hooks are **element ids, not classes**: the view sets
+no `class` and no `data-*` anywhere, and its only attribute write is `type="button"` on a
+row button.
+
+| Region | Hook (id) | What it holds |
+|---|---|---|
+| Heading | (no id — `h1`) | "Installations" |
+| Status line | `#picker-status` | one of five states, below |
+| List | `#picker-list` → `li` rows | `li` with the row text and up to two `button`s ("Choose"/"Chosen", "Remove") |
+| Add form | `#picker-add` | `label[for=picker-project]`, `#picker-project` (text input), three pick buttons, `#picker-add-submit` |
+| Pick buttons | `#picker-pick-binary`, `#picker-pick-config`, `#picker-pick-checkout` | "Choose binary…" / "Binary chosen" (and the config/checkout pair) |
+
+States, all in the status line: **error/refusal** (`reply.reason`), **file unreadable**
+(`"<path> could not be read: <refusal>"`), **empty** ("No installations yet. Add one
+below."), **ready/none chosen** ("No installation is chosen. Choose one below."),
+**ready/chosen** ("`<project>` is the installation this console is showing (`<mode>`).").
+`installations-view.test.ts` builds its fake document **from the ids the file really
+declares** and asserts each id exists, so the ids are a pinned hook set — this design
+styles them by id rather than adding classes.
+
+### 2.3 Live — `screens/live.ts`
+
+The default screen: one glance at what is spending money now. Regions in tree order:
+header (`h1.live-project`, mode, day, connection, notes) → total block → `ol.live-repos`
+of `li.live-repo`, each with a cap bar, a burn sparkline and a kill banner and an
+`ol.live-runs` of `li.live-run` → an optional `ol.live-orphans` → the stale banner and the
+"last read" line.
+
+| Group | Class hooks |
+|---|---|
+| Header | `live-header`, `live-project`, `live-mode`, `live-day`, `live-connection`, `live-connection-age`, `live-connection-reason`, `live-note` |
+| Total | `live-total`, `live-counted`, `live-cap`, `live-percent`, `live-total-notional`, `live-total-percent` |
+| Repository | `live-repo`, `live-repo-name`, `live-repo-counted`, `live-repo-cap`, `live-repo-percent`, `live-repo-notional`, `live-burn-rate`, `live-burn`, `live-burn-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
+| Run row | `live-run`, `live-run-id`, `live-run-title`, `live-run-stage`, `live-run-round`, `live-run-verify`, `live-run-models`, `live-run-recipe`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-flag`, `live-run-contradiction`, `live-run-workflow`, `live-run-requester` |
+| Condition classes on a row | `live-run-queued`, `live-run-stuck` |
+| Kill banner | `live-kill`, `live-kill-word`, `live-kill-by`, `live-kill-at`, `live-kill-reason` |
+| Stale / recency | `live-stale`, `live-stale-word`, `live-stale-silence`, `live-stale-threshold`, `live-stale-at`, `live-since`, `live-since-word`, `live-since-at`, `live-since-age` |
+| Bars and numbers | `live-bar`, `live-num` (every numeric cell) |
+
+`data-*` emitted by this screen, with their value sets:
+
+| Attribute | Values | Note |
+|---|---|---|
+| `data-theme` | `light` \| `dark` | on the `section.live` root |
+| `data-received-at` | an ISO stamp, or `''` | the newest frame |
+| `data-fill` | a formatted percent (`12.5%`, `≥ 12.5%`, `NOTIONAL~12.5%`, `est. 12.5%`, `n/a`, `—`) | a bar's fill, as text |
+| `data-height` | the same shapes | each sparkline bar |
+| `data-state` | `measured` \| `notional` \| `estimated` \| `unavailable` \| `gap` | a bar's or a cell's availability — **the state rule's only hook** |
+| `data-segments` | an integer as a string | how many pieces a sparkline broke into |
+| `data-tone` | `plain` \| `amber` \| `alarm` \| `queued` | row and flag severity |
+| `data-queued` | `true` \| `false` | |
+| `data-flag` | `silent` \| `lost` \| `near deadline` \| `over deadline` \| `stuck` \| `queued` \| `unknown health` \| `unknown deadline` | one `span.live-run-flag` per flag |
+| `data-contradiction` | `true` (present only) | health says quiet longer than the run is old |
+| `data-killed` | `true` \| `false` | repo block, total, and the banner (`true`) |
+| `data-key` | a sanitized slug, or `''` | the repository |
+| `data-fast` | `true` \| `false` | burn faster than the cap allows |
+| `data-stale` | `true` (present only) | the stale banner |
+| `data-stale-by-age` | `true` \| `false` | the connection cell |
+
+State variants and **how each is marked**: killed/halted (`div.live-kill` with
+`data-killed="true"`, the word `KILLED by` then who, when, why); stale (`div.live-stale`
+with `data-stale="true"` and the sentence "…(a feed is stale after 45 s), so the values
+above are the last ones read and the graphs break where the console stopped observing");
+gap (`data-state="gap"`, the mark `—`); silent (`data-flag="silent"`, `data-tone="amber"`);
+lost (`data-flag="lost"`, `data-tone="alarm"`); near/over deadline (`data-flag`, amber and
+alarm); queued (the `live-run-queued` class, `data-queued="true"`, `data-tone="queued"`);
+stuck (`live-run-stuck`, `data-tone="alarm"`); notional (`data-state="notional"`, the text
+carries `NOTIONAL~`); unavailable (`data-state="unavailable"`, the text `n/a`, the reason
+in `title`); empty (a sparkline with no sample draws **one** bar whose reading is a `gap`).
+**There is no loading state**: the screen is drawn from a model, and the entry draws
+nothing until the handshake answers. **There is no cap-reached flag**: the cap is a
+`percent` reading and a bar's `data-fill`, and nothing else — colouring it at a threshold
+is a rule the stylesheet writes, not a state the code emits.
+
+Time constants the stylesheet's threshold rules must agree with:
+`LIVE_STALE_AFTER_SECONDS = 45`, `LIVE_SILENT_AFTER_SECONDS = 60`,
+`LIVE_LOST_AFTER_SECONDS = 3 * 60`, `LIVE_NEAR_DEADLINE_FRACTION = 0.8` (80 %),
+`LIVE_BURN_WINDOW_SECONDS = 5 * 60`.
+
+### 2.4 Spend — `screens/spend.ts`
+
+Regions in tree order: header → range picker → breakdown switch → person knob →
+`div.spend-accounts` (three charts) → `ol.spend-rows` → totals → notes → warnings → the
+caps panel.
+
+| Group | Class hooks |
+|---|---|
+| Header | `spend-header`, `spend-project`, `spend-source`, `spend-since`, `spend-until`, `spend-weeks`, `spend-degraded`, `spend-notice` |
+| Picker & switch | `spend-picker`, `spend-window`, `spend-switch`, `spend-dim`, `spend-dim-unknown`, `spend-persons`, `spend-persons-word`, `spend-persons-state`, `spend-persons-note` |
+| Charts | `spend-accounts`, `spend-account`, `spend-account-title`, `spend-peak`, `spend-series`, `spend-point`, `spend-point-key`, `spend-point-value`, `spend-partial`, `spend-compute`, `spend-notional`, `spend-model`, `spend-key`, `spend-num` |
+| Rows | `spend-rows`, `spend-row`, `spend-runs`, `spend-run-hours`, `spend-tokens-in`, `spend-tokens-out` |
+| Totals | `spend-totals`, `spend-totals-word`, `spend-total-model`, `spend-total-notional`, `spend-total-compute`, `spend-total-runs`, `spend-total-run-hours` |
+| Caps | `spend-caps`, `spend-caps-project`, `spend-caps-day`, `spend-caps-mode`, `spend-scope`, `spend-cap-limit`, `spend-cap-word`, `spend-cap-reserve`, `spend-cap-global`, `spend-cap-counted`, `spend-cap-daily`, `spend-cap-per-run`, `spend-cap-notional`, `spend-cap-headroom`, `spend-cap-defaults`, `spend-cap-repos`, `spend-cap-repo`, `spend-cap-repo-name`, `spend-cap-spent`, `spend-kill`, `spend-kill-word`, `spend-kill-by`, `spend-kill-at`, `spend-kill-reason` |
+| Notes | `spend-note`, `spend-warning` |
+
+`data-*`: `data-theme`; `data-current`, `data-enabled`, `data-known`,
+`data-dimension` (`day|week|month|year|repo|model|person`, or `unknown`), `data-day`,
+`data-until` (`set` \| `cli`) on the controls; `data-state`
+(`measured|notional|estimated|unavailable|gap`), `data-height`, `data-partial`,
+`data-hollow`, `data-key`, `data-account` (`model|notional|compute`), `data-peak`,
+`data-segments` on the charts and rows; `data-available`, `data-scope-known`,
+`data-daily-scope`, `data-per-run-scope` (a document word, or `unknown`), `data-limit`
+(`max_reserve`), `data-killed` on the caps panel.
+
+States: killed (the kill banner, `data-killed="true"`); partial/hollow
+(`data-partial="true"` / `data-hollow="true"` plus the `(partial)` marker text in
+`span.spend-partial`); gap (a day with no document → `data-state="gap"`, `data-height="—"`,
+reason in `title`); unavailable (caps absent: `data-available="false"` and the sentence
+"…every cap here is n/a, not zero"); empty per account (a `gap` reading, `data-state="gap"`);
+degraded (`span.spend-degraded` with `data-degraded="true"` and the word `degraded`);
+person view withheld (`data-enabled="false"`, state text `off`, the note in `title`);
+unknown breakdown (`spend-dim-unknown`, `data-dimension="unknown"`, `data-known="false"`);
+unknown cap scope (`data-scope-known="false"`, "a scope this console does not know").
+**There is no loading state, no stale state and no halted state on this screen**, and no
+"cap reached" marker (as on Live).
+
+Formatting: money is `usd` (2 decimals, grouping, sign before `$`), shares are `percent`
+(1 decimal, used only for `data-height`), time is `hours` (2 decimals + ` h`), counts are
+`count` (0 decimals). Exported: `SPEND_DEFAULT_CONTROLS = {since:'30d', until:null,
+by:'day', persons:false}`, `SPEND_PICKER_WINDOWS = ['7d','30d','90d','12w']`,
+`SPEND_DIMENSIONS` (seven), `SPEND_ACCOUNTS = ['model','notional','compute']`,
+`PARTIAL_MARKER = '(partial)'`.
+
+### 2.5 Projects — `screens/projects.ts`
+
+Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` and
+(where there is one) `data-operation`: `caps`, `kill`, `repositories`, `jobs`, `accounts`,
+`secrets`, `policy`, `enrollment`.
+
+| Group | Class hooks |
+|---|---|
+| Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
+| Caps | `projects-caps`, `projects-reserve`, `projects-reserve-value`, `projects-cap-list`, `projects-cap`, `projects-cap-repo`, `projects-cap-scope`, `projects-cap-value`, `projects-cap-source` |
+| Kill | `projects-kills`, `projects-kill-global`, `projects-kill-scope`, `projects-kill-none`, `projects-kill-row`, `projects-kill-repo`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
+| Repositories | `projects-repos`, `projects-enrolled`, `projects-enrolled-count`, `projects-enrolled-list`, `projects-enrolled-repo`, `projects-seen`, `projects-seen-count`, `projects-seen-list`, `projects-seen-repo`, `projects-only-seen`, `projects-only-seen-repo`, `projects-only-enrolled`, `projects-only-enrolled-repo`, `projects-repos-label` |
+| Jobs | `projects-jobs`, `projects-job-list`, `projects-job`, `projects-job-run`, `projects-job-repo`, `projects-job-workflow`, `projects-job-status`, `projects-job-stage`, `projects-job-by`, `projects-job-created`, `projects-job-model`, `projects-job-compute`, `projects-job-total`, `projects-jobs-note`, `projects-jobs-dropped`, `projects-jobs-total`, `projects-jobs-total-of` |
+| Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-accounts-note` |
+| Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed` |
+
+`data-*`: `data-theme`; `data-panel`; `data-state` — **the panel states are
+`read`, `unavailable`, `not-built`**; `data-operation`
+(`budget.show|runs.list|accounts.inventory|secrets.inventory`, absent on `policy` and
+`enrollment`); `data-scope` (`global|defaults|repo`); `data-slug`; `data-killed` (`true`).
+
+The `not-built` state is the design's own honesty rule in the DOM: `policy` and
+`enrollment` carry `data-state="not-built"` and a `projects-because` sentence ("not
+readable with this CLI: …"). An `unavailable` panel carries the CLI's sentence or "no
+document arrived for …". A `read` panel carries a count and a body; **a panel in any other
+state has no body at all**, so a rule that painted an empty body would be painting nothing.
+
+Readings: money (`usd`) for the reserve, the caps and the job figures; counts for panel
+counts, dropped/total, enrolled/seen, secret versions. **No reading is a time on this
+screen** — every date is text.
+
+### 2.6 Run detail — `screens/run.ts`
+
+Reached from a `live-run` row. Regions in tree order: header → ledger → stages → pull
+request → logs → diagnosis → replay → warnings.
+
+| Group | Class hooks |
+|---|---|
+| Header | `run-header`, `run-id`, `run-repo`, `run-workflow`, `run-status`, `run-outcome`, `run-stage`, `run-branch`, `run-requested-by`, `run-flags`, `run-settled`, `run-stale`, `run-follow-up`, `run-halt`, `run-halt-word`, `run-halt-reason`, `run-halt-scope`, `run-halt-at`, `run-halt-detail` |
+| Ledger | `run-ledger`, `run-ledger-model`, `run-ledger-model-value`, `run-ledger-compute`, `run-ledger-compute-value`, `run-ledger-total`, `run-ledger-total-value`, `run-number`, `run-panel-title` |
+| Stages | `run-stages`, `run-stage-list`, `run-stage`, `run-stage-name`, `run-stage-passed`, `run-stage-tests`, `run-stage-failures`, `run-stage-duration`, `run-stage-spend`, `run-stage-deadline` |
+| Pull request | `run-pr`, `run-pr-repo`, `run-pr-number`, `run-pr-url`, `run-pr-reason` |
+| Logs | `run-logs`, `run-log-list`, `run-log-line`, `run-log-time`, `run-log-severity`, `run-log-stage`, `run-log-message`, `run-log-note`, `run-log-dropped`, `run-log-of`, `run-log-total`, `run-log-refused`, `run-log-refused-count`, `run-log-link`, `run-log-link-note`, `run-log-tail`, `run-log-tail-line` |
+| Diagnosis | `run-diagnosis`, `run-failed`, `run-failed-word`, `run-failed-test`, `run-flaky`, `run-flaky-word`, `run-flaky-test`, `run-finding`, `run-finding-severity`, `run-finding-file`, `run-finding-summary`, `run-agent-message`, `run-agent-word`, `run-agent-text`, `run-comments-word`, `run-comments-path`, `run-comments-value`, `run-draft-note`, `run-follow-up-word`, `run-follow-up-pr`, `run-follow-up-comments-word`, `run-follow-up-comments`, `run-follow-up-session`, `run-reported`, `run-reported-usd`, `run-charged-word`, `run-charge-usd`, `run-reported-warning`, `run-pin-warning`, `run-route`, `run-route-name`, `run-route-usd`, `run-model`, `run-model-name`, `run-model-usd` |
+| Replay | `run-replay`, `run-replay-records`, `run-replay-count`, `run-replay-window-word`, `run-replay-window`, `run-replay-span`, `run-replay-from`, `run-replay-to`, `run-replay-scrubbed`, `run-replay-at`, `run-replay-note`, `run-replay-count` |
+| Warnings | `run-warning` |
+
+`data-*`: `data-theme`, and `data-href` on a log link (written by `putLink`, never the
+navigating attribute).
+
+States: terminal / still running / settled / stale draft / follow-up (header flags, as
+text); halted (`div.run-halt`, the word `HALTED`); stage passed/failed (`run-stage-passed`
+with `passed`/`failed`); deadline ok/near/over (`run-stage-deadline`), or `n/a` when the
+document has no deadline; a stage spend that is always `n/a` (no document carries spend by
+stage); a pull request with **no link at all** (`run.link` is typed `null`, and
+`PR_NO_LINK_REASON` explains why); logs bounded ("lines not drawn: N of M") and a count of
+refused lines; replay scrubbed / not scrubbed.
+
+Readings: money (`usd`) throughout the ledger, the diagnosis route and model splits, the
+reported/charged pair; counts for tests, failures, dropped lines, follow-up PRs and
+comments, replay records; **seconds** for a stage's duration and the replay window.
+
+### 2.7 Degraded: no Firebase — `screens/degraded.ts`
+
+`section.degraded` with `data-kind="no-firebase"`, `data-theme`, `data-received-at`; the
+mode line `span.degraded-mode` carries the literal `polling` **and**
+`data-state="polling"`. Regions: `header.degraded-header` (`degraded-project`,
+`degraded-mode-word` "run records only", `degraded-notice`, `degraded-warning`,
+`degraded-document-warning`, `degraded-since` + `-word`/`-at`/`-age`) →
+`div.degraded-caps` (`degraded-cap` with `data-state="unavailable"`, `data-kill-capable`
+— always `false` on this shape — and `degraded-caps-word`) → `div.degraded-totals`
+(`degraded-model-usd`, `degraded-model-notional-usd`, `degraded-compute-usd`,
+`degraded-compute-unknown`, `degraded-compute-word`, `degraded-total-usd`,
+`degraded-runs`) → `ol.degraded-runs` of `li.degraded-run` (`degraded-run-id`, `-repo`,
+`-status`, `-stage`, `-outcome`, `-branch`, `-reason`, `-account`, `-created`, `-model`,
+`-compute`, `-total`, `data-run`, `data-notional-model`).
+
+Its presence is the design's §6.3 rule made visible: **caps read `n/a`, the kill
+affordance is absent (`KILL_ABSENT_BECAUSE`), and a figure that is a lower bound says so**
+(`COMPUTE_LOWER_BOUND_NOTE`).
+
+### 2.8 The unavailable and refusal screens — `screens/degraded.ts` + `entry.ts`
+
+`renderUnavailable` draws `section.console-unavailable` with `data-kind="no-binary"` or
+`data-kind="refused"`, `data-theme`, `data-received-at=""`. Two bodies:
+
+- **no binary** — `h1.unavailable-headline` ("no fugaro binary"), `p.unavailable-reason`,
+  `p.unavailable-install-lead` ("install it with"), `pre.unavailable-install-command`,
+  `div.unavailable-picker` + `p.unavailable-picker-lead` (with **`data-picker="binary"`**),
+  and a searched-places line (`unavailable-searched`, `-lead`, `-count`).
+- **refused** — `h1.unavailable-headline` ("the CLI refused this read"),
+  `span.unavailable-operation` and `p.unavailable-sentence`, where the sentence is the
+  CLI's own text through `sanitizeRefusal` or the console's
+  `REFUSAL_UNREADABLE` ("the CLI refused this read, and its own sentence is longer than the
+  console will draw").
+
+The **version-skew banner** (`renderVersionSkew` in `shared/version.ts`) is the third: the
+whole screen when the console refused, a banner a screen is mounted under when it is
+reduced. It is drawn into the mount **before** the nav, so it is the first thing in the
+panel's column.
+
+`refusal.html` itself is a **document**, not a screed: `<main>` with an `<h1>` ("Fugaro
+console") and one `<p>` ("This console will not draw a dashboard for the fugaro it
+found."). It loads **no script at all**, so it is the one page in the console that cannot
+carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
+
+### 2.9 Every state variant, in one table
+
+| State | Screen(s) | How it is marked in the DOM |
+|---|---|---|
+| killed / halted | Live (repo, total, banner), Spend (caps), Projects (kill panel, banner), Run (`run-halt`) | a banner element with `data-killed="true"` / the word `KILLED by` / `HALTED` + who, when, why |
+| stale (console clock) | Live | `data-stale="true"` banner + the threshold sentence |
+| stale (document age) | Live | `data-stale-by-age="true"` on the connection cell |
+| silent / lost / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |
+| queued / stuck | Live run rows | the `live-run-queued` / `live-run-stuck` class + `data-queued` + `data-flag` |
+| gap | Live, Spend | `data-state="gap"`, the mark `—`, a reason in `title` |
+| unavailable | every screen | `data-state="unavailable"` (or `data-available="false"`), the text `n/a`, a reason in `title` |
+| notional / estimated | Live, Spend, Projects, Run, degraded | `data-state="notional"`/`"estimated"` and the text marks `NOTIONAL~` / `est.` |
+| partial / hollow | Spend | `data-partial="true"` / `data-hollow="true"` + the `(partial)` marker |
+| degraded | Spend | `span.spend-degraded` with `data-degraded="true"` |
+| polling (no Firebase) | degraded | `data-kind="no-firebase"` + `data-state="polling"` |
+| no binary / refused | unavailable | `data-kind="no-binary"` / `"refused"` |
+| skew (refused / reduced) | chrome | the version-skew banner; the nav is missing the withheld buttons |
+| not built | Projects (`policy`, `enrollment`) | `data-state="not-built"` + a `projects-because` sentence |
+| empty | picker (status line), Live (a `gap` bar), Spend (a `gap` point, a caps note) | the console's own sentence, never an empty box |
+| cap reached | **none — not a state in the code.** The cap is a `percent` reading and a bar's `data-fill` | the stylesheet may colour a threshold; the code emits no flag |
+| loading | **none — not a state in the code** | the entry draws nothing before the handshake answers |
+
+### 2.10 Numbers, money and time — what the stylesheet must align
+
+| Kind | Unit | Where | Format |
+|---|---|---|---|
+| **Money** | `usd` | Live (spend, counted, cap, notional, burn rate, sparkline title), Spend (points, peaks, rows, totals, every cap), Projects (reserve, caps, job model/compute/total), Run (ledger, stage spend, reported, charged, routes, models), degraded (all totals) | `$` + grouping + **2 decimals**, sign before the `$` |
+| **Share** | `percent` | Live (cap percent, bar fills), Spend (`data-height`) | 1 decimal + `%` |
+| **Duration / time** | `seconds` | Live (run age, connection age, silence), Run (stage duration, replay window), degraded (feed age) | 0 decimals + ` s` |
+| **Time (money-shaped)** | `hours` | Spend (run hours, totals) | 2 decimals + ` h` |
+| **Count** | `count` | Live (segments), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records), degraded (runs, searched) | 0 decimals + grouping |
+
+Every numeric cell carries `live-num` / `spend-num` / `projects-number` / `run-number`
+(`numberCell` prepends it), which is the single hook that gives **tabular figures** and
+right alignment — §6.1 rule 2's "tabular figures, right-aligned numerics" is satisfiable
+today only because that class exists. Monospace is the mechanism: `font-variant-numeric:
+tabular-nums` with a fallback to `--font-mono`.
+
+---
+
+## 3. The theme system
+
+### 3.1 One file, two value sets, one vocabulary
+
+Following [the website's own split](../../website/src/styles/tokens.css) — "the palette is
+a value set for a fixed vocabulary rather than a second copy of it" — the console gets:
+
+| File | Holds | Contains no |
+|---|---|---|
+| `console/src/renderer/theme/tokens.css` | the **vocabulary**: spacing steps, radii, type sizes, leading, weights, motion durations, the focus-ring width and offset | colour |
+| `console/src/renderer/theme/palette.css` | the **value set**: every colour token, light and dark, each written once | sizes, spacing, motion |
+| `console/src/renderer/theme/base.css` | reset, document, chrome, layout, responsive, focus, forced-colors | colour literals — it reads the tokens |
+| `console/src/renderer/theme/screens.css` | the per-screen rules, in the order §2 lists the screens | colour literals |
+
+The plan's tree already names `src/renderer/theme/tokens.css`
+(`docs/plans/2026-10-15-desktop-console.md:118`); this design fills it in and adds three
+siblings, and Task 6.1 extends the plan's tree with them.
+
+**The vocabulary** (a 4 px base, mirroring the website so a reader of one knows the other):
+
+```css
+:root {
+  --space-3xs: 0.125rem; --space-2xs: 0.25rem; --space-xs: 0.5rem;
+  --space-sm: 0.75rem;   --space-md: 1rem;     --space-lg: 1.5rem;
+  --space-xl: 2rem;      --space-2xl: 3rem;
+
+  --radius-sm: 3px; --radius-md: 6px; --radius-pill: 999px;
+  --border-width: 1px; --rule-width: 1px;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --font-size-xs: 0.6875rem;  /* 11px — a table's header, a caption      */
+  --font-size-sm: 0.75rem;    /* 12px — the dense default: rows, labels  */
+  --font-size-base: 0.8125rem;/* 13px — a screen's prose                 */
+  --font-size-md: 0.9375rem;  /* 15px — a panel title                    */
+  --font-size-lg: 1.125rem;   /* 18px — the screen's h1                  */
+
+  --leading-tight: 1.2; --leading-normal: 1.45;
+  --weight-normal: 400; --weight-medium: 500; --weight-semibold: 600;
+
+  --row-height: 24px;         /* §6.1 rule 2, as a token                */
+  --row-height-compact: 20px;
+
+  --focus-ring-width: 2px; --focus-ring-offset: 2px;
+
+  --duration-fast: 120ms; --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+```
+
+**The very first rule of the font stack is `system-ui`, and no web font is ever
+fetched**: the CSP allows `font-src 'self'` and `connect-src 'none'`, and the console is
+offline by construction, so a self-hosted face would be a file the bundle ships for no
+reason. The website's own note — "the fonts are a system stack … so the page fetches no
+font from anywhere" — holds here for a stronger reason.
+
+### 3.2 The dark value set — the console's first screen
+
+Derived from the website's palette in force ([`palette-logo.css`](../../website/src/styles/palette-logo.css),
+the logo's sampled hue, [reconciliation §5](../website/redesign/reconciliation.md)), with
+the six tokens the console needs added: the second surface, the control border and the
+five state colours. Everything the website already names keeps **its exact value**, so the
+console and the site are one product.
+
+| Token | Value | Hue | Role |
+|---|---|---|---|
+| `--ground` | `#0A0E16` | 220° | the window's ground |
+| `--surface` | `#121A26` | 216° | a panel, a card |
+| `--surface-alt` | `#18222F` | 214° | a table header, a zebra row |
+| `--text` | `#E6EEF5` | 208° | body text |
+| `--text-muted` | `#9FB2C4` | 209° | labels, secondary prose |
+| `--accent` | `#17A8E6` | 198° | structure: rules, the focus ring, a filled control, the cap bar below its threshold |
+| `--accent-ink` | `#6FD8F5` | 193° | the accent **as text** — links, an accent heading |
+| `--border` | `#24303F` | 213° | a **decorative** hairline |
+| `--border-strong` | `#5B7491` | 212° | a border that marks a **control's extent** |
+| `--ok` | `#4CC38A` | 151° | measured and inside the cap |
+| `--warn` | `#F5A524` | 37° | attention: near deadline, silent, a cap approaching |
+| `--error` | `#FF6B6B` | 0° | failed, lost, an infra error |
+| `--halted` | `#C9A0FF` | 266° | killed — a **deliberate stop**, not a failure |
+| `--stale` | `#8A9AAB` | 211° | the last-known values after the feed stopped |
+
+### 3.3 The light value set — the same hue, darkened for a light ground
+
+The website has no light ground ("the site has one, dark, appearance, and the brief does
+not ask for a second", RF19), so this is the first light set in the product and it is
+derived from the same sampled hue: the accent moves from 198° to **199.6°** and is darkened
+until it clears 4.5:1 as text and 3:1 as a boundary on either light ground. `#17A8E6` on a
+light ground is **2.70:1** — the exact figure reconciliation §5.3 records while noting "the
+accent is never text on a light ground" — which is why light needs its own accent step
+rather than the same value.
+
+| Token | Value | Hue | Role |
+|---|---|---|---|
+| `--ground` | `#F2F6FA` | 210° | the window's ground (a blue-tinted paper, not white) |
+| `--surface` | `#FFFFFF` | — | a panel |
+| `--surface-alt` | `#E7EEF5` | 210° | a table header, a zebra row |
+| `--text` | `#0B1219` | 210° | body text |
+| `--text-muted` | `#516274` | 211° | labels, secondary prose |
+| `--accent` | `#0B6E9E` | 200° | structure, a filled control |
+| `--accent-ink` | `#085A82` | 200° | the accent as text |
+| `--border` | `#D5DFE9` | 210° | a decorative hairline |
+| `--border-strong` | `#6F8497` | 209° | a control's extent |
+| `--ok` | `#0F7A4D` | 155° | |
+| `--warn` | `#8A5600` | 37° | |
+| `--error` | `#C0272D` | 358° | |
+| `--halted` | `#7A3E9D` | 278° | |
+| `--stale` | `#5C6B7A` | 210° | |
+
+### 3.4 Contrast, computed
+
+Every ratio below was computed from the sRGB relative-luminance definition
+(`(L1+0.05)/(L2+0.05)`) over the literal values in §3.2 and §3.3, by the same arithmetic
+`website/test/a11y.mjs` uses. **Requirements: 4.5:1 for body-size text, 3:1 for large text
+and for any boundary that marks a control's extent.**
+
+**Dark**
+
+| Pair | `--ground` | `--surface` | `--surface-alt` | Needs |
+|---|---|---|---|---|
+| `--text` | **16.47** | **14.91** | **13.69** | 4.5 ✓ |
+| `--text-muted` | **8.87** | **8.02** | **7.37** | 4.5 ✓ |
+| `--accent-ink` | **11.79** | **10.67** | **9.79** | 4.5 ✓ |
+| `--accent` | **7.16** | **6.48** | **5.94** | 4.5 ✓ (and 3 ✓ as a UI boundary) |
+| `--border-strong` | **4.00** | **3.62** | **3.33** | 3 ✓ |
+| `--ok` | **8.72** | **7.89** | **7.24** | 4.5 ✓ |
+| `--warn` | **9.46** | **8.56** | **7.86** | 4.5 ✓ |
+| `--error` | **6.96** | **6.30** | **5.78** | 4.5 ✓ |
+| `--halted` | **9.16** | **8.29** | **7.61** | 4.5 ✓ |
+| `--stale` | **6.71** | **6.07** | **5.57** | 4.5 ✓ |
+| `--border` (decorative) | 1.44 | 1.31 | 1.20 | **not admissible as a control boundary** — 1 px hairlines only |
+
+**Light**
+
+| Pair | `--ground` | `--surface` | `--surface-alt` | Needs |
+|---|---|---|---|---|
+| `--text` | **17.35** | **18.84** | **16.10** | 4.5 ✓ |
+| `--text-muted` | **5.77** | **6.27** | **5.36** | 4.5 ✓ |
+| `--accent-ink` | **6.92** | **7.51** | **6.42** | 4.5 ✓ |
+| `--accent` | **5.17** | **5.62** | **4.80** | 4.5 ✓ (and 3 ✓ as a UI boundary) |
+| `--border-strong` | **3.57** | **3.87** | **3.31** | 3 ✓ |
+| `--ok` | **4.94** | **5.37** | **4.59** | 4.5 ✓ |
+| `--warn` | **5.67** | **6.16** | **5.26** | 4.5 ✓ |
+| `--error` | **5.42** | **5.88** | **5.03** | 4.5 ✓ |
+| `--halted` | **6.44** | **6.99** | **5.98** | 4.5 ✓ |
+| `--stale` | **5.04** | **5.47** | **4.67** | 4.5 ✓ |
+| `--border` (decorative) | 1.24 | 1.35 | 1.15 | 1 px hairlines only |
+
+**A label on a filled control** (a filled button, a state chip, a kill banner's fill)
+carries `--ink-on-fill`, which is `--ground` on the dark set and `--surface` on the light
+set — light-on-dark and dark-on-light, as the two sets are inverses:
+
+| Fill | Dark: `--ground` on it | Light: `--surface` on it | Needs |
+|---|---|---|---|
+| `--accent` | **7.16** | **5.62** | 4.5 ✓ |
+| `--ok` | **8.72** | **5.37** | 4.5 ✓ |
+| `--warn` | **9.46** | **6.16** | 4.5 ✓ |
+| `--error` | **6.96** | **5.88** | 4.5 ✓ |
+| `--halted` | **9.16** | **6.99** | 4.5 ✓ |
+| `--stale` | **6.71** | **5.47** | 4.5 ✓ |
+
+The website's `--warn`/`--accent` pair is preserved: `--warn` is 37° and `--accent` 198°,
+**161° apart**, "so the two can never be mistaken for each other". The five state colours
+are ≥ 60° apart from each other in both sets, which is the secondary defence behind
+[§3.5](#35-never-colour-alone).
+
+### 3.5 Never colour alone
+
+Design §6.1 rule 5 already requires the screens to be readable for colour-blind users, and
+WCAG 1.4.1 requires it regardless. **Every state the stylesheet colours also carries a mark
+the code already emits**, and the stylesheet must never be the only carrier of a fact:
+
+| State | The non-colour mark, already in the DOM |
+|---|---|
+| killed / halted | the banner's **words**: `KILLED by <who> <when> "<reason>"` / `HALTED` |
+| stale | the banner's sentence, naming the 45 s threshold, plus `last read <at>` |
+| silent / lost / near / over deadline | the flag's **text** (`silent`, `lost`, `near deadline`, …) in `span.live-run-flag` |
+| queued / stuck | the flag text plus the all-caps row treatment |
+| gap | the mark `—` in the cell and a `title` |
+| unavailable | the mark `n/a` and a `title` |
+| notional / estimated | the `NOTIONAL~` / `est.` prefix **in the number itself** |
+| partial | the `(partial)` marker text |
+| degraded / polling | the words `degraded` and `polling` |
+| cap near / over | the **number**: the percent reading, and the bar's `data-fill` |
+| not-built | the panel's own sentence |
+
+The rules this makes binding on the stylesheet: (1) **a colour never replaces a word**;
+(2) a state colour is used on a **fill, a rule or a badge**, and the badge keeps its text;
+(3) the one state that is a colour-only reading today — a cap bar past its threshold — is
+always drawn beside its own percentage, so the colour is redundant by construction;
+(4) `--ok` is used for *measured and inside the cap*, never decoratively, per §6.1 rule 3
+("never decoratively").
+
+### 3.6 How the theme is chosen
+
+Three sources, in this order, and **one switch**:
+
+1. **The operating system, by default.** No script is involved: `:root` carries
+   `color-scheme: light dark`, which is the browser's own "follow the OS" value, and
+   `prefers-color-scheme` resolves against it.
+2. **An explicit `data-theme` attribute**, which the screens *already emit* on their own
+   roots. The attribute is the single switch: `[data-theme='light'] { color-scheme: light }`
+   and `[data-theme='dark'] { color-scheme: dark }`.
+3. **The owner's override**, if the owner wants one ([Q2](#8-open-for-the-owner)), which
+   *writes that same attribute* (or, equivalently, `nativeTheme.themeSource` in the main
+   process). Nothing in the CSS changes for it.
+
+The palette is written **once per token** with `light-dark()`, which reads the *used*
+`color-scheme` of the element it is declared on:
+
+```css
+:root { color-scheme: light dark; }          /* the OS decides, until told otherwise   */
+[data-theme='light'] { color-scheme: light; } /* a screen, a mount, the document root   */
+[data-theme='dark']  { color-scheme: dark; }
+
+:root, [data-theme] {                          /* declared on both, so a mount can switch */
+  --ground: light-dark(#F2F6FA, #0A0E16);
+  --surface: light-dark(#FFFFFF, #121A26);
+  /* … every token of §3.2 and §3.3, once … */
+}
+```
+
+The `:root, [data-theme]` pair is load-bearing and not decoration: a custom property is
+**computed where it is declared**, so a token declared only on `:root` would inherit an
+already-resolved colour into a mount that switched, and the light golden frame would be a
+picture of the dark theme. Declaring the set on `[data-theme]` too makes the switch work at
+any depth. `light-dark()` needs Chromium 123; the console pins Electron 44.7.2
+(`console/package.json`), which is far past it — and the fallback, if the owner prefers no
+modern function, is two explicit blocks selected by attribute, with the token test
+asserting both blocks name exactly the same vocabulary (see [§9](#9-alternatives-considered)).
+
+**What each document gets, then:**
+
+| Document | Script | How it is themed |
+|---|---|---|
+| `index.html` (dashboard) | `console.js` | the entry puts `data-theme` on the mount it draws the chrome into, so the nav, the installation line and the panel all switch together; each screen additionally stamps its own root (as it does today) |
+| `installations.html` (picker) | `installations.js` | the picker's script stamps `document.documentElement` (or its `<main>`); its CSS is id-scoped |
+| `refusal.html` | **none** | `:root`'s `color-scheme: light dark` alone — **the OS decides, and no code runs.** This is the strongest argument for making the OS the default rather than a stored preference: the one document the console shows when nothing else works must be themed without a script |
+
+**Why the entry and not the screens decide.** Today the entry names one theme for every
+drawing (`CONSOLE_THEME`, and `renderLive(…, theme)` and its three siblings take it as an
+argument). That stays: the *argument* is what a golden frame records, and a screen never
+reads the environment. What changes in [Task 6.5](#76-task-65--the-theme-switch-css-only--one-entry-line)
+is the **value**: `CONSOLE_THEME` becomes the answer of a small `themeChoice()` that reads
+`matchMedia('(prefers-color-scheme: dark)')` and subscribes to its `change` event — a
+`matchMedia` read is neither a network call nor a style write, so the CSP is untouched and
+the `ElementLike` interface is untouched (a media query is not a DOM write).
+
+### 3.7 Typography
+
+| Role | Size | Weight | Family |
+|---|---|---|---|
+| Screen `h1` (`live-project`, `spend-project`, `projects-project`) | `--font-size-lg` (18px) | 600 | sans |
+| Panel / section title (`projects-title`, `run-panel-title`, `spend-account-title`) | `--font-size-md` (15px) | 600 | sans |
+| Table header (`projects-repos-label`, `run-log-time`, a column caption) | `--font-size-xs` (11px), uppercase, letter-spaced | 500 | sans |
+| Row text, labels, controls | `--font-size-sm` (12px) — the dense default | 400 | sans |
+| Screen prose (`live-note`, `spend-note`, `spend-warning`, `projects-because`, `run-warning`) | `--font-size-base` (13px) | 400 | sans |
+| **Every number, id, slug, path, timestamp and log line** | `--font-size-sm` | 400 | `--font-mono` with `font-variant-numeric: tabular-nums` |
+
+Money is always tabular and right-aligned, in mono, with the `$` inside the same cell —
+§6.1 rule 2's "no whitespace padding between related figures". A run id, a repository slug,
+a secret name and a log line are mono too, because their value is that they can be compared
+character by character; prose never is.
+
+### 3.8 Spacing and density
+
+`--row-height: 24px` is the design's own number (§6.1 rule 2) and is a token, so a rule
+that wants a taller row says `--row-height-compact` or an explicit multiple rather than a
+new number. The density rules the stylesheet keeps:
+
+- a table row is `--row-height` (24 px) with `--space-2xs` vertical padding, no horizontal
+  padding between related figures, and one hairline between rows;
+- a panel is separated from the next by `--space-lg`; a panel's own padding is
+  `--space-sm`;
+- a screen's `h1` block has `--space-md` below it and nothing above;
+- **figures that are read together sit together**: a cap's counted figure, its cap and its
+  percent are one cell group, never three columns with gaps.
+
+### 3.9 Motion
+
+Motion is available and almost unused: `--duration-fast` (120 ms) with `--ease-out` for a
+hover/focus transition and for a nav button's state change, and **nothing else**. The one
+rule that matters:
+
+```css
+*, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
+                         transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+```
+
+inside `@media (prefers-reduced-motion: reduce)`. This is written **once**, globally, in
+`base.css`, the way the website's `Base.astro` writes its own reduce rule once
+([reconciliation RF17](../website/redesign/reconciliation.md)) "so a new component cannot
+forget it". The console animates no chart, no sparkline and no number — a figure that
+animated would be a figure whose last frame is a lie about when the value was read.
+
+---
+
+## 4. Layout
+
+### 4.1 The window's structure
+
+`CONSOLE_WINDOW_SIZE` is `{ width: 1180, height: 780 }` CSS pixels
+(`src/main/window.ts`) and the window sets **no background colour at all** — there is no
+`backgroundColor` key in `consoleWindowOptions`. That is one wiring detail this design
+proposes to change, and it is *not* a CSS change: until `backgroundColor` is set to
+`#0A0E16`, a light-theme window flashes the platform's default (usually white) before the
+document paints, and a dark-theme window flashes white on a white-on-white round trip. The
+main process cannot read the CSS, so the value is a duplicate of `--ground`; the plan's
+Task 6.5 carries it, and the token test asserts the two literals are equal.
+
+The document is one column with three bands, matching the three children the entry already
+appends:
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│ section.console-installation   project · binary · version · mode          │  1 line
+├───────────────────────────────────────────────────────────────────────────┤
+│ nav.console-views   [ Live ] [ Spend ] [ Projects ]                       │  1 line
+├───────────────────────────────────────────────────────────────────────────┤
+│ div.console-panel                                                         │
+│   (the version-skew banner, when there is one, is the first thing here)   │  the rest
+│   section.live | .spend | .projects | .run | .degraded | .console-unavailable
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+- **The installation line and the nav are chrome and never scroll**; the panel scrolls.
+  A sticky header is the difference between a dense screen and a screen that looks broken
+  the moment it is longer than the window.
+- **`nav.console-views` is a tab list in all but name** and is styled as one: a row of
+  equal-weight buttons separated by rules, the current one marked with `aria-current`
+  (which the code emits) plus a weight and an underline in `--accent`. Because `aria-current`
+  is already the marker, the style rule is `[aria-current='true']` and not a class.
+- **A screen's own root is the panel's only child** and carries the screen's `data-theme`,
+  so a rule may be written `section.live { … }` or `.live { … }` but never
+  `div.console-panel .live` — the panel is chrome and the screen is content.
+- The installation line's three states (`chosen`, `none`, `unreadable`) are styled as
+  three states: `chosen` is `--text`, `none` is `--text-muted`, and `unreadable` carries
+  the `--warn` rule and its own sentence.
+
+### 4.2 Narrow windows
+
+There is no responsive layer today and the window is fixed at 1180 × 780, but the
+operator can resize one, and the content is tables. Three breakpoints, in `base.css` and
+`screens.css`, in `em` against the root size:
+
+| Width | What changes |
+|---|---|
+| ≤ 1000 px | the widest tables (the Log and Jobs tables, `spend-rows`) drop their least load-bearing columns; a repository block's burn sparkline narrows before a figure does |
+| ≤ 780 px | the nav wraps to two rows, the installation line drops to project · mode, and any three-column figure group becomes two |
+| ≤ 560 px | the ledger, the caps panel and the panels' source lines stack; **no figure is ever dropped or truncated** — what is dropped is a column, and a dropped column is one whose value is repeated in a `title` |
+
+**The rule that outranks the breakpoints: a figure is never hidden to make a layout fit.**
+A dense console that hides a cap on a narrow window is the console lying about spend,
+which §6.1 rule 1 forbids more strongly than any layout does.
+
+### 4.3 Keyboard and focus
+
+- **The focus ring** is one rule and it is a token, as on the website:
+  `:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: var(--focus-ring-offset) }`.
+  The accent clears 3:1 against both grounds in both sets (§3.4), which is exactly the
+  requirement for a focus indicator.
+- **`:focus-visible` and never `:focus`** — a mouse click must not leave a ring on a nav
+  button, and a keyboard user must never lose one.
+- **The nav is the one place the console needs a roving tabindex, and it does not have
+  one.** Today `entry.ts` creates one `button.console-view` per view with no keyboard
+  handling at all, so Tab walks all three buttons and neither arrow keys nor
+  Home/End move between them. Task 6.5 adds the WAI-ARIA tablist behaviour in ~15 lines:
+  `role="tablist"` on the nav, `role="tab"` on each button, `aria-current` (already there)
+  plus `aria-selected`, **roving `tabindex`** (the current view is `0`, the others `-1`),
+  and Arrow/Home/End handling that calls the existing `show(id)`. **This is a renderer
+  change and it is not a style change** — no attribute it writes is a style, so the CSP
+  and `ElementLike` are untouched. It is in the styling plan because a keyboard-less nav is
+  a layout defect the styling work is where you notice.
+- **A skipped-by-default DOM stays skipped**: the console has no skip link and does not
+  need one (there is no repeated block of links before the content), and it must not gain
+  a link that would need the allow-list's `openExternal` to do nothing.
+- The picker's form is ordinary HTML (`label[for]`, a text input, `button`s), so it is
+  keyboard-operable already; it needs only the ring and a visible disabled state, which
+  `installations.ts` sets with `disabled` while a request is in flight.
+
+### 4.4 Forced colors and high contrast
+
+Windows High Contrast and `forced-colors: active` discard author colours. Two rules:
+
+1. **Every state keeps its word** ([§3.5](#35-never-colour-alone)), so nothing becomes
+   unreadable when the colours go away. This is the whole reason that section exists.
+2. `screens.css` carries `@media (forced-colors: active)` blocks that (a) let the system
+   paint backgrounds by setting `background: Canvas` / `color: CanvasText` on the chrome
+   and the row surfaces, (b) map the state badges to `Highlight`/`HighlightText` for the
+   current view and to `LinkText`/`GrayText` where a fill was carrying a meaning, and
+   (c) re-enable the borders the system collapses (`border: 1px solid CanvasText` on a
+   panel) because a hairlines-only table becomes structureless without them.
+
+---
+
+## 5. Wiring (SECURITY-SENSITIVE)
+
+This section is the part of the design that touches the **CSP, the protocol handler and
+the build**, so it is flagged `SECURITY-SENSITIVE, independent opus review` in the plan
+([Task 6.2](#72-task-62--the-wiring-security-sensitive)) and is not merged on a
+self-review. Nothing here loosens a policy.
+
+### 5.1 The stylesheet files
+
+Four source files under `console/src/renderer/theme/` (§3.1), emitted as **one** served
+file, `dist/bundle/console.css`, served at `/console.css`. One file and not four, for the
+same reason the scripts are bundled: the served root is a flat allow-list
+(`SERVED_FILES`), and the handler's refusals are pinned on paths that name **files under
+one root**. A second stylesheet would be a second entry in the allow-list for no gain;
+four requests to a `app://` handler whose only job is to read a file is four times the
+work for one page paint.
+
+### 5.2 How the bundler emits it
+
+`console/tools/bundle-renderer/index.ts` gains a **stylesheet step** with the same shape as
+everything else in that file — an ordered, frozen allow-list, and a refusal for anything
+else:
+
+```ts
+/** THEME_STYLESHEETS is the theme directory's whole contents, in the order the
+ * cascade needs: the vocabulary, then the values, then the rules that read them. */
+export const THEME_STYLESHEETS: readonly string[] = Object.freeze([
+  'tokens.css', 'palette.css', 'base.css', 'screens.css',
+])
+```
+
+- it reads `src/renderer/theme/` and **refuses a `.css` file that is not on the list**
+  (`BundleRefusal`, exactly as the served root refuses a foreign file), so a stylesheet
+  nobody reviewed cannot be served;
+- it refuses a **missing** file on the list, so a rename fails the build rather than
+  silently dropping a layer of the cascade;
+- it refuses an **`@import`** and a **remote `url()`** in any theme file — the bundle is one
+  file and the console is offline (`connect-src 'none'`), so an import would either fail
+  at runtime or be a network call the CSP forbids;
+- it writes `dist/bundle/console.css` = each file's bytes in list order, each preceded by a
+  `/* <name> */` banner so a reader of the artefact can see the seam, and the whole file
+  preceded by one line naming the build (`/* console.css — generated by
+  tools/bundle-renderer; do not edit */`);
+- `console.css` joins the **owned** set of the output directory (the `siblings` mechanism
+  already exists for exactly this), so the served root's foreign-file refusal keeps
+  holding;
+- **no CSS is parsed, minified, autoprefixed or rewritten.** The bytes on disk are the
+  bytes served, which is what makes the contrast unit test ([§6.3](#63-contrast-as-unit-tests))
+  meaningful: it reads the same literals the window paints.
+
+### 5.3 The one new entry in `SERVED_FILES`
+
+```ts
+export const SERVED_FILES: readonly string[] = Object.freeze([
+  '/console.css',        // <- the one new entry
+  '/console.js',
+  '/index.html',
+  '/installations.html',
+  '/installations.js',
+  '/refusal.html',
+])
+```
+
+`test/unit/bundle.test.ts` changes with it, in the three places it counts or compares:
+`expect(SERVED_FILES.length, …).toBe(6)`, and `builtListing('bundle')` — which is derived
+from `SERVED_FILES` — keeps holding the directory equal in both directions. **The test's
+non-vacuity assertion is the load-bearing half**: a name dropped from the list, or a file
+written into `dist/bundle/` that nothing vouches for, still fails.
+
+### 5.4 The three `<link>` elements
+
+One `<link rel="stylesheet" href="./console.css" />` in the `<head>` of **each** of
+`index.html`, `installations.html` and `refusal.html`, beside the existing CSP `<meta>`:
+
+- it is a **relative path on this origin** (`./console.css`), like `./console.js`: no
+  query, no host, no scheme, so it is resolved by the bundler as a literal and by the
+  handler as a path under the root;
+- it carries **no `media`, no `onload`, no integrity attribute and no `crossorigin`** — the
+  file is local and same-origin, and `integrity` on an `app://` response is a hash nobody
+  maintains;
+- the refusal document **is included**, and that is the point: the one page a console below
+  the floor shows must not be the unstyled one.
+
+### 5.5 The CSP is unchanged, proved
+
+**Nothing in this document edits `CONTENT_SECURITY_POLICY`, and the stylesheet is admitted
+by the directive that is already there.** Read the string in
+`console/src/main/protocol.ts`: `style-src 'self'` is its third directive. A `<link
+rel="stylesheet">` to `app://console/console.css` is a stylesheet **from this origin**, so
+`'self'` admits it; `default-src 'none'` is not consulted for it; `font-src 'self'` is not
+consulted (no web font is loaded); `connect-src 'none'` is not consulted (a `<link>` is not
+a fetch the CSP's `connect-src` governs, and no script fetches the CSS).
+
+The evidence a reviewer should require, and which the tests provide:
+
+- `CONTENT_SECURITY_POLICY` is byte-identical before and after, and so is the `<meta>`
+  copy in each of the three documents — held by `test/unit/window.test.ts`
+  (`expect(CONTENT_SECURITY_POLICY).toBe(DESIGN_CSP)`) and by
+  `test/unit/csp-document.test.ts`;
+- `APP_SCHEME_PRIVILEGES` still has **no `bypassCSP`**, asserted rather than merely unset;
+- the served CSS is served by the same `serveAppRequest`, with
+  `content-type: text/css; charset=utf-8` from `mediaTypeFor`, `nosniff`, and the CSP
+  header on the response.
+
+**No inline style attribute and no CSP loosening is introduced, and a test fails if either
+appears** — three of them, in fact: `csp-document.test.ts` already refuses a `<style`
+element and a `style` attribute in any served document; [Task 6.2](#72-task-62--the-wiring-security-sensitive)
+extends `test/unit/screen-literals.test.ts`'s scan so that a `.style` property write, a
+`setAttribute('style', …)` or a `style` entry in its attribute vocabulary is an offence in
+any file under `src/renderer/`; and the CSP assertions above refuse `'unsafe-inline'` (and
+`'unsafe-eval'`, `*`, and a loosened `style-src`).
+
+### 5.6 The unit tests that change, and what they pin
+
+| File | Change |
+|---|---|
+| `test/unit/bundle.test.ts` | `SERVED_FILES.length` 5 → **6**; a new case that `dist/bundle/console.css` is the concatenation of `THEME_STYLESHEETS` in order (the same both-directions equality the documents get); a case that the theme directory holds no `.css` outside the list |
+| `test/unit/csp-document.test.ts` | a case that **every** document's `<link>` elements are exactly one, `rel="stylesheet"`, `href="./console.css"`, and carry no `media`/`onload`/`integrity`; the existing "no `<style>`, no `style` attribute" cases stay and now cover the stylesheet's existence too |
+| `test/unit/window.test.ts` | unchanged in substance: the CSP/no-`bypassCSP` assertions already cover the CSS response, and the served-document cases still compare byte-identical HTML — its `<link>` is part of that HTML, so the file the window loads is still the file the test read |
+| `test/unit/build-files.test.ts` | `bundlerOutputs` gains `'dist/bundle/console.css'`, so `build.files` in `console/package.json` **must** gain it (and `console/README.md`'s list must name it) — the packaged app would otherwise ship without its stylesheet, which is the exact failure this test exists to catch |
+| `test/unit/theme-tokens.test.ts` (new) | the contrast and vocabulary cases of [§6.3](#63-contrast-as-unit-tests) |
+| `test/unit/screen-literals.test.ts` | the `style` scan of §5.5 |
+
+---
+
+## 6. Tests
+
+### 6.1 The golden frames
+
+**The eight baselines are re-recorded after the stylesheet lands, and not before.**
+Recording them first would produce a picture of unstyled markup that the next PR
+invalidates, and — worse — it would let a reviewer believe the screens had been looked at.
+
+- The frames are the same eight the tests already name: `live`, `spend`, `projects` and
+  `run`, each `light` and `dark`, each per platform (`playwright.config.ts`'s
+  `snapshotPathTemplate`), and the recording command is unchanged:
+  `npx playwright test live.spec.ts --update-snapshots` (and its three siblings), run by
+  **the owner, once per platform**, since `updateSnapshots: 'none'` makes a missing
+  baseline fail rather than be written.
+- **PR #629's darwin set is superseded, not kept.** Its baselines are pictures of the
+  unstyled tree; the task that lands the CSS re-records them, and the PR body says so.
+- `degraded.spec.ts` takes no frame, on purpose, and this design does not add one: its
+  states are read as text assertions and a frame of a screen with no dashboard on it
+  would be a picture of an absence.
+
+### 6.2 The computed-background assertion — so identical frames can never be recorded again
+
+**A per-spec assertion that the computed background colour differs between the schemes**,
+in all four golden specs, next to the existing theme read:
+
+```ts
+const paintedBackground = (el: Element): string =>
+  getComputedStyle(el).backgroundColor
+
+// for each theme, after the screen is drawn:
+expect(paintedBackground(root), `${theme}: the screen paints no background`)
+  .not.toBe('rgba(0, 0, 0, 0)')
+const [light, dark] = [/* the two runs' values */]
+expect(light, 'light and dark paint the same background: the stylesheet is not being applied')
+  .not.toBe(dark)
+```
+
+This is the test the current suite is missing. Every one of the four specs already reads
+`data-theme` off the screen root (`scope.querySelector('.live')?.getAttribute('data-theme')`),
+which passes today with no stylesheet at all. The new assertion fails **the moment a
+stylesheet stops being served, stops being linked, or stops switching** — which is exactly
+the regression that could otherwise be recorded as a fresh golden and never noticed.
+
+### 6.3 Contrast as unit tests
+
+`test/unit/theme-tokens.test.ts`, in the shape of `website/test/a11y.mjs` (which this file
+should reuse the arithmetic of rather than re-derive):
+
+- it **reads `theme/palette.css` and nothing else** — the literals the window paints, not a
+  copy of them;
+- one case computes **every pair of §3.4** and asserts the ratio its role requires: 4.5:1
+  for `--text`, `--text-muted`, `--accent-ink` and all five state colours on `--ground`,
+  `--surface` and `--surface-alt`; 3:1 for `--accent` and `--border-strong` on each; 4.5:1
+  for `--ink-on-fill` on every fill;
+- a case asserts the **vocabulary** is complete and identical in both sets — the token
+  names of one set are exactly the token names of the other, and every token of §3.1–§3.3
+  is present — so a token added to light and not to dark fails by name;
+- a case asserts `--border` is **only** used decoratively: no rule in `base.css` or
+  `screens.css` uses `--border` where the property is `outline` or where the border marks
+  a control (a scan of the CSS text, in the spirit of `screen-literals.test.ts`);
+- a case asserts **the main process's window background equals `--ground` for the default
+  theme** ([§4.1](#41-the-windows-structure)) — a literal duplicated by necessity, held
+  equal by test rather than by hope;
+- **a red step, run for real and committed as a case**: the arithmetic is exercised against
+  a deliberately failing pair, and the case asserts it reports
+  `--text-muted on --surface is 3.10:1, needs 4.5:1` — the same discipline `a11y.mjs`
+  keeps, "so the refusal cannot rot into a comment about a check that no longer refuses
+  anything".
+
+### 6.4 A forced-colors smoke
+
+One e2e case per screen, with Playwright's `emulateMedia({ forcedColors: 'active' })` (and
+`colorScheme` pinned), asserting the three things §4.4 promises: the state words are still
+in the DOM (`KILLED by`, `n/a`, `—`, `(partial)`, `queued`), the current view is still
+marked, and the row structure still has a visible boundary (`border-bottom-width` is not
+`0px` under forced colors, or the system's `CanvasText` is used). It is a **smoke, not a
+golden**: forced-colors rendering is the platform's and its pixels are not ours to pin.
+
+### 6.5 The docs test
+
+`internal/cli/docs_console_styling_test.go` (new), in the shape of
+`docs_budget_token_channel_test.go`: a **presence test** over this document's
+load-bearing strings — that it says "design only; nothing is implemented", that it names
+the wiring task as security-sensitive, that it lists the five states the state colours
+must carry without colour alone, that it says the CSP is unchanged, and that the owner's
+open questions are open — and a **citation test** that `os.Stat`s every path this document
+cites (`console/src/main/protocol.ts`, `console/src/renderer/entry.ts`,
+`console/tools/bundle-renderer/index.ts`, `console/test/unit/bundle.test.ts`,
+`console/test/unit/csp-document.test.ts`, `website/src/styles/palette-logo.css`,
+`docs/plans/2026-10-15-desktop-console.md`), so a citation that moves is a failing test
+rather than a dead link. Its red step is this document's absence, and the mutations it is
+proved against are named with the change ([§7.7](#77-the-red-steps)).
+
+---
+
+## 7. The build plan (Phase 6, UNAPPROVED)
+
+Added to [the plan](../plans/2026-10-15-desktop-console.md) as a new **Phase 6** in the
+file's own numbering (a section `## Phase 6 — …`, tasks `### Task 6.n:`, a row in the
+Phase summary, a row in the PR groups table, and a line in the plan's File Structure
+tree). **Nothing here is approved**: the plan's OWNER APPROVAL GATE stands, and these tasks
+carry `UNAPPROVED` until the owner answers [§8](#8-open-for-the-owner). Task 6.2's heading
+carries `SECURITY-SENSITIVE, independent opus review`, and Global Constraints rule 9's list
+gains `6.2` in the same edit — `TestPlanRule9ListsEveryFlaggedHeading` fails otherwise,
+which is the mutation this change is proved against.
+
+**Order, and why it is this one.** 6.1 (the tokens) is first because everything reads it.
+6.2 (the wiring) is second because until it lands **nothing on screen changes at all** —
+the CSS files are inert without a `<link>`. 6.3 and 6.4 (layout, then the screens) are
+then ordinary CSS PRs that a reviewer can read as a stylesheet. 6.5 (the switch and the
+keyboard) is the only task that touches the entry. 6.6 (the frames) is last and owner-run.
+
+### 7.1 Task 6.1 — the tokens
+
+- **Scope:** `console/src/renderer/theme/tokens.css` (the vocabulary of §3.1),
+  `theme/palette.css` (both value sets, §3.2–§3.3), and `test/unit/theme-tokens.test.ts`
+  (the contrast and vocabulary cases of §6.3).
+- **Files:** the three above; the plan's tree; `console/README.md`'s theme note.
+- **Tests:** the red step is real: the token test is written first, and the failing pair it
+  is proved against is a palette edited to break one ratio — the test reports the ratio by
+  name and the mutation is reverted.
+- **Verification:** `cd console && npm run test:unit` (the new file and the whole unit
+  suite green).
+- **Reviewer tier:** ordinary. It touches no CSP, no protocol and no document.
+- **Not mergeable alone into a visible change:** it is inert until 6.2. That is fine and
+  stated: a token file that nothing links is a file, and the PR says so.
+
+### 7.2 Task 6.2 — the wiring — SECURITY-SENSITIVE
+
+- **Scope:** the bundler's stylesheet step (§5.2), `SERVED_FILES` (§5.3), the three
+  `<link>` elements (§5.4), `build.files` and the README's list (§5.6), and the tests that
+  pin all of it — `bundle.test.ts`, `csp-document.test.ts`, `build-files.test.ts`, and the
+  `style` scan extension to `screen-literals.test.ts` (§5.5).
+- **Files:** `console/tools/bundle-renderer/index.ts`, `console/src/main/protocol.ts`,
+  the three `.html` documents, `console/package.json`, `console/README.md`,
+  `console/test/unit/{bundle,csp-document,build-files,screen-literals}.test.ts`.
+- **Tests, and the mutations each is proved against:** drop `/console.css` from
+  `SERVED_FILES` → `bundle.test.ts` fails; add a `.css` to `theme/` that is not on
+  `THEME_STYLESHEETS` → the bundler refuses; add `'unsafe-inline'` to `style-src` →
+  `window.test.ts` and `csp-document.test.ts` fail; put `style="…"` in a served document →
+  `csp-document.test.ts` fails; write `el.style.color = …` in `entry.ts` →
+  `screen-literals.test.ts` fails; remove `dist/bundle/console.css` from `build.files` →
+  `build-files.test.ts` fails.
+- **Verification:** `cd console && npm run test:unit && npm run build`, then
+  `npm run test:e2e -- entry` for the live CSP assertion, and `GOFLAGS=-p=2 go test
+  ./internal/cli -run 'Docs|Lint' -count=1` (this task edits no Go, but the docs suite is
+  the run this repository reaches a doc change by).
+- **Reviewer tier:** **SECURITY-SENSITIVE, independent opus review** — it edits the CSP's
+  tests, the protocol handler's allow-list and the served documents.
+- **This is the task a reviewer should attack**: can the served root grow a file nothing
+  vouches for, can `style-src` be widened, can a document gain a second stylesheet or an
+  inline style.
+
+### 7.3 Task 6.3 — the layout
+
+- **Scope:** `theme/base.css` — the reset, the document, the three bands of §4.1, the nav's
+  tab-list styling, the focus ring, the responsive layers of §4.2, and the forced-colors
+  rules of §4.4.
+- **Files:** `theme/base.css`; `THEME_STYLESHEETS` in the bundler (it is already on the
+  list, so a new file only has to exist); `README.md`.
+- **Tests:** the forced-colors smoke (§6.4); the computed-background assertion (§6.2) for
+  the nav chrome.
+- **Verification:** `cd console && npm run test:unit && npm run test:e2e -- entry`; the
+  e2e specs that read the chrome's shape (`entry.spec.ts`'s
+  `['console-installation', 'console-views', 'console-panel']`) still pass.
+- **Reviewer tier:** ordinary.
+
+### 7.4 Task 6.4 — the screens
+
+- **Scope:** `theme/screens.css` — the rules for Live, Spend, Projects, Run, the degraded
+  and unavailable screens and the picker (§2), including the tabular-figure/right-align
+  rule, the density rules of §3.8 and the state colours of §3.5.
+- **Files:** `theme/screens.css`; `README.md`.
+- **Tests:** the computed-background assertion per screen (§6.2); a case that
+  `screens.css` selects only hooks the [§2](#2-screen-inventory) inventory names — a scan
+  of the stylesheet's selectors checked against a list derived from the screens' own class
+  literals, so a rule that styles a class nothing emits fails.
+- **Verification:** `cd console && npm run test:unit && npm run test:e2e`.
+- **Reviewer tier:** ordinary.
+
+### 7.5 Task 6.5 — the theme switch, the window background and the keyboard
+
+- **Scope:** `CONSOLE_THEME` becomes the answer of a `themeChoice()` that reads
+  `matchMedia('(prefers-color-scheme: dark)')` and subscribes to `change` (§3.6); the entry
+  stamps `data-theme` on the mount it draws the chrome into; the picker's script stamps its
+  document; `consoleWindowOptions` gains `backgroundColor` (§4.1); the nav's tablist
+  behaviour (§4.3).
+- **Files:** `console/src/renderer/entry.ts`, `console/src/renderer/installations.ts`,
+  `console/src/main/window.ts`, `console/test/unit/{entry-wiring,window,theme-tokens}.test.ts`.
+- **Tests, mutation-proven:** `CONSOLE_THEME` no longer follows the media query → the
+  unit test fails; the background literal drifts from `--ground` → the token test fails;
+  a second roving-tabindex regression → the entry wiring test fails.
+- **Note on the CSP and `ElementLike`:** this task writes **attributes only**. A
+  `matchMedia` read is not a DOM write and not a network call; `data-theme` is a
+  `data-*` attribute, which is what the screens already write; `role`, `aria-*` and
+  `tabindex` are attributes. **`ElementLike` needs no widening, no style is written, and
+  the CSP is not touched.**
+- **Verification:** `cd console && npm run test:unit && npm run test:e2e`.
+- **Reviewer tier:** ordinary — but it is the one task that touches the entry, so it is
+  reviewed against §5.5's "no style, no loosening" rule explicitly.
+
+### 7.6 Task 6.6 — the golden frames, re-recorded
+
+- **Scope:** the eight baselines per platform, the per-spec computed-background assertion
+  (§6.2) and the forced-colors smoke (§6.4).
+- **Files:** `console/test/e2e/{live,spend,projects,run}.spec.ts`; the committed
+  `console/test/e2e/__screenshots__/**` PNGs.
+- **Owner-run:** the **recording** is owner-run ("recorded by an owner, once on each
+  platform the comparison runs on", as the specs already say). The **assertions** are
+  agent-written and fail until the baselines are committed — which is the suite's existing,
+  deliberate red state.
+- **Verification:** `cd console && npm run test:e2e` after the owner records; before that,
+  `FUGARO_CONSOLE_GOLDENS=skip` for everything else.
+- **Reviewer tier:** ordinary for the assertions; the recording is the owner's.
+- **What it supersedes:** the draft PR #629's darwin baselines, which are pictures of the
+  unstyled tree.
+
+### 7.7 The red steps
+
+Every task above lands test-first, and each red step was named with it. The three that
+matter most, and the mutation each is proved against:
+
+| Red step | Mutation that must make it fail |
+|---|---|
+| `theme-tokens.test.ts` (6.1) | a palette value edited to break one ratio — the test names the pair and the ratio |
+| `bundle.test.ts` / `csp-document.test.ts` (6.2) | `/console.css` dropped from `SERVED_FILES`; a `<link>`'s `href` changed; `style-src` widened by one token |
+| the golden specs' `paintedBackground` assertion (6.6) | the `<link>` removed from `index.html` — the two schemes then paint the same colour and the assertion fails |
+
+---
+
+## 8. Open for the owner
+
+Six questions this design does not answer for the owner. **No D-number is allocated** —
+they are the console plan's `C`-series style only in shape, and a number is the owner's to
+give.
+
+**Q1 — Does the console ship a light theme at all, and is the OS the default?**
+- *Options:* (a) light and dark both ship, the OS decides, an override is offered
+  (**recommended**); (b) dark only, matching today's `CONSOLE_THEME`, with light deferred;
+  (c) light and dark, the OS decides, **no override at all**.
+- *Recommendation:* (a). *Why:* the design already decided a light set exists (§6.1 rule 5)
+  and the refusal page — the one document with no script — can only be themed by the OS
+  (§3.6), so if there is no light theme the console ships a dark product and a white
+  refusal page. (c) is defensible and cheaper; it costs the operator nothing but choice.
+
+**Q2 — Where does the owner's theme override live?**
+- *Options:* (a) **no override in v1** — the OS is the whole answer, and the app writes
+  nothing new (**recommended for v1**); (b) a new bounded `settings.json` in `userData`,
+  which **amends §5.1 rule 10** ("the app writes the spawn log, when asked, and this
+  installations file, and nothing else") and needs the owner's ruling the way C8 did;
+  (c) a key inside the existing `installations.json`, which is schema-closed and would
+  need a version bump; (d) `nativeTheme.themeSource` in the main process, which themes all
+  three documents including the refusal page.
+- *Recommendation:* (a) for v1, with (d) named as the natural home if the owner later wants
+  one — (d) needs no new setting to *decide the colour* but still needs one to *remember*
+  the choice. *Why:* v1 writes two files and rule 10 says so in the owner's own words;
+  adding a third is a security-relevant change (a new file, a new parse, a new bound) that
+  a styling pass should not make silently.
+
+**Q3 — Does the console ship the "phosphor set" the design's §6.1 rule 5 names?**
+- *Options:* (a) light and dark only (**recommended**); (b) light, dark and the low-saturation
+  variants (green, amber, blue, mono).
+- *Recommendation:* (a). *Why:* rule 5's "a small set of low-saturation palettes" was written
+  when the theme was a preference; the token layer makes each variant additive (one more
+  `.css` and one more entry on `THEME_STYLESHEETS`), so deferring costs nothing and shipping
+  six palettes costs six contrast sets to review and six more goldens per screen.
+
+**Q4 — Are PR #629's darwin baselines superseded, or kept until the CSS lands?**
+- *Options:* (a) superseded — the CSS lands, then one recording pass (**recommended**);
+  (b) #629's baselines merge first and are re-recorded again later.
+- *Recommendation:* (a). *Why:* they are pictures of the unstyled tree ([§1.3](#13-why-this-matters-now-the-golden-frames-are-pictures-of-unstyled-markup));
+  merging them buys a recording pass that the next PR invalidates, and their presence would
+  make the suite green on a console that has never been styled.
+
+**Q5 — Is the forced-colors smoke a gate or a report?**
+- *Options:* (a) a gate — the case fails the build (**recommended**); (b) a report — it runs
+  and prints, and does not fail.
+- *Recommendation:* (a), because the three things it asserts (the state words survive, the
+  current view is still marked, the rows still have a boundary) are the accessibility
+  contract §3.5 and §4.4 state, and a report nobody reads is not a contract.
+
+**Q6 — Does the styling work gate the console's first release?**
+- *Options:* (a) no — it lands after 0.9.0, as an ordinary follow-up (**recommended**);
+  (b) yes, the console's MVP release waits for Phase 6.
+- *Recommendation:* (a). *Why:* the design's MVP list ("What ships with the MVP") does not
+  name a stylesheet, and a release that waits on a design review of colours is a release
+  held by its least load-bearing part. (b) is the owner's call and costs one release.
+
+---
+
+## 9. Alternatives considered
+
+### 9.1 A CSS-in-JS runtime — **refused by the CSP**
+
+A runtime that injects a `<style>` element or writes `style="…"` needs
+`style-src 'unsafe-inline'`; constructing the sheet through the CSSOM
+(`sheet.insertRule`, `CSSStyleSheet.replaceSync`) is not blocked by CSP but **the text would
+have to arrive in the script**, since `connect-src 'none'` refuses every fetch. The cost is
+the same either way and it is not the CSP: the styling stops being a file a reviewer can
+read, the CSP's `style-src 'self'` stops meaning anything, and the console's own rule — no
+markup, no style, through the narrow `ElementLike` — is undone in one dependency. **Refused,
+and the reason is reviewability rather than bytes.** A framework runtime is also the
+dependency the console's own pinning rule exists to keep out.
+
+### 9.2 Constructed stylesheets, `adoptedStyleSheets` — admissible, but it costs a fetch
+
+Does `style-src 'self'` permit a constructed stylesheet built **from a served file**?
+
+- **Yes for the file, no for the way it would be read.** A constructable `CSSStyleSheet`
+  populated by `replaceSync(text)` is not subject to `style-src` at all (CSP has no hook on
+  CSSOM insertion), so a served file *could* be adopted without touching `style-src` — **but
+  the renderer cannot read that file**: `connect-src 'none'` refuses `fetch()`, and an
+  `<link>`'s `.sheet` is only reachable through the same `<link>` this design already
+  proposes. So an adopted sheet would have to be either (a) a `<link>` plus adoption, which
+  is strictly more machinery than the `<link>` alone, or (b) CSS text embedded inside
+  `console.js`, which is free under the CSP and **moves the stylesheet into the script** —
+  no separate served file, no `text/css` response, nothing for `SERVED_FILES` to vouch for,
+  and a reviewer reading TypeScript template literals for a `:focus-visible` rule.
+- **Verdict: refused in favour of the `<link>`.** Adoption is a real option the day the
+  console needs to swap a theme without a document reload; it is not needed to paint a
+  screen, and it would spend the bundle's reviewability to buy nothing.
+
+### 9.3 The unstyled-but-laid-out stopgap
+
+Ship only `base.css` — a reset, the three bands, the density, the focus ring — and no
+palette, so the console uses the platform's own colours. It is genuinely attractive: it is
+one file, it is guaranteed to respect the OS, forced-colors and high contrast for free, and
+it makes the golden frames meaningful (layout regressions) without deciding a colour.
+**Refused as the plan, kept as an ingredient:** the console's first rule (§6.1 rule 1) is
+that a reading never lies, and the state colours are how `measured`, `notional`, `estimated`,
+`unavailable` and `gap` become distinguishable at a glance — a platform-coloured console
+draws five states in one colour and asks the operator to read five pieces of text. 6.3's
+`base.css` **is** that stopgap, with `palette.css` already in place beside it.
+
+### 9.4 Recommended
+
+**The `<link>` to one bundled `console.css`, four source files, `style-src 'self'`
+untouched** — §5 in full. It is the smallest change that paints the screens, it keeps the
+CSP exactly as the design wrote it, it keeps every byte the window paints readable as a
+file, and it is the shape the website already uses for its own tokens.
+
+---
+
+## 10. Design brief for the Claude Design canvas
+
+A controller is building a Claude Design canvas in parallel with this document. **This
+section is the brief it should be drawn from, and the two must agree**: the screens, the
+regions, the states and the palette below are the same ones §2 and §3 specify, and a
+canvas that invents a screen, a region, a state or a colour is a canvas that disagrees with
+the code.
+
+**The tone, in one line:** *dense, calm, operator-grade — an instrument, not a marketing
+page.* The console is read at a glance, many times an hour, by the person who owns the
+bill. Nothing is decorative, nothing is hidden, and no figure is ever dressed up.
+
+**What to draw (five frames, each in light and dark):**
+
+1. **Live** — the default. The three bands (§4.1) with the installation line, the tab-like
+   nav and the panel. Regions in order: the header (`h1.live-project`, mode, day,
+   connection); the total block (counted, cap, percent, the cap bar, the notional figure);
+   two or three repository blocks, each with its cap bar, its 5-minute burn sparkline, its
+   kill banner (draw one **without** a kill and one **with** `KILLED by <who> <when>
+   "<reason>"`); under each, four run rows at 24 px with the columns §2.3 lists. Draw one
+   row `silent` (amber flag word), one `lost` (alarm flag word), one `queued` (its own
+   treatment), and one run whose spend reads `NOTIONAL~`.
+2. **Spend** — the header with the range picker and the breakdown switch; three chart
+   blocks (`billed model spend`, `NOTIONAL~ subscription list price`, `compute
+   (estimated)` — draw them as **separate**, never summed, per the design's own rule);
+   the rows table with money, counts and run hours; the totals; and the caps panel with the
+   global cap, the defaults and one per-repository override, each naming the **binding
+   scope**. Draw one hollow `(partial)` day.
+3. **Projects** — eight panels, each with its title, its source line and its state. Draw
+   three `read`, one `unavailable` (with its sentence), one `not-built` ("not readable with
+   this CLI…"), and the secrets panel with **names, scopes and version counts only** —
+   never a value.
+4. **Run detail** — the header with its flags, the ledger, the stages table with one stage
+   `over deadline`, the pull request shown **as text with no link**, the bounded log table,
+   the diagnosis block, and the replay line.
+5. **The boundary screens** — the degraded (no-Firebase) screen with caps reading `n/a` and
+   the kill affordance absent; the no-binary screen with its install command and picker; and
+   the refusal screen (`<h1>Fugaro console</h1>` and one sentence). The last of these is the
+   **no-script** case and must look complete anyway.
+
+**The palette to draw in:** §3.2 (dark) and §3.3 (light), with the semantic roles of
+[§2.9](#29-every-state-variant-in-one-table). `--ok` is for measured-and-inside-cap;
+`--warn` for attention; `--error` for failed/lost; `--halted` for **killed**, a deliberate
+stop and not a failure — it must not read as an error; `--stale` for last-known values.
+**Never colour alone**: every state badge carries its word (§3.5).
+
+**What not to draw:** no marketing hero, no illustration, no gradient, no drop shadow, no
+rounded card with a title floating in whitespace, no accent used decoratively, no empty box
+where a state is missing, no green/red that is not also a word, no sparkline or chart
+animation. A screen with nothing to measure draws that fact and one sentence — it does not
+draw a zero.
+
+---
+
+## 11. What this document does not decide
+
+- **It does not change the CSP** (§5.5), the protocol handler's refusals, the preload, the
+  IPC allow-list or the spawn contract.
+- **It allocates no D-number and no C-number** (§8); the six questions are the owner's and
+  are unnumbered on purpose.
+- **It does not approve Phase 6.** The plan's OWNER APPROVAL GATE stands: the tasks are
+  `UNAPPROVED` until the owner answers [§8](#8-open-for-the-owner) and gives the go.
+- **It does not decide the home for a theme override** (Q2) — that is a §5.1-rule-10
+  amendment and an owner's ruling, not a styling choice.
+- **It does not re-record the golden frames.** That is Task 6.6 and it is owner-run.
+- **It does not touch `SECURITY.md`, any workflow, `docs/gcp-live-checklist.md` or any
+  check number.** No check number is taken by this work: nothing here is a live step.
+- **It does not name a font it does not have.** The stacks are `system-ui` and
+  `ui-monospace`, no face is downloaded, and the CSP's `font-src 'self'` stays unused.
