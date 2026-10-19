@@ -744,20 +744,28 @@ and the link"*; the answer is **always on** — there is no switch, no first-lau
 consent state — so the gate this task was written around does not exist and is not built. The
 task keeps its number, its place and its tier, and does the two things that remain: the app
 **says** what it does, and the link to `/privacy/` is built the one safe way.
-**Files.** `mobile/src/telemetry/notice.js` (new: the sentence and the platform-neutral
-statement the settings surface renders), `mobile/src/app/root.js` (the settings surface
-carries the statement; **no sheet, and nothing is added to the first screen**),
-`mobile/src/telemetry/notice.test.js`. **Nothing is created in `shared/`** — the consent
+**Files.** `mobile/src/telemetry/notice.js` (new: the statement the app shows, and the
+`/privacy/` URL), `mobile/src/app/root.js` (the shell renders the statement as **a third child**
+— `SHELL.NOTICE` — because **the app has no settings screen** and the shell is the only surface
+it has; **no sheet, no prompt and no control**), **`mobile/src/app/root.test.js`** (it pins the
+shell's children to exactly `[SHELL.TITLE, SHELL.BODY]` and the rendered text of both states,
+so adding the statement breaks it and it moves in the same commit — the task's own
+`cd mobile && npm test` cannot pass without it), and `mobile/src/telemetry/notice.test.js`. **Nothing is created in `shared/`** — the consent
 machine, the platform flag table and the settings key `telemetry.consent` the earlier version
 of this task named are all deleted from the phase (§6 of the plan lists what the answer
 removes from the tree).
-**Depends on.** P7.1; **D195** (answered: always on); **D124** (the host allow-list P0.3's
-validator needs for the `/privacy/` link).
+**Depends on.** P7.1; **D195** (answered: always on); and **D124's host list, which the owner
+still owes an answer to** — `shared/url`'s `DEFAULT_HOST_ALLOW_LIST` ships **empty** and D124's
+answer names no hosts, so the `/privacy/` URL is refused with `allow-list-empty` and renders as
+**text** until the owner names `fugaro.dev` in it. **Until that step, this task ships the
+statement without a link**, and the plan's §6 says so rather than leaving it to be found on a
+device.
 **Verification.** `cd mobile && npm test`: the statement is rendered from a single source and
 its text is the one §6 of the plan states; the `/privacy/` link is built through
 `shared/url`'s validator, and a host the allow-list does not name renders as text, not as a
-link; the settings surface carries **no switch** that turns collection off, and the module
-makes **no `setAnalyticsCollectionEnabled(`/`setCrashlyticsCollectionEnabled(` call** — the
+link — **and until the owner's host list names `fugaro.dev`, the text rendering is the
+assertion that passes**; the shell carries **no switch** that turns collection off, and the
+module makes **no `setAnalyticsCollectionEnabled(`/`setCrashlyticsCollectionEnabled(` call** — the
 plan's §7.4 scan refuses one anywhere in the app, which is what makes "there is no switch" a
 test rather than a sentence.
 **Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.** It is the only place a
@@ -820,7 +828,7 @@ decides whether one is wanted when the first task lands.
 | The task | Verifiable with no device | Not verifiable |
 |---|---|---|
 | P7.1 | the tracked-file rules, the ignore rules, the `AIza…` walk, the guard's pure part | that the plugin applies or a development build is produced — `expo prebuild` and `eas build` need a toolchain this repository's CI does not have |
-| P7.2 | the statement's text, the link's validator path, and the absence of a switch and of any runtime collection call (the scan) | that the settings surface renders as intended, and that the **native** SDK is what actually sends — only check 111 can show that |
+| P7.2 | the statement's text, the link's validator path, the shell's new child, and the absence of a switch and of any runtime collection call (the scan) | that the shell renders as intended on a device, and that the **native** SDK is what actually sends — only check 111 can show that |
 | P7.3 | the scan, the never-send test, the existing fences | that the **native** SDK collects what the allow-list says and nothing else — only checks 111 and 112 can show that |
 | P7.4 | the website's own gates | the two store forms (owner) |
 | P7.5 | the register's own docs tests | the three checks (owner) |
@@ -942,7 +950,7 @@ decides whether one is wanted when the first task lands.
 
 **7. Answer C1–C8 (C7 withdrawn into D113c), or let them stand.** They are the plan's own provisional choices, and each names the task it changes.
 
-**7b. Answer D194–D200, or let them stand — added 2026-10-19, for Phase 7 only.** *(Dated note, 2026-10-19: the owner answered **seven of the eight rows** the same day — **D193 to D198, and D200**, D195 as **always on**, against the recommendation — and **D199 is the one row still open**. **Answering a row is not approving a task**, and this step is not done until D199 is answered or its recommendation accepted in writing.)* **D193 is already answered** (the owner's ruling of 2026-10-19) and approves no task. Phase 7 is **PROPOSED, not approved**: no task of P7.1–P7.5 may start before the steps above that name it are done, before **every** row it names is answered or its recommendation accepted in writing — **P7.1 waits on D199, and on nothing else** — and before the owner explicitly approves the phase. **D194 is an owner step as well as a decision** — the project is **`fugaro-prod`**, it exists, and the owner creates the two Firebase apps in it **by hand**; nothing in this repository can do that. **Phase 7 changes no approved phase and holds back no existing task.**
+**7b. Answer D194–D200, or let them stand — added 2026-10-19, for Phase 7 only.** *(One owner step outside that block, added 2026-10-19: **P7.2 cannot render the `/privacy/` link until D124's host list names the website's host.** `shared/url`'s `DEFAULT_HOST_ALLOW_LIST` ships empty and D124's answer names no hosts, so the URL is refused with `allow-list-empty` and renders as text; the plan's §6 states the step and check 111 names it.)* *(Dated note, 2026-10-19: the owner answered **seven of the eight rows** the same day — **D193 to D198, and D200**, D195 as **always on**, against the recommendation — and **D199 is the one row still open**. **Answering a row is not approving a task**, and this step is not done until D199 is answered or its recommendation accepted in writing.)* **D193 is already answered** (the owner's ruling of 2026-10-19) and approves no task. Phase 7 is **PROPOSED, not approved**: no task of P7.1–P7.5 may start before the steps above that name it are done, before **every** row it names is answered or its recommendation accepted in writing — **P7.1 waits on D199, and on nothing else** — and before the owner explicitly approves the phase. **D194 is an owner step as well as a decision** — the project is **`fugaro-prod`**, it exists, and the owner creates the two Firebase apps in it **by hand**; nothing in this repository can do that. **Phase 7 changes no approved phase and holds back no existing task.**
 
 **The recommendations in [reconciliation.md](reconciliation.md) are not answers.** This plan is written so that either answer to each decision leaves a coherent plan; it is not written so that the recommendations can be treated as settled.
 

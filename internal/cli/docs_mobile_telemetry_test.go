@@ -572,6 +572,17 @@ func TestTelemetryPlanNamesTheFlagsExactly(t *testing.T) {
 		}
 	}
 
+	// The arithmetic of the table, pinned because it is the sentence a reader
+	// checks the table against at a glance — and because the earlier draft of
+	// it counted four and four, which was the opt-in table's shape and not this
+	// one's: six switches are thrown `true` (the four native collection ones and
+	// the two firebase.json auto-collection ones) and two `false` (the ad-ID pair).
+	for _, want := range []string{"`true` six times", "`false` twice"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%s's §4.2 does not say %q: the table it introduces throws six switches `true` and two `false`, and a summary that counts them differently is a summary a reader trusts instead of the table", telemetryPlan, want)
+		}
+	}
+
 	// The recommendation itself, and the two device contexts the flags live in:
 	// a reader has to be able to tell which file each one goes in.
 	for _, want := range []string{"AndroidManifest.xml", "Info.plist", "firebase.json"} {
@@ -581,6 +592,93 @@ func TestTelemetryPlanNamesTheFlagsExactly(t *testing.T) {
 	}
 	if !strings.Contains(section, "false") {
 		t.Errorf("%s's §4.2 states no required value: every switch in the table is thrown, one way or the other, and a table that names a switch without a value is a table an implementer reads as optional", telemetryPlan)
+	}
+}
+
+// TestTelemetryPlanNamesTheSurfaceAndTheHostItCannotLinkYet pins the three
+// corrections a review of round 6 forced, each of them a sentence that was
+// true of nothing:
+//
+//  1. **There is no settings surface.** The plan put the always-on statement in
+//     "the app's own settings surface" and check 111 asked a reader to look at
+//     it, but `mobile/src/app/root.js` builds a shell out of a title and one
+//     body Text and no phase of the mobile plan builds a settings screen. The
+//     statement therefore goes in the shell, as a third child, and
+//     `mobile/src/app/root.test.js` — which pins the shell's children to
+//     exactly `[SHELL.TITLE, SHELL.BODY]` — has to move with it, or P7.2's own
+//     `cd mobile && npm test` fails.
+//  2. **The link cannot be built yet.** `shared/url`'s `DEFAULT_HOST_ALLOW_LIST`
+//     ships empty and D124's answer names no hosts, so `/privacy/` is refused
+//     with `allow-list-empty` and renders as text. That is an owner step, and
+//     the plan has to name it rather than let a reader find it on a device.
+//  3. **The project id is already committed.** §5 said no id of the project is
+//     written into this repository; `fugaro-prod` is D91's project and is named
+//     in the website's deploy script, its preview workflow and its promote doc.
+//
+// Each assertion is about a phrase the document has to carry, and each was
+// mutated: dropping any one of them fails this test.
+func TestTelemetryPlanNamesTheSurfaceAndTheHostItCannotLinkYet(t *testing.T) {
+	doc := readDoc(t, telemetryPlan)
+	flat := telemetryPlain(strings.Join(strings.Fields(doc), " "))
+
+	// 1. The surface: §6 is where the statement is placed, and it is read
+	// section-scoped rather than document-wide — the phrase "the app's shell"
+	// and the path of the shell's test both appear in more than one place, and
+	// an assertion satisfied by §10's task list would stay green while §6, the
+	// section a reader lands on, still sent them to a screen that does not
+	// exist.
+	section6 := telemetryPlain(strings.Join(strings.Fields(planSection(t, doc, "## 6. Consent and opt-out (D195): there is none")), " "))
+	for _, want := range []string{
+		"The app has no settings screen",
+		"SHELL.NOTICE",
+		"mobile/src/app/root.test.js",
+		// 2. The host list: the refusal, its code, and the owner step it needs.
+		"allow-list-empty",
+		"fugaro.dev",
+	} {
+		if !strings.Contains(section6, want) {
+			t.Errorf("%s's §6 does not say %q: the app's shell is a title and one body Text, no task in any phase builds a settings screen, and shared/url ships an empty allow-list that D124's answer does not fill — so the statement has to be placed in the shell, the test that pins the shell's children has to move with it, and the owner has to be asked for the host list before the link can exist", telemetryPlan, want)
+		}
+	}
+	if !strings.Contains(planSection(t, doc, "## 6. Consent and opt-out (D195): there is none"), "DEFAULT_HOST_ALLOW_LIST") {
+		t.Errorf("%s's §6 does not name DEFAULT_HOST_ALLOW_LIST: it is the export that refuses every host today, and the section that requires a link has to say which empty list refuses it (read from the raw text, since telemetryPlain strips underscores)", telemetryPlan)
+	}
+	// And the phrase that assumed a surface that does not exist is gone: a
+	// reader sent to a screen the app does not have is a reader sent nowhere.
+	if strings.Contains(flat, "the app's own settings surface") || strings.Contains(flat, "settings surface carries") {
+		t.Errorf("%s still sends a reader to \"the app's own settings surface\": no such screen exists in the app or in any task of any phase, so the statement, the link and check 111's walk have to name the surface the shell actually has", telemetryPlan)
+	}
+
+	// 3. And the task that does the work carries both: P7.2 is where the shell
+	// gains its third child and where the link is built, and a requirement that
+	// lives only in §6 is a requirement the task's own reader never sees.
+	p72 := telemetryPlain(strings.Join(strings.Fields(planSubsection(t, doc, "### Task P7.2:")), " "))
+	for _, want := range []string{
+		"mobile/src/app/root.test.js",
+		"SHELL.NOTICE",
+		"allow-list-empty",
+	} {
+		if !strings.Contains(p72, want) {
+			t.Errorf("%s's P7.2 does not name %q: the shell's test pins its children to exactly [SHELL.TITLE, SHELL.BODY] and fails on the statement's first line, and the link is refused until the owner's host list names the host — a task that does not say either ships a broken npm test or a link that cannot open", telemetryPlan, want)
+		}
+	}
+
+	// 3. §5's step 6: the id is committed already, and the step says which
+	// half of the answer is the part that must not be written down.
+	section5 := telemetryPlain(strings.Join(strings.Fields(planSection(t, doc, "## 5. The Fugaro-operated project (D194), as owner steps")), " "))
+	if strings.Contains(section5, "No id of this project is written into this repository") {
+		t.Errorf("%s's §5 still says no id of the project is written into this repository: `fugaro-prod` is D91's project and it is already named in scripts/deploy-website.sh, .github/workflows/website-preview.yml and docs/website/preview-promote.md — the step has to say what is genuinely new (the property id and the two app ids), not that no id is here at all", telemetryPlan)
+	}
+	if !strings.Contains(section5, "D91") {
+		t.Errorf("%s's §5 does not name D91: the project it uses is the website's own, already committed and already documented, and the step that claims nothing of it is written down has to say so", telemetryPlan)
+	}
+
+	// 4. The one leftover that described collection as gated, three sections
+	// below the row rewritten to say it is not.
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.Contains(line, "collects nothing before consent") {
+			t.Errorf("%s still says collection waits for consent (%q): D195 is answered always-on, so there is no consent state for a task to verify and no sentence may describe one", telemetryPlan, strings.TrimSpace(line))
+		}
 	}
 }
 

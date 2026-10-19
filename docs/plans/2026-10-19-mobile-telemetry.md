@@ -1,8 +1,10 @@
 # Mobile telemetry: Firebase Crashlytics and Firebase Analytics in the app — implementation plan
 
 **Status: a plan. Nothing here is built, nothing here is approved, and no code, no
-configuration and no workflow is written by this change.** This document is the only
-deliverable: it writes down how Firebase Crashlytics and Firebase Analytics reach the Expo
+configuration and no workflow *of the app, the website, the CLI or CI* is written by this
+change — the change is this document, the entries that register it, and one Go test that pins
+them (`internal/cli/docs_mobile_telemetry_test.go`, stated in full in §13).** This document is
+the deliverable: it writes down how Firebase Crashlytics and Firebase Analytics reach the Expo
 app at `mobile/`, so the owner can approve or refuse it in one pass. It implements nothing,
 it changes no command, and it touches no rules file, no Terraform and no workflow.
 
@@ -291,8 +293,9 @@ native project, and corrects this table in the same commit if any is wrong** (§
 plan commits to is the *shape*, and D195's answer is what fixes it: the app's builds collect,
 so **every collection switch is on and no runtime call turns collection on or off**, while
 **every ad-ID switch is off** and stays off. The two halves are held by the same test (§7.4),
-which is why a table that reads `true` four times and `false` four times is one requirement
-and not two.
+which is why a table that reads `true` six times — the four native collection switches and the
+two `firebase.json` auto-collection switches — and `false` twice, for the two ad-ID switches,
+is one requirement and not two.
 
 **The app carries no advertising identifier, and that is a requirement here, not a hope.** The
 website's privacy page promises it — *the app carries no advertising identifier* is the sentence
@@ -425,10 +428,17 @@ Named plainly, because every step below is the owner's and none is an agent's:
    none of them reads analytics or crash data (§5's opening paragraph, and the fact the owner
    accepted). Anything the deploy identity is granted later is a change to this paragraph.
    *Owner step.*
-6. **Record the answer** — the project id, the property id, the two app ids, the retention —
-   in the owner's own notes. **No id of this project is written into this repository**: the
-   app gets it from the native config file at build time, and the repository does not need it
-   (and a committed project id would be an invitation to commit the file beside it).
+6. **Record the answer** — the project id, the Analytics property id, the two app ids and the
+   retention — in the owner's own notes. **What must not be written into this repository is
+   what is new**: the property id and the two app ids are the project's own, the app reads them
+   from the native config file at build time (§4.3), and the repository does not need them (a
+   committed config file's contents would be an invitation to commit the file beside it).
+   **The project id itself is already in the repository and this plan uses the committed
+   spelling** — `fugaro-prod` is **D91's** project, the one the website is deployed into, and
+   it is named in `scripts/deploy-website.sh`, the website's preview workflow and
+   `docs/website/preview-promote.md`, as §5's opening paragraph says. An earlier draft of this
+   step said *"no id of this project is written into this repository"*, which was false when it
+   was written; this step states the half that is not.
 
 **What the app does *not* do with this project.** It never authenticates to it, never reads
 it, never writes it and never lists it: it hands the native SDK a config at build time and
@@ -457,18 +467,41 @@ privacy page say what is sent and what is never sent, whether or not a reader ca
 
 **What the answer removes from the tree.** There is **no** `shared/telemetry-consent/`, **no**
 `mobile/src/telemetry/consent.js`, **no** sheet, **no** stored choice and **no**
-`telemetry.consent` key in the settings store. **Nothing is designed to be shown at first
-launch**, which is why the app's first launch is unchanged from what `mobile/src/app/root.js`
-renders today — the `NO_ACCOUNT` line — and why P7.2 is rewritten as the always-on statement
-and the link rather than as a gate.
+`telemetry.consent` key in the settings store. **Nothing is shown at first launch as a gate**:
+no sheet, no prompt and no question — the `NO_ACCOUNT` line `mobile/src/app/root.js` renders
+today is still what a new install sees — and P7.2 is rewritten as the always-on statement and
+the link rather than as a gate.
 
-**What the app says instead, and where.** The app's own **settings surface** carries the
-statement in the page's own words — *the reports are on, there is no switch, uninstalling the
-app stops them* — and the link to **`https://fugaro.dev/privacy/`**, opened **only** through
-P0.3's URL validator (`shared/url/`, whose host allow-list is D124's answer) and never as a raw
-`Linking.openURL` of a literal. **The website's privacy statement is the authority for what a
-reader is owed in prose**, it already carries the app's paragraph, and §8.3 is where the plan
-holds the two to each other.
+**What the app says instead, and where — and the surface it does not have.** **The app has no
+settings screen.** Read from the tree: `mobile/src/app/root.js` builds a shell out of a title
+and one body `Text` (`APP_TITLE`, `NO_ACCOUNT`), and **no phase of the mobile plan** — Phase 3
+through Phase 7 — builds a settings screen for a statement to live in; earlier drafts of this plan
+wrote as if one existed, and it does not. The
+statement therefore goes in **the only surface the app has**: the shell, as **one more child**
+of it. `mobile/src/telemetry/notice.js` builds the statement, `mobile/src/app/root.js` renders
+it as a third element (`SHELL.NOTICE`, named in the same file so a test can name it too), and
+**`mobile/src/app/root.test.js` moves in the same commit** — it pins the shell's children to
+exactly `[SHELL.TITLE, SHELL.BODY]` and the rendered text of both states, so it is the file
+that would fail on the statement's first line. The statement is **fixed text**, in the page's
+own words — *the reports are on, there is no switch, uninstalling the app stops them* — and it
+carries **no control**.
+
+**The link, and the host list the owner still owes it.** The statement carries the link to
+**`https://fugaro.dev/privacy/`**, opened **only** through P0.3's URL validator (`shared/url/`)
+and never as a raw `Linking.openURL` of a literal. **It cannot be a link yet.**
+`shared/url`'s `DEFAULT_HOST_ALLOW_LIST` ships **empty** — the module's own header says the
+list *"is not this module's to choose … it is the owner's answer to D124, and it has not been
+given"* (read from the tree) — and **D124's answer names no hosts**: reconciliation U3 and
+finding F27's gap 7 are where that is recorded. So `https://fugaro.dev/privacy/` is refused
+with **`allow-list-empty`** and renders as **text**, which is exactly what P7.2's own
+verification expects of a host the allow-list does not name. **This is an owner step, and the
+plan names it here rather than leaving it to be discovered on a device:** *before P7.2 can
+render a link, the owner gives D124's host list, with `fugaro.dev` in it — one exact entry, no
+suffix and no wildcard, which is the validator's own rule.* Until that step is taken the
+statement is what the app shows and **check 111's link half cannot pass**; §12 says so inside
+the check as well, so a reader running it is not left to conclude the app is broken. **The
+website's privacy statement is the authority for what a reader is owed in prose**, it already
+carries the app's paragraph, and §8.3 is where the plan holds the two to each other.
 
 **"There is no switch" is structural, not a sentence.** Two things hold it, and neither is
 prose: §4.2's native switches are **on** — so there is no state for the app to toggle — and
@@ -818,18 +851,30 @@ would put a native config file in the tree if it were wrong.
 
 ### Task P7.2: The always-on statement, and the link
 
-**Files.** `mobile/src/telemetry/notice.js` (new: the sentence the app shows and the `/privacy/`
-URL it links, both as constants in one place), `mobile/src/app/root.js` (the line in the app's
-own settings surface — **not a gate, not a modal and not a first-launch screen**), and
-`mobile/src/telemetry/notice.test.js`. **`shared/telemetry-consent/`, `mobile/src/telemetry/consent.js`
+**Files.** `mobile/src/telemetry/notice.js` (new: the statement the app shows and the
+`/privacy/` URL it links, both as constants in one place), `mobile/src/app/root.js` (the shell
+renders the statement as **a third child**, `SHELL.NOTICE`, because **the app has no settings
+screen for it to live in** — §6 reads that from the tree — and the shell is the only surface
+the app has today; **not a gate, not a modal and not a first-launch prompt**, and the statement
+carries **no control** — and the file's own header, which says what the shell is allowed to
+show and forbids widening it silently, is updated in the same commit, because this is the
+widening its rule asks to be recorded), **`mobile/src/app/root.test.js`** (it pins the shell's children to
+exactly `[SHELL.TITLE, SHELL.BODY]` and the rendered text of both states, so it moves in the
+same commit — without it this task's own `cd mobile && npm test` fails on the statement's first
+line), and `mobile/src/telemetry/notice.test.js`. **`shared/telemetry-consent/`, `mobile/src/telemetry/consent.js`
 and the `telemetry.consent` settings key are all gone from this task**: D195's answer is
 always-on, so there is no choice machine, no sheet and no stored value (§6).
-**Depends on.** P7.1, **D195 (answered: always-on)**, D124 (the host allow-list P0.3's validator
-needs for the `/privacy/` link).
+**Depends on.** P7.1; **D195 (answered: always-on)**; and **D124's host list, which the owner
+still owes** — `shared/url` refuses every host today (`DEFAULT_HOST_ALLOW_LIST` ships **empty**)
+and D124's answer names none, so **until the owner names `fugaro.dev` the `/privacy/` URL is
+refused with `allow-list-empty` and renders as text**: this task then ships the statement
+**without a link**, and that is the expected result, not a failure (§6).
 **Verification.** `cd mobile && npm test`: the statement carries the page's own three facts —
-the reports are on, there is no switch, uninstalling stops them (§8.3) — the link is built
-through `shared/url`'s validator, and a host the allow-list does not name renders as text
-rather than being opened. **And the negative half, which is what this task is now for:** the
+the reports are on, there is no switch, uninstalling stops them (§8.3) — the shell renders it
+as its third child with `root.test.js` moved in the same commit, the URL is built through
+`shared/url`'s validator, and a host the allow-list does not name renders as **text** rather
+than being opened — which, until the owner's host list names `fugaro.dev`, is the assertion
+that passes rather than one that fails. **And the negative half, which is what this task is now for:** the
 app's source carries **no** `telemetry.consent` key, no stored choice, no toggle, and **no
 `setAnalyticsCollectionEnabled(`/`setCrashlyticsCollectionEnabled(` call** — §7.4's scan is
 what proves it, with a planted call as its control.
@@ -904,7 +949,7 @@ approves a task** — the gate in
 | Level | Tasks | Reviewer | Files touched |
 |---|---|---|---|
 | **0** | **P7.1** the plugin, the native files, the development build | **SECURITY-SENSITIVE** | `mobile/app.config.js`, `mobile/eas.json`, `mobile/firebase.json`, `mobile/.gitignore`, `mobile/package.json`, `mobile/README.md`, `mobile/src/app-config.test.js` |
-| **1** | **P7.2** the always-on statement and the link · **P7.3** the allow-list and the scan | **both SECURITY-SENSITIVE** | `mobile/src/telemetry/notice.js` (and `mobile/src/app/root.js`) · `mobile/src/telemetry/` (the event module and its two tests), one entry in `mobile/src/mailbox/write-path.test.js` |
+| **1** | **P7.2** the always-on statement and the link · **P7.3** the allow-list and the scan | **both SECURITY-SENSITIVE** | `mobile/src/telemetry/notice.js`, `mobile/src/app/root.js` and `mobile/src/app/root.test.js` · `mobile/src/telemetry/` (the event module and its two tests), one entry in `mobile/src/mailbox/write-path.test.js` |
 | **2** | **P7.4** the labels and the website's paragraph | standard (website) / **owner** (the forms) | `website/src/pages/privacy.astro`, the website's gates |
 | **3** | **P7.5** checks 111–113 written | standard | `docs/gcp-live-checklist.md` |
 | **owner** | the checks **run** — P7.5 writes 111–113 and the owner runs them. **This is not a task and has no number**: running a check merges nothing, so the phase is five tasks and not six | owner | none |
@@ -912,9 +957,11 @@ approves a task** — the gate in
 **P7.2 and P7.3 are parallel** — different directories, and the only shared file between them
 is none. **P7.4 waits on P7.3** because the labels are answered from the allow-list, not from
 this plan's prose. **P7.5 waits on all three code tasks.** **No level contains two writers of
-one file:** `mobile/src/telemetry/` is written by P7.2 (`consent.js`) and P7.3 (everything
-else), and the plan splits them into **two files with two owners** rather than one directory
-with two — the same rule the mobile plan's shared-files table states.
+one file:** `mobile/src/telemetry/` is written by P7.2 (`notice.js`, `notice.test.js`, and the
+one child P7.2 adds to `mobile/src/app/root.js` and its test) and P7.3 (everything else —
+`consent.js` went with D195's answer, and §6 lists it among what the answer removes), and the
+plan splits them into **two files with two owners** rather than one directory with two — the
+same rule the mobile plan's shared-files table states.
 
 **The critical path is P7.1 → P7.3 → P7.4 → P7.5**, four deep, and it is short on purpose:
 this phase is additive and nothing in the app's existing tasks waits on it.
@@ -925,7 +972,7 @@ this phase is additive and nothing in the app's existing tasks waits on it.
 |---|---|---|
 | P7.1 | the tracked-file rules, the ignore rules, the `AIza…` walk, the guard's pure part | that the plugin applies, that a development build is produced, that the SDKs initialise — **`npx expo prebuild` and `eas build` need a toolchain this repository's CI does not have** |
 | P7.2 | the statement's facts, the link's validator path, and the absence of a switch (the scan) | that the statement renders in the app, and that the native SDK is collecting — **only check 111 can show that**, on a device |
-| P7.3 | the scan, the never-send test, the existing fences | that the *native* SDK collects nothing before consent — **only Check 111 can show that**, on a device |
+| P7.3 | the scan, the never-send test, the existing fences | that the *native* SDK collects what the allow-list says and nothing else — **only checks 111 and 112 can show that**, on a device |
 | P7.4 | the website's own gates | the two store forms (owner) |
 | P7.5 | the register's own docs tests | the three checks (owner) |
 
@@ -962,7 +1009,7 @@ agent runs any step of any of them.** They are **written by P7.5 and run by the 
 
 | # | The check | Task | Why it cannot be a test |
 |---|---|---|---|
-| **111** | **The reports arrive, they arrive from the first launch, and they arrive at `fugaro-prod` and no other project.** Install a second-build app on a device, launch it, **touch nothing** — there is no sheet, no switch and no prompt, which is D195's answer — and watch the Firebase console's debug view: the app's own `app_launch` and `screen_shown` events appear **for `fugaro-prod` and for no other project**, and they appear **at the first launch** rather than at any later moment. Then the two negative halves, which are what this check is for: **the app's own settings surface says the reports are on and links to `/privacy/`, and no control anywhere in the app stops them** (D195, §6, and §7.4's scan is the static half of the same fact); and **the submitted build declares no `AD_ID` permission** — read from the built artifact's merged manifest, not from the source — so the identifier the page promises is absent is absent in the build a store holds. | P7.5 writes it; **the owner runs it** | Needs a real device, a real store build, a real network and the Firebase console. No hermetic test can see a native SDK's own socket, and no Go test can read a store's build. |
+| **111** | **The reports arrive, they arrive from the first launch, and they arrive at `fugaro-prod` and no other project.** Install a second-build app on a device, launch it, **touch nothing** — there is no sheet, no switch and no prompt, which is D195's answer — and watch the Firebase console's debug view: the app's own `app_launch` and `screen_shown` events appear **for `fugaro-prod` and for no other project**, and they appear **at the first launch** rather than at any later moment. Then the two negative halves, which are what this check is for: **the app's shell says the reports are on and carries no control that stops them — the link beside that sentence is the `/privacy/` URL once the owner's D124 host list names `fugaro.dev` (it renders as text until then, §6), so this half of the check is run after that owner step and not before it** (D195, §6, and §7.4's scan is the static half of the same fact); and **the submitted build declares no `AD_ID` permission** — read from the built artifact's merged manifest, not from the source — so the identifier the page promises is absent is absent in the build a store holds. | P7.5 writes it; **the owner runs it** | Needs a real device, a real store build, a real network and the Firebase console. No hermetic test can see a native SDK's own socket, and no Go test can read a store's build. |
 | **112** | **A real crash reaches `fugaro-prod`, with nothing that names anything in it.** Crash the app deliberately from the debug menu on a freshly installed device — **nothing has been consented to, because there is nothing to consent to**: the report appears in Crashlytics under `fugaro-prod` on the app's own first run, which is the always-on half of D195 proved end to end. **Its breadcrumbs, its custom keys, its logs and its device fields contain no message text, no mailbox key, no account id, no `authUid`, no project id, no token and no MAC**; `setUserId` is absent from the report; and **no advertising identifier is in it**. Then the control, and it is a different control from the one this check used to carry: **the same crash on the FIRST build — the one that carries neither SDK (D198) — produces no report at all**, which is what proves the reporting is the SDKs' and not something else in the app. | P7.5 writes it; **the owner runs it** | Needs a real device, a real crash, two builds and the Crashlytics console — the redaction is a property of a report that only exists after a crash. |
 | **113** | **The two store forms, and the live privacy statement, match what the app sends.** The Play **Data safety** form and the App Store **privacy label** are the answers of §8.1 and §8.2, category by category, and **each ticked category is justified by traffic observed in 111 and 112** — with the two over-declared categories (`User IDs`, `Other in-app messages`) recorded **as** over-declared, in the owner's own words. And the page: `https://fugaro.dev/privacy/` — **the URL both store listings point at as the privacy policy** — is read against the build sentence by sentence, because **it is already live and already ahead of the build** (§8.3): every provider and every category it names must be one the app actually sends, and **every category the app sends must be one it names**. A page that names something the app does not send, or an app that sends something the page does not name, is the failure this check exists to catch — and since the page cannot be changed by the build, **the build does not ship until the two agree**. | P7.5 writes it; **the owner runs it** | Needs the two consoles, the live site and the owner's own accounts. |
 
@@ -1086,7 +1133,9 @@ line below is a claim this plan makes **without** a source in this tree:
 ---
 
 *Status of this document: a plan. Nothing is built, nothing is approved, and no code,
-configuration or workflow is written by the change that adds it. **The owner answered seven of
+configuration or workflow *of the app, the website, the CLI or CI* is written by the change
+that adds it — it adds this document, the entries registering it, and the one Go test that pins
+them (§13). **The owner answered seven of
 the eight rows on 2026-10-19**: **D193** (the ruling the plan is built on — Crashlytics and
 Analytics, reporting to **`fugaro-prod`**, a Firebase project Fugaro operates), **D194**,
 **D195** (**always on** — no switch, no sheet, against this plan's opt-in recommendation,
