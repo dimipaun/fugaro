@@ -527,6 +527,25 @@ func TestDocsMobilePushMACEevidenceIsInTheTree(t *testing.T) {
 	}
 }
 
+// TestDocsMobilePushNamesNoUnresolvableLabels: two sentences of the design cited
+// "the B4 conclusion" and "§3.3's B5 correction" — labels from the review rounds
+// that produced them, defined nowhere in this document or anywhere in the repo.
+// Every other reference in the document resolves to a section, a rule, a
+// question or a file, and a reader who cannot resolve a citation cannot check
+// the claim it carries. These now read "the conclusion the paragraph above
+// reaches" and "the settled recommendation that §3.3 and Q7 withdrew", and this
+// guard keeps the class out: no `B<n>` token in the document at all.
+//
+// Mutation (verified, run and restored): putting "the B4 conclusion" back turns
+// this test red.
+func TestDocsMobilePushNamesNoUnresolvableLabels(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	doc := readDoc(t, docPath)
+	if m := regexp.MustCompile(`\bB[0-9]{1,2}\b`).FindString(normSpace(doc)); m != "" {
+		t.Errorf("%s carries the review-round label %q, which nothing in the repo defines: name the section, rule, question or file the claim comes from", docPath, m)
+	}
+}
+
 // TestDocsMobilePushHasOneWritersTable: §3.4 said "the pairing command is the
 // only thing that ever wrote the push node", which contradicts Q3's recommended
 // re-registration principal (§3.5 (b)) and §3.8's preferences writer — the very
