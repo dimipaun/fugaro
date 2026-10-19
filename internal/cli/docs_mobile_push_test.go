@@ -425,6 +425,11 @@ func TestDocsMobilePushSaysWhoDeletesThePushNode(t *testing.T) {
 // directions: every symbol the paragraph quotes must be in
 // `internal/budget/rules/rules.go`, the commit named must be the one the design
 // says it read, and the "on a branch, not on main" wording must be gone.
+//
+// Mutation (verified, run and restored): renaming `MaxMacLength` in rules.go,
+// `macField` in shared/mailbox-schema/index.js or `verifyMac` in
+// shared/mailbox-schema/mac.js, or dropping "are in the tree now" from the
+// paragraph: this test fails, each way.
 func TestDocsMobilePushMACEevidenceIsInTheTree(t *testing.T) {
 	const docPath = "docs/mobile/design/push-notifications.md"
 	doc := readDoc(t, docPath)
@@ -682,6 +687,10 @@ func TestDocsMobilePushQuotesThePlanAsItStandsAfterThisPR(t *testing.T) {
 // block and the row mark P6.4 **merged** (#601, the generation in the tree) and
 // P6.6 approved and not built, rather than carrying the pre-approval
 // "proposed, NOT APPROVED" this guard was first written against.
+//
+// Mutation (verified, run and restored): put "proposed, NOT APPROVED" back into
+// the P5.2 dependency row or into its Depends-on block, or drop "merged"/"#601"
+// from the row: this test fails, each way.
 func TestDocsMobilePushPlanRecordsTheDesignsPrerequisites(t *testing.T) {
 	const docPath = "docs/mobile/design/push-notifications.md"
 	const planPath = "docs/mobile/implementation-plan.md"
@@ -928,6 +937,10 @@ func TestDocsMobilePushCategorySetIncludesCapNear(t *testing.T) {
 // and `origin/main` in other paragraphs entirely, so a paragraph-wide check
 // would pass a citation that is not attributed at all (it did, on the first
 // attempt at this guard, which is why the window is here).
+//
+// Mutation (verified, run and restored): change "`371038f` carries it" in the
+// design to another commit, or put "not in this branch's tree" back: this test
+// fails, both ways.
 func TestDocsMobilePushBranchOnlyCitationsAreAttributed(t *testing.T) {
 	const docPath = "docs/mobile/design/push-notifications.md"
 	doc := readDoc(t, docPath)
