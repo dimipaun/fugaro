@@ -779,7 +779,10 @@ hold. The result then goes through the console's redactor with a public key (as
 (`r-...`, `slug-...`) and the project as `<project>`. Kept as the CLI wrote
 them, and only if in the fixed vocabulary listed in `scrub.ts` (`VOCAB`,
 `VERIFY_KINDS`, `QUEUED_NOTE_SHAPE`): mode, stage, round, health, deadline, auth,
-verify, connection state, `queued_note`, and the ages and burn numbers.
+verify, connection state, `queued_note`, and the ages and burn numbers. A
+connection `reason` is the one value with a free-text branch: the two sentences
+the CLI writes itself are kept, and the transport's own error text is replaced
+rather than copied (see the vocabularies below).
 
 **The clock shift is drawn, not committed** (owner review of PR #643, item 2).
 `scrubDocument` takes the offset as an argument and, given none, draws a
@@ -802,10 +805,12 @@ there.** Every list in `scrub.ts` names the writer it came from, and
 test allows to mention a `console/` path, reading this file as bytes and
 importing nothing from it, so the allow-list keeps its single entry — reads the
 lists back out of the file and compares them with the constants the source writes
-them from: the runner's stage names, the config's allowed `agent.auth`, the
+them from: the runs[].stage vocabulary, the config's allowed `agent.auth`, the
 budget's modes, the three verify kinds, the two status words and the rerun flag,
 the one warning sentence and the clean-tree note, the connection, health,
-deadline, status and outcome tables, the two `commands.reports` globs the warning
+deadline, status and outcome tables, the two connection `reason` sentences
+`internal/watch/state.go` writes itself (`CONNECTION_REASONS`), the two
+`commands.reports` globs the warning
 sentence carries (`VERIFY_REPORT_GLOBS`, against `internal/config/defaults.go`),
 and the 120-rune clip the registry puts on the summary (`VERIFY_CLIP_RUNES`,
 against internal/runner's `verifySummaryRunes`) — the scrub needs the number
@@ -829,10 +834,37 @@ condition names what it guards without writing it), so the one condition a
 segment *is* decided by is read on its own: the counts are written under
 `r.Kind == KindTest` and no other kind, which is what lets the grammar slice that
 group off for a build or a lint and require it for a test. The list that was too *short* is
-the failure that review found: a stage the runner writes and the scrub does
+the failure that review found: a value the CLI writes and the scrub does
 not know is not a leak, it is a recorder that throws on an ordinary run.
-`bootstrap`, `review_first` and `finalize` were missing from `stage`, `vertex`
+`bootstrap` and `review_first` were missing from `stage`, `vertex`
 from `auth`, and `warn` was a mode no CLI writes.
+
+**A list that is too *long* is the same failure from the other side, and the
+scan has to read the right field to see it.** `stage` held five names
+`runs[].stage` cannot carry — `provision`, `check`, `render`, `writeback`,
+`finalize` — because the scan took every stage string in `internal/runner`. Only
+one of those is the row's: `internal/watch/build.go` writes `dash(e.Stage)` from
+the run's **registry entry**, which is given a stage by exactly two writers — the
+literal it is created with, `bootstrap`
+(`internal/runner/budget_session.go`'s `registryEntry`), and `beginBudgetStage`,
+whose only caller is `r.stage(ctx, name, ...)`, so the rest are that helper's
+call sites. The others are other documents: `r.rec.Stage` (`render`,
+`writeback`, `check`, `finalize`) is the run record's own stage in `result.json`,
+and `provisionStage` names the timing row provisioning records. The scan now
+reads the entry's literal plus `r.stage`'s call sites plus the `queued`
+`internal/watch/queued.go` gives a runs-bucket row with no entry yet, and pins
+that `beginBudgetStage` still has that one caller taking its own `name`
+argument. `sameSet` compared the two lists in both directions already — the
+premise, not the comparison, was what a too-long list slipped past.
+
+**A connection reason is kept only when the CLI wrote it.** `connection.reason`
+had no rule at all, so any recording made while the link was not live failed the
+scrub — `internal/watch/state.go` sets `access refused` for a permission error
+and `connecting` before the first event, and its third branch is the transport's
+own error, one-lined and clipped there. Those two sentences are
+`CONNECTION_REASONS`, held against the source by the drift test; anything else
+that is a string is **replaced** with `INVENTED_CONNECTION_REASON`, so the free
+text never reaches the fixture, and anything that is not a string is refused.
 
 **Not recorded, and stay invented**: `silent-then-lost`, `kill-mid-feed` and
 `repo-at-cap` (they need cloud writes), and the other cases still await a
@@ -868,7 +900,10 @@ is a deterministic case (a 64-character digest with a twelve-digit run planted i
 it, plus runs of 12, 13 and 20 digits standing on their own) and a loop that
 scrubs and scans 300 drawings of the clock. Held by `test/unit/scrub-vocabulary.test.ts`: that
 the scrub accepts every stage, auth and mode the CLI writes and refuses what it
-does not, that the verify shape is the one `internal/verify/verify.go` writes
+does not — the stage list it loops over is `VOCAB.stage` itself, so this file
+keeps no second copy of it — that the connection `reason` the CLI wrote is kept
+and the transport's own error text replaced, that the verify shape is the one
+`internal/verify/verify.go` writes
 (every tail variant, the `FAILED` spelling, the `exit -1` a killed process
 leaves, and the 120-rune clip) and refuses a line it cannot, that the pinned
 matcher takes the IDs `junit.go` builds verbatim — pytest parametrisations, names

@@ -4890,20 +4890,32 @@ func without(values []string, drop string) []string {
 func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	scrub := readDoc(t, scrubTS)
 
-	// The stages. Every site the runner writes a stage at: the agent stages
-	// (r.stage(ctx, "name", ...)), the record's own stage (r.rec.Stage = "x"),
-	// the run's registry entry (Stage: "bootstrap"), and the stage name
-	// provisioning records its own time under (const provisionStage = "provision").
-	var stages []string
+	// The stages of runs[].stage, which is the run's REGISTRY entry and nothing
+	// else: internal/watch/build.go writes dash(e.Stage) into the row, and that
+	// entry takes a stage from exactly two places -- the literal it is created
+	// with (budget_session.go's registryEntry) and beginBudgetStage, whose only
+	// caller is r.stage, so its vocabulary is the first argument of r.stage's
+	// call sites. The runner's other stage strings are other documents: the
+	// record's own stage (r.rec.Stage = "render", "writeback", "check",
+	// "finalize") goes to result.json, and provisionStage names a timing row. A
+	// scrub that knew them would pass a value runs[].stage can never carry, so
+	// the scan reads the entry and not the package's every stage string.
+	budgetSession := readDoc(t, "internal/runner/budget_session.go")
+	stages := sourceValues(t, "internal/runner/budget_session.go", budgetSession, `Stage: "([a-z_]+)"`)
+	var budgetStageCalls []string
 	for _, path := range runnerSources(t, "internal/runner") {
 		src := readDoc(t, strings.TrimPrefix(path, "../../"))
 		stages = append(stages, collect(src, `\.stage\(ctx, "([a-z_]+)"`)...)
-		stages = append(stages, collect(src, `\.rec\.Stage = "([a-z_]+)"`)...)
-		stages = append(stages, collect(src, `Stage: "([a-z_]+)"`)...)
-		stages = append(stages, collect(src, `const \w*Stage = "([a-z_]+)"`)...)
+		budgetStageCalls = append(budgetStageCalls, collect(src, `\.beginBudgetStage\((\w+),`)...)
 	}
-	if len(stages) < 10 {
+	if len(stages) < 5 {
 		t.Fatalf("internal/runner yielded %d stages (%v); the scans are no longer reading the source", len(stages), stages)
+	}
+	// Those names are the vocabulary only while r.stage is the one caller of
+	// beginBudgetStage and hands it its own name argument: a second call site,
+	// or a stage the entry is given some other way, and the list is short.
+	if len(budgetStageCalls) != 1 || budgetStageCalls[0] != "name" {
+		t.Fatalf("internal/runner calls beginBudgetStage(%v, ...); this test reads the stage names off r.stage's call sites because that call is what puts them in the registry entry", budgetStageCalls)
 	}
 	// A runs-bucket row with no registry entry yet carries watch's own "queued".
 	stages = append(stages, sourceValues(t, "internal/watch/queued.go",
@@ -4923,6 +4935,14 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	// The budget mode.
 	sameSet(t, "mode", sourceValues(t, "internal/budget/model.go", readDoc(t, "internal/budget/model.go"),
 		`Mode\w+ = "([a-z]+)"`), tsList(t, scrub, `\bmode: \[([^\]]*)\]`, "VOCAB.mode"))
+
+	// The connection reasons the CLI writes itself: internal/watch/state.go sets
+	// one beside each kind it invents -- "access refused" for a permission
+	// error, "connecting" before the first event. The third branch is the
+	// transport's own error text, one-lined and clipped there, so the scrub
+	// cannot have a vocabulary for it; only these two are compared.
+	sameSet(t, "connection reason", sourceValues(t, "internal/watch/state.go", readDoc(t, "internal/watch/state.go"),
+		`c\.Kind, c\.Reason = \w+, "([^"]*)"`), tsList(t, scrub, `CONNECTION_REASONS = \[([^\]]*)\]`, "CONNECTION_REASONS"))
 
 	// The verify kinds: the three `fugaro verify` can run. Held in variables
 	// rather than passed straight to sameSet because the head grammar below is

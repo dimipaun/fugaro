@@ -121,16 +121,18 @@ export const VOCAB = {
   // watch document can carry (internal/watch/build.go's View.Mode).
   mode: ['enforce', 'observe'],
   connectionState: ['live', 'stale', 'offline', 'refused', 'polling'],
-  // Every name a run writes as its stage: internal/runner's `r.stage(ctx, ...)`
-  // calls (implement, review, review_first, fix, plan), its `r.rec.Stage`
-  // assignments (plan, render, review, check, finalize, writeback), its
-  // registry's bootstrap entry, provisioning's own stage name, and the
-  // `queued` a runs-bucket row carries (internal/watch/queued.go) before any
-  // registry entry exists.
-  stage: [
-    'bootstrap', 'queued', 'provision', 'plan', 'implement', 'review_first', 'review', 'fix', 'check', 'render',
-    'writeback', 'finalize',
-  ],
+  // Every name a runs[].stage can carry, which is the run's REGISTRY entry and
+  // nothing else: internal/watch/build.go writes `dash(e.Stage)` into the row,
+  // and the entry is given a stage by exactly two writers -- the literal it is
+  // created with, `bootstrap` (internal/runner/budget_session.go's
+  // registryEntry), and beginBudgetStage, whose only caller is the runner's
+  // `r.stage(ctx, name, ...)`, so the rest of them are that helper's call
+  // sites. `queued` is not the entry at all: internal/watch/queued.go gives it
+  // to a runs-bucket row that has no entry yet. The runner's other stage
+  // strings are other documents: `render`, `writeback`, `check` and `finalize`
+  // are `r.rec.Stage` (the run record in result.json) and `provision` is the
+  // name provisioning records its own time under, so none can appear here.
+  stage: ['bootstrap', 'queued', 'plan', 'implement', 'review_first', 'review', 'fix'],
   // internal/config/validate.go's allowed `agent.auth` values, plus the `-`
   // internal/watch/build.go's `dash` writes for an empty one.
   auth: ['vertex', 'api-key', 'oauth', '-'],
@@ -460,10 +462,28 @@ function applyRules(obj: Obj, path: string, rules: Readonly<Record<string, Rule>
 }
 
 const BURN_RULES: Readonly<Record<string, Rule>> = { known: bool, usd_per_min: num, fast: bool }
+/**
+ * CONNECTION_REASONS is the connection header's own text: internal/watch/state.go
+ * sets `access refused` beside ConnRefused and `connecting` beside the offline
+ * kind a view starts in. Its third branch is the transport's error, one-lined
+ * and clipped there -- free text, with no sentence known to be safe.
+ */
+export const CONNECTION_REASONS = ['access refused', 'connecting'] as const
+/** INVENTED_CONNECTION_REASON is what that free text becomes. */
+export const INVENTED_CONNECTION_REASON = 'example connection reason'
+/** connectionReason keeps the CLI's two sentences and replaces anything else:
+ * the transport's error is free text, so a rule that only accepted the two
+ * would refuse an ordinary recording of an offline run -- which is what a scrub
+ * with no rule for `reason` at all did. Nothing of the original survives the
+ * replacement, so a sentence riding there is dropped rather than published. */
+const connectionReason: Rule = (v, path) => {
+  if (typeof v !== 'string') return refuse(path, 'not a string')
+  return (CONNECTION_REASONS as readonly string[]).includes(v) ? v : INVENTED_CONNECTION_REASON
+}
 const CONNECTION_RULES: Readonly<Record<string, Rule>> = {
   state: oneOf(VOCAB.connectionState),
   age_seconds: num,
-  // `reason` is free text in the CLI: no sentence is known to be safe, so it is refused.
+  reason: connectionReason,
 }
 
 /** shiftIso moves one timestamp by this run's offset (see randomTimeShiftMs).

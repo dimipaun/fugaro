@@ -452,7 +452,11 @@ describe('the scrub', () => {
       ['outcome', (d) => { at(d, 'finished', 0)['outcome'] = 'real' }],
       ['failed', (d) => { at(d, 'finished', 0)['failed'] = 'real' }],
       ['connection.state', (d) => { at(d, 'connection')['state'] = 'real' }],
-      ['connection.reason', (d) => { at(d, 'connection')['reason'] = 'the real reason' }],
+      // Every branch internal/watch/state.go writes a reason in writes a
+      // string, so only the type is refused here: the two sentences the CLI
+      // writes itself are kept and the transport's own error text is replaced,
+      // which `scrub-vocabulary.test.ts` holds.
+      ['connection.reason', (d) => { at(d, 'connection')['reason'] = 7 }],
       ['burn.known', (d) => { at(d, 'total', 'burn')['known'] = 'real' }],
       ['queued_note', (d) => { d['queued_note'] = 'queued runs unavailable: real-org said no' }],
     ]

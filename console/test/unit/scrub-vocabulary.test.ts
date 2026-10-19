@@ -2,12 +2,14 @@
 //
 // Three things are held here, and each names the mutation it catches:
 //
-//   - **the vocabularies are the CLI's.** Every value the Go source writes as a
-//     stage, an auth or a mode is ACCEPTED, and a value outside the list is
-//     refused. The mutation that matters is the one the review found: a scrub
-//     that throws on an ordinary run (`bootstrap`, `review_first`, `finalize`,
-//     `vertex`) fails here. The lists themselves are checked against the Go
-//     source by `TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource`.
+//   - **the vocabularies are the CLI's.** Every value the Go source writes into
+//     the field is ACCEPTED, and a value outside the list is refused. The
+//     mutation that matters is the one the review found: a scrub that throws on
+//     an ordinary run (`bootstrap`, `review_first`, `vertex`) fails here. The
+//     lists themselves are the scrub's own -- this file holds no second copy of
+//     one -- and `TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource` reads
+//     them back out of `scrub.ts` and holds them against the Go source, in both
+//     directions, so a list that is too long fails there as well as too short.
 //   - **the verify shape is what verify.go writes**, exactly: every tail
 //     `Record.Summary` can append, the `FAILED` spelling, the truncation the
 //     registry makes, and a refusal of a line the writer cannot produce.
@@ -22,8 +24,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  TIME_SHIFT_RANGE_MS, VERIFY_CLIP_RUNES, isKnownVerifySummary, isVerifySummary, randomTimeShiftMs,
-  scrubDocument, timeShiftFromDraw,
+  CONNECTION_REASONS, INVENTED_CONNECTION_REASON, TIME_SHIFT_RANGE_MS, VERIFY_CLIP_RUNES, VOCAB,
+  isKnownVerifySummary, isVerifySummary, randomTimeShiftMs, scrubDocument, timeShiftFromDraw,
 } from '../../tools/scrub-fixture/scrub'
 
 /** raw is the smallest document the scrub accepts: one run, one repo, a total
@@ -58,27 +60,17 @@ function at(doc: Record<string, unknown>, ...path: Array<string | number>): Reco
 
 describe('the scrub: the CLI vocabulary it copies', () => {
   /**
-   * STAGES is every value internal/runner or internal/watch writes as a stage,
-   * listed with the site that writes it. It is the list review item 1 says was
-   * incomplete; the Go drift test holds it against the source, so a stage added
-   * there and not here fails rather than silently making the scrub unusable.
+   * STAGES is the scrub's own stage list, not a second copy of it: the list is
+   * `VOCAB.stage`, held against the Go source by
+   * `TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource`. A copy here was
+   * the third hand-kept list review found, and it could only ever agree with
+   * itself -- a stage the runner writes and the scrub refuses is the failure
+   * this loop is for, so it reads the scrub's list, and the drift test is what
+   * says whether that list is the CLI's.
    */
-  const STAGES: readonly string[] = [
-    'bootstrap', // internal/runner/budget_session.go registryEntry, runner.go's record
-    'queued', // internal/watch/queued.go: a runs-bucket row with no registry entry
-    'provision', // internal/runner/provision.go's provisionStage
-    'plan', // internal/runner/artifact.go, runner.go's r.stage(ctx, "plan")
-    'implement', // internal/runner/runner.go's r.stage(ctx, "implement")
-    'review_first', // internal/runner/runner.go's r.stage(ctx, "review_first")
-    'review', // internal/runner/runner.go and reviewmode.go
-    'fix', // internal/runner/runner.go's r.stage(ctx, "fix")
-    'check', // internal/runner/runner.go's rec.Stage = "check"
-    'render', // internal/runner/artifact.go
-    'writeback', // internal/runner/lockcache.go
-    'finalize', // internal/runner/runner.go's finalize
-  ]
+  const STAGES: readonly string[] = VOCAB.stage
 
-  it('accepts every stage the runner writes, so an ordinary run does not throw', () => {
+  it('accepts every stage in that list, so an ordinary run does not throw', () => {
     for (const stage of STAGES) {
       const doc = raw()
       at(doc, 'runs', 0)['stage'] = stage
@@ -88,7 +80,13 @@ describe('the scrub: the CLI vocabulary it copies', () => {
   })
 
   it('refuses a stage the runner does not write, rather than passing it through', () => {
-    for (const stage of ['coding', 'tests', 'planning', 'IMPLEMENT', 'queued ', 'a real stage']) {
+    // The last five are stages the runner does write -- as the run record's own
+    // stage and as provisioning's timing name -- but not into the registry
+    // entry runs[].stage comes from, so a scrub that took them would pass a
+    // value the CLI cannot put there.
+    const outside = ['coding', 'tests', 'planning', 'IMPLEMENT', 'queued ', 'a real stage',
+      'check', 'render', 'writeback', 'finalize', 'provision']
+    for (const stage of outside) {
       const doc = raw()
       at(doc, 'runs', 0)['stage'] = stage
       expect(() => scrubDocument(doc, 0), stage).toThrow(/a value outside the CLI vocabulary/)
@@ -115,6 +113,32 @@ describe('the scrub: the CLI vocabulary it copies', () => {
     const doc = raw()
     doc['mode'] = 'warn'
     expect(() => scrubDocument(doc, 0)).toThrow(/a value outside the CLI vocabulary/)
+  })
+
+  it('keeps the connection reasons the CLI writes, and replaces the transport\'s own text', () => {
+    for (const reason of CONNECTION_REASONS) {
+      const doc = raw()
+      at(doc, 'connection')['state'] = 'offline'
+      at(doc, 'connection')['reason'] = reason
+      expect(at(scrubDocument(doc, 0), 'connection')['reason']).toBe(reason)
+    }
+    // internal/watch/state.go's third branch is the transport's error, one-lined
+    // and clipped there: free text, and ordinary in a recording of an offline
+    // run. It is replaced, never refused -- a scrub with no rule for `reason`
+    // threw on the whole document for it.
+    const doc = raw()
+    at(doc, 'connection')['state'] = 'offline'
+    at(doc, 'connection')['reason'] = 'dial tcp 10.0.0.7:443: connect: connection refused'
+    const scrubbed = at(scrubDocument(doc, 0), 'connection')
+    expect(scrubbed['reason']).toBe(INVENTED_CONNECTION_REASON)
+    expect(scrubbed['state']).toBe('offline')
+    expect(JSON.stringify(scrubbed)).not.toContain('10.0.0.7')
+  })
+
+  it('refuses a connection reason that is not a string, rather than inventing one', () => {
+    const doc = raw()
+    at(doc, 'connection')['reason'] = 7
+    expect(() => scrubDocument(doc, 0)).toThrow(/not a string/)
   })
 })
 
