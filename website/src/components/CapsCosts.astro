@@ -46,6 +46,17 @@
  * gained is the table, its provenance note, and the two rules that hold it: the file's
  * figures are the page's figures, and the page's figures are the file's.
  *
+ * **A phone reads the figures as labelled rows** (the owner's feedback of 2026-10-19: the
+ * figures, which are the right-hand part of the page on a desktop, "render terrible on
+ * mobile"). Both tables say the same columns in the same order and print the same figures;
+ * what changes below the site's 48 rem breakpoint is the layout — each row is a block, each
+ * cell on its own line, each cell labelled with its column's own header text through
+ * `data-label`, and the figures set at the body's size rather than the table's smaller one.
+ * Nothing here invents a figure, a label or a claim: the label is the header's text, and
+ * `website/test/caps-figures.mjs` holds every cell's label to its column's header and the
+ * phone's layout to the rules that make it (a table read as a table at 360 px is a sideways
+ * scroll or six crushed columns, and both tables would have been that).
+ *
  * **The cap the note prints is the installation's, not the product's.** `fugaro budget
  * set --per-run N` is what sets a per-run cap: the flag's default is 0, which sets none, and an
  * enforcing project with no per-run cap on any of the three scopes refuses every lease
@@ -235,12 +246,12 @@ const windowRecipes = countOf('recipes')
       <tbody>
         {typical.jobs.map((job) => (
           <tr data-job={job.id}>
-            <th scope="row">{job.name}</th>
-            <td>{job.runs}</td>
-            <td>{money(job.medianUSD)}</td>
-            <td>{job.middleHalfUSD === null ? '—' : `${money(job.middleHalfUSD.low)}–${money(job.middleHalfUSD.high)}`}</td>
-            <td>{money(job.nineInTenUnderUSD)}</td>
-            <td>{job.worstUSD === null ? '—' : money(job.worstUSD)}</td>
+            <th scope="row" data-label="Job">{job.name}</th>
+            <td data-label="Runs">{job.runs}</td>
+            <td data-label="Median">{money(job.medianUSD)}</td>
+            <td data-label="Middle half">{job.middleHalfUSD === null ? '—' : `${money(job.middleHalfUSD.low)}–${money(job.middleHalfUSD.high)}`}</td>
+            <td data-label="9 in 10 under">{money(job.nineInTenUnderUSD)}</td>
+            <td data-label="Worst">{job.worstUSD === null ? '—' : money(job.worstUSD)}</td>
           </tr>
         ))}
       </tbody>
@@ -300,32 +311,34 @@ const windowRecipes = countOf('recipes')
         </ul>
       )}
 
-      <table>
-        <caption>
-          Duration and cost per recipe: the minimum, the median and the p90, with the sample
-          size behind every figure.
-        </caption>
-        <thead>
-          <tr>
-            <th scope="col">Recipe</th>
-            <th scope="col">Runs</th>
-            <th scope="col">Duration, s — min / median / p90</th>
-            <th scope="col">Cost, USD — min / median / p90</th>
-            <th scope="col">Runs with no compute estimate</th>
-          </tr>
-        </thead>
-        <tbody>
-          {costs.groups.map((group) => (
-            <tr data-recipe={group.recipe}>
-              <th scope="row">{group.recipe}</th>
-              <td>{group.runs}</td>
-              <td>{group.durationS.min} / {group.durationS.median} / {group.durationS.p90}</td>
-              <td>{group.costUSD.min} / {group.costUSD.median} / {group.costUSD.p90}</td>
-              <td>{group.computeNotEstimated}</td>
+      <div class="table-scroll">
+        <table>
+          <caption>
+            Duration and cost per recipe: the minimum, the median and the p90, with the sample
+            size behind every figure.
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">Recipe</th>
+              <th scope="col">Runs</th>
+              <th scope="col">Duration, s — min / median / p90</th>
+              <th scope="col">Cost, USD — min / median / p90</th>
+              <th scope="col">Runs with no compute estimate</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {costs.groups.map((group) => (
+              <tr data-recipe={group.recipe}>
+                <th scope="row" data-label="Recipe">{group.recipe}</th>
+                <td data-label="Runs">{group.runs}</td>
+                <td data-label="Duration, s — min / median / p90">{group.durationS.min} / {group.durationS.median} / {group.durationS.p90}</td>
+                <td data-label="Cost, USD — min / median / p90">{group.costUSD.min} / {group.costUSD.median} / {group.costUSD.p90}</td>
+                <td data-label="Runs with no compute estimate">{group.computeNotEstimated}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <p class="not-a-promise">{costs.notAPromise}</p>
     </>
@@ -373,17 +386,94 @@ const windowRecipes = countOf('recipes')
     text-align: left;
   }
 
-  /* The first table is six short columns and a phone is 390 px wide: the figures keep their
-     own line rather than wrapping mid-number. Six columns of nowrap figures are wider than
-     such a screen, so the table itself scrolls: `.table-scroll` is the box that does it, and
-     the page body never scrolls sideways. Without that box the widest row would widen the
-     document (only `pre` sets its own `overflow-x` in `base.css`). */
-  .table-scroll {
-    overflow-x: auto;
+  /* **A phone reads the figures as labelled rows, not as a table** (the owner's feedback of
+     2026-10-19: "these render terrible on mobile"). Six short columns of figures are about
+     460 px of content and a phone's content box is 328 px (360 px less `main`'s gutter), so a
+     table read as a table at 360 px is either a sideways scroll or six crushed columns. Below
+     the site's one layout breakpoint each row becomes a block, the header row's names become
+     the labels above the figures they name, and every cell is on a line of its own: the same
+     columns, the same figures, in the order the table has them.
+
+     The label is the cell's own `data-label`, and it is the column's header text exactly —
+     the page writes no label of its own, and `website/test/caps-figures.mjs` holds every
+     label to its column's header. `::before` with `attr()` is what makes one rule label
+     every cell rather than one attribute per figure being read by a reader.
+
+     The figures are set at the body size here and not the table size: `base.css` sets every
+     `table` (`:where(table) { font-size: var(--font-size-sm) }`) at 15 px where the body is
+     17 px, which is a table's smaller type for six columns and not a phone's one figure under
+     its name. `overflow-wrap: anywhere` (also `base.css`) is what keeps a long recipe name
+     inside the box. */
+  @media (max-width: 47.98rem) {
+    table,
+    thead,
+    tbody,
+    tr,
+    th,
+    td {
+      display: block;
+    }
+
+    /* The names are the labels now, and a header row drawn as a block would be an unlabelled
+       list of six words above the first row's figures. */
+    thead {
+      display: none;
+    }
+
+    table {
+      font-size: var(--font-size-base);
+    }
+
+    th,
+    td {
+      border-bottom: none;
+      padding: 0;
+    }
+
+    /* One row is one card, and the line between two of them is what tells a reader where one
+       run's figures stop. */
+    tr {
+      border-bottom: var(--border-width) solid var(--border);
+      padding-block: var(--space-sm);
+    }
+
+    /* `base.css` fills every `th` with the surface colour, which is a table's header cell and
+       not a card's title. The row header is the title: the name of the job or the recipe the
+       figures under it belong to. */
+    th {
+      background: none;
+    }
+
+    th[scope='row'] {
+      font-weight: var(--weight-semibold);
+      margin-bottom: var(--space-3xs);
+    }
+
+    /* The label above its figure. It is the header's own text, in the muted colour and on a
+       line of its own, so a reader at 360 px reads "Median" over the median rather than
+       counting columns. */
+    th[data-label]::before,
+    td[data-label]::before {
+      content: attr(data-label);
+      display: block;
+      color: var(--text-muted);
+    }
   }
 
-  #typical-costs td {
-    white-space: nowrap;
+  /* Above the breakpoint the figures are a table again, and the two boxes that make a wide
+     table fit stay here rather than in the base rules: six columns of figures held on their
+     own lines are wider than a phone, so at a wide width the table scrolls inside
+     `.table-scroll` and the page body never scrolls sideways. Below the breakpoint neither is
+     in force — `nowrap` on a stacked figure is a line that runs out of the card, and a scroll
+     container around blocks that fit is a box that can only hide what is in it. */
+  @media (min-width: 48rem) {
+    .table-scroll {
+      overflow-x: auto;
+    }
+
+    #typical-costs td {
+      white-space: nowrap;
+    }
   }
 
   .empty {
