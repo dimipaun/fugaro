@@ -415,9 +415,10 @@ func hasLoneSurrogateEscape(span []byte) bool {
 //
 // A literal that is not one a JSON document can hold — no opening quote, no
 // closing quote, a trailing backslash, half an escape, an escape JSON does not
-// have — is an error, never a partial string and never a loop that does not
-// advance. Through Decode it cannot happen: the decoder refuses such a document
-// first. It is written this way because the alternative the code used to have,
+// have, a `\u` escape whose four digits are not hexadecimal — is an error,
+// never a partial string and never a loop that does not advance. Through Decode
+// it cannot happen: the decoder refuses such a document first. It is written
+// this way because the alternative the code used to have,
 // a `break` for each of those cases, was wrong in both of its two shapes: the
 // one in the loop body left the loop with the string only half decoded, and the
 // one inside the switch never advanced i at all and spun forever.
@@ -472,7 +473,17 @@ func unquoteKeepingLoneSurrogates(literal []byte) (string, error) {
 				// byte forever. This is the one of the two that used to hang.
 				return "", errors.New("mailbox: a string literal ends in a half-written escape")
 			}
-			first, _ := hexQuad(literal[i+2 : i+6])
+			first, ok := hexQuad(literal[i+2 : i+6])
+			if !ok {
+				// The ok flag is the whole point of hexQuad's pair, and
+				// dropping it is not a small thing: the zero it returns with
+				// false is a NUL, so `\uZZZZ` would decode to a string
+				// carrying one, with no error, and the validator would then
+				// answer bad-character for a character the document never
+				// named. There is no canonical form for an escape JSON does
+				// not have, so it is refused here.
+				return "", errors.New("mailbox: a string literal carries a \\u escape whose four digits are not hexadecimal")
+			}
 			if isHighSurrogate(first) && i+12 <= end && literal[i+6] == '\\' && literal[i+7] == 'u' {
 				if low, ok := hexQuad(literal[i+8 : i+12]); ok && isLowSurrogate(low) {
 					b.WriteRune(utf16Rune(first, low))
@@ -975,10 +986,11 @@ func serialiseNumber(value any) (string, error) {
 // encodeJSONString writes one string's canonical form: JSON's own escaping and
 // nothing else.
 //
-// The HTML escaping is OFF, and it is the trap §8.1 names: Go's encoder turns
-// `<`, `>` and `&` into `<`, `>` and `&` unless it is told not
-// to, and the phone's bytes carry them raw. The vectors' "html characters stay
-// raw" case is the assertion that it stays off.
+// The HTML escaping is OFF, and it is the trap §8.1 names: left on, Go's
+// encoder turns `<`, `>` and `&` into `\u003c`, `\u003e` and `\u0026`,
+// where JSON.stringify leaves all three raw — so the same record would have two
+// spellings, one per language. The vectors' "html characters stay raw" case is
+// the assertion that it stays off.
 func encodeJSONString(value string) (string, error) {
 	if err := canonicalString(value); err != nil {
 		return "", err

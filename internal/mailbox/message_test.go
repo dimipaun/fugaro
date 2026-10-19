@@ -974,19 +974,25 @@ func TestTheUnquoterDecodesWhatItKeeps(t *testing.T) {
 		{`no quote at all`, "no opening quote"},
 		{`"a`, "no closing quote"},
 		{`"a` + "\\", "no closing quote"},
-		{`"a` + "\\" + `"`, "lone backslash"},  // a backslash with only the closing quote after it
-		{`"a` + "\\" + `u00"`, "half-written"}, // half an escape
-		{`"a` + "\\" + `q"`, "JSON grammar"},   // an escape JSON does not have
+		{`"a` + "\\" + `"`, "lone backslash"},   // a backslash with only the closing quote after it
+		{`"a` + "\\" + `u00"`, "half-written"},  // half an escape
+		{`"a` + "\\" + `uZZZZ"`, "hexadecimal"}, // four digits, and not one of them hex
+		{`"a` + "\\" + `u12g4"`, "hexadecimal"}, // the same, with the bad digit in the middle
+		{`"a` + "\\" + `q"`, "JSON grammar"},    // an escape JSON does not have
 	} {
 		t.Run("refused: "+tc.literal, func(t *testing.T) {
 			got, err := unquoteKeepingLoneSurrogates([]byte(tc.literal))
 			if err == nil {
 				t.Fatalf("%q unquoted to %q, and a document cannot hold it", tc.literal, got)
 			}
-			// Each of those is its own branch, so each is named: a test that
-			// only asked "did it fail" would pass with three of the four checks
-			// deleted, which is what a mutation proved before this table had a
-			// `wantErr` column.
+			// Each row is its own branch, so each is named: a test that only
+			// asked "did it fail" would pass with one check deleted, because
+			// the next check along catches the same literal with a different
+			// message — which is what a mutation proved before this table had
+			// a `wantErr` column. The last two rows are the pair hexQuad
+			// returns: dropping its ok flag is invisible to a row that only
+			// asks whether the call failed, since a false from it is a NUL
+			// with no error at all.
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("%q failed with %q, wanted it to name %q", tc.literal, err, tc.wantErr)
 			}
