@@ -228,13 +228,10 @@ here goes stale the way the byte budgets did before D192.
   the menu's hover-open and the six corrections that day and the next made to it, which moved
   the same script again. So the figures below are derived once, over the build the merge
   produces, which is the only account of them that is true of the site that ships:
-  **JavaScript per page 149,580** (three times 49,860; `public/scripts/site.js` 39,888 bytes),
-  **page weight per page 1,000,974** (three times 333,658; the docs hub 266,926 bytes) and
-  **whole site 3,158,079** (three times 1,052,693; the gates' own build of the site, 842,154
-  bytes across 21 files). The last re-derivation is the owner's brief of 2026-10-19, item 1 —
-  the menu's drawer came out and the three group labels took its place — which is 278 bytes
-  off the base stylesheet every page inlines, 181 off the script, and so 459 off the page
-  figure and 3,239 off the site's. The fix
+  **JavaScript per page 149,172** (three times 49,724; `public/scripts/site.js` 39,779 bytes),
+  **page weight per page 1,001,607** (three times 333,869; the docs hub 267,095 bytes) and
+  **whole site 3,672,369** (three times 1,224,123; the gates' own build of the site, 979,298
+  bytes across 23 files, the `fugaro watch` assets below included). The fix
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
   card edges became the site's separator and the footer's link label is the repository's name
@@ -254,7 +251,14 @@ here goes stale the way the byte budgets did before D192.
   turns out of the measure's cap; the third's four commits moved the site figure to 814,455,
   815,116 and 815,212 bytes and the page figure with it; and the fourth's fix for the
   two-by-two's wrap arrow moved it 626 bytes on the two pages that draw the flow — and each was
-  re-derived in the commit that shipped the bytes. The
+  re-derived in the commit that shipped the bytes. **And this round is the screenshot landing**,
+  which is the sixth: the site figure alone moves, 1,056,379 to 1,224,123 tight and 3,169,137
+  to 3,672,369 stated, because PR #622's two `public/images/` assets (the 130,533-byte capture
+  and its 3,363-byte transcription) were already in every build of the site and unplaced, and
+  the `<img>` that puts the picture on the homepage adds 299 bytes of its markup. The page
+  weight does not move — the picture is on the homepage, and the ceiling is derived from the
+  docs hub, which renders neither the chat nor the screenshot — and nor does the JavaScript.
+  The
   figures live in `website/README.md` and nowhere else, and
   `website/test/budget.mjs` reads them from there and holds each to the build it can measure:
   a derivation that names another build fails, which is what stops the page and the site
@@ -266,8 +270,8 @@ here goes stale the way the byte budgets did before D192.
   `website/dist`, which is the checkout's own build. The reason is that one page of the site
   reads the checkout's git state: the changelog renders each release file's "not yet released"
   state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
-  to **842,154 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
-  and so the deployed site — and to **840,639 with the tags this repository's clone carries**,
+  to **979,298 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
+  and so the deployed site — and to **977,783 with the tags this repository's clone carries**,
   the 1,515-byte changelog page being the whole of the difference. A figure derived from one is
   refused by the other, which is what happened: the gate could not measure the build `main`'s
   README named, and `website-preview` could not deploy. A derivation is likewise not held to
@@ -284,8 +288,9 @@ here goes stale the way the byte budgets did before D192.
   is a quiet line inside a turn rather than a command block, because the reader did not type
   it. Item 5's screenshot is a separate task: this pull request leaves
   `[data-slot="watch-screenshot"]` right after the chat and commits **no image**, and
-  `website/test/home.mjs` holds that slot to being empty and the homepage to its one picture
-  (the wordmark). **The watch bar is a command block like every other one on the site, and the
+  `website/test/home.mjs` held that slot to being empty and the homepage to its one picture
+  (the wordmark) — **the state this file describes of that round**; the image landed in the
+  slot later, with the case rewritten to hold it there (the section on the screenshot below). **The watch bar is a command block like every other one on the site, and the
   control sits beside the command rather than above it** — which the third fix round made the
   rule for the whole site rather than this block's exception: `base.css` lays every
   `[data-copy]` block out as one reversed row (`flex-direction: row-reverse`, the command
@@ -351,9 +356,11 @@ here goes stale the way the byte budgets did before D192.
   - **the empty slot takes no page** (item 3b). `[data-slot="watch-screenshot"]` with no rule
     of its own was a box of blank page between the conversation and the command bar, which is
     the ~140 px the review measured. `.chat-shot:empty { display: none }` takes it out until
-    PR #622's image lands, and `chatSlotFailures` refuses a slot rule that gives it height,
-    padding, a border or a background, and requires the rule that will size the image
-    (`.chat-shot > img`) so that adding the image stays one line of markup.
+    PR #622's image lands — and it is kept now that the image is in the slot, because it is the
+    rule that keeps a placeholder from coming back — and `chatSlotFailures` refuses a slot rule
+    that gives it height, padding, a border or a background, and holds the rule that sizes the
+    image (`.chat-shot > img`) to scaling it: a width that is a percentage of the column and a
+    height that follows the file's ratio.
   - **How It Works has one left edge, and room under its title** (item 3d). The detail section
     carried `var(--space-md)` of inline padding of its own on top of `main`'s gutter, so "The
     run, step by step" and the five steps were 24 px right of the `h1` and of the flow between
@@ -492,7 +499,8 @@ here goes stale the way the byte budgets did before D192.
   rather than one, and the gap is why: a padding that doubled a gap *below* some width would be
   invisible to a check taken at the desktop width, so `homeRhythmFailures` reads the page at
   1280, 768 and 375, and a case plants a phone-only double padding and proves the check refuses
-  it at 375 and nowhere else. The watch slot is `display: none` until PR #622's image lands, and nothing
+  it at 375 and nowhere else. The watch slot is `display: none` while it is empty (the image has since
+  landed in it, with the same rule kept under it), and nothing
   overflows horizontally, the
   reader's bubble is 288 px at the right of the card
   and the agent's 463–557 px at the left. Below 35 rem the bubbles fill the column — the
@@ -503,6 +511,42 @@ here goes stale the way the byte budgets did before D192.
   heaviest page renders neither the flow nor the install section. Whether the page then *looks*
   right is the owner's check (70a–70c, D190), and
   no screenshot is committed here: this run cannot see one either.
+
+## The `fugaro watch` screenshot (owner spec of 2026-10-18, item 5)
+
+`website/public/images/fugaro-watch.png` (2918 x 882 px, a 2x retina capture, so 1459 x 441 logical) is a
+real screenshot of `fugaro watch` running on the owner's dev installation, taken by the owner on
+2026-10-18. It is not a fixture and not generated. It shows the owner's real run titles, spend, run IDs
+and pull request links of `dimipaun/fugaro`; the owner decided to use it as is. D190 ("screenshots are
+regenerated and never committed") is waived by the owner for this one image, as it was for the first
+version. `website/public/images/fugaro-watch.txt` is a hand transcription of what the image shows, one
+line per terminal line, for alt text and as a text fallback (column spacing is approximate).
+
+The only processing is a lossless-to-near-lossless size reduction: the PNG was quantised to 48 colours
+without dithering and stripped of metadata (ImageMagick), from 510,664 bytes to 130,533 bytes. The text
+stays sharp and the green and yellow words keep their colours. No row or text was cropped or edited.
+
+Size: 130,533 bytes, inside the enforced byte budgets (`website/README.md`, re-derived over the gates'
+own build in the commit that placed it: 1,001,607 per page, 3,672,369 for the site — the two assets and
+the `<img>` moved the site figure and nothing else, above).
+
+**It is on the homepage now** (`website/src/components/AgentChat.astro`): the slot
+`[data-slot="watch-screenshot"]` under the chat holds it, so the block that was empty until the asset
+existed is the picture the owner took. The markup declares the capture's logical size (1459 x 441, the
+2x file's own ratio) so the box is reserved before the file arrives, `loading="lazy"` because the block
+sits under the whole conversation and nothing above the fold waits on it, and the `alt` is the gist of
+`fugaro-watch.txt` — the transcription ships as the text a reader gets when the picture does not.
+`website/test/home.mjs` holds all four (in the slot, a non-empty `alt`, the declared dimensions, and no
+external URL), and `website/test/base-styles.mjs`'s `chatSlotFailures` holds the sizing that makes it
+scale — a width that is a percentage of the column it sits in and a height that follows the file's own
+ratio, refused if either becomes a pixel count (the two planted cases). The rendered page was measured in
+a headless Chromium over the built site at 1280, 768 and 375: `scrollWidth` is the viewport's width at all
+three (no horizontal scroll, the picture being the page's own and nothing else overflowing), and the
+screenshot lays out at 750 x 228, 722 x 220 and 329 x 101 px — the column's width and the capture's ratio
+at each. Whether the rendered page matches the owner's design is the owner's check (70a-70c, D190), as no
+gate here can see an image: at 375 px the picture is a quarter of the width of the screen it captures, so
+its small print is not readable at that width and the transcription beside it is what a reader reads
+instead.
 
 ## The 2026-10-19 brief: the phone's menu and the console in the call to action
 

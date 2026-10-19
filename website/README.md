@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **842,154 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **979,298 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **840,639 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **977,783 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -212,6 +212,24 @@ added or removed without this sentence moving fails there:
   and it is also why **the page and the site move with the script**: a script every page
   loads is a page's weight as well as its JavaScript.
 
+  **The round after those is the `fugaro watch` screenshot landing on the homepage**, and it
+  moved the site figure alone. The owner's capture and its transcription
+  (`public/images/fugaro-watch.png`, 130,533 bytes, and `fugaro-watch.txt`, 3,363) were
+  committed by PR #622 but not yet placed on a page, and `public/` is served, so they were
+  already in every build of the site and were simply not counted here: the site figure is
+  derived from **every file in `dist/`** and can only see what a build produces, so the two
+  assets arrive in it as a build that grew. The `<img>` itself is 299 bytes of the homepage's
+  own markup. **The site figure moves 134,195 bytes of build**, so 167,744 bytes tight (that
+  plus 25 %) and 503,232 as stated: **tight 1,056,379 to 1,224,123, stated 3,169,137 to
+  3,672,369**. The page weight
+  does not move, and that is the check worth keeping: the picture lands on the homepage, and
+  the homepage is not the heaviest page — the docs hub is, at 267,095 bytes either side of
+  this change — while the homepage's own weight goes from 94,007 to 224,839 bytes, the
+  screenshot being 130,533 of it. The JavaScript is untouched.
+
+
+  - **JavaScript per page:** 149,172 bytes. Three times 49,724: the one script the site ships,
+    `public/scripts/site.js` (39,779 bytes), plus 25 %. What the file carries is the copy
   The round after that **took the menu's drawer out** (the owner's brief of 2026-10-19, item
   1): the "Menu" toggle, the panel it opened and the sibling combinator that showed it are
   gone, the three group labels stand in the header's row at every width, and the script loses
@@ -258,8 +276,8 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,158,079 bytes. Three times 1,052,693 (every file in `dist/`, 842,154
-    bytes across 21 files, plus 25 %) — the gates' own build of the site, which is the build
+  - **Whole site:** 3,672,369 bytes. Three times 1,224,123 (every file in `dist/`, 979,298
+    bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
