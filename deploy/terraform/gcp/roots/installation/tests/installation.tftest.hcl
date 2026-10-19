@@ -1633,7 +1633,7 @@ run "deployer_scoped_opt_in" {
       google_project_iam_custom_role.fugaro_deployer_repository[0].role_id,
       google_project_iam_custom_role.fugaro_deployer_run_job[0].role_id,
       google_project_iam_custom_role.fugaro_deployer_scheduler_job[0].role_id,
-    ] == [
+      ] == [
       "fugaroDeployerStorage",
       "fugaroDeployerSecret",
       "fugaroDeployerAccount",

@@ -342,7 +342,7 @@ condition. All seven are behind `count = var.managed_deployer_scoped ? 1 : 0`.
 | role | permissions | type(s) | condition clause |
 | --- | --- | --- | --- |
 | `fugaroDeployerStorage` (9) | `storage.buckets.{delete,get,setIamPolicy,update}`, `storage.objects.{create,delete,get,list,update}` | `storage.googleapis.com/Bucket`, `.../Object` | `resource.name.startsWith("projects/_/buckets/fmgd-")` — the form Check 32 proved |
-| `fugaroDeployerSecret` (3) | `secretmanager.secrets.{delete,setIamPolicy,update}` | `secretmanager.googleapis.com/Secret`, `.../SecretVersion` | `resource.name.extract("projects/{project}/secrets/{secret}").startsWith("fmgd-")` |
+| `fugaroDeployerSecret` (3) | `secretmanager.secrets.{delete,setIamPolicy,update}` | `secretmanager.googleapis.com/Secret` | `resource.name.extract("projects/{project}/secrets/{secret}").startsWith("fmgd-")` |
 | `fugaroDeployerAccount` (4) | `iam.serviceAccounts.{actAs,delete,setIamPolicy,update}` | `iam.googleapis.com/ServiceAccount` | `resource.name.startsWith("projects/${var.project}/serviceAccounts/fmgd-")` — the project is a plan-time literal here (C5, `cover.go`'s `saName`) |
 | `fugaroDeployerApiKey` (2) | `apikeys.keys.{delete,update}` | `apikeys.googleapis.com/Key` | `resource.name.extract("projects/{project}/locations/{location}/keys/{key}").startsWith("fmgd-")` |
 | `fugaroDeployerRepository` (3) | `artifactregistry.repositories.{delete,setIamPolicy,update}` | `artifactregistry.googleapis.com/Repository` | `resource.name.extract("projects/{project}/locations/{location}/repositories/{repository}").startsWith("fmgd-")` |
@@ -350,8 +350,21 @@ condition. All seven are behind `count = var.managed_deployer_scoped ? 1 : 0`.
 | `fugaroDeployerSchedulerJob` (5) | `cloudscheduler.jobs.{delete,enable,pause,run,update}` | `cloudscheduler.googleapis.com/Job` | `resource.name.extract("projects/{project}/locations/{location}/jobs/{job}").startsWith("fmgd-")` |
 
 9+3+4+2+3+5+5 = **31** — D75's scoped list, partitioned, nothing added or
-dropped. Operator counts: storage 3, secret 3, account 1, and 2 for each of the
-other four. The largest is 3 against a limit of 12 (C1).
+dropped. Operator counts: storage 3 (two clauses, joined by one `||`), and 1 for
+each of the other six (one clause, so a single `&&`). The largest is 3 against a
+limit of 12 (C1), where the 0.8.6 shape's single condition counted 17.
+
+`secretmanager.googleapis.com/SecretVersion` is deliberately **not** fenced and
+**not** named by any clause: no permission in `fugaroDeployerSecret` acts on a
+version (`secretmanager.versions.*` is in no deployer role at all), and a
+version's own name (`projects/<n>/secrets/<secret>/versions/<v>`) does not match
+the secret template, so a clause for it would be dead weight in a condition that
+has to stay under 12 operators. A version resource is therefore out of the
+fence's reach by being out of the role's reach — fail-closed. If a version
+permission were ever added to the role, `TestDeployerScopedRolesAreD75Partitioned`
+(internal/infra/tf/cover_test.go) refuses it: it is not in D75's scoped list,
+which that test carries as its own literal, and the partition test is what makes
+a permission moved between services a visible diff.
 
 The condition **title** stays `fugaro-managed-prefix` (`tf.DeployerConditionTitle`)
 for every binding: it names the *fence*, and an operator reading the project's
