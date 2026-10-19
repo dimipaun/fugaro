@@ -413,7 +413,7 @@ cost of the false refusal is a phone that cannot speak.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 54 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 55 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
@@ -464,7 +464,7 @@ than a claim.
 | the double's ack is classified by suffix alone (in `store.js`) | `only a message's own `acked` child is an ack: an id of `acked` is a message` -- and, run against `client.test.js`, `a message whose id is `acked` is a message in both directions` |
 | the leak fence treats any occurrence as a leak (in `secure-store.js`) | `the fence catches the material coming out, not its characters coinciding` -- and, run against `client.test.js`, `a pairing key short enough to turn up inside its own tag still speaks` |
 | **The offline gate (P6.10)** | |
-| the connection gate in `send` is asked at all | `with no connection nothing is written, and the owner is told why` |
+| the connection gate in `send` is asked at all | `with no connection nothing is written, and the owner is told why` -- and, for the other half of D167 (nothing is delivered LATER either), `a gated utterance is not delivered when the connection comes back` |
 | `send` judges the last poll's heartbeat again, at the time the owner speaks | `a consumer that has gone quiet since the last poll refuses the sentence` |
 | the poll keeps its observation for the gate | the same test |
 | the refusal speaks the sentence (the owner is TOLD) | `with no connection nothing is written, and the owner is told why` |
@@ -478,6 +478,7 @@ than a claim.
 | a send refusal the gate did not make carries no sentence either | `a sentence comes from the gate alone, and every other refusal is bare` |
 | a refused `flush` carries no sentence to render or to speak | the same test |
 | a refused `poll` carries no sentence to render or to speak | the same test |
+| the double's constructor is no more generous than the gate (in `connection.js`) | `the constructor is no more generous than the gate` |
 | a connection that is not `true` is offline (in `gate.js`) | `no connection refuses whatever the consumer looks like` |
 | a live consumer must be a VERIFIED one (in `gate.js`) | `a presence that is not evidence of a live consumer refuses` |
 | an unobserved consumer is not a refusal (in `gate.js`) | `a connected phone with nothing observed may send` |
