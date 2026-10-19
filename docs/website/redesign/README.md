@@ -313,6 +313,16 @@ here goes stale the way the byte budgets did before D192.
   renders the section, where the page's rule named the class and never reached the element —
   Astro scopes a page's selector to the elements the page renders, and the section is rendered
   by a component. The page weight and the script stay where they were.
+  **And a later round is the header's layer**, from the owner's reading of 2026-10-19 ("How it
+  works: menu hidden by the blocks on mobile"): the header and the panel a group hangs below it
+  were positioned boxes with no `z-index`, so a block drawn after the header and taken out of
+  the flow — the diagram's steps, which `position: relative` is what their arrows are placed
+  against, and the run's timeline steps, positioned for their connector — painted over an open
+  menu in tree order. `tokens.css` names the scale (`--z-header`, `--z-chrome`) and `base.css`
+  puts `.site-header` on the header's layer, which makes it a stacking context. Every one of the
+  eleven pages grows by the same bytes — the stylesheet they all inline — so the site figure and
+  the page weight both move, the docs hub inlining the same stylesheet and being the heaviest
+  page. The script is untouched.
   **The figures themselves are the ones `website/README.md` writes, and they are written
   there and nowhere else**: `website/test/budget.mjs` reads them from there and holds each to
   the build it can measure, and a derivation that names another build fails, which is what

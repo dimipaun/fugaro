@@ -28,9 +28,9 @@
 // `test/support/built.ts` makes the build before any of this reads it: the
 // workflow runs `npm run test:unit` on a fresh checkout, with no `dist/` at all.
 
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { createContext, runInContext } from 'node:vm'
 
 import { describe, expect, it } from 'vitest'
@@ -39,6 +39,7 @@ import { SERVED_FILES } from '../../src/main/protocol'
 import {
   BundleRefusal,
   THEME_STYLESHEETS,
+  buildConsole,
   bundleRenderer,
   bundleStylesheet,
   consoleBundlePaths,
@@ -48,6 +49,7 @@ import {
   isEntryPoint,
   isRelative,
   moduleClosure,
+  quotedRemoteIn,
   remoteUrlIn,
   requireSpecifiers,
   resolveSpecifier,
@@ -645,6 +647,43 @@ describe('the bundler', () => {
     })
   })
 
+  it('refuses to write its bundle through a symlink (review M4)', () => {
+    // The mutation: `dist/bundle/console.js` as a symbolic link. The write
+    // would land on the link's target -- a file outside the served root that
+    // nothing in this build, `SERVED_FILES` or the packaged-file list knows
+    // about -- so the bundle is refused rather than written through it.
+    withPlanted({ 'entry.js': `'use strict';\n` }, (root) => {
+      mkdirSync(join(root, 'dist', 'bundle'), { recursive: true })
+      const outside = join(root, 'outside.js')
+      writeFileSync(outside, 'untouched\n')
+      symlinkSync(outside, pathsOf(root).out)
+      const paths = pathsOf(root)
+      expect(() => {
+        bundleRenderer(paths)
+      }).toThrow(/is a symbolic link/)
+      // The second half of the claim, and the one a refusal alone would not
+      // make: the target still holds what it held.
+      expect(readFileSync(outside, 'utf8')).toBe('untouched\n')
+    })
+  })
+
+  it('refuses to write its bundle into a symlinked directory (review M4)', () => {
+    // The same half as the stylesheet's case, on the renderer's step: the
+    // served root itself is the link, so `readdirSync` would list the target's
+    // contents and the foreign-file refusal would be answering about the wrong
+    // directory before the write landed there.
+    withPlanted({ 'entry.js': `'use strict';\n` }, (root) => {
+      const outside = join(root, 'outside')
+      mkdirSync(outside, { recursive: true })
+      mkdirSync(join(root, 'dist'), { recursive: true })
+      symlinkSync(outside, join(root, 'dist', 'bundle'))
+      expect(() => {
+        bundleRenderer(pathsOf(root))
+      }).toThrow(/is a symbolic link/)
+      expect(readdirSync(outside)).toEqual([])
+    })
+  })
+
   it('refuses a package that is not the console', () => {
     withPlanted({ 'entry.js': `'use strict';\n` }, (root) => {
       expect(() => consoleRootHere(root)).toThrow(BundleRefusal)
@@ -778,6 +817,21 @@ describe('the stylesheet step', () => {
     })
   })
 
+  it('names the cascade in the design’s order (review M5, design section 3.6)', () => {
+    // The one case in this file that spells a theme file's *name*, and the only
+    // one that reads the artefact's layer order rather than the list: every
+    // other assertion reads `THEME_STYLESHEETS`, which is what keeps them true
+    // as Tasks 6.3 and 6.4 append their files -- and it is exactly why swapping
+    // two entries of the list left the whole suite green. `console.css` would be
+    // concatenated in the wrong order, `palette.css`'s values would arrive
+    // before the vocabulary that names them (design section 3.6: "the
+    // vocabulary, then the values, then the rules that read them"), and nothing
+    // would have failed.
+    const written = builtFile('bundle/console.css')
+    const layers = [...written.matchAll(/^\/\* ([\w.-]+\.css) \*\/$/gm)].map((match) => match[1])
+    expect(layers.slice(0, 2)).toEqual(['tokens.css', 'palette.css'])
+  })
+
   it('refuses a .css in the theme directory that THEME_STYLESHEETS does not list', () => {
     // The mutation: a stylesheet nobody reviewed. The list is the directory's
     // whole contents, so this file is the one that cannot be served.
@@ -788,6 +842,86 @@ describe('the stylesheet step', () => {
       expect(() => {
         bundleStylesheet(options)
       }).toThrow(/stray\.css, which THEME_STYLESHEETS does not list/)
+    })
+  })
+
+  it('refuses a .css the list does not name whatever its extension’s case is (review N3)', () => {
+    // The mutation: the stray-file refusal is `endsWith('.css')`, which is
+    // case-sensitive, so `stray.CSS` was neither listed nor refused -- the one
+    // file in the directory that the "the list is the whole contents" claim did
+    // not cover. It is harmless today (only listed names are read), which is
+    // why it is a nit, and it is one `.toLowerCase()` to close.
+    withPlantedStylesheet({ ...themeFiles(), 'stray.CSS': ':root { color: red; }\n' }, (options) => {
+      expect(() => {
+        bundleStylesheet(options)
+      }).toThrow(/stray\.CSS, which THEME_STYLESHEETS does not list/)
+    })
+  })
+
+  it('refuses a listed theme file that is a symlink (review M2)', () => {
+    // The mutation: a committed symlink in place of a theme layer. `statSync`
+    // would follow it and read whatever it points at into `console.css`, which
+    // is served to every window and packaged into the `.app` -- bytes the theme
+    // directory does not hold, and a file no test reading the sources sees. The
+    // target here is outside the theme directory and inside the planted tree,
+    // which is the shape a `../../../somewhere` link has.
+    const name = THEME_STYLESHEETS[0] ?? ''
+    const files = themeFiles()
+    delete files[name]
+    withPlantedStylesheet(files, (options) => {
+      const outside = join(options.directory, '..', '..', '..', 'outside.css')
+      writeFileSync(outside, ':root { --secret: SECRET-OUTSIDE; }\n')
+      symlinkSync(join('..', '..', '..', 'outside.css'), join(options.directory, name))
+      expect(() => {
+        bundleStylesheet(options)
+      }).toThrow(/is not a regular file/)
+    })
+    // The control the case needs: the same tree without the link builds, so the
+    // refusal is about the link and not about the name it took over. (It is the
+    // control case above, repeated on the tree this one plants — the missing
+    // file it starts from is why.)
+    withPlantedStylesheet(themeFiles(), (options) => {
+      expect(() => {
+        bundleStylesheet(options)
+      }).not.toThrow()
+    })
+  })
+
+  it('refuses to write the stylesheet through a symlink (review M4)', () => {
+    // The mutation: `dist/bundle/console.css` as a symbolic link. This is the
+    // mirror of the case above at the other end of the step, and it is the one
+    // that would put the theme's bytes outside `dist/bundle/` -- into a file the
+    // served root, `SERVED_FILES` and the packaged-file list all know nothing
+    // about.
+    withPlantedStylesheet(themeFiles(), (options) => {
+      const outside = join(options.directory, '..', '..', '..', 'outside.css')
+      writeFileSync(outside, 'untouched\n')
+      mkdirSync(dirname(options.out), { recursive: true })
+      symlinkSync(outside, options.out)
+      expect(() => {
+        bundleStylesheet(options)
+      }).toThrow(/is a symbolic link/)
+      expect(readFileSync(outside, 'utf8')).toBe('untouched\n')
+    })
+  })
+
+  it('refuses to write the stylesheet into a symlinked directory (review M4)', () => {
+    // The other half of the case above, and the one the file check alone leaves
+    // open: `mkdirSync(directory, { recursive: true })` accepts a symlinked
+    // directory without a word and the write then lands on the link's target, so
+    // `dist/bundle -> ../outside` used to build cleanly and leave the served
+    // stylesheet outside the served root. The link here is at the directory the
+    // output goes into, exactly as in the reproduction.
+    withPlantedStylesheet(themeFiles(), (options) => {
+      const root = join(options.directory, '..', '..', '..')
+      const outside = join(root, 'outside')
+      mkdirSync(outside, { recursive: true })
+      mkdirSync(dirname(dirname(options.out)), { recursive: true })
+      symlinkSync(outside, dirname(options.out))
+      expect(() => {
+        bundleStylesheet(options)
+      }).toThrow(/is a symbolic link/)
+      expect(existsSync(join(outside, 'console.css'))).toBe(false)
     })
   })
 
@@ -804,13 +938,19 @@ describe('the stylesheet step', () => {
     })
   })
 
-  it('refuses an @import, in every spelling CSS allows', () => {
+  it('refuses an @import, in the at-rule spellings CSS allows (review M1: the name overclaimed)', () => {
     // The mutation: the bundle is one file and the console is offline
     // (`connect-src 'none'`), so an import is either a runtime failure or a
     // request the CSP forbids.
     //
-    // Every spelling, and the upper-case one is the case that matters rather
-    // than a courtesy: at-rule names are ASCII case-insensitive in CSS, so
+    // Every *at-rule* spelling -- and the name used to say "every spelling CSS
+    // allows", which was false: CSS also spells one with an escape (`@\69mport`),
+    // and no scan in this tool unescapes. That spelling is the next case, on its
+    // own, because what refuses it is one rule about backslashes rather than a
+    // sixth string here (review M1).
+    //
+    // The upper-case one is the case that matters rather than a courtesy:
+    // at-rule names are ASCII case-insensitive in CSS, so
     // `@IMPORT url("./base.css");` is the same rule -- and it is the one
     // spelling the remote-URL refusal cannot catch, because its target is
     // relative. A case-sensitive scan would emit it into `console.css`, where
@@ -845,6 +985,95 @@ describe('the stylesheet step', () => {
         bundleStylesheet(options)
       }).not.toThrow()
     })
+  })
+
+  it('refuses a backslash, which CSS reads as an escape (review M1)', () => {
+    // The mutation, in its three shapes. CSS unescapes identifiers and strings
+    // before anything else sees them, so each of these is a rule this file
+    // refuses in its plain spelling: an `@import` whose target is relative (the
+    // one the remote-URL refusal cannot catch either), a `url()` that leaves
+    // this origin, and a quoted string that names a remote URL. Every scan in
+    // this tool is a scan and not a parse -- a comment that mentions `@import`
+    // is refused for it -- so none of them can see through an escape, and the
+    // escape is what is refused.
+    const name = THEME_STYLESHEETS[0] ?? ''
+    const real = themeFiles()[name] ?? ''
+    const escapes = [
+      '@\\69mport "./base.css";',
+      'a { background: u\\72l(https://cdn.example/x.png); }',
+      '.a { content: "\\68ttp://cdn.example/x.png"; }',
+      // And the case that makes the rule a rule rather than a list of the three
+      // shapes above: an escape of an ordinary character, `content: "\2014"`.
+      // Refused on purpose. An escaped spelling of a character says nothing a
+      // literal one does not -- theme files are UTF-8 and can write the
+      // character -- and a scan that tried to tell the harmless escapes from the
+      // load-bearing ones would be the parser this tool is not.
+      '.a { content: "\\2014"; }',
+    ]
+    for (const plant of escapes) {
+      withPlantedStylesheet({ ...themeFiles(), [name]: `${real}\n${plant}\n` }, (options) => {
+        expect(() => {
+          bundleStylesheet(options)
+        }).toThrow(/holds a backslash/)
+      })
+    }
+    // The control the refusal needs: the tree without the escape builds, so the
+    // rule is about the backslash and not about the file it was planted in.
+    withPlantedStylesheet(themeFiles(), (options) => {
+      expect(() => {
+        bundleStylesheet(options)
+      }).not.toThrow()
+    })
+    // Neither stylesheet in the tree holds one, which is what makes the refusal
+    // cost nothing today: a `\` in either would fail `npm run build` right here.
+    for (const [file, css] of Object.entries(themeFiles())) {
+      expect(css.includes('\\'), `${file} holds a backslash, which the step refuses`).toBe(false)
+    }
+  })
+
+  it('refuses a quoted string that names a URL, which image-set() reads as one (review M1)', () => {
+    // The mutation: `image-set()` and `-webkit-image-set()` take a **bare
+    // string** as a URL, so a remote load can be spelled without ever writing
+    // `url(`, which is the only place the scan beside this one looks.
+    const name = THEME_STYLESHEETS[0] ?? ''
+    const real = themeFiles()[name] ?? ''
+    for (const remote of [
+      'image-set("https://cdn.example/x.png" 1x)',
+      '-webkit-image-set("//cdn.example/x.png" 2x)',
+      "'http://cdn.example/x.png'",
+      // The mark that is *not* the string's own is an ordinary character inside
+      // it, so a body that excluded both marks could not see this one -- and
+      // neither `url()` scan nor the at-rule scan sees it either, so the load
+      // would reach `console.css` and be blocked at paint (review M1, second
+      // pass).
+      'image-set("https://cdn.example/a\'b.png" 1x)',
+      "-webkit-image-set('//cdn.example/a\"b.png' 2x)",
+    ]) {
+      withPlantedStylesheet({ ...themeFiles(), [name]: `${real}\n.a { background-image: ${remote}; }\n` }, (options) => {
+        expect(() => {
+          bundleStylesheet(options)
+        }).toThrow(/a quoted string that names a URL/)
+      })
+    }
+    // The control: a quoted string with no scheme is a string, and the `data:`
+    // URL the `url()` scan admits is admitted here too -- the two scans read a
+    // target the same way, which is `REMOTE_SCHEME_RE`. The second string is the
+    // false positive's edge, stated rather than implied: the target test is
+    // anchored at the string's start, so a string that merely *mentions* a URL
+    // is not refused. (A string that *begins* as a URL and is not one --
+    // `content: "Note: hello"`, which reads as the scheme `Note:` -- is refused,
+    // and that is the whole of the false-positive surface.)
+    withPlantedStylesheet(
+      {
+        ...themeFiles(),
+        [name]: `${real}\n.a { content: "attention"; background: url("data:image/svg+xml,%3Csvg%3E%3C/svg%3E"); quotes: "it's" "see the design's notes, https://example.com/x"; }\n`,
+      },
+      (options) => {
+        expect(() => {
+          bundleStylesheet(options)
+        }).not.toThrow()
+      },
+    )
   })
 
   it('refuses a url() on another origin, and admits one on this one', () => {
@@ -882,5 +1111,113 @@ describe('the stylesheet step', () => {
     expect(remoteUrlIn('a { background: url(data:image/png;base64,iVBORw0KGgo=); }')).toBeNull()
     expect(remoteUrlIn('a { background: none; }')).toBeNull()
     expect(themeStylesheetSources(THEME_DIR).map((source) => source.name)).toEqual([...THEME_STYLESHEETS])
+    // The quoted-string scan, which the cases above are only about `image-set()`
+    // if these answer what they say they answer: it reads a string's whole
+    // content, both marks, and the same two remote tests as the `url()` scan.
+    expect(quotedRemoteIn('.a { background: image-set("https://x/y.png" 1x); }')).toBe('"https://x/y.png"')
+    expect(quotedRemoteIn(".a { background: image-set('//x/y.png' 1x); }")).toBe("'//x/y.png'")
+    // The other mark is legal inside the string, so the body allows it: this is
+    // the spelling a body excluding both marks read as no string at all.
+    expect(quotedRemoteIn('.a { background: image-set("https://x/a\'b.png" 1x); }')).toBe('"https://x/a\'b.png"')
+    expect(quotedRemoteIn(".a { background: image-set('//x/a\"b.png' 1x); }")).toBe("'//x/a\"b.png'")
+    // The two ends of the false-positive surface: a string that merely mentions
+    // a URL passes (the target test is anchored at its start), and one that
+    // begins as a URL and is not one is refused.
+    expect(quotedRemoteIn('.a { content: "see the design\'s notes, https://x/y"; }')).toBeNull()
+    expect(quotedRemoteIn('.a { content: "Note: hello"; }')).toBe('"Note: hello"')
+    expect(quotedRemoteIn('.a { content: "attention"; }')).toBeNull()
+    expect(quotedRemoteIn('.a { background: url("data:image/svg+xml,%3Csvg%3E%3C/svg%3E"); }')).toBeNull()
+    expect(quotedRemoteIn('a { background: url(./y.png); }')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The order the build's steps run in (review M3).
+// ---------------------------------------------------------------------------
+
+/** themeSources are the two theme stylesheets a planted console root needs: the
+ * names `THEME_STYLESHEETS` holds, so a planted root is the console's own shape
+ * without being the console's own directory. */
+function themeSources(): Record<string, string> {
+  const files: Record<string, string> = {}
+  for (const name of THEME_STYLESHEETS) files[join('src', 'renderer', 'theme', name)] = 'a { color: red; }\n'
+  return files
+}
+
+/** plantedConsoleRoot is a throwaway console package for `buildConsole`: the
+ * served document and the theme under `src/`, the two compiled entries under
+ * `dist/renderer/`, and whatever the caller adds on top. It is the smallest tree
+ * the whole step accepts, which is what makes a refusal in the cases below about
+ * the file that was planted rather than about the tree. */
+function plantedConsoleRoot(extra: Readonly<Record<string, string>> = {}): string {
+  const root = mkdtempSync(join(tmpdir(), 'console-build-'))
+  const files: Record<string, string> = {
+    ...themeSources(),
+    [join('dist', 'renderer', 'entry.js')]: `'use strict';\n`,
+    [join('dist', 'renderer', 'installations.js')]: `'use strict';\n`,
+    ...extra,
+  }
+  for (const [name, body] of Object.entries(files)) {
+    const path = join(root, name)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, body)
+  }
+  mkdirSync(join(root, 'src', 'renderer'), { recursive: true })
+  writeFileSync(join(root, 'src', 'renderer', 'index.html'), '<!doctype html>\n')
+  return root
+}
+
+/** withPlantedConsole runs `body` on a planted console root, removed afterwards
+ * whatever happens. */
+function withPlantedConsole<T>(extra: Readonly<Record<string, string>>, body: (root: string) => T): T {
+  const root = plantedConsoleRoot(extra)
+  try {
+    return body(root)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+describe('the order the build’s steps run in', () => {
+  it('refuses a foreign file in the served root before it writes anything (review M3)', () => {
+    // The control first: this tree builds, and it builds every file the step is
+    // about. Without it a refusal below could be the planted tree's doing.
+    withPlantedConsole({}, (root) => {
+      buildConsole(root)
+      for (const name of ['console.css', 'console.js', 'installations.js', 'index.html']) {
+        expect(existsSync(join(root, 'dist', 'bundle', name)), `${name} was not written`).toBe(true)
+      }
+    })
+
+    // The mutation: a file in `dist/bundle/` this build does not write. The
+    // refusal is `refuseForeignFilesIn`, which `bundleRenderer` also calls --
+    // and the failure this case is about is that the stylesheet step used to run
+    // *first*, so the build failed with a fresh `console.css` already written
+    // beside the file it refused. Nothing was packaged, so nothing broke; the
+    // claim the tool's own comment made ("a refusal there should not leave half
+    // a bundle behind") held only one way round, and this is the other way.
+    withPlantedConsole({ [join('dist', 'bundle', 'FOREIGN.txt')]: 'not ours\n' }, (root) => {
+      expect(() => {
+        buildConsole(root)
+      }).toThrow(/holds FOREIGN\.txt/)
+      expect(
+        existsSync(join(root, 'dist', 'bundle', 'console.css')),
+        'the build refused a foreign file after writing console.css: the foreign-file check must run before the first write',
+      ).toBe(false)
+      expect(existsSync(join(root, 'dist', 'bundle', 'console.js'))).toBe(false)
+    })
+
+    // And the second thing the pre-write half refuses: the served root itself as
+    // a symlink, before `refuseForeignFilesIn` reads it and before any write.
+    // (`refuseForeignFilesIn` would happily answer about the link's target.)
+    withPlantedConsole({}, (root) => {
+      const outside = join(root, 'dist', 'outside')
+      mkdirSync(outside, { recursive: true })
+      symlinkSync(outside, join(root, 'dist', 'bundle'))
+      expect(() => {
+        buildConsole(root)
+      }).toThrow(/is a symbolic link/)
+      expect(readdirSync(outside)).toEqual([])
+    })
   })
 })
