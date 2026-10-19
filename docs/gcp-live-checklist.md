@@ -4416,9 +4416,10 @@ stays **NOT RUN**.
 RF23), and written here rather than left to the redesign's own plan because this is the file the
 owner runs live checks out of. It is the half of P5 no hermetic test can take. Two gates hold the
 halves the claim rests on — `website/test/fold.mjs` the **ordering** (the homepage's lead region is
-the promise and nothing else, Getting Started's install section opens with its commands, and every
-page that prints a command prints it under a heading) and `website/test/budget.mjs` the **word
-ceilings** (D188: 40 words in a page's lead, 250 per page except the three reference pages) — and
+the promise and its call to action and nothing else, Getting Started's install section opens with
+its commands, and every page that prints a command prints it under a heading) and
+`website/test/budget.mjs` the **word ceilings** (D188: 40 words in a page's lead, 250 per page
+except the three reference pages) — and
 neither of them can see a viewport, which is exactly D187's question. The fold is a position on a
 screen, and this repository's gates are deliberately browser-free, so D187 answered it with the
 ceiling **plus this one owner-run check** rather than with the repository's first browser-driven

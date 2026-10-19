@@ -525,15 +525,24 @@ var reChecklistClassName = regexp.MustCompile(`\.([a-z][a-z0-9]*(?:-[a-z0-9]+)+)
 var reChecklistDataAttr = regexp.MustCompile(`\b(data-[a-z][a-z0-9]*(?:-[a-z0-9]+)*)`)
 
 // websiteSourceText is the site's own source, concatenated: every `.astro`, `.css`, `.js`,
-// `.mjs`, `.ts`, `.json` and `.yaml` file under `website/src`, `website/public` and
-// `website/test`. It is deliberately not the built artifact -- `website/dist/` exists only
-// after `npm run check`, and the Go tests run in CI with no Node and no build -- and not
-// `node_modules`, which is a toolchain's cache rather than the site.
+// `.mjs`, `.ts`, `.json` and `.yaml` file under `website/src` and `website/public`. It is
+// deliberately not the built artifact -- `website/dist/` exists only after `npm run check`,
+// and the Go tests run in CI with no Node and no build -- and not `node_modules`, which is a
+// toolchain's cache rather than the site.
+//
+// `website/test` is deliberately **not** walked, though it is the site's source too. The
+// gates keep the retired names as fixtures -- `website/test/base-styles.mjs` and
+// `website/test/nav-hover.mjs` hold `site-nav-toggle`, `site-nav-drawer` and `site-nav-panel`
+// as "must be gone" text, and they appear nowhere under `src` or `public` -- so a walk that
+// covered them would answer for exactly the names this case exists to catch, and a section
+// that re-added the retired drawer would pass. The case is about the site that ships; the
+// pages the gates build are checked from the other side, by `website/test/checklist.mjs` for
+// Check 70a.
 func websiteSourceText(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join("..", "..", "website")
 	var b strings.Builder
-	for _, dir := range []string{"src", "public", "test"} {
+	for _, dir := range []string{"src", "public"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -578,8 +587,10 @@ func websiteSourceText(t *testing.T) string {
 //
 // The names are derived from the document and never listed here: a list of selectors written
 // into this file would be a second place to forget, and the subject is the checks' own text.
-// Each name has to be a whole word of some source file -- the boundary excludes `-`, so a
-// source that has `.chat-watch-block` does not answer for `.chat-watch` -- and each section
+// Each name has to be a whole word of some source file the site ships -- `website/src` or
+// `website/public`, never `website/test`, whose retired-name fixtures would answer for a
+// check that re-added them (see `websiteSourceText`) -- the boundary excludes `-`, so a
+// source that has `.chat-watch-block` does not answer for `.chat-watch`, and each section
 // has to contribute at least one, so a rewrite that dropped every name is refused rather than
 // passing an empty loop.
 func TestWebsiteChecklist70SectionsNameClassesTheSiteCarries(t *testing.T) {
@@ -603,7 +614,7 @@ func TestWebsiteChecklist70SectionsNameClassesTheSiteCarries(t *testing.T) {
 		for _, name := range slices.Sorted(maps.Keys(names)) {
 			carried := regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])` + regexp.QuoteMeta(name) + `(?:$|[^A-Za-z0-9_-])`).MatchString(source)
 			if !carried {
-				t.Errorf("%s cites `%s`, and no source file under website/src, website/public or website/test carries that name: the section reads the page out of the tree, so a name the tree does not have is a step the owner cannot run -- rename it in docs/gcp-live-checklist.md in the commit that renames it in the site", h, name)
+				t.Errorf("%s cites `%s`, and no source file under website/src or website/public carries that name: the section reads the page out of the tree, so a name the tree does not have is a step the owner cannot run -- rename it in docs/gcp-live-checklist.md in the commit that renames it in the site", h, name)
 			}
 		}
 	}
