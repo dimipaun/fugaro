@@ -286,9 +286,10 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		{"image refresh", ""},
 	} {
 		words := c.path
+		cmd := commandAt(t, strings.Split(c.path, " ")...)
 		if c.flag != "" {
 			words += " --" + c.flag
-			if cmd := commandAt(t, strings.Split(c.path, " ")...); cmd.Flags().Lookup(c.flag) == nil {
+			if cmd.Flags().Lookup(c.flag) == nil {
 				t.Errorf("fugaro %s has no --%s flag, and %s tells an operator to run it", c.path, c.flag, releaseNotesV090)
 			}
 		}
