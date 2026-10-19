@@ -55,12 +55,12 @@ not exist. Recording them here so the next reader does not repeat them.
 | **MCP server over HTTP** (§7) | No MCP server, no MCP dependency. The only HTTP server in the repository is the per-run budget gateway, bound to loopback (`internal/gateway/gateway.go:190-202`, `127.0.0.1:0`). See **#8**. |
 | **Two model tiers; "reuses the project's existing key management and security service"** (§8) | The security service does not exist (`docs/credentials-service/README.md:3` — *"plan only; nothing is implemented"*). Model configuration today is per **slot**, not per tier (`agent.models.coder|reviewer|background`, `docs/design/m10-multi-model.md:62`) plus the routing switch (`internal/config/routing.go:42-61`). See **#21**, **#22**, **#23**. |
 | **Concurrency: Firestore transactions or a per-project lock** (§9) | The Firestore client has **no transactions**; the only lock is per-branch, in GCS (`internal/lock/lock.go:1-5`, key `locks/<slug>/<branch-hash>`). The repo's concurrency idiom is generation-matched GCS writes (`internal/blobx/blobx.go:238,334,365`), RTDB `PutIfMatch` ETag CAS (`internal/budget/kill.go:141`) and deterministic doc IDs with update-time preconditions (`internal/budget/rollover.go:511,526`). See **#16**, **#17**. |
-| **Daily token-spend cap that "counts toward the project's existing spend caps"** (§9) | The existing caps are **per run**, keyed to a run's Firebase identity (`internal/budget/token/token.go:83-88 Claims`; `internal/budget/evaluate.go:135 Evaluate`). A long-lived service has no run identity. See **#19**. |
+| **Daily token-spend cap that "counts toward the project's existing spend caps"** (§9) | The existing caps are **per run**, keyed to a run's Firebase identity (`internal/budget/token/token.go:83-88 Claims`; `internal/budget/evaluate.go:135 Evaluate`). A long-lived service has no run identity. See **#25**. |
 | **Drift reconciliation: a scheduled job via the same Terraform** (§9) | This shape exists: Cloud Scheduler → HTTP POST to the Cloud Run Admin `jobs:run` API (`deploy/terraform/gcp/modules/installation/history.tf:180`, `*/15 * * * *`; a daily rollover at `:223`). It targets a **job**, not a service. See **#18**. |
-| **Console project-wide view; "ask the coordinator"** (§10) | The console's nav is Live / Spend / Projects (`console/src/renderer/entry.ts:490-496`); its data plane is one interface over the `fugaro` CLI as a sidecar (`console/src/source/cli.ts:1-8`), with 14 read operations and no write (`console/src/main/ipc.ts:307-558`). The v2 *spec*'s "Overview" is unbuilt, and v2's ruling is one write only — launch (D22, `docs/design/desktop-console-v2.md:244`). See **#25**, **#26**. |
+| **Console project-wide view; "ask the coordinator"** (§10) | The console's nav is Live / Spend / Projects (`console/src/renderer/entry.ts:490-496`); its data plane is one interface over the `fugaro` CLI as a sidecar (`console/src/source/cli.ts:1-8`), with thirteen read operations and one `link.openExternal` (`console/src/main/ipc.ts:307-558`, fourteen entries). The v2 *spec*'s "Overview" is unbuilt, and v2's ruling is one write only — launch (D22, `docs/design/desktop-console-v2.md:244`). See **#27**, **#28**. |
 | **Advisory, not authoritative; "never blocks or reorders merges"** (§3) | Consistent with the repo, and it has a hard consequence: the coordinator must hold **no GitHub write permission**. The App's per-run token asks for `contents: write, pull_requests: write, issues: read, metadata: read` (`internal/gitprov/github/apptoken.go:83`); a read-only set is expressible (`MintInstallationToken` takes the perms map) but no caller mints one. See **#9**, **Q3**. |
 | **Self-hosted; no Fugaro-operated central service** (§3) | Consistent: everything is per-installation, and managed projects are gated off in this release (`internal/cli/recipes_skew.go:169 managedDeployerShipped = false`). |
-| **"Works with any MCP-capable agent, not only Claude"** (§7) | The repository drives **only Claude Code** (`docs/base-image.md`). A front door for arbitrary MCP clients is a new integration and a new untrusted-input surface. See **#8**, **#27**. |
+| **"Works with any MCP-capable agent, not only Claude"** (§7) | The repository drives **only Claude Code** (`docs/base-image.md`). A front door for arbitrary MCP clients is a new integration and a new untrusted-input surface. See **#8**, **#13**. |
 
 ---
 
@@ -180,8 +180,9 @@ frame-ancestors 'none'; object-src 'none'`, and the comment at `:126-128` says w
 *"`connect-src 'none'` is the load-bearing one: the renderer never talks to the network,
 because every byte it draws arrives over IPC from the main process."* The renderer reaches
 data only through `window.fugaro` → `ipcRenderer.invoke` (`console/src/preload/index.ts:238`)
-→ a fixed table of 14 read operations, each of which spawns the `fugaro` binary with an
-exact argv (`console/src/main/ipc.ts:307-558`, `console/src/main/spawn.ts:326+`).
+→ a fixed table of fourteen operations, thirteen of them reads, each of which spawns the
+`fugaro` binary with an exact argv (`console/src/main/ipc.ts:307-558`,
+`console/src/main/spawn.ts:326+`).
 *Consequence:* live updates in the console are a **CLI-sidecar polling** problem, exactly
 like today's `live.watch` (`['watch','--json']`), not a listener problem. Whatever the
 coordinator stores, the console sees it only if a `fugaro` command can read it. → **Q8**.
@@ -461,9 +462,9 @@ A rough arithmetic, stated as arithmetic and not as a quote:
   about **$0.0035**; 200 events is under **$1/day**. This tier is not the cost problem.
 - **Reasoning tier.** At Opus 5.5 rates, a 20,000-token context with a 1,000-token answer
   is about **$0.10**; run it on every event and 200 events is **$20/day**, roughly
-  **$600/month** — which is the number that matters, and it is two orders of magnitude
-  above the routine tier. Rebuilding a project-wide context on each wake-up (spec §9) is
-  what makes the context large.
+  **$600/month** — which is the number that matters, and it is some thirty times the
+  routine tier's. Rebuilding a project-wide context on each wake-up (spec §9) is what
+  makes the context large.
 - **Idle cost.** A scale-to-zero Cloud Run service costs nothing while idle; Cloud
   Scheduler is free at these volumes; RTDB and Firestore at this scale are within the free
   tier or single-digit dollars a month. The idle cost is **not** the risk.
@@ -476,8 +477,9 @@ so. Anything that runs the reasoning tier on every event is the whole cost. → 
 **#27 — The console gains no project-wide view for free, and its write surface is already ruled. — Gap / Rule.**
 The nav is three views (`console/src/renderer/entry.ts:490-496`) and the data plane is one
 interface (`console/src/source/source.ts`, `console/src/source/cli.ts:1-8`) whose v1
-implementation spawns the installed `fugaro`. The IPC table is 14 read operations plus
-`link.openExternal` (`console/src/main/ipc.ts:307-558`). v1 is *"strictly read-only"*
+implementation spawns the installed `fugaro`. The IPC table is fourteen entries — thirteen
+reads plus `link.openExternal` (`console/src/main/ipc.ts:307-558`). v1 is *"strictly
+read-only"*
 (`docs/design/desktop-console.md:404`, D2), and v2's ruling is **one** write — launch,
 through `fugaro run`, *"with no command queue"* (`docs/design/desktop-console-v2.md:244`,
 D22). So the console's §10 "ask the coordinator" is a **new** interaction, and it is the
@@ -675,8 +677,10 @@ them and then approves a plan.
 
 ## 5. Glossary
 
-The spec's words collide with words this repository already uses, and two of the collisions
-are real (finding **#29**). Proposed, for the README and for whatever plan follows.
+The spec's words collide with words this repository already uses, and the collisions are of
+two kinds: some are the same object under two names (a Fugaro project **is** an
+installation, finding **#1**), and one is a real conflict (finding **#29**). Proposed, for
+the README and for whatever plan follows.
 
 | Word | What it means **here** | Where it is already used |
 | --- | --- | --- |
