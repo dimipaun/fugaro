@@ -154,6 +154,14 @@ test('a new queue is empty, and its defaults are the owner rulings', () => {
   // is a caller whose next call this module would refuse.
   assert.ok(Object.isFrozen(queue));
   assert.ok(Object.isFrozen(queue.prompts));
+  // The RESULT is frozen too, like every other object an exported entry point
+  // hands back: this one was the exception, and a caller that could rewrite
+  // `ok` or swap the queue on the result it was given would be a caller whose
+  // next call this module could not predict.
+  const built = initialQueue({ now: T0, account: 'acct-a' });
+  assert.equal(built.ok, true);
+  assert.ok(Object.isFrozen(built), 'the constructor result is frozen like every other');
+  assert.ok(Object.isFrozen(built.queue));
 });
 
 test('a queue refuses what it cannot read, one code per fault', () => {
@@ -595,13 +603,20 @@ test('a clock that leaps forward is refused, and the watermark does not move', (
   assert.equal(expire(queue, { now: T0 - 1 }).code, REFUSAL.NOW_WENT_BACKWARDS);
 });
 
-test('every operation that accepts a clock reading writes it into the queue it hands back', () => {
+test('every MUTATING operation writes the reading it accepted into the queue it hands back', () => {
   // The monotone rule is not only a check on the way in: an accepted `now`
   // becomes the queue's watermark, which is what makes the NEXT call's
   // `now-went-backwards` possible. One path that forgot to write it would let a
   // clock step back after an enqueue, an answer or an announce -- re-arming
   // reminders and reviving a prompt's due state -- while looking exactly like a
   // queue that had never heard of the later reading.
+  //
+  // MUTATING is the word that matters, and the exceptions below are pinned
+  // rather than assumed: a read (`pending`) and an enqueue that changed nothing
+  // (`duplicate`, `expired`) hand back the queue they were given, so the
+  // reading they accepted is NOT recorded -- deliberately, because there is no
+  // state for it to be recorded in. A later call with an earlier `now` is
+  // therefore accepted after them, which is the same fact from the other side.
   const queue = enqueueOne(makeQueue()).queue;
   assert.equal(queue.now, T0);
   const later = T0 + HOUR;
@@ -618,6 +633,18 @@ test('every operation that accepts a clock reading writes it into the queue it h
     // And the rule that write is for, on the queue it just handed back.
     assert.equal(act(moved.queue, later - 1).code, REFUSAL.NOW_WENT_BACKWARDS, name);
   }
+
+  // The exceptions, one by one: each hands back the very queue it was given.
+  const read = pending(queue, { now: later });
+  assert.equal(read.ok, true);
+  assert.deepEqual(read.queue, queue, 'a read hands back the queue it was given');
+  assert.equal(read.queue.now, T0, 'a read records no reading');
+  const duplicate = enqueue(queue, { now: later, prompt: promptMessage() });
+  assert.equal(duplicate.outcome, OUTCOME.DUPLICATE);
+  assert.equal(duplicate.queue.now, T0, 'a duplicate changed nothing, so it records nothing');
+  const dead = enqueue(makeQueue(), { now: T0 + PROMPT_TTL_MS + 1, prompt: promptMessage({ at: T0 }) });
+  assert.equal(dead.outcome, OUTCOME.EXPIRED, JSON.stringify(dead));
+  assert.equal(dead.queue.now, T0, 'an already-dead delivery is not a queue that moved on');
 });
 
 test('the count across installations refuses a clock behind an installation it read', () => {
@@ -640,6 +667,57 @@ test('the count across installations refuses a clock behind an installation it r
   // And the forward jump is deliberately NOT bounded here: nothing is written,
   // so a far-future reading is a listing, not a fault.
   assert.equal(pendingAcross(queues, { now: T0 + MAX_JUMP_MS + 1 }).ok, true);
+});
+
+test('the reads answer over a queue the caller has already expired, and say what they see', () => {
+  // A held prompt dies while it waits, and the reads do NOT apply the TTL to
+  // it. That is deliberate, and it is the caller's ordering that makes it safe:
+  // `expire` is what kills a prompt, it is P6.7 that calls it -- on the
+  // consumer's own clock, before it reads -- and expiry YIELDS the safe answer
+  // or a stop that the orchestrator is owed exactly once (D168 as amended). A
+  // listing that quietly dropped a dead prompt would destroy that answer, which
+  // is the one thing this module refuses to do anywhere else (a full queue is
+  // refused, never evicted).
+  //
+  // So the invariant is a PRECONDITION, stated here and in the README: the
+  // reads are over a swept queue. This test pins both halves of it -- what a
+  // read reports when the caller has not swept, and that the sweep clears it.
+  const queue = enqueueOne(makeQueue()).queue;
+  const dead = T0 + PROMPT_TTL_MS + 1; // one millisecond past the TTL
+  const swept = expire(queue, { now: dead });
+  assert.equal(swept.expired.length, 1, "expire's own verdict at that now");
+  assert.equal(swept.expired[0].reply, EXPIRED_REPLY, 'the answer the orchestrator is owed');
+  assert.equal(swept.expired[0].stop, true, 'no safe answer, so it is told to stop');
+  assert.equal(swept.queue.prompts.length, 0);
+
+  // Unswept, at that same now: every read still sees a live, due question.
+  const listed = pending(queue, { now: dead });
+  assert.equal(listed.pending.length, 1);
+  assert.equal(listed.pending[0].due, true, 'a dead prompt still reads as due');
+  assert.equal(announce(queue, { now: dead }).spoken.length, 1, 'and is still read out');
+  assert.equal(announcement([queue], { now: dead }).count, 1);
+  assert.equal(announcement([queue], { now: dead }).text, 'One question waiting');
+  assert.equal(
+    evaluateInterrupt({ queue, now: dead, switch: SWITCH.WIDEN }).reason,
+    INTERRUPT.PROMPT,
+    'and can raise the widen interrupt until it is swept',
+  );
+
+  // Swept: none of them reports it, at the same `now`.
+  assert.equal(pending(swept.queue, { now: dead }).pending.length, 0);
+  assert.equal(announce(swept.queue, { now: dead }).spoken.length, 0);
+  assert.equal(announcement([swept.queue], { now: dead }).count, 0);
+  assert.equal(announcement([swept.queue], { now: dead }).text, null);
+  assert.equal(
+    evaluateInterrupt({ queue: swept.queue, now: dead, switch: SWITCH.WIDEN }).reason,
+    null,
+  );
+
+  // And the door refuses to hold one in the first place, which is the same rule
+  // one call earlier: a delivery that arrives dead is answered, not queued.
+  const late = enqueue(makeQueue(), { now: dead, prompt: promptMessage({ at: T0 }) });
+  assert.equal(late.outcome, OUTCOME.EXPIRED);
+  assert.equal(late.queue.prompts.length, 0);
 });
 
 test('a stored prompt is re-checked against the `at` bound on every read', () => {

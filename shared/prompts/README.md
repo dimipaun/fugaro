@@ -90,6 +90,17 @@ non-destructive answer, or a **stop** when it has none (`EXPIRED_REPLY`, "no ans
 Delivering that answer exactly once is the consumer's (P6.7), ledger-protected; this module decides
 only what it is.
 
+**The reads are over a swept queue, and the ordering is the caller's.** Nothing here kills a
+prompt on a timer: `expire` kills it, and P6.7 calls it on the consumer's own clock (D168 as
+amended) *before* it reads. So `pending`, `announce`, `announcement` and `evaluateInterrupt` apply
+**no TTL** — an unswept dead prompt is still listed (`due: true`), still read out, still counted in
+the cross-account sentence, and still able to raise the `widen` interrupt. That is deliberate: a
+listing that quietly omitted a dead prompt would throw away the safe answer or the stop the
+orchestrator is owed exactly once, and this module refuses to drop a question anywhere else (a full
+queue is refused, never evicted). The invariant is stated, therefore, as a precondition on the
+caller — and `index.test.js` pins both halves: what every read reports unswept, and that the sweep
+clears it at the same `now`.
+
 The boundary is `>` and is deliberately the same boundary P1.1 draws: a prompt of age exactly the
 TTL is still alive here and still accepted by `step`. `index.test.js` asserts that agreement by
 running P1.1 rather than by restating the arithmetic, which is what keeps the two from drifting —
@@ -113,6 +124,13 @@ rule (`now-went-backwards`, against every queue they read), because reading a qu
 its own watermark is a contradiction whatever the caller does with it. **If any of those three ever
 grows a write, it takes this bound with it** — `open()` is the only door a watermark moves through,
 and a second door would have to argue for itself here.
+
+**`pending` is the exception among the reads, and it is on purpose.** It is a single
+installation's own queue, opened through the same door the writes use, so it takes both bounds:
+`now-went-backwards` and `now-jumped`. A far-future reading of *your own* queue is a fault with a
+state behind it — the queue keeps that watermark — while the three views above take a reading and
+hold nothing. The asymmetry is the point, not an oversight: `pending`'s refusal is what tells the
+caller its clock and its queue have parted company.
 
 ## Two windows, and which one an answer takes (D173, §3.6)
 
@@ -309,10 +327,12 @@ the ceiling holds on both sides of a queue's life), and a **plain `answer` to a 
 is `not-a-confirmation` while an **action record** answers it, is judged from the confirmation's own
 time and is checked as an action record rather than merely accepted by kind. Three tests pin the
 rules that were *removed* rather than kept, and two more pin the rule the whole clock section
-rests on: every operation that accepts a reading **writes it into the queue it hands back** — so a
-clock that steps back after an `enqueue`, an `expire`, an `answer` or an `announce` is refused
+rests on: every **mutating** operation writes the reading it accepted into the queue it hands back —
+so a clock that steps back after an `enqueue`, an `expire`, an `answer` or an `announce` is refused
 `now-went-backwards`, one case per path — and the count across installations refuses a reading
-behind any installation it read. `reminderStage` is monotone in `at` (which
+behind any installation it read. The same test pins the three that deliberately do **not** record a
+reading: `pending` and an `enqueue`'s `duplicate` and `expired` outcomes hand back the queue they
+were given, because nothing changed for a watermark to be written into. `reminderStage` is monotone in `at` (which
 is why the listing needs no stage rule of its own), an expiry list comes back oldest-first (which is
 why `expire` needs no sort), and `digest.severity` is read through its own descriptor (which is why
 `readKill` has no plain property access). One test is not about values at all: it scans `index.js`
@@ -328,7 +348,7 @@ P6.13 have one — so that sentence is the task's *Verification* clause, and thi
 step the plan named. It is still written first and kept as `mutation-proof.sh`'s first guard: it is
 the clause the task is verified by, and re-running it costs nothing.
 
-`mutation-proof.sh` plants 86 one-line bugs in `index.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 90 one-line bugs in `index.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. It

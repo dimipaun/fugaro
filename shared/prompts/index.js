@@ -39,6 +39,18 @@
 // Exactly-once delivery of that answer is the consumer's (P6.7), ledger-
 // protected; this module only decides WHAT the answer is.
 //
+// **The reads are over a swept queue, and that is the caller's ordering.** A
+// held prompt dies while it waits: nothing here kills it on a timer, because
+// `expire` is what kills it and the consumer calls it on its own clock (D168 as
+// amended). So `pending`, `announce`, `announcement` and `evaluateInterrupt`
+// apply **no TTL**: an unswept dead prompt is still listed, still due, still
+// counted and still able to widen the interrupt. That is deliberate, not a
+// gap -- a listing that quietly omitted a dead prompt would destroy the answer
+// the orchestrator is owed, which is the one thing this module refuses to do
+// anywhere else (a full queue is refused, never evicted) -- and P6.7 expires
+// before it reads. `index.test.js` pins both halves: what a read reports when
+// the caller has not swept, and that the sweep clears it.
+//
 // The boundary is the same boundary P1.1 applies, and that is not a coincidence
 // to be re-derived: P1.1 accepts a prompt of age exactly the TTL
 // (`now - at > window` refuses) and P6.5 expires it at exactly the same line,
@@ -636,7 +648,12 @@ function initialQueueUnguarded(options = {}) {
     return refuse(REFUSAL.INVALID_FUTURE_TOLERANCE, 'futureToleranceMs');
   }
 
-  return {
+  // Frozen like every other result an entry point hands back: the queue is a
+  // value, and the object carrying it is one too. A caller that could rewrite
+  // `ok`, or swap the queue on the result it was given, would be a caller whose
+  // next call this module could not predict -- and this constructor was the one
+  // exception.
+  return Object.freeze({
     ok: true,
     queue: freezeQueue({
       account,
@@ -647,7 +664,7 @@ function initialQueueUnguarded(options = {}) {
       futureToleranceMs,
       prompts: [],
     }),
-  };
+  });
 }
 
 /** A queue value, frozen at every level: entries and their prompts alike. */
@@ -1306,7 +1323,9 @@ function compareForListing(left, right) {
  *
  * In the listing order, each carrying its reminder stage and whether it is due
  * ("what's pending?", §3.4, and the text screen's list, P6.9). It changes
- * nothing: `announce` is what marks a prompt as spoken.
+ * nothing: `announce` is what marks a prompt as spoken, and neither applies the
+ * TTL -- the queue is one the caller has already expired (`expire`), which is
+ * what keeps a dead prompt's answer from being dropped unspoken.
  *
  * @returns `{ ok: true, pending: [...] }` or a refusal
  */
@@ -1551,6 +1570,10 @@ const CAP_FIELDS = Object.freeze(['reached', 'near']);
  * the consumer, then a prompt -- so two events at once report the one that
  * matters most, and there is no cell of the (event x switch) table left
  * undecided: `index.test.js` asserts the whole table rather than the examples.
+ *
+ * It applies **no TTL** to the queue it reads (`widen`'s `due` is the reminder
+ * schedule, not the prompt's life), so it is a read over a queue the caller has
+ * already expired -- see the header's note on the caller's ordering.
  *
  * @returns `{ ok: true, interrupt, reason, pending }` or a refusal
  */

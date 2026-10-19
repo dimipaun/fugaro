@@ -407,6 +407,51 @@ run "announce writes the reading it accepted" \
 # The cross-account reads hold no watermark, so they apply the backwards rule
 # and NOT the jump bound -- but they do apply the backwards rule, per
 # installation, over every queue they were handed.
+# The constructor's result is a frozen value like every other result an entry
+# point hands back: this was the one exception, and a caller that could rewrite
+# `ok` or swap the queue on the result it was given is a caller whose next call
+# this module could not predict.
+run "the constructor's result is frozen, queue and all" \
+  "  return Object.freeze({
+    ok: true,
+    queue: freezeQueue({
+      account," \
+  "  return {
+    ok: true,
+    queue: freezeQueue({
+      account,"
+
+# The reads do NOT apply the TTL: the queue is one the caller has already
+# expired, and a listing that quietly dropped a dead prompt would destroy the
+# safe answer or the stop the orchestrator is owed exactly once. These two
+# mutations are the "helpful" fix the review offered, planted to show the tests
+# refuse it.
+run "a listing does not hide a prompt the caller has not expired" \
+  "  const list = current.prompts
+    .map((entry) => listing(entry, values.now))
+    .sort(compareForListing);" \
+  "  const list = current.prompts
+    .filter((entry) => !expiredBy(entry.prompt.at, values.now, current.promptTtlMs))
+    .map((entry) => listing(entry, values.now))
+    .sort(compareForListing);"
+
+run "an unswept dead prompt can still raise the widen interrupt" \
+  "    due: queue.prompts.some((entry) => isDue(entry, values.now))," \
+  "    due: queue.prompts.some(
+      (entry) => isDue(entry, values.now) && !expiredBy(entry.prompt.at, values.now, queue.promptTtlMs),
+    ),"
+
+# A delivery that changed nothing records no reading: it hands back the queue it
+# was given, because there is no state for a new watermark to be written into.
+run "a duplicate records no reading" \
+  "      return Object.freeze({ ok: true, outcome: OUTCOME.DUPLICATE, id: prompt.id, queue: current });" \
+  "      return Object.freeze({
+        ok: true,
+        outcome: OUTCOME.DUPLICATE,
+        id: prompt.id,
+        queue: freezeQueue({ ...current, now: values.now }),
+      });"
+
 run "the count across installations refuses a clock behind one of them" \
   "    if (now < queue.now) return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');
     const list = queue.prompts" \
