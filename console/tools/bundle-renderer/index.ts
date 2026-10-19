@@ -531,7 +531,7 @@ const URL_STRIPPED_RE = /[\t\n\r]/g
 
 /** URL_EDGE_SPACE_RE matches the C0 controls and spaces the URL parser strips
  * at the two ends of a target. */
-const URL_EDGE_SPACE_RE = /^[\u0000- ]+|[\u0000- ]+$/g
+const URL_EDGE_SPACE_RE = /^[\u0000-\u0020]+|[\u0000-\u0020]+$/g
 
 /** urlParserTarget is a target as the URL parser would read it: ASCII tab and
  * newline removed wherever they are, then the leading and trailing C0 controls
