@@ -312,11 +312,43 @@ run "a clock that went backwards is refused" \
   "  if (read.values.now < current.queue.now) return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');" \
   "  if (false) return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');"
 
+# The other direction of the same rule: an unbounded leap forward would be
+# written as the watermark, and every honest `now` afterwards would come back
+# `now-went-backwards`, so one bad reading would brick the queue.
+run "a clock that leaps more than a year forward is refused" \
+  "  if (read.values.now - current.queue.now > MAX_JUMP_MS) {
+    return refuse(REFUSAL.NOW_JUMPED, 'now');
+  }" \
+  "  if (false) {
+    return refuse(REFUSAL.NOW_JUMPED, 'now');
+  }"
+
+run "the leap is measured from the watermark, not from the epoch" \
+  "  if (read.values.now - current.queue.now > MAX_JUMP_MS) {" \
+  "  if (read.values.now > MAX_JUMP_MS) {"
+
+# The bound is the last watermark's, so a reading exactly at it is still an
+# honest advance and must be accepted.
+run "a leap of exactly the bound is still accepted" \
+  "  if (read.values.now - current.queue.now > MAX_JUMP_MS) {" \
+  "  if (read.values.now - current.queue.now >= MAX_JUMP_MS) {"
+
+run "the queue's jump bound is P1.1's, not a number of its own" \
+  "export const MAX_JUMP_MS = MAX_FORWARD_JUMP_MS;" \
+  "export const MAX_JUMP_MS = MAX_TTL_MS;"
+
 # A queue handed back is re-validated, never trusted: a prompt the schema would
 # refuse (a mangled mac, say) is not answered from.
 run "a queue's prompts are re-validated on every read" \
   "  const validated = validateMessage(entry.prompt);" \
   "  const validated = { ok: true, message: entry.prompt };"
+
+# The schema accepts `at: 0` and any value up to `MAX_SAFE_INTEGER`, so a stored
+# prompt has to be re-checked against the module's own `at` bound on the way in;
+# otherwise an entry that could never have been written is trusted as read.
+run "a stored prompt's \`at\` is re-checked against the module's bound" \
+  "  if (!isIntegerInRange(prompt.at, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_ENTRY, 'prompts');" \
+  "  if (false) return refuse(REFUSAL.INVALID_ENTRY, 'prompts');"
 
 run "a queue is not a bag: an unknown field is refused" \
   "    if (!names.includes(key)) return refuse(REFUSAL.UNKNOWN_FIELD, where);" \

@@ -23,8 +23,10 @@ import { readFileSync } from 'node:fs';
 import {
   initialState,
   KIND as MAILBOX_KIND,
+  MAX_FORWARD_JUMP_MS,
   MAX_FUTURE_TOLERANCE_MS,
   step,
+  TIME_MAX,
 } from '../mailbox/index.js';
 import { validateMessage } from '../mailbox-schema/index.js';
 import { SEVERITY } from '../digest/severity.js';
@@ -42,6 +44,7 @@ import {
   initialQueue,
   INTERRUPT,
   isExpired,
+  MAX_JUMP_MS,
   MAX_TTL_MS,
   MAX_MAX_PENDING,
   MIN_TTL_MS,
@@ -514,6 +517,81 @@ test('expire refuses a clock that went backwards and an unreadable queue', () =>
   assert.equal(expire(queue, { now: T0 - 1 }).code, REFUSAL.NOW_WENT_BACKWARDS);
   assert.equal(expire(queue, {}).code, REFUSAL.MISSING_FIELD);
   assert.equal(expire(queue, { now: T0, x: 1 }).code, REFUSAL.UNKNOWN_FIELD);
+});
+
+test('a clock that leaps forward is refused, and the watermark does not move', () => {
+  // `now` is monotone: it is written into the queue as the watermark, and every
+  // later reading earlier than it is refused `now-went-backwards`. Without a
+  // forward bound, one bad reading (or one hostile caller) writing TIME_MAX
+  // would refuse every honest `now` after it for ever -- the queue bricked by a
+  // single event. P1.1 bounds the same leap on the mailbox (`now-jumped`,
+  // `MAX_FORWARD_JUMP_MS`), and this module imports that bound rather than
+  // restating it, so the two cannot drift.
+  const queue = enqueueOne(makeQueue()).queue;
+  assert.equal(MAX_JUMP_MS, MAX_FORWARD_JUMP_MS, "P1.1's bound, imported");
+  assert.equal(REFUSAL.NOW_JUMPED, 'now-jumped', "P1.1's code, spelled the same");
+
+  const jumped = expire(queue, { now: T0 + MAX_JUMP_MS + 1 });
+  assert.equal(jumped.ok, false);
+  assert.equal(jumped.code, REFUSAL.NOW_JUMPED);
+  assert.equal(jumped.field, 'now');
+  assert.ok(Object.isFrozen(jumped));
+  // The far-future `now` is refused WITHOUT being written: the queue the caller
+  // holds is untouched, which is what makes recovery the next line.
+  assert.equal(queue.now, T0);
+  // Recovery: an honest `now` after a refused leap is accepted, because the
+  // refused value never became the watermark.
+  const honest = expire(queue, { now: T0 + MINUTE });
+  assert.equal(honest.ok, true, 'a refused jump must not brick the queue');
+  assert.equal(honest.queue.now, T0 + MINUTE);
+  // The boundary itself is a jump this module accepts -- exactly the leap, not
+  // one millisecond more -- and the same bound holds on every operation that
+  // opens a queue.
+  assert.equal(expire(queue, { now: T0 + MAX_JUMP_MS }).ok, true);
+  assert.equal(expire(queue, { now: T0 + MAX_JUMP_MS + 1 }).code, REFUSAL.NOW_JUMPED);
+  assert.equal(pending(queue, { now: T0 + MAX_JUMP_MS + 1 }).code, REFUSAL.NOW_JUMPED);
+  assert.equal(announce(queue, { now: T0 + MAX_JUMP_MS + 1 }).code, REFUSAL.NOW_JUMPED);
+  assert.equal(
+    enqueue(queue, { now: T0 + MAX_JUMP_MS + 1, prompt: promptMessage({ id: 'p9' }) }).code,
+    REFUSAL.NOW_JUMPED,
+  );
+  assert.equal(
+    answer(queue, { now: T0 + MAX_JUMP_MS + 1, answer: answerMessage() }).code,
+    REFUSAL.NOW_JUMPED,
+  );
+  // A `now` at the ceiling is a leap like any other: the bound is the leap, not
+  // the value, so no single reading can put the watermark at TIME_MAX.
+  assert.equal(expire(queue, { now: TIME_MAX }).code, REFUSAL.NOW_JUMPED);
+  // And a clock that went backwards is still refused first, by its own code:
+  // the two faults are not one.
+  assert.equal(expire(queue, { now: T0 - 1 }).code, REFUSAL.NOW_WENT_BACKWARDS);
+});
+
+test('a stored prompt is re-checked against the `at` bound on every read', () => {
+  // The schema accepts `at: 0` (and `at: -0`, which is numerically zero) and
+  // any safe integer up to `Number.MAX_SAFE_INTEGER`; this module will not
+  // carry either once it has been read. A queue is a value the caller hands
+  // back, so an entry holding one of them is refused rather than trusted --
+  // otherwise a hand-built queue could carry a prompt whose age nothing bounds.
+  const queue = enqueueOne(makeQueue()).queue;
+  const held = queue.prompts[0];
+  for (const at of [0, -0, Number.MAX_SAFE_INTEGER]) {
+    const broken = { ...queue, prompts: [{ ...held, prompt: { ...held.prompt, at } }] };
+    const result = expire(broken, { now: T0 });
+    assert.equal(result.ok, false, `at: ${String(at)} must not be read`);
+    assert.equal(result.code, REFUSAL.INVALID_ENTRY, `at: ${String(at)}`);
+  }
+  // The same bound the writer is held to at the door: one is refused by
+  // `zero-timestamp`/`negative-zero`, which is why the reader refuses the entry
+  // rather than reading a time the writer could never have sent.
+  assert.equal(enqueue(queue, { now: T0, prompt: promptMessage({ at: 0 }) }).code, REFUSAL.ZERO_TIMESTAMP);
+  assert.equal(enqueue(queue, { now: T0, prompt: promptMessage({ at: -0 }) }).code, REFUSAL.NEGATIVE_ZERO);
+  assert.equal(
+    enqueue(queue, { now: T0, prompt: promptMessage({ at: Number.MAX_SAFE_INTEGER }) }).code,
+    REFUSAL.FUTURE_TIMESTAMP,
+  );
+  // A queue whose entries are all inside the bounds is still read as before.
+  assert.equal(expire(queue, { now: T0 + MINUTE }).ok, true);
 });
 
 // ---------------------------------------------------------------------------

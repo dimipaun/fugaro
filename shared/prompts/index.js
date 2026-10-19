@@ -112,6 +112,7 @@ import {
   DEFAULT_FUTURE_TOLERANCE_MS,
   DEFAULT_WINDOW_MS,
   KIND,
+  MAX_FORWARD_JUMP_MS,
   MAX_FUTURE_TOLERANCE_MS,
   MAX_PROMPT_TTL_MS,
   MAX_WINDOW_MS,
@@ -135,6 +136,24 @@ export const PROMPT_TTL_MS = 72 * 60 * 60 * 1_000;
 /** The TTL's own bounds: P1.1's floor, and its `MAX_PROMPT_TTL_MS` ceiling. */
 export const MIN_TTL_MS = MIN_WINDOW_MS;
 export const MAX_TTL_MS = MAX_PROMPT_TTL_MS;
+
+/**
+ * How far one event's `now` may lead the queue's own watermark: **366 days**,
+ * which is P1.1's bound for the same leap (`MAX_FORWARD_JUMP_MS`, imported
+ * rather than restated, so the mailbox and the queue cannot disagree about how
+ * far a clock may jump).
+ *
+ * `now` is monotone here: it is written into the queue and every later reading
+ * earlier than it is refused `now-went-backwards`. Without this bound, one bad
+ * clock reading -- or one hostile caller -- writing `TIME_MAX` as the watermark
+ * would refuse every honest `now` after it for ever: the queue bricked by a
+ * single event, on a phone whose user cannot fix it. A leap past the bound is
+ * refused `now-jumped` and the watermark stays where it was, so the next honest
+ * reading is accepted. A consumer that really was off for longer starts from a
+ * new `initialQueue`, which is exactly what P1.1 says for its own state; by
+ * then every prompt this queue held is past its TTL anyway (72 hours).
+ */
+export const MAX_JUMP_MS = MAX_FORWARD_JUMP_MS;
 
 /**
  * When a waiting prompt is re-announced: at the next natural pause after one
@@ -239,6 +258,10 @@ export const REFUSAL = Object.freeze({
   INVALID_AT: 'invalid-at',
   INVALID_NOW: 'invalid-now',
   NOW_WENT_BACKWARDS: 'now-went-backwards',
+  // The clock's other fault, and P1.1's code for it: a leap forward past
+  // `MAX_JUMP_MS`, refused without being written, so the watermark holds and
+  // the next honest reading is accepted.
+  NOW_JUMPED: 'now-jumped',
   INVALID_ACCOUNT: 'invalid-account',
   INVALID_TTL: 'invalid-ttl',
   INVALID_WINDOW: 'invalid-window',
@@ -694,6 +717,15 @@ function readEntry(raw) {
   if (!validated.ok) return refuse(REFUSAL.INVALID_ENTRY, 'prompts');
   const prompt = validated.message;
   if (prompt.kind !== KIND_OF_PROMPT) return refuse(REFUSAL.INVALID_ENTRY, 'prompts');
+  // The schema accepts `at: 0` and `at: -0` (both are numerically zero) and any
+  // safe integer up to `Number.MAX_SAFE_INTEGER`, and this module carries
+  // neither: `enqueue` refuses the first two as `zero-timestamp` and
+  // `negative-zero`, and a value past the ceiling as `future-timestamp`. A
+  // queue is a value the caller hands back, so the reader applies the same
+  // bound rather than trusting a stored prompt the writer could never have
+  // sent -- otherwise an entry with `at: 0` would be "expired" from the moment
+  // it was written, and one at the ceiling would be a prompt no age bounds.
+  if (!isIntegerInRange(prompt.at, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_ENTRY, 'prompts');
 
   if (typeof entry.destructive !== 'boolean') return refuse(REFUSAL.INVALID_ENTRY, 'prompts');
   const safe = readSafe(entry.safe, prompt);
@@ -771,9 +803,13 @@ const TIME_ONLY_FIELDS = Object.freeze(['now']);
  * A `now` earlier than the queue's own is refused rather than absorbed
  * (`now-went-backwards`), because expiry is a function of `now`: a clock that
  * could run in reverse would make an expired prompt alive again and re-arm a
- * reminder that was already spoken. A forward jump is deliberately **not**
- * bounded, unlike P1.1's -- there is no ledger here whose ordering a jump could
- * corrupt; a jump merely expires prompts, which is what the clock says.
+ * reminder that was already spoken. A leap FORWARD past `MAX_JUMP_MS` is
+ * refused too (`now-jumped`, P1.1's code for the same leap): the `now` this
+ * module accepts is written into the queue as its watermark, so an unbounded
+ * forward jump would let one bad reading or one hostile caller put the watermark
+ * at `TIME_MAX` and refuse every honest reading after it for ever. The refusal
+ * leaves the queue exactly as it was -- nothing is written on the way out -- so
+ * the caller's next honest `now` is accepted.
  */
 function open(queue, event, names, where) {
   const current = readQueue(queue, 'queue');
@@ -783,6 +819,9 @@ function open(queue, event, names, where) {
   if (read.values.now === undefined) return refuse(REFUSAL.MISSING_FIELD, 'now');
   if (!isIntegerInRange(read.values.now, 1, TIME_MAX)) return refuse(REFUSAL.INVALID_NOW, 'now');
   if (read.values.now < current.queue.now) return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');
+  if (read.values.now - current.queue.now > MAX_JUMP_MS) {
+    return refuse(REFUSAL.NOW_JUMPED, 'now');
+  }
   return { ok: true, queue: current.queue, values: read.values };
 }
 

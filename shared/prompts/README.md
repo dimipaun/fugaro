@@ -87,8 +87,22 @@ only what it is.
 The boundary is `>` and is deliberately the same boundary P1.1 draws: a prompt of age exactly the
 TTL is still alive here and still accepted by `step`. `index.test.js` asserts that agreement by
 running P1.1 rather than by restating the arithmetic, which is what keeps the two from drifting —
-this module's canonical order, its `now-went-backwards` refusal and its `future-timestamp` bound
-are P1.1's for the same reason.
+this module's canonical order, its `now-went-backwards` and `now-jumped` refusals and its
+`future-timestamp` bound are P1.1's for the same reason.
+
+**The clock is monotone, and it is bounded in both directions.** `now` is written into the queue as
+its watermark and never runs backwards (`now-went-backwards`), and it may not leap past 366 days
+from that watermark either (`now-jumped`, P1.1's `MAX_FORWARD_JUMP_MS`, imported rather than
+restated). The bound is not symmetry for its own sake: without it one bad reading — or one hostile
+caller passing `TIME_MAX` — becomes the watermark, and every honest reading after it is refused for
+ever, which is a queue a phone cannot un-brick. The refusal writes nothing: the queue is handed back
+exactly as it was, so the next honest `now` is accepted. A consumer that really was away longer
+starts from a new `initialQueue`, as P1.1 says for its own state; by then every prompt in this queue
+is past its 72-hour TTL. The two cross-account reads (`pendingAcross`, `announcement`) and the
+interrupt policy take their `now` without this bound, deliberately: they hold no watermark and write
+nothing, so a far-future `now` there is a read that reports everything expired rather than a state
+a caller has to recover from — and a jump bound per installation would refuse a legitimate pause
+across installations whose queues were last seen at different times.
 
 ## Two windows, and which one an answer takes (D173, §3.6)
 
@@ -212,6 +226,7 @@ nor any stage, and the value the text screen would render) is an answer a caller
 | `invalid-now` | `now` is not a positive safe integer |
 | `invalid-at` | (`isExpired`, `reminderStage`) `at` is not a positive safe integer — the predicate's argument is checked, never coerced, so it cannot answer `false` or `NaN` by arithmetic on a value that is not a time |
 | `now-went-backwards` | `now` is earlier than the queue's own, so expiry would run in reverse |
+| `now-jumped` | `now` leads the queue's own watermark by more than `MAX_JUMP_MS` (366 days, P1.1's bound) — refused without being written, so one far-future reading cannot refuse every honest one after it (P1.1's code, spelled the same) |
 | `invalid-account` | the installation id is not 1..64 characters |
 | `invalid-ttl` | the TTL is outside P1.1's `MIN_WINDOW_MS`..`MAX_PROMPT_TTL_MS` |
 | `invalid-window` | the command window is outside P1.1's bounds |
@@ -219,7 +234,7 @@ nor any stage, and the value the text screen would render) is an answer a caller
 | `invalid-future-tolerance` | the future tolerance is outside P1.1's `0`..`MAX_FUTURE_TOLERANCE_MS` (24 hours), the bound that decides how far a prompt's `at` may lead the clock |
 | `invalid-queue` | a handed-back queue has a field that is missing, mistyped or out of bounds |
 | `invalid-prompts` | the prompts are not a list, or hold more entries than the cap allows |
-| `invalid-entry` | an entry is malformed, its prompt fails the schema, or its prompt is not a prompt |
+| `invalid-entry` | an entry is malformed, its prompt fails the schema, its prompt is not a prompt, or its `at` is outside the bound the writer is held to (`1`..`TIME_MAX` — the schema accepts `at: 0`, `at: -0` and any safe integer, and this module carries none of them) |
 | `duplicate-entry` / `unsorted-prompts` | a handed-back queue holds one id twice, or is out of canonical order |
 | `invalid-queues` | the cross-account view was handed two queues for one installation, or not a list |
 | `not-a-prompt` / `not-an-answer` | the delivered message is not the kind the operation takes |
@@ -264,6 +279,11 @@ tests pin the two lines a *code* can draw for the same field — a schema refusa
 schema defines and never one the writer invented, and a field that is not carried at all is
 `missing-field` rather than `unknown-field` — and one pins `isExpired`'s arguments, argument by
 argument, against the coercion that would answer `false`. Three
+Two more tests pin the clock's second bound and the read-side one: a `now` that leaps more than
+a year past the watermark is refused `now-jumped` without being written — the exact bound is still
+an honest advance, and the next honest reading after a refused leap is accepted — and a stored
+prompt whose `at` is outside the module's own bound is refused on the way in rather than trusted
+because the schema accepted it. Three
 tests pin the rules that were *removed* rather than kept: `reminderStage` is monotone in `at` (which
 is why the listing needs no stage rule of its own), an expiry list comes back oldest-first (which is
 why `expire` needs no sort), and `digest.severity` is read through its own descriptor (which is why
@@ -278,7 +298,7 @@ function of the prompt's `at`, the TTL and the consumer's clock", written agains
 that never expires anything and failing on it. It is `mutation-proof.sh`'s first guard, so it stays
 re-runnable rather than living only in a pull-request transcript.
 
-`mutation-proof.sh` plants 70 one-line bugs in `index.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 75 one-line bugs in `index.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. It
