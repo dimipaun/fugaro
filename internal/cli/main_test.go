@@ -63,6 +63,11 @@ func TestMain(m *testing.M) {
 	// while their configs carry fake endpoints, so they turn the skip off and
 	// the tests of the skip itself turn it on.
 	skipGSOnFakeEndpoints = false
+	// Managed projects and --provision-batch are refused in this release
+	// (managedDeployerShipped, batchProvisionShipped). Their own tests run
+	// with both gates open, as the release that ships them will; the refusal
+	// tests (shipped_gates_test.go) put each back to its constant.
+	managedDeployerOpen, batchProvisionOpen = true, true
 	// findLayer's bucket has no seam override redirecting gs:// elsewhere
 	// the way sharedBucketOpener does above: a rig whose local config
 	// computes a gs:// runs bucket URL (most do; only bucket_url: file://

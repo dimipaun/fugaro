@@ -15,7 +15,7 @@
 
 import { join } from 'node:path'
 
-import { _electron as electron, expect, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import { INSTALLATIONS_MENU_LABEL, PICKER_ENTRY_URL } from '../../src/main/picker'
@@ -23,6 +23,7 @@ import { APP_ENTRY_URL } from '../../src/main/protocol'
 import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
 import { installCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { launchConsole } from '../support/launch'
 
 const consoleDir = join(__dirname, '..', '..')
 
@@ -96,7 +97,7 @@ test.describe('the installation picker, in the real window', () => {
   })
 
   test('opens from the menu, lists the store, refuses a literal path and a refused CLI, and keeps each bridge to its own document', async () => {
-    const app = await electron.launch({ args: stub.launchArgs(consoleDir), env: stub.env })
+    const app = await launchConsole({ args: stub.launchArgs(consoleDir), env: stub.env })
     try {
       const dashboard = await app.firstWindow()
       await dashboard.waitForLoadState('domcontentloaded')

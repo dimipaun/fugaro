@@ -45,8 +45,8 @@ questions:
   - id: what-it-is
     question: What is Fugaro?
     answer: >-
-      A fleet of ephemeral cloud workers for coding agents: one task, one container, one
-      pull request, then gone. The container does not survive the run.
+      Ephemeral cloud jobs for coding agents: one task, one container, one pull request,
+      then gone. The container does not survive the run.
     source: README.md
 
   - id: where-it-runs

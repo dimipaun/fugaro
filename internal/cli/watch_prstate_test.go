@@ -27,6 +27,50 @@ func fakeWatchGH(t *testing.T, script string) string {
 	return testutil.FakeCommand(t, "gh", script)
 }
 
+// prStateTestBudget is how long the tests below let one gh lookup take. Every
+// one of them asserts an ANSWER — which row the frame drops, what gh was asked,
+// how many times — and a test about an answer must never also be a test of how
+// long the machine took: a fork, an exec and a shell script can outlast the
+// production 3s, and a lookup killed at its budget records no answer at all,
+// which the test then reads as "gh could not tell the pull request's state"
+// (fail open: every row kept) instead of the answer it means to check. The
+// budget itself has its own tests, in the package that owns it
+// (internal/watch: TestPRStateGHThatHangsLeavesTheRowListed and
+// TestPRStateGHLeavingAChildBehindAnswers), which set their own short one.
+const prStateTestBudget = 30 * time.Second
+
+// longPRStateBudget gives the ready list's gh lookups room a loaded machine can
+// meet, for the rest of the test. It covers both halves of the wait: the
+// lookup's own budget, and how long one --once snapshot waits for it, which
+// must be longer — a lookup killed at its budget answers "no answer", so a wait
+// that expired first would leave the test reading the clock rather than the
+// answer.
+func longPRStateBudget(t *testing.T) {
+	t.Helper()
+	oldTimeout, oldWait := prStateTimeout, prStateOnceWait
+	prStateTimeout, prStateOnceWait = prStateTestBudget, 2*prStateTestBudget
+	t.Cleanup(func() { prStateTimeout, prStateOnceWait = oldTimeout, oldWait })
+}
+
+// waitPRStateAnswers waits for the n lookups p was asked to start to land.
+// Settle(d) is not usable for that: it is a deadline of its own, started when
+// the caller asks, before the lookup goroutine has set its own — and a wait
+// equal to the budget is then a race against the clock the lookup is killed by.
+// Version counts answers landed (a failure counts: it is an answer), so this
+// waits for the work itself. The deadline is twice the budget, so it can only
+// ever fire when the answer is genuinely not coming, and a test that gets there
+// fails rather than flakes.
+func waitPRStateAnswers(t *testing.T, p *watch.PRState, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * prStateTestBudget)
+	for p.Version() < uint64(n) {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d of %d PR-state lookups answered", p.Version(), n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func ghWatchCalls(t *testing.T, calls string) []string {
 	t.Helper()
 	b, err := os.ReadFile(calls)
@@ -55,6 +99,7 @@ func readySection(frame string) string {
 // The owner's request (2026-10-16): a merged or closed pull request leaves the
 // ready list, an open one stays, and the header's count is the filtered one.
 func TestWatchPlainDropsMergedAndClosedPRs(t *testing.T) {
+	longPRStateBudget(t)
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")
 	merged, closed, open := runID(10*time.Minute, "aa01"), runID(9*time.Minute, "aa02"), runID(8*time.Minute, "aa03")
@@ -127,6 +172,7 @@ func TestWatchPlainWithoutGHKeepsRowsAndNotesOnce(t *testing.T) {
 // A gh that fails leaves the row listed, with one note that names the reason
 // in words of ours, and never leaks what gh printed.
 func TestWatchPlainWithFailingGHKeepsRows(t *testing.T) {
+	longPRStateBudget(t)
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")
 	run := runID(10*time.Minute, "cc01")
@@ -223,10 +269,15 @@ func TestEmitLiveFramesApplyPRState(t *testing.T) {
 			PRURL: "https://github.com/acme/app/pull/43", PRNumber: 43, FinishedAt: now.Add(-9 * time.Minute)},
 	}, now)
 	var buf bytes.Buffer
+	// The lookup's own timeout is generous on purpose: this test asserts the
+	// ANSWER (which row the frame drops), so it must not also be a test of how
+	// fast a loaded machine can start a shell — a lookup killed at a short
+	// timeout would answer "unknown", leave the row listed, and fail here as
+	// if the filter were broken.
 	d := &WatchDeps{Out: &buf, LC: &localcfg.Config{Name: "aurora"},
 		Filter:  watch.Filter{Keep: 6 * time.Hour, KeepCount: 15, FailedKeep: 24 * time.Hour},
 		Acks:    watch.LoadAcks(filepath.Join(t.TempDir(), "watch-acks.json")),
-		PRState: watch.NewPRState(watch.PRStateOptions{})}
+		PRState: watch.NewPRState(watch.PRStateOptions{Timeout: prStateTestBudget})}
 	o := &watchOptions{plain: true}
 
 	if err := d.emit(o, v, false); err != nil {
@@ -235,7 +286,9 @@ func TestEmitLiveFramesApplyPRState(t *testing.T) {
 	if first := buf.String(); !strings.Contains(first, "Ready for your review (2)") {
 		t.Fatalf("the first live frame must draw the list as it is:\n%s", first)
 	}
-	d.PRState.Settle(5 * time.Second)
+	// Both rows' lookups: the wait is for those answers, not a deadline of its
+	// own racing them (waitPRStateAnswers says why).
+	waitPRStateAnswers(t, d.PRState, 2)
 	buf.Reset()
 	if err := d.emit(o, v, false); err != nil {
 		t.Fatal(err)
@@ -258,6 +311,7 @@ func TestEmitLiveFramesApplyPRState(t *testing.T) {
 // watch.TestTUIPRStateDropsMergedReadyRow (internal/watch/prstate_test.go), which
 // proves the drawn frame loses the row for the same reason.
 func TestWatchStreamRedrawsWhenAPRStateAnswerLands(t *testing.T) {
+	longPRStateBudget(t)
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")
 	for _, r := range []struct {

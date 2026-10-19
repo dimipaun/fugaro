@@ -25,6 +25,18 @@
  *     repository builds no Windows binary — is a note rather than a platform a reader is
  *     offered. The page carries no support promise the release build does not make.
  *
+ * **Two ways to install, side by side (the owner's changes spec of 2026-10-18, item 6).**
+ * The install section is two options rather than one list: the **CLI** — the install paths
+ * `install.yaml` carries, the Homebrew cask first, each command with its copy control — and
+ * the **desktop console**, whose downloads are offered here so that a reader who wants the
+ * console installs it without leaving the page. The console option is
+ * `src/components/ConsoleOption.astro`, it renders from the same facts the console page's
+ * Downloads section does (`src/lib/console-downloads.mjs`, one reader for
+ * `website/content/downloads.json`), and while the console is unreleased it renders the data
+ * file's own sentence, no link but the one to `/console/`. The two options stack in document
+ * order — CLI first — until the grid has room for two columns, so the page is the same page
+ * at 390 px, where the first install command is still what the section opens with (P5).
+ *
  * **What the redesign took out (P4).** The page used to open with a paragraph about where
  * its commands come from — `install.yaml`, the Go test, the three files that test holds it
  * to — and every path carried "Commands as printed in <file>" and "Platforms: …" beside
@@ -38,14 +50,25 @@
  * link it prints is the Releases page `install.yaml` names (Global Constraints 4 and 8).
  */
 import Base from '../layouts/Base.astro'
-import { loadSite } from '../content.ts'
+import ConsoleOption from '../components/ConsoleOption.astro'
+import { SITE_ROOT, loadSite } from '../content.ts'
 import { copyControlHTML } from '../lib/copy-control.mjs'
+import { loadConsoleDownloads } from '../lib/console-downloads.mjs'
 
 // The whole generated layer, read and validated through the base layout's own call: a
 // missing install.yaml stops the build rather than rendering an empty install block
 // (W1.3's pipeline).
 const site = loadSite()
 const install = site.install
+
+// The console's own facts, from the one reader both pages use: this page renders the
+// unreleased sentence from them while the console has no release, and the release's own
+// published assets once it has — never a URL of its own (see the console option below).
+const consoleFacts = loadConsoleDownloads(
+  SITE_ROOT,
+  site.facts.features.consoleDownloads,
+  site.facts.repository,
+)
 
 // The reader-facing name of a platform a path names. A path's own `platforms:` list names
 // the **goos** a build produces — `darwin`, `linux` — while the platform list above carries
@@ -74,45 +97,66 @@ const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
   <section id="install">
     <h2>Install</h2>
 
-    {/* The section opens with the paths themselves (P5): the first thing under the heading is
-        the first install path's own commands, and a reader who came for the command they run
-        meets it on the first screen rather than under a sentence about the page. The one
-        sentence the section carries — that the plugin is a step of the install and not an
-        extra — moves with the order and closes the section, after the paths it is about.
-        Its words are P4's and are unchanged: ordering is this part's, copy is not. */}
+    {/* The section opens with the paths themselves (P5): under the heading comes the CLI
+        option and, at the top of it, the first install path's own commands — a reader who came
+        for the command they run meets it on the first screen rather than under a sentence
+        about the page, in the two-column layout and in the stacked one alike. The one sentence
+        the section carries — that the plugin is a step of the install and not an extra — moves
+        with the order and closes the section, after the options it is about. Its words are
+        P4's and are unchanged: ordering is this part's, copy is not.
 
-    {install.paths.map((installPath) => (
-      <article data-path={installPath.id}>
-        <h3>{installPath.name}</h3>
+        The two options are one grid, in document order: the CLI first, the console second,
+        which is the order the stacked layout renders at 390 px. */}
+    <div class="install-options">
+      <div class="install-option" data-option="cli">
+        <h3>CLI</h3>
 
-        {installPath.note !== '' && <p>{installPath.note}</p>}
+        {install.paths.map((installPath) => (
+          <article data-path={installPath.id}>
+            <h4>{installPath.name}</h4>
 
-        {/* The line and the blocks below it are one fact: a path with no commands of its
-            own — the release archive, whose facts are a page and a name template rather
-            than a command line — renders neither, because "from README.md" over an empty
-            list tells a reader to read something that is not there. install.yaml is
-            allowed to carry a path with no commands, so the page has to render that shape
-            as well as the other one. */}
-        {installPath.commands.length > 0 && (
-          <p class="source">
-            From <code>{installPath.source}</code>{installPath.devOnly && ' — development only'} · {platformsOf(installPath.platforms)}
-          </p>
-        )}
+            {installPath.note !== '' && <p>{installPath.note}</p>}
 
-        {installPath.releasePage !== '' && (
-          <p class="release">
-            <a href={installPath.releasePage} rel="noopener">{installPath.releasePage}</a>
-          </p>
-        )}
+            {/* The line and the blocks below it are one fact: a path with no commands of its
+                own — the release archive, whose facts are a page and a name template rather
+                than a command line — renders neither, because "from README.md" over an empty
+                list tells a reader to read something that is not there. install.yaml is
+                allowed to carry a path with no commands, so the page has to render that shape
+                as well as the other one. */}
+            {installPath.commands.length > 0 && (
+              <p class="source">
+                From <code>{installPath.source}</code>{installPath.devOnly && ' — development only'} · {platformsOf(installPath.platforms)}
+              </p>
+            )}
 
-        {installPath.commands.map((command) => (
-          <div class="command-block" data-copy>
-            <Fragment set:html={copyControlHTML('Copy the install command')} />
-            <pre><code>{command}</code></pre>
-          </div>
+            {installPath.releasePage !== '' && (
+              <p class="release">
+                <a href={installPath.releasePage} rel="noopener">{installPath.releasePage}</a>
+              </p>
+            )}
+
+            {installPath.commands.map((command) => (
+              <div class="command-block" data-copy>
+                <Fragment set:html={copyControlHTML('Copy the install command')} />
+                <pre><code>{command}</code></pre>
+              </div>
+            ))}
+          </article>
         ))}
-      </article>
-    ))}
+      </div>
+
+      <div class="install-option" data-option="console">
+        {/* The console, offered beside the CLI: its own heading, its downloads once it has a
+            release, and the link to the page that says what it is. While it is unreleased the
+            component renders the data file's sentence and no download at all — the same rule
+            the console page's Downloads section keeps, from the same facts. */}
+        <ConsoleOption
+          available={consoleFacts.available}
+          note={consoleFacts.notReleased.short}
+          downloads={consoleFacts.downloads}
+        />
+      </div>
+    </div>
 
     <p>The plugin is a step of the install, not an extra: the commands that drive a run come with it.</p>
   </section>
@@ -139,11 +183,54 @@ const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
       max-width: var(--measure);
     }
 
-    article {
+    /* The install section is the one section here that is wider than a measure: two options
+       side by side need the width, and the commands inside them are not prose. The one
+       sentence the section carries is prose, and it keeps the measure. */
+    #install {
+      max-width: none;
+    }
+
+    #install > p {
+      max-width: var(--measure);
+    }
+
+    /* The two options, one column until the viewport has room for two: at 390 px this is the
+       CLI first and the console under it, which is the page P5's fold claim is about. */
+    .install-options {
+      display: grid;
+      align-items: start;
+      gap: var(--space-md);
+    }
+
+    @media (min-width: 48rem) {
+      .install-options {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    /* One option, one card: the CLI's paths and the console's own contents are cards of the
+       same shape, so the two read as two ways to install rather than as a list and a note
+       beside it. */
+    .install-option {
       border: var(--border-width) solid var(--border);
       border-radius: var(--radius-md);
       padding: var(--space-md);
-      margin-block: var(--space-md);
+    }
+
+    /* And inside the CLI's card the paths are sections of it rather than cards in a card:
+       the rule between two of them is the whole of the separation they need. */
+    .install-option article {
+      border: 0;
+      border-top: var(--border-width) solid var(--border);
+      border-radius: 0;
+      padding: var(--space-md) 0 0;
+      margin: var(--space-md) 0 0;
+    }
+
+    .install-option article:first-of-type {
+      border-top: 0;
+      padding-top: 0;
+      margin-top: 0;
     }
 
     pre {
