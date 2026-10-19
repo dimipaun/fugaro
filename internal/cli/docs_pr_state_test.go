@@ -21,6 +21,11 @@ import (
 // the code cannot drift apart in either direction, and the host is not written
 // twice here for one of them to rot.
 func TestDocsDesignDocPinsTheHostOfThePRStateLookup(t *testing.T) {
+	// This test is about the argv gh was given, not about how fast a loaded
+	// machine can fork and exec it: it owns the lookup's budget (and the
+	// --once wait, which must outlast it) so a slow exec is never read as a
+	// lookup that answered nothing.
+	longPRStateBudget(t)
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")
 	run := runID(10*time.Minute, "ff01")
