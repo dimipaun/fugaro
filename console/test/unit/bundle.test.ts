@@ -28,9 +28,20 @@
 // `test/support/built.ts` makes the build before any of this reads it: the
 // workflow runs `npm run test:unit` on a fresh checkout, with no `dist/` at all.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { createContext, runInContext } from 'node:vm'
 
 import { describe, expect, it } from 'vitest'
@@ -1048,6 +1059,24 @@ describe('the stylesheet step', () => {
       // pass).
       'image-set("https://cdn.example/a\'b.png" 1x)',
       "-webkit-image-set('//cdn.example/a\"b.png' 2x)",
+      // And the leading bytes the URL parser strips, on this scan too (review
+      // M1, left open by #701): the same three the body can hold -- a space, a
+      // tab and a carriage return -- and the protocol-relative `//` behind one.
+      // `image-set(" https://…" 1x)` is the spelling the review reproduced.
+      //
+      // **The fourth character, a raw newline, is not here, and it is the one
+      // byte this scan cannot see.** `QUOTED_STRING_RE`'s body is bounded by the
+      // newline, for the two reasons its own comment gives: a raw LF is what
+      // ends a CSS `<string>`, and a body that crossed one would pair an
+      // unbalanced quote -- both theme files hold an apostrophe in their prose
+      // -- with the next quote of its mark, so the string a refusal named would
+      // stop being a string. The `url()` case above carries the newline,
+      // because that scan's quoted body does cross lines, and the probes below
+      // state the difference rather than leaving it to be rediscovered.
+      'image-set(" https://cdn.example/x.png" 1x)',
+      'image-set("\thttps://cdn.example/x.png" 1x)',
+      'image-set("\rhttps://cdn.example/x.png" 1x)',
+      '-webkit-image-set(" //cdn.example/x.png" 2x)',
     ]) {
       withPlantedStylesheet({ ...themeFiles(), [name]: `${real}\n.a { background-image: ${remote}; }\n` }, (options) => {
         expect(() => {
@@ -1079,7 +1108,23 @@ describe('the stylesheet step', () => {
   it('refuses a url() on another origin, and admits one on this one', () => {
     const name = THEME_STYLESHEETS[0] ?? ''
     const real = themeFiles()[name] ?? ''
-    for (const remote of ['url(https://cdn.example/x.woff2)', 'url(//cdn.example/x.png)', "url('http://x/y.png')"]) {
+    for (const remote of [
+      'url(https://cdn.example/x.woff2)',
+      'url(//cdn.example/x.png)',
+      "url('http://x/y.png')",
+      // The leading bytes the URL parser strips before it reads a scheme, in
+      // every shape a theme file can write (review M1, left open by #701): a
+      // space, a tab, a newline and a carriage return. The target test used to
+      // require the scheme at character 0, so `url(" https://…")` was admitted
+      // -- and a space and a tab are ordinary characters inside a CSS string,
+      // which makes the first two of these not even unusual spellings. The
+      // protocol-relative `//` has the same hole and the same fix.
+      'url(" https://cdn.example/x.woff2")',
+      'url("\thttps://cdn.example/x.woff2")',
+      'url("\nhttps://cdn.example/x.woff2")',
+      'url("\rhttps://cdn.example/x.woff2")',
+      'url(" //cdn.example/x.png")',
+    ]) {
       withPlantedStylesheet({ ...themeFiles(), [name]: `${real}\n.a { background: ${remote}; }\n` }, (options) => {
         expect(() => {
           bundleStylesheet(options)
@@ -1110,6 +1155,21 @@ describe('the stylesheet step', () => {
     expect(remoteUrlIn('a { background: url(./y.png); }')).toBeNull()
     expect(remoteUrlIn('a { background: url(data:image/png;base64,iVBORw0KGgo=); }')).toBeNull()
     expect(remoteUrlIn('a { background: none; }')).toBeNull()
+    // The leading bytes the URL parser strips before it reads a scheme (review
+    // M1, left open by #701): a space, a tab, a newline and a carriage return
+    // are removed, and the C0 controls and spaces at the two ends are stripped,
+    // so each of these is the same remote load as the plain spelling. The
+    // refusal still quotes the call **as it is written**.
+    expect(remoteUrlIn('a { background: url(" https://x/y.png"); }')).toBe('url(" https://x/y.png")')
+    expect(remoteUrlIn('a { background: url("\thttps://x/y.png"); }')).toBe('url("\thttps://x/y.png")')
+    expect(remoteUrlIn('a { background: url("\nhttps://x/y.png"); }')).toBe('url("\nhttps://x/y.png")')
+    expect(remoteUrlIn('a { background: url("\rhttps://x/y.png"); }')).toBe('url("\rhttps://x/y.png")')
+    expect(remoteUrlIn('a { background: url(" //x/y.png"); }')).toBe('url(" //x/y.png")')
+    // The other end of the same rule: the stripping is the URL parser's, not a
+    // general trim, so a leading space in front of a path on this origin is
+    // still a path, and one in front of `data:` is still a byte string.
+    expect(remoteUrlIn('a { background: url(" ./y.png"); }')).toBeNull()
+    expect(remoteUrlIn('a { background: url(" data:image/png;base64,iVBORw0KGgo="); }')).toBeNull()
     expect(themeStylesheetSources(THEME_DIR).map((source) => source.name)).toEqual([...THEME_STYLESHEETS])
     // The quoted-string scan, which the cases above are only about `image-set()`
     // if these answer what they say they answer: it reads a string's whole
@@ -1128,6 +1188,23 @@ describe('the stylesheet step', () => {
     expect(quotedRemoteIn('.a { content: "attention"; }')).toBeNull()
     expect(quotedRemoteIn('.a { background: url("data:image/svg+xml,%3Csvg%3E%3C/svg%3E"); }')).toBeNull()
     expect(quotedRemoteIn('a { background: url(./y.png); }')).toBeNull()
+    // The same leading bytes, on this scan (review M1, left open by #701), and
+    // the same control: the test is the URL parser's stripping and not a general
+    // trim, so a space in front of a word is still a word.
+    expect(quotedRemoteIn('.a { background: image-set(" https://x/y.png" 1x); }')).toBe('" https://x/y.png"')
+    expect(quotedRemoteIn('.a { background: image-set("\thttps://x/y.png" 1x); }')).toBe('"\thttps://x/y.png"')
+    expect(quotedRemoteIn('.a { background: image-set("\rhttps://x/y.png" 1x); }')).toBe('"\rhttps://x/y.png"')
+    expect(quotedRemoteIn('.a { background: image-set(" //x/y.png" 1x); }')).toBe('" //x/y.png"')
+    expect(quotedRemoteIn('.a { content: " attention"; }')).toBeNull()
+    // And the one byte this scan cannot see, stated rather than left to be
+    // found: a raw newline inside a string. It is a limit of *this* scan's body
+    // and not of the rule -- `remoteUrlIn` above refuses the same spelling,
+    // because its quoted body is not bounded by the newline -- and the comment
+    // on `QUOTED_STRING_RE` carries why the body is bounded: a raw LF ends a CSS
+    // `<string>` anyway, and crossing it would pair an unbalanced quote with the
+    // next quote of its mark.
+    expect(quotedRemoteIn('.a { background: image-set("\nhttps://x/y.png" 1x); }')).toBeNull()
+    expect(remoteUrlIn('a { background: url("\nhttps://x/y.png"); }')).toBe('url("\nhttps://x/y.png")')
   })
 })
 
@@ -1178,6 +1255,43 @@ function withPlantedConsole<T>(extra: Readonly<Record<string, string>>, body: (r
   }
 }
 
+/** snapshotOf is everything under `directory` as a value: each file's bytes,
+ * each symbolic link's target, each subdirectory by name. It is how a case says
+ * "nothing was written", which a refusal alone does not say -- and the comparison
+ * is of *contents* rather than of a listing, because the failure being guarded
+ * against is a file written beside the one that was refused, and a listing that
+ * named it would not see its bytes.
+ *
+ * A directory that is not there is the empty snapshot. That is deliberate and it
+ * is the one thing this value does not distinguish: `refuseForeignFilesIn` makes
+ * the served root when it is absent, so a build that stops there may have made an
+ * empty `dist/bundle/` and no file in it. No *file* is what these cases are
+ * about; a directory the writers need is not a written artefact.
+ */
+function snapshotOf(directory: string): Record<string, string> {
+  const entries: Record<string, string> = {}
+  const walk = (at: string): void => {
+    let names: string[]
+    try {
+      names = readdirSync(at)
+    } catch {
+      return
+    }
+    for (const name of names.sort()) {
+      const path = join(at, name)
+      const key = relative(directory, path)
+      const stats = lstatSync(path)
+      if (stats.isSymbolicLink()) entries[key] = `link:${readlinkSync(path)}`
+      else if (stats.isDirectory()) {
+        entries[key] = 'directory'
+        walk(path)
+      } else entries[key] = `file:${readFileSync(path, 'utf8')}`
+    }
+  }
+  walk(directory)
+  return entries
+}
+
 describe('the order the build’s steps run in', () => {
   it('refuses a foreign file in the served root before it writes anything (review M3)', () => {
     // The control first: this tree builds, and it builds every file the step is
@@ -1219,5 +1333,73 @@ describe('the order the build’s steps run in', () => {
       }).toThrow(/is a symbolic link/)
       expect(readdirSync(outside)).toEqual([])
     })
+  })
+
+  it('refuses a symlinked output before it writes anything (review M4, left open by #701)', () => {
+    // The same claim one refusal further in, and the one the pre-write phase
+    // used to leave open: the symlinked-output refusal (review M4) lived only
+    // inside the writers, so `dist/bundle/console.js` -- or a document the build
+    // copies into the served root -- as a symbolic link failed *after*
+    // `bundleStylesheet` had written `console.css`, and the document's case
+    // after the bundle beside it as well. The build stopped with a fresh
+    // artefact in the directory it then abandoned: exactly the half-a-bundle
+    // state the ordering exists to prevent, and the same defect as the
+    // foreign-file case above, reached by a different name.
+    //
+    // Both names, because they are refused by different calls in the pass: the
+    // bundle by the `outputs` list's `resolve(bundle.out)`, the document by the
+    // destination each bundle's own `documentsOf` contributes.
+    for (const [name, outside] of [
+      ['console.js', 'outside.js'],
+      ['index.html', 'outside.html'],
+    ] as const) {
+      withPlantedConsole({}, (root) => {
+        const served = join(root, 'dist', 'bundle')
+        mkdirSync(served, { recursive: true })
+        const target = join(root, outside)
+        writeFileSync(target, 'untouched\n')
+        symlinkSync(target, join(served, name))
+        const before = snapshotOf(served)
+        expect(() => {
+          buildConsole(root)
+        }).toThrow(/is a symbolic link/)
+        // The claim a refusal alone does not make, and the one this case is
+        // about: the served root is byte for byte what it was. Without the
+        // pre-write pass `console.css` is in it (and, for the document,
+        // `console.js` too), so the comparison fails rather than the refusal.
+        expect(
+          snapshotOf(served),
+          `the build refused the symlinked ${name} after writing into the served root: the symlinked-output refusal must run before the first write`,
+        ).toEqual(before)
+        expect(readFileSync(target, 'utf8')).toBe('untouched\n')
+      })
+    }
+  })
+
+  it('refuses a module the walk will not bundle before it writes anything (review M3, left open by #701)', () => {
+    // The third refusal the pre-write pass asks, and the one that is not about
+    // the directory at all: the closure walk's own refusals -- a bare specifier,
+    // a computed one, a module the build did not emit -- are `bundleRenderer`'s,
+    // and they used to land after `console.css` was written for the same reason
+    // the symlinked output did. `require('electron')` is the one to plant: it is
+    // the refusal a reader of the preload's rule expects to see, and it is the
+    // module shape that would be a runtime crash in a window with no Node.
+    withPlantedConsole(
+      { [join('dist', 'renderer', 'entry.js')]: `'use strict';\nrequire('electron');\n` },
+      (root) => {
+        const served = join(root, 'dist', 'bundle')
+        const before = snapshotOf(served)
+        expect(() => {
+          buildConsole(root)
+        }).toThrow(/may require its own modules and nothing else/)
+        // The served root may have been made -- the writers need it -- but no
+        // file is in it, which is what `snapshotOf` says by answering the same
+        // value for an absent directory and for an empty one.
+        expect(
+          snapshotOf(served),
+          'the build refused the module after writing into the served root: the walk’s refusals must run before the first write',
+        ).toEqual(before)
+      },
+    )
   })
 })
