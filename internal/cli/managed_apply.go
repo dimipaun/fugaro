@@ -96,7 +96,7 @@ This is not fugaro project (the project's own configuration) and not fugaro
 init (which creates and re-installs an installation): a managed project's
 agent-authored root is applied by fugaro managed apply.`,
 	}
-	cmd.AddCommand(newManagedApplyCmd())
+	cmd.AddCommand(newManagedApplyCmd(), newManagedFlagCmd())
 	return cmd
 }
 
@@ -129,7 +129,15 @@ prompt, and what replaces the prompt is the gate (a refused plan is not
 applied), the marker (an unreadable one is not an apply), the owner's list (an
 address the owner did not approve is refused) and the deployer account (which
 holds no project-level IAM permission and cannot write the runs bucket). None
-of the four is a boundary against a session that goes around this program.`,
+of the four is a boundary against a session that goes around this program.
+
+The prompt comes back whenever the whole-project inventory does not clear the
+project: before anything is planned, this command reads every resource of the
+GCP project (Cloud Asset, with the operator's own credential) and compares it
+with what the installation's Terraform states account for. A resource nothing
+accounts for, or an inventory that cannot be read, keeps this run's
+confirmation: a coding agent's session is refused and a person is asked, with
+the reason printed first. Nothing is halted and nothing is deleted.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return managedApply(cmd, o, args[0])
@@ -161,7 +169,7 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 		return err
 	}
 	for _, w := range lc.Warnings() {
-		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", safetext.Field(w))
 	}
 	root, err := managedRoot(ctx, lc, rootArg)
 	if err != nil {
@@ -177,14 +185,14 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	// bucket would make this command read objects nobody wrote for it.
 	bucket := "fugaro-runs-" + lc.GCPProject
 	if got := lc.RunsBucketName(); got != bucket {
-		return userErr("project %s names the runs bucket %q, and a managed project's marker and delete list live in %s: a managed apply reads the objects of the project's own runs bucket, so check runs_bucket in the project config", lc.Name, got, bucket)
+		return userErr("project %s names the runs bucket %q, and a managed project's marker and delete list live in %s: a managed apply reads the objects of the project's own runs bucket, so check runs_bucket in the project config", safetext.Field(lc.Name), safetext.Field(got), safetext.Field(bucket))
 	}
 	// The project number is what says a bucket name is this project's (a
 	// bucket name is global), and both reads below prove it with.
 	number, err := infra.ProjectNumber(ctx, c, lc.GCPProject)
 	if err != nil {
 		// The API's own text can carry a body: one sanitised line.
-		return remote(fmt.Errorf("reading the number of GCP project %s: %s", lc.GCPProject, safetext.Field(err.Error())))
+		return remote(fmt.Errorf("reading the number of GCP project %s: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error())))
 	}
 	// The apply-time budget read, and the gate it opens (Task 4.4). Both
 	// happen here, after the project and its number are known and before
@@ -204,6 +212,15 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	if err != nil {
 		return managedListErr(lc, bucket, err)
 	}
+	// The whole-project inventory (Task 4.5, D59), read here because this is
+	// the last moment the operator's own credential is the one in hand: the
+	// Cloud Asset read role is granted to the operators, the deployer holds
+	// neither it nor the installation's state bucket, and everything after
+	// the impersonation below runs as the deployer. It cannot fail the
+	// command — every way it can go wrong is a fallback that keeps the run's
+	// confirmations (managedInventory's own comment) — and the answer is
+	// handed to the apply, which asks D55's rule with it.
+	inventory := managedInventory(ctx, lc, c, number)
 	// Who is running, and with which credential: the impersonation grant is
 	// on people (deployer.tf grants it to var.operators), so this is the
 	// operator's own identity and the credential the IAM Credentials calls
@@ -221,7 +238,7 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	}
 	wd, err := infra.CopyRoot(dir, root)
 	if err != nil {
-		return userErr("the root %s: %v", rootArg, err)
+		return userErr("the root %s: %v", safetext.Field(rootArg), safetext.FieldErr(err))
 	}
 	cache, err := infra.PluginCache(os.Getenv)
 	if err != nil {
@@ -238,8 +255,13 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 		// so the value is checked twice and neither check can be left out.
 		Enable:  gate,
 		Project: lc.Name, GCPProject: lc.GCPProject,
-		Fact:    fact,
-		Workdir: wd,
+		Fact: fact,
+		// The whole-project inventory read above: D59's third fact of the
+		// confirmation rule, and the reason this run keeps its confirmations
+		// when the read found a resource the state does not account for or
+		// could not be made at all (Task 4.5).
+		Inventory: inventory,
+		Workdir:   wd,
 		// Terraform is built inside the deployer's assumption, around the
 		// credential it was handed: the plan is read from this root's own
 		// state bucket (D77), which the deployer holds and the operator's
@@ -288,11 +310,11 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	}
 	w := cmd.OutOrStdout()
 	if !res.Changed {
-		fmt.Fprintf(w, "no changes: the plan of %s is empty, so nothing was gated and nothing was applied\n", rootArg)
+		fmt.Fprintf(w, "no changes: the plan of %s is empty, so nothing was gated and nothing was applied\n", safetext.Field(rootArg))
 		return nil
 	}
 	fmt.Fprintf(w, "applied the saved plan of %s as %s: the gate admitted every change in it, and the owner's list approved every delete and replacement it carries\n",
-		rootArg, managedmode.DeployerAccount(lc.GCPProject))
+		safetext.Field(rootArg), safetext.Field(managedmode.DeployerAccount(lc.GCPProject)))
 	return nil
 }
 
@@ -320,7 +342,7 @@ func managedConditions(cmd *cobra.Command) initflow.Conditions {
 func managedAsk(cmd *cobra.Command, lc *localcfg.Config) func(string) (bool, error) {
 	return func(question string) (bool, error) {
 		out := cmd.ErrOrStderr()
-		fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\nType %s to confirm: ", lc.Name, question, lc.Name)
+		fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\nType %s to confirm: ", safetext.Field(lc.Name), question, safetext.Field(lc.Name))
 		line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return false, err
@@ -342,24 +364,24 @@ func managedAsk(cmd *cobra.Command, lc *localcfg.Config) func(string) (bool, err
 func managedRoot(ctx context.Context, lc *localcfg.Config, rootArg string) (string, error) {
 	abs, err := filepath.Abs(rootArg)
 	if err != nil {
-		return "", userErr("the root %s: %v", rootArg, err)
+		return "", userErr("the root %s: %v", safetext.Field(rootArg), safetext.FieldErr(err))
 	}
 	st, err := os.Stat(abs)
 	switch {
 	case err != nil:
-		return "", userErr("the root %s: %v", rootArg, err)
+		return "", userErr("the root %s: %v", safetext.Field(rootArg), safetext.FieldErr(err))
 	case !st.IsDir():
-		return "", userErr("the root %s is not a directory", rootArg)
+		return "", userErr("the root %s is not a directory", safetext.Field(rootArg))
 	}
 	co, err := checkoutProject(ctx, abs)
 	if err != nil {
 		return "", err
 	}
 	if co == nil {
-		return "", userErr("the root %s is in no checkout with a fugaro.yaml, and a managed apply runs the root of the project repository (D75): run it on a directory of the checkout whose fugaro.yaml names %s", rootArg, lc.Name)
+		return "", userErr("the root %s is in no checkout with a fugaro.yaml, and a managed apply runs the root of the project repository (D75): run it on a directory of the checkout whose fugaro.yaml names %s", safetext.Field(rootArg), safetext.Field(lc.Name))
 	}
 	if co.Project != lc.Name {
-		return "", userErr("the root %s is in the checkout of project %s, and this command is acting on %s: a managed apply runs the root of the project it applies for", rootArg, co.Project, lc.Name)
+		return "", userErr("the root %s is in the checkout of project %s, and this command is acting on %s: a managed apply runs the root of the project it applies for", safetext.Field(rootArg), safetext.Field(co.Project), safetext.Field(lc.Name))
 	}
 	// co.Root is abs's own git toplevel (checkoutProject resolved it), so abs
 	// is inside the checkout by construction and nothing further is checked
@@ -442,7 +464,7 @@ func managedTerraform(cmd *cobra.Command, lc *localcfg.Config, wd *infra.Workdir
 	want := managedmode.DeployerAccount(lc.GCPProject)
 	ic, ok := cred.(impersonatedCredential)
 	if !ok {
-		return nil, none, fmt.Errorf("the credential for %s does not name the impersonation it was minted through, and terraform's credential file is that impersonation or nothing", cred.Account())
+		return nil, none, fmt.Errorf("the credential for %s does not name the impersonation it was minted through, and terraform's credential file is that impersonation or nothing", safetext.Field(cred.Account()))
 	}
 	u := ic.ImpersonationURL()
 	account, err := impersonationAccount(u)
@@ -454,7 +476,7 @@ func managedTerraform(cmd *cobra.Command, lc *localcfg.Config, wd *infra.Workdir
 		// managed.Deployer before this runs; this is the second check, in the
 		// one place that would otherwise write another account's credential
 		// file — and it reads the account out of the file's own URL.
-		return nil, none, fmt.Errorf("the credential is for %s (its impersonation names %s), not for the deployer account of %s", cred.Account(), account, lc.GCPProject)
+		return nil, none, fmt.Errorf("the credential is for %s (its impersonation names %s), not for the deployer account of %s", safetext.Field(cred.Account()), safetext.Field(account), safetext.Field(lc.GCPProject))
 	}
 	file, cleanup, err := writeImpersonationFile(u)
 	if err != nil {
@@ -471,9 +493,9 @@ func managedTerraform(cmd *cobra.Command, lc *localcfg.Config, wd *infra.Workdir
 		cleanup()
 		var ee *tf.ExitError
 		if errors.As(err, &ee) {
-			return nil, none, remote(err)
+			return nil, none, remote(safetext.FieldErr(err))
 		}
-		return nil, none, userErr("%v", err)
+		return nil, none, userErr("%v", safetext.FieldErr(err))
 	}
 	t.Out = cmd.ErrOrStderr()
 	return t, cleanup, nil
@@ -518,16 +540,16 @@ func writeImpersonationFile(impersonationURL string) (string, func(), error) {
 	}
 	src, err := readBounded(path)
 	if err != nil {
-		return "", none, userErr("reading your Application Default Credentials: %v (run gcloud auth application-default login)", err)
+		return "", none, userErr("reading your Application Default Credentials: %v (run gcloud auth application-default login)", safetext.FieldErr(err))
 	}
 	var kind struct {
 		Type string `json:"type"`
 	}
 	if json.Unmarshal(src, &kind) != nil || kind.Type == "" {
-		return "", none, userErr("your Application Default Credentials (%s) are not a credential file this command reads: run gcloud auth application-default login", path)
+		return "", none, userErr("your Application Default Credentials (%s) are not a credential file this command reads: run gcloud auth application-default login", safetext.Field(path))
 	}
 	if kind.Type != "authorized_user" {
-		return "", none, userErr("your Application Default Credentials are a %s credential, and a managed apply is run by a person: the deployer account's impersonation grant is on the project's operators (people), so run it with your own credentials", kind.Type)
+		return "", none, userErr("your Application Default Credentials are a %s credential, and a managed apply is run by a person: the deployer account's impersonation grant is on the project's operators (people), so run it with your own credentials", safetext.Field(kind.Type))
 	}
 	body, err := json.Marshal(impersonationFile{
 		Type:                           "impersonated_service_account",
@@ -539,7 +561,7 @@ func writeImpersonationFile(impersonationURL string) (string, func(), error) {
 	}
 	dir, err := os.MkdirTemp(credentialDir, "fugaro-deployer-")
 	if err != nil {
-		return "", none, userErr("making the credential file's directory: %v", err)
+		return "", none, userErr("making the credential file's directory: %v", safetext.FieldErr(err))
 	}
 	remove := func() {
 		// The file is removed whether or not the apply succeeded: what it
@@ -548,17 +570,17 @@ func writeImpersonationFile(impersonationURL string) (string, func(), error) {
 		// rather than ignored, because the operator is the only one who can
 		// delete it.
 		if err := os.RemoveAll(dir); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %s could not be removed (%v): it holds your own credentials, wrapped for the deployer account, and nothing needs it again\n", dir, err)
+			fmt.Fprintf(os.Stderr, "warning: %s could not be removed (%v): it holds your own credentials, wrapped for the deployer account, and nothing needs it again\n", safetext.Field(dir), safetext.FieldErr(err))
 		}
 	}
 	if err := os.Chmod(dir, 0o700); err != nil {
 		remove()
-		return "", none, userErr("%v", err)
+		return "", none, userErr("%v", safetext.FieldErr(err))
 	}
 	out := filepath.Join(dir, "credentials.json")
 	if err := os.WriteFile(out, body, 0o600); err != nil {
 		remove()
-		return "", none, userErr("writing %s: %v", out, err)
+		return "", none, userErr("writing %s: %v", safetext.Field(out), safetext.FieldErr(err))
 	}
 	return out, remove, nil
 }
@@ -611,11 +633,11 @@ var managedCaller = func(ctx context.Context, lc *localcfg.Config) (string, oaut
 		if errors.Is(err, errServiceAccount) {
 			return "", nil, userErr("a managed apply runs as a person: the deployer account's impersonation grant is on the project's operators, and this run's credentials are a service account's")
 		}
-		return "", nil, userErr("fugaro managed apply cannot tell who you are: %v", err)
+		return "", nil, userErr("fugaro managed apply cannot tell who you are: %v", safetext.FieldErr(err))
 	}
 	ts, err := google.DefaultTokenSource(ctx, cloudPlatformScope)
 	if err != nil {
-		return "", nil, userErr("no Google credentials to assume the deployer account with: run gcloud auth application-default login (%v)", err)
+		return "", nil, userErr("no Google credentials to assume the deployer account with: run gcloud auth application-default login (%v)", safetext.FieldErr(err))
 	}
 	return "user:" + email, ts, nil
 }
@@ -683,7 +705,7 @@ func (i deployerImpersonator) Impersonate(ctx context.Context, account string) (
 		return nil, err
 	}
 	if named != account {
-		return nil, fmt.Errorf("the impersonation URL names %s, not the deployer account %s", named, account)
+		return nil, fmt.Errorf("the impersonation URL names %s, not the deployer account %s", safetext.Field(named), safetext.Field(account))
 	}
 	first, err := i.accessToken(ctx, account)
 	if err != nil {
@@ -711,20 +733,20 @@ func deployerImpersonationURL(endpoint, account string) string {
 func impersonationAccount(u string) (string, error) {
 	parsed, err := url.Parse(u)
 	if err != nil {
-		return "", fmt.Errorf("the impersonation URL %q: %w", u, err)
+		return "", fmt.Errorf("the impersonation URL %s: %w", safetext.Field(u), safetext.FieldErr(err))
 	}
 	const prefix = "/v1/projects/-/serviceAccounts/"
 	rest, ok := strings.CutPrefix(parsed.EscapedPath(), strings.TrimRight(parsedPathPrefix(parsed), "/")+prefix)
 	if !ok || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", fmt.Errorf("the impersonation URL %q is not a generateAccessToken URL", u)
+		return "", fmt.Errorf("the impersonation URL %s is not a generateAccessToken URL", safetext.Field(u))
 	}
 	escaped, ok := strings.CutSuffix(rest, ":generateAccessToken")
 	if !ok || escaped == "" || strings.Contains(escaped, "/") {
-		return "", fmt.Errorf("the impersonation URL %q is not a generateAccessToken URL", u)
+		return "", fmt.Errorf("the impersonation URL %s is not a generateAccessToken URL", safetext.Field(u))
 	}
 	account, err := url.PathUnescape(escaped)
 	if err != nil || account == "" || strings.ContainsAny(account, "/:") {
-		return "", fmt.Errorf("the impersonation URL %q names no account", u)
+		return "", fmt.Errorf("the impersonation URL %s names no account", safetext.Field(u))
 	}
 	return account, nil
 }
@@ -792,7 +814,7 @@ func (i deployerImpersonator) accessToken(ctx context.Context, account string) (
 		ExpireTime  string `json:"expireTime"`
 	}
 	if json.Unmarshal(out, &tok) != nil || tok.AccessToken == "" {
-		return nil, fmt.Errorf("assuming the deployer account %s: generateAccessToken answered without a token", account)
+		return nil, fmt.Errorf("assuming the deployer account %s: generateAccessToken answered without a token", safetext.Field(account))
 	}
 	exp, err := time.Parse(time.RFC3339, tok.ExpireTime)
 	if err != nil {
@@ -819,14 +841,14 @@ func (i deployerImpersonator) identity(ctx context.Context, account string) (str
 		Token string `json:"token"`
 	}
 	if json.Unmarshal(out, &tok) != nil || tok.Token == "" {
-		return "", fmt.Errorf("assuming the deployer account %s: generateIdToken answered without a token", account)
+		return "", fmt.Errorf("assuming the deployer account %s: generateIdToken answered without a token", safetext.Field(account))
 	}
 	email, err := jwtEmail(tok.Token)
 	if err != nil {
-		return "", fmt.Errorf("assuming the deployer account %s: %w", account, err)
+		return "", fmt.Errorf("assuming the deployer account %s: %w", safetext.Field(account), safetext.FieldErr(err))
 	}
 	if email != account {
-		return "", fmt.Errorf("the credential is for %s, not for the deployer account %s: the token this assumption produced names another account", email, account)
+		return "", fmt.Errorf("the credential is for %s, not for the deployer account %s: the token this assumption produced names another account", safetext.Field(email), safetext.Field(account))
 	}
 	return email, nil
 }
@@ -861,7 +883,7 @@ func (i deployerImpersonator) call(ctx context.Context, account, method string, 
 	}
 	tok, err := i.ts.Token()
 	if err != nil {
-		return nil, fmt.Errorf("assuming the deployer account: fetching your own credential failed (%v): run gcloud auth application-default login", err)
+		return nil, fmt.Errorf("assuming the deployer account: fetching your own credential failed (%v): run gcloud auth application-default login", safetext.FieldErr(err))
 	}
 	u := strings.TrimRight(i.endpoint, "/") + "/v1/projects/-/serviceAccounts/" + url.PathEscape(account) + ":" + method
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(string(body)))
@@ -872,19 +894,23 @@ func (i deployerImpersonator) call(ctx context.Context, account, method string, 
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := i.hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("assuming the deployer account %s: %w", account, err)
+		return nil, fmt.Errorf("assuming the deployer account %s: %w", safetext.Field(account), safetext.FieldErr(err))
 	}
 	defer resp.Body.Close()
 	out, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, fmt.Errorf("assuming the deployer account %s: %w", account, err)
+		return nil, fmt.Errorf("assuming the deployer account %s: %w", safetext.Field(account), safetext.FieldErr(err))
 	}
+	// resp.Status is the status line the far end answered with — the reason
+	// phrase included, which is the other program's own text and not a code —
+	// so it is one bounded field like the body under it. The account this
+	// command asked about is one as well, here as everywhere it is printed.
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
 		return nil, fmt.Errorf("%w: %s refused this run's credential (%s): the owner-run creating apply grants roles/iam.serviceAccountTokenCreator on %s to var.operators, so ask the owner to add you, or run this from the terminal you are an operator in",
-			managedmode.ErrNoImpersonationGrant, account, resp.Status, account)
+			managedmode.ErrNoImpersonationGrant, safetext.Field(account), safetext.Field(resp.Status), safetext.Field(account))
 	}
 	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("assuming the deployer account %s: %s: %s", account, resp.Status, oneLineCLI(string(out)))
+		return nil, fmt.Errorf("assuming the deployer account %s: %s: %s", safetext.Field(account), safetext.Field(resp.Status), safetext.Field(string(out)))
 	}
 	return out, nil
 }
@@ -1003,11 +1029,11 @@ func managedBudgetGateOf(ctx context.Context, s *storage.Service, r *crm.Service
 func managedListErr(lc *localcfg.Config, bucket string, err error) error {
 	switch {
 	case errors.Is(err, managed.ErrRefused):
-		return userErr("nothing was applied: the delete list of %s could not be read, and an unreadable list approves nothing: %s", lc.Name, safetext.Field(err.Error()))
+		return userErr("nothing was applied: the delete list of %s could not be read, and an unreadable list approves nothing: %s", safetext.Field(lc.Name), safetext.Field(err.Error()))
 	case isAccessDenied(err):
-		return userErr("nothing was applied: gs://%s/%s could not be read with this run's credentials: %s", bucket, managed.AllowDeleteObject, safetext.Field(err.Error()))
+		return userErr("nothing was applied: gs://%s/%s could not be read with this run's credentials: %s", safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(err.Error()))
 	default:
-		return remote(fmt.Errorf("reading gs://%s/%s for %s: %w", bucket, managed.AllowDeleteObject, lc.Name, err))
+		return remote(fmt.Errorf("reading gs://%s/%s for %s: %w", safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(lc.Name), safetext.FieldErr(err)))
 	}
 }
 
@@ -1024,7 +1050,7 @@ func managedApplyErr(lc *localcfg.Config, root string, res managedmode.Result, e
 		// value, and this is the apply's own refusal of it.
 		return userErr("nothing was applied: %v", err)
 	case errors.As(err, &refused):
-		return userErr("nothing was applied: the gate refused the plan of %s, and a refused plan is not applied — the plan carries a delete or a replacement the owner has not approved, or a resource outside the managed project's allowlist:\n%v", root, err)
+		return userErr("nothing was applied: the gate refused the plan of %s, and a refused plan is not applied — the plan carries a delete or a replacement the owner has not approved, or a resource outside the managed project's allowlist:\n%v", safetext.Field(root), err)
 	case errors.Is(err, managedmode.ErrNotManaged):
 		return userErr("nothing was applied: %v", err)
 	case errors.Is(err, managedmode.ErrSessionAddresses):
@@ -1051,6 +1077,6 @@ func managedApplyErr(lc *localcfg.Config, root string, res managedmode.Result, e
 	case errors.As(err, &ee):
 		return remote(err)
 	default:
-		return remote(fmt.Errorf("applying the root of %s for %s: %w", root, lc.Name, err))
+		return remote(fmt.Errorf("applying the root of %s for %s: %w", safetext.Field(root), safetext.Field(lc.Name), safetext.FieldErr(err)))
 	}
 }

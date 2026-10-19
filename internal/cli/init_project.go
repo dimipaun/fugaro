@@ -45,7 +45,7 @@ func (o *initOptions) checkCreateProject() error {
 	if !o.createProject {
 		switch {
 		case o.managed:
-			return userErr("--managed goes with --create-project: it is what a project this run creates is, and only a creation can be one — flagging a project that already exists as managed is not yet possible in this release (and never by init --firebase, which adds Firebase to a project someone else made). To create a managed project: fugaro init --create-project --gcp-project <id> --managed --budget <amount> --budget-currency <code> --billing-account <id>")
+			return userErr("--managed goes with --create-project: it is what a project this run creates is, and only a creation can be one — an existing project is made managed by the owner's own command instead (never by init --firebase, which adds Firebase to a project someone else made). To create a managed project: fugaro init --create-project --gcp-project <id> --managed --budget <amount> --budget-currency <code> --billing-account <id>; to flag one that already exists: fugaro managed flag <id> --budget <amount> --budget-currency <code>, before a person, who types its ID")
 		case o.linkBilling != "":
 			return userErr("--link-billing goes with --create-project (both flags, explicitly: init links billing only to a project it was asked to create or adopt). To link billing yourself: gcloud billing projects link <project> --billing-account=<account>")
 		case o.parent != "" || o.displayName != "":

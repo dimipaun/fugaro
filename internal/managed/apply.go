@@ -25,12 +25,26 @@
 // thing that opens the gate is the
 // apply-time budget read (Task 4.4) — internal/cli's managed apply makes it and
 // hands the answer in, and this package refuses a gate that read did not open
-// as its own first step. The whole-project inventory (Task 4.1, inventory.go)
-// is built and tested but NOT consulted here: Apply has no inventory input,
-// so a resource created outside Fugaro in a managed project is not detected
-// by the apply (accepted for 0.8.5 by the owner's ruling of 2026-10-18; the
-// wiring is the plan's Task 4.5, unscheduled, with Task 6.1 in 0.9.0).
-// TestApplyConsultsNoInventory pins that, so wiring it is a deliberate change.
+// as its own first step.
+//
+// The whole-project inventory (Task 4.1, inventory.go) is consulted here, and
+// this is the wiring Task 4.5 is: Request.Inventory carries the caller's
+// read of the project against what the installation's own state accounts for,
+// and its Fallback is the third fact of the confirmation rule below — where it
+// fires, the run keeps its confirmations (D59). What that means in the two
+// sessions this command runs in: a person at a terminal is asked, with the
+// inventory's own warning printed first, and a coding agent's session is
+// refused, because the confirmation D55 removes for a managed project is
+// exactly the confirmation the fallback keeps. Nothing here halts and nothing
+// here deletes: a plan the gate admitted is still applied, by a session that
+// may confirm it.
+//
+// Request.Inventory is zero-value-closed (check.go/InventoryCheck): a caller
+// that read nothing falls back rather than proceeding, so forgetting the read
+// lands on the safe side of the rule.
+// TestApplyConsultsTheInventory pins the wiring, and the two directions of it:
+// a foreign resource keeps the confirmations, and an inventory that could not
+// be read keeps them too.
 package managed
 
 import (
@@ -165,6 +179,18 @@ type Request struct {
 	// function that runs an apply rather than left to each caller, and
 	// anything here is refused by name whatever the owner's object says.
 	Session []string
+	// Inventory is the whole-project inventory's answer (Task 4.5, design
+	// D59): the caller's Cloud Asset read of the project against what the
+	// installation's own state accounts for. It is the third fact of the
+	// confirmation rule — a fallback keeps this run's confirmations, which in
+	// a coding agent's session means the plan is not applied unattended and in
+	// a person's means the person is asked (and warned) as they would be
+	// without the managed case at all.
+	//
+	// The zero value FALLS BACK (InventoryCheck's contract): a caller that
+	// made no read is a run that checked nothing, and "checked nothing" must
+	// not read as "found nothing".
+	Inventory InventoryCheck
 	// Conditions is what the session asking for the apply says about who is
 	// there (initflow.Conditions: the marker its environment carries, a
 	// terminal, --yes). It is the third input of D55's confirmation rule, and
@@ -221,9 +247,11 @@ type RefusedError struct {
 	Advice  string
 }
 
-// Error is the refusal as a person reads it: one line per refused change, each
-// with the gate that refused it and the address and rule's own words, and then
-// the mode's advice when there is one.
+// Error is the refusal as a person reads it: one line per refused change — at
+// most safetext.FieldListMax of them, with the rest counted in this program's
+// own words — each with the gate that refused it and the address and rule's
+// own words, and then the mode's advice when there is one. The count in the
+// first line is every refusal, listed or not.
 //
 // Every part of it that can come from somewhere else is one bounded field
 // first (safetext.Field): an address and a rule's own words are read out of a
@@ -235,7 +263,11 @@ type RefusedError struct {
 func (e *RefusedError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s, so nothing is applied (%d refusal(s))", ErrRefused, len(e.Verdict.Refusals))
-	for _, r := range e.Verdict.Refusals {
+	listed := e.Verdict.Refusals
+	if len(listed) > safetext.FieldListMax {
+		listed = listed[:safetext.FieldListMax]
+	}
+	for _, r := range listed {
 		b.WriteString("\n  ")
 		// The gate's name is this program's own, but it is rendered the way
 		// the rest is: the shape of the line is the same whatever any of its
@@ -250,6 +282,15 @@ func (e *RefusedError) Error() string {
 	}
 	if len(e.Verdict.Refusals) == 0 {
 		b.WriteString(": the verdict refused and listed nothing, which is a refusal all the same")
+	}
+	// The listing stops at the cap and says how many it did not print, in this
+	// program's own words: how many changes a plan refuses is the plan's to
+	// choose, and the count in the line above is the whole list's, so a
+	// truncated listing is flagged and never read as a short one.
+	if n := len(e.Verdict.Refusals) - len(listed); n > 0 {
+		b.WriteString("\n  (")
+		b.WriteString(safetext.FieldListNote(n))
+		b.WriteString(")")
 	}
 	if e.Advice != "" {
 		b.WriteString("\n")
@@ -282,7 +323,7 @@ func (e *RefusedError) Unwrap() error { return ErrRefused }
 func DeleteAdvice(gcpProject string) string {
 	where := "the owner's own list"
 	if gcpProject != "" {
-		where = "the owner's own list at gs://fugaro-runs-" + gcpProject + "/fugaro/allow-delete.json"
+		where = "the owner's own list at gs://fugaro-runs-" + safetext.Field(gcpProject) + "/fugaro/allow-delete.json"
 	}
 	return "the addresses a managed project may delete or replace are " + where +
 		", which the owner writes with their own credentials and the owner-run command fugaro allow-delete, and no address named on the command line of an applying command approves one: an address the owner approves is listed there"
@@ -309,9 +350,26 @@ func DeleteAdvice(gcpProject string) string {
 //     assumption: terraform's own environment is built around its credential,
 //     the init and the plan run as it, the plan is gated, the session's own
 //     leg of D55's confirmation rule is asked (confirm, which is where the
-//     managed case is reached), and the saved file is applied. Nothing runs
-//     outside the assumption, and a refused or unassumable deployer runs no
-//     terraform at all.
+//     managed case and the inventory's fallback are reached), and the saved
+//     file is applied. Nothing runs outside the assumption, and a refused or
+//     unassumable deployer runs no terraform at all.
+//
+// The inventory read itself is not made here but handed in (Request.Inventory):
+// it needs the Cloud Asset API and the installation's own state bucket, which
+// internal/cli reads with the operator's credential — the identity the
+// installation grants the read role to — and not with the deployer's, which
+// holds neither. Reading it before terraform is also what makes it independent
+// of the plan: it is made whatever the plan turns out to hold, and its answer
+// is the same whether the plan applies something or nothing.
+//
+// Where it is SAID is narrower, and deliberately so: the fallback's sentence is
+// printed by confirm, and confirm is reached only where the run could go on to
+// apply — not on a plan that changes nothing, not on a plan the gate refuses,
+// and not on a closed gate. On each of those the run applies nothing, so there
+// is no confirmation for the fallback to keep and nothing for the sentence to
+// warn about; the read is still made, and its answer still decides whether
+// confirm would ask (the apply-time budget gate has the same shape: it is read
+// before the plan and its refusal is a refusal, not a warning).
 func Apply(ctx context.Context, r Request) (Result, error) {
 	if err := r.Enable.Refuse(); err != nil {
 		return Result{}, err
@@ -336,19 +394,19 @@ func Apply(ctx context.Context, r Request) (Result, error) {
 	// root carries one of its own, so there is exactly one.
 	settings, err := r.Workdir.WriteBackend(r.stateBucket(), infra.StatePrefixManaged)
 	if err != nil {
-		return Result{}, fmt.Errorf("the state backend of %s: %w", r.what(), err)
+		return Result{}, fmt.Errorf("the state backend of %s: %w", r.what(), safetext.FieldErr(err))
 	}
 	if err := r.Workdir.WriteBackendBlock(); err != nil {
-		return Result{}, fmt.Errorf("the state backend of %s: %w", r.what(), err)
+		return Result{}, fmt.Errorf("the state backend of %s: %w", r.what(), safetext.FieldErr(err))
 	}
 	if err := r.writeVars(); err != nil {
-		return Result{}, fmt.Errorf("the variables file of %s: %w", r.what(), err)
+		return Result{}, fmt.Errorf("the variables file of %s: %w", r.what(), safetext.FieldErr(err))
 	}
 	// The lock file is this command's too: init runs with -lockfile=readonly,
 	// so the lock decides which provider package is accepted, and the root's
 	// own was refused by the preflight.
 	if err := r.Workdir.WriteManagedLock(providers); err != nil {
-		return Result{}, fmt.Errorf("%w: the lock file of %s: %w", ErrPreflight, r.what(), err)
+		return Result{}, fmt.Errorf("%w: the lock file of %s: %w", ErrPreflight, r.what(), safetext.FieldErr(err))
 	}
 	// From here on everything runs as the deployer account of D75, and the
 	// first thing that runs as it is terraform itself: the plan is read from
@@ -369,15 +427,15 @@ func Apply(ctx context.Context, r Request) (Result, error) {
 			defer done()
 		}
 		if err != nil {
-			return fmt.Errorf("terraform for %s: %w", r.what(), err)
+			return fmt.Errorf("terraform for %s: %w", r.what(), safetext.FieldErr(err))
 		}
 		if err := t.Init(ctx, settings); err != nil {
-			return fmt.Errorf("initializing the root of %s: %w", r.what(), err)
+			return fmt.Errorf("initializing the root of %s: %w", r.what(), safetext.FieldErr(err))
 		}
 		planPath := filepath.Join(r.Workdir.Root, infra.PlanFile)
 		changed, err := t.Plan(ctx, planPath)
 		if err != nil {
-			return fmt.Errorf("planning the root of %s: %w", r.what(), err)
+			return fmt.Errorf("planning the root of %s: %w", r.what(), safetext.FieldErr(err))
 		}
 		if !changed {
 			// Nothing to change: there is no plan to gate and none to apply,
@@ -399,10 +457,18 @@ func Apply(ctx context.Context, r Request) (Result, error) {
 // all — a refusal that named one would be read by the session it refuses as a
 // thing to pass.
 func (r Request) refuseSession() error {
+	// The addresses are the applying session's own arguments and are bounded
+	// like every other untrusted value before they are interpolated: a refusal
+	// that a newline in an argument could turn into a line of its own is a
+	// refusal the session it refuses can write the rest of. The listing is
+	// capped as its source is — a command line holds as many arguments as the
+	// session passed — and the entries it leaves out are counted rather than
+	// silently dropped (safetext.FieldListLine).
 	named := slices.Clone(r.Session)
 	slices.Sort(named)
+	line := safetext.FieldListLine(named)
 	return fmt.Errorf("%w: refusing the addresses this command's own command line named (%s): in a managed project the addresses a run may delete or replace come from the owner's own list at gs://%s/%s, written with the operator's credentials by fugaro allow-delete, never from the arguments of the command that applies the plan; ask the owner to approve %s",
-		ErrSessionAddresses, strings.Join(named, ", "), r.runsBucket(), "fugaro/allow-delete.json", strings.Join(named, ", "))
+		ErrSessionAddresses, line, r.runsBucket(), "fugaro/allow-delete.json", line)
 }
 
 // fact is the creation fact's own rule: this command applies only for a
@@ -413,7 +479,7 @@ func (r Request) refuseSession() error {
 func (r Request) fact() error {
 	switch {
 	case r.Fact.Err != nil:
-		return fmt.Errorf("%w: reading the creation fact of %s: %w", ErrNotManaged, r.what(), r.Fact.Err)
+		return fmt.Errorf("%w: reading the creation fact of %s: %w", ErrNotManaged, r.what(), safetext.FieldErr(r.Fact.Err))
 	case r.Fact.Managed:
 		return nil
 	case safetext.Field(r.Fact.Reason) == "":
@@ -466,17 +532,23 @@ func (r Request) writeVars() error {
 // runsBucket is the name the marker and the delete list live under, the one
 // infra/managed reads (its runsBucketName): the default, never the config's
 // runs_bucket, because a managed object in another bucket is read by nobody.
-func (r Request) runsBucket() string { return "fugaro-runs-" + r.GCPProject }
+// The project in it is bounded (safetext.Field) because this name is printed:
+// it is built from what the marker read answered, and that is a value out of
+// an object someone else could have written.
+func (r Request) runsBucket() string { return "fugaro-runs-" + safetext.Field(r.GCPProject) }
 
-// what names the project in this file's refusals.
+// what names the project in this file's refusals. Both halves of the name are
+// untrusted at this boundary — whatever the caller read the project and its
+// GCP project from, and in a managed project that includes the marker the
+// cloud answered with — so each is bounded before it is interpolated.
 func (r Request) what() string {
 	switch {
 	case r.Project != "" && r.GCPProject != "":
-		return r.Project + " (" + r.GCPProject + ")"
+		return safetext.Field(r.Project) + " (" + safetext.Field(r.GCPProject) + ")"
 	case r.Project != "":
-		return r.Project
+		return safetext.Field(r.Project)
 	case r.GCPProject != "":
-		return r.GCPProject
+		return safetext.Field(r.GCPProject)
 	}
 	return "this project"
 }
@@ -495,13 +567,13 @@ func (r Request) spec(t *tf.TF) Spec {
 func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, planPath string) (Result, error) {
 	before, err := planHash(planPath)
 	if err != nil {
-		return Result{}, fmt.Errorf("%w: the saved plan of %s: %w", ErrRequest, r.what(), err)
+		return Result{}, fmt.Errorf("%w: the saved plan of %s: %w", ErrRequest, r.what(), safetext.FieldErr(err))
 	}
 	v, err := Gate(ctx, planPath, r.spec(t))
 	if err != nil {
 		// A plan the gate cannot read is an error and never a verdict, and the
 		// zero Verdict it returns is not OK either.
-		return Result{}, fmt.Errorf("gating the plan of %s: %w", r.what(), err)
+		return Result{}, fmt.Errorf("gating the plan of %s: %w", r.what(), safetext.FieldErr(err))
 	}
 	res := Result{Changed: true, PlanPath: planPath, PlanHash: before, Verdict: v}
 	if !v.OK {
@@ -525,17 +597,17 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 	// immediately before the apply.
 	now, err := planHash(planPath)
 	if err != nil {
-		return res, fmt.Errorf("%w: the saved plan of %s: %w", ErrPlanChanged, r.what(), err)
+		return res, fmt.Errorf("%w: the saved plan of %s: %w", ErrPlanChanged, r.what(), safetext.FieldErr(err))
 	}
 	if now != before {
 		return res, fmt.Errorf("%w: the file the gate admitted is not the file that would be applied (%s then, %s now), so nothing is applied: gate and apply must be the same bytes",
 			ErrPlanChanged, before, now)
 	}
 	if r.Out != nil {
-		fmt.Fprintf(r.Out, "applying the saved plan of %s as %s\n", r.what(), cred.Account())
+		fmt.Fprintf(r.Out, "applying the saved plan of %s as %s\n", r.what(), safetext.Field(cred.Account()))
 	}
 	if err := t.Apply(ctx, planPath); err != nil {
-		return res, err
+		return res, safetext.FieldErr(err)
 	}
 	return res, nil
 }
@@ -563,9 +635,10 @@ func (r Request) advice(v Verdict) string {
 
 // confirm is D55's rule, and this is the caller that reaches its managed case:
 // initflow.CanConfirmManaged is the one predicate, its zero Managed is today's
-// rule word for word, and the value asked with here is this apply's own two
-// facts — the creation fact the marker read answered and the verdict that
-// admitted the plan.
+// rule word for word, and the value asked with here is this apply's own three
+// facts — the creation fact the marker read answered, the verdict that
+// admitted the plan, and whether the whole-project inventory fell back (D59,
+// Task 4.5).
 //
 // The step's class is YesOrTyped because that is the class this apply is: the
 // gate judged a saved plan, which is what a YesOrTyped step is, and money or
@@ -576,19 +649,39 @@ func (r Request) advice(v Verdict) string {
 // apply nobody confirmed.
 //
 // A session the rule admits is then one of two. A coding agent's, in a managed
-// project with an admitted plan, is D55's answer: it proceeds, and says why in
-// initflow's own sentence (AgentProceeded). A person's — a terminal and no
-// marker — is ASKED (Request.Ask), with a question that names the project, the
-// saved plan's hash and what it changes: having a terminal is what makes a
-// confirmation possible, not a confirmation, and an apply in a project with no
-// agent must not run on a person's terminal without the person saying so.
+// project with an admitted plan the inventory did not fall back on, is D55's
+// answer: it proceeds, and says why in initflow's own sentence
+// (AgentProceeded). A person's — a terminal and no marker — is ASKED
+// (Request.Ask), with a question that names the project, the saved plan's hash
+// and what it changes: having a terminal is what makes a confirmation
+// possible, not a confirmation, and an apply in a project with no agent must
+// not run on a person's terminal without the person saying so.
 //
 // The refusal names what refused in the words initflow already produces: the
 // reason is decided in one place, and a caller that printed its own version of
 // it would be the second copy of the rule this whole shape exists to avoid.
+// Where the inventory's fallback is what kept the confirmation, the
+// inventory's own sentence is appended to that refusal rather than replacing
+// it — both are true, and the reader needs both.
 func (r Request) confirm(v Verdict, hash string) error {
-	if !initflow.CanConfirmManaged(initflow.YesOrTyped, r.Conditions, initflow.Managed{Managed: r.Fact.Managed, Admitted: v.OK}) {
+	// D59's warning comes first, before anything is asked or refused, and it
+	// is printed in every session: a person about to answer the question and
+	// the session about to be refused both read why this run is not the
+	// managed case. It names the foreign resources (the inventory's own
+	// sentence, bounded) and it halts nothing.
+	fallback := r.Inventory.Fallback()
+	if fallback && r.Out != nil {
+		fmt.Fprintln(r.Out, safetext.MultiLine(r.Inventory.Why()))
+	}
+	if !initflow.CanConfirmManaged(initflow.YesOrTyped, r.Conditions, initflow.Managed{Managed: r.Fact.Managed, Admitted: v.OK, Fallback: fallback}) {
 		if marker := r.Conditions.Agent; marker != "" {
+			// The reason is initflow's own sentence, which is where D55's
+			// rule is decided; the fallback's own sentence is appended rather
+			// than substituted, so a reader gets both the rule and what this
+			// project did to it.
+			if fallback {
+				return fmt.Errorf("%w: %s (%s)", ErrNotConfirmed, initflow.AgentRefusal(marker), safetext.MultiLine(r.Inventory.Why()))
+			}
 			return fmt.Errorf("%w: %s", ErrNotConfirmed, initflow.AgentRefusal(marker))
 		}
 		return fmt.Errorf("%w: %s", ErrNotConfirmed, initflow.NeedsTerminal("applying the saved plan of "+r.what()))
@@ -605,7 +698,7 @@ func (r Request) confirm(v Verdict, hash string) error {
 	ok, err := r.Ask(r.question(v, hash))
 	switch {
 	case err != nil:
-		return fmt.Errorf("%w: asking whether to apply the saved plan of %s: %w", ErrNotConfirmed, r.what(), err)
+		return fmt.Errorf("%w: asking whether to apply the saved plan of %s: %w", ErrNotConfirmed, r.what(), safetext.FieldErr(err))
 	case !ok:
 		return fmt.Errorf("%w: the saved plan of %s was not confirmed, so nothing is applied", ErrNotConfirmed, r.what())
 	}
@@ -669,7 +762,11 @@ func TerraformEnv(parent []string, workdir, cache string) ([]string, error) {
 		return nil, err
 	}
 	if k := providerSettingIn(env); k != "" {
-		return nil, fmt.Errorf("%w: %s is set in terraform's environment, and the credential terraform runs with is this command's own (the deployer account's): unset it", ErrProviderSetting, k)
+		// The name is a variable name out of the environment this command
+		// inherited — the one thing in the sentence that is not this
+		// program's, and a name that may hold anything but "=" and NUL — so it
+		// is one bounded field (safetext.Field) before it is interpolated.
+		return nil, fmt.Errorf("%w: %s is set in terraform's environment, and the credential terraform runs with is this command's own (the deployer account's): unset it", ErrProviderSetting, safetext.Field(k))
 	}
 	return env, nil
 }

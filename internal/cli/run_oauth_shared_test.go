@@ -8,38 +8,43 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
-// An OAuth launch onto a shared project job (plan task 3.4a, the owner's
-// ruling of 2026-10-17): every Claude OAuth token is refused on a shared
-// (profile) job — a profile is shared by every repository admitted to it, and
-// an account's allow_data_to is a per-repository list a shared job cannot
-// honour — and `fugaro init` refuses to deploy one, so an installation whose
-// runs use `agent.auth: oauth` has no shared job at all until phase 5 decides
-// how an account reaches one (design docs/design/project-centric.md §4.1 and
-// the shared-job section; docs/project-layer.md's "Which runs work on a
-// shared job today").
+// An OAuth launch onto a shared project job (plan task 3.4a, the owner's ruling
+// of 2026-10-17, replaced by task 3's gate — design §4.4 rows 4 to 6): a shared
+// project job may serve a named Claude account, because each account has a job
+// of its own whose container holds that account's token (config.ProjectJobAccounts,
+// internal/infra's ProjectJobs). What remains refused is everything that would
+// put a run on a job whose credential is not the run's own:
 //
-// Before the refusal, such a launch was started on a job that cannot serve
-// it: the claim was taken, a budget token was minted, and the launch then
-// failed in Cloud Run — the profile's own job does not exist when the profile
-// mounts an account (`internal/infra`'s projectJobSecrets refuses to deploy
-// it) and reads no token when it does not. The launcher now refuses it where
-// it decides the job, before any of that (internal/cli/project_job.go).
+//   - an OAuth launch whose account the selected profile serves no job for —
+//     including the default account on a profile that does not list `default`,
+//     whose job mounts no token at all (design §4.4 rows 5 and 9);
+//   - a launch whose repository the account's own policy list does not cover
+//     (rows 3 and 4);
+//   - a non-OAuth launch onto an account job, which is the runner's own half
+//     (row 6).
 //
-// The refusal is scoped to shared project jobs: a repository that still has
-// its own job — a baked workflow, or an installation that has published no
-// profiles — launches an OAuth run exactly as it always has, and the tests
-// below pin both halves.
+// Every one of them is refused where the job is decided, before the claim,
+// before the budget token and before any Cloud Run call, and the refusal is
+// scoped to shared project jobs: a repository that still has its own job — a
+// baked workflow, or an installation that has published no profiles — launches
+// an OAuth run exactly as it always has.
 
-// TestOAuthLaunchOntoASharedProjectJobIsRefusedBeforeLaunch is the ruling's
-// first test: an `agent.auth: oauth` checkout whose clone workflow selects a
-// published profile is refused, and nothing of the launch happened.
+// TestOAuthLaunchOntoASharedProjectJobIsRefusedBeforeLaunch is the refusal's
+// first test, in the state every installation that has not adopted accounts is
+// in: an `agent.auth: oauth` checkout whose clone workflow selects a published
+// profile that serves no Claude account, so the job it would run on mounts no
+// token at all — an OAuth run on it starts with no credential. Nothing of the
+// launch happened.
 //
-// Mutation (run, restore): drop checkProjectJobOAuth from launchProjectJobFor
-// — the launch takes the claim (the hook below fires), mints a token and
-// starts an execution on the shared job.
+// Mutation (run, restore): drop the config.ProjectJobTokenAccount half of
+// projectJobAccountFor — the launch is admitted onto a job whose container
+// holds no token, takes the claim (the hook below fires), mints a token and
+// starts an execution.
 func TestOAuthLaunchOntoASharedProjectJobIsRefusedBeforeLaunch(t *testing.T) {
 	// The installation runs the budget backend in its enforcing mode, so this
 	// launch takes the path a real one takes: the precheck runs before the job
@@ -60,8 +65,8 @@ func TestOAuthLaunchOntoASharedProjectJobIsRefusedBeforeLaunch(t *testing.T) {
 
 	const run = "20261017-100000-aaaa"
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "standard") || !strings.Contains(err.Error(), "phase 5") {
-		t.Fatalf("an OAuth launch onto a shared project job: %v, want a user error naming the profile and phase 5", err)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "standard") || !strings.Contains(err.Error(), "claude-oauth-token") {
+		t.Fatalf("an OAuth launch onto the shared job of a profile that serves no Claude account: %v, want a user error naming the profile and the token its job would hold", err)
 	}
 	if claimed {
 		t.Error("the refusal came after the launch claim: the claim, the budget token and the Cloud Run call all happen past it, so a launch that reaches it has already spent them")
@@ -74,6 +79,88 @@ func TestOAuthLaunchOntoASharedProjectJobIsRefusedBeforeLaunch(t *testing.T) {
 	}
 	if tok := readToken(t, f.cloudFixture, run); tok != "" {
 		t.Errorf("the refused launch minted a budget token: %s", tok)
+	}
+}
+
+// TestOAuthAccountRefusalNamesTokenProfileAndFix is the gate's text: one
+// function decides both halves — the account a launch may target and the
+// refusal of the ones it may not — and every refusal names the account, the
+// token and the profile it is about, while nothing else is refused at all.
+//
+// Mutation (run, restore): read the run's selection without the profile's own
+// job set — `if !slices.Contains(...)` dropped from projectJobAccountFor — and
+// the oauth rows naming an account the profile serves no job for stop being
+// refused: the launch is admitted onto a job whose token the run's own
+// configuration did not choose.
+func TestOAuthAccountRefusalNamesTokenProfileAndFix(t *testing.T) {
+	serving := projectpolicy.Profile{JobProfile: config.JobProfile{
+		Provider:       "github",
+		ClaudeAccounts: []string{"acme-personal", config.DefaultClaudeAccount},
+	}}
+	plain := projectpolicy.Profile{JobProfile: config.JobProfile{Provider: "github"}}
+	p := &projectpolicy.Policy{Version: projectpolicy.Version, Accounts: map[string]projectpolicy.Account{
+		"acme-personal":             {AllowRepos: []string{"github/acme/app"}},
+		config.DefaultClaudeAccount: {AllowRepos: []string{"github/acme/app"}},
+	}}
+	cases := []struct {
+		name    string
+		auth    string
+		acct    string
+		profile projectpolicy.Profile
+		want    string // the account the launch targets; "" is the no-account job
+		refuse  bool
+	}{
+		{name: "an oauth workflow on the default account, which the profile serves", auth: "oauth", profile: serving},
+		{name: "an oauth workflow on a named account the profile serves", auth: "oauth", acct: "acme-personal", profile: serving, want: "acme-personal"},
+		{name: "an oauth workflow on the default account of a profile that does not list it", auth: "oauth", profile: plain, refuse: true},
+		{name: "an oauth workflow on a named account of a profile that serves none", auth: "oauth", acct: "acme-personal", profile: plain, refuse: true},
+		// A named account is only ever selected by a workflow whose auth is
+		// oauth (claudeAccountAllowed, run.go), and spec.OAuthToken is empty
+		// for the default account (run.go sets it only for another one), so a
+		// selected name on a non-oauth run is refused before this gate. What
+		// the gate itself must not do is put such a run on an account job: the
+		// job a run is launched on is chosen by the run's own credential, and
+		// nothing a task.json or a flag carries can move it there.
+		{name: "an api-key workflow", auth: "api-key", profile: serving},
+		{name: "a vertex workflow with a stale selection", auth: "vertex", acct: "acme-personal", profile: serving},
+		{name: "no auth resolved", auth: "", profile: serving},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := projectJobAccountFor(p, "standard", c.profile, c.auth, c.acct, "github", "acme/app")
+			if !c.refuse {
+				if err != nil {
+					t.Fatalf("no Claude account is refused here, so the launch is admitted: %v", err)
+				}
+				if got != c.want {
+					t.Fatalf("the launch targets the account %q, want %q", got, c.want)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v (%d), want a user error", err, ExitCode(err))
+			}
+			msg := err.Error()
+			for _, want := range []string{"standard", "claude_accounts", "CLAUDE_CODE_OAUTH_TOKEN", "no claim was taken"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("the refusal does not name %q: %v", want, err)
+				}
+			}
+			account := c.acct
+			if account == "" {
+				account = config.DefaultClaudeAccount
+			}
+			if !strings.Contains(msg, account) || !strings.Contains(msg, config.ClaudeAccountSecret(account)) {
+				t.Errorf("the refusal does not name the account %q and its token %s: %v", account, config.ClaudeAccountSecret(account), err)
+			}
+			// It names the setting, never the file that carries it: the profile
+			// a launch runs on is the published policy's, and the account list
+			// is the project's local config's, so blaming fugaro.yaml would
+			// send the operator to the wrong place.
+			if strings.Contains(msg, "fugaro.yaml") {
+				t.Errorf("the refusal blames a file for a setting it cannot attribute: %v", err)
+			}
+		})
 	}
 }
 
@@ -95,10 +182,12 @@ func TestOAuthLaunchOnALegacyJobIsUnchanged(t *testing.T) {
 	projectJobCheckoutYAML(t, strings.Replace(projectJobOAuthRepoYAML, "    checkout: clone\n", "", 1))
 
 	// The variant job of the named account, and the build record that says the
-	// image's runner knows task.Spec.OAuthToken (checkImageSince).
+	// image's runner knows task.Spec.OAuthToken (checkImageSince) and reads the
+	// sealed budget token (the seal gate, sealSince — this fixture publishes a
+	// policy, so this launch mints).
 	perRepo := gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-personal"))
 	f.run.AddJob(perRepo, "2", "4Gi")
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", release065)
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseSeal)
 
 	const run = "20261017-110000-bbbb"
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", "acme-personal", "Add a feature"); err != nil {
@@ -116,67 +205,5 @@ func TestOAuthLaunchOnALegacyJobIsUnchanged(t *testing.T) {
 	spec, err := runstore.Open(b, appSlug, run).ReadTask(context.Background())
 	if err != nil || spec.OAuthToken != "acme-personal" {
 		t.Errorf("the stored task = %+v, %v; want the account this run's own job mounts", spec, err)
-	}
-}
-
-// TestOAuthRefusalNamesAccountProfileAndFix is the ruling's third test: one
-// function, one text, naming the account the run uses, the profile it would
-// have run on and the fix — and refusing nothing at all when no OAuth account
-// is involved, which is what keeps every other launch byte-identical.
-//
-// Mutation (run, restore): read the selected account as well as the auth —
-// `if auth != "oauth" && acct == "" { return nil }` — and the api-key row
-// carrying a named account stops launching, which is the case the check must
-// leave alone.
-func TestOAuthRefusalNamesAccountProfileAndFix(t *testing.T) {
-	cases := []struct {
-		name   string
-		auth   string
-		acct   string
-		refuse bool
-	}{
-		{name: "an oauth workflow on the default account", auth: "oauth", refuse: true},
-		{name: "an oauth workflow on a named account", auth: "oauth", acct: "acme-personal", refuse: true},
-		{name: "a named account selected by flag", auth: "oauth", acct: "acme-work", refuse: true},
-		// The check reads the resolved agent.auth and nothing else: a named
-		// account is only ever selected by a run whose auth is oauth
-		// (claudeAccountAllowed), and spec.OAuthToken is empty for the default
-		// account (run.go sets it only for another one), so an api-key or
-		// Vertex run is untouched here whatever account it carries.
-		{name: "an api-key workflow on a named account", auth: "api-key", acct: "acme-work"},
-		{name: "an api-key workflow", auth: "api-key"},
-		{name: "a vertex workflow", auth: "vertex"},
-		{name: "no auth resolved", auth: ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			err := checkProjectJobOAuth("standard", c.auth, c.acct)
-			if !c.refuse {
-				if err != nil {
-					t.Fatalf("no Claude OAuth account is selected, so the launch is not refused here: %v", err)
-				}
-				return
-			}
-			if ExitCode(err) != ExitUserError {
-				t.Fatalf("err = %v (%d), want a user error", err, ExitCode(err))
-			}
-			msg := err.Error()
-			for _, want := range []string{"standard", "phase 5", "agent.auth", "API-key", "per-repository"} {
-				if !strings.Contains(msg, want) {
-					t.Errorf("the refusal does not name %q: %v", want, err)
-				}
-			}
-			if c.acct != "" && !strings.Contains(msg, c.acct) {
-				t.Errorf("the refusal does not name the account %q: %v", c.acct, err)
-			}
-			// It names the setting, never the file that carries it: the resolved
-			// agent.auth may come from the project layer rather than the
-			// repository's own fugaro.yaml (config.Resolve overlays the layer's
-			// defaults), and blaming a file that does not set it would send the
-			// operator to the wrong place.
-			if strings.Contains(msg, "fugaro.yaml") {
-				t.Errorf("the refusal blames a file for a setting it cannot attribute: %v", err)
-			}
-		})
 	}
 }

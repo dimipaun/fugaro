@@ -42,6 +42,12 @@ type bk struct {
 	// installs the counter.
 	auths *int
 
+	// key is the launch's seal key: the token object is sealed under it and
+	// the job's marker carries it (Backend.TokenMarked, Backend.TokenKey), as
+	// a launcher that seals leaves both (D15). A test of an unmarked job
+	// clears the two fields itself.
+	key []byte
+
 	mu      sync.Mutex
 	secrets []string
 }
@@ -69,8 +75,10 @@ func attachBackend(t *testing.T, g *gw, mode string) *bk {
 	b.db.Set(budget.PathCapsGlobal, budget.GlobalCaps{DailyMicros: micros(150_000_000), PerRunMicros: micros(20_000_000)})
 	b.db.Set(budget.PathCapsRepo(repoSlug), budget.RepoCaps{DailyMicros: micros(60_000_000), PerRunMicros: micros(20_000_000), Repo: "acme/app"})
 	b.bucket = withBucket(g.harness)
+	b.key = sealKeyFor(0x5a)
 	g.deps.Backend = runner.Backend{
 		RTDBURL: b.db.URL, APIKey: bkAPIKey,
+		TokenMarked: true, TokenKey: b.key,
 		Tune: func(c *budget.Config) {
 			c.IdentityURL, c.SecureTokenURL = b.itk.URL, b.itk.URL
 			c.HeartbeatEvery, c.RetryEvery, c.CapRetryWait = 30*time.Millisecond, 20*time.Millisecond, 30*time.Millisecond
@@ -87,21 +95,46 @@ func attachBackend(t *testing.T, g *gw, mode string) *bk {
 	return b
 }
 
-// mint leaves the run's token in the bucket, as fugaro run does at launch.
+// mint leaves the run's token in the bucket, sealed under the fixture's key,
+// as fugaro run does at launch.
 func (b *bk) mint(at time.Time) {
+	b.tb.Helper()
+	b.mintSealed(repoSlug, runID, at)
+}
+
+// mintSealed mints slug/run's token at at and leaves it sealed under b.key.
+func (b *bk) mintSealed(slug, run string, at time.Time) {
+	b.tb.Helper()
+	tok := b.mintToken(slug, run, at)
+	if err := token.PutObject(context.Background(), b.bucket, slug, run, tok, b.key); err != nil {
+		b.tb.Fatal(err)
+	}
+}
+
+// mintToken is slug/run's custom token, minted at at and left nowhere.
+func (b *bk) mintToken(slug, run string, at time.Time) string {
 	b.tb.Helper()
 	signer, err := token.NewIAMSigner(bkSignerEmail, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "ya29.launcher"}), token.WithIAMEndpoint(b.iam.URL))
 	if err != nil {
 		b.tb.Fatal(err)
 	}
-	tok, err := token.MintAt(context.Background(), signer, token.Claims{Slug: repoSlug, Run: runID, FX: token.ExpiryFX(at, 3*time.Hour), FP: "aurora", RB: bkRB}, at)
+	tok, err := token.MintAt(context.Background(), signer, token.Claims{Slug: slug, Run: run, FX: token.ExpiryFX(at, 3*time.Hour), FP: "aurora", RB: bkRB}, at)
 	if err != nil {
 		b.tb.Fatal(err)
 	}
-	if err := token.PutObject(context.Background(), b.bucket, repoSlug, runID, tok); err != nil {
-		b.tb.Fatal(err)
-	}
+	return tok
 }
+
+// mintPlain is slug/run's custom token minted now, for a test that plants a
+// plaintext object Fugaro itself never writes.
+func mintPlain(t *testing.T, b *bk, slug, run string) string {
+	t.Helper()
+	return b.mintToken(slug, run, time.Now())
+}
+
+// unmarked makes the fixture's job one no sealing launcher started: no
+// marker, no key (every local run, and every launch that minted nothing).
+func (b *bk) unmarked() { b.deps.Backend.TokenMarked, b.deps.Backend.TokenKey = false, nil }
 
 func (b *bk) registered() []string {
 	b.mu.Lock()
@@ -130,6 +163,14 @@ func (b *bk) repoLeaf(leaf string) int64 {
 }
 func (b *bk) globalLeaf(leaf string) int64 {
 	return b.num(budget.PathSpendGlobal(b.day()) + "/" + leaf)
+}
+
+// tokenObjectKept reports that the run's token object is still in the
+// bucket: the take is read-only (the job's grant on tokens/ has no delete,
+// D16), so a run never removes it; the lifecycle rule and the launcher do.
+func (b *bk) tokenObjectKept() bool {
+	ok, err := b.bucket.Exists(context.Background(), token.ObjectKey(repoSlug, runID))
+	return err == nil && ok
 }
 
 func (b *bk) tokenObjectGone() bool {

@@ -231,11 +231,11 @@ func TestRunClonedWorkflowWithRecipeLaunchesWithNoBuildRecord(t *testing.T) {
 // applies unconditionally, because nothing else here checks that
 // base_images.base is actually that recent: fugaro-base could first be
 // published from an older release, or --image-source could mirror one.
-// cloneSince (0.7.5) is ahead of every release that exists today, so this
-// also covers the ordinary case of a current base image (0.6.0 here is
-// simply some release below it): the refusal must say plainly that
-// checkout: clone's runner side is not released yet and name checkout:
-// baked as the way to run the workflow today.
+// cloneSince is 0.7.5, and 0.6.0 here is simply some release below it: the
+// refusal must name the release the runner side needs and send the reader to
+// `fugaro init --base base`, the ordinary *Since wording. It is the
+// enabled-state pin for this gate — with cloneShipped false the same launch
+// is refused with the not-released-yet wording instead, and this test fails.
 func TestRunClonedWorkflowRefusedBelowCloneSince(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.6.0}\n")
@@ -250,10 +250,14 @@ func TestRunClonedWorkflowRefusedBelowCloneSince(t *testing.T) {
 	t.Chdir(dir)
 	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "how to provision a blobless clone (FUGARO_CHECKOUT) (fugaro 0.7.5 or later)") ||
-		!strings.Contains(err.Error(), "ghcr.io/dimipaun/fugaro-base:0.6.0, release 0.6.0") ||
-		!strings.Contains(err.Error(), "checkout: clone's own runner side is not released yet") ||
-		!strings.Contains(err.Error(), "checkout: baked") {
+		!strings.Contains(err.Error(), "is ghcr.io/dimipaun/fugaro-base:0.6.0, release 0.6.0") ||
+		!strings.Contains(err.Error(), "fugaro init --base base") {
 		t.Fatalf("err = %v", err)
+	}
+	// The disabled state's guidance is gone with the flip: an older image is
+	// told to move its base image, not that the runner side is unreleased.
+	if strings.Contains(err.Error(), "not released yet") || strings.Contains(err.Error(), "checkout: baked") {
+		t.Fatalf("a shipped gate still refuses with the unreleased wording: %v", err)
 	}
 }
 

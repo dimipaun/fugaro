@@ -45,9 +45,10 @@ func TestVersionSinceCoversEveryVersion(t *testing.T) {
 		}
 		prev = cur
 	}
-	// The two rows this line ships, pinned exactly: 1 is the model (0.8.0), 2
-	// the profile gate (0.8.5). An off-by-one table fails here.
-	for v, want := range map[int]string{1: "0.8.0", 2: "0.8.5"} {
+	// The rows this line ships, pinned exactly: 1 is the model (0.8.0), 2
+	// the profile gate (0.8.5), 3 the account axis (0.9.0). An off-by-one
+	// table fails here.
+	for v, want := range map[int]string{1: "0.8.0", 2: "0.8.5", 3: "0.9.0"} {
 		if got := VersionSince[v]; got != want {
 			t.Errorf("VersionSince[%d] = %q, want %q", v, got, want)
 		}

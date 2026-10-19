@@ -56,6 +56,10 @@ variable "job" {
       title      = string
       expression = string
     })
+    token_condition = object({
+      title      = string
+      expression = string
+    })
     vertex = bool
   })
 
@@ -87,6 +91,20 @@ variable "job" {
   validation {
     condition     = length(var.job.bucket_condition.title) > 0 && length(var.job.bucket_condition.title) <= 100 && length(var.job.bucket_condition.expression) > 0
     error_message = "job.bucket_condition needs a title of 1-100 characters and an expression."
+  }
+
+  # The job's read-only grant on the runs bucket's budget token objects
+  # (gcp.ProjectTokenBucketCondition): the whole of tokens/ of this bucket,
+  # in one clause, with no slug — a project job serves every repository
+  # admitted to its profile, so the prefix is as narrow as the grant can be,
+  # and tokens/ is not one of the job's objectUser prefixes
+  # (docs/design/budget-token-channel.md §7.2).
+  validation {
+    condition = (
+      length(var.job.token_condition.title) > 0 && length(var.job.token_condition.title) <= 100 &&
+      can(regex("^resource\\.name\\.startsWith\\(\"projects/_/buckets/[a-z0-9._-]+/objects/tokens/\"\\)$", var.job.token_condition.expression))
+    )
+    error_message = "job.token_condition must be one resource.name.startsWith clause on tokens/ of the runs bucket (gcp.ProjectTokenBucketCondition)."
   }
 
   validation {

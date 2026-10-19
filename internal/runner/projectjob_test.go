@@ -13,6 +13,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -54,9 +56,9 @@ type projectJob struct {
 }
 
 // projectJobOf is the fixture's own project job: the default profile, serving
-// github, running as no Claude account — the profile mounts no token, so its
-// job's account segment is empty (config.ClaudeAccountOfSecrets) — on the
-// fixture's repository.
+// github, running as no Claude account — the profile lists none, so the axis
+// config.ProjectJobAccounts computes for it is the empty account alone — on
+// the fixture's repository.
 func projectJobOf() projectJob {
 	return projectJob{profile: projectpolicy.DefaultProfileName, provider: "github", slugRepo: "acme/app"}
 }
@@ -142,7 +144,7 @@ func projectPolicyFor(project, profile string) string {
 	if profile != "" {
 		own = `,"allow_repos":` + profile
 	}
-	return `{"version":2,"allow_repos":` + project + `,"profiles":{"standard":{"provider":"github"` +
+	return `{"version":3,"allow_repos":` + project + `,"profiles":{"standard":{"provider":"github"` +
 		own + `,` + profileShape + `}}}`
 }
 
@@ -154,7 +156,7 @@ func projectPolicyFor(project, profile string) string {
 // one (projectpolicy's CloneURLs) — so the fixture publishes what a real
 // publish publishes.
 func projectPolicyCloning(project, url string) string {
-	return `{"version":2,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
+	return `{"version":3,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
 		`"profiles":{"standard":{"provider":"github",` + profileShape + `}}}`
 }
 
@@ -454,4 +456,81 @@ func TestProjectJobBindsTheSlugToTheJobsRepository(t *testing.T) {
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, b.deps.Store.Slug(), "acme/app", "project job",
 		gcp.ProjectJobName("standard", "github", ""), "must be the slug task.Slug(github, acme/app)")
+}
+
+// projectPolicyServing is projectPolicyFor with the standard profile serving
+// one Claude account, whose own list is the fixture's repository: the pair a
+// published node carries for a profile that lists an account. The profile
+// writes its own allow_repos exactly — the subset rule requires it, and
+// requires every account it lists to cover it — so the two lists here are the
+// same one repository.
+func projectPolicyServing(account string) string {
+	return `{"version":3,"allow_repos":["github/acme/app"],"profiles":{"standard":{"provider":"github",` +
+		`"claude_accounts":["` + account + `"],"allow_repos":["github/acme/app"],` + profileShape + `}},` +
+		`"accounts":{"` + account + `":{"allow_repos":["github/acme/app"]}}}`
+}
+
+// refusedBeforeTheAgent fails unless the run stopped at the runner's own
+// credential check: the run failed (an infra error, so the job shows failed
+// and the reason is published in its record) carrying every want, with no
+// stage run, no lease reserved, no lock taken and no outcome written.
+//
+// It is refusedAdmission's counterpart for a refusal that must happen AFTER
+// the configuration is read, and it therefore asserts nothing about the git
+// credential count: which credential a run is, is a fact of the repository's
+// own fugaro.yaml (agent.auth), which exists only once the checkout is there.
+// What this check must come before is the agent, the lease and the budget, and
+// that is what the assertions below are.
+func refusedBeforeTheAgent(t *testing.T, b *bk, rec *runstore.Record, err error, want ...string) {
+	t.Helper()
+	if err == nil || rec == nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("rec = %+v, err = %v: the run was not refused", rec, err)
+	}
+	for _, w := range want {
+		if !strings.Contains(rec.Reason, w) {
+			t.Errorf("reason %q lacks %q", rec.Reason, w)
+		}
+	}
+	if strings.Contains(rec.Reason, "\n") {
+		t.Errorf("the reason is not one line: %q", rec.Reason)
+	}
+	if len(b.agent.calls) != 0 {
+		t.Errorf("%d stages ran after the refusal", len(b.agent.calls))
+	}
+	slug := b.deps.Store.Slug()
+	if v := b.db.Value(budget.PathRun(slug, runID) + "/reserved"); v != nil {
+		t.Errorf("the refused run reserved %v in its ledger", v)
+	}
+	if ok, lerr := b.bucket.Exists(context.Background(), lock.Key(slug, "fugaro/"+runID)); lerr != nil || ok {
+		t.Errorf("the refused run took the branch lock (ok = %v, err = %v)", ok, lerr)
+	}
+	if v := b.db.Value(budget.PathOutcome(b.day(), slug, runID)); v != nil {
+		t.Errorf("the refused run wrote an outcome: %v", v)
+	}
+}
+
+// A run that is not an OAuth run may only be in the profile's no-account job
+// (plan task 3, design §4.4 row 8). This is the end-to-end half of the
+// runner's own check: the run is launched onto the job of the account
+// acme-personal — whose container the platform hands that account's token to,
+// for every run of it — while the repository's own fugaro.yaml resolves to
+// agent.auth: api-key. The launcher's gate never selects an account job for a
+// run that is not an OAuth one (design §4.4 row 7), so this state is one it
+// does not produce; what this test runs is Runner.Run itself, with no launcher
+// anywhere, which is the independence the design asks for: a launcher is
+// trusted, so a launch check alone is not a boundary.
+//
+// Mutation (run, restored): return nil from checkProjectJobAccount without
+// looking (or drop its call in runner.go). The run goes on in a job holding a
+// credential its own configuration never chose: it reaches its provider,
+// reserves a lease and its first stage runs, and every assertion here fails.
+func TestRunnerRefusesNonOAuthOnAccountJob(t *testing.T) {
+	const account = "acme-personal"
+	job := projectJob{profile: projectpolicy.DefaultProfileName, provider: "github", account: account, slugRepo: "acme/app"}
+	b := projectRun(t, job, "off", "", projectPolicyServing(account))
+	projectHost(t, b)
+	rec, err := b.run(t)
+	refusedBeforeTheAgent(t, b, rec, err,
+		gcp.ProjectJobName(job.profile, job.provider, account), `"`+account+`"`, config.ClaudeAccountSecret(account),
+		`"api-key"`, "CLAUDE_CODE_OAUTH_TOKEN", "The run stops")
 }

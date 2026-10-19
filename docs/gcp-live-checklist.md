@@ -501,6 +501,7 @@ probe account carries predefined grants only).
 | 52 | The UNVERIFIED questions phase 3 depends on, written and answered **before any phase 3 code** (design `project-centric.md` §13 and §4.5; plan `2026-10-14-project-centric.md` Task 3.0): **U2** whether a Cloud Run secret **reference** works inside a container env override (the API type has a `ValueSource`) and whether an execution's overrides are visible to the container; **U3** whether a Secret Manager IAM condition on a name prefix is honoured for `secretmanager.versions.access`; **U4** the sandbox project's service-account count against Google's default quota and the runs bucket's IAM policy binding count (the ceilings the design's §13 names); and **U1**, which is **no longer a probe** — the owner ruled on 2026-10-15 that a Bitbucket credential cannot be scoped to one project's repositories, so Bitbucket credentials stay per repository and phase 3's shared jobs are GitHub's, with D5 amended to record the ruling (plan Task 0.5) | See "Check 52" below; **you** run it, on installation `fugaro` (never `belong`) — every step acts only on the sandbox's **own** job, service account, bucket and secrets in project `fugaro-dev`, and **no Bitbucket credential, project or repository is created, read or written at all** (U1 is answered by ruling, not by a probe), never anything under `edgeappinc`. | A few `gcloud` reads, **three** override executions on the sandbox job (the secret-reference call in (a), the plain-literal comparison in (c), and the length-only run when the container's command is a shell — (b) is a template-level `--update-secrets` update, and the bare `gcloud run jobs execute` carries no override at all, so neither is one of the three), the check's own probe service account `fugaro-chk52-probe` and its two throwaway secrets (`fugaro-probe-in`, inside the condition's prefix, and `fugaro-other-probe`, outside it), and **nothing on the Bitbucket side**. **USER-RUN, NOT RUN.** |
 | 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled — except its step 7 (the preload image *family*'s rebuild), which needs only the compute root:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, the fail-closed marker, and **the largest `computeResource` a task can ask for on `e2-standard-4` and still leave `QUEUED`** (the built shares are Check 57a's own 2000m/4096MiB submission, a floor known to work rather than a measured maximum — the built-in headroom for the OS, the Batch agent and the Docker daemon is what that step pins), and — step 1 and step 7 — the two UNVERIFIEDs the compute module ships with (whether a run's VM reports to the Batch agent under the module's deny-all ingress rule, and whether the family handover leaves the runs' boot reference serving while the delete of a superseded generation is refused or accepted). | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image (the check's own 57a-3b artefact, `${SA}-preload`; the compute module's preload **family** is the installation's and is never this check's to delete), the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **57a RUN 2026-10-15: see the RESULTS block above; 57b USER-RUN, NOT RUN.** |
 | 58 | Artifact runs (design `artifact-runs.md` §3–§9 and §11; plan `2026-10-15-artifact-runs.md`): a `mode: artifact` recipe rendered on a real image (ffmpeg through `image.apt`, one Cloud Build), three attached PNGs in and a video out, the `render` record and the model-against-compute counters, **no branch pushed and no pull request opened**, the probe's verdict through `commands.probe` beside an independent local `ffprobe`, the recorded content type against the object's own (U5), retrieval with a sha256 match and the upload's wall clock inside `finalize_reserve` — at the set's own size, and in 6b for two files written at exactly `outputs.max_bytes` (U6) — and the failure direction in three halves — a probe that demands an impossible duration and must fail the run with nothing uploaded, a set over `outputs.max_total_bytes` that must refuse with the cap named and the container alive, and a render driven past the job's memory, whose FACT is what was seen (U3) | See "Check 58" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs one hard-coded project guard (`P` hard-coded and never read from `gcloud`, `${VAR:?}` on every argument, the three hard stops, the workflow name checked against the checkout), every launch is guarded per step and records its run id, its commit and the image and base HEAD step 1 found in a per-attempt record file (`/tmp/chk58-records/<batch>.env`), and the Restore reverts only the commits that record holds and that are not already reverted — it refuses to guess at one it does not. | One Cloud Build (the image that carries ffmpeg) and five tiny sandbox runs — two of them carrying the same three attached PNGs (step 2 and 7a; 7b may too), one render-only and therefore at model $0, and one driven past its memory limit. **USER-RUN, NOT RUN.** |
+| 60 | The sealed budget token (design `budget-token-channel.md` §7 and "The check outline"): a sealed run works end to end; the `tokens/` object is ciphertext with no claim readable and nothing is left under `runs/`; where the key is and is not (the job's environment, the execution record — U2 as found — and the RunJob audit entry, recorded by length, never by value); a wrong key, a plaintext object and a sideways copy all refuse; a peer job account cannot delete a queued token; the launchers' widened `runs/`+`tokens/` condition and the job's read-only `tokens/<slug>/` grant read off the live policy | See "Check 60" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only, with Check 43's guard block re-run at every step; Restore puts back the two objects the check overwrote, removes its probe file and scratch dir, and diffs the bucket policy against step 8's. | Three or four tiny sandbox runs and executions. **USER-RUN, NOT RUN.** |
 | 69a | The site is live and honest (website plan `docs/website/implementation-plan.md`, Task W2.2; D92, D108's fourth gate): the canonical origin in `website/data/site.yaml` answers over **HTTPS** with a certificate for that host, the deployed HTML is the artifact `npm run build` produced from the commit that is checked out, and the page a stranger lands on names no unshipped feature — no player for the video, which does not exist (`features.video` is false), and every console download it offers resolving to an asset of the release its own facts name (`features.console_downloads` is true since the `console-v0.8.7` release) | See "Check 69a" below; run by you, in a browser and a terminal, against the site's own Firebase project only (never an installation's, and no `fugaro` command runs at all). The canonical origin is read out of `website/data/site.yaml` by the guard block, so it is not typed from memory, and it is the only host this check fetches: there is no second domain (owner ruling 2026-10-17), so no step here observes one. **No agent runs any step of it** | HTTPS 200 from the canonical origin with `ssl_verify_result` 0 and a certificate whose subject is that host; the deployed home page's sha256 equal to the local build's; the greps for a player printing nothing; and every console download URL the pages carry answering 200 (or a redirect to the release's own storage) with the checksum the page printed beside it. **USER-RUN, NOT RUN.** |
 | 69b | Nothing phones home (website plan Task W2.2; D93, D106, W1.11): the live page, loaded with the browser's network panel open and the cache disabled, requests **no origin outside `website/data/site.yaml`'s `allowed_hosts`** — no font, no script, no embed, no pixel — and nothing is requested from the analytics origin **before consent**; after consent exactly that one origin and no other third party appears (D93 chose Google Analytics behind the consent banner and **W3.2 has turned it on** — the measurement id is `website/data/site.yaml`'s, the gate is the site's own file, and the pass is therefore a pass about the post-consent request, not about analytics being absent) | See "Check 69b" below; run by you, in a browser, on the live site — read-only, no command that changes anything, no cloud project touched, **No agent runs any step of it** | The panel's host list holds the canonical host and, where the page links them, `github.com` and `raw.githubusercontent.com` — and nothing else; the deployed markup's absolute URLs hold no other origin; and no request to the analytics origin before consent. **USER-RUN, NOT RUN.** |
 | 70a | The mobile header fits one row, and the three group labels are the phone's menu (website redesign plan `docs/website/redesign/implementation-plan.md` §3, part P3; D182 and the amendment of 2026-10-19, RF3): at **390 × 844** — and at 375, 320 and 391 — the header is **one row** of about 77 px, with the wordmark's mark kept and its text out of the row below the breakpoint, nothing wrapped under them and no sideways scroll; the three labels are the whole menu there (**Product**, **Reference**, **Project**, each at least 44 px tall, **no `Menu` control on the page**), each opens its own panel **by tap and by keyboard**, Escape and a click outside close it, the focus goes back to the label that opened it, the three are exclusive, the menu reaches every link with **JavaScript disabled**, and on a device whose **pointer hovers** a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it (the owner's brief of 2026-10-18, item 1) | See "Check 70a" below; run by you, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the deployed site — read-only, no cloud project touched, no `fugaro` command, and **No agent runs any step of it** | The header's measured height at each width is one row's (about 77 px, not the 177 px of three rows RF3 measured), `document.documentElement.scrollWidth` is not wider than the viewport, the wordmark's text is out of the row below its breakpoint and the mark is in it, the three labels are on the one row and each is at least 44 px tall, a label is focusable and opens its panel, Escape closes it and returns the focus, opening a second label closes the first, every link in the three groups is reachable and follows with JavaScript off, **and on a device whose pointer hovers a group's submenu opens when the pointer arrives at it and stays open while the pointer is inside it** (the owner's brief of 2026-10-18, item 1), and at 1280 × 900 the three group labels are **drawn** in the header's one row as the three dropdowns D182 asks for, with no `Menu` control and no overlay panel, and opening a group showing its links **without changing the header's height**. **USER-RUN, NOT RUN.** |
@@ -3986,6 +3987,212 @@ The loop prints **which commits it reverted and which were already reverted** (`
 
 **Paste back:** every `FACT` line above — the job's image reference and the digest it resolves to, **before and after** the build, and the job they belong to, `task.json`'s inputs against `sha256sum`, the `render` record and the counters, both halves of the probe's verdict, the recorded and the object's own content type, the retrieved files' hashes and the upload's wall clock **at both sizes** (step 6's set, and step 6b's near-cap pair with `finalize_reserve_s` beside it), and 7a, 7b and 7c's reason lines — **and never a secret value or the contents of an attached file**. Until this check runs, `docs/design/artifact-runs.md` §12's **U3, U5 and U6** stay open, and **U2's mise half stays open however this check turns out** — only its `image.apt` half is settled here — and that is the honest state of the design's claims rather than a fault list. Never run any step of this check against `belong`; no agent runs any step of it — every command is yours.
 
+## Check 60: the sealed budget token — a run's token is worthless without its own execution's key (installation `fugaro`, sandbox repository only, never `belong`; run by you; NOT RUN)
+
+The budget token's seal ([design/budget-token-channel.md](design/budget-token-channel.md) §7, both halves built for 0.9.0): the launcher seals the run's Firebase custom token under a key drawn for that one launch and writes it to `tokens/<slug>/<run>/budget-token`; the key travels as the value of the execution's `FUGARO_BUDGET_TOKEN` override; the run reads the object read-only, unseals it, and refuses everything else. The unit tests hold the AAD and every refusal row of §7.4; this check records what only a live installation can show: that a sealed run works end to end, what the object and the override actually expose, what the audit log carries, and that the grants are the ones the plan says. **No agent runs any step of this check**; you run every command. **Never `belong`**: nothing here creates, changes or deletes anything there.
+
+**Before you start.** The installation must have been applied with this release's `fugaro init` (the `tokens/` grants and the widened launcher condition — step 8 reads them), and the sandbox repository's job image must be at `sealSince` (0.9.0) or later, or a development image built from this branch (its build record then says `sealed_budget_token`, and the launch passes with no seal warning; a development job image whose record does not say it is refused if built before 2026-10-17T17:45:33Z and otherwise launches with only a warning — record which you got) — a launch that mints against an older image is refused by the launcher (`sealGate`), which is itself worth a FACT if you meet it. A `checkout: clone` workflow has no job image to judge, so there the gate reads the installation's own `base_images.base` (`sealGate`'s `checkCloneImageSince`): a release ref below 0.9.0 is refused, and a ref that is not a release only warns. Check 52 step 3 (U2) is the probe this check's step 3 repeats on the deployed shape; it has not run either.
+
+**Method.** Every block runs in `bash`. Keep the step variables in `$CHK60/vars.env` and re-run the guard block at the start of every step: the block reads that file back, so a later shell keeps `SLUG`, `RUN2`, `RUN9` and `SANDBOX_JOB`, which is what makes the steps runnable in any order of shells — and what lets step 1 and step 2 run before step 3 has learnt the job. **Starting over:** if `/tmp/chk60` is left from an earlier attempt, its `vars.env` is read back as this attempt's, so every step would work on the earlier attempt's run and the baseline would be its policy file — delete the directory first (`rm -rf /tmp/chk60`) and start the check again at step 1, which makes it again (and if the earlier attempt had already changed the bucket, run Restore first).
+
+### 1. Setup and guard
+
+**Check 43's guard block, with this check's number in the three stop messages and its own variables.** The three stops are verbatim (Check 43's "Why the guard is one block, and why it is re-run", "Paste the block into a file, not straight into an interactive zsh" and "Every `fugaro` command that takes `--project` gets `--project fugaro`" paragraphs apply here word for word), and the only variables it sets are this check's:
+
+```bash
+# === Check 60: setup + guard. RE-RUN THE WHOLE BLOCK at the start of every
+# step: it is idempotent, and nothing below the three hard stops runs. ===
+P=fugaro-dev                 # HARD-CODED, never `gcloud config get-value project`
+L=us-east5                   # the installation's region
+[ "$P" = fugaro-dev ] && [ -n "$L" ] \
+  || { echo "Check 60 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L not empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 60 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 60 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+# The step's variables. SANDBOX_BUCKET is the runs bucket the local config
+# names — the read-only list below prints the candidates — and every use of it
+# is ${SANDBOX_BUCKET:?}-guarded. SANDBOX_JOB is NOT filled in here: it is
+# learnt in step 3, off the run's own launch record, because the job the steps
+# execute is not always the repository's own (a clone workflow of a project
+# that has published the profile it selects launches on the shared project
+# job). Steps 1 and 2 therefore run without it, and every step that names it
+# re-runs this block, which reads it back out of vars.env.
+SANDBOX_BUCKET=${SANDBOX_BUCKET:?the runs bucket the local config names}
+CHK60=/tmp/chk60; mkdir -p "$CHK60"; chmod 700 "$CHK60"
+[ -f "$CHK60/vars.env" ] && . "$CHK60/vars.env"   # step 2's RUN2/SLUG, step 3's SANDBOX_JOB
+SANDBOX_JOB=${SANDBOX_JOB:-}   # empty until step 3 writes it; every use is ${SANDBOX_JOB:?}-guarded
+```
+
+```bash
+# Read-only: the bucket above, and the job names step 3 reads its job out of.
+gcloud run jobs list --project="${P:?}" --region="${L:?}" --format='value(name)'
+gcloud storage buckets list --project="${P:?}" --format='value(name)'
+```
+
+**Baseline, once, before anything changes** (Restore diffs against it; never overwrite it):
+
+```bash
+[ -e "$CHK60/bucket-policy.before.json" ] || \
+  gcloud storage buckets get-iam-policy "gs://${SANDBOX_BUCKET:?}" --project="${P:?}" --format=json > "$CHK60/bucket-policy.before.json"
+```
+
+### 2. A sealed token works (design check step 1)
+
+```bash
+fugaro run --project fugaro --json "Check 60 step 2: add a line to CHECK60.md" | tee "$CHK60/run2.json"
+RUN2=$(jq -r .run_id "$CHK60/run2.json"); SLUG=$(jq -r '.run|split("/")[0]' "$CHK60/run2.json")
+echo "RUN2=${RUN2:?} SLUG=${SLUG:?}" >> "$CHK60/vars.env"
+fugaro logs --project fugaro --follow "${SLUG:?}/${RUN2:?}" > "$CHK60/run2.log"
+```
+
+FACT: the run's outcome (`fugaro runs ls --project fugaro`, or `fugaro diagnose "${SLUG:?}/${RUN2:?}" --project fugaro` for the one run), and that `run2.log` and the run's `result.json` carry no budget token and no key (`grep -c` for `eyJ` and for the marker's value: both `0`; the key is not printed anywhere for you to grep, which is the point — record the count of `FUGARO_BUDGET_TOKEN=` in the log, which must be `0` too).
+
+### 3. The object is worthless without the key, and where the key is (design steps 2 and 3)
+
+**Which job `SANDBOX_JOB` is.** The one step 2's run launched on, which is not always the sandbox repository's own job: a `checkout: clone` workflow of a project whose published policy defines the profile it selects launches on the **shared project job** (`internal/cli/project_job.go`'s `launchProjectJobFor` — the clone path only, and only once the project has published that profile), and a baked workflow, or a project that has published none, keeps the repository's own job. Read it off the run's own launch record — this step is where it is learnt, so steps 1 and 2 do not have it and every step from here re-runs the setup block, which reads it back out of `vars.env` — and use that job in every step below that names it (3 to 7, and 9 — step 4's audit-log filter carries it too, and a filter left on the repository's own job would return nothing and record a false FACT). Every use is `${SANDBOX_JOB:?}`-guarded, so an empty one stops there rather than reaching `gcloud`:
+
+```bash
+# -er, not -r, AND the non-zero exit is consumed: a launch record with no .job
+# prints the word `null` — under -r it also exits 0, and under -e it exits 1 but
+# still prints `null`, which `$(...)` captures whatever the status is — and
+# `null` is a non-empty name the guard below would accept, so the step would go
+# on to describe a job called null. The `||` is what makes the read fail: it
+# stops the step before anything is described or recorded.
+SANDBOX_JOB=$(gcloud storage cat "gs://${SANDBOX_BUCKET:?}/runs/${SLUG:?}/${RUN2:?}/launch.json" --project="${P:?}" | jq -er .job) \
+  || { echo "Check 60 stopped: ${SLUG:?}/${RUN2:?}'s launch record carries no .job (jq -e exited non-zero), so step 2's run is not one this check can read: re-read step 2, or start over at step 1" >&2; exit 1; }
+echo "SANDBOX_JOB=${SANDBOX_JOB:?}" >> "$CHK60/vars.env"
+```
+
+Step 8 records the `tokens/` grant of whichever job this is; the two kinds have different shapes — the repository's own job reads exactly `tokens/<its slug>/`, the shared project job the whole `tokens/` (design `docs/design/budget-token-channel.md`, the **Slice B is built** paragraph, and the FACT in step 8 below).
+
+```bash
+O="gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token"
+gcloud storage cat "$O" --project="${P:?}" > "$CHK60/object.bin"
+wc -c < "$CHK60/object.bin"; head -c 1 "$CHK60/object.bin" | od -An -tx1    # the version byte, 01
+grep -c 'eyJ' "$CHK60/object.bin"; grep -c "${SLUG:?}" "$CHK60/object.bin"   # both 0: no JWT, no claim in the clear
+gcloud storage ls "gs://${SANDBOX_BUCKET:?}/runs/${SLUG:?}/${RUN2:?}/budget-token" --project="${P:?}" 2>&1 | tail -1   # nothing under runs/
+# The job's own environment: no key there (the key is an execution override).
+gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json \
+  | jq '[.spec.template.spec.template.spec.containers[0].env[]? | select(.name=="FUGARO_BUDGET_TOKEN")] | length'
+# The execution's record (v1 path): what it shows of the override, recorded, not
+# asserted. -er with its exit consumed, for the reason above: a row carrying no
+# execution prints `null`, and describe below would look up an execution named
+# null. A row with no execution is itself what U2 records, so read the row by
+# hand before going on.
+EXE=$(fugaro diagnose "${SLUG:?}/${RUN2:?}" --project fugaro --json | jq -er .row.execution) \
+  || { echo "Check 60 stopped: ${SLUG:?}/${RUN2:?}'s diagnose row carries no execution (jq -e exited non-zero): read the row by hand and record what U2 finds there" >&2; exit 1; }
+gcloud run jobs executions describe "${EXE##*/}" --project="${P:?}" --region="${L:?}" --format=json \
+  | jq '[.spec.template.spec.containers[0].env[]? | select(.name=="FUGARO_BUDGET_TOKEN") | (.value|length)]'
+```
+
+On an installation that runs the compute backend, read every Fugaro Batch job's variables too. **No installation of this release can:** `backend: cloud-batch` is refused by config validation (`not enabled yet`, `internal/localcfg`), and the launcher's Batch wiring is not built, so the block below is a record for the release that enables it. What it checks then is the **Batch backend's own refusal** — a launch carrying the marker (`LaunchSpec.SecretEnv`) is refused before anything is created (`backend.ErrRejected`, and the refusal never quotes the value), so no Fugaro Batch job may carry `FUGARO_BUDGET_TOKEN`.
+
+```bash
+for j in $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --format='value(name)' --filter='name~/jobs/fugaro-'); do
+  gcloud batch jobs describe "$j" --project="${P:?}" --location="${L:?}" --format=json \
+    | jq '[.taskGroups[].taskSpec.environment.variables // {} | has("FUGARO_BUDGET_TOKEN")] | any'
+done
+```
+
+FACT: the object's size and first byte (`01`); the two `grep -c` counts (`0`, `0`); that nothing is under `runs/`; the job's env count of `FUGARO_BUDGET_TOKEN` (`0`); and **U2 as found**: whether the execution record shows the override at all, and if so the **length** of its value (43 is the key) — never the value; and, on an installation that runs the compute backend (none of this release does), that no Fugaro Batch job's variables carry `FUGARO_BUDGET_TOKEN` (every line `false` — with no such job the loop prints nothing, which is not this FACT). This FACT, not the design, is what §3.1's and §7.1's audience sentences are then worded from.
+
+### 4. What the audit log carries (design step 4)
+
+```bash
+gcloud logging read --project="${P:?}" --freshness=2h --format=json \
+  'protoPayload.methodName:"Jobs.RunJob" AND resource.labels.job_name="'"${SANDBOX_JOB:?}"'"' \
+  | jq '[.[] | {at: .timestamp, carries_env: (tostring|test("FUGARO_BUDGET_TOKEN")), env_value_len: ([.. | objects | select(.name?=="FUGARO_BUDGET_TOKEN") | .value? // "" | length])}]'
+```
+
+FACT: whether the RunJob entry for `RUN2`'s launch carries the marker's name, and the length of its value (43 = the key verbatim, 0 or absent = redacted or not logged). Record who can read that entry (the project's log readers). Do not paste the value.
+
+### 5. A wrong key refuses (design step 5)
+
+A second execution of the same run with a key you draw now (a sandbox-only override). Its object is step 2's, sealed under step 2's key, so it must not open.
+
+The key is 32 random bytes as one unpadded base64url string — the form the launcher's marker carries (`BackendFromEnv`; 43 characters) — drawn here and never written down. It is `openssl` and not `basenc`: `basenc` is GNU coreutils and stock macOS has none, while `openssl rand` is what draws the bytes anyway, so `openssl base64 -A` (one line, no wrap) with the alphabet mapped is the same encoding on both. The two `KEY=` lines below are the same pipeline, for the same reason.
+
+```bash
+WRONG=$(openssl rand 32 | openssl base64 -A | tr '+/' '-_' | tr -d '=')   # a fresh 43-character key, never written down
+gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
+  --update-env-vars="FUGARO_RUN=${SLUG:?}/${RUN2:?},FUGARO_BUDGET_TOKEN=${WRONG:?}" ; unset WRONG
+```
+
+FACT: the execution's exit (non-zero) and the refusal it logged (`fugaro logs` for the run; the run's `result.json` may now say the duplicate execution or the unseal refusal — record which, and that neither line contains the key).
+
+### 6. A plaintext object refuses (design step 6)
+
+```bash
+printf 'not a sealed token' > "$CHK60/plain.txt"
+gcloud storage cp "$CHK60/plain.txt" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token.plain-probe" --project="${P:?}"
+gcloud storage cp "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" "$CHK60/object.keep" --project="${P:?}"
+gcloud storage cp "$CHK60/plain.txt" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" --project="${P:?}"
+KEY=$(openssl rand 32 | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
+  --update-env-vars="FUGARO_RUN=${SLUG:?}/${RUN2:?},FUGARO_BUDGET_TOKEN=${KEY:?}" ; unset KEY
+gcloud storage cp "$CHK60/object.keep" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" --project="${P:?}"   # put it back
+gcloud storage rm "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token.plain-probe" --project="${P:?}"
+```
+
+FACT: the run refused, and its reason names a plaintext / not-sealed object, never reading it.
+
+### 7. A peer cannot delete a queued token (design step 7)
+
+As the sandbox job's own service account (impersonation — you must hold `roles/iam.serviceAccountTokenCreator` on it in the sandbox; grant it for this step and remove it in Restore if you do not already):
+
+```bash
+JOB_SA=$(gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format='value(spec.template.spec.template.spec.serviceAccountName)')
+gcloud storage rm "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" --project="${P:?}" --impersonate-service-account="${JOB_SA:?}" 2>&1 | tail -2
+gcloud storage cat "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" --project="${P:?}" --impersonate-service-account="${JOB_SA:?}" | wc -c
+```
+
+FACT: the delete is refused (403), and the read succeeds with the same size as step 3. Record what it does **not** prove: the peer can still read the bytes; the seal is why that read is worth nothing.
+
+### 8. The grants the move changed, and the ones it did not (design step 8)
+
+**This is the one step that is installation-wide rather than per-job**: it reads the bucket's whole policy — the launchers' binding, and the `tokens/` grant of every job of the project, not only `SANDBOX_JOB`'s. Steps 3 to 7 and 9 are per-job: each names one job (`SANDBOX_JOB`, the one step 3 learnt) and its FACT is about that job's own grant, override, audit entry or refusal. Steps 1 and 2 are per-run: step 2's run is what everything below reads.
+
+```bash
+gcloud storage buckets get-iam-policy "gs://${SANDBOX_BUCKET:?}" --project="${P:?}" --format=json > "$CHK60/bucket-policy.after.json"
+jq -r '.bindings[] | select(.condition) | [.role, .condition.title, .condition.expression] | @tsv' "$CHK60/bucket-policy.after.json"
+```
+
+FACT: the launchers' binding is `roles/storage.objectUser`, title `fugaro-launchers-runs-tokens`, expression exactly `gcp.LauncherBucketCondition`'s (`runs/` **or** `tokens/` of this bucket, nothing else); step 3's job account holds `roles/storage.objectViewer` on `tokens/`, in the shape its kind has — the repository's own job: title `fugaro-tokens-<account id>` on exactly `tokens/<its slug>/` (`gcp.TokenBucketCondition`); the shared project job: title `fugaro-project-tokens-<account id>` on the whole `tokens/` (`gcp.ProjectTokenBucketCondition`, `internal/backend/gcp/names.go`) — read-only, with no create, delete or update; and its `objectUser` condition on `runs/`, `cache/`, `locks/` is byte-identical to `bucket-policy.before.json`'s (the `apply` replaced the launchers' binding, so it is **not** unchanged — record the old and the new).
+
+### 9. A sideways replay refuses, and what that does and does not prove (design step 9)
+
+```bash
+fugaro run --project fugaro --json "Check 60 step 9: a second run" | tee "$CHK60/run9.json"
+RUN9=$(jq -r .run_id "$CHK60/run9.json"); echo "RUN9=${RUN9:?}" >> "$CHK60/vars.env"
+# After RUN9 has finished, copy RUN2's sealed object over RUN9's (operator credentials:
+# after the move only operators and launchers can write tokens/), and re-execute RUN9
+# with a fresh key; then put RUN9's object back.
+gcloud storage cp "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN9:?}/budget-token" "$CHK60/run9.keep" --project="${P:?}"
+gcloud storage cp "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN2:?}/budget-token" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN9:?}/budget-token" --project="${P:?}"
+KEY=$(openssl rand 32 | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
+  --update-env-vars="FUGARO_RUN=${SLUG:?}/${RUN9:?},FUGARO_BUDGET_TOKEN=${KEY:?}" ; unset KEY
+gcloud storage cp "$CHK60/run9.keep" "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/${RUN9:?}/budget-token" --project="${P:?}"
+```
+
+FACT: the second execution refused at the unseal. **This proves the per-launch key, not the AAD**: the copy is sealed under another launch's key and another name, and GCM's one tag check cannot say which failed; the AAD's own property is held by `internal/budget/token`'s unit test (`seal_aad_test.go`). Record that limit beside the FACT.
+
+### Restore
+
+```bash
+# Only what this check created or changed: the probe file (removed in step 6),
+# the objects put back in steps 6 and 9, the impersonation grant of step 7 if
+# you added it, and the scratch dir. The two runs' branches/PRs: close them.
+gcloud storage buckets get-iam-policy "gs://${SANDBOX_BUCKET:?}" --project="${P:?}" --format=json > "$CHK60/bucket-policy.restore.json"
+diff <(jq -S .bindings "$CHK60/bucket-policy.after.json") <(jq -S .bindings "$CHK60/bucket-policy.restore.json") && echo "bucket policy: as step 8 recorded it"
+gcloud storage ls "gs://${SANDBOX_BUCKET:?}/tokens/${SLUG:?}/**" --project="${P:?}" | grep -c 'plain-probe'   # 0
+rm -rf "${CHK60:?}"
+```
+
+The token objects themselves are left for the bucket's one-day lifecycle rule (`tokens/`, suffix `/budget-token`), which is what removes every taken token now that the run no longer deletes it; record the next day that they are gone.
+
+**Paste back:** every FACT line above — sizes, counts, lengths, titles and expressions — **never a token, a key or the object's bytes**.
 ## Check 69a: the site is live and honest — the canonical domain, the deployed artifact, and the page a stranger lands on (the site's own Firebase project only, never an installation's; run by you; NOT RUN)
 
 **NOT RUN.** Written by the website plan's Task W2.2 together with Check 69b; the third live check of the same line of work, **69c** (the published ranges are real), is Task W2.3's and lands in the level after this one. Nothing here can run before the site is deployed to its own Firebase project and the domain is attached — the owner's steps, which no agent takes (D92): registering the domain, adding the custom domain to the project and writing the DNS records at the registrar. **The site has one domain and nothing redirects**: W2.2 wrote a second one and the owner ruled on 2026-10-17 that no second domain is theirs, so this check observes the canonical origin and no other host (the amendment under plan Task W2.2).

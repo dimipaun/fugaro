@@ -57,7 +57,8 @@ import (
 //   - A bucket insert needs the project to have been added (AddProject),
 //     and otherwise answers 403.
 //   - DenyWrites answers 403 for a write under a prefix, as a conditional
-//     grant would; reads and listings are never denied.
+//     grant would; reads and listings are never denied by it (FailListings
+//     and FailObjectGetsAfter are what fail those).
 type GCS struct {
 	*Server
 	mu      sync.Mutex
@@ -74,6 +75,11 @@ type GCS struct {
 	// a content GET) answer 503, as a flaky network or an overloaded
 	// backend would.
 	failGets int
+	// failStores makes the next object creates store the object and *then*
+	// answer an error: the write landed but the caller was not told so
+	// (FailObjectStoresAfterWrite), which is the one failure a caller that
+	// removes what a failed create may have left cannot see any other way.
+	failStores int
 	// failObject maps an object ("<bucket>/<name>") to the first read of it
 	// that answers 403 (FailObjectGetsAfter); reads is how many reads of
 	// each object the fake has served, successful or failed.
@@ -81,6 +87,13 @@ type GCS struct {
 	reads      map[string]int
 	// listCalls counts object listing requests (one per page).
 	listCalls int
+	// failList makes every object listing of a bucket answer 403
+	// (FailListings), as GCS does for a principal without
+	// storage.objects.list or for a bucket that is not there.
+	failList map[string]bool
+	// noList maps a bucket to the prefixes under which a read of a missing
+	// object answers 403, not 404 (AnswerMissingAs403).
+	noList map[string][]string
 	// denied maps a bucket to the prefixes DenyWrites has closed.
 	denied map[string][]string
 	// refusedPolicy makes a bucket's getIamPolicy answer 403.
@@ -131,7 +144,7 @@ func NewGCS(t *testing.T) *GCS {
 	g := &GCS{gen: 1_700_000_000_000_000, buckets: map[string]map[string]*object{}, meta: map[string]*bucketMeta{},
 		uploads: map[string]*upload{}, projects: map[string]uint64{}, denied: map[string][]string{},
 		refusedPolicy: map[string]bool{}, failedPolicy: map[string]bool{}, held: map[string][]string{},
-		failObject: map[string]int{}, reads: map[string]int{}}
+		failObject: map[string]int{}, reads: map[string]int{}, failList: map[string]bool{}, noList: map[string][]string{}}
 	g.Server = newServer(t, g.handle)
 	return g
 }
@@ -174,6 +187,31 @@ func (g *GCS) FailObjectGets(n int) {
 	g.failGets = n
 }
 
+// FailObjectStoresAfterWrite makes the next n object creates store the object
+// and then answer 403, storing it: a create whose write landed but whose
+// response the caller never got as a success (a gateway error, a connection
+// dropped on the response), so the object is there and the caller must treat
+// the create as failed. 403 and not a 5xx: the storage client retries a 5xx on
+// its own — and a conditional insert (ifGenerationMatch=0) is idempotent, so
+// the retry would meet the object this only-just wrote and answer
+// FAILED_PRECONDITION, hiding the state this knob exists to model. Unlike
+// DenyWrites, deletes are unaffected, which is what lets a test observe a
+// caller that removes what such a create left behind.
+func (g *GCS) FailObjectStoresAfterWrite(n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.failStores = n
+}
+
+// FailListings makes every object listing of bucket answer 403
+// PERMISSION_DENIED, so a test can fail a listing a caller must not read as
+// an empty bucket.
+func (g *GCS) FailListings(bucket string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.failList[bucket] = true
+}
+
 // FailObjectGetsAfter makes reads of one object answer 403 PERMISSION_DENIED
 // from the (skip+1)th on, so a test can fail the read a late step makes while
 // the earlier steps that read the same object (a record read during the plan,
@@ -184,6 +222,19 @@ func (g *GCS) FailObjectGetsAfter(bucket, name string, skip int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.failObject[bucket+"/"+name] = skip + 1
+}
+
+// AnswerMissingAs403 makes a read (content or metadata) of a missing object
+// under prefix in bucket answer 403 PERMISSION_DENIED instead of 404, as GCS
+// answers a caller that holds storage.objects.get on the name but not
+// storage.objects.list — every job and build account, whose grants are
+// conditioned on a prefix (docs/design/bucket-iam.md §2.3, live check 7). A
+// present object still answers as it would; FailObjectGetsAfter is what
+// refuses a present one.
+func (g *GCS) AnswerMissingAs403(bucket, prefix string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.noList[bucket] = append(g.noList[bucket], prefix)
 }
 
 // AddProject lets bucket inserts name project id, whose number new buckets
@@ -687,6 +738,11 @@ func (g *GCS) store(w http.ResponseWriter, bucket, name, ct string, cond *int64,
 	g.gen++
 	o := &object{data: append([]byte(nil), data...), gen: g.gen, metagen: 1, ct: ct, updated: time.Now().UTC()}
 	objs[name] = o
+	if g.failStores > 0 {
+		g.failStores--
+		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "the object was stored but this response was not a success")
+		return
+	}
 	writeJSON(w, http.StatusOK, meta(bucket, name, o))
 }
 
@@ -715,6 +771,12 @@ func (g *GCS) notFound(w http.ResponseWriter, bucket, name string) {
 func (g *GCS) get(w http.ResponseWriter, bucket, name string, media bool) {
 	o := g.buckets[bucket][name]
 	if o == nil {
+		for _, p := range g.noList[bucket] {
+			if strings.HasPrefix(name, p) {
+				writeError(w, http.StatusForbidden, "PERMISSION_DENIED", fmt.Sprintf("caller does not have storage.objects.get access to the Google Cloud Storage object. Permission 'storage.objects.get' denied on resource (or it may not exist): %s/%s", bucket, name))
+				return
+			}
+		}
 		g.notFound(w, bucket, name)
 		return
 	}
@@ -811,6 +873,10 @@ func (g *GCS) patch(w http.ResponseWriter, bucket, name string, body []byte) {
 // prefixes together, as GCS counts them) after pageToken.
 func (g *GCS) list(w http.ResponseWriter, bucket string, q url.Values) {
 	g.listCalls++
+	if g.failList[bucket] {
+		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "the caller does not have storage.objects.list access to the bucket")
+		return
+	}
 	prefix, delim := q.Get("prefix"), q.Get("delimiter")
 	from, end := q.Get("startOffset"), q.Get("endOffset")
 	if t := q.Get("pageToken"); t > from {
