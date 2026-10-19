@@ -48,6 +48,12 @@ type lsOptions struct {
 // bucket still holds is listed.
 var prLookback = fmt.Sprintf("%dd", int(followUpLookback/(24*time.Hour)))
 
+// lsNow is runs ls's clock: --since's window (the default 7d) is measured
+// back from it, so which runs a listing shows depends on the day it runs.
+// Tests replace it to pin that window instead of minting run IDs dated
+// against the day the test happens to run (internal/cli: runid_test.go).
+var lsNow = time.Now
+
 // lsFilter selects the runs loadRows reads.
 type lsFilter struct {
 	slugs  []string
@@ -161,7 +167,7 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	// --watch would otherwise read them again on every redraw.
 	warnings := imageWarnings(ctx, env, f.slugs, time.Now().UTC())
 	for {
-		now := time.Now()
+		now := lsNow()
 		if since > 0 {
 			f.since = now.Add(-since)
 		}

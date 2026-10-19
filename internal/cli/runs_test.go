@@ -56,7 +56,7 @@ func TestLsFiltersAndTotals(t *testing.T) {
 	e1 := seedRun(t, f, today+"-090000-aaaa", "b1", "someone@example.com", true)
 	seedRun(t, f, today+"-091000-bbbb", "b1", "other@example.com", true)
 	seedRun(t, f, today+"-092000-cccc", "b2", "someone@example.com", false)
-	seedRun(t, f, "20200101-000000-dddd", "b1", "someone@example.com", false) // outside --since
+	seedRun(t, f, "20200101-000000-dddd", "b1", "someone@example.com", false) // outside --since // runid-guard:allow
 	f.run.SetState(e1, backend.StateRunning)
 
 	out, _, err := execute(t, "runs", "ls", "--json")

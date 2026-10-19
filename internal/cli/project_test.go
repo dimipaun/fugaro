@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -63,7 +64,10 @@ func writeProject(t *testing.T, name, gcp string) string {
 // of its stderr, even when it fails after the project is selected.
 func TestCloudCommandsPrintProjectHeader(t *testing.T) {
 	newCloudFixture(t)
-	const ref = "20260927-100000-abcd"
+	// no runs are seeded: the ID only has to parse for the commands that
+	// take one, but it is minted recent so it never ages out of a window a
+	// command measures back from now.
+	ref := recentRunID(t, time.Minute, "abcd")
 	for _, args := range [][]string{
 		{"runs", "ls"}, {"run", "--retry", ref}, {"cancel", ref}, {"logs", ref}, {"diagnose", ref},
 		{"secrets", "ls", "--repo", "acme/app"}, {"image", "status"}, {"image", "check"},
@@ -142,7 +146,9 @@ func TestJSONOutputsCarryProject(t *testing.T) {
 		}
 		return doc.Project
 	}
-	const launched, finished = "20260927-100000-abcd", "20260927-100000-bbbb"
+	// Both are minted inside runs ls's default --since window: a fixed date
+	// would age out of it and make the ls row assert the wrong project.
+	launched, finished := recentRunID(t, time.Minute, "abcd"), recentRunID(t, time.Minute, "bbbb")
 	exec := seedRun(t, f, finished, "", "", true)
 	f.run.SetState(exec, backend.StateSucceeded)
 	for _, args := range [][]string{
