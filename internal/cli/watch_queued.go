@@ -163,7 +163,9 @@ type scanResult struct {
 	// neither and could not be trusted with either (a launcher writes a job's
 	// environment and its own launch.json, never the job's name or the
 	// registry). Job is "" when there is no launch.json to read, and
-	// LaunchedBy too (a launch.json written before the launcher was recorded).
+	// LaunchedBy too (a launch that recorded no launcher: the recovery
+	// backfill, a local run with no execution, or `fugaro logs`'s synthetic
+	// launch).
 	Facts watch.RunFacts
 }
 

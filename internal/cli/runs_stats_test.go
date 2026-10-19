@@ -452,8 +452,8 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 		// Two launchers whose identities differ by one character the
 		// sanitising drops, so the table keys them alike: this is the
 		// collision the cap is documented for, reached the other way. The
-		// caller's private view is the runs their own identity recorded --
-		// what runs ls --mine means by "your own" -- so the other person's
+		// caller's private view is the runs their own launch identity recorded
+		// -- not the row key -- so the other person's
 		// run is not in it, however the row they share is keyed.
 		userStatsPlace(t, f, "alice@example.com", []string{"user:alice@example.com"}, nil)
 		twin := "ali​ce@example.com"
@@ -587,7 +587,7 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 // one the recorded-text comparison cannot reach on its own. A caller whose
 // identity is no key of its own -- nothing printable in it, or the word
 // 'unknown' itself -- is shown no row, and that holds even when runs recorded
-// the caller's exact text: runs ls --mine's comparison keeps those runs (the
+// the caller's exact text: the recorded-text comparison keeps those runs (the
 // recorded text is theirs), and the row they land in is keyed 'unknown' either
 // way, the key everybody's unattributed runs are grouped under. The private
 // table would then print that row under "your own runs only" while the note

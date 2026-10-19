@@ -41,7 +41,7 @@ Group the runs:
 fugaro runs stats --json
 ```
 
-It reads the run records and nothing else (no budget counter, and it writes nothing), and it takes `--repo`, `--all`, `--since` and `--max-runs` like the list above. It shows the caller's own row alone, and the whole table only to an operator of the installation, or with `--all-users`; the table says whose numbers it shows, so repeat that. In its JSON, each row's `counted_usd` is model spend that counts toward the caps and its `notional_usd` is a subscription's, never added together (and compute is attributed to no person), and a run whose launch recorded no launcher is grouped as `unknown` rather than guessed. If it refuses because the CLI cannot tell who you are, report that, or use `--all-users` if the user asks for the table.
+It reads the run records and nothing else (no budget counter, and it writes nothing), and it takes `--repo`, `--all` and `--since` in the same forms as `runs ls` above, plus `--max-runs` (which `runs ls` does not have) and `--all-users`. It shows the caller's own row alone, and the whole table only to an operator of the installation, or with `--all-users`; the table says whose numbers it shows, so repeat that. In its JSON, each row's `counted_usd` is model spend that counts toward the caps and its `notional_usd` is a subscription's, never added together (and compute is attributed to no person), and a run whose launch recorded no launcher is grouped as `unknown` rather than guessed. If it refuses because the CLI cannot tell who you are, report that, or use `--all-users` if the user asks for the table.
 
 ## 2. The budget
 

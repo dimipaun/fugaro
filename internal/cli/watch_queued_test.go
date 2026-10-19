@@ -544,8 +544,8 @@ func TestWatchQueuedTaskFieldsSanitised(t *testing.T) {
 }
 
 // writeLaunchBy writes launch.json with the launcher fugaro run records at
-// launch (writeLaunch's own records none: the shape every run launched before
-// the launcher was recorded has).
+// launch (writeLaunch's own records none: the shape a launch that recorded no
+// launcher has -- a backfill, a local run, or the synthetic launch logs builds).
 func (f *budgetFixture) writeLaunchBy(t *testing.T, slug, run, by string, at time.Time) {
 	t.Helper()
 	data, err := json.Marshal(struct {
