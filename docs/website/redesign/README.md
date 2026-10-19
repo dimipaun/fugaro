@@ -230,7 +230,7 @@ here goes stale the way the byte budgets did before D192.
   produces, which is the only account of them that is true of the site that ships:
   **JavaScript per page 149,580** (three times 49,860; `public/scripts/site.js` 39,888 bytes),
   **page weight per page 1,000,974** (three times 333,658; the docs hub 266,926 bytes) and
-  **whole site 3,677,892** (three times 1,225,964; the gates' own build of the site, 980,771
+  **whole site 3,678,141** (three times 1,226,047; the gates' own build of the site, 980,837
   bytes across 23 files, the `fugaro watch` assets below included). The fix
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
@@ -280,7 +280,14 @@ here goes stale the way the byte budgets did before D192.
   figure alone again, 978,623 → **980,771**, by 2,148 bytes: the section, its four names and four
   lines and the rules that draw the grid, all of them on the homepage. The page weight and the
   script stay where they were, and the words the section costs that page are what moved D188's
-  word ceiling from 250 to 300, in the same commit (the reading below).
+  word ceiling from 250 to 300, in the same commit (the reading below). **And the round after
+  that is the pull request's caption** (the same feedback), which moved the site figure alone
+  again, 980,771 → **980,837**, by 66 bytes: the caption's line and the `data-source` it cites
+  with it — `docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)` where the step used
+  to cite `README.md#How it works` — on the two pages that render the flow, the homepage and
+  How It Works. The page weight and the script stay where they were: the docs hub renders no
+  flow. The caption is two words shorter than the one it replaced, so the homepage measures 294
+  words where the benefits left it at 296 (the reading below).
   **The figures above are the build this branch ships.**
   The
   figures live in `website/README.md` and nowhere else, and
@@ -294,15 +301,15 @@ here goes stale the way the byte budgets did before D192.
   `website/dist`, which is the checkout's own build. The reason is that one page of the site
   reads the checkout's git state: the changelog renders each release file's "not yet released"
   state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
-  to **980,771 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
-  and so the deployed site — and to **979,256 with the tags this repository's clone carries**,
+  to **980,837 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
+  and so the deployed site — and to **979,322 with the tags this repository's clone carries**,
   the 1,515-byte changelog page being the whole of the difference. A figure derived from one is
   refused by the other, which is what happened: the gate could not measure the build `main`'s
   README named, and `website-preview` could not deploy. A derivation is likewise not held to
   whatever artifact a run was pointed at: `FUGARO_GATES_DIST` is how `console-option.mjs` runs
   the artifact gates over a copy with the console's flag flipped off — the state the checkout
   built until the console's release turned it on — and that copy is a different build — **1,572
-  bytes smaller at the site figure** than the gates' own, 979,199 against 980,771, measured (the
+  bytes smaller at the site figure** than the gates' own, 979,265 against 980,837, measured (the
   console page's downloads 1,100, Getting Started's option 386 and the homepage's call to
   action 86), and the page weight where it was — rather than another copy of this one.
   **The direction is the one the flag's own round gave it, read the other way:** turning the
@@ -713,33 +720,39 @@ changes are cited as the feedback's own.
 - **D188's word ceiling moves from 250 to 300, and that is the reading rather than a
   loosening.** The benefits are a fourth block the owner's feedback requires on the one page
   that already carried the three the briefs before it require — the promise, the chat (changes
-  spec item 3) and the flow (item 4) — and the four together measure **296 words**, so the
-  homepage is over the number D188 set. `website/README.md` states the rule for exactly this:
+  spec item 3) and the flow (item 4) — and the four together measured **296 words** when the
+  section landed, so the homepage was over the number D188 set. `website/README.md` states the
+  rule for exactly this:
   "a task that needs more raises the number here, in the commit that needs it". The number is
   therefore the smallest round ceiling above the page that carries every block its briefs
   require, and it stays a ceiling: the highest page that gained nothing from this feedback is
   Getting Started at 250 words, and a page that wants the extra fifty has to carry a block its
   own brief requires for them. The lead ceiling is untouched: the homepage's lead is 23 words
   (the request, the promise and the two links) against 40, and it grew by the request line the
-  feedback puts there.
+  feedback puts there. The caption below takes two words back off that page — it measures **294**
+  words with everything the feedback asks for in place, which is the number `website/README.md`
+  derives the ceiling from.
 - **The diagram's fourth caption said more than the repository says.** It read "each commit is
-  pushed within about a minute while the agent works", which is not what happens: what happens
-  is that the run's **first checkpoint push opens a draft pull request** — within about a
-  minute of the run's first commit — and the run keeps pushing checkpoints as it works
+  pushed within about a minute while the agent works", which is not what a reader of the picture
+  takes it to mean: what opens the pull request is the run's **first checkpoint push** — within
+  about a minute of the run's first commit — and what a reader gets then is a **draft, marked
+  not verified**, while the run goes on pushing checkpoints as it works
   (`docs/git-providers.md#Early draft PRs (git.pr.early_draft)` and
   `#Checkpoint pushes (git.pr.checkpoints)`; `docs/gcp-setup.md` says the same). The caption is
   now **"the first checkpoint opens the draft PR, marked not verified"**, cited to
   `docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)`, and the step cites a section
   of a document other than README.md for the first time — which is why the flow's captions are
-  now held per-section rather than to README.md as one file. **What the caption cannot carry is
-  the second half** — that the run goes on pushing — because a caption is one contiguous
-  quotation and the README's own line about checkpoints is a different sentence in a different
-  document; the flow's step 4 is the pull request, so the caption says what opens and when, and
-  the pushes after it are `docs/git-providers.md`'s business. It is recorded here rather than
-  left to the reader of the picture.
+  held per-section rather than to README.md as one file, and why `home.mjs`'s ordering case is
+  now built out of two of README.md's own `## How it works` lines: each step of the shipped flow
+  cites a section of its own, and the rule that a section's lines come in the section's order
+  has to keep holding for the day two steps share one again. **What the caption cannot carry is
+  the half after it** — that the run goes on pushing checkpoints — because a caption is one
+  contiguous quotation and that is another section's sentence; the flow's step is the pull
+  request, so the caption says what opens and when, and the pushes that follow are the section
+  it cites. It is recorded here rather than left to the reader of the picture.
 - **The measurements, and the check that is still the owner's.** Nothing here was rendered: no
   browser was driven for this round, and no screenshot is committed — this run cannot see one.
-  What the gates read is the artifact and the stylesheet: the homepage is 296 words against the
+  What the gates read is the artifact and the stylesheet: the homepage is 294 words against the
   300-word ceiling and its lead 23 against 40 (`budget.mjs`), the section's own vertical
   padding is read out of the built CSS at the three widths the rhythm gate uses, so the block
   pads the gap above it once and not twice (`base-styles.mjs`), the section is a
