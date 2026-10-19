@@ -637,8 +637,8 @@ the site at all. One of them did move, and [§3.4](#34-contrast-computed) is whe
 | Token | Value | Hue | Role |
 |---|---|---|---|
 | `--ground` | `#0A0E16` | 220° | the window's ground |
-| `--surface` | `#121A26` | 216° | a panel, a card |
-| `--surface-alt` | `#18222F` | 214° | a table header, a zebra row |
+| `--surface` | `#121A26` | 216° | a panel, a card, the installation rail's ground (§4.1) |
+| `--surface-alt` | `#18222F` | 214° | a table header, a zebra row, the rail's selected row |
 | `--text` | `#E6EEF5` | 208° | body text |
 | `--text-muted` | `#9FB2C4` | 209° | labels, secondary prose |
 | `--accent` | `#17A8E6` | 198° | structure: rules, the focus ring, a filled control, the cap bar below its threshold |
@@ -693,8 +693,8 @@ needs its own accent step rather than the same value:
 | Token | Value | Hue | Role |
 |---|---|---|---|
 | `--ground` | `#F2F6FA` | 210° | the window's ground (a blue-tinted paper, not white) |
-| `--surface` | `#FFFFFF` | — | a panel |
-| `--surface-alt` | `#E7EEF5` | 210° | a table header, a zebra row |
+| `--surface` | `#FFFFFF` | — | a panel, the installation rail's ground (§4.1) |
+| `--surface-alt` | `#E7EEF5` | 210° | a table header, a zebra row, the rail's selected row |
 | `--text` | `#0B1219` | 210° | body text |
 | `--text-muted` | `#516274` | 211° | labels, secondary prose |
 | `--accent` | `#0B6E9E` | 200° | structure, a filled control |
@@ -1266,16 +1266,30 @@ which §6.1 rule 1 forbids more strongly than any layout does.
   sets — which is exactly the requirement for a focus indicator.
 - **`:focus-visible` and never `:focus`** — a mouse click must not leave a ring on a nav
   button, and a keyboard user must never lose one.
-- **The nav is the one place the console needs a roving tabindex, and it does not have
-  one.** Today `entry.ts` creates one `button.console-view` per view with no keyboard
-  handling at all, so Tab walks all three buttons and neither arrow keys nor
-  Home/End move between them. Task 6.5 adds the WAI-ARIA tablist behaviour in ~15 lines:
-  `role="tablist"` on the nav, `role="tab"` on each button, `aria-current` (already there)
-  plus `aria-selected`, **roving `tabindex`** (the current view is `0`, the others `-1`),
-  and Arrow/Home/End handling that calls the existing `show(id)`. **This is a renderer
-  change and it is not a style change** — no attribute it writes is a style, so the CSP
-  and `ElementLike` are untouched. It is in the styling plan because a keyboard-less nav is
-  a layout defect the styling work is where you notice.
+- **The console needs a roving tabindex in two places, and it has one in neither.** Today
+  `entry.ts` creates one `button.console-view` per view with no keyboard handling at all, so
+  Tab walks all three buttons and neither arrow keys nor Home/End move between them. Task
+  6.5 adds the WAI-ARIA tablist behaviour in ~15 lines: `role="tablist"` on the nav,
+  `role="tab"` on each button, `aria-current` (already there) plus `aria-selected`,
+  **roving `tabindex`** (the current view is `0`, the others `-1`), and Arrow/Home/End
+  handling that calls the existing `show(id)`. **And the rail's list is the second** — §4.1
+  gives it the same treatment over `div.console-rail-list` and its `role="tab"` rows, one
+  tab stop for the whole list rather than one per installation, with **Enter** as the key
+  that selects (the nav's `show(id)` **is** its selection, so a nav button needs no second
+  key and the rail's rows do: the arrows move focus and Enter chooses). **Both are renderer
+  changes and neither is a style change** — no attribute either writes is a style, so the
+  CSP and `ElementLike` are untouched. They are in the styling plan because a keyboard-less
+  tablist is a layout defect, and the styling work is where you notice it.
+- **The focus order is the DOM order, and the rail is first.** A tab through the chrome
+  goes: the rail's collapse control, the rail's list (one stop, however many installations),
+  the rail's add row — then the view nav, then the panel's own controls, and the panel's
+  contents in the order the screen draws them. That is the layout's promise and not a
+  preference: the rail is appended before the installation line (§4.1), so the tab order a
+  reader gets is the order they see, left to right and top to bottom. **A rail that were
+  drawn on the left and appended last would put the whole chrome ahead of it**, which is
+  the WCAG 2.4.3 failure this ordering exists to avoid — and it is also why the shortcut
+  keys exist: `Ctrl`/`Cmd` + digit reaches the first three installations without walking
+  the tab order at all (§4.1).
 - **A skipped-by-default DOM stays skipped**: the console has no skip link and does not
   need one (there is no repeated block of links before the content), and it must not gain
   a link that would need the allow-list's `openExternal` to do nothing.
@@ -1620,7 +1634,9 @@ golden**: forced-colors rendering is the platform's and its pixels are not ours 
 
 **It lands in halves, each with the rules it tests**, because a case written for a
 stylesheet that does not exist yet is a case that fails: the chrome's half — the current
-view still marked, the chrome's boundary still visible — is [Task 6.3](#73-task-63--the-layout)'s,
+view still marked, the chrome's boundary still visible, **and the rail's rows with them**,
+since §4.4's rule 1 is what the rail's three state words are for and a `silent` row's word
+and glyph have to survive the same screen — is [Task 6.3](#73-task-63--the-layout)'s,
 in `test/e2e/entry.spec.ts`, which is the spec that already drives the dashboard the
 chrome is drawn into; the per-screen half — the state words and the row boundary, in each
 screen's own spec — is [Task 6.4](#74-task-64--the-screens)'s. This is also why §4.4's
@@ -1864,20 +1880,31 @@ keyboard) is the only task that touches the entry. 6.6 (the frames) is last and 
 
 ### 7.3 Task 6.3 — the layout
 
-- **Scope:** `theme/base.css` — the reset, the document, the three bands of §4.1, the nav's
-  tab-list styling, the focus ring, the responsive layers of §4.2, and the **chrome's**
-  `@media (forced-colors: active)` block of §4.4.
-- **Files:** `theme/base.css`; `THEME_STYLESHEETS` in the bundler, which gains
+- **Scope:** `theme/base.css` — the reset, the document as the two-column grid of §4.1 and
+  **the installation rail** and its rules: the rail's fixed 216 px width, its header row and
+  its collapse control, its rows with their name, project, state glyph and word and spend
+  spans, its selected row's 3 px accent border, its foot row and its hint — the three bands
+  of §4.1, the nav's tab-list styling, the focus ring, the responsive layers of §4.2, and the
+  **chrome's** `@media (forced-colors: active)` block of §4.4. **The rail's elements are
+  drawn by `entry.ts`, and this task is what draws them**, because the rules that select
+  them are this task's and a hook nothing emits is not a hook — the same rule that puts
+  `degraded-num` in Task 6.4's Files. The rail's **keys** are not here: they are Task 6.5's,
+  which is already the task that gives the nav its own.
+- **Files:** `theme/base.css`; `src/renderer/entry.ts` (the rail's elements);
+  `THEME_STYLESHEETS` in the bundler, which gains
   `'base.css'` in this commit — the list is the theme directory's whole contents and the
   bundler refuses a listed file that is missing, so the file and its entry move together
-  (§5.2); `README.md`; `test/e2e/entry.spec.ts` (the forced-colors smoke's chrome half).
+  (§5.2); `README.md`; `test/e2e/entry.spec.ts` (the forced-colors smoke's chrome half, and
+  the body-children assertion the rail moves).
 - **Tests:** the forced-colors smoke's chrome half (§6.4) — the current view still marked,
-  and the chrome's boundary still visible, both under `emulateMedia({ forcedColors:
-  'active' })` — written first, which is this task's red step.
+  the chrome's boundary still visible and the rail's rows with them, all under
+  `emulateMedia({ forcedColors: 'active' })` — written first, which is this task's red step;
+  and a case that the rail draws one row per stored installation with its state word and its
+  glyph.
 - **Verification:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
   test:e2e -- entry`; the
   e2e specs that read the chrome's shape (`entry.spec.ts`'s
-  `['console-installation', 'console-views', 'console-panel']`) still pass. The four golden
+  `['console-rail', 'console-installation', 'console-views', 'console-panel']`) still pass. The four golden
   tests are skipped in this task and in the two after it (`FUGARO_CONSOLE_GOLDENS=skip`,
   which the staged console-tests workflow already sets): a layout change is a picture the
   baselines do not have, and re-recording them before the last stylesheet lands is what
@@ -1920,7 +1947,11 @@ window background and the keyboard**.
 - **Scope:** `CONSOLE_THEME` stays the literal `'dark'` it is today — no `themeChoice()`,
   no `matchMedia` read, no `change` subscription and no `nativeTheme` query comes with it
   (§3.6); `consoleWindowOptions` gains `backgroundColor`, **one literal**, `#0A0E16`,
-  against the one `--ground` (§4.1); the nav's tablist behaviour (§4.3).
+  against the one `--ground` (§4.1); the nav's tablist behaviour **and the rail's** (§4.3) —
+  the rail's list gets the same roving `tabindex`, Arrow/Home/End between its rows and
+  **Enter to select**, together with the **shortcut keys** that select by position (§4.1).
+  The rail's keys are new to this task and belong here rather than in Task 6.3: the rail is
+  the canvas's region and this is the task that gives the console its keyboard.
   *The scope as designed, before the ruling:* `CONSOLE_THEME` becomes the answer of a
   `themeChoice()` that reads `matchMedia('(prefers-color-scheme: dark)')` and subscribes to
   `change`; the entry stamps `data-theme` on the mount it draws the chrome into; the
@@ -1989,11 +2020,14 @@ matter most, and the mutation each is proved against:
 | the forced-colors smoke (6.3's chrome half, 6.4's per screen) | the `@media (forced-colors: active)` block deleted from the stylesheet under it — the boundary collapses and the case fails |
 | the golden specs' `paintedBackground` assertion (6.6) | the `<link>` removed from `index.html` — nothing paints the ground and both runs read the compositor's `rgba(0, 0, 0, 0)`, so the assertion fails. *Under the two-set design the same mutation failed because the two schemes then painted the same colour, which one set cannot show:* |
 
-**And the four this document's own docs test was proved against, each run for real and
+**And the five this document's own docs test was proved against, each run for real and
 reverted** ([§6.5](#65-the-docs-test)): the status line replaced with `Status: draft.`; a
 cited path removed from the text, and another moved on disk; an in-page anchor left as the
 broken slug it was written as; Phase 6's heading stripped of `UNAPPROVED`, one of its six
-question markers dropped, and one of its task headings renamed. The seventh is the plan's
+question markers dropped, and one of its task headings renamed; and the rail's two glyphs
+swapped between `running` and `silent` in §4.1's table, or its **216 px** width dropped from
+the block beside it, which the rail test catches on the row the glyph moved to and by name.
+The seventh is the plan's
 own: `6.2` removed from Global Constraints rule 9's list, which
 `TestPlanRule9ListsEveryFlaggedHeading` catches. **And the ordering test (§6.5's tenth)
 carries eight of its own**, one per case, planted and reverted: the four-name
@@ -2144,6 +2178,14 @@ section is the brief it should be drawn from, and the two must agree**: the scre
 regions, the states and the palette below are the same ones §2 and §3 specify, and a
 canvas that invents a screen, a region, a state or a colour is a canvas that disagrees with
 the code.
+
+**The canvas has since been drawn and approved.** The owner approved it on 2026-10-19: the
+four screens — Live, Spend, Projects and Run detail — in the one value set that ships, the
+dark one, with the boundary screens of frame 5 drawn in the same set. Its **one structural
+addition to this design is the installation rail** ([§4.1](#41-the-windows-structure)),
+which this brief did not ask for and the owner accepted: the region's structure, its tokens,
+its state words, its keys, the collapsed state and the read-only rule it keeps are specified
+in §4.1, and a canvas drawn again from this brief draws the rail with the rest of the frame.
 
 **The tone, in one line:** *dense, calm, operator-grade — an instrument, not a marketing
 page.* The console is read at a glance, many times an hour, by the person who owns the

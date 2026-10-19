@@ -1466,7 +1466,7 @@ func TestDocsConsoleStylingCountsMatch(t *testing.T) {
 		{
 			sentence: "this document's own docs test was proved against",
 			countRE:  `\*\*And the (\w+) this document's own docs test was proved against`,
-			start:    "**And the four this document's own docs test was proved against",
+			start:    "**And the five this document's own docs test was proved against",
 			end:      "The seventh is the plan's",
 		},
 		{
