@@ -304,8 +304,11 @@ func TestDocsMobilePushIsIndexedAndPlanned(t *testing.T) {
 }
 
 // markdownLinkTargets returns the target of every `[text](target)` link in s,
-// in order. It is deliberately shallow — the plan's own links are simple
-// relative paths — and it ignores an image, which this document does not use.
+// in order, skipping an image (`![alt](target)`). It is deliberately shallow —
+// the plan's own links are simple relative paths. An image is skipped rather
+// than returned because its target is an asset and not a citation a reader
+// follows: a badge or a screenshot in the entry would otherwise be stat'ed as
+// if it were a link and fail this test with a message about a broken link.
 func markdownLinkTargets(s string) []string {
 	var out []string
 	for i := 0; ; {
@@ -317,6 +320,11 @@ func markdownLinkTargets(s string) []string {
 		close := strings.Index(s[open:], ")")
 		if close < 0 {
 			return out
+		}
+		// The `[` that opens this link, and the `!` an image puts before it.
+		if bracket := strings.LastIndex(s[:open], "["); bracket > 0 && s[bracket-1] == '!' {
+			i = open + close + 1
+			continue
 		}
 		out = append(out, s[open+2:open+close])
 		i = open + close + 1
@@ -380,12 +388,21 @@ func TestDocsMobilePushSaysWhoDeletesThePushNode(t *testing.T) {
 	if !strings.Contains(doc, "deletes BOTH nodes") {
 		t.Errorf("%s's §3.4 does not state that `fugaro pair revoke` deletes both `config/admin/devices/$uid` and `config/admin/push/$uid`, which §7 and Q10(i) both assert", docPath)
 	}
-	// And the two sentences that assert it must keep pointing at it.
+	// And the two sentences that assert it must keep pointing at it. The
+	// fragments are matched against the document with its whitespace flattened:
+	// this document wraps its prose, so a needle carrying the wrap it happens to
+	// have today ("... on\n  revoke") breaks on a harmless reflow — the same
+	// convention TestDocsMobilePushDoesNotInventAMailboxDisclosureInSecurityMD
+	// states for its own needles.
+	flat := normSpace(doc)
 	for _, want := range []string{
 		"**revoke** (§3.4 deletes the push node",
-		"deleted with the push node on\n  revoke",
+		// Q10(i)'s own sentence, citation included: the bare phrase also occurs
+		// in §3.6's note recording the withdrawal, which would satisfy a shorter
+		// needle on its own.
+		"and are **deleted with the push node on revoke** (§3.4)",
 	} {
-		if !strings.Contains(doc, want) {
+		if !strings.Contains(flat, normSpace(want)) {
 			t.Errorf("%s no longer carries %q: the retention answer must keep citing §3.4's deletion rather than asserting it from nowhere", docPath, want)
 		}
 	}
@@ -539,6 +556,96 @@ func TestDocsMobilePushQuotesThePlanAsItStandsAfterThisPR(t *testing.T) {
 	}
 }
 
+// TestDocsMobilePushSenderCategoriesExcludeFinishedAndFailed: §3.6(B) listed the
+// run registry among "the sources §1's reconciled category set has", §3.7
+// illustrated dedupe with a run ending `infra_error` sending "failed", §3.6(A)
+// opened with "Run finished / failed" and §6's storm row said "many runs fail at
+// once". §1 and the owner's answered D160 exclude that pair — the phone has no
+// read of `agents/$slug/$run` or `outcomes/**`, which is the ground the owner
+// declined "include failed and halted runs" on — so an implementer building the
+// sender from those four sentences would build the category the owner declined.
+// No category in the reconciled set is sourced from the run registry.
+func TestDocsMobilePushSenderCategoriesExcludeFinishedAndFailed(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	doc := readDoc(t, docPath)
+	flat := normSpace(doc)
+
+	for _, bad := range []string{
+		// §3.7's dedupe example, and §3.6(A)'s opening case.
+		`a run that ends ` + "`infra_error`" + ` sends one "failed"`,
+		"Run finished / failed",
+		// §6's storm row.
+		"many runs fail at once",
+		// §3.6(B)'s source list, with the registry among the set's sources.
+		"the run registry (`internal/budget/registry.go`'s entries), the spend and kill",
+	} {
+		if strings.Contains(flat, normSpace(bad)) {
+			t.Errorf("%s still carries %q: §1's reconciled set (D160) excludes finished and failed, so no sender built from that sentence sends a category the owner declined", docPath, bad)
+		}
+	}
+
+	for _, want := range []string{
+		// §3.6(B): the registry is read by the sweep, and is not made a category.
+		"does **not** turn that into a category",
+		"a sender that derived them from the registry would build the category the owner declined",
+		// §3.7's dedupe example is now a category that exists.
+		`a cap that is still reached on the next sweep sends one "cap reached"`,
+		// And §6's storm row.
+		"a storm (many runs cross their cap at once)",
+	} {
+		if !strings.Contains(flat, normSpace(want)) {
+			t.Errorf("%s lacks %q: the sender's examples must be categories in §1's reconciled set", docPath, want)
+		}
+	}
+}
+
+// TestDocsMobilePushPerPairingKeyCitationPointsAtTheKey: §1 cited §3.6 for "the
+// sender holds no per-pairing key", and §3.6 never makes that claim — its "no
+// key" prose is about the FCM credential ("no downloaded key", "no key on a
+// laptop"). The per-pairing key is §4 rule 11's and §5's. A citation that sends
+// a reader to a section about a different key is the dangling-citation class
+// TestDocsMobilePushSaysWhoDeletesThePushNode was written to catch for §7/Q10's
+// §3.4 reference.
+func TestDocsMobilePushPerPairingKeyCitationPointsAtTheKey(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	doc := readDoc(t, docPath)
+	flat := normSpace(doc)
+
+	if strings.Contains(flat, normSpace("holds no per-pairing key (§3.6)")) {
+		t.Errorf("%s still cites §3.6 for the per-pairing key, which §3.6 never claims: its \"no key\" prose is about the FCM credential", docPath)
+	}
+	for _, want := range []string{
+		"the sender holds no per-pairing key",
+		// The sections that do make the point.
+		"§4 rule 11 is what makes the app check it",
+		"the rules cannot verify a tag",
+		// And the note that keeps a reader from re-reading §3.6 for it.
+		"argument is about a different credential",
+	} {
+		if !strings.Contains(flat, normSpace(want)) {
+			t.Errorf("%s lacks %q: the per-pairing-key claim must cite the sections that make it", docPath, want)
+		}
+	}
+}
+
+// TestMarkdownLinkTargetsSkipsImages: markdownLinkTargets' doc comment said it
+// ignores an image, and the implementation did not — `![alt](target)` contains
+// `](`, so the target came back and was stat'ed as a link. Inert while the
+// plan's entry carries no image; a badge or a screenshot added later would fail
+// the resolution check with a message about a broken link.
+func TestDocsMobilePushMarkdownLinkTargetsSkipsImages(t *testing.T) {
+	got := markdownLinkTargets("See ![the diagram](../assets/x.png) and [the design](design/push-notifications.md), then [two](a.md).")
+	want := []string{"design/push-notifications.md", "a.md"}
+	if len(got) != len(want) {
+		t.Fatalf("markdownLinkTargets = %q, want %q: an image target must not be returned as a link", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("markdownLinkTargets[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 // TestDocsMobilePushLedgerHasOneHome: the dedupe/cap ledger was stated three
 // incompatible ways — §3.6 said "under config/admin ... or in Firestore under
 // its roles/datastore.user", while §7 and Q10(i) pinned it to the push node
@@ -549,35 +656,38 @@ func TestDocsMobilePushQuotesThePlanAsItStandsAfterThisPR(t *testing.T) {
 func TestDocsMobilePushLedgerHasOneHome(t *testing.T) {
 	const docPath = "docs/mobile/design/push-notifications.md"
 	doc := readDoc(t, docPath)
+	// Fragments, not whole sentences: the document wraps its prose and aligns
+	// its node diagram's comments, so a needle carrying either would break on a
+	// harmless reflow.
+	flat := normSpace(doc)
 
 	// The withdrawn alternative: a second store would make Q10(i) false.
 	for _, bad := range []string{
 		"or in Firestore under its `roles/datastore.user`",
 		"(`config/admin` or Firestore)",
-		"(`config/admin` or\n  Firestore)",
 	} {
-		if strings.Contains(doc, bad) {
+		if strings.Contains(flat, normSpace(bad)) {
 			t.Errorf("%s still offers %q as the ledger's home; the ledger lives in config/admin/push/$uid/ledger and nowhere else", docPath, bad)
 		}
 	}
 
 	for _, want := range []string{
 		// The node diagram carries it (§3.4).
-		"ledger/                             #   §3.6/§3.7: THE SENDER'S OWN STATE",
+		"ledger/ # §3.6/§3.7: THE SENDER'S OWN STATE, and its only home",
 		// The writers table carries the sender's only write.
 		"| `config/admin/push/$uid/ledger` | **the sender**",
 		"**The ledger's home is the push node and nowhere else.**",
 		// The three sections that used to disagree now name the same place.
-		"in **`config/admin/push/$uid/ledger`**",                                      // §3.6
-		"`config/admin/push/$uid/ledger` (§3.4, §3.6 — the ledger's one home)",        // §3.7
-		"the ledger\n  in its `ledger` child (§3.4, §3.6: one home, no second store)", // §7
-		"the dedupe ledger (the push node's `ledger` child, §3.4/§3.6)",               // Q10(i)
+		"in **`config/admin/push/$uid/ledger`**",                                   // §3.6
+		"`config/admin/push/$uid/ledger` (§3.4, §3.6 — the ledger's one home)",     // §3.7
+		"the ledger in its `ledger` child (§3.4, §3.6: one home, no second store)", // §7
+		"the dedupe ledger (the push node's `ledger` child, §3.4/§3.6)",            // Q10(i)
 		// §6's two rows: the no-send row is a §3.6/§3.7 property, not §3.4's,
 		// and the queued intent lives in the same node.
 		"the sender writes no ledger entry",
 		"a pending row in the same device's `config/admin/push/$uid/ledger`",
 	} {
-		if !strings.Contains(doc, want) {
+		if !strings.Contains(flat, normSpace(want)) {
 			t.Errorf("%s lacks %q: the ledger's home must be stated once and cited by every section that mentions it", docPath, want)
 		}
 	}

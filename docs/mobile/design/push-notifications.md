@@ -71,7 +71,11 @@ authenticated mailbox for the app to resolve "a run finished" or "a run failed" 
 app's §3.9 rule — an id or category it cannot resolve is ignored — would silently drop them,
 which is worse than not offering them: a category that can never be confirmed is a lock-screen
 lie the app itself posts. And the sender could not fill that gap even if it wanted to: P6.3
-requires a **`mac`** on every outbox message, and the sender holds no per-pairing key (§3.6).
+requires a **`mac`** on every outbox message, and the sender holds no per-pairing key — the key
+is D169/D171's, held by the phone and the laptop consumer, and §5's "*the rules cannot verify a
+tag*" paragraph is why no one else can write the tag (§4 rule 11 is what makes the app check it).
+*(§3.6's own "no key" argument is about a different credential — the **FCM** one — and not about
+this key.)*
 
 **So the reconciled category set is D160's**: the **kill switch**, **cap reached** and
 **consumer offline**, with **cap-near off by default**, and the **prompt** category that
@@ -542,9 +546,12 @@ service account's identity**, never a downloaded key and never a secret on a lap
 The candidates, priced:
 
 - **(A) The producer sends, in its own process.**
-  - *Run finished / failed*: the runner at finalize (`internal/runner`'s `finalize`) or the
-    gateway at a threshold (`internal/gateway`'s `Server`) calls FCM directly. Lowest latency,
-    and the event is in hand.
+  - *The cap categories*: the gateway at a threshold (`internal/gateway`'s `Server`) decides
+    the budget case in-process and calls FCM directly. Lowest latency, and the event is in
+    hand. *(The runner at finalize, `internal/runner`'s `finalize`, is the producer a
+    "finished" or "failed" notification would need — and those are **not** in §1's reconciled
+    set, so (A) is priced here for the categories that exist, not for the pair the owner
+    declined.)*
   - *Cost*: it widens **every run's job account** with the FCM send permission — the same
     account that, under project-centric phase 3, is **shared between repositories**
     (budget-token-channel.md §2). A push-send grant on a shared job account is a grant every
@@ -569,10 +576,13 @@ The candidates, priced:
     under `fugaroHistory` and already holds `roles/firebasedatabase.admin` on the project's
     database — `deploy/terraform/gcp/modules/firebase/iam.tf`'s `google_project_iam_member.history_database`,
     whose own comment is "only this account (and no job account) holds one on the FP". It
-    reads the run registry (`internal/budget/registry.go`'s entries), the spend and kill
-    nodes, and the mailbox's outbox — the sources §1's reconciled category set has — and it gains
-exactly one
-    thing: the FCM send permission, held by **one account**, not by every run. Keeping the
+    reads the spend and kill nodes and the mailbox's outbox — the sources §1's reconciled
+    category set has — and it gains exactly one thing: the FCM send permission, held by
+    **one account**, not by every run. *(It also reads
+    the run registry — `internal/budget/registry.go`'s entries — for its own sweep; this design
+    does **not** turn that into a category. "Finished" and "failed" are not in the reconciled
+    set (§1, D160), so a sender that derived them from the registry would build the category
+    the owner declined.)* Keeping the
     sender off the run accounts is not a nicety: because a push has no sender signature
     (§3.9), any account that can send can lie on the lock screen.
   - *What that account may hold, named exactly.* The permission is
@@ -651,8 +661,8 @@ paragraph above says. Q1 records the latency/grant trade and (D).
 
 ### 3.7 Rate limiting and dedupe
 
-- **One notification per state change.** The key is the *transition*, not the event: a run
-  that ends `infra_error` sends one "failed", not one per retry of the finalize path; a prompt
+- **One notification per state change.** The key is the *transition*, not the event: a cap that
+  is still reached on the next sweep sends one "cap reached", not one per sweep; a prompt
   sends one "needs answer", not one per outbox re-delivery (the consumer already re-delivers
   until the ack, `shared/mailbox/index.js`'s dedupe ledger `state.seen`). The sender
   dedupes on `(device, category, state-change key)` over a window, so a re-derived event
@@ -660,8 +670,9 @@ paragraph above says. Q1 records the latency/grant trade and (D).
   `config/admin/push/$uid/ledger` (§3.4, §3.6 — the ledger's one home), written by the sender
   and by nothing else.
 - **A storm cap.** At most **N notifications per device per hour** (N is small — the design
-  suggests **6**, and Q4 asks), and at most **one per category per run per hour**. A repository
-  that fails ten runs in a minute produces one alert and a quiet count, not ten buzzes. The
+  suggests **6**, and Q4 asks), and at most **one per category per run per hour**. Ten runs of
+  one repository crossing their cap in a minute produce one alert and a quiet count, not ten
+  buzzes. The
   cap is enforced **at the sender**, because the sender is the single writer and the phone
   cannot enforce anything about its own buzz — the window's timestamps are the same
   `ledger` rows, so the cap and the dedupe share one store and one lifetime (Q10(ii)).
@@ -1022,7 +1033,7 @@ against.
 | the token is stale (FCM `UNREGISTERED`) | the sender drops the token and **deletes the entry in `config/admin/push/$uid`** — it never writes a marker, and it never touches `config/admin/devices/$uid` (§3.4, §3.5). If that leaves the push node empty the sender **deletes the push node**; it does not retry. *(This is the same deletion `fugaro pair revoke` performs in its one act — §3.4 states the two paths; the sender's is the net for an orphaned node, not the mechanism)* | nothing until the app re-registers (§3.5 (b)) |
 | FCM or APNs is down, or the send fails | the intent **stays queued** — a pending row in the same device's `config/admin/push/$uid/ledger` (§3.4, §3.6) — and the sweep retries; after the retry window it is dropped, never escalated | a delayed or missing buzz; the mailbox is unaffected |
 | a duplicate event is derived | deduped on `(device, category, key)` (§3.7) | one buzz |
-| a storm (many runs fail at once) | the sender's cap suppresses beyond N/hour (§3.7) | one buzz, and the mailbox has the rest |
+| a storm (many runs cross their cap at once) | the sender's cap suppresses beyond N/hour (§3.7) | one buzz, and the mailbox has the rest |
 | the sender job itself is down | alerts stop; **nothing else does** | the mailbox still fills; the heartbeat still shows liveness (D117) |
 | quiet hours | suppressed at the sender before FCM is called | nothing during the window |
 | the payload would need the detail to make sense | it does not carry it — the app fetches (§3.2) | a generic buzz, then the truth on open |
