@@ -1559,10 +1559,11 @@ run "project_secrets" {
   }
 }
 
-# The managed deployer's scoped role and its conditioned binding are gated off
-# by default (0.8.6: the fmgd- fence cannot be expressed as an IAM condition
-# yet; deployer.tf's header). By default neither exists, while the account, the
-# unconditioned role and its binding stay.
+# The managed deployer's seven conditioned roles and their seven conditioned
+# bindings are gated off by default (0.9.0: the fmgd- fence is one condition per
+# service and has not been measured live yet; deployer.tf's header, Check 68 of
+# docs/gcp-live-checklist.md). By default none of the fourteen exists, while the
+# account, the unconditioned role and its binding stay.
 run "deployer_scoped_off_by_default" {
   command = plan
 
@@ -1571,8 +1572,32 @@ run "deployer_scoped_off_by_default" {
   }
 
   assert {
-    condition     = length(google_project_iam_custom_role.fugaro_deployer_scoped) == 0 && length(google_project_iam_member.fugaro_deployer_scoped) == 0
-    error_message = "the scoped deployer role and its binding must not exist unless managed_deployer_scoped is set"
+    condition = alltrue([
+      for r in [
+        google_project_iam_custom_role.fugaro_deployer_storage,
+        google_project_iam_custom_role.fugaro_deployer_secret,
+        google_project_iam_custom_role.fugaro_deployer_account,
+        google_project_iam_custom_role.fugaro_deployer_apikey,
+        google_project_iam_custom_role.fugaro_deployer_repository,
+        google_project_iam_custom_role.fugaro_deployer_run_job,
+        google_project_iam_custom_role.fugaro_deployer_scheduler_job,
+      ] : length(r) == 0
+    ])
+    error_message = "the seven conditioned deployer roles must not exist unless managed_deployer_scoped is set"
+  }
+  assert {
+    condition = alltrue([
+      for m in [
+        google_project_iam_member.fugaro_deployer_storage,
+        google_project_iam_member.fugaro_deployer_secret,
+        google_project_iam_member.fugaro_deployer_account,
+        google_project_iam_member.fugaro_deployer_apikey,
+        google_project_iam_member.fugaro_deployer_repository,
+        google_project_iam_member.fugaro_deployer_run_job,
+        google_project_iam_member.fugaro_deployer_scheduler_job,
+      ] : length(m) == 0
+    ])
+    error_message = "the seven conditioned deployer bindings must not exist unless managed_deployer_scoped is set"
   }
   assert {
     condition     = google_service_account.fugaro_deployer.account_id == "fugaro-deployer" && google_project_iam_custom_role.fugaro_deployer.role_id == "fugaroDeployer"
@@ -1584,9 +1609,10 @@ run "deployer_scoped_off_by_default" {
   }
 }
 
-# The opt-in still plans the gated pair exactly as D75 wrote it: one role with
-# the scoped permissions (cloudscheduler.jobs.enable, never .resume), bound once
-# under the managed-prefix condition.
+# The opt-in plans the gated half exactly as the 0.9.0 redesign writes it: one
+# role per service, each holding that service's slice of D75's 31 permissions
+# (cloudscheduler.jobs.enable, never the .resume that does not exist), each
+# bound exactly once under its own service's fence and no other service's.
 run "deployer_scoped_opt_in" {
   command = plan
 
@@ -1599,18 +1625,60 @@ run "deployer_scoped_opt_in" {
   }
 
   assert {
-    condition     = length(google_project_iam_custom_role.fugaro_deployer_scoped) == 1 && google_project_iam_custom_role.fugaro_deployer_scoped[0].role_id == "fugaroDeployerScoped"
-    error_message = "with managed_deployer_scoped the scoped role must exist, as fugaroDeployerScoped"
+    condition = [
+      google_project_iam_custom_role.fugaro_deployer_storage[0].role_id,
+      google_project_iam_custom_role.fugaro_deployer_secret[0].role_id,
+      google_project_iam_custom_role.fugaro_deployer_account[0].role_id,
+      google_project_iam_custom_role.fugaro_deployer_apikey[0].role_id,
+      google_project_iam_custom_role.fugaro_deployer_repository[0].role_id,
+      google_project_iam_custom_role.fugaro_deployer_run_job[0].role_id,
+      google_project_iam_custom_role.fugaro_deployer_scheduler_job[0].role_id,
+    ] == [
+      "fugaroDeployerStorage",
+      "fugaroDeployerSecret",
+      "fugaroDeployerAccount",
+      "fugaroDeployerApiKey",
+      "fugaroDeployerRepository",
+      "fugaroDeployerRunJob",
+      "fugaroDeployerSchedulerJob",
+    ]
+    error_message = "with managed_deployer_scoped the seven conditioned roles exist, one per service"
   }
   assert {
-    condition     = contains(google_project_iam_custom_role.fugaro_deployer_scoped[0].permissions, "cloudscheduler.jobs.enable") && !contains(google_project_iam_custom_role.fugaro_deployer_scoped[0].permissions, "cloudscheduler.jobs.resume")
+    condition = sum([
+      for r in [
+        google_project_iam_custom_role.fugaro_deployer_storage,
+        google_project_iam_custom_role.fugaro_deployer_secret,
+        google_project_iam_custom_role.fugaro_deployer_account,
+        google_project_iam_custom_role.fugaro_deployer_apikey,
+        google_project_iam_custom_role.fugaro_deployer_repository,
+        google_project_iam_custom_role.fugaro_deployer_run_job,
+        google_project_iam_custom_role.fugaro_deployer_scheduler_job,
+      ] : length(r[0].permissions)
+    ]) == 31
+    error_message = "the seven roles partition D75's 31 conditioned permissions, none added and none dropped (9 storage, 3 secret, 4 account, 2 apikey, 3 repository, 5 run, 5 scheduler)"
+  }
+  assert {
+    condition     = contains(google_project_iam_custom_role.fugaro_deployer_scheduler_job[0].permissions, "cloudscheduler.jobs.enable") && !contains(google_project_iam_custom_role.fugaro_deployer_scheduler_job[0].permissions, "cloudscheduler.jobs.resume")
     error_message = "the scoped role resumes a Scheduler job with cloudscheduler.jobs.enable; cloudscheduler.jobs.resume does not exist"
   }
   assert {
-    condition = (length(google_project_iam_member.fugaro_deployer_scoped) == 1 &&
-      google_project_iam_member.fugaro_deployer_scoped[0].role == "projects/proj-1234/roles/fugaroDeployerScoped" &&
-      google_project_iam_member.fugaro_deployer_scoped[0].condition[0].title == "fugaro-managed-prefix" &&
-    strcontains(google_project_iam_member.fugaro_deployer_scoped[0].condition[0].expression, "projects/_/buckets/fmgd-"))
-    error_message = "with managed_deployer_scoped the scoped role is bound once, under the fugaro-managed-prefix condition"
+    condition = alltrue([
+      for b in [
+        [google_project_iam_member.fugaro_deployer_storage[0], "fugaroDeployerStorage", "storage.googleapis.com/Bucket"],
+        [google_project_iam_member.fugaro_deployer_secret[0], "fugaroDeployerSecret", "secretmanager.googleapis.com/Secret"],
+        [google_project_iam_member.fugaro_deployer_account[0], "fugaroDeployerAccount", "iam.googleapis.com/ServiceAccount"],
+        [google_project_iam_member.fugaro_deployer_apikey[0], "fugaroDeployerApiKey", "apikeys.googleapis.com/Key"],
+        [google_project_iam_member.fugaro_deployer_repository[0], "fugaroDeployerRepository", "artifactregistry.googleapis.com/Repository"],
+        [google_project_iam_member.fugaro_deployer_run_job[0], "fugaroDeployerRunJob", "run.googleapis.com/Job"],
+        [google_project_iam_member.fugaro_deployer_scheduler_job[0], "fugaroDeployerSchedulerJob", "cloudscheduler.googleapis.com/Job"],
+      ] :
+      b[0].role == "projects/proj-1234/roles/${b[1]}" &&
+      b[0].condition[0].title == "fugaro-managed-prefix" &&
+      strcontains(b[0].condition[0].expression, b[2]) &&
+      strcontains(b[0].condition[0].expression, "fmgd-") &&
+      !strcontains(b[0].condition[0].expression, "contains(")
+    ])
+    error_message = "each conditioned deployer role is bound exactly once, under its own service's fmgd- fence and no other's"
   }
 }

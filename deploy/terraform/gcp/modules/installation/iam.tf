@@ -56,7 +56,7 @@ resource "google_project_iam_custom_role" "tag_mover" {
 }
 
 # The role is a literal path and not the resource's name attribute: this grant
-# is planned by the same apply that creates the deployer's two roles, and a
+# is planned by the same apply that creates the deployer's eight roles, and a
 # project grant whose role is computed cannot be told from a deployer one at
 # plan time (Task 1.5 step 5; internal/infra/tf refuses a computed project role
 # while a deployer role is being created). var.project is known at plan time,
@@ -118,7 +118,7 @@ resource "google_project_iam_custom_role" "cloud_asset_reader" {
 # Granted at the project to the operators, who run the managed apply that makes
 # the read. The role is a literal path and not the resource's name attribute,
 # for the reason the launcher grant above gives: this grant is planned by the
-# same apply that creates the deployer's two roles, and a project grant whose
+# same apply that creates the deployer's eight roles, and a project grant whose
 # role is computed cannot be told from a deployer one at plan time.
 #
 # The role ID is a literal in both places, like the history role's, and not a

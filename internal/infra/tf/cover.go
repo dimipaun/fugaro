@@ -63,8 +63,8 @@ var allowedTypes = map[string]bool{
 // who says what kind of principal a module grants a role to: People are the
 // members the review screen lists (launchers, operators, admins), Accounts the
 // Fugaro service accounts of this run, and Deployer the deployer account of
-// D75 alone — its own kind, so that its two roles name it and nothing else, and
-// no row meant for Fugaro's accounts accepts it.
+// D75 alone — its own kind, so that its eight roles name it and nothing else,
+// and no row meant for Fugaro's accounts accepts it.
 type who uint8
 
 const (
@@ -241,16 +241,16 @@ var (
 // docs/plans/2026-10-16-managed-projects.md).
 //
 // A managed apply does not run as the operator: it assumes the deployer
-// account the installation module creates, which holds two custom roles split
-// so that a condition on one binding cannot be defeated by an unconditioned
-// binding of the same role (D75). fugaroDeployer holds only create
-// permissions, read permissions and serviceusage.services.enable, and is bound
-// to the account with no condition; fugaroDeployerScoped holds every update,
-// delete, run and pause permission, every *.setIamPolicy and
-// iam.serviceAccounts.actAs, and is bound to the account exactly once, under
-// the IAM condition below — so the authority that could reach an existing
-// resource is authority the deployer holds only over names carrying
-// ManagedPrefix. That prefix is what keeps the deployer out of the runs bucket
+// account the installation module creates, which holds eight custom roles,
+// split so that a condition on one binding cannot be defeated by an
+// unconditioned binding of the same role (D75). fugaroDeployer holds only
+// create permissions, read permissions and serviceusage.services.enable, and
+// is bound to the account with no condition; the seven conditioned roles hold
+// every update, delete, run and pause permission, every *.setIamPolicy and
+// iam.serviceAccounts.actAs, one role per service, and each is bound to the
+// account exactly once under its own service's condition (deployerServices
+// below) — so the authority that could reach an existing resource is authority
+// the deployer holds only over names carrying ManagedPrefix. That prefix is what keeps the deployer out of the runs bucket
 // (where the marker and the owner's delete list are), out of Fugaro's own
 // accounts, jobs, secrets and repositories, and off the project's default
 // compute account, which holds Editor by default.
@@ -732,9 +732,9 @@ func planAccounts(p *Plan) (created, held map[string]bool) {
 // deployerPlan is what a plan does about the deployer (D75, Task 1.5).
 type deployerPlan struct {
 	// createsRole is whether this plan creates or replaces one of the
-	// deployer's two custom roles. While it does, a project grant whose role
-	// is computed is refused: the computed role could be
-	// fugaroDeployerScoped, whose IAM condition is the whole fence around the
+	// deployer's eight custom roles. While it does, a project grant whose role
+	// is computed is refused: the computed role could be one of the seven
+	// conditioned ones, whose IAM condition is the whole fence around the
 	// account, and a plan cannot be read as if it were not (Task 1.5 step 5).
 	// This is why the module writes its project grants' roles as literals.
 	createsRole bool
@@ -967,12 +967,13 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 	// The role.
 	if unknown(ch, "role") {
 		if kind == toDeployer {
-			return "a computed role to the deployer account: it holds its two roles, named, and nothing else"
+			return "a computed role to the deployer account: it holds its eight roles, named, and nothing else"
 		}
 		if createsDeployerRole && typ == "google_project_iam_member" {
 			// The plan is creating one of the deployer's roles, so a computed
-			// PROJECT role here could be the scoped one — the role whose
-			// single binding carries the IAM condition that is D75's whole
+			// PROJECT role here could be one of the seven conditioned ones —
+			// whose single binding carries the IAM condition that is D75's
+			// whole
 			// fence. A condition cannot be checked against a role nobody can
 			// name.
 			//
@@ -1075,16 +1076,18 @@ func (c Cover) jobsCondition(ch Change) string {
 // Two of the module's grants are its business, and each is the whole of a
 // property the account's safety rests on:
 //
-//   - a project binding of one of the deployer's two roles (deployer.tf's
-//     bindings (1) and (2)), whose MEMBER, PROJECT and CONDITION this checks:
+//   - a project binding of one of the deployer's eight roles (deployer.tf's
+//     bindings (1) and (2)-(8)), whose MEMBER, PROJECT and CONDITION this
+//     checks:
 //     the member is exactly serviceAccount:fugaro-deployer@<installation
 //     project> (a job account, the scheduler, the history account or a
 //     computed member holding either role is refused even under the exact
 //     condition), and the role and binding are in that same project. It is the only check
 //     in this file that looks at a condition on anything but a bucket grant,
-//     and it is here because a project binding of the scoped role without its
-//     condition — or with a wider one — hands the deployer every update,
-//     delete, setIamPolicy and actAs permission of that role project-wide,
+//     and it is here because a project binding of a conditioned role without
+//     its condition — or with a wider one, or with another service's — hands
+//     the deployer every update, delete, setIamPolicy and actAs permission of
+//     that role project-wide,
 //     which is the account that could then reach the runs bucket and forge the
 //     marker.
 //   - the operators' impersonation grant, DeployerTokenCreatorRole on

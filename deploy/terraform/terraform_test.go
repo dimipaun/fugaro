@@ -1100,11 +1100,11 @@ var (
 	// A custom role of this project, spelled as the literal path
 	// "projects/${var.project}/roles/<id>" rather than read from the role
 	// resource's own name attribute. Task 1.5 step 5: the creating apply plans
-	// the deployer's two roles, and a project grant whose role is computed
-	// cannot be told from the scoped one, whose IAM condition is the whole
-	// fence around the account — so the five project grants planned by that
-	// same apply (the deployer's two, the launchers', the build submitters'
-	// and the history account's) name their role literally instead. var.project
+	// the deployer's eight roles, and a project grant whose role is computed
+	// cannot be told from a conditioned one, whose IAM condition is the whole
+	// fence around the account — so the project grants planned by that same
+	// apply (the deployer's eight, the launchers', the build submitters' and
+	// the history account's) name their role literally instead. var.project
 	// is known at plan time, and the ID must be one the modules create
 	// (tf.FugaroRoles), checked below.
 	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.project\}/roles/([A-Za-z0-9_.]+)"$`)
@@ -1278,18 +1278,19 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 				}
 				continue
 			}
-			// The deployer's two roles (installation/deployer.tf, D75) hold
+			// The deployer's roles (installation/deployer.tf, D75) hold
 			// permissions this ban exists to keep out of Fugaro's own custom
 			// roles: IAM, serviceusage and apikeys permissions, and a
 			// resource-level setIamPolicy. That is the owner's answer of
 			// 2026-10-16, and the bound on them is elsewhere and is exact:
-			// tf.RolePermissions pins both lists permission for permission
+			// tf.RolePermissions pins every list permission for permission
 			// (internal/infra/tf/cover_test.go) with a fixture that refuses a
-			// widening, and both are bound to one account, the scoped one only
-			// under the managed-prefix condition. The deployer is not an
-			// installation role: it holds nothing project-wide but creation
-			// and reads.
-			if blk.name == "google_project_iam_custom_role.fugaro_deployer" || blk.name == "google_project_iam_custom_role.fugaro_deployer_scoped" {
+			// widening, and each of the eight is bound to one account, the
+			// seven conditioned ones only under the managed-prefix fence of
+			// their own service (docs/design/managed-deployer-fence.md). The
+			// deployer is not an installation role: it holds nothing
+			// project-wide but creation and reads.
+			if strings.HasPrefix(blk.name, "google_project_iam_custom_role.fugaro_deployer") {
 				continue
 			}
 			if blk.name == "google_project_iam_custom_role.token_minter" {

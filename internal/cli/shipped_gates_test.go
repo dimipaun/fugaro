@@ -133,7 +133,7 @@ func TestShippedGateVariablesAreOnlyTheConstants(t *testing.T) {
 	}
 }
 
-// doctor says plainly, as info, that the scoped deployer role is absent on
+// doctor says plainly, as info, that the scoped deployer roles are absent on
 // purpose in this release, and never warns or fails on it, not even with
 // --strict.
 func TestDoctorSaysManagedDeployerIsDisabled(t *testing.T) {

@@ -123,7 +123,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 		// Roles no module grants through any type.
 		// tokenCreator is deliberately not among these any more: D75 grants it
 		// on a service account for a person (the matrix's own row above). The
-		// deployer's two roles are not here either: their row is
+		// deployer's eight roles are not here either: their row is
 		// google_project_iam_member's alone, so every other type refuses them.
 		for _, role := range []string{"roles/owner", "roles/editor", "roles/viewer", "roles/iam.securityAdmin", "roles/storage.admin", "roles/run.admin",
 			"projects/proj-1/roles/fugaroEverything", "projects/other/roles/fugaroLauncher"} {
@@ -372,8 +372,8 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 	}
 }
 
-// The deployer's two roles are held by the deployer account and by nothing
-// else, and the deployer account holds those two roles and nothing else: a
+// The deployer's eight roles are held by the deployer account and by nothing
+// else, and the deployer account holds those eight roles and nothing else: a
 // plan that binds the scoped role — even under its exact condition — to a job
 // account, the scheduler or the history account hands that account every
 // update, delete, setIamPolicy and actAs on the managed prefix; a plan that
@@ -513,7 +513,7 @@ func TestCloudAssetRoleIsTheSearchReadOnly(t *testing.T) {
 	}
 }
 
-// The deployer is its own kind of principal: only its two roles name it, and
+// The deployer is its own kind of principal: only its eight roles name it, and
 // they name nothing else. A row that let an account or a person hold either
 // role, or let the deployer hold any other, would undo the check above.
 func TestOnlyTheDeployerRolesNameTheDeployer(t *testing.T) {
