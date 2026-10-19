@@ -45,6 +45,24 @@ import config from '../../playwright.config'
 /** E2E_DIR is where the specs live, from this file's location. */
 const E2E_DIR = fileURLToPath(new URL('../e2e', import.meta.url))
 
+/**
+ * The two ways a spec can start Electron without going through
+ * `test/support/launch.ts`, and therefore without the runtime being resolved
+ * before the spawn and without the ETXTBSY retry.
+ *
+ * `_electron` is matched as a bare token rather than as `_electron as electron`
+ * (review of this PR): Playwright exports the launcher under the underscore
+ * name, so `import { _electron } from '@playwright/test'` followed by
+ * `_electron.launch(...)` is the *likeliest* way a spec goes back to launching
+ * itself -- and `\b` does not match between `_` and `e`, so a call pattern of
+ * `\belectron\.launch\(` reads that call as an ordinary member call and the
+ * guard stays green. `DIRECT_LAUNCH_CALL` accepts the optional underscore for
+ * the same reason. Both are asserted against the spellings in this file's own
+ * test, so loosening one is not a silent change.
+ */
+const DIRECT_LAUNCH_IMPORT = /_electron/
+const DIRECT_LAUNCH_CALL = /_?electron\.launch\(/
+
 describe('playwright.config.ts', () => {
   it('is the config the e2e run uses', () => {
     // The anchor for the assertion below: a config reached through the wrong
@@ -119,11 +137,37 @@ describe('playwright.config.ts', () => {
     for (const spec of specs) {
       const text = readFileSync(join(E2E_DIR, spec), 'utf8')
       expect(text, `${spec} imports Playwright's Electron launcher directly; use launchConsole from ../support/launch`).not.toMatch(
-        /_electron as electron/,
+        DIRECT_LAUNCH_IMPORT,
       )
       expect(text, `${spec} calls electron.launch directly; use launchConsole from ../support/launch`).not.toMatch(
-        /\belectron\.launch\(/,
+        DIRECT_LAUNCH_CALL,
       )
     }
+  })
+
+  it('recognises every spelling of a direct launch, the `_electron` alias included', () => {
+    // The patterns above are the guard, so they get their own test: the first
+    // spelling is the one this PR rewrote, and the second is the one that would
+    // slip past a guard written as `\belectron\.launch\(` -- `\b` does not match
+    // between `_` and `e`, so an aliased import called as `_electron.launch(`
+    // reads as an ordinary member call to that pattern. A guard with that hole
+    // would be green while a spec raced itself again.
+    const direct = [
+      "import { _electron as electron } from '@playwright/test'\nelectron.launch({ args: [] })",
+      "import { _electron } from '@playwright/test'\n_electron.launch({ args: [] })",
+      "import { _electron as e } from '@playwright/test'\ne.launch({ args: [] })",
+      "const { _electron } = require('@playwright/test')\n_electron.launch({ args: [] })",
+    ]
+    for (const source of direct) {
+      expect(source, 'a direct launch must match one of the two patterns').toMatch(DIRECT_LAUNCH_IMPORT)
+    }
+    expect(direct[0], 'the rewritten spelling, called through the alias').toMatch(DIRECT_LAUNCH_CALL)
+    expect(direct[1], 'the rewritten spelling, called under its own name').toMatch(DIRECT_LAUNCH_CALL)
+
+    // And the spelling every spec uses now is not a false positive: the guard
+    // must not fail the helper it exists to point specs at.
+    const throughHelper = "import { launchConsole } from '../support/launch'\nlaunchConsole({ args: [], env: {} })"
+    expect(throughHelper, 'launchConsole is not a direct launch').not.toMatch(DIRECT_LAUNCH_IMPORT)
+    expect(throughHelper).not.toMatch(DIRECT_LAUNCH_CALL)
   })
 })
