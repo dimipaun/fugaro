@@ -15,8 +15,11 @@ import (
 // value is closed.
 //
 // What it is opened WITH, as of Task 4.5 (the plan's wiring of the
-// whole-project inventory, the 0.9.0 target the owner's ruling of 2026-10-18
-// set): the managed apply now also consults the whole-project inventory
+// whole-project inventory, in 0.9.0 as the owner's ruling of 2026-10-18 set;
+// the redesigned managed path that wiring belongs to moved to 0.9.5 by the
+// owner's ruling of 2026-10-19, and 0.9.0 ships with the managed deployer's
+// scoped role still gated off): the managed apply now also consults the
+// whole-project inventory
 // (inventory.go, Task 4.1), so a resource the installation's own state does
 // not account for falls that run back to its confirmations and the gate's
 // opening buys an agent's session nothing there (D55, D59). The ruling's own
