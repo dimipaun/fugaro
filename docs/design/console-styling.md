@@ -193,7 +193,7 @@ rule does not allow. **A fifth child precedes these four whenever the mode is no
 
 | Region | Element and hooks | What it holds |
 |---|---|---|
-| Installation rail | `aside.console-rail` → `div.console-rail-head` (`p.console-rail-title`, `button.console-rail-collapse`), `div.console-rail-list` → one `button.console-rail-row` per installation (`span.console-rail-name`, `span.console-rail-project`, `span.console-rail-state`, `span.console-rail-spend`), `div.console-rail-add` → `button.console-rail-add`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows, `aria-controls`/`aria-expanded` on the collapse control | the canvas's structural addition (§4.1): the header row and its collapse control, one tab per installation, the add row and the hint. The first `role=` in the renderer. **Thirteen hooks**, and a rule selects no other — the tree, the tokens and the keyboard are §4.1's |
+| Installation rail | `aside.console-rail` → `div.console-rail-head` (`p.console-rail-title`, `button.console-rail-collapse`), `div.console-rail-list` → one `button.console-rail-row` per installation (`span.console-rail-name`, `span.console-rail-project`, `span.console-rail-state`, `span.console-rail-spend`), `div.console-rail-add` → `button.console-rail-add`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows, `aria-controls`/`aria-expanded` on the collapse control | the canvas's structural addition (§4.1): the header row and its collapse control, one tab per row, **one row per installation the dashboard can read** (§4.1), the add row and the hint. The first `role=` in the renderer. **Twelve hooks on thirteen elements** — `console-rail-add` names the foot row and its button both — and a rule selects no other: the tree, the tokens and the keyboard are §4.1's |
 | Installation line | `section.console-installation`, `data-installation`, `data-mode` | `data-installation="chosen"` with `p.installation-project`, `p.installation-binary`, `p.installation-version` and `data-mode`; `data-installation="none"` with `p.installation-none`; `data-installation="unreadable"` with `p.installation-unreadable`; and `p.installation-store-refusal` |
 | Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, `data-view="live\|spend\|projects"`, `aria-current="true\|false"`, label as text |
 | Panel | `div.console-panel` | the mounted screen's root |
@@ -1148,7 +1148,13 @@ and Run detail — are reached as [§2](#2-screen-inventory) says: three from th
 detail from a run row. The rail adds no tab of its own, and the console gains no view.
 
 The rail itself is `aside.console-rail` — the one element the entry appends for it — and its
-tree is six parts, each part's class a hook a rule may select:
+tree is **thirteen classed elements**, each element's class a hook a rule may select. Those
+thirteen elements carry **twelve classes**: the foot row and its button share
+`console-rail-add` (a row and the control inside it are one region, and the class names the
+region), so a stylesheet selects twelve distinct hooks and
+[§2.1](#21-the-dashboards-chrome--srcrendererentryts) lists the same twelve. **The count is
+stated here and in §2.1 because it is what a reader checks the tree against**, and the tree
+below is the list:
 
 ```
 aside.console-rail                        the rail — the grid's first column
@@ -1219,33 +1225,50 @@ aside.console-rail                        the rail — the grid's first column
   built by the main process's picker module (ruling C9), whose add form is the one place an
   installation is created. The rail adds **no inline form, no second add path, no new store
   operation and no new file**, and it is not a second way to remove or edit anything.
-- **The rail adds no write action, and the console stays READ ONLY.** Selecting a row
-  chooses the installation the console is reading, through the console's one choose
-  operation — the picker's own channel (ruling C9) — and not through a second one the rail
-  brings with it. Nothing on the rail adds, removes or edits an installation, no renderer
-  ever sends a path, and the only file a choose writes is the installations file the picker
-  already writes — the console design's rule 10, as C8's answer amended it, is what keeps
-  that list closed.
-- **What the rail reads, and the one read the console does not have.** A row carries four
-  fields, and the dashboard can read only one of them today: the **name** and the **GCP
-  project** are the installation store's and the CLI's answers *about an installation*, and
-  the **state** and the **spend** are the console's own view of one. `installation.current`
-  answers the **active** installation and nothing else, and it takes no argument; the stored
-  list is the picker's own read (§2.2), on a channel a frame on this document cannot reach.
-  **This section states that dependency and does not
-  design its way around it**: the task that builds the rail lands the read it needs — the
-  same bounded, schema-checked list the picker already draws, with no path and no id
-  crossing from the renderer — or draws the row it *can* read (the active installation's)
-  and says so, which is the console's rule for every missing reading. **The canvas settled
-  the shape of a row; it did not settle where a non-active row's figures come from.**
+- **What the rail draws, and the read the console does not have.** The rail draws **one row
+  per installation the dashboard can read**, and today that is **one row: the installation
+  the operator chose**, with its name, its project, its state and its spend. A row carries
+  four fields and the dashboard's one installations read answers all four for that
+  installation and no other: `installation.current` **takes no argument at all and names no
+  id**, so a renderer cannot ask about an installation other than the one this console is
+  running (`src/main/ipc.ts`, the fourteenth operation). The stored list is the picker's own
+  read (§2.2): `INSTALLATION_OPERATIONS` is registered in `src/main/picker.ts` and each
+  channel is gated on **the picker's own document**, so a frame on the dashboard is answered
+  `SENDER_REFUSAL` and the two documents cannot reach each other's surface.
+- **A row per stored installation needs a read this design does not add.** The canvas draws
+  the rail with an installation per row; **this phase draws the rows it can read**, and the
+  read that would fill the rest is **a surface addition — a bounded, schema-checked list read
+  on the dashboard's bridge** — which is exactly what [§11](#11-what-this-document-does-not-decide)
+  withholds: this document does not change the preload or the IPC allow-list, and no task in
+  Phase 6 owns those files. **So no task draws a row for an installation the dashboard cannot
+  read**, and nothing here invents one: the spans in the tree are the shape every row has,
+  the three state words are the rail's vocabulary with `running` the active row's, and the
+  shortcut keys address the rows the rail draws — a rail of one row has one tab stop in its
+  list. **The canvas settled the shape of a row; it did not settle where a non-active row's
+  figures come from, and landing that read is a decision for the owner** (it is a second
+  installations read on a bridge C9 keeps read-only, and the ruling that authorizes it is not
+  this document's to make).
+- **The rail adds no write action, and the console stays READ ONLY.** **The rail cannot
+  choose an installation, and this section does not pretend otherwise**: the console's one
+  choose operation is the picker's (`fugaro:installations/choose`, ruling C9) on the picker's
+  own channel, and a frame on this document cannot reach it — so choosing an installation
+  stays where it is today, in the picker window the header, the degraded screen and this
+  rail's foot row all open. A row's `aria-selected` is the rail's own mark of which row is
+  the active one, and it selects nothing. Nothing on the rail adds, removes or edits an
+  installation, no renderer ever sends a path, and the only file a choose writes is the
+  installations file the picker already writes — the console design's rule 10, as C8's
+  answer amended it, is what keeps that list closed.
 - **The keyboard** — the detail is [§4.3](#43-keyboard-and-focus): the rail's list is **a
   tablist in its own right**, `div.console-rail-list` with `role="tablist"` and one
   `role="tab"` row each; it uses a **roving `tabindex`** (the selected row is `0`, the rest
   `-1`), Arrow Up and Arrow Down move between the rows, **Home** and **End** go to the first
   and the last, and **Enter selects** — the arrow keys move focus and the key that chooses is
-  Enter, which is the pattern's manual-activation form. The **shortcut keys** select by
-  position: **Command-1** to **Command-3** on macOS and **Control-1** to **Control-3**
-  elsewhere address the first three rows, which is the hint's own sentence. The collapse
+  Enter, which is the pattern's manual-activation form; **what Enter selects is the row**
+  (the rail's own mark of which row is active), since the command that changes which
+  installation the console reads is the picker's and is unreachable from this document. The
+  **shortcut keys** select by position: **Command-1** to **Command-3** on macOS and
+  **Control-1** to **Control-3** elsewhere address the first three rows **the rail draws**,
+  which is the hint's own sentence. The collapse
   control is a tab stop **before** the list and the add row is a tab stop **after** it, so
   the rail's tab stops are the button, the list and the add row — three, whatever the number
   of installations.
@@ -1330,8 +1353,8 @@ which §6.1 rule 1 forbids more strongly than any layout does.
   reader gets is the order they see, left to right and top to bottom. **A rail drawn on the left
   and appended last would put the whole chrome ahead of it**, which is
   the WCAG 2.4.3 failure this ordering exists to avoid — and it is also why the shortcut
-  keys exist: `Ctrl`/`Cmd` + digit reaches the first three installations without walking
-  the tab order at all (§4.1).
+  keys exist: `Ctrl`/`Cmd` + digit reaches the first three rows the rail draws (§4.1)
+  without walking the tab order at all.
 - **A skipped-by-default DOM stays skipped**: the console has no skip link and does not
   need one (there is no repeated block of links before the content), and it must not gain
   a link that would need the allow-list's `openExternal` to do nothing.
@@ -1809,15 +1832,21 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    over a list numbered 5 to 10, so a reader counting the items after the sentence counted
    six.
 12. a **rail test** over §4.1's rail block, the twelfth: it requires the block to say the rail
-   is a **left vertical rail**, to name `aside.console-rail`, its **216 px** width,
-   `div.console-rail-list` as the tablist, the hint "Switch with the shortcut keys 1 2 3",
-   **Command-1** and **Control-1**, the words READ ONLY and "+ Add installation",
-   `role="tablist"`, a **roving `tabindex`**, Enter selects, and **Home** with End; and it
-   reads the three state words off the table the block draws them in, **one row each**, so
-   `running`'s row carries its dot and `--ok`, `silent`'s its triangle and `--warn`, and
-   `idle`'s its open circle and `--text-muted` — a glyph moved to the wrong word, or a word
-   given a tone §3.2 does not have, fails by name. It is the case that keeps the canvas's one
-   structural addition from being remembered rather than written down.
+   is a **left vertical rail**, to name `aside.console-rail`, **both its widths** — the
+   216 px expanded one and the 56 px collapsed one, each its own required string, so dropping
+   either fails by name — `div.console-rail-list` as the tablist, the hint "Switch with the
+   shortcut keys 1 2 3", **Command-1** and **Control-1**, the words READ ONLY and "+ Add
+   installation", `role="tablist"`, a **roving `tabindex`**, Enter selects, and **Home** and
+   **End**, each asserted separately because the section names both keys and a case that
+   required only "Home" would pass over a block that had dropped End; it reads the three
+   state words off the table the block draws them in, **one row each**, so `running`'s row
+   carries its dot and `--ok`, `silent`'s its triangle and `--warn`, and `idle`'s its open
+   circle and `--text-muted` — a glyph moved to the wrong word, or a word given a tone §3.2
+   does not have, fails by name; it counts the tree's classed elements and its distinct
+   classes and requires §4.1's sentence and §2.1's row to state the same two numbers, so the
+   count cannot rot silently; and it requires the block to say the rail draws the rows the
+   dashboard can read rather than a row per stored installation. It is the case that keeps
+   the canvas's one structural addition from being remembered rather than written down.
 13. a **rail-ownership test** over the plan, the thirteenth: it reads Task 6.3's `**Scope**`
    and `**Files**` and Task 6.5's `**Scope**` and requires each to name what that task owns —
    the rail's structure, and the entry that draws its elements, in 6.3; the rail's shortcut
@@ -1946,8 +1975,11 @@ element with no keys. 6.6 (the frames) is last and owner-run.
 - **Tests:** the forced-colors smoke's chrome half (§6.4) — the current view still marked,
   the chrome's boundary still visible and the rail's rows with them, all under
   `emulateMedia({ forcedColors: 'active' })` — written first, which is this task's red step;
-  a case that the rail draws one row per stored installation with its state word and its
-  glyph; and **the §2-inventory selector scan over `base.css`**, which is this task's and
+  a case that the rail draws **one row per installation the dashboard can read** — the
+  active installation's, from `installation.current` — with its state word and its glyph,
+  **and draws no row for an installation it cannot read**, since the dashboard's surface has
+  no list read and this task adds none (§4.1, §11); and **the §2-inventory selector scan over
+  `base.css`**, which is this task's and
   not §7.4's alone: the rail's hooks are the chrome's and §2.1 lists them, so the list the
   scan checks against is the inventory's tables rather than the screens' class literals,
   which cannot see a rule written against a hook the entry draws.
@@ -2082,9 +2114,11 @@ question markers dropped, and one of its task headings renamed; and the rail's t
 swapped between `running` and `silent` in §4.1's table, or its **216 px** expanded width — or
 its **56 px** collapsed one — dropped from the block beside it, which the rail test catches
 on the row the glyph moved to and by name, once per width — as does **§7's ordering sentence
-put back to the wording that named 6.5 as the one task to touch the entry**, which the same
-case refuses wherever the document writes it, the claim §7.3 contradicts by putting
-`entry.ts` in Task 6.3's `**Files**`.
+put back to a wording that makes 6.5 the sole owner of the entry**, which the same case
+refuses wherever either document carries that claim — the guard is a pattern over the two
+documents rather than one fixed sentence, so it was run against §7's sentence, §7.5's
+original phrasing and the plan's `J4` row, three wordings of the same claim, and the third is
+the one this round found still standing.
 The seventh is the plan's
 own: `6.2` removed from Global Constraints rule 9's list, which
 `TestPlanRule9ListsEveryFlaggedHeading` catches. **And the ordering test (§6.5's tenth)
@@ -2301,6 +2335,14 @@ draw a zero.
 
 - **It does not change the CSP** (§5.5), the protocol handler's refusals, the preload, the
   IPC allow-list or the spawn contract.
+- **It does not add a read to the dashboard's bridge, and the rail is drawn without one.**
+  The installation rail the canvas draws needs a bounded, schema-checked list read on the
+  dashboard's surface to fill a row per stored installation ([§4.1](#41-the-windows-structure));
+  the dashboard has none today — `installation.current` is its one installations read, it
+  takes no argument and names no id, and the picker's list is on the picker's own channels —
+  and this document **does not add it**. No Phase 6 task owns `src/preload/` or the IPC
+  allow-list, and the phase draws the rows the dashboard can read. **A multi-row rail is a
+  surface decision for the owner, and it is not taken here.**
 - **It allocates no D-number and no C-number** (§8); the six questions are the owner's and
   are unnumbered on purpose.
 - **It does not approve Phase 6** — that was the first revision's line, and the owner's

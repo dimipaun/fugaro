@@ -170,7 +170,7 @@ Each row is one mergeable PR, green on its own:
 | J | **6.1** | **APPROVED by the owner on 2026-10-19** (added 2026-10-19 with `docs/design/console-styling.md`); the token layer only — inert until J2 lands, and its PR says so. Implemented in this round |
 | J2 | **6.2** | **SECURITY-SENSITIVE** (the CSP's tests, the protocol handler's served-file list and the served documents); **APPROVED by the owner on 2026-10-19** |
 | J3 | **6.3**, **6.4** (two PRs) | **APPROVED by the owner on 2026-10-19**; ordinary stylesheet review |
-| J4 | **6.5** | **APPROVED by the owner on 2026-10-19**; the one task that touches the renderer entry |
+| J4 | **6.5** | **APPROVED by the owner on 2026-10-19**; **6.3 and 6.5 are the two tasks that touch the renderer entry** — 6.3 appends the rail's elements, 6.5 adds the attributes and the keys |
 | J5 | **6.6** | **APPROVED by the owner on 2026-10-19**; the eight baselines are **OWNER-RUN** (recorded by the owner, once per platform), the assertions are agent-written |
 
 ---
@@ -1381,7 +1381,11 @@ first, which is this task's red step, and the rail's own boundary with it, since
 chrome and its rows are the surface the smoke reads; `entry.spec.ts`'s body-children
 assertion, which gains `console-rail` as the first of the four shapes it lists, because the
 entry appends it before the installation line and the rail is what a reader sees first; a
-case that the rail draws one row per stored installation with its state word and its glyph;
+case that the rail draws **one row per installation the dashboard can read** — the active
+installation's, from `installation.current` — with its state word and its glyph, **and draws
+no row for an installation it cannot read**: the dashboard's surface has no list read and
+this task does not add one to it, so a case that expects a row per stored installation would
+be a case against a read no file in this commit brings (design §4.1, §11);
 and **the §2-inventory selector scan over `base.css`** — the rail's thirteen hooks are the
 chrome's and the design's §2.1 lists them, so the list the scan checks against is the
 inventory's tables (the screens' class literals and the chrome's hooks), not the screens'
