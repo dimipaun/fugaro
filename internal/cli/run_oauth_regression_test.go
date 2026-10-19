@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"gocloud.dev/blob"
 
@@ -67,7 +68,11 @@ func TestLsNamedRunIsPendingNotError(t *testing.T) {
 	writeBuildRecord(t, f, otherSlug, "svc", release065)
 	variant := gcp.WorkflowVariant("svc", "acme-personal")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
-	if _, _, err := execute(t, "run", "--run-id", "20261012-100000-b2b2", "--token", "acme-personal", "A task"); err != nil {
+	// The run ID is minted relative to now, not written down: `runs ls` reads
+	// through its own `--since 7d` default, so an ID with a fixed date is a test
+	// that passes for a week and then fails on the day it ages out.
+	id := time.Now().UTC().Add(-time.Minute).Format("20060102-150405") + "-b2b2"
+	if _, _, err := execute(t, "run", "--run-id", id, "--token", "acme-personal", "A task"); err != nil {
 		t.Fatal(err)
 	}
 	got, errOut := lsJSON(t, "--repo", "acme/other")

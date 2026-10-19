@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -57,7 +58,8 @@ import (
 // utterance is not sent" back; put §4.5's "the text is not sent" back; restore
 // §2's "not shipped"; restore §2's "checked field by field through PARENTKIND";
 // restore §2's "rules.go:583-590"; rename a `## Check 49:` heading; delete a
-// `| 49 |`, `| 57 |` or `| 11b |` summary row; rename `## Check 19:`; add a
+// `| 49 |`, `| 57 |`, `| 11b |`, `| 81 |`, `| 82 |` or `| 89 |` summary row;
+// rename `## Check 19:`; add a
 // `| 48 |` row or a `## Check 69c` section; restore §13's "the register says so
 // of itself"; drop "11 also carries **11b**" from §13's run; add a `| 67a |`
 // row, a `## Check 68:` section or a `## Check 57:` section; stop the `| 57 |`
@@ -67,22 +69,14 @@ import (
 // quotation from §13; or point §5.3's 70b sentence at "the count below" when the
 // count is above it — each fails this test.
 
-// voiceSwitchSinceBaseline is the register's checks written since the baseline
-// a573870. §13 of the design names eight of them in its dated count — 49, 50,
-// 52, 58, 69a, 69b, 70a and 70c, read at 07022b1 — and names the ninth, 70b, in
-// its 70a–70c table row, which says all three are written; the run stops at 70c
-// because it is a count taken at 07022b1, before this PR's `| 70b |` row existed.
-// It is the list both halves of the case below read, and the list the two
-// comments there state the length of.
-var voiceSwitchSinceBaseline = []string{"49", "50", "52", "58", "69a", "69b", "70a", "70b", "70c"}
-
-// voiceSwitchSinceBaselineCount is that list's length as the comments state it.
-// It is written out rather than derived from `len` on purpose: the drift it
-// pins is a comment that says one number over a list of another — which is what
-// happened here, "the eight written since the baseline" over nine entries (the
-// eight §13 counts, plus the 70b this PR writes) — and a derived count would
-// follow the list and hide it.
-const voiceSwitchSinceBaselineCount = 9
+// voiceSwitchWritten is every number §13 of the design names as written in the
+// register — each a summary row AND a `## Check` section: the eight written
+// since the baseline a573870 (49, 50, 52, 58, 69a, 69b, 70a, 70c), 70b, which
+// §13's 70a–70c row names as written, and the mobile work's 81, 82 and 89.
+// Named once; its length is never stated, because a stated count over a list is
+// the drift this file keeps catching — the counts §13 gives are derived from the
+// register at test time (part 1c).
+var voiceSwitchWritten = []string{"49", "50", "52", "58", "69a", "69b", "70a", "70b", "70c", "81", "82", "89"}
 
 func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	const designPath = "docs/mobile/design/voice-evaluation-switch.md"
@@ -91,20 +85,16 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	checklist := readDoc(t, checklistPath)
 
 	// 1. The numbers the design names as written, each a summary row AND a
-	// `## Check` section — the nine written since the baseline a573870 (49,
-	// 50, 52, 58, 69a, 69b, 70a, 70b, 70c), which is every number §13 names as
-	// written and so the whole list this half pins. The list is
-	// `voiceSwitchSinceBaseline`, named once, because these comments state its
-	// length and the length is a fact about the list: they said "eight" over nine
-	// entries for a round, which is what the count this file declares is here to
-	// catch. Both
-	// halves, the way TestWebsiteChecklistHasCheck69aAnd69b pins 69a and 69b: a
-	// check that exists as a section but not as a row is one nobody reads first,
-	// and a row with no section is a command nobody can follow.
-	if len(voiceSwitchSinceBaseline) != voiceSwitchSinceBaselineCount {
-		t.Errorf("the register's checks written since the baseline a573870 are %d (%s), and this test's comments say %d: the count and the list are one fact, so the comments are what a tenth number changes", len(voiceSwitchSinceBaseline), strings.Join(voiceSwitchSinceBaseline, ", "), voiceSwitchSinceBaselineCount)
-	}
-	for _, n := range voiceSwitchSinceBaseline {
+	// `## Check` section: every number §13 names as written (voiceSwitchWritten
+	// below: the eight written since the baseline a573870 — 49, 50, 52, 58, 69a,
+	// 69b, 70a, 70c — plus 70b, which this branch writes, and the mobile work's
+	// 81, 82 and 89), and so the whole list this half pins. Both halves, the way
+	// TestWebsiteChecklistHasCheck69aAnd69b pins 69a and 69b: a check that
+	// exists as a section but not as a row is one nobody reads first, and a row
+	// with no section is a command nobody can follow. The list is named once and
+	// no count of it is written down: a count is derived from the register
+	// (part 1c), so there is no number here for a later check to leave stale.
+	for _, n := range voiceSwitchWritten {
 		if !strings.Contains(checklist, "## Check "+n+":") {
 			t.Errorf("%s has no `## Check %s:` section, but %s §13 names %s as written; correct the design's reading or this test's list", checklistPath, n, designPath, n)
 		}
@@ -130,13 +120,12 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	// 1b. §13's reading of the register, read from the register rather than
 	// trusted — both directions of it. The row run it writes out is 1 (and 1b),
 	// 2–18 (11 also carries 11b), 19–23 and 26–38, 40–47, 49, 50, 52, 57, 58,
-	// 69a, 69b, 70a and 70c — that is the run as §13 writes it, and it stops at
-	// 70c because the run is a count taken at 07022b1, before this PR's `| 70b |`
-	// row existed; §13's 70a–70c row is what names 70b as written, so the list
-	// this half wants is the run plus 70b. Every number in that list must have a
+	// 69a, 69b, 70a and 70c — that is the run as §13 writes it, a count taken at
+	// 07022b1, so the list this half wants is the run plus the numbers §13 names
+	// as written since (70b, 81, 82, 89). Every number in that list must have a
 	// row; and every number §13 says is written as a `## Check` section (19–47
-	// with 39 living in the retire-image-mirror plan as 39a–39f, plus the nine
-	// written since the baseline — §13's eight and 70b) must have one. Without
+	// with 39 living in the retire-image-mirror plan as 39a–39f, plus
+	// voiceSwitchWritten) must have one. Without
 	// this half the test pins only what the register must NOT have: deleting
 	// `| 57 |`, `| 11b |` or `## Check 19` left it green.
 	rows := summaryRows(t, checklistPath, checklist)
@@ -146,7 +135,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 			wantRows = append(wantRows, strconv.Itoa(i))
 		}
 	}
-	wantRows = append(wantRows, "49", "50", "52", "57", "58", "69a", "69b", "70a", "70b", "70c")
+	wantRows = append(wantRows, "49", "50", "52", "57", "58", "69a", "69b", "70a", "70b", "70c", "81", "82", "89")
 	for _, n := range wantRows {
 		if !rows[n] {
 			t.Errorf("%s's summary table has no `| %s |` row, but %s §13 names %s as a written row — in its row run, or, for 70b, in its 70a–70c row; correct the design's reading or this test's list", checklistPath, n, designPath, n)
@@ -160,7 +149,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 			t.Errorf("%s now has a `| %s |` summary row, so §13's count of the row run (\"19–23 and 26–38 (24 and 25 have `## Check` sections but no summary row)\") is stale and must be recounted", checklistPath, n)
 		}
 	}
-	wantSections := []string{"49", "50", "52", "58", "69a", "69b", "70a", "70b", "70c"}
+	wantSections := append([]string{}, voiceSwitchWritten...)
 	for i := 19; i <= 47; i++ {
 		if i != 39 { // 39 is written as 39a–39f in the retire-image-mirror plan, not here
 			wantSections = append(wantSections, strconv.Itoa(i))
@@ -171,6 +160,48 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 			t.Errorf("%s has no `## Check %s:` section, but %s §13 names %s as written (19–47 written, 39 as 39a–39f in the retire-image-mirror plan)", checklistPath, n, designPath, n)
 		}
 	}
+	// 1c. The counts §13 states, derived from the register's own headings and
+	// compared with the figure the design prints, so no number in this test is a
+	// hand-kept copy of one in the design. "(28 of them" is the 19–47 run's
+	// sections (39 excluded: it lives in the retire-image-mirror plan), and the
+	// dated count "carries 36 `## Check` sections" at 07022b1 is that run plus
+	// the eight written since the baseline — the sections §13 says existed at
+	// that commit; the four written after it (70b, 81, 82, 89) are not in it.
+	headings := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^## Check (\d+[a-z]?):`).FindAllStringSubmatch(checklist, -1) {
+		headings[m[1]] = true
+	}
+	run := 0
+	for i := 19; i <= 47; i++ {
+		if headings[strconv.Itoa(i)] {
+			run++
+		}
+	}
+	atCount := run
+	for _, n := range []string{"49", "50", "52", "58", "69a", "69b", "70a", "70c"} {
+		if headings[n] {
+			atCount++
+		}
+	}
+	checks13 := docSection(t, designPath, design, "## 13. The checks this would need")
+	for _, c := range []struct {
+		re   string
+		got  int
+		what string
+	}{
+		{`\((\d+) of them;`, run, "the 19–47 run's `## Check` sections"},
+		{`carries (\d+) ` + "`## Check`" + ` sections`, atCount, "the `## Check` sections the register carried at 07022b1"},
+	} {
+		m := regexp.MustCompile(c.re).FindStringSubmatch(checks13)
+		if m == nil {
+			t.Errorf("%s's §13 no longer states %s (pattern %q), so its count cannot be checked against the register", designPath, c.what, c.re)
+			continue
+		}
+		if stated, _ := strconv.Atoi(m[1]); stated != c.got {
+			t.Errorf("%s's §13 states %d for %s, and %s has %d: recount", designPath, stated, c.what, checklistPath, c.got)
+		}
+	}
+
 	// 39 is the one number in that run whose section is not in the register, and
 	// the design says where it lives instead. A `## Check 39` section written
 	// later makes that sentence stale.
@@ -195,9 +226,15 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	// The numbers §13 names as in neither half of the register: a row or a
 	// section for any of them means the design's reading is stale. (85 is the
 	// bake-off, which §13 says is written nowhere; 110 is the number this
-	// document names and writes nothing into.)
+	// document names and writes nothing into. 81, 82 and 89 are excluded from
+	// the 80–89 run because §13's row names them as written by Task P4.2a, and
+	// the first half above requires their rows and sections; 70b is not here
+	// because §13's 70a–70c row names it as written.)
 	absent := []string{"48", "51", "53", "54", "55", "56", "69c", "85", "110"}
 	for i := 80; i <= 89; i++ {
+		if i == 81 || i == 82 || i == 89 {
+			continue
+		}
 		absent = append(absent, strconv.Itoa(i))
 	}
 	for _, n := range absent {
@@ -491,10 +528,10 @@ func TestVoiceDocRegisterNoteCounts70bAsWritten(t *testing.T) {
 	}
 	// And the direction it points in. The count this sentence is about is §5.3's dated
 	// paragraph above it (the eight written since a573870, counted at 07022b1) and the note
-	// above the sentence in the same paragraph ("takes the list above to nine"); nothing below
+	// above the sentence in the same paragraph ("adds 70b to the list above"); nothing below
 	// the sentence carries a count, so "the count below" sends the reader to nothing.
 	if strings.Contains(voice, "written since the count below") {
-		t.Errorf("%s §5.3 says 70b is \"written since the count below\", and the count is above the sentence: §5.3's dated paragraph is where the eight written since a573870 are counted, and the note above this sentence says it takes \"the list above\" to nine", voicePath)
+		t.Errorf("%s §5.3 says 70b is \"written since the count below\", and the count is above the sentence: §5.3's dated paragraph is where the eight written since a573870 are counted, and the note above this sentence says it adds 70b to \"the list above\"", voicePath)
 	}
 }
 
