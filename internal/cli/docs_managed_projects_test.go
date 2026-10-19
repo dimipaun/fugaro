@@ -1694,3 +1694,241 @@ func TestChecklistHasCheck67bMissingSecretColumnIsReadNotPrinted(t *testing.T) {
 		t.Error("the restore now prints a MISSING column, so Check 67b may list it as printed again")
 	}
 }
+
+// check68Step returns the body of one numbered step of Check 68, from its
+// `**(N) ` heading to the next one, so a pin reads the step and not the
+// section around it.
+func check68Step(t *testing.T, section, head string) string {
+	t.Helper()
+	i := strings.Index(section, head)
+	if i < 0 {
+		t.Fatalf("Check 68 has no step beginning %q", head)
+	}
+	step := section[i:]
+	if j := strings.Index(step[len(head):], "\n**("); j >= 0 {
+		step = step[:len(head)+j]
+	}
+	return step
+}
+
+// TestChecklistHasCheck68NegativeProbesAreNonDestructive is the review's first
+// finding: step 3's probes copied probe bytes ONTO the live creation fact
+// (`fugaro/managed.json`), the delete list and `project.json`, with no copy of
+// what stood there. On the expected path the write is refused and nothing is
+// lost — but the probe's own premise is "this permission is absent", and a
+// check that destroys the object when its premise turns out to be wrong is
+// worse than no check. Two designs are pinned here, one per property being
+// measured: a throwaway object name where the permission is the bucket-level
+// write, and a byte-exact backup plus a must-not-exist precondition where the
+// property is the named object itself.
+func TestChecklistHasCheck68NegativeProbesAreNonDestructive(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+	step := check68Step(t, section, "**(3) The negative FACT: it cannot write the marker or the delete list**")
+
+	var cmds []string
+	for _, b := range bashBlocks(step) {
+		cmds = append(cmds, logicalCommands(b)...)
+	}
+
+	// 1. No probe may name one of the three live objects without a
+	// precondition: `--if-generation-match=0` writes only where there is no
+	// object, so a probe of an object that IS there cannot overwrite it.
+	named := 0
+	for _, c := range cmds {
+		if !strings.Contains(c, "chk68-probe.txt") || !strings.Contains(c, "gcloud storage cp") {
+			continue
+		}
+		if !strings.Contains(c, "/fugaro/managed.json") &&
+			!strings.Contains(c, "/fugaro/allow-delete.json") &&
+			!strings.Contains(c, "/fugaro/project.json") {
+			continue
+		}
+		named++
+		if !strings.Contains(c, "--if-generation-match=0") {
+			t.Errorf("Check 68's probe of a live object carries no precondition, so it can overwrite the object it names:\n  %s", c)
+		}
+	}
+	if named < 3 {
+		t.Errorf("Check 68's step 3 probes %d of the three named objects (fugaro/managed.json, fugaro/allow-delete.json, fugaro/project.json): the FACT is about all three", named)
+	}
+
+	// 2. The bucket-level write is measured on a throwaway name under the same
+	// prefix — a name that cannot be any object this check reads — and the
+	// object is removed afterwards ONLY if the write succeeded.
+	for _, want := range []string{
+		`PROBE="fugaro/chk68-probe-`,
+		"cannot be `fugaro/managed.json`",
+		"only if the write succeeded",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("Check 68's step 3 does not carry %q, so its bucket-level probe is not non-destructive by construction", want)
+		}
+	}
+
+	// 3. The named objects are backed up byte-exactly BEFORE the probes, the
+	// backup is read back and compared, and the doc says what to do if a probe
+	// unexpectedly succeeds.
+	for _, want := range []string{
+		"chk68-managed.orig.json",
+		"chk68-allow-delete.orig.json",
+		"chk68-project.orig.json",
+		"cmp - ",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("Check 68's step 3 does not carry %q", want)
+		}
+	}
+	// The way back carries its CONFIRM on the command itself, not only in the
+	// prose above it: this is the one line in the check that writes the live
+	// creation fact with the owner's own credentials.
+	recovered := false
+	for _, c := range cmds {
+		if strings.Contains(c, "chk68-managed.orig.json") && strings.Contains(c, "⚠ CONFIRM") {
+			recovered = true
+		}
+	}
+	if !recovered {
+		t.Error("Check 68's step 3 restores the creation fact from its backup without a ⚠ CONFIRM on the command, and that write is the owner's own")
+	}
+
+	// The order is read off the commands, not the prose around them: the first
+	// backup command has to come before the first preconditioned copy.
+	code := strings.Join(cmds, "\n")
+	if strings.Index(code, "chk68-managed.orig.json") > strings.Index(code, "--if-generation-match=0") {
+		t.Error("Check 68's step 3 takes its backup after the probes, and a backup taken after the write is not a backup")
+	}
+
+	// 4. Which design each negative uses, and why: the reader has to know
+	// which half is protected by the name and which by the copy.
+	for _, want := range []string{
+		"non-destructive by construction",
+		"byte-exact",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("Check 68's step 3 does not say %q, so which negative uses which design is left to the reader", want)
+		}
+	}
+
+	// 5. The precondition flag is the pinned SDK's own, and the doc says so.
+	if !strings.Contains(step, "588.0.0") {
+		t.Error("Check 68's step 3 uses --if-generation-match without naming the SDK it was checked against")
+	}
+	if !strings.Contains(step, "gcloud storage cp --help") {
+		t.Error("Check 68's step 3 does not say where the precondition flag was checked")
+	}
+
+	// 6. The scratch the step now leaves is in the Restore's own list.
+	if !strings.Contains(section, "chk68-managed.orig.json") {
+		t.Error("Check 68's Restore does not remove the backups step 3 writes")
+	}
+
+	// 7. The summary row a reader meets first says the same thing: a reader who
+	// stops at the table must not take away "a cp of fugaro/managed.json" with
+	// nothing about the precondition and the backup.
+	row := ""
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| 68 |") {
+			row = line
+		}
+	}
+	if row == "" {
+		t.Fatal("the checklist has no `| 68 |` table row")
+	}
+	for _, want := range []string{
+		"non-destructive by construction",
+		"backed up byte-exactly",
+		"conditioned on the destination object not existing",
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("the `| 68 |` row does not carry %q, so the table still describes the probes as plain overwrites", want)
+		}
+	}
+}
+
+// TestChecklistHasCheck68RowAloneExampleIsolatesTheRow is the review's second
+// finding: the section says a row can be measured on its own by moving the
+// others aside, and the example moved `key.tf` and `repo.tf` while leaving
+// `job.tf` and `service.tf` in the root — so the "bucket-grant row alone" was
+// three rows, and the PERMISSION_DENIED it produces need not be the grant's.
+// The example now moves every OTHER row aside, names each file, and confirms
+// what the root declares before it applies.
+func TestChecklistHasCheck68RowAloneExampleIsolatesTheRow(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+	step := check68Step(t, section, "**(5) What the two roles are known to LACK, measured per type**")
+
+	// The root is one file per row of the table, and the isolation is the
+	// moves: the row being measured stays, every other row goes aside.
+	rows := []string{"bucket-grant.tf", "job.tf", "service.tf", "key.tf", "repo.tf"}
+	for _, r := range rows {
+		if !strings.Contains(step, "./managed-root-perm/"+r) {
+			t.Errorf("Check 68's step 5 no longer writes ./managed-root-perm/%s, so the table's rows and the root's files have drifted apart", r)
+		}
+	}
+	var aside []string
+	for _, b := range bashBlocks(step) {
+		for _, c := range logicalCommands(b) {
+			if strings.HasPrefix(c, "mv ") && strings.Contains(c, "/tmp/chk67-perm-aside/") && !strings.Contains(c, "/tmp/chk67-perm-aside/*") {
+				// the restoring direction moves FROM the aside directory
+				if strings.Index(c, "/tmp/chk67-perm-aside/") < strings.Index(c, "./managed-root-perm/") {
+					continue
+				}
+				aside = append(aside, c)
+			}
+		}
+	}
+	if len(aside) == 0 {
+		t.Fatal("Check 68's step 5 has no example that moves rows aside, so the row-alone claim has nothing behind it")
+	}
+	// The example isolates the grant row: it moves the FOUR other rows.
+	isolating := ""
+	for _, c := range aside {
+		n := 0
+		for _, r := range []string{"job.tf", "service.tf", "key.tf", "repo.tf"} {
+			if strings.Contains(c, "./managed-root-perm/"+r) {
+				n++
+			}
+		}
+		if n == 4 {
+			isolating = c
+		}
+	}
+	if isolating == "" {
+		t.Errorf("Check 68's step 5 moves rows aside without ever isolating one: no example moves all four other rows (job.tf, service.tf, key.tf, repo.tf), so the row it claims to measure is not the only row in the root:\n  %s", strings.Join(aside, "\n  "))
+	}
+	// And what remains is confirmed, locally, before the apply.
+	for _, want := range []string{
+		"ls ./managed-root-perm/*.tf",
+		"grep -H '^resource' ./managed-root-perm/*.tf",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("Check 68's step 5 does not confirm which resources the root holds before applying (%q)", want)
+		}
+	}
+	// The rotation has to say the same number as the example: five rows, one left
+	// in the root, so FOUR move aside. "The other three" would leave a second row
+	// standing and describe an isolation the example above does not perform.
+	if !strings.Contains(step, "move the other four rows aside") {
+		t.Error("Check 68's step 5 does not say the rotation moves the FOUR other rows aside, so its arithmetic disagrees with the five-row table")
+	}
+	if strings.Contains(step, "move the other three rows aside") {
+		t.Error("Check 68's step 5 says the rotation moves three rows aside, which leaves a second row in the root and measures two")
+	}
+	// Same for what the confirming read is said to print: the root keeps the
+	// provider (no resource), the account, the bucket and the grant.
+	if !strings.Contains(step, "the three resources the root still declares") {
+		t.Error("Check 68's step 5 does not say how many resources the isolated root still declares, so the `grep -H` above has nothing to be checked against")
+	}
+
+	// The comment that made the example wrong: the grant IS one of the table's
+	// rows, so it cannot be listed among the files that "stay in every run".
+	// The comment is wrapped across lines in the doc, so it is compared with
+	// the wrapping taken out — otherwise a re-flowed paragraph would slip past.
+	flat := strings.ToLower(strings.NewReplacer("\n# ", " ", "\n", " ", "# ", "").Replace(step))
+	if strings.Contains(flat, "the account, the bucket, the grant and the api enable stay in every run") {
+		t.Error("Check 68's step 5 still says the grant and the API enable stay in every run, and both are rows of the table it measures")
+	}
+}
