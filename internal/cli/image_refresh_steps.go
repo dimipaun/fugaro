@@ -229,11 +229,13 @@ func (r *initRun) askBuild(what string) (confirmed, reachable bool, err error) {
 // API (as refreshCheckJob moves the daily check job's), after its own
 // confirmation; no Cloud Build is ever submitted for it.
 //
-// Before any of that (review finding, 0.7.0 safety fix round 2): while
-// cloneShipped is false, no fugaro release can run a checkout: clone
-// workflow's job at all, so this refuses to move it onto base_images.base
-// in the first place, before the cloud calls below — the same gate
-// planRepo applies before deploying one. refuseClonesNotShipped's error is
+// Before any of that (review finding, 0.7.0 safety fix round 2): while the
+// gate was shut no fugaro release could run a checkout: clone workflow's
+// job at all, so this refused to move it onto base_images.base in the first
+// place, before the cloud calls below — the same gate planRepo applied
+// before deploying one. cloneShipped has been true since 0.9.0 shipped the
+// flip, so the call below is a no-op on every plan today and stays for the
+// flip-back the constant's comment describes. refuseClonesNotShipped's error is
 // cloneErr to refreshBuilds' caller, so it never stops the baked rebuild
 // offers the rest of this step makes for the repository's other workflows
 // (same as a declined clone confirmation already does not, see

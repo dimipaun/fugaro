@@ -160,27 +160,54 @@ func matchJobName(job string, p *projectpolicy.Policy, found bool, slug, workflo
 
 // projectJobCandidates is every (profile, provider, account) the published
 // policy defines a job for: each profile it defines, with the provider the
-// profile pins and the Claude account the profile's mounts name (Task 3.1 step
-// 2, plan task 3.2 step 1). The set is computed once per run, from the one
-// policy read, and its size is the cost note the plan makes: N profiles × M
-// accounts of string comparisons, no regex and no prefix test.
+// profile pins, and one entry per account the profile serves — its
+// no-account job and one per account it lists (config.ProjectJobAccounts,
+// the one function the deployer built the deployed jobs with and the
+// launcher picks the job it launches with). The set is computed once per run,
+// from the one policy read, and its size is the cost note the plan makes: N
+// profiles × M accounts of string comparisons, no regex and no prefix test.
 //
-// The account comes from the profile's own secret list through one function
-// (config.ClaudeAccountOfSecrets), which is the axis internal/infra computed
-// the deployed name with (projectJobSecrets): a name the runner would not
-// recompute is a job every run of that profile halts on, so the two must be
-// one rule. Phase 5's named accounts are already covered — a profile mounting
-// claude-oauth-token-<name> computes that account's job — and a policy that
-// later carries accounts of its own adds them here.
+// The account comes from the profile's own claude_accounts field and from
+// nothing else, because that is what internal/infra deployed the names from
+// (ProjectJobs): a name the runner would not recompute is a job every run of
+// that profile halts on, so the two must be one rule. It used to be read out
+// of the profile's secrets: (config.ClaudeAccountOfSecrets), which was the
+// same answer while no profile could mount a Claude token; a token in
+// secrets: is still refused (projectpolicy's isClaudeOAuthSecret), so the
+// field is now the only place the axis can come from.
 func projectJobCandidates(p *projectpolicy.Policy) []jobTriple {
 	names := p.ProfileNames()
 	out := make([]jobTriple, 0, len(names))
 	for _, name := range names {
 		pr := p.Profiles[name]
-		account, _ := config.ClaudeAccountOfSecrets(pr.Secrets)
-		out = append(out, jobTriple{Profile: name, Provider: pr.Provider, Account: account})
+		for _, account := range config.ProjectJobAccounts(pr.JobProfile) {
+			out = append(out, jobTriple{Profile: name, Provider: pr.Provider, Account: account})
+		}
 	}
 	return out
+}
+
+// ProjectJobOfPolicy is the (profile, provider, account) of the project job
+// named job that the published policy defines, and whether it defines one at
+// all. It is the same computation and the same order matchJobName uses, so a
+// reader outside this package — internal/cli's watch, which shows a run's job
+// in its JSON — can never disagree with the runner about which job is whose,
+// and neither of them ever parses the name back (R2-5).
+//
+// ok is false for a name no profile of the policy computes: a per-repository
+// job, another installation's, or one a policy no longer describes. p may be
+// nil, which is a project that has published no policy and so defines no
+// project job.
+func ProjectJobOfPolicy(p *projectpolicy.Policy, job string) (profile, provider, account string, ok bool) {
+	if p == nil || job == "" {
+		return "", "", "", false
+	}
+	for _, c := range projectJobCandidates(p) {
+		if gcp.ProjectJobName(c.Profile, c.Provider, c.Account) == job {
+			return c.Profile, c.Provider, c.Account, true
+		}
+	}
+	return "", "", "", false
 }
 
 // legacyVariant is gcp.WorkflowVariant(workflow, token) for the workflow the
@@ -323,4 +350,140 @@ func (r *run) cloneURL(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("the clone URL of this run's repository on the job profile %q: %w", job.Profile, err)
 	}
 	return url, nil
+}
+
+// checkProjectJobAccount is the runner's own half of the launch gate (plan task
+// 3, design §4.4 rows 6 to 9): the credential a run holds is a fact of the job
+// it is in, and the run re-decides, from the policy and its own resolved
+// configuration, that the two are the same one.
+//
+// The launcher refuses every case below before the claim and before the budget
+// token (internal/cli's projectJobAccountFor), and this is deliberately a
+// second, independent door: the launcher's answer is a value in the run's
+// environment — CLOUD_RUN_JOB is the platform's and cannot be written, but the
+// selection the run acts on is its own task.json, a bucket object the launcher
+// writes and other things can too — so a run must never hold a credential its
+// own configuration did not choose, nor be a credential-less OAuth run, merely
+// because some other process said so. It is called once the run's own config is
+// resolved (runner.go), since agent.auth is what says which credential this run
+// is; the job identity and the policy come from admissionCheck, which runs
+// before any git credential exists.
+//
+// Four rules, and each is a way for the job and the run to disagree:
+//
+//   - the job holds one account's token, or none (config.ProjectJobTokenAccount
+//     on the profile the job's name pins — the same join the launcher and the
+//     deployer make). A job holding no token is the no-account job of a profile
+//     that does not list `default`: an OAuth run there would start with no
+//     credential at all, so it is refused rather than left to run against an
+//     API key the job may not even carry — the run's own auth is oauth, and
+//     agent.BuildEnv refuses to write ANTHROPIC_API_KEY for it
+//     (internal/agent), so the alternative to refusing is a run with nothing
+//     to authenticate with;
+//   - a run that is not an OAuth run selects no account, so it may only be in
+//     the profile's no-account job: a non-OAuth run in an account job would
+//     hold that account's token while its own configuration asks for another
+//     credential entirely;
+//   - an OAuth run may only be in the job of the account its own configuration
+//     selected (the default account and no selection are the same selection,
+//     and ride the no-account job, D5);
+//   - and that account's own policy list must cover this repository: the token
+//     is the account's blast radius (§6.1), and accounts.<name>.allow_repos is
+//     the per-repository decision of which runs may use it (D3).
+//
+// A run in a per-repository job is not this check's business: there the account
+// is part of the job's own name (gcp.WorkflowVariant), the job mounts exactly
+// the selected account's token, and the per-repository rules hold unchanged.
+func (r *run) checkProjectJobAccount(ctx context.Context, auth string) error {
+	job, project := r.projectJob()
+	if !project {
+		return nil
+	}
+	p, found, err := r.projectPolicy(ctx)
+	if err != nil {
+		return err
+	}
+	if !found || p == nil {
+		// Unreachable: jobIdentity only adopts a project job's identity by
+		// matching the published policy's own names, so a run with an identity
+		// has read a policy. Kept as the halt it would be — a token is not
+		// allowed to ride on an identity nothing describes.
+		return fmt.Errorf("this run is in the project job %s, and this project has published no policy to read its account from: the run stops rather than holding a credential no policy bounds",
+			gcp.ProjectJobName(job.Profile, job.Provider, job.Account))
+	}
+	pr, err := p.ProfileFor(job.Profile)
+	if err != nil {
+		return fmt.Errorf("this run is in the project job %s: %w", gcp.ProjectJobName(job.Profile, job.Provider, job.Account), err)
+	}
+	account, oauth := "", auth == "oauth"
+	if oauth {
+		account = claudeAccountOf(r.spec.OAuthToken)
+	}
+	tokenAccount, serves := config.ProjectJobTokenAccount(pr.JobProfile, job.Account)
+	if !serves {
+		// The job holds no Claude token at all. A non-OAuth run is the run that
+		// job is for; an OAuth one has nothing to authenticate with.
+		if oauth {
+			return fmt.Errorf("this run's own credential is the Claude OAuth account %q, and this run is in the project job %s, which holds no Claude token: the job profile %q serves no such account on it — the account's token is mounted into the job of that account and no other, and the profile's no-account job mounts one only when the profile lists %q (config.ProjectJobTokenAccount) — so this run would start with no credential at all. The run stops rather than authenticating as something its own configuration did not choose or falling back to an API key: agent.auth is oauth, and this release writes no API key for one (agent.BuildEnv). The fix is the launcher's: an OAuth run is only launched onto the job of the account its own credential selects. This run's job is the no-account job of the profile %s",
+				selectedName(r.spec.OAuthToken), gcp.ProjectJobName(job.Profile, job.Provider, job.Account), job.Profile, config.DefaultClaudeAccount, job.Profile)
+		}
+		return nil
+	}
+	if account != job.Account {
+		return fmt.Errorf("this run is in the project job %s, whose container holds the Claude account %q's token (%s, mounted as CLAUDE_CODE_OAUTH_TOKEN) for every run of it, and the run's own credential is not that account's: agent.auth is %q and the task selects %q (the default account and no selection are the same selection). A project job holds one account's token and no other, and the platform mounts it before the run starts, so this run would hold a credential its own configuration does not use — and would use the account's token for whatever the run does. The run stops rather than running as an account its own configuration did not choose. The fix is the launcher's: a run is only launched onto the job of the account it selects",
+			gcp.ProjectJobName(job.Profile, job.Provider, job.Account), tokenAccount,
+			config.ClaudeAccountSecret(tokenAccount), auth, selectedName(r.spec.OAuthToken))
+	}
+	acc, ok := p.Accounts[tokenAccount]
+	if !ok {
+		// Unreachable: a profile naming an account the accounts block does not
+		// define is refused by the policy's own decoder
+		// (projectpolicy.validProfileAccounts). Kept as a halt, because the
+		// list is the whole of the rule that bounds the token (D3) and an
+		// absent one is a gate that is not there.
+		return fmt.Errorf("this run is in the project job %s, which holds the Claude account %q's token (%s), and the published policy describes no list of repositories that token may be used by: accounts.%s is absent, so nothing bounds which repositories may hold it. The run stops rather than using an unbounded token",
+			gcp.ProjectJobName(job.Profile, job.Provider, job.Account), tokenAccount, config.ClaudeAccountSecret(tokenAccount), tokenAccount)
+	}
+	canonical, err := projectpolicy.Canonical(job.Provider, r.spec.Repo)
+	if err != nil {
+		return fmt.Errorf("the repository this run is for (%s) cannot be named in the project's policy: %w", r.spec.Repo, err)
+	}
+	if projectpolicy.AdmitRepo(acc.AllowRepos, canonical) {
+		return nil
+	}
+	return fmt.Errorf("this run is in the project job %s, which holds the Claude account %q's token (%s, mounted as CLAUDE_CODE_OAUTH_TOKEN), and this repository is not on the list of repositories that token may be used by: accounts.%s.allow_repos is %s, and %s is not one of them. The account's list is derived at publish from the project's local config (%s), and it is the per-repository decision of which runs may use that token (D3). The run stops before the agent starts, independently of the launcher that started it",
+		gcp.ProjectJobName(job.Profile, job.Provider, job.Account), tokenAccount, config.ClaudeAccountSecret(tokenAccount),
+		tokenAccount, strings.Join(acc.AllowRepos, ", "), canonical, allowReposSource(tokenAccount))
+}
+
+// allowReposSource is where an account's policy list is derived from at publish
+// (projectpolicy.DeriveAccounts): a named account's own allow_data_to in the
+// project's local config, and the project_secrets entry for the default account,
+// whose name is reserved in claude_accounts.
+func allowReposSource(account string) string {
+	if account == config.DefaultClaudeAccount {
+		return "project_secrets." + config.ClaudeAccountSecret(account) + ".allow_data_to"
+	}
+	return "claude_accounts." + account + ".allow_data_to"
+}
+
+// claudeAccountOf is a selection as a job's account axis and the policy's
+// accounts block spell it: the default account and no selection at all are both
+// the empty account (internal/cli's projectJobAccount is the launcher's copy of
+// this rule, and config.ProjectJobAccounts/ProjectJobTokenAccount are the same
+// spelling).
+func claudeAccountOf(selected string) string {
+	if selected == config.DefaultClaudeAccount {
+		return ""
+	}
+	return selected
+}
+
+// selectedName is a selection as a message spells it, "" included: the default
+// account is the name of the account a run with no selection uses.
+func selectedName(selected string) string {
+	if selected == "" {
+		return config.DefaultClaudeAccount
+	}
+	return selected
 }

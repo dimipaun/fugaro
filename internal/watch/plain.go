@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/runview"
 )
 
 // PlainOptions tune RenderPlain.
@@ -67,17 +68,17 @@ func RenderPlain(w io.Writer, project string, v View, ready []ReadyRow, o PlainO
 		}
 		if len(r.Runs) > 0 {
 			tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "  RUN\tTITLE\tSTAGE\tROUND\tAGE\tSPENT\tFLAGS")
+			fmt.Fprintln(tw, "  RUN\tTITLE\tSTAGE\tROUND\tAGE\tSPENT\tBY\tFLAGS")
 			for _, run := range r.Runs {
-				fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\n", run.Run, run.Title, run.Stage, run.Round, ageText(run), runSpend(run), flags(run, warn))
+				fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", run.Run, run.Title, run.Stage, run.Round, ageText(run), runSpend(run), launcherText(run), flags(run, warn))
 			}
 			tw.Flush()
 		}
 		if len(r.Finished) > 0 {
 			ftw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(ftw, "  FINISHED\tOUTCOME\tAGE\tPR")
+			fmt.Fprintln(ftw, "  FINISHED\tOUTCOME\tAGE\tBY\tPR")
 			for _, f := range r.Finished {
-				fmt.Fprintf(ftw, "  %s\t%s\t%s\t%s\n", f.Run, finishedOutcomeText(f), ageText(f), dashIfEmpty(f.PRURL))
+				fmt.Fprintf(ftw, "  %s\t%s\t%s\t%s\t%s\n", f.Run, finishedOutcomeText(f), ageText(f), launcherText(f), dashIfEmpty(f.PRURL))
 			}
 			ftw.Flush()
 		}
@@ -140,6 +141,29 @@ func dashIfEmpty(s string) string {
 	}
 	return s
 }
+
+// launcherText is a row's BY cell: who started the run, in the short form a
+// column has room for (the part before the @ of an address, the whole value for
+// anything else — a service account name, a CI runner), or "-" for a run whose
+// launch.json recorded no launcher. Several people start runs on one project at
+// once, so the column is always there, and the dash is a fact ("not recorded"),
+// never a placeholder for one.
+//
+// run.LaunchedBy is already sanitised (safetext.Field, in the row's own
+// builder and again in MergeFacts) and already capped at safetext.FieldMax, so
+// shortening it here cannot unsanitise it: LauncherShort only drops the domain
+// of an address.
+func launcherText(run RunRow) string {
+	by := runview.LauncherShort(run.LaunchedBy)
+	if r := []rune(by); len(r) > launcherCellRunes {
+		by = string(r[:launcherCellRunes]) + "…"
+	}
+	return dashIfEmpty(by)
+}
+
+// launcherCellRunes bounds the BY cell, as fugaro runs ls bounds its own
+// (maxNameCellRunes): the sanitiser's cap is far wider than a column.
+const launcherCellRunes = 64
 
 // USD is an amount for people: cents, or four places below a cent.
 func USD(m budget.Micros) string {

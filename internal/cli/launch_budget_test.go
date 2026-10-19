@@ -44,10 +44,14 @@ func newLaunchBudget(t *testing.T, mode string) *launchBudgetFixture {
 	f.db.Set("config/caps/global", map[string]any{"dailyMicros": 100 * usd1, "perRunMicros": 10 * usd1})
 	f.db.Set("config/caps/defaults", map[string]any{"repoDailyMicros": 50 * usd1, "repoPerRunMicros": 5 * usd1})
 	f.db.Set("config/limits", map[string]any{"maxReserveMicros": 5 * usd1})
+	// The job image's runner reads the sealed token: a launch that mints is
+	// judged against it (the seal gate, sealSince).
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseSeal)
 	return f
 }
 
-// readToken is the run's token object, "" when there is none.
+// readToken is the run's token object as the bucket holds it — sealed, so not
+// a token by itself (launchedToken opens it) — "" when there is none.
 func readToken(t *testing.T, f *cloudFixture, run string) string {
 	t.Helper()
 	b, err := blob.OpenBucket(context.Background(), f.bucket)
@@ -85,7 +89,8 @@ func claimsOf(t *testing.T, f *launchBudgetFixture, tok string) map[string]any {
 func TestRunMintsAndWritesObjectBeforeLaunch(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	var atLaunch string
-	f.run.OnRun = func(c gcpfake.RunCall) { atLaunch = readToken(t, f.cloudFixture, budgetRun) }
+	var env map[string]string
+	f.run.OnRun = func(c gcpfake.RunCall) { env, atLaunch = c.Env, readToken(t, f.cloudFixture, budgetRun) }
 	start := time.Now()
 	if _, _, err := runBudget(t); err != nil {
 		t.Fatal(err)
@@ -93,7 +98,7 @@ func TestRunMintsAndWritesObjectBeforeLaunch(t *testing.T) {
 	if atLaunch == "" {
 		t.Fatal("the token object was not in the bucket when jobs.run was called")
 	}
-	c := claimsOf(t, f, atLaunch)
+	c := claimsOf(t, f, unsealed(t, markerKey(t, env), []byte(atLaunch), budgetRun))
 	if c["fs"] != appSlug || c["fr"] != budgetRun || c["fp"] != "aurora" || c["rb"] != "someone@example.com" {
 		t.Fatalf("claims = %v", c)
 	}
@@ -124,7 +129,7 @@ func TestRunRequestedByInClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c := claimsOf(t, f, string(data)); c["rb"] != "retrier@example.com" {
+	if c := claimsOf(t, f, unsealed(t, lastLaunchKey(t, f.cloudFixture), data, spec.RunID)); c["rb"] != "retrier@example.com" {
 		t.Fatalf("rb = %v", c["rb"])
 	}
 }
@@ -145,9 +150,67 @@ func TestRetryMintsFresh(t *testing.T) {
 	if err != nil || string(data) == old {
 		t.Fatalf("the leftover token was kept: %q, %v", data, err)
 	}
-	claimsOf(t, f, string(data)) // a fresh, valid mint
+	claimsOf(t, f, unsealed(t, lastLaunchKey(t, f.cloudFixture), data, spec.RunID)) // a fresh, valid mint, sealed
 	if n := len(f.iam.SignCalls()); n != 1 {
 		t.Fatalf("sign calls = %d", n)
+	}
+}
+
+// TestAMintThatCannotDeleteOrWriteStopsTheLaunch is mintBudgetToken's two
+// failure paths after the mint itself succeeded — the launcher's last chances
+// to say no, and the two the review found untested:
+//
+//   - the earlier attempt's object cannot be removed (the delete answers 503;
+//     a delete that fails leaves the earlier key able to open an object a
+//     second execution could be handed, D17). The launch is refused and
+//     nothing of this attempt is written.
+//   - the new object cannot be *confirmed* written: the create stored it and
+//     then answered 503 — the response was lost. The launch is refused, and
+//     the launcher removes what that create left (dropBudgetToken), because an
+//     object nobody is going to be handed a key for is an object a later
+//     reader could mistake for this run's identity.
+//
+// Both must return no key: the marker is the only delivery, and a refusal that
+// had already handed the key on would be a key in front of an execution that
+// was never launched.
+//
+// Mutation (run, restored): ignore token.DeleteObject's error in
+// mintBudgetToken — "a delete that fails" launches.
+// Mutation (run, restored): drop the e.dropBudgetToken call from the put
+// failure arm — "a create whose response was lost" leaves the sealed object in
+// the bucket.
+func TestAMintThatCannotDeleteOrWriteStopsTheLaunch(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name, want string
+		fail       func(*gcpfake.GCS)
+	}{
+		{"a delete that fails", "deleting the token object failed", func(g *gcpfake.GCS) { g.FailObjectDeletes(1) }},
+		{"a create whose response was lost", "writing the token object failed", func(g *gcpfake.GCS) { g.FailObjectStoresAfterWrite(1) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			gcs := gcpfake.NewGCS(t)
+			env := envOn(t, f.cloudFixture, gcs.Bucket(t, "runs"))
+			spec := raceSpec(t, env)
+			name := token.ObjectKey(appSlug, spec.RunID)
+			tc.fail(gcs)
+			key, err := env.mintBudgetToken(ctx, appSlug, spec, nil)
+			if err == nil || key != nil {
+				t.Fatalf("key = %v, err = %v: the launch minted anyway", key, err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want it to say %q", err, tc.want)
+			}
+			// The mint itself happened: the failure is the one after it, not
+			// a decision not to mint.
+			if n := len(f.iam.SignCalls()); n != 1 {
+				t.Errorf("sign calls = %d, want the one mint the failure followed", n)
+			}
+			if _, _, rerr := env.bucket.Read(ctx, name); !errors.Is(rerr, blobx.ErrNotExist) {
+				t.Errorf("the failed mint left %s in the bucket: %v", name, rerr)
+			}
+		})
 	}
 }
 
@@ -249,6 +312,7 @@ func newOffModeBudget(t *testing.T, budget string) *launchBudgetFixture {
 	f.appendConfig(t, budget)
 	f.db.Set("fugaro/project", "aurora")
 	f.db.Set("config/mode", "enforce")
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseSeal)
 	return f
 }
 
@@ -268,7 +332,7 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 	// an empty allow_repos is deny-all (plan task 1.5), so a policy that names
 	// no repository would refuse the launch before the mint decision these
 	// subtests are about.
-	policy := `{"version":2,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
+	policy := `{"version":3,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
 
 	t.Run("no policy, no token", func(t *testing.T) {
 		f := newOffModeBudget(t, "")
@@ -298,21 +362,19 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 		if _, _, err := runBudget(t); err != nil {
 			t.Fatal(err)
 		}
-		tok := readToken(t, f.cloudFixture, budgetRun)
-		if tok == "" {
+		raw := readToken(t, f.cloudFixture, budgetRun)
+		if raw == "" {
 			t.Fatal("a launch for a project with a published policy minted no token")
 		}
-		if c := claimsOf(t, f, tok); c["fs"] != appSlug || c["fr"] != budgetRun || c["fp"] != "aurora" {
+		if c := claimsOf(t, f, unsealed(t, markerKey(t, env), []byte(raw), budgetRun)); c["fs"] != appSlug || c["fr"] != budgetRun || c["fp"] != "aurora" {
 			t.Fatalf("claims = %v", c)
 		}
 		// M2: the launch that minted marks this execution with the token, and
 		// the marker is the run request's, not the job's deployment (that
 		// environment is init --repo's, and internal/infra pins that it never
 		// carries the marker). It is what makes a missing token a refusal for
-		// this run instead of "this project has published no policy".
-		if env[runner.BudgetTokenEnv] != "1" {
-			t.Fatalf("a launch that minted a token set %s = %q in its request, want 1", runner.BudgetTokenEnv, env[runner.BudgetTokenEnv])
-		}
+		// this run instead of "this project has published no policy", and its
+		// value is the launch's seal key (D15), checked by markerKey above.
 		// The launch is not the deploy: the job's own environment is the one
 		// the mode was deployed with, and the launcher does not rewrite it to
 		// the policy's mode. What the policy decides is the runner's mode,
@@ -352,7 +414,7 @@ func TestLaunchReadsThePolicyOnce(t *testing.T) {
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
-	publishPolicy(t, f, `{"version":2,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
+	publishPolicy(t, f, `{"version":3,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
 	if _, _, err := runBudget(t); err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +449,7 @@ func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":2,"budget":{"mode":"enforce","per_run_usd":5}}`))
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":3,"budget":{"mode":"enforce","per_run_usd":5}}`))
 	f.db.DenyRead(projectpolicy.PathShared())
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
@@ -415,7 +477,7 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":2,"allow_repo":["acme/*"]}`))
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":3,"allow_repo":["acme/*"]}`))
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "allow_repo") {
 		t.Fatalf("err = %v, want a refusal naming the unknown key", err)
@@ -439,7 +501,7 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 // for a policy he wrote himself.
 func TestLaunchClassifiesAMalformedPolicyAsTheUsersOwnError(t *testing.T) {
 	for name, node := range map[string]string{
-		"a budget the decoder refuses": `{"version":2,"budget":{"mode":"nonsense"}}`,
+		"a budget the decoder refuses": `{"version":3,"budget":{"mode":"nonsense"}}`,
 		"a node with no version":       `{"budget":{"mode":"enforce"}}`,
 		"not a JSON object":            `["budget"]`,
 	} {
@@ -493,10 +555,7 @@ func TestMintedTokenNotInJobsRunRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok := readToken(t, f.cloudFixture, budgetRun)
-	if tok == "" {
-		t.Fatal("no token object")
-	}
+	tok := launchedToken(t, f.cloudFixture, budgetRun)
 	parts := strings.Split(tok, ".")
 	for _, secret := range []string{tok, parts[1], parts[2]} {
 		for _, r := range f.run.Requests() {
@@ -516,11 +575,9 @@ func TestMintedTokenNotInJobsRunRequest(t *testing.T) {
 		}
 		// The marker, and only the marker: the runner learns that this
 		// execution was minted a token from this one variable, and never the
-		// token itself (internal/runner's BudgetTokenEnv, M2).
-		if env[runner.BudgetTokenEnv] != "1" {
-			t.Fatalf("%s = %q in the launch, want \"1\": the runner cannot tell a deleted token from a project with nothing published",
-				runner.BudgetTokenEnv, env[runner.BudgetTokenEnv])
-		}
+		// token itself (internal/runner's BudgetTokenEnv, M2). Its value is
+		// the seal key, which opens the object and is not the token (D15).
+		markerKey(t, env)
 		if strings.Contains(out+errOut, secret) {
 			t.Fatal("the token was printed")
 		}
@@ -849,7 +906,7 @@ func TestPrecheckSkippedForAnAlreadyLaunchedRun(t *testing.T) {
 // fxOf is the token's fx claim as a time.
 func fxOf(t *testing.T, f *launchBudgetFixture) time.Time {
 	t.Helper()
-	c := claimsOf(t, f, readToken(t, f.cloudFixture, budgetRun))
+	c := claimsOf(t, f, launchedToken(t, f.cloudFixture, budgetRun))
 	fx, _ := c["fx"].(json.Number)
 	ms, err := fx.Int64()
 	if err != nil {
@@ -902,7 +959,7 @@ func TestRunFXFollowsTargetJobTimeout(t *testing.T) {
 func TestRunFXFollowsNamedAccountJobTimeout(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	f.appendConfig(t, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n")
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", release065)
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseSeal) // at once named tokens' and the seal's
 	variant := gcp.WorkflowVariant("web", "acme-personal")
 	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
 	f.run.SetJobTimeout(gcp.JobName(appSlug, variant), 30*time.Minute)
