@@ -218,15 +218,52 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	// a managed verdict. It is checked here, with the number and before the
 	// bucket, because it is a property of the project the one call above
 	// already answered, and a project that does not carry it cannot be
-	// managed whatever the runs bucket holds — so nothing below is read for
-	// it. The two ways of disagreeing are told apart, and neither is a
-	// failure: a caller prints both.
+	// managed whatever the runs bucket holds. The two ways of disagreeing are
+	// told apart, and neither is a failure: a caller prints both.
+	labelWhy := ""
 	if v, ok := labels[ProjectLabelKey]; !ok {
-		return Marker{}, false, fmt.Sprintf("GCP project %s carries no %s label, so %s is not managed: the label is written by the run that creates the project, and a project that has the creation fact without it is marked again by hand, on the account that owns it (docs/gcp-setup.md)", gcpProject, ProjectLabelKey, project), nil
+		labelWhy = fmt.Sprintf("GCP project %s carries no %s label, so %s is not managed: the label is written by the run that creates the project, and a project that has the creation fact without it is marked again by hand, on the account that owns it (docs/gcp-setup.md)", gcpProject, ProjectLabelKey, project)
 	} else if v != ProjectLabelValue {
-		return Marker{}, false, fmt.Sprintf("GCP project %s carries %s=%s, not %s, so %s is not managed", gcpProject, ProjectLabelKey, v, ProjectLabelValue, project), nil
+		labelWhy = fmt.Sprintf("GCP project %s carries %s=%s, not %s, so %s is not managed", gcpProject, ProjectLabelKey, v, ProjectLabelValue, project)
 	}
 
+	// Without the label the answer is this one, and it is the answer for every
+	// state of the object below but one — which is why the object is still
+	// read for it. A version-2 marker about this project carrying a figure
+	// Budget.Check refuses is reported as that figure, and not as the missing
+	// label: "a managed creation could not have chosen this amount" is the
+	// more specific of the two sentences, and the label's sends the owner to
+	// the backfill in docs/gcp-setup.md, which would leave them with a managed
+	// project whose recorded amount nothing can be compared against. The cost
+	// is a bucket and an object read for a project that has no label — the
+	// state every project marked before Task 3.0 is in (decisions §5) — and it
+	// is paid for the reason: the verdict is the same either way (never
+	// managed), so what the read buys is only the better sentence.
+	m, ok, reason, err = readFactObject(ctx, s, project, gcpProject, number)
+	switch {
+	case labelWhy == "":
+		return m, ok, reason, err
+	case err == nil && m.Budget != nil && m.Budget.Check() != nil:
+		// ReadBudgetAnswer's own condition, deliberately: the pair of
+		// functions has to agree about which refusals carry a figure back.
+		return m, false, reason, nil
+	}
+	// Everything else, including a bucket or object read that failed: the
+	// label alone decides this project, and a read that could not answer
+	// cannot change a verdict the label already gave. The error is dropped
+	// rather than returned — a caller failing a command for a project the
+	// label has already refused would be reporting the wrong thing.
+	return Marker{}, false, labelWhy, nil
+}
+
+// readFactObject is the second half of readFact: everything the answer needs
+// once the project's number and the label have been read. It is split out so
+// that readFact can order its two refusals (see there) without either of them
+// being judged twice, and it keeps readFact's decisions exactly as they were —
+// each return is one of the ways IsManaged lists of being "not managed", with
+// readFact's own doc as the account of them.
+func readFactObject(ctx context.Context, s *storage.Service, project, gcpProject string, number uint64) (m Marker, ok bool, reason string, err error) {
+	bucket := runsBucketName(gcpProject)
 	b, err := s.Buckets.Get(bucket).Context(ctx).Do()
 	if err != nil {
 		var ge *googleapi.Error

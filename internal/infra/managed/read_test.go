@@ -1013,3 +1013,86 @@ func TestReadBudgetAnswerInvalidAndProjectFirst(t *testing.T) {
 		}
 	}
 }
+
+// L3, and the precedence between the two reasons a project can be refused for
+// at once: an unlabelled project whose runs bucket holds a version-2 marker
+// about it carrying a figure that fails Budget.Check is refused for the
+// FIGURE — Invalid, with the refused figure handed back — and not for the
+// missing label. Both halves hold, and the figure's reason is the more
+// specific one, which is the one to win: the label's sentence sends the owner
+// to the backfill in docs/gcp-setup.md, and a backfill would leave them with a
+// managed project whose recorded amount nothing can be compared against.
+//
+// Every other state of the object keeps the label's reason. It is the verdict
+// — a project without that label is not managed whatever the object says, and
+// IsManaged has to stay false for all of these — and it is the sentence the
+// owner of a project marked before Task 3.0 reads first (decisions §5).
+func TestReadBudgetAnswerTheInvalidFigureOutranksTheMissingLabel(t *testing.T) {
+	ctx := context.Background()
+	const noLabel = "carries no fugaro_managed label"
+	for name, tc := range map[string]struct {
+		marker  string // "" for a bucket with no object in it
+		invalid bool
+		reason  string
+	}{
+		"a figure that fails Check": {
+			marker:  `{"version":2,"gcp_project":"` + testProject + `","budget":{"amount":5000,"currency":"usd"}}`,
+			invalid: true,
+			reason:  "a managed creation could have chosen",
+		},
+		"an empty figure": {
+			marker:  `{"version":2,"gcp_project":"` + testProject + `","budget":{}}`,
+			invalid: true,
+			reason:  "a managed creation could have chosen",
+		},
+		// Not Invalid, and the label's reason: the project is not managed, and
+		// a valid figure in an object it may not be believed from changes
+		// nothing about that.
+		"a valid figure": {
+			marker: `{"version":2,"gcp_project":"` + testProject + `","budget":{"amount":50,"currency":"USD"}}`,
+			reason: noLabel,
+		},
+		"a version-1 fact, which carries no figure": {
+			marker: `{"version":1,"gcp_project":"` + testProject + `"}`,
+			reason: noLabel,
+		},
+		// The project's name is judged before its figure (readFact), so this
+		// one would carry no figure back even with the label written; without
+		// it the label's reason stands.
+		"another project's marker, with a figure that fails Check": {
+			marker: `{"version":2,"gcp_project":"proj-9999","budget":{"amount":5000,"currency":"usd"}}`,
+			reason: noLabel,
+		},
+		"no object at all": {reason: noLabel},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, testManaged)
+			if tc.marker != "" {
+				f.Put(testBucket, MarkerObject, []byte(tc.marker))
+			}
+			// The state the regression of decisions §5 is: everything else as
+			// a managed project has it, and this key never written. Other
+			// labels of its own, so the row is about this key.
+			c, _ := labelledCRM(t, map[string]string{"environment": "prod"})
+			a, err := ReadBudgetAnswer(ctx, s, c, testFugaroProject, testProject)
+			if err != nil || a.OK {
+				t.Fatalf("%+v, %v: want a refusal answered, not a failure", a, err)
+			}
+			if a.Invalid != tc.invalid {
+				t.Errorf("Invalid = %v, want %v (%s)", a.Invalid, tc.invalid, a.Reason)
+			}
+			if !strings.Contains(a.Reason, tc.reason) {
+				t.Errorf("reason %q, want %q", a.Reason, tc.reason)
+			}
+			if tc.invalid && strings.Contains(a.Reason, noLabel) {
+				t.Errorf("the label's reason was answered for a figure no creation could have chosen: %q", a.Reason)
+			}
+			// The verdict is the same either way: the read of the object buys
+			// the better reason, never a managed project.
+			if managed, _, _ := IsManaged(ctx, s, c, testFugaroProject, testProject); managed {
+				t.Error("IsManaged believed a project with no fugaro_managed label")
+			}
+		})
+	}
+}
