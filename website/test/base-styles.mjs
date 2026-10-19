@@ -119,7 +119,11 @@ function mediaBlocks(css) {
 //     wordmark and the labels is the phone's 8 px rather than the wide layout's 32 px. Those
 //     two are what the row measures against at 320 px, and neither is decoration: with the
 //     text drawn, or with the wide gap, the row is wider than the header's content box and
-//     the page gets a sideways scroll;
+//     the page gets a sideways scroll. Out of the row is not out of the page, though: the mark
+//     beside the text is decoration with an empty `alt`, so the text is the home link's only
+//     name and no `.site-wordmark-name` rule — in the phone block **or in the base rule above
+//     it**, which is where a `display:none` would hide it at every width — may hide it from a
+//     screen reader;
 //   - **opening anything must not move the page.** A group's list is out of the header's flow,
 //     so opening *Product* at 1280 px must not grow the header and push the page down under
 //     the reader; and on a wide viewport the dropdown hangs from the group's **right** edge,
@@ -179,8 +183,17 @@ export function navLayoutFailures(css, rel = '') {
   if (hidden && !/position:absolute/.test(hidden)) {
     fail("the wordmark's text is taken out of the row without being taken out of the flow, so the row is still as wide as the word")
   }
-  if (hidden && /display:none|visibility:hidden/.test(hidden)) {
-    fail("the wordmark's text is hidden from a screen reader as well as from the eye, and the logo beside it is decoration with an empty alt: the link to the home page is left naming nothing")
+  // **Every** `.site-wordmark-name` rule, not only the phone block's: the base rule is the one
+  // that is in force at 1280 px, so a `display:none` there takes the name away at every width
+  // while the phone block still reads as the correct clipping, and a check that only read
+  // inside the block would pass it (the review of 2026-10-19). The mark beside the text is
+  // decoration with an empty `alt`, so the text is the link's only name and this is not a
+  // layout preference.
+  for (const rule of cssRules(css)) {
+    if (rule.selector !== '.site-wordmark-name') continue
+    if (/display:none|visibility:hidden/.test(rule.body ?? '')) {
+      fail("the wordmark's text is hidden from a screen reader as well as from the eye, and the logo beside it is decoration with an empty alt: the link to the home page is left naming nothing")
+    }
   }
 
   const wide = mediaBlocks(css).filter((block) => /48rem/.test(block.query))
@@ -330,6 +343,19 @@ test('every layout refusal fires on the defect it names', () => {
     [
       "the wordmark's text hidden from a screen reader as well",
       plant('.site-wordmark-name{clip-path:inset(50%)', '.site-wordmark-name{display:none;clip-path:inset(50%)'),
+      /naming nothing/,
+    ],
+    // And the same hiding in the base rule, which is in force at every width: the phone block
+    // is untouched here, so a check that read only inside it would pass this stylesheet while
+    // the home link names nothing at 1280 px.
+    [
+      "the wordmark's text hidden at every width by the base rule",
+      plant('.site-wordmark-name{text-overflow:ellipsis', '.site-wordmark-name{display:none;text-overflow:ellipsis'),
+      /naming nothing/,
+    ],
+    [
+      "the wordmark's text made invisible at every width by the base rule",
+      plant('.site-wordmark-name{text-overflow:ellipsis', '.site-wordmark-name{visibility:hidden;text-overflow:ellipsis'),
       /naming nothing/,
     ],
     // The wide viewport.

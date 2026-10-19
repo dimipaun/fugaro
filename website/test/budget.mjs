@@ -556,8 +556,10 @@ test('the README budget lines are read strictly', () => {
 // reason). The merge of `main` into the redesign brought a second artifact with it —
 // `console-option.mjs` builds the site with the console's flag flipped and runs the artifact
 // gates over that copy to prove the flip is safe — and a derivation held to that one would be
-// the flag's own bytes rather than the site's: measured on this build, **536 bytes** at the site
-// figure and nothing at all at the page weight. The checkout's own `dist/` is the other artifact
+// the flag's own bytes rather than the site's: measured on this build, **622 bytes** at the site
+// figure — the console option's markup on the three pages that render it: the homepage's call to
+// action 86, the console page's downloads 146 and Getting Started's option 390 — and nothing at
+// all at the page weight. The checkout's own `dist/` is the other artifact
 // the numbers may not name, because its git state moves it by 1,515 bytes (the changelog's "not
 // yet released" labels, above). What is left is the gates' own build: a copy of the repository
 // with no `.git`, made by `test/lib/build.mjs`'s `buildCopy`, which is what the case below
@@ -600,16 +602,17 @@ export function derivationFailures(readme, measured) {
  * own rather than the artifact the run was pointed at. `FUGARO_GATES_DIST` is the mechanism the
  * gates document for reading another artifact, and the case that uses it — `console-option.mjs`'s
  * released build — is a DIFFERENT build rather than another copy of this one: flipping
- * `features.console_downloads` adds the console option's markup to two pages, measured at 536
- * bytes on that copy's site figure. The derivation is not held to it.
+ * `features.console_downloads` adds the console option's markup to the three pages that render it,
+ * measured at 622 bytes on that copy's site figure (the homepage's call to action 86, the console
+ * page's downloads 146 and Getting Started's option 390). The derivation is not held to it.
  *
  * Nor is it held to `website/dist`, which `npm run check` builds first — and that is the
  * correction this reading carries (2026-10-19). `dist/` is the site built from the checkout the
  * gates are running in, and one page of the site depends on that checkout's git state: the
  * changelog renders each release file's "not yet released" state where `git tag --list` finds no
  * tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the same commit
- * builds to two different site figures — 842,154 bytes in a checkout with no tags, which is what
- * `.github/workflows/website-preview.yml`'s default checkout is, and 840,639 with the tags this
+ * builds to two different site figures — 976,349 bytes in a checkout with no tags, which is what
+ * `.github/workflows/website-preview.yml`'s default checkout is, and 974,834 with the tags this
  * repository's own clone carries, the 1,515-byte changelog page being the whole of the
  * difference. A README figure derived from either one is a figure the other environment refuses,
  * which is exactly what happened: `website-preview` could not deploy, because the derivation
