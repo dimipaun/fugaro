@@ -20,6 +20,15 @@
 //
 // The property the checks are walked with is tested against a planted secret
 // first, so a green run means the walk can fail.
+//
+// **P4.4's half (added 2026-10-19).** "No identity in `app.json`" is only half
+// a fence: a store build cannot exist without the two identities, so the file
+// below it -- `mobile/app.config.js`, Expo's dynamic config -- resolves them
+// from EAS environment variables at build time. The last test here reads the
+// RESOLVED config through that file in both modes: a build carries the two
+// identities and nothing else new, a dev/lint run gets the static config
+// unchanged. `src/app-config.ids.test.js` owns the refusals, and
+// `src/eas-config.test.js` owns the profiles the build is made from.
 
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
@@ -27,6 +36,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { secretShaped } from './accounts/index.js';
+import { ID_VARIABLES, resolveConfig } from '../app.config.js';
 
 const HERE = import.meta.dirname;
 const APP_JSON = join(HERE, '..', 'app.json');
@@ -111,4 +121,47 @@ test('the config is a config, and the entry it needs exists', () => {
   assert.equal(MANIFEST.main, 'index.js');
   assert.equal(existsSync(join(HERE, '..', MANIFEST.main)), true, 'the entry exists');
   assert.equal(existsSync(join(HERE, 'app', 'root.js')), true, 'the root the entry imports exists');
+});
+
+// --- ... and the one file the identities come from (P4.4, D120, D125) -------
+//
+// The three tests above are what keeps the identities OUT of `app.json`. This
+// one is the other half of the same fence: a build still needs them, so
+// `mobile/app.config.js` -- Expo's dynamic config, the `({ config }) => ...`
+// form Expo calls with the `expo` object it read from `app.json` -- resolves
+// them from the environment at build time, and from nowhere else. Read
+// together: `app.json` carries no identity, a build carries both, and the two
+// facts are exactly one file apart.
+//
+// `app.config.js` and its own tests (`src/app-config.ids.test.js`) own the
+// refusals (a missing or malformed variable under `EAS_BUILD`); what is pinned
+// here is the boundary -- that the static config is what a dev/lint run gets
+// back unchanged, and that resolving a build config changes those two fields
+// and nothing else.
+
+test('the identities are resolved through app.config.js, in both modes', () => {
+  // A build: `EAS_BUILD` is what EAS's build servers set, and the two
+  // variables are the ones the owner sets in the project's environments.
+  const resolved = resolveConfig(CONFIG.expo, {
+    EAS_BUILD: 'true',
+    [ID_VARIABLES.ios]: 'dev.fugaro.app',
+    [ID_VARIABLES.android]: 'dev.fugaro.app',
+  });
+  assert.equal(resolved.ios.bundleIdentifier, 'dev.fugaro.app');
+  assert.equal(resolved.android.package, 'dev.fugaro.app');
+  // ... and they are the ONLY difference from the committed file: strip them
+  // and `app.json`'s `expo` object is what is left, field for field.
+  const ios = { ...resolved.ios };
+  const android = { ...resolved.android };
+  delete ios.bundleIdentifier;
+  delete android.package;
+  assert.deepEqual({ ...resolved, ios, android }, CONFIG.expo);
+
+  // A dev/lint run (a developer's `expo start`, and this suite): neither
+  // switch is set, so the resolved config is the static one, with no identity
+  // resolved onto it -- `npm test` needs no store account, and this is where
+  // that is asserted rather than assumed.
+  assert.deepEqual(resolveConfig(CONFIG.expo, {}), CONFIG.expo);
+  assert.equal('bundleIdentifier' in CONFIG.expo.ios, false, 'and the static file never grew one');
+  assert.equal('package' in CONFIG.expo.android, false);
 });
