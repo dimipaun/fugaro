@@ -2081,7 +2081,10 @@ broken slug it was written as; Phase 6's heading stripped of `UNAPPROVED`, one o
 question markers dropped, and one of its task headings renamed; and the rail's two glyphs
 swapped between `running` and `silent` in §4.1's table, or its **216 px** expanded width — or
 its **56 px** collapsed one — dropped from the block beside it, which the rail test catches
-on the row the glyph moved to and by name, once per width.
+on the row the glyph moved to and by name, once per width — as does **§7's ordering sentence
+put back to the wording that named 6.5 as the one task to touch the entry**, which the same
+case refuses wherever the document writes it, the claim §7.3 contradicts by putting
+`entry.ts` in Task 6.3's `**Files**`.
 The seventh is the plan's
 own: `6.2` removed from Global Constraints rule 9's list, which
 `TestPlanRule9ListsEveryFlaggedHeading` catches. **And the ordering test (§6.5's tenth)
