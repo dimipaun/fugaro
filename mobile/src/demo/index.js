@@ -109,6 +109,20 @@ export function createDemoMode(options = {}) {
 
   /** Everything the demo owns while it is running; `null` when it is not. */
   let running = null;
+  /**
+   * The `enter()` still in flight, if any. `running` is assigned only at the END
+   * of a run -- there are awaits in between -- so it cannot be the guard against
+   * a double tap on its own: two taps in the same tick would both find it null
+   * and both build a demo. This one is set synchronously, before the first await.
+   */
+  let entering = null;
+  /**
+   * Bumped by `leave()`, so a run that is in flight across a leave is abandoned
+   * rather than landing afterwards: a reviewer who leaves has asked for the app
+   * without the demo, and a screen that put the banner back would be answering
+   * the opposite.
+   */
+  let epoch = 0;
   /** The last snapshot handed out, so `state()` is a stable value. */
   let snapshot = INACTIVE;
   const listeners = new Set();
@@ -209,15 +223,35 @@ export function createDemoMode(options = {}) {
    * verification, the real speak, the real ack), put the consumer's question in
    * P6.5's queue and read the destructive command back with P6.2's machine.
    *
-   * Entering twice is the same demo, not a second one: the second call answers
-   * the state it already has, so a double tap on the control cannot send the
-   * sample utterances twice.
+   * Entering twice is the same demo, not a second one. There are two ways a
+   * second call arrives and both are answered: once a run has finished, the
+   * state it already has is returned; while a run is still going (a double tap,
+   * which lands in the same tick -- `enter` awaits the client in between), the
+   * second call JOINS the run in flight and resolves to the same state. Either
+   * way the sample utterances are sent once.
    *
    * @returns {Promise<object>} the state, once everything above has run
    */
   async function enter() {
     if (running !== null) return snapshot;
+    if (entering !== null) return entering;
+    entering = run(epoch);
+    try {
+      return await entering;
+    } finally {
+      entering = null;
+    }
+  }
 
+  /**
+   * The body of one entry.
+   *
+   * @param {number} mine the epoch this run was started in; a `leave()` while it
+   *   was in flight bumps the real one, and the run is then dropped whole rather
+   *   than published
+   * @returns {Promise<object>} the state, or the (inactive) state after a leave
+   */
+  async function run(mine) {
     const transport = createDemoTransport({ now });
     const client = createMailboxClient({
       account: DEMO_ACCOUNT,
@@ -275,6 +309,10 @@ export function createDemoMode(options = {}) {
       });
       if (!asked.ok) problems.push(Object.freeze({ at: 'confirm-command', code: asked.code }));
     }
+
+    // Left while this was in flight: the run is dropped whole rather than
+    // published over a screen the reviewer has already dismissed.
+    if (epoch !== mine) return snapshot;
 
     running = {
       transport,
@@ -351,9 +389,13 @@ export function createDemoMode(options = {}) {
    * it was entered, and entering it again starts from the sample data rather
    * than from the last reviewer's session.
    *
+   * Leaving also abandons an entry that is still in flight (the epoch below), so
+   * the way out is answered whatever the run is doing.
+   *
    * @returns {object} the inactive state
    */
   function leave() {
+    epoch += 1;
     if (running === null) return snapshot;
     running = null;
     publish(INACTIVE);

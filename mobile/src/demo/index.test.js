@@ -167,6 +167,46 @@ test('entering the demo twice is the same demo, not a second one', async () => {
   assert.notEqual(again.destructive.confirmed, null, 'the confirmation survived the second enter');
 });
 
+test('two overlapping enters are one demo: the double tap cannot send twice', async () => {
+  // A double tap is not two calls that take turns -- both land before either has
+  // finished, because `enter` awaits the client's sends in between. The guard
+  // therefore cannot be "has `running` been set yet": that only happens at the
+  // very end of the run, so two overlapping calls would each build their own
+  // demo, send the sample utterances twice and publish twice.
+  const demo = createDemoMode();
+  let changes = 0;
+  demo.subscribe(() => { changes += 1; });
+
+  const first = demo.enter();
+  const second = demo.enter();
+  const [a, b] = await Promise.all([first, second]);
+
+  assert.equal(changes, 1, 'the demo was entered twice');
+  assert.equal(a, b, 'the two taps answered different runs');
+  assert.equal(a, demo.state());
+  const sentences = [...DEMO_UTTERANCES, DEMO_DESTRUCTIVE.command];
+  assert.deepEqual(a.sent.map((entry) => entry.text), sentences);
+  assert.equal(a.sent.length, sentences.length, 'the sample utterances were sent more than once');
+  assert.deepEqual(a.problems, []);
+});
+
+test('leaving while the demo is still being built leaves it off', async () => {
+  // The other half of the same hazard: `leave` is answered while the run is
+  // still in flight, so the run must not land afterwards and put the banner back
+  // on a screen the reviewer has already dismissed.
+  const demo = createDemoMode();
+  const pending = demo.enter();
+  const left = demo.leave();
+  assert.equal(left.active, false);
+  assert.equal((await pending).active, false, 'the abandoned run landed anyway');
+  assert.equal(demo.active(), false);
+  assert.equal(demo.state().active, false);
+
+  // And the next entry is a whole demo: abandoning a run leaves nothing behind.
+  assert.equal((await demo.enter()).active, true);
+  assert.equal(demo.state().sent.length, DEMO_UTTERANCES.length + 1);
+});
+
 test('leaving the demo drops everything, and entering again starts fresh', async () => {
   const { demo, state } = await entered();
   await demo.confirm();
