@@ -18,9 +18,11 @@
 //      its description or its card;
 //   2. **README.md**, which is where the site's own promise lines come from, and whose
 //      "fleeting cloud workers" line was the old tagline itself;
-//   3. **the site's own sources** — `website/src`, `website/data` and `website/public` — so
-//      that the word cannot come back in a component or a data file and only show up on the
-//      next build.
+//   3. **the site's own sources** — `website/src`, `website/data`, `website/public` and the
+//      generated documents under `website/content` — so that the word cannot come back in a
+//      component or a data file and only show up on the next build. One file of that last
+//      directory is excepted by name: `FILES_THAT_KEEP_IT` below, the generated CLI
+//      reference, which carries the root command's help text verbatim.
 //
 // **Why the three document-rendering pages are exempt, and how wide the exemption is.** They
 // render a document of this repository rather than a page of the site: `/docs/` renders the
@@ -33,7 +35,10 @@
 // generated file may not be hand-edited.
 // The exemption is exactly D188's three pages and no others, and the word is still refused
 // everywhere else — including `website/data/faq.yaml`, whose answer said "a fleet of
-// ephemeral cloud workers" and whose page `/faq/` is not exempt.
+// ephemeral cloud workers" and whose page `/faq/` is not exempt. The file half of the same
+// ruling is one line in one generated file, and it too is named and held to the tree
+// (`FILES_THAT_KEEP_IT` and the case that reads it) rather than left to the gate's own
+// sweep to miss.
 //
 // **The second rule: the claim the chat's caption may not make.** The hero's chat is an
 // illustration, and its caption said "every line is the repository's own words, from the
@@ -77,6 +82,30 @@ export const RETIRED = /\bworkers?\b/i
  * read from each skill's own `SKILL.md` rather than from every file beneath it.
  */
 export const SKILLS_THAT_CARRY_IT = ['parallelism', 'routing', 'working']
+
+/**
+ * The one file of the site's tree that still carries the retired word, by its path under
+ * `website/`, as a named and dated exception rather than a gap in the sweep.
+ *
+ * `website/content/cli-reference.md` is generated (W0.4) from the CLI's own help text, and
+ * its second paragraph is the root command's short description, which still reads "Fleeting
+ * cloud workers for coding agents". The owner's ruling of 2026-10-18 leaves the CLI's help
+ * text, this generated file and the `SKILLS_THAT_CARRY_IT` skills' wording to the 0.9.0
+ * work, and the file may not be hand-edited: changing that line here would mean either
+ * editing generated output or changing the command's help, both of which the ruling puts in
+ * that later round. The website's own copy — the pages, the data files, the components — is
+ * the whole of item 2 and is guarded as before.
+ *
+ * **Dated, and expiring.** The list is not a permanent hole: the case below reads
+ * `website/content` and holds this list equal to the files there that carry the word, so when
+ * the 0.9.0 work changes the root command's description and regenerates the file, that case
+ * fails and says to delete the line — an exception still standing for a file that no longer
+ * needs one is a hole nobody can see.
+ *
+ * This exception was written on 2026-10-19, in the third fix round of the website changes of
+ * 2026-10-18, and is recorded for the owner in the pull request's deferred list.
+ */
+export const FILES_THAT_KEEP_IT = ['content/cli-reference.md']
 
 /**
  * The claim the hero's chat caption may not make again, in the two halves a rewording would
@@ -181,6 +210,10 @@ export function wordingFailures(dist) {
 export function sourceWordingFailures(files) {
   const out = []
   for (const [rel, body] of Object.entries(files)) {
+    // The named exception, and only it: the generated CLI reference quotes the root
+    // command's help text, which the ruling of 2026-10-18 leaves to the 0.9.0 work. Every
+    // other file of the tree is read as before.
+    if (FILES_THAT_KEEP_IT.includes(rel)) continue
     const flat = body.replace(/\s+/g, ' ')
     out.push(...claimFailures(flat, rel))
     const found = RETIRED.exec(body)
@@ -195,17 +228,23 @@ export function sourceWordingFailures(files) {
 
 // ---- the built site ---------------------------------------------------------------------
 
-/** The site's own sources: every text file under `src/`, `data/` and `public/`. */
+/**
+ * The site's own sources: every text file under `src/`, `data/`, `public/` and the generated
+ * `content/`. The last is swept too because it is committed to the tree and rendered into
+ * pages — a generated document is still a file of this site that a reader can read — and the
+ * one file of it that carries the word is exempted by name, not by being outside the sweep
+ * (`FILES_THAT_KEEP_IT`, and the case below that holds the list to what is there).
+ */
 function siteSources() {
   const files = {}
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const file = path.join(dir, entry.name)
       if (entry.isDirectory()) walk(file)
-      else if (/\.(astro|ts|mjs|css|yaml|json|txt|svg|webmanifest|html)$/.test(entry.name)) files[path.relative(SITE, file)] = readFileSync(file, 'utf8')
+      else if (/\.(astro|ts|mjs|css|yaml|json|txt|md|svg|webmanifest|html)$/.test(entry.name)) files[path.relative(SITE, file)] = readFileSync(file, 'utf8')
     }
   }
-  for (const name of ['src', 'data', 'public']) walk(path.join(SITE, name))
+  for (const name of ['src', 'data', 'public', 'content']) walk(path.join(SITE, name))
   return files
 }
 
@@ -259,6 +298,26 @@ test('the plugin skills the documents name as carrying the old wording are the o
     carrying,
     [...SKILLS_THAT_CARRY_IT].sort(),
     `the plugin skills whose own SKILL.md carries ${RETIRED}, ${JSON.stringify(carrying)}, are not the ones the site's documents name, ${JSON.stringify([...SKILLS_THAT_CARRY_IT].sort())}: the word stays in those skills until 0.9.0 and the documents that name them move in the same commit (changes spec 2026-10-18, item 2)`,
+  )
+})
+
+test('the generated file that keeps the old wording is the one named here, and only until 0.9.0', () => {
+  // The exception is one path in a list, and a list is what this holds to the tree: the files
+  // under `website/content` that carry the word are exactly `FILES_THAT_KEEP_IT`. Two
+  // directions, and both matter. A second generated document that starts carrying the word is
+  // a defect the sweep would otherwise look past; and when the 0.9.0 work changes the root
+  // command's description and regenerates `cli-reference.md`, this fails with an empty list on
+  // the left and says to delete the line — an exception nobody needs is an exemption that goes
+  // on hiding whatever lands behind it.
+  const carrying = Object.entries(siteSources())
+    .filter(([rel]) => rel.startsWith('content/'))
+    .filter(([, body]) => RETIRED.test(body))
+    .map(([rel]) => rel)
+    .sort()
+  assert.deepEqual(
+    carrying,
+    [...FILES_THAT_KEEP_IT].sort(),
+    `the generated files under website/content carrying ${RETIRED}, ${JSON.stringify(carrying)}, are not the named exception(s), ${JSON.stringify([...FILES_THAT_KEEP_IT].sort())}: the CLI reference quotes the root command's help text, the owner's ruling of 2026-10-18 leaves that wording to the 0.9.0 work, and this list is the whole of the exemption (changes spec 2026-10-18, item 2)`,
   )
 })
 
