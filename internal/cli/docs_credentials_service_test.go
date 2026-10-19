@@ -355,3 +355,156 @@ func TestCredentialsStatusLinesRecordTheC0Approval(t *testing.T) {
 		t.Error("the plan's status does not record that Slice 0's docs and rules tasks are built")
 	}
 }
+
+// TestCredentialsDocsNeverStateTheSharedJobRefusalStays: the owner's ruling of
+// 2026-10-18 lifted phase 3's refusal of an OAuth launch onto a shared job — the
+// static `secret_env` mount carries it in 0.9.0 — so no line of the plan or the
+// reconciliation may still say the refusal waits for the service or for C3.9.
+// The reconciliation is a dated record, so its 2026-10-17 answer may stand; a
+// line that repeats it must carry the correction beside it.
+func TestCredentialsDocsNeverStateTheSharedJobRefusalStays(t *testing.T) {
+	const planPath = "docs/credentials-service/implementation-plan.md"
+	plan := readDoc(t, planPath)
+	gc6 := docTail(t, planPath, plan, "6. **Per-repository jobs only**")
+	if i := strings.Index(gc6, "\n7. **"); i != -1 {
+		gc6 = gc6[:i]
+	}
+	for _, want := range []string{
+		"is **lifted in 0.9.0**",
+		"2026-10-18",
+		"project-named-oauth-tokens.md",
+		"stopgap",
+		"unscheduled",
+	} {
+		if !strings.Contains(gc6, want) {
+			t.Errorf("Global Constraint 6 does not record the owner's lifting of the shared-job refusal: it lacks %q", want)
+		}
+	}
+	if strings.Contains(gc6, "stays until then") {
+		t.Error("Global Constraint 6 still says the shared-job refusal stays until the phase-3 rules land, which the owner's ruling of 2026-10-18 supersedes")
+	}
+	c39 := docTail(t, planPath, plan, "- **C3.9 Shared jobs**")
+	if i := strings.Index(c39, "\n\n"); i != -1 {
+		c39 = c39[:i]
+	}
+	for _, want := range []string{"does not wait for this", "lifts it in 0.9.0", "stopgap"} {
+		if !strings.Contains(c39, want) {
+			t.Errorf("C3.9 does not say the refusal is already lifted and only the service's admission of a shared job waits: it lacks %q", want)
+		}
+	}
+	if strings.Contains(c39, "refusal is lifted then") {
+		t.Error("C3.9 still says Task 3.4a's refusal is lifted only when the phase-3 rules land")
+	}
+	// The stale sentence may appear only on a line that carries the correction.
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.Contains(line, "stays until then") {
+			t.Errorf("the plan still carries the stale claim on a line of its own: %.120s", line)
+		}
+	}
+	const reconPath = "docs/credentials-service/reconciliation.md"
+	recon := readDoc(t, reconPath)
+	row := docTail(t, reconPath, recon, "| **D131** |")
+	row = row[:strings.Index(row, "\n")]
+	for _, want := range []string{"Superseded in part on 2026-10-18", "does **not** wait for", "project-named-oauth-tokens.md"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("reconciliation D131 does not carry the 2026-10-18 correction of its own answer: it lacks %q", want)
+		}
+	}
+	for _, line := range strings.Split(recon, "\n") {
+		if strings.Contains(line, "stays until the service exists") && !strings.Contains(line, "Superseded in part on 2026-10-18") {
+			t.Errorf("reconciliation repeats the refusal-stays claim without its correction: %.120s", line)
+		}
+	}
+}
+
+// TestChecklistCheck90RowDoesNotOverclaimU2AndU3: step 7 records that U3 stays
+// open when no usage limit can be met, and reconciliation sources U2 to
+// Anthropic's documentation rather than to this check, so the register's row
+// and the section's own summary may not read as if the check settled both. Row
+// 91's parallel overclaim was fixed; this is row 90's.
+func TestChecklistCheck90RowDoesNotOverclaimU2AndU3(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	row := docTail(t, checklistPath, doc, "| 90 | The OAuth header swap")
+	row = row[:strings.Index(row, "\n")]
+	for _, bad := range []string{"settles U1, U2, U3 and U4", "settles U2", "settles U3"} {
+		if strings.Contains(row, bad) {
+			t.Errorf("the register's row for Check 90 claims more than the check settles: it says %q", bad)
+		}
+	}
+	for _, want := range []string{"settles U1 and U4", "Anthropic's documentation", "only if a usage limit can be observed"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("the register's row for Check 90 does not say what the check does and does not settle: it lacks %q", want)
+		}
+	}
+	check := docSection(t, checklistPath, doc, chk90Heading)
+	for _, want := range []string{"Anthropic's documentation", "U3 stays open", "settle two of"} {
+		if !strings.Contains(check, want) {
+			t.Errorf("Check 90's own summary does not state what it settles: it lacks %q", want)
+		}
+	}
+	if strings.Contains(check, "settle four of") {
+		t.Error("Check 90's summary still claims it settles four of the reconciliation's open items")
+	}
+}
+
+// TestChecklistCheck91ColdStartProvesAFreshInstance: the step waited five
+// minutes and asserted the first request was cold, while Cloud Run holds an idle
+// instance far longer — this repository's own cold-start check (Check 41) waits
+// 35 minutes — so U5 would have been written from a warm measurement. The relay
+// now reports the time its process started, the step reads it before and after
+// the wait, and the FACT only counts a cold figure when the two differ.
+func TestChecklistCheck91ColdStartProvesAFreshInstance(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk91Heading)
+	relay := docSection(t, checklistPath, check, "### Check 91 step 2: the relay")
+	for _, want := range []string{"STARTED = time.time()", `"started=%s\n"`} {
+		if !strings.Contains(relay, want) {
+			t.Errorf("Check 91's relay does not report which instance answered: it lacks %q", want)
+		}
+	}
+	step := docSection(t, checklistPath, check, "### Check 91 step 4: cold start")
+	for _, want := range []string{
+		"sleep 2100",
+		"35 minutes",
+		"BEFORE=",
+		"AFTER=",
+		"NOT a cold start",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("Check 91's cold-start step does not prove the instance was released: it lacks %q", want)
+		}
+	}
+	if strings.Contains(step, "sleep 300") {
+		t.Error("Check 91's cold-start step still waits only five minutes for the idle instance, which Cloud Run keeps far longer")
+	}
+	if !strings.Contains(check, "A cold figure is one whose two `started=` values differ") {
+		t.Error("Check 91's FACT does not make the cold figure conditional on a new instance having answered")
+	}
+	if !strings.Contains(check, "started=` values that show a **different** instance") {
+		t.Error("Check 91's Passes-when does not require the evidence that the cold request met a new instance")
+	}
+}
+
+// TestChecklistCheck91PinsTheProtocolOfEachRow: the second body row relied on
+// curl's default ALPN and recorded no version, so a curl built without HTTP/2
+// would have sent HTTP/1.1 with no error and the row would have duplicated the
+// first while its FACT claimed to record the front end's HTTP/2 behaviour. Both
+// rows now pin their protocol and print `%{http_version}`, and the step stops
+// when the client cannot speak HTTP/2 at all.
+func TestChecklistCheck91PinsTheProtocolOfEachRow(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk91Heading)
+	step := docSection(t, checklistPath, check, "### Check 91 step 6: the request-body limit")
+	for _, want := range []string{
+		`--http1.1 -o "$CHK91/echo.out"`,
+		`--http2 -o "$CHK91/echo.out"`,
+		"%{http_version}",
+		"curl -V | grep -q 'HTTP2'",
+		"no HTTP/2 support",
+		"degrades to HTTP/1.1 silently",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("Check 91's body probe does not pin and record each row's protocol: it lacks %q", want)
+		}
+	}
+}
