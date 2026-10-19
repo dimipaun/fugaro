@@ -203,7 +203,18 @@ const STEPS = [
     max-width: var(--page-max);
   }
 
+  /* `max-width: none` is not decoration: `base.css` holds prose to the measure
+     (`:where(p, ul, ol, dl, blockquote, figcaption) { max-width: var(--measure) }`), and the
+     flow's steps are an `<ol>`. The cap is 68 ch — about 578 px at the body's 17 px — and the
+     four cards with their three arrows want about 720 px, so the list drew the whole picture
+     inside a 578 px box: cards about 143 px wide, `Ephemeral cloud job` breaking as
+     `Ephemera / l cloud job`, and the flow the narrowest thing in the section it is the
+     subject of. The list is not prose; it is the picture, and it is as wide as the page's
+     column. `website/test/base-styles.mjs` resolves the cascade for this element's own
+     `max-width` and refuses any cap narrower than the row needs, so this line cannot be
+     dropped quietly. */
   .flow-steps {
+    max-width: none;
     display: flex;
     flex-direction: column;
     margin: 0;

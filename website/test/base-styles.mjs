@@ -336,6 +336,364 @@ function longestWord(names) {
     .at(0) ?? ''
 }
 
+// ---- the cap the measure puts on the flow's own list (changes spec item 4) ---------------
+//
+// `base.css` holds prose to the measure — `:where(p, ul, ol, dl, blockquote, figcaption)
+// { max-width: var(--measure) }` — and the flow's four steps are an `<ol>`. That cap was
+// invisible to every check in this file: the arithmetic below sizes a card from the page's
+// own column, and a browser gives the list **the smaller of the column and the cap**. The
+// measure is 68 ch, about 578 px at the body's 17 px, where the four cards and their three
+// arrows want about 720: the row was drawn inside a 578 px box, the cards came out about
+// 143 px wide, `Ephemeral cloud job` broke as `Ephemera / l cloud job`, and the picture item
+// 4 is about was the narrowest thing in its own section. The declaration that fixes it is one
+// line (`max-width: none` on `.flow-steps`), and what this reader adds is the reason it
+// cannot be dropped quietly again: it resolves the cascade for that element's `max-width` —
+// the rules that reach an `<ol class="flow-steps">`, in force at the width, highest
+// specificity first and the last one winning a tie — turns the winner into pixels, and
+// refuses any cap narrower than the row it lays out needs.
+//
+// The reader knows the selectors this site writes and no more: an element name, classes, an
+// id, `:where()`, `:is()`, `:not()`, and state pseudo-classes (`:hover` and its kind, which a
+// browser does not apply at rest). Anything else a rule could reach the list through — an
+// attribute selector, a `::pseudo-element`, an ancestor part this reader cannot check against
+// a page it is not given — is **reported rather than skipped**: a cap nobody could read is a
+// cap nobody checked, which is how this defect shipped in the first place.
+
+/**
+ * The flow's list, as this reader models it: the `<ol class="flow-steps">` the component
+ * writes, with no attributes beyond its class. The gate below reads the real element — name,
+ * classes, id and every attribute it carries, Astro's scoping attribute included — out of the
+ * built page and hands it to the reader, so `[data-astro-cid-…]` is answered rather than
+ * guessed at; this is the fallback for a caller that has only a stylesheet.
+ */
+const FLOW_LIST = { name: 'ol', classes: ['flow-steps'], id: null, attrs: new Map() }
+
+/** Pseudo-classes that are a state rather than a shape: a browser does not apply them at rest. */
+const STATE_PSEUDO = new Set(['hover', 'focus', 'focus-visible', 'focus-within', 'active', 'visited', 'target'])
+
+/**
+ * A `ch` in pixels, at the element's own font size. `ch` is the advance of the font's `0`,
+ * which no stylesheet states and no hermetic test can measure — the site sets `--font-sans`,
+ * the reader's own system UI font. The value below is deliberately **below** what a digit
+ * measures in the sans stacks the tokens name (they run about 0.55–0.6 em), so a cap that
+ * fails here fails whatever the reader's font is: the failure is a statement about the
+ * smallest cap the value could mean, not about one machine's fonts.
+ */
+const CH = 0.5
+
+/** The parts of a list — a selector list, a value list — split on `separator` outside any parentheses. */
+function splitTop(text, separator) {
+  const out = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]
+    if (ch === '(' || ch === '[') depth += 1
+    else if (ch === ')' || ch === ']') depth -= 1
+    else if (depth === 0 && ch === separator) {
+      out.push(text.slice(start, i))
+      start = i + 1
+    }
+  }
+  out.push(text.slice(start))
+  return out.map((part) => part.trim()).filter(Boolean)
+}
+
+/** A selector's compounds — one per element — with the combinators between them taken out. */
+function compoundsOf(selector) {
+  const out = []
+  let depth = 0
+  let current = ''
+  for (const ch of selector) {
+    if (ch === '(' || ch === '[') depth += 1
+    else if (ch === ')' || ch === ']') depth -= 1
+    if (depth === 0 && (ch === ' ' || ch === '>' || ch === '+' || ch === '~')) {
+      if (current) out.push(current)
+      current = ''
+      continue
+    }
+    current += ch
+  }
+  if (current) out.push(current)
+  return out
+}
+
+/** The index of the `)` that closes the `(` at `open`, or -1. */
+function closingParen(selector, open) {
+  let depth = 0
+  for (let i = open; i < selector.length; i += 1) {
+    if (selector[i] === '(') depth += 1
+    else if (selector[i] === ')') {
+      depth -= 1
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+/** The index of the `]` that closes the `[` at `open`, with quoted values skipped, or -1. */
+function closingBracket(selector, open) {
+  let quote = ''
+  for (let i = open + 1; i < selector.length; i += 1) {
+    const ch = selector[i]
+    if (quote) {
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === '"' || ch === "'") quote = ch
+    else if (ch === ']') return i
+  }
+  return -1
+}
+
+/**
+ * How an attribute selector reads against the element this reader was given. The element's own
+ * attributes are carried in, rather than assumed: a component's stylesheet is scoped by the
+ * attribute Astro adds to the elements it styles (`.flow-steps[data-astro-cid-…]`), so a
+ * reader that could not answer for an attribute would report every component rule as
+ * unreadable — and one that assumed every attribute selector matched would read a rule about
+ * an element it has never seen as a cap on this one.
+ */
+function readAttribute(selector, element) {
+  const parsed = /^\[\s*([\w-]+)\s*(?:([~^$*|]?=)\s*(?:"([^"]*)"|'([^']*)'|([^\]\s]+))\s*([iIsS])?\s*)?\]$/.exec(selector)
+  if (!parsed) return { unreadable: `the attribute selector ${JSON.stringify(selector)}` }
+  const [, name, operator, doubleQuoted, singleQuoted, bare, flag] = parsed
+  const actual = element.attrs?.get(name)
+  if (operator === undefined) return { matches: actual !== undefined }
+  if (actual === undefined) return { matches: false }
+  const insensitive = (flag ?? '').toLowerCase() === 'i'
+  const have = insensitive ? actual.toLowerCase() : actual
+  const want = insensitive ? (doubleQuoted ?? singleQuoted ?? bare ?? '').toLowerCase() : doubleQuoted ?? singleQuoted ?? bare ?? ''
+  const answers = {
+    '=': have === want,
+    '~=': have.split(/\s+/).includes(want),
+    '^=': have.startsWith(want),
+    '$=': have.endsWith(want),
+    '*=': have.includes(want),
+    '|=': have === want || have.startsWith(`${want}-`),
+  }
+  return answers[operator] === undefined ? { unreadable: `the attribute operator ${JSON.stringify(operator)}` } : { matches: answers[operator] }
+}
+
+const IDENT = /^[a-zA-Z][\w-]*/
+
+/**
+ * How one compound of a selector reads against the flow's list: `{ matches, ratio }`, where
+ * `ratio` is the compound's specificity as `[ids, classes, elements]` — or `{ unreadable }`
+ * when the compound carries something this reader cannot evaluate **and could still match**.
+ * A compound that already cannot match the element (another name, another class) answers
+ * `matches: false` whatever else it carries, which is what keeps a rule about somebody else's
+ * `::marker` out of this reader's way.
+ */
+function readCompound(compound, element) {
+  const ratio = [0, 0, 0]
+  let matches = true
+  let i = 0
+  const unreadable = (why) => (matches ? { unreadable: why } : { matches: false, ratio })
+  if (compound[i] === '*') i += 1
+  else {
+    const name = IDENT.exec(compound.slice(i))
+    if (name) {
+      if (name[0].toLowerCase() !== element.name) matches = false
+      ratio[2] += 1
+      i += name[0].length
+    }
+  }
+  while (i < compound.length) {
+    const ch = compound[i]
+    if (ch === '.') {
+      const name = IDENT.exec(compound.slice(i + 1))
+      if (!name) return unreadable(`a class in ${JSON.stringify(compound)} this reader cannot read`)
+      if (!element.classes.includes(name[0])) matches = false
+      ratio[1] += 1
+      i += 1 + name[0].length
+      continue
+    }
+    if (ch === '#') {
+      const name = IDENT.exec(compound.slice(i + 1))
+      if (!name) return unreadable(`an id in ${JSON.stringify(compound)} this reader cannot read`)
+      if (element.id !== name[0]) matches = false
+      ratio[0] += 1
+      i += 1 + name[0].length
+      continue
+    }
+    if (ch === '[') {
+      const end = closingBracket(compound, i)
+      if (end === -1) return unreadable(`the unbalanced ${JSON.stringify(compound)}`)
+      const attribute = readAttribute(compound.slice(i, end + 1), element)
+      if (attribute.unreadable) return unreadable(attribute.unreadable)
+      if (!attribute.matches) matches = false
+      ratio[1] += 1
+      i = end + 1
+      continue
+    }
+    if (ch === ':') {
+      const double = compound[i + 1] === ':'
+      const name = IDENT.exec(compound.slice(i + (double ? 2 : 1)))
+      if (!name) return unreadable(`a pseudo-class in ${JSON.stringify(compound)} this reader cannot read`)
+      const pseudo = name[0].toLowerCase()
+      const after = i + (double ? 2 : 1) + name[0].length
+      if (compound[after] === '(') {
+        const end = closingParen(compound, after)
+        if (end === -1) return unreadable(`the unbalanced ${JSON.stringify(compound)}`)
+        if (double) return unreadable(`the pseudo-element ${JSON.stringify(compound.slice(i, end + 1))}`)
+        if (pseudo !== 'where' && pseudo !== 'is' && pseudo !== 'not') {
+          return unreadable(`the functional pseudo-class ${JSON.stringify(`:${pseudo}()`)} in ${JSON.stringify(compound)}`)
+        }
+        const readings = splitTop(compound.slice(after + 1, end), ',').map((arg) => readSelector(arg, element))
+        if (readings.some((r) => r.unreadable)) return unreadable(`the ${JSON.stringify(`:${pseudo}()`)} in ${JSON.stringify(compound)}, whose own arguments this reader cannot evaluate`)
+        // An empty `:where()`/`:is()` matches nothing — and an empty selector list is an
+        // invalid selector, so the rule it is written in never applies at all.
+        const any = readings.length > 0 && readings.some((r) => r.matches)
+        // `:where()` contributes nothing to the specificity; `:is()` and `:not()` take their
+        // most specific argument's, which is what makes `:where(ul, ol)` a zero the class
+        // `.flow-steps` beats and a `:is(ol)` worth the element name it carries.
+        const strongest = readings.map((r) => r.ratio).reduce((a, b) => (moreSpecific(b, a) ? b : a), [0, 0, 0])
+        if (pseudo === 'not') {
+          if (any) matches = false
+          ratio[0] += strongest[0]
+          ratio[1] += strongest[1]
+          ratio[2] += strongest[2]
+        } else if (pseudo === 'is') {
+          if (!any) matches = false
+          ratio[0] += strongest[0]
+          ratio[1] += strongest[1]
+          ratio[2] += strongest[2]
+        } else if (!any) matches = false
+        i = end + 1
+        continue
+      }
+      if (double) return unreadable(`the pseudo-element ${JSON.stringify(`::${pseudo}`)}`)
+      if (STATE_PSEUDO.has(pseudo)) {
+        matches = false
+        ratio[1] += 1
+        i = after
+        continue
+      }
+      return unreadable(`the pseudo-class ${JSON.stringify(`:${pseudo}`)} in ${JSON.stringify(compound)}`)
+    }
+    return unreadable(`the part of ${JSON.stringify(compound)} that begins at ${JSON.stringify(ch)}`)
+  }
+  return { matches, ratio }
+}
+
+/**
+ * How a whole selector reads against the flow's list. A selector with more than one compound
+ * reaches the element through an ancestor — `figure > ol` — and an ancestor is a fact about a
+ * page this reader is not given, so it is reported rather than assumed either way.
+ */
+function readSelector(selector, element) {
+  const compounds = compoundsOf(selector)
+  const subject = compounds.at(-1)
+  if (!subject) return { unreadable: `the empty selector ${JSON.stringify(selector)}` }
+  const reading = readCompound(subject, element)
+  // A rule about somebody else's element — `.site-footer ul`, `figure > ol` where there is no
+  // such figure — is not a rule about this one, and saying so here is what keeps an unrelated
+  // rule out of the refusals below. Only a selector that *does* reach the list and reaches it
+  // through an ancestor is unreadable.
+  if (reading.unreadable || !reading.matches) return reading
+  if (compounds.length > 1) {
+    return { unreadable: `${JSON.stringify(selector)}, whose ancestor part this reader cannot check against a page` }
+  }
+  return reading
+}
+
+/** True when `a` is the more specific of two `[ids, classes, elements]` ratios. */
+function moreSpecific(a, b) {
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return a[i] > b[i]
+  }
+  return false
+}
+
+/** The values a stylesheet declares its tokens as, for following a `var()` to what it means. */
+function tokenText(css) {
+  const out = new Map()
+  for (const m of css.matchAll(/--([a-z0-9-]+):\s*([^;{}]+)/g)) out.set(m[1], m[2].trim())
+  return out
+}
+
+/** The font size the flow's list is set in: what its `ch` lengths are measured against. */
+function elementFontPx(css) {
+  const tokens = lengthTokens(css)
+  const rules = allRules(css)
+  const own = rules
+    .filter((r) => /\.flow-steps(?![\w-])/.test(r.selector))
+    .map((r) => declarations(r)['font-size'])
+    .filter(Boolean)
+    .pop()
+  const body = rules
+    .filter((r) => /(^|[,\s>])body(?![\w-])/.test(r.selector))
+    .map((r) => declarations(r)['font-size'])
+    .filter(Boolean)
+    .pop()
+  return toPx(own ?? body ?? '', tokens) || 16
+}
+
+/** A `max-width` value as pixels: `none` is no cap at all, and `NaN` is a value this reader cannot measure. */
+function capPixels(value, tokens, pxTokens, fontPx) {
+  const seen = new Set()
+  let text = value.trim()
+  for (;;) {
+    const variable = /^var\(--([a-z0-9-]+)\)$/.exec(text)
+    if (!variable) break
+    if (seen.has(variable[1])) return NaN
+    seen.add(variable[1])
+    const next = tokens.get(variable[1])
+    if (next === undefined) return NaN
+    text = next
+  }
+  if (text === 'none') return Infinity
+  const px = toPx(text, pxTokens)
+  if (!Number.isNaN(px)) return px
+  const ch = /^([\d.]+)ch$/.exec(text)
+  return ch ? Number(ch[1]) * CH * fontPx : NaN
+}
+
+/**
+ * The `max-width` in force on the flow's list at a viewport width: `{ px, value, selector,
+ * query }`, where `px` is `Infinity` for `none` or for no rule at all — or `{ unreadable }`
+ * when a rule that reaches the element carries a value or a selector this reader cannot
+ * evaluate, which the caller refuses rather than reads past.
+ */
+export function flowListMaxWidth(css, width, element = FLOW_LIST) {
+  const rules = allRules(css)
+  const tokens = tokenText(css)
+  const fontPx = elementFontPx(css)
+  const unreadable = []
+  let best = null
+  for (const rule of rules) {
+    if (!appliesAt(width)(rule)) continue
+    // Only a rule that declares a `max-width` can be a cap, and only those are read: a rule
+    // about something else — `:root`'s tokens, a heading's size — is not this check's subject,
+    // and reporting *its* selector as unreadable would be noise about a rule that cannot
+    // squeeze anything.
+    const value = declarations(rule)['max-width']
+    if (value === undefined) continue
+    let ratio = null
+    for (const part of splitTop(rule.selector, ',')) {
+      const reading = readSelector(part, element)
+      if (reading.unreadable) {
+        unreadable.push(`${reading.unreadable}${rule.query ? ` inside ${rule.query}` : ''}`)
+        continue
+      }
+      if (!reading.matches) continue
+      if (ratio === null || moreSpecific(reading.ratio, ratio)) ratio = reading.ratio
+    }
+    if (ratio === null) continue
+    if (best === null || !moreSpecific(best.ratio, ratio)) best = { value, ratio, selector: rule.selector, query: rule.query }
+  }
+  // A rule that reaches this element and whose selector or value this reader cannot read is
+  // reported rather than skipped: it may be the one that caps the list.
+  if (unreadable.length > 0) return { unreadable: unreadable[0] }
+  if (best === null) return { px: Infinity, value: 'none', selector: '', query: '' }
+  const px = capPixels(best.value, tokens, lengthTokens(css), fontPx)
+  if (Number.isNaN(px)) {
+    return { unreadable: `${JSON.stringify(best.value)} on ${JSON.stringify(best.selector)}${best.query ? ` inside ${best.query}` : ''}` }
+  }
+  return { px, value: best.value, selector: best.selector, query: best.query }
+}
+
 /**
  * Every way the flow's four-across row fails to render the step names it prints, for one
  * built page's stylesheet and the names that page carries. Two things are checked, and each
@@ -358,7 +716,7 @@ function longestWord(names) {
  * back — the arithmetic takes the padding the rules declare and ignores the shortcut, so the
  * width it works from is a floor rather than the page's own.
  */
-export function flowLayoutFailures(css, names, wrappers = []) {
+export function flowLayoutFailures(css, names, wrappers = [], element = FLOW_LIST) {
   const out = []
   const rules = allRules(css)
   const tokens = lengthTokens(css)
@@ -420,10 +778,20 @@ export function flowLayoutFailures(css, names, wrappers = []) {
     return sum + (value ?? 0)
   }, 0)
 
-  // The card's content box at a viewport: the page's column, less the gutters, shared between
-  // four cards, three arrows and three gaps, less the card's own padding and border.
-  const contentBox = (width) =>
-    (Math.min(width, tokens.get('page-max')) - 2 * mainPad(width) - 2 * wrapperPad - 3 * gap - 3 * arrow) / 4 - 2 * cardPad - 2 * border
+  // The width the four-across row itself gets at a viewport: the page's column — `--page-max`
+  // less the page's gutters — or the cap the measure puts on the list, whichever is narrower.
+  // The second half is the reading the arithmetic above was missing, and the defect it missed:
+  // `.flow-steps` is a `<ol>`, `base.css` holds lists to the measure, and a browser gives the
+  // row the smaller of the two boxes rather than the column the card was sized against.
+  const column = (width) => Math.min(width, tokens.get('page-max')) - 2 * mainPad(width) - 2 * wrapperPad
+  const rowWidth = (width) => {
+    const cap = flowListMaxWidth(css, width, element)
+    return Math.min(column(width), Number.isNaN(cap.px) ? 0 : cap.px)
+  }
+
+  // The card's content box at a viewport: the row's width, shared between four cards, three
+  // arrows and three gaps, less the card's own padding and border.
+  const contentBox = (width) => (rowWidth(width) - 3 * gap - 3 * arrow) / 4 - 2 * cardPad - 2 * border
 
   // The head is a row (the number beside the name) until a rule turns it into a column, which
   // is how the name's own box is read: the number is `flex: none`, so a row takes its width and
@@ -435,10 +803,28 @@ export function flowLayoutFailures(css, names, wrappers = []) {
       .filter(Boolean)
       .pop() === 'column'
 
+  // What the row needs of its own box: four cards wide enough for the longest word of the
+  // names (plus their own padding and border), the three arrows between them and the three
+  // gaps. A box narrower than this is a row the browser has to squeeze.
+  const cardNeeds = (names_) => textWidth(longestWord(names_), nameSize) + 2 * cardPad + 2 * border
+  const rowNeeds = (names_) => 4 * cardNeeds(names_) + 3 * (arrow + gap)
+
   for (const width of [at, 80 * 16]) {
     const content = contentBox(width)
     const nameBox = headIsColumn(width) ? content : content - number - headGap
     const needs = textWidth(longestWord(names), nameSize)
+    const cap = flowListMaxWidth(css, width, element)
+    if (cap.unreadable) {
+      out.push(
+        `at ${width / 16} rem the flow's list is reached by a rule this check cannot read — ${cap.unreadable} — and a cap nobody can read is a cap nobody checked: teach \`website/test/base-styles.mjs\`'s cascade reader the construct, or write the rule in a shape it reads`,
+      )
+    } else if (cap.px < rowNeeds(names)) {
+      out.push(
+        `at ${width / 16} rem the flow's list is capped at ${Math.round(cap.px)} px (max-width: ${cap.value}` +
+          `${cap.selector ? `, from ${JSON.stringify(cap.selector)}` : ''}${cap.query ? ` inside ${cap.query}` : ''}), and the four cards with their three arrows need ${Math.round(rowNeeds(names))} px: ` +
+          `the list is an \`<ol>\`, base.css holds lists to the measure, and the cap squeezes the picture into a narrower box than it is drawn for (changes spec 2026-10-18, item 4)`,
+      )
+    }
     if (nameBox < needs) {
       out.push(
         `at ${width / 16} rem the flow's four-across row gives a step name ${Math.round(nameBox)} px and the longest word of the names it prints (${JSON.stringify(longestWord(names))}, at ${nameSize} px) needs ${Math.round(needs)} px: the row cannot render its own step names (changes spec 2026-10-18, item 4)`,
@@ -453,6 +839,25 @@ function stepNames(html) {
   return [...walk(parse(html))]
     .filter((el) => el.name === 'h2' && (el.attrs.get('class') ?? '').split(/\s+/).includes('step-name'))
     .map((el) => textOf(el).replace(/\s+/g, ' ').trim())
+}
+
+/**
+ * The flow's list element on one built page, as `flowListMaxWidth` reads it: its name, its
+ * classes, its id and every attribute it carries. The attributes matter because Astro scopes a
+ * component's stylesheet by adding one (`data-astro-cid-…`), and a rule the cascade reader
+ * could not answer for is a rule it has to refuse.
+ */
+export function flowListElement(html) {
+  const list = [...walk(parse(html))].find(
+    (el) => el.name === 'ol' && (el.attrs.get('class') ?? '').split(/\s+/).includes('flow-steps'),
+  )
+  assert.ok(list, 'the page carries no <ol class="flow-steps">, so the cap on it cannot be read: item 4 puts the flow on the homepage and on How It Works')
+  return {
+    name: list.name,
+    classes: (list.attrs.get('class') ?? '').split(/\s+/).filter(Boolean),
+    id: list.attrs.get('id') ?? null,
+    attrs: list.attrs,
+  }
 }
 
 /** The classes between `main` and the flow's figure on one built page: the gutters it sits in. */
@@ -472,7 +877,7 @@ test('the four-across flow has room for the step names it prints', () => {
     const names = stepNames(html)
     if (names.length === 0) continue
     checked += 1
-    failures.push(...flowLayoutFailures(pageCss(html), names, flowWrappers(html)).map((line) => `${rel}: ${line}`))
+    failures.push(...flowLayoutFailures(pageCss(html), names, flowWrappers(html), flowListElement(html)).map((line) => `${rel}: ${line}`))
   }
   assert.ok(checked > 0, 'no built page carries the flow, and item 4 puts it on the homepage and on How It Works')
   assert.deepEqual(failures, [], `the flow cannot render its own step names:\n  ${failures.join('\n  ')}`)
@@ -482,8 +887,22 @@ test('every flow-layout refusal fires on the defect it names', () => {
   const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const names = stepNames(home)
   const wrappers = flowWrappers(home)
+  const element = flowListElement(home)
   assert.ok(names.length === 4, `the homepage prints ${names.length} step names, and the flow is the spec's four steps`)
   const cases = [
+    // The defect this reader was written for, and the one the picture shipped with: the
+    // measure — `base.css`'s `:where(p, ul, ol, dl, blockquote, figcaption) { max-width:
+    // var(--measure) }` — reaching the flow's own list, because the list is an `<ol>`. A card
+    // is sized against the page's column and the browser gives the row 578 px, so the four
+    // cards and their arrows are drawn in a box narrower than they need.
+    ['the measure’s cap on the flow’s list', plant(';max-width:none', ''), /is capped at \d+ px/],
+    // A cap written in a shape the reader cannot evaluate is refused rather than skipped: a
+    // selector it cannot read may be the one that squeezes the list.
+    [
+      'a rule that reaches the list in a shape this reader cannot read',
+      TODAY().replace(/\.flow-steps(\[data-astro-cid-)/, '.flow-steps:nth-child(2)$1'),
+      /reached by a rule this check cannot read/,
+    ],
     // The defect as it shipped: the name on one line, in a card a quarter of the row wide.
     [
       'a step name held on one line',
@@ -523,10 +942,10 @@ test('every flow-layout refusal fires on the defect it names', () => {
     ],
   ]
   for (const [what, css, expected] of cases) {
-    const failures = [...flowLayoutFailures(css, names, wrappers), ...arrowDirectionFailures(css, home)]
+    const failures = [...flowLayoutFailures(css, names, wrappers, element), ...arrowDirectionFailures(css, home)]
     assert.ok(failures.some((f) => expected.test(f)), `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`)
   }
-  assert.deepEqual(flowLayoutFailures(TODAY(), names, wrappers), [], 'the flow-layout rule fails on the built stylesheet, so the cases above are not proving what they name')
+  assert.deepEqual(flowLayoutFailures(TODAY(), names, wrappers, element), [], 'the flow-layout rule fails on the built stylesheet, so the cases above are not proving what they name')
   assert.deepEqual(arrowDirectionFailures(TODAY(), home), [], 'the arrow-direction rule fails on the built page, so the cases above are not proving what they name')
 })
 
