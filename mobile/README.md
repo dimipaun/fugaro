@@ -138,16 +138,27 @@ eas submit --platform android --profile internal --latest
 `app-bundle` (the Play app-signing path) and `submit.internal.android.track`
 **exactly `internal`** — C8's whole content is that one value. The iOS submit
 side names nothing at all: EAS prompts for it. `cli.appVersionSource` is
-`remote`, and what that moves is the **build number** — `expo.ios.buildNumber`
-and `expo.android.versionCode`: EAS holds it on the project and increments it,
-so no file here carries one. It is **not** the version the stores show, and it
-is not the version check 89 step 4 compares with the tag: that one is
-`expo.version` in `app.json`, the line C6 ties to the release tag, so releasing
-this app means setting it to the version being released (`0.0.0` in the tree is
-the placeholder a release replaces — nothing here bumps it for you). And
-`cli.requireCommit` is `true` (a store build records the commit it was made
-from). `development` is a dev client on internal distribution and `preview` is
-an internal-distribution build — neither reaches a store — and each profile
+`remote`, and what that puts on the project is the **build number** —
+`expo.ios.buildNumber` and `expo.android.versionCode`: EAS holds it, so no file
+here carries one. Remote means *stored* remotely, not *moved*: the `internal`
+profile therefore sets `autoIncrement: true`, which is what makes EAS raise the
+build number for each build — and that is not a convenience but the thing that
+keeps a second internal build and submit from being refused, because App Store
+Connect rejects a build whose number repeats one it already has (a *redundant
+binary*) and Play rejects a duplicate version code, so a store profile with
+`remote` and no `autoIncrement` builds once and then stops. It is on `internal`
+alone, and the reason is the same one that names it the store profile:
+`development` and `preview` are internal-distribution builds that reach no
+store, so incrementing for them would spend this release's build numbers on
+artifacts nobody ever submits. The build number is **not** the version the
+stores show, and it is not the version check 89 step 4 compares with the tag:
+that one is `expo.version` in `app.json`, the line C6 ties to the release tag,
+so releasing this app means setting it to the version being released (`0.0.0` in
+the tree is the placeholder a release replaces — nothing here bumps it for
+you). And `cli.requireCommit` is `true` (a store build records the commit it was
+made from). `development` is a dev client on internal distribution and
+`preview` is an internal-distribution build — neither reaches a store — and
+each profile
 names the EAS environment it builds with (`development`, `preview`, and
 `production` for `internal`), which is why the variables are created in all
 three above: a profile that named none would resolve EAS's default environment

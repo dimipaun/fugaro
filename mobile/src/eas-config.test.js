@@ -15,6 +15,14 @@
 //     path), and `submit.internal.android.track` **exactly `internal`** --
 //     C8's whole content is that one value, because an internal release is not
 //     a public one and cannot be withdrawn the way a public one can;
+//   * **a profile a store is submitted from increments its build number.** The
+//     build number lives on the EAS project (`cli.appVersionSource: remote`),
+//     and a project-held number does not move by itself: `autoIncrement: true`
+//     on the submitted profile is what moves it, and without it the second
+//     build and submit is refused (a redundant binary on App Store Connect, a
+//     duplicate version code on Play). It is on that profile alone -- the
+//     internal-distribution profiles reach no store, and a build number spent
+//     on one of them is spent for nothing.
 //   * **no credential path and no credential value anywhere in it.** A path to
 //     a key file in `eas.json` is the finding Check 89's step 5 exists to
 //     catch: the credentials belong to the EAS project (server-side, under the
@@ -146,6 +154,39 @@ test('the `internal` profile is the store profile: store distribution, an app bu
   assert.notEqual(profile.distribution, 'internal');
 });
 
+test('a profile a store is submitted from increments its remote build number', () => {
+  // `appVersionSource: remote` puts the build number on the EAS project, and a
+  // project-held number does not move by itself: without `autoIncrement` every
+  // build of the profile reuses the same `expo.ios.buildNumber` /
+  // `expo.android.versionCode`, so the first build and submit is accepted and
+  // the second is refused -- App Store Connect rejects a build number it
+  // already has (a redundant binary) and Play rejects a duplicate version code.
+  // Check 89 step 2 builds and step 3 submits; a check that can be run once is
+  // not a check.
+  //
+  // The property is stated over the **submit** side, because that is the set of
+  // profiles that reach a store: each submitted profile's build profile has to
+  // increment. Mutation: drop `build.internal.autoIncrement` and this goes red.
+  assert.equal(EAS.cli?.appVersionSource, 'remote', 'the premise: the build number is the project\'s, so a profile has to ask for the increment');
+  const submitted = Object.keys(EAS.submit ?? {});
+  assert.equal(submitted.length > 0, true, 'the submit side names the profiles this property is about');
+  for (const name of submitted) {
+    assert.equal(name in EAS.build, true, `submit.${name} submits a build profile that exists`);
+    assert.equal(
+      EAS.build[name].autoIncrement,
+      true,
+      `build.${name} is submitted to a store, so its remote build number has to be incremented -- without it the second build is refused as a redundant binary or a duplicate version code`,
+    );
+  }
+  // ... and it is on those alone: `development` and `preview` reach no store
+  // (the README says why), so a build number is not spent on them.
+  assert.deepEqual(
+    Object.entries(EAS.build).filter(([, profile]) => profile.autoIncrement === true).map(([name]) => name),
+    ['internal'],
+    'only a store-submitted profile increments: the build numbers are the release\'s, and an internal-distribution build nobody submits spends one for nothing',
+  );
+});
+
 test('the submit profile lands on the internal track, which is C8', () => {
   // The one value Check 89 step 1 reads with `jq '.submit.internal.android.track'`.
   assert.equal(EAS.submit.internal.android?.track, 'internal');
@@ -202,25 +243,34 @@ test('no identity is committed here: the variables are EAS environment variables
 });
 
 test('the build number is EAS’s, the version is the tree’s, and a build is a committed tree', () => {
-  // `appVersionSource` is where the **build number** lives and increments --
+  // `appVersionSource` is where the **build number** is kept --
   // `expo.ios.buildNumber` and `expo.android.versionCode` -- and **not** the
   // version the stores show or the app reports: that one is `expo.version` in
   // `app.json`, the line C6 ties to the release tag, and check 89 step 4 is
   // the step that compares the installed app's version with the tag. Read the
   // other way round it tells a reader to leave `app.json` alone, and step 4
   // then fails on an app that reports `0.0.0`.
-  assert.equal(EAS.cli?.appVersionSource, 'remote', 'the build number is EAS\'s to hold and increment, not a file\'s');
+  //
+  // And `remote` is where the number is *stored*, not a promise that it moves:
+  // the increment is a profile's own (`autoIncrement`, asserted below), so
+  // this line does not stand on its own.
+  assert.equal(EAS.cli?.appVersionSource, 'remote', 'the build number is EAS\'s to hold, and to move only where a profile says so: `remote` alone leaves it standing still');
   assert.equal(EAS.cli?.requireCommit, true, 'a store build records the commit it was made from');
   // ... and the file a reader trusts about it says the same thing. Mutation:
   // put "the store version is EAS's to move, not a file's" back into the
-  // README's paragraph on this key and the first two lines below go red.
+  // README's paragraph on this key and the first two lines below go red; drop
+  // `autoIncrement` from the paragraph and the third goes red (a README that
+  // says EAS "increments it" without the flag is the claim that builds a
+  // second time and is refused).
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const at = readme.indexOf('`cli.appVersionSource`');
   assert.notEqual(at, -1, 'the README explains `cli.appVersionSource` where the owner reads the profiles');
   const rest = readme.slice(at);
   const end = rest.indexOf('\n\n');
   const about = end < 0 ? rest : rest.slice(0, end);
-  assert.match(about, /build number/, 'the README says which number `appVersionSource` moves');
+  assert.match(about, /build number/, 'the README says which number `appVersionSource` holds');
   assert.match(about, /expo\.version/, 'and names the version line that is the tree\'s to set (C6, check 89 step 4)');
+  assert.match(about, /autoIncrement/, 'and names the flag that actually moves the remote build number');
+  assert.match(about, /reach no\s+store/, 'and says why it is on the submitted profile alone: the profiles that reach no store do not spend a build number');
   assert.equal(about.includes("the store version is EAS's to move"), false, 'the README does not hand the store version to EAS');
 });

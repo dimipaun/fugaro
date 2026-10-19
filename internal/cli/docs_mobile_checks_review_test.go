@@ -558,10 +558,12 @@ func TestDocsCheck82PrintVarsKeys(t *testing.T) {
 
 // TestDocsCheck89GuardMatchesWhatExists: check 89's guard is written to
 // hard-stop on a checkout without the app, and it stopped on `mobile/app.json`
-// because P3.1 had not landed when the check was written. It has: the file is
-// in this checkout, so the guard stops on `mobile/eas.json` (P4.4 makes it)
-// and on an app.json that does not carry the store identity yet -- the ids a
-// store build cannot be submitted without. The old guard read
+// because P3.1 had not landed when the check was written. Both files have
+// landed -- P3.1's `mobile/app.json` and P4.4's `mobile/eas.json` and
+// `mobile/app.config.js` are all in this checkout, so the guard's file tests
+// pass and what it stops on today is the store identity itself: an app.json
+// that does not carry it, and the two variables that are not in the shell yet
+// -- the ids a store build cannot be submitted without. The old guard read
 // `d["ios"]["bundleIdentifier"]` and would have died with a Python traceback
 // instead of saying so.
 //
@@ -596,7 +598,7 @@ func TestDocsCheck89GuardMatchesWhatExists(t *testing.T) {
 		}
 	}
 	if !strings.Contains(guard, "mobile/eas.json") {
-		t.Errorf("## Check 89: the guard does not stop on mobile/eas.json, which is what is absent today (P4.4 writes it): the guard has to name the file whose absence is the honest current state")
+		t.Errorf("## Check 89: the guard does not test for mobile/eas.json, the file the build and submit profiles are read from (P4.4's, and in this checkout): without the test, a checkout that predates it would build against no profiles at all, and the stop would come from eas-cli's own error rather than from this guard")
 	}
 	if strings.Contains(guard, `d["ios"]["bundleIdentifier"]`) {
 		t.Errorf("## Check 89: the guard reads ios.bundleIdentifier straight out of app.json, and the file has no such key yet: the guard dies with a Python traceback instead of stopping with the reason a store build cannot be submitted")
