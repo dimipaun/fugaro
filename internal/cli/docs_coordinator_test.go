@@ -9,9 +9,10 @@ package cli
 // the owner answers the reconciliation's questions.
 //
 // The reconciliation's whole value is that every claim in it is checkable, and
-// the three things a later edit can silently break are: the spec stops being
-// verbatim, a citation drifts to a path that no longer exists, or the work
-// starts allocating decision numbers the owner never gave it. Each of the eight
+// the four things a later edit can silently break are: the spec stops being
+// verbatim, a citation drifts to a path that no longer exists, a citation into a
+// document other works add to drifts off the sentence it meant, or the work
+// starts allocating decision numbers the owner never gave it. Each of the nine
 // tests below is one of those, plus the two structural facts (the questions are
 // numbered and optioned; the index states the status, the owner and the commit
 // checked against) and one that reads this file rather than the documents (the
@@ -43,11 +44,21 @@ package cli
 //    full-path citation before it in its own paragraph, to a line that exists,
 //    and -- where a symbol is named -- to a symbol within a few lines of it.
 //  * TestDocsCoordinatorNumbersTableIsReadFromItsSources -- the README's numbers
-//    table is a reading of five other documents' allocations: every citation in
+//    table is a reading of six other documents' allocations: every citation in
 //    the section is one the test pins, every block either row states is named
-//    with its state and read from the line it cites, that line still carries the
-//    claim, and no range the checks row calls unwritten covers a number the
-//    register has written.
+//    with its state and read from the one line of the document it cites that
+//    carries the block's own label, that line still carries it, and no range the
+//    checks row calls unwritten covers a number the register has written.
+//  * TestDocsCoordinatorFrequentCitationsAreAnchoredByContent -- the other half
+//    of the same rule, on the reconciliation: none of its citations into
+//    `docs/design/` or `docs/mobile/` carries a line number, every one of them is
+//    held to the single line of its document that carries the phrase the citation
+//    turns on, and the anchors are counted against the citations document by
+//    document, so a claim added against a document that already has an anchor
+//    fails until it has one of its own -- the case a document-level check passes.
+//    It also holds the index to what it holds: the sentence stating the rule is
+//    pinned, so it cannot widen back to cover the index's own links into those
+//    trees, which name no phrase and are anchored by nothing.
 //  * TestDocsCoordinatorQuestionsAreNumberedAndOptioned -- Q1..Q16, contiguous,
 //    each with at least two options, a recommendation and the owner's recorded
 //    answer of 2026-10-19.
@@ -60,7 +71,7 @@ package cli
 //    twenty-four -- which is the same silent-overclaim the citation census
 //    exists to catch in the document.
 //
-// Mutation (verified, run and restored) -- 58, one per way these documents can
+// Mutation (verified, run and restored) -- 61, one per way these documents can
 // rot, each planted and reverted. The count is a digit and not a word, and
 // there is only one of it, because TestDocsCoordinatorMutationRecordIsCounted
 // reads it and counts the list under it: one arrow per mutation, so a number
@@ -190,7 +201,18 @@ package cli
 //	  longer names D21–D38, and the table it is read from splits them;
 //	  call a held block unused (`**D55–D78** managed projects, unused`) ->
 //	  fails: the range rule rejects it, because the allocation's own documents
-//	  record D55–D78 as held.
+//	  record D55–D78 as held;
+//	  put the checks row's old state back for 100–104 (`**100–104** are
+//	  **proposed, not approved**`, read from `docs/mobile/README.md`) -> fails
+//	  twice: the row no longer carries the plan's own label, and the document the
+//	  pin reads the block from is the mobile README, not the plan that approved
+//	  those five checks;
+//	  put a bare relative line reference back in the numbers section (a `:25`
+//	  beside a block, with the document taken from the sentence around it) ->
+//	  fails: the section's citation matcher reads that shape and refuses it, and
+//	  before this round the matcher required a full `path.md` before the line
+//	  spec, so the token was invisible -- the one citation shape in the section
+//	  that names no document at all was the one nothing could see.
 //	TestDocsCoordinatorFrequentCitationsAreAnchoredByContent
 //	  put a line number back on a citation into one of those trees
 //	  (`docs/design/v1.md:26`, the shape every one of these citations had) ->
@@ -216,7 +238,11 @@ package cli
 //	  sentence citing `docs/design/v1.md` beside the four there) -> fails,
 //	  naming the citation count and the anchor count: one anchor holds one
 //	  citation, and a claim added against an already-anchored document is
-//	  exactly what a check comparing documents rather than citations passes.
+//	  exactly what a check comparing documents rather than citations passes;
+//	  widen the README's sentence back to "holds every one of them" (dropping the
+//	  pinned sentence that scopes it to the reconciliation) -> fails: this test
+//	  reads reconciliation.md and nothing else, and the index's own links into
+//	  those two trees name no phrase for an anchor to hold.
 //	TestDocsCoordinatorQuestionsAreNumberedAndOptioned
 //	  delete Q9 -> fails on every question after it;
 //	  leave Q12 with one option -> fails;
@@ -1731,7 +1757,28 @@ func TestDocsCoordinatorFrequentCitationsAreAnchoredByContent(t *testing.T) {
 	}
 	t.Logf("%s: %d citations under %s held by %d content anchors, none of them by a line number",
 		coordinatorReconciled, total, strings.Join(coordinatorContentAnchoredDirs, " and "), len(coordinatorContentAnchors))
+
+	// And the index must not claim more of this test than it does. This test reads the
+	// reconciliation and nothing else, so a README sentence saying it "holds every one of
+	// them" -- every citation into either tree, the index's own included -- was false: the
+	// Check 110 row and the reading list name a document and no phrase, and no anchor is
+	// behind them. The sentence that scopes the rule is pinned whole, on the one line it is
+	// written on, so that widening it back is a failure rather than something a reader has to
+	// check against this test by hand -- which is why every other sentence this directory
+	// states about its own checks is pinned too.
+	readme := readDoc(t, coordinatorReadme)
+	if !strings.Contains(readme, coordinatorReadmeAnchorScope) {
+		t.Errorf("%s no longer carries %q: that sentence is what says which citations this test holds and which it does not, and an index claiming this test holds every citation into those two trees would be claiming coverage it does not have",
+			coordinatorReadme, coordinatorReadmeAnchorScope)
+	}
 }
+
+// coordinatorReadmeAnchorScope is the README's own statement of what the content-anchor rule
+// does not reach: the index's citations into `docs/design/` and `docs/mobile/` name no phrase,
+// so no anchor holds them. It replaced a sentence claiming the test above "holds every one of
+// them", which was false -- the test reads reconciliation.md and nothing else -- and it is
+// pinned because the scope of a check is exactly what gets widened by accident.
+const coordinatorReadmeAnchorScope = "**This index's own citations into those two trees name no phrase and are held by no anchor**"
 
 // coordinatorCount writes a count with its noun, so that a failure reads "three citations" and
 // "one anchor" rather than a bare number a reader has to work out the subject of.
