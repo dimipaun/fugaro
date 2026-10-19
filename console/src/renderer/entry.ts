@@ -569,6 +569,21 @@ export function tabTarget(key: string, at: number, count: number, axis: TabAxis)
 }
 
 /**
+ * tabStop is the roving `tabindex` one tab of a tablist carries: `'0'` for the
+ * tab that holds the list's single stop and `'-1'` for every tab beside it
+ * (design sections 4.1 and 4.3 -- "the selected row is `0`, the rest `-1`").
+ *
+ * It is a function rather than the same ternary written twice because **the two
+ * tablists must answer it the same way**, and the rail's list holds one row
+ * today: a rail that stopped roving would still be one stop while it is one row,
+ * so the rule is held here, where a case drives both answers, and each tablist
+ * is left with the write.
+ */
+export function tabStop(selected: boolean): '0' | '-1' {
+  return selected ? '0' : '-1'
+}
+
+/**
  * shortcutRow is the row a shortcut key addresses, or `null` for a key that is
  * not one. The design's rule (section 4.1) is **Command + digit on macOS and
  * Control + digit elsewhere**, and both halves of it are load-bearing: the
@@ -853,7 +868,7 @@ export function drawRail(surface: DomSurface, reply: unknown): RailView {
     for (const each of rows) {
       const selected = each === wanted
       each.setAttribute('aria-selected', selected ? 'true' : 'false')
-      each.setAttribute('tabindex', selected ? '0' : '-1')
+      each.setAttribute('tabindex', tabStop(selected))
     }
   }
 
@@ -1264,7 +1279,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     for (const [key, button] of buttons) {
       button.setAttribute('aria-current', key === id ? 'true' : 'false')
       button.setAttribute('aria-selected', key === id ? 'true' : 'false')
-      button.setAttribute('tabindex', key === roving ? '0' : '-1')
+      button.setAttribute('tabindex', tabStop(key === roving))
     }
   }
 

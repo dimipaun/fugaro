@@ -64,6 +64,7 @@ import {
   bootDashboard,
   isMacPlatform,
   shortcutRow,
+  tabStop,
   tabTarget,
 } from '../../src/renderer/entry'
 import { decodeSnapshot } from '../../src/shared/schema'
@@ -1151,7 +1152,7 @@ describe('the installation rail’s keyboard', () => {
   })
 })
 
-describe('the keyboard’s two mappings', () => {
+describe('the keyboard’s own rules, apart from the DOM', () => {
   it('moves within a tablist by the axis it is given, and wraps at both ends', () => {
     // The navigation is horizontal and the rail's list vertical (design sections 4.1 and
     // 4.3), and the axis is a parameter rather than two functions so the one rule -- which
@@ -1172,6 +1173,16 @@ describe('the keyboard’s two mappings', () => {
     // An empty tablist, and an index outside it, move nowhere.
     expect(tabTarget('ArrowRight', 0, 0, 'x')).toBeNull()
     expect(tabTarget('ArrowRight', 3, 3, 'x')).toBeNull()
+  })
+
+  it('gives a tablist one tab stop, and the same one answer to both tablists', () => {
+    // The roving half of the pattern (design sections 4.1 and 4.3): one tab of
+    // the list is in the tab order and every tab beside it is not. The rail's
+    // list holds one row today, so a rail that stopped roving would still draw
+    // exactly one stop -- this is where that rule is held, and the rail's own
+    // case above is where its *write* is held.
+    expect(tabStop(true)).toBe('0')
+    expect(tabStop(false)).toBe('-1')
   })
 
   it('spells the shortcut key the platform’s way, and answers the row’s position', () => {
