@@ -758,9 +758,10 @@ same branch (`2fc37c7fd8`) removed it again. The PR was **squash-merged**, so
 neither commit is on `main` and no commit on `main` ever held the file — but the
 pull request's own history on GitHub still does, and a squash does not delete
 anything from the remote. (Those two commits are not in a clone of `main` either:
-`git cat-file` does not know them, and nothing in this branch ever held the file,
-which was created after the squash. So this paragraph is the account of what the
-PR's history holds, and a reader here cannot read the file itself to check it.)
+`git cat-file` does not know them, and this branch was created after the squash,
+so nothing was ever in its history either. So this paragraph is the account of
+what the PR's history holds, and a reader here cannot read the file itself to
+check it.)
 The file held unsalted SHA-256 digests, which are a dictionary: a small integer, a
 dollar amount or a repository name is recovered from a bare digest by trying
 candidates, so the values it covered must be treated as **exposed**, not merely
