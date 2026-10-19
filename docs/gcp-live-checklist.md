@@ -4636,7 +4636,9 @@ RF23), and written here rather than left to the redesign's own plan because this
 owner runs live checks out of. It is the half of P5 no hermetic test can take. Two gates hold the
 halves the claim rests on — `website/test/fold.mjs` the **ordering** (the homepage's lead region is
 the promise and its call to action and nothing else, Getting Started's install section opens with
-its commands, and every page that prints a command prints it under a heading) and
+its commands, Getting Started's three bands — the install, then the steps a real installation
+takes, then the details — are the page's sections in the order a reader reads them, and every page
+that prints a command prints it under a heading) and
 `website/test/budget.mjs` the **word ceilings** (D188: 40 words in a page's lead, 250 per page
 except the three reference pages) — and
 neither of them can see a viewport, which is exactly D187's question. The fold is a position on a
@@ -4802,12 +4804,13 @@ grep -n "position: fixed" -A3 website/src/components/ConsentBanner.astro
 3. **Getting Started's first command block is above the fold on both sizes.** At 390 × 844 and at
    1280 × 900, read `firstCommandBottom` for `/getting-started/` and check the first command
    block's bottom is under the viewport's height on each. The block is the whole of it — the
-   command and the control beside it — and the section's heading and the `From …` line sit above
-   it, so a block whose bottom is inside the first screen is a block a reader meets without
-   scrolling. RF5 measured this page's first screen as the internal paragraph, with the commands
-   after it; P5's change is the ordering, and this step is where the position of the result is
-   read. **FACT:** the command, its bottom at both widths, and whether the whole block is above
-   the fold at each.
+   command and the control beside it — and the section's heading sits above it and the `From …`
+   line sits below it: the command is the first thing under the path's name, and the citation
+   that names the file it came from follows the block it cites, so a block whose bottom is inside
+   the first screen is a block a reader meets without scrolling. RF5 measured this page's first
+   screen as the internal paragraph, with the commands after it; P5's change is the ordering, and
+   this step is where the position of the result is read. **FACT:** the command, its bottom at
+   both widths, and whether the whole block is above the fold at each.
 
 4. **The consent banner is over the page, and it covers nothing this check claims.** The banner is
    `position: fixed` at the foot of the window (read where it sits out of
