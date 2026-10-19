@@ -45,6 +45,18 @@
  * command does; the lead line the parent command carried went the same way. What the page
  * gained is the table, its provenance note, and the two rules that hold it: the file's
  * figures are the page's figures, and the page's figures are the file's.
+ *
+ * **The word ceiling, measured in both states of the aggregation** (recorded here because it is
+ * a conflict between two owner rulings rather than a defect of this page, and the number is what
+ * the next task needs). D188's ceiling is 250 words for a page, and this page measures **249**
+ * while `website/content/costs.json` is absent — the state this checkout builds, and so the
+ * state `website/test/budget.mjs` reads. With a file published the same page measures **451**:
+ * the empty state is 22 words, and the aggregation's own window, its counted-runs lines, its
+ * table and the aggregation's "not a promise" disclaimer are about 230 more. D96 and D97 ask
+ * for the window, the sample size, the counts and that disclaimer to be published, and D188
+ * counts every word a reader sees, so publishing the file (W2.3) is the task that has to choose
+ * which rule gives way — the five of them cannot all hold at once. Both numbers are measured
+ * with the gate's own reader over a build, not argued.
  */
 import { loadSite } from '../content.ts'
 import { copyControlHTML } from '../lib/copy-control.mjs'
