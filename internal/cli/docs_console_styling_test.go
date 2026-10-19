@@ -98,6 +98,51 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 			}
 		}
 	}
+
+	// §2's per-screen tables are what a stylesheet's rules are written from, and
+	// three of them claimed what the source does not do: `note()` is called once
+	// (the secrets panel), so `projects-note` is not on "every note paragraph";
+	// Run emits no `data-state` and no `data-killed`; and Live draws no `count`
+	// reading at all — `data-segments` is a bare attribute, not a reading. Each
+	// row below is pinned to what the source says, so putting the old claim back
+	// is a failing test.
+	notes := mdRow(t, path, mdBetween(t, path, doc, "### 2.5 Projects", "### 2.6 Run detail"), "| Notes |")
+	for _, hook := range []string{"`projects-note`", "`projects-jobs-note`", "`projects-accounts-note`"} {
+		if !strings.Contains(notes, hook) {
+			t.Errorf("%s: §2.5's notes row does not name %s; that screen carries three note hooks, one per panel, and no single one of them reaches all three", path, hook)
+		}
+	}
+	if live := mdFlat(mdBetween(t, path, doc, "### 2.3 Live", "### 2.4 Spend")); !strings.Contains(live, "never writes `data-state=\"notional\"`") {
+		t.Errorf("%s: §2.3 claims Live's notional state without saying the attribute is not its own; Live's `data-state` is a bar's percent reading, which is measured, unavailable or gap", path)
+	}
+	prose := mdRow(t, path, mdBetween(t, path, doc, "### 3.7 Typography", "### 3.8 Spacing"), "| Screen prose (")
+	for _, hook := range []string{"`projects-note`", "`projects-jobs-note`", "`projects-accounts-note`"} {
+		if !strings.Contains(prose, hook) {
+			t.Errorf("%s: §3.7's screen-prose rule does not name %s, so the Projects note that carries it falls outside the rule", path, hook)
+		}
+	}
+	states := mdBetween(t, path, doc, "### 2.9 Every state variant", "### 2.10 Numbers")
+	for _, want := range []struct {
+		row, has, because string
+	}{
+		{"| killed / halted |", "no attribute at all", "Run's halt is `div.run-halt`, and that screen sets no `data-killed`"},
+		{"| unavailable |", "Run writes no `data-state` at all", "its numbers go through `putReading`, which writes text and, for a value with no number, a `title`"},
+		{"| notional / estimated |", "**Spend alone**", "`data-state=\"notional\"` / `\"estimated\"` is Spend's own point, on the notional and compute dimensions"},
+	} {
+		if row := mdRow(t, path, states, want.row); !strings.Contains(row, want.has) {
+			t.Errorf("%s: §2.9's %s row does not say %q — %s", path, strings.TrimSpace(want.row), want.has, want.because)
+		}
+	}
+	countRow := mdRow(t, path, mdBetween(t, path, doc, "### 2.10 Numbers", "## 3. "), "| **Count** |")
+	if strings.Contains(countRow, "Live") {
+		t.Errorf("%s: §2.10's count row names Live, and Live draws no `count` reading — its units are usd, percent and seconds", path)
+	}
+	if !strings.Contains(doc, "Live draws no `count` reading at all") {
+		t.Errorf("%s: §2.10 no longer says Live draws no `count` reading, which is why the row above leaves it out", path)
+	}
+	if !strings.Contains(mdBetween(t, path, doc, "### 1.1 ", "### 1.2 "), "61 lines") {
+		t.Errorf("%s: §1.1 does not give the served document's real length (61 lines)", path)
+	}
 }
 
 // mdCodeSpanRE matches one code span and captures its contents.
@@ -118,6 +163,28 @@ func mdCodeSpans(s string) []string {
 // a hook list, and not of a sentence that mentions a hook.
 func mdWithoutCodeSpans(s string) string {
 	return mdCodeSpanRE.ReplaceAllString(s, "")
+}
+
+// mdRow returns the one row of a section that begins with prefix, so a case can
+// read a single line of a single screen's table: `| Notes |` is a row of §2.4
+// and of §2.5, and the two say different things. A missing row, or two of them,
+// is a failure rather than a silent empty answer.
+func mdRow(t *testing.T, path, section, prefix string) string {
+	t.Helper()
+	found := ""
+	for _, line := range strings.Split(section, "\n") {
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		if found != "" {
+			t.Fatalf("%s: %q starts two rows of the same section; this case reads one", path, prefix)
+		}
+		found = line
+	}
+	if found == "" {
+		t.Fatalf("%s: no row of that section starts with %q; this case reads that row", path, prefix)
+	}
+	return found
 }
 
 // TestDocsConsoleStylingCitationsExist: the design's citations are paths a

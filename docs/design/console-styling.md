@@ -29,7 +29,7 @@ could carry one:
 
 | Claim | Read from |
 |---|---|
-| `console/src/renderer/index.html` is script-only: its `<head>` holds one `<script src="./console.js" defer>` and nothing else. There is no `<link rel="stylesheet">` and no `<style>` element. | the file, 60 lines, read whole |
+| `console/src/renderer/index.html` is script-only: its `<head>` holds one `<script src="./console.js" defer>` and nothing else. There is no `<link rel="stylesheet">` and no `<style>` element. | the file, 61 lines, read whole |
 | The body of `index.html` is **empty on purpose**, and `console/test/unit/csp-document.test.ts` holds it empty (`expect(bodyMarkup(served('index.html'))).toBe('')`). | the file; the test |
 | `console/src/renderer/installations.html` and `console/src/renderer/refusal.html` carry the same CSP `<meta>` and no stylesheet either; `refusal.html` is script-free as well (`expect(scriptElements(served('refusal.html'))).toEqual([])`). | the two documents; `csp-document.test.ts` |
 | There is **no `.css` file anywhere under `console/`**: `find console -name '*.css'` returns nothing. | the tree |
@@ -119,9 +119,13 @@ What was never decided, and is what this document decides or puts to the owner:
    operating system's preference");
 3. the layout, the focus rules and the forced-colors behaviour;
 4. **the wiring: the stylesheet does not exist, is not bundled, is not served, and no
-   document links one.** The plan's File Structure tree names `src/renderer/theme/tokens.css`
-   (`docs/plans/2026-10-15-desktop-console.md:120`) and **no task's Files line names it** —
-   it is a file the tree promises and the tasks never create;
+   document links one.** At the ref these claims were read, the plan's File Structure tree
+   named `src/renderer/theme/tokens.css` with **no task behind it** — a file the tree
+   promised and the tasks never created. §7's Phase 6 is what changes that:
+   `docs/plans/2026-10-15-desktop-console.md:120` (the tree as this change leaves it — the
+   same line is `:118` at the ref declared above, alone and unannotated) now carries all four
+   `src/renderer/theme/*.css` lines, each annotated with the task that writes it, and
+   Task 6.1's **Scope** names `tokens.css` and `palette.css`;
 5. the tests that keep all of it honest.
 
 ---
@@ -258,9 +262,11 @@ above are the last ones read and the graphs break where the console stopped obse
 gap (`data-state="gap"`, the mark `—`); silent (`data-flag="silent"`, `data-tone="amber"`);
 lost (`data-flag="lost"`, `data-tone="alarm"`); near/over deadline (`data-flag`, amber and
 alarm); queued (the `live-run-queued` class, `data-queued="true"`, `data-tone="queued"`);
-stuck (`live-run-stuck`, `data-tone="alarm"`); notional (`data-state="notional"`, the text
-carries `NOTIONAL~`); unavailable (`data-state="unavailable"`, the text `n/a`, the reason
-in `title`); empty (a sparkline with no sample draws **one** bar whose reading is a `gap`).
+stuck (`live-run-stuck`, `data-tone="alarm"`); notional (**the text mark `NOTIONAL~` alone** —
+Live's `data-state` comes from a `percent` reading, and a percent reading is `measured`,
+`unavailable` or `gap`, so this screen never writes `data-state="notional"`; the attribute is
+Spend's, §2.4); unavailable (`data-state="unavailable"`, the text `n/a`, the reason in
+`title`); empty (a sparkline with no sample draws **one** bar whose reading is a `gap`).
 **There is no loading state**: the screen is drawn from a model, and the entry draws
 nothing until the handshake answers. **There is no cap-reached flag**: the cap is a
 `percent` reading and a bar's `data-fill`, and nothing else — colouring it at a threshold
@@ -325,7 +331,7 @@ Eight panels, each `section.projects-panel` carrying `data-panel`, `data-state` 
 | Group | Class hooks |
 |---|---|
 | Header | `projects-header`, `projects-project`, `projects-mode`, `projects-day`, `projects-title`, `projects-source`, `projects-count`, `projects-number`, `projects-because`, `projects-panel`, `projects-warning` |
-| Notes | `projects-note` — the class `note()` puts on **every** note paragraph whatever panel it is in (the `projects-jobs-note` / `projects-accounts-note` below are the panel-specific two beside it), so it is the single hook that reaches the console's own sentences on this screen |
+| Notes | three hooks, one per panel that carries a note: `projects-note` on the **secrets** panel's sentence (the one call of `note()`), `projects-jobs-note` on the jobs panel's "runs not drawn:" line, `projects-accounts-note` on the accounts panel's sentence (which also carries the generic `note` class). **No single hook reaches all three**, so a rule that means "the notes" has to name the three |
 | Caps | `projects-caps`, `projects-reserve`, `projects-reserve-value`, `projects-cap-list`, `projects-cap`, `projects-cap-repo`, `projects-cap-scope`, `projects-cap-value`, `projects-cap-source` |
 | Kill | `projects-kills`, `projects-kill-global`, `projects-kill-scope`, `projects-kill-none`, `projects-kill-row`, `projects-kill-repo`, `projects-kill`, `projects-kill-word`, `projects-kill-by`, `projects-kill-at`, `projects-kill-reason` |
 | Repositories | `projects-repos`, `projects-enrolled`, `projects-enrolled-count`, `projects-enrolled-list`, `projects-enrolled-repo`, `projects-seen`, `projects-seen-count`, `projects-seen-list`, `projects-seen-repo`, `projects-only-seen`, `projects-only-seen-repo`, `projects-only-enrolled`, `projects-only-enrolled-repo`, `projects-repos-label` |
@@ -434,14 +440,14 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 
 | State | Screen(s) | How it is marked in the DOM |
 |---|---|---|
-| killed / halted | Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner), Run (`run-halt`) | a banner element with `data-killed="true"` / the word `KILLED by` / `HALTED` + who, when, why. **The attribute is on the banner, and on Live's repository block itself** — `li.live-repo` carries `true`/`false` and the banner is appended into that same `li` (`live.ts`), so `.live-repo[data-killed="true"]` is a rule this design allows; the two blocks that only *append* a banner, `div.live-total` and `div.spend-caps`, carry none (§2.3, §2.4) |
+| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, and on Live's repository block itself** — `li.live-repo` carries `true`/`false` and the banner is appended into that same `li` (`live.ts`), so `.live-repo[data-killed="true"]` is a rule this design allows; the two blocks that only *append* a banner, `div.live-total` and `div.spend-caps`, carry none (§2.3, §2.4) |
 | stale (console clock) | Live | `data-stale="true"` banner + the threshold sentence |
 | stale (document age) | Live | `data-stale-by-age="true"` on the connection cell |
 | silent / lost / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |
 | queued / stuck | Live run rows | the `live-run-queued` / `live-run-stuck` class + `data-queued` + `data-flag` |
 | gap | Live, Spend | `data-state="gap"`, the mark `—`, a reason in `title` |
-| unavailable | every screen | `data-state="unavailable"` (or `data-available="false"`), the text `n/a`, a reason in `title` |
-| notional / estimated | Live, Spend, Projects, Run, degraded | `data-state="notional"`/`"estimated"` and the text marks `NOTIONAL~` / `est.` |
+| unavailable | `data-state="unavailable"`: Live (a bar, and the sparkline's bars), Spend (a point), Projects (**the panel state**, beside `read` and `not-built`), degraded (the cap line). `data-available="false"`: Spend's caps panel. The text `n/a` with a reason in `title`: **every** screen | **Run writes no `data-state` at all** — its numbers go through `putReading`, which sets the text and, for a value with no number, the `title` reason, and nothing else (§2.6), so a `[data-state]` colour rule selects nothing on that screen |
+| notional / estimated | the text marks: Live, Spend, Projects, Run, degraded. The attribute `data-state`: **Spend alone** | `NOTIONAL~` / `est.` are `formatReading`'s marks, so they appear wherever a notional or estimated reading is drawn, on all five screens (Live's repository and total notional figures, §2.3; the subscription model and the estimated compute on Projects and Run, §2.5, §2.6; the degraded compute, §2.7). The **attribute** `data-state="notional"` / `"estimated"` is written by Spend alone, on `.spend-point`, when the chart's dimension is `notional` or `compute` — Projects' `data-state` is its panel state, Live's comes from a `percent` reading, Run writes none, and the degraded cap is always `unavailable` |
 | partial / hollow | Spend | `data-partial="true"` / `data-hollow="true"` + the `(partial)` marker |
 | degraded | Spend | `span.spend-degraded` with `data-degraded="true"` |
 | polling (no Firebase) | degraded | `data-kind="no-firebase"` + `data-state="polling"` |
@@ -460,7 +466,12 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | **Share** | `percent` | Live (cap percent, bar fills), Spend (`data-height`) | 1 decimal + `%` |
 | **Duration / time** | `seconds` | Live (run age, connection age, silence), Run (stage duration, replay window), degraded (feed age) | 0 decimals + ` s` |
 | **Time (money-shaped)** | `hours` | Spend (run hours, totals) | 2 decimals + ` h` |
-| **Count** | `count` | Live (segments), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records), degraded (runs, searched) | 0 decimals + grouping |
+| **Count** | `count` | Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records), degraded (runs, searched) | 0 decimals + grouping |
+
+**Live draws no `count` reading at all**, which is why the row above does not name it: its
+numbers are `usd`, `percent` and `seconds`, and `data-segments` — the one integer it does put
+on an element — is a bare attribute on the sparkline list (`String(line.segments)`), not a
+reading drawn through `formatReading`, so it carries no mark, no `title` and no state.
 
 **Four of the five screens have a number hook, and the fifth does not.** Live, Spend,
 Projects and Run each have their own `numberCell` — one per screen file, not one in
@@ -499,9 +510,10 @@ a value set for a fixed vocabulary rather than a second copy of it" — the cons
 | `console/src/renderer/theme/base.css` | reset, document, chrome, layout, responsive, focus, forced-colors | colour literals — it reads the tokens |
 | `console/src/renderer/theme/screens.css` | the per-screen rules, in the order §2 lists the screens | colour literals |
 
-The plan's tree already names `src/renderer/theme/tokens.css`
-(`docs/plans/2026-10-15-desktop-console.md:120`); this design fills it in and adds three
-siblings, and Task 6.1 extends the plan's tree with them.
+The plan's tree carries all four `src/renderer/theme/*.css` lines, each annotated with the
+task that writes it (`docs/plans/2026-10-15-desktop-console.md:120` — the tree as this change
+leaves it). This design fills in what each file holds: Task 6.1's **Scope** names
+`tokens.css` and `palette.css`, and Tasks 6.3 and 6.4 own `base.css` and `screens.css`.
 
 **The vocabulary** (a 4 px base, mirroring the website so a reader of one knows the other):
 
@@ -869,7 +881,7 @@ the `ElementLike` interface is untouched (a media query is not a DOM write).
 | Panel / section title (`projects-title`, `run-panel-title`, `spend-account-title`) | `--font-size-md` (15px) | 600 | sans |
 | Table header (`projects-repos-label`, `run-log-time`, a column caption) | `--font-size-xs` (11px), uppercase, letter-spaced | 500 | sans |
 | Row text, labels, controls | `--font-size-sm` (12px) — the dense default | 400 | sans |
-| Screen prose (`live-note`, `spend-note`, `spend-warning`, `projects-because`, `run-warning`) | `--font-size-base` (13px) | 400 | sans |
+| Screen prose (`live-note`, `spend-note`, `spend-warning`, `projects-because`, `run-warning`, and the three Projects note hooks — `projects-note`, `projects-jobs-note`, `projects-accounts-note`, §2.5) | `--font-size-base` (13px) | 400 | sans |
 | **Every number, id, slug, path, timestamp and log line** | `--font-size-sm` | 400 | `--font-mono` with `font-variant-numeric: tabular-nums` |
 
 Money is always tabular and right-aligned, in mono, with the `$` inside the same cell —
