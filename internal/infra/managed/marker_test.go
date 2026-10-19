@@ -539,6 +539,157 @@ func TestWriteManagedLabel(t *testing.T) {
 	}
 }
 
+// TestWriteManagedLabelForFlag is the other gate on the same label: the one
+// `fugaro managed flag` holds (D58's owner, their own terminal, the GCP
+// project ID typed), for a project no run created. What it must do that
+// WriteManagedLabel must not is exactly that — label a project this run did
+// not create — and everything else is the same write: the same value, the
+// same refusals, the same labels kept.
+//
+// The gate itself is not in this function and cannot be: it is the command's
+// (an agent's session and a run's process are refused before it reads
+// anything, and the typed ID is the confirmation), which is why the test that
+// pins it is managed_flag_test.go's. What is pinned here is that this entry
+// point asks for none of WriteManagedLabel's creation evidence.
+func TestWriteManagedLabelForFlag(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		project    string
+		labels     map[string]string // the project's labels as the fake has them
+		missing    bool              // the project is not in the fake at all
+		refuse     int               // a status for every Resource Manager call
+		noUpdate   bool              // the read is readable and the update is refused
+		want       string            // a substring the refusal must carry, "" for no refusal
+		wantLabels map[string]string // what the project carries afterwards
+		wantCalls  int               // Resource Manager calls the write may make
+	}{
+		// The row this entry point exists for: no run created this project —
+		// it is the owner's, flagged by hand — and the label lands on it
+		// anyway, with the label it already carried kept.
+		"a project no run created": {
+			project:    testProject,
+			labels:     map[string]string{"environment": "prod"},
+			wantLabels: map[string]string{"environment": "prod", ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  2, // the read and the update
+		},
+		"a project with no labels at all": {
+			project:    testProject,
+			wantLabels: map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  2,
+		},
+		"a project that already carries the label": {
+			project:    testProject,
+			labels:     map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantLabels: map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  1, // the read, and no update: the mark is written once
+		},
+		// Refused, and the refusal says which of the two writes this label
+		// is, because the flag's message for it is the operator's: the label
+		// is not this command's to replace, whatever put it there.
+		"a project carrying the key with another value": {
+			project:    testProject,
+			labels:     map[string]string{ProjectLabelKey: "false"},
+			want:       "already carries",
+			wantLabels: map[string]string{ProjectLabelKey: "false"},
+			wantCalls:  1,
+		},
+		"an empty value is not the label": {
+			project:    testProject,
+			labels:     map[string]string{ProjectLabelKey: ""},
+			wantLabels: map[string]string{ProjectLabelKey: ProjectLabelValue},
+			wantCalls:  2,
+		},
+		"no project to label": {
+			project:   "",
+			want:      "no project name",
+			wantCalls: 0,
+		},
+		"the project read is refused": {
+			project: testProject, refuse: http.StatusForbidden,
+			want:      "reading project",
+			wantCalls: 1,
+		},
+		"the project is not there": {
+			project: testProject, missing: true,
+			want:      "reading project",
+			wantCalls: 1,
+		},
+		"the update is refused": {
+			project:    testProject,
+			labels:     map[string]string{"environment": "prod"},
+			noUpdate:   true,
+			want:       "labelling project",
+			wantLabels: map[string]string{"environment": "prod"},
+			wantCalls:  2,
+		},
+		"the read fails": {
+			project: testProject, refuse: http.StatusInternalServerError,
+			want:      "reading project",
+			wantCalls: 1,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, cf := newCRM(t)
+			if !tc.missing {
+				cf.AddProject(testProject, testProjectNumber)
+				if tc.labels != nil {
+					cf.SetLabels(testProject, tc.labels)
+				}
+			}
+			if tc.refuse != 0 {
+				cf.Refuse(tc.refuse, "PERMISSION_DENIED", "", "refused")
+			}
+			if tc.noUpdate {
+				cf.DenyUpdate(testProject)
+			}
+			err := WriteManagedLabelForFlag(ctx, c, tc.project)
+			switch {
+			case tc.want == "" && err != nil:
+				t.Fatalf("err = %v, want the label written", err)
+			case tc.want != "" && err == nil:
+				t.Fatalf("want a refusal carrying %q", tc.want)
+			case tc.want != "" && !strings.Contains(err.Error(), tc.want):
+				t.Errorf("err = %v, want it to carry %q", err, tc.want)
+			}
+			if n := len(cf.Requests()); n != tc.wantCalls {
+				t.Errorf("the write made %d Resource Manager calls, want %d: %v", n, tc.wantCalls, cf.Requests())
+			}
+			// One read and one update, and the update is a projects update:
+			// the same shape WriteManagedLabel's own test pins.
+			for _, r := range cf.Requests() {
+				if r.Method != http.MethodGet && r.Method != http.MethodPut {
+					t.Errorf("the write made a %s %s", r.Method, r.Path)
+				}
+			}
+			if tc.wantLabels != nil {
+				if got := cf.Labels(testProject); !maps.Equal(got, tc.wantLabels) {
+					t.Errorf("the project carries %v, want %v", got, tc.wantLabels)
+				}
+			}
+		})
+	}
+
+	// The refusal that names who writes the label is this entry point's own
+	// text: the creation path's would tell a flagged project's owner about a
+	// run that created it, which is not what happened.
+	c, cf := newCRM(t)
+	cf.AddProject(testProject, testProjectNumber)
+	cf.SetLabels(testProject, map[string]string{ProjectLabelKey: "false"})
+	err := WriteManagedLabelForFlag(ctx, c, testProject)
+	if err == nil || !strings.Contains(err.Error(), "the owner flagging the project") {
+		t.Errorf("err = %v, want it to say who writes the label", err)
+	}
+	if err := WriteManagedLabel(ctx, c, testProject, testProject); err == nil || !strings.Contains(err.Error(), "the run that created the project") {
+		t.Errorf("err = %v, want the creation path's own text", err)
+	}
+
+	// And the client the rows above all have: a call with none is a refusal
+	// rather than a panic.
+	if err := WriteManagedLabelForFlag(ctx, nil, testProject); err == nil {
+		t.Error("the write was made with no Resource Manager client")
+	}
+}
+
 // The write half of Global Constraint 4 (design D57): no credential a run
 // holds may have a write path to the marker. The agent of a run holds a job
 // account and a build holds a build account, and the grant each is given on

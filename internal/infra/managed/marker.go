@@ -365,7 +365,9 @@ func writeMarker(ctx context.Context, s *storage.Service, bucket, created, proje
 // label for either. Adding Firebase to an existing project is not creating
 // one (D73), so this is not a way to label the owner's own projects — which
 // matters more here than it does for the object, because a project label is
-// visible to everyone who can read the project.
+// visible to everyone who can read the project. An owner who wants one of
+// those projects labelled uses WriteManagedLabelForFlag, below, whose gate is
+// the command's own.
 //
 // It is idempotent in the one direction that is not dangerous: a project that
 // already carries exactly this label is left alone (the mark is written once,
@@ -385,10 +387,52 @@ func WriteManagedLabel(ctx context.Context, c *crm.Service, created, project str
 	if created == "" {
 		return nil
 	}
-	switch {
-	case project == "" || project != created:
+	if project == "" || project != created {
 		return fmt.Errorf("refusing to label project %q as %s: this run created %q, and the label records a creation — adding Firebase to an existing project, a project this run did not create, is not one", project, ProjectLabelKey, created)
-	case c == nil:
+	}
+	return writeManagedLabel(ctx, c, project, "the run that created the project")
+}
+
+// WriteManagedLabelForFlag writes the same label under the other gate a
+// managed project can be made by: `fugaro managed flag` (Task 6.1), where the
+// project is an EXISTING one — the owner's, or a project an earlier run
+// created without --managed — and no run of ours ever created it.
+//
+// That is the one difference from WriteManagedLabel, and it is the whole
+// reason this entry point exists: the creation write refuses a project it did
+// not create (there, "created" is evidence; here it would be false, and
+// requiring it would make the command unable to do the thing it is for). The
+// gate that replaces it belongs to the command, not to this package, and it
+// is a stronger one than a string comparison: managed_flag.go refuses a
+// coding agent's session and any Fugaro run's process before this is reached
+// (agentMarker and managedFlagRunMarkers), and the confirmation is the
+// project's exact GCP project ID typed at the owner's own terminal
+// (confirmTypedGCPProject) — D58's answer, and the reason the label is
+// written only ever by an owner-run command (design finding 14: a label is a
+// write to the privilege boundary the feature rests on).
+//
+// Everything else is writeManagedLabel's, shared and unchanged: the same
+// value, the same refusals, the same labels kept, and the same fail-closed
+// direction when it cannot write (the object is the authority and the label
+// narrows; an unlabelled project reads as not managed). Nothing but
+// managed_flag.go may call this — the flag's typed confirmation is a
+// parameter of the command, not of this function, so a caller that skips the
+// command skips the gate.
+func WriteManagedLabelForFlag(ctx context.Context, c *crm.Service, project string) error {
+	if project == "" {
+		return fmt.Errorf("refusing to write the %s label: no project name", ProjectLabelKey)
+	}
+	return writeManagedLabel(ctx, c, project, "the owner flagging the project")
+}
+
+// writeManagedLabel is the write both gates above end in, so that the label
+// itself has exactly one implementation: read the project, leave a project
+// that already carries the label alone, refuse one carrying the key with
+// another value, keep every other label, write once. who names the writer in
+// that refusal — the two callers are the two hands a project becomes managed
+// by, and the operator reading it should be told which of them it was.
+func writeManagedLabel(ctx context.Context, c *crm.Service, project, who string) error {
+	if c == nil {
 		return fmt.Errorf("refusing to label %s as managed: no Resource Manager client", project)
 	}
 	p, err := c.Projects.Get(project).Context(ctx).Do()
@@ -402,7 +446,7 @@ func WriteManagedLabel(ctx context.Context, c *crm.Service, created, project str
 		if v == ProjectLabelValue {
 			return nil
 		}
-		return fmt.Errorf("refusing to label %s as %s=%s: it already carries %s=%s, and the label is written once, by the run that created the project", project, ProjectLabelKey, ProjectLabelValue, ProjectLabelKey, v)
+		return fmt.Errorf("refusing to label %s as %s=%s: it already carries %s=%s, and the label is written once, by %s", project, ProjectLabelKey, ProjectLabelValue, ProjectLabelKey, v, who)
 	}
 	labels := make(map[string]string, len(p.Labels)+1)
 	for k, v := range p.Labels {
