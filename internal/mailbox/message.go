@@ -144,6 +144,20 @@ const (
 	CodeDuplicateEntry Code = "duplicate-entry"
 )
 
+// Codes is every code this package speaks, one per family of refusal the
+// module's REFUSALS declares. It is exported because it is the list the two
+// ends are held to: TestEveryRefusalCodeMatchesTheModule reads REFUSALS out of
+// index.js and requires the two sets to be the same, so a code added, dropped
+// or reworded on one end is a failing test rather than a protocol the two ends
+// disagree about.
+var Codes = []Code{
+	CodeNotAnObject, CodeUnknownField, CodeMissingField, CodeWrongType,
+	CodeEmptyString, CodeBadKey, CodeTooLong, CodeTooMany, CodeTooFew,
+	CodeBadCharacter, CodeBadTimestamp, CodeUnknownKind, CodeUnknownVerb,
+	CodeFieldNotAllowed, CodeBadTarget, CodeBadSHA, CodeBadMAC,
+	CodeDuplicateEntry,
+}
+
 // Refusal is the schema's answer for a value it will not accept. Field is the
 // field at fault as a dotted path (`action.target.run`) when the fault is
 // inside a record, and empty when the fault is the value itself.
@@ -191,14 +205,22 @@ var ErrNotAnObject = errors.New("mailbox: a record must be a JSON object")
 //     holds is exactly the ambiguity this schema exists to refuse — and a tag
 //     computed over the surviving one proves nothing about the other;
 //   - a second JSON value after the first is refused, so a record followed by
-//     anything else is not read as the record.
+//     anything else is not read as the record;
+//   - a `\u` escape that spells an unpaired surrogate is refused, with the
+//     module's own code (bad-character in a value, bad-key in a key), because
+//     encoding/json replaces one with U+FFFD and says nothing — see
+//     checkSurrogateEscapes for why nothing later in the pipeline can tell.
+//
+// It answers a *Refusal for that last one: the module refuses such a string
+// while validating, and this is the only point where the fault is still
+// visible, so a caller that wants the code gets it.
 //
 // Numbers are decoded as json.Number: the bytes are what is signed, and a
 // float64 in between would round a value the phone wrote.
 func Decode(data []byte) (Record, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
-	value, err := decodeValue(dec, 0)
+	value, err := decodeValue(dec, data, "", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -221,19 +243,31 @@ func Decode(data []byte) (Record, error) {
 const maxDepth = 8
 
 // decodeValue walks one JSON value with the decoder's own tokens, so that a
-// duplicate key is seen rather than silently resolved.
-func decodeValue(dec *json.Decoder, depth int) (any, error) {
+// duplicate key is seen rather than silently resolved. data is the document
+// being read: a string token is checked against the bytes it was written as,
+// because the decoder has already thrown the difference away (see
+// checkSurrogateEscapes), and where is the dotted path of the value being read
+// — `action.target.run`, `agents[0]` — so a refusal can name the field the way
+// every other refusal in this package does.
+func decodeValue(dec *json.Decoder, data []byte, where string, depth int) (any, error) {
 	if depth > maxDepth {
 		return nil, fmt.Errorf("mailbox: a record nested deeper than %d levels", maxDepth)
 	}
+	start := dec.InputOffset()
 	tok, err := dec.Token()
 	if err != nil {
 		return nil, fmt.Errorf("mailbox: reading a record: %w", err)
 	}
+	end := dec.InputOffset()
 	delim, isDelim := tok.(json.Delim)
 	if !isDelim {
 		switch tok.(type) {
-		case nil, bool, string, json.Number:
+		case string:
+			if refusal := checkSurrogateEscapes(data[start:end], false, where); refusal != nil {
+				return nil, refusal
+			}
+			return tok, nil
+		case nil, bool, json.Number:
 			return tok, nil
 		}
 		return nil, fmt.Errorf("mailbox: unexpected JSON token %v", tok)
@@ -242,18 +276,23 @@ func decodeValue(dec *json.Decoder, depth int) (any, error) {
 	case '{':
 		object := map[string]any{}
 		for dec.More() {
+			keyStart := dec.InputOffset()
 			keyTok, err := dec.Token()
 			if err != nil {
 				return nil, fmt.Errorf("mailbox: reading a record's key: %w", err)
 			}
+			keyEnd := dec.InputOffset()
 			key, ok := keyTok.(string)
 			if !ok {
 				return nil, fmt.Errorf("mailbox: a record's key is not a string: %v", keyTok)
 			}
+			if refusal := checkSurrogateEscapes(data[keyStart:keyEnd], true, join(where, key)); refusal != nil {
+				return nil, refusal
+			}
 			if _, duplicate := object[key]; duplicate {
 				return nil, fmt.Errorf("mailbox: the key %q appears twice in one record", key)
 			}
-			value, err := decodeValue(dec, depth+1)
+			value, err := decodeValue(dec, data, join(where, key), depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -265,8 +304,8 @@ func decodeValue(dec *json.Decoder, depth int) (any, error) {
 		return object, nil
 	case '[':
 		list := []any{}
-		for dec.More() {
-			item, err := decodeValue(dec, depth+1)
+		for i := 0; dec.More(); i++ {
+			item, err := decodeValue(dec, data, fmt.Sprintf("%s[%d]", where, i), depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -279,6 +318,113 @@ func decodeValue(dec *json.Decoder, depth int) (any, error) {
 	default:
 		return nil, fmt.Errorf("mailbox: unexpected JSON delimiter %q", delim)
 	}
+}
+
+// checkSurrogateEscapes refuses a string literal that spells an unpaired
+// surrogate with a `\u` escape: `"\ud800"` is half a character, and both ends
+// refuse it (bad-character in a value, bad-key in a key) because neither can
+// write it — Go's encoder writes U+FFFD and JavaScript's keeps the half.
+//
+// It is here, in the decoder, for one reason: encoding/json replaces an
+// unpaired surrogate escape with U+FFFD and reports nothing, so by the time the
+// string comes back from Token() the fault is gone. The record no longer
+// carries anything the validator could refuse, and CanonicalBytes would sign
+// bytes the phone reads as a different message. Decoding is the last moment the
+// distinction exists, so decoding is where it is enforced.
+//
+// The scan is over the literal's own bytes, which is why it can tell the three
+// cases apart that a decoded string cannot:
+//
+//   - `\uD83D\uDE00` is a pair and one astral character, and is accepted;
+//   - `\uD800` alone is refused;
+//   - `\\uD800` is an escaped backslash and then six characters of ordinary
+//     text — the record is about the string `\uD800`, not about a surrogate —
+//     so an escaped character is skipped rather than read as an escape.
+//
+// A literal U+FFFD in the document is not an escape and is not refused: it is a
+// character the phone can speak, and it is not this decoder's business to
+// refuse a record that never carried the fault.
+//
+// span is the raw bytes of one string token as the decoder reported them, from
+// InputOffset before the token to InputOffset after it — so it begins at the
+// opening quote or at the punctuation before it, and ends at the closing quote.
+// It never spans another token, so a backslash found in it belongs to this
+// string.
+//
+// where is the dotted path of the string, so the refusal names the field the
+// way every other refusal here does. A key's path is spelled with the character
+// its escape stands for — U+FFFD, the character the decoder read — rather than
+// with the escape itself: the path says where in the record the fault is, and
+// the record, once decoded, really does carry that character there.
+func checkSurrogateEscapes(span []byte, isKey bool, where string) *Refusal {
+	open := bytes.IndexByte(span, '"')
+	if open < 0 {
+		return nil
+	}
+	code := CodeBadCharacter
+	if isKey {
+		code = CodeBadKey
+	}
+	// The content is everything between the quotes.
+	end := len(span) - 1
+	for i := open + 1; i < end; {
+		if span[i] != '\\' {
+			i++
+			continue
+		}
+		if i+1 >= end {
+			return nil // a decoder cannot produce a string ending in a lone backslash
+		}
+		if span[i+1] != 'u' {
+			i += 2 // an escaped quote, backslash or control character
+			continue
+		}
+		if i+6 > end {
+			return nil // nor an escape with no room for its four digits
+		}
+		first, ok := hexQuad(span[i+2 : i+6])
+		if !ok {
+			return nil
+		}
+		switch {
+		case first >= 0xdc00 && first <= 0xdfff:
+			// A low half with nothing before it.
+			return refuse(code, where)
+		case first >= 0xd800 && first <= 0xdbff:
+			// A high half: it is a character only if its low half follows
+			// immediately, as another `\u` escape.
+			if i+12 <= end && span[i+6] == '\\' && span[i+7] == 'u' {
+				if low, ok := hexQuad(span[i+8 : i+12]); ok && low >= 0xdc00 && low <= 0xdfff {
+					i += 12
+					continue
+				}
+			}
+			return refuse(code, where)
+		default:
+			i += 6
+		}
+	}
+	return nil
+}
+
+// hexQuad reads the four hex digits of a `\u` escape as a UTF-16 code unit.
+func hexQuad(digits []byte) (uint32, bool) {
+	var value uint32
+	for _, digit := range digits {
+		var nibble uint32
+		switch {
+		case digit >= '0' && digit <= '9':
+			nibble = uint32(digit - '0')
+		case digit >= 'a' && digit <= 'f':
+			nibble = uint32(digit-'a') + 10
+		case digit >= 'A' && digit <= 'F':
+			nibble = uint32(digit-'A') + 10
+		default:
+			return 0, false
+		}
+		value = value<<4 | nibble
+	}
+	return value, true
 }
 
 // Message is a validated mailbox message: the named fields, checked, with the
@@ -644,12 +790,12 @@ func serialiseValue(value any) (string, error) {
 			return "true", nil
 		}
 		return "false", nil
-	case json.Number:
-		return serialiseNumber(string(v))
-	case int:
-		return strconv.Itoa(v), nil
-	case int64:
-		return strconv.FormatInt(v, 10), nil
+	case json.Number, int, int64, float64:
+		// Every numeric type this package accepts, in one case, so that the
+		// set canonicalisation takes is the set validation takes: a type
+		// accepted by one half and refused by the other is a record that
+		// validates and cannot be tagged.
+		return serialiseNumber(v)
 	case Record:
 		return serialiseObject(v)
 	case map[string]any:
@@ -674,23 +820,35 @@ func serialiseValue(value any) (string, error) {
 // two languages stop spelling a number the same way.
 const maxSafeInteger = int64(1)<<53 - 1
 
-// serialiseNumber writes a JSON number literal's canonical form, refusing the
-// literals whose bytes the two languages disagree about. A literal written in
-// exponent form, or with a trailing `.0`, is accepted when it holds an integer
-// — JSON.parse gives 1e3 as 1000 in JavaScript and JSON.stringify writes
-// "1000" — and refused when it does not.
+// serialiseNumber writes one number's canonical form, refusing the values
+// whose bytes the two languages disagree about. A number written in exponent
+// form, or with a trailing `.0`, is accepted when it holds an integer —
+// JSON.parse gives 1e3 as 1000 in JavaScript and JSON.stringify writes "1000" —
+// and refused when it does not.
 //
-// Negative zero is refused for every literal that spells it — "-0", "-0.0",
-// "-0e0" and the rest — which is why the question is asked of the parsed VALUE
-// and not of the text: these all parse to the one double `-0`, they are all
-// safe integers to `Number.isSafeInteger`, and the module's own canonicalBytes
-// throws for all of them (README: a record carrying -0 "can be neither tagged
-// nor verified"). Refusing only the literal "-0" would let `-0.0` through,
-// canonicalise it to "0" and tag it — a byte-parity hole in the one function
-// whose whole contract is byte parity.
-func serialiseNumber(literal string) (string, error) {
-	f, err := strconv.ParseFloat(literal, 64)
-	if err != nil || f != math.Trunc(f) || math.Abs(f) > float64(maxSafeInteger) {
+// Negative zero is refused for every spelling of it — "-0", "-0.0", "-0e0" and
+// the rest — which is why the question is asked of the parsed VALUE and not of
+// the text: these all parse to the one double `-0`, they are all safe integers
+// to `Number.isSafeInteger`, and the module's own canonicalBytes throws for all
+// of them (README: a record carrying -0 "can be neither tagged nor verified").
+// Refusing only the literal "-0" would let `-0.0` through, canonicalise it to
+// "0" and tag it — a byte-parity hole in the one function whose whole contract
+// is byte parity.
+//
+// It takes every numeric type this package accepts — the json.Number the wire
+// carries and the int, int64 and float64 an `encoding/json` caller builds — and
+// asks the same two questions of all of them through numericValue, because the
+// safe-integer line is a property of the number and not of the Go type it
+// arrived in. A table that answered it for one type and not another would give
+// the same number two verdicts, which is precisely what the module's own tests
+// (index.test.js: `at: 2 ** 53` is bad-timestamp, and canonicalBytes throws for
+// it) exist to prevent.
+func serialiseNumber(value any) (string, error) {
+	f, isNumber := numericValue(value)
+	if !isNumber {
+		return "", fmt.Errorf("mailbox: a %T is not a value a message carries", value)
+	}
+	if f != math.Trunc(f) || math.Abs(f) > float64(maxSafeInteger) {
 		return "", errors.New("mailbox: a number must be a safe integer, so both languages spell it the same way")
 	}
 	if f == 0 && math.Signbit(f) {
@@ -794,6 +952,13 @@ func keyField(value any, field string) checked[string] {
 	if utf16Len(s) > IDMax {
 		return bad[string](CodeTooLong, field)
 	}
+	if !utf8.ValidString(s) {
+		// Go cannot hold a lone surrogate as a character: the Go spelling of
+		// one is invalid UTF-8 (WTF-8). The module refuses a lone surrogate in
+		// a key as bad-key, and CanonicalBytes refuses to sign invalid UTF-8,
+		// so accepting it here would pass on a record that can never be tagged.
+		return bad[string](CodeBadKey, field)
+	}
 	for _, r := range s {
 		if forbiddenKeyChars[r] || r < 0x20 || r == 0x7f || r == ' ' || r == ' ' {
 			return bad[string](CodeBadKey, field)
@@ -815,6 +980,14 @@ func stringField(value any, field string, max int, lineBreaks bool) checked[stri
 	}
 	if utf16Len(s) > max {
 		return bad[string](CodeTooLong, field)
+	}
+	if !utf8.ValidString(s) {
+		// The Go spelling of a lone surrogate is invalid UTF-8 (WTF-8): the
+		// module refuses one in a value as bad-character, and CanonicalBytes
+		// refuses to sign invalid UTF-8, so the validator refuses it first
+		// rather than accepting a string no encoder can spell. A literal U+FFFD
+		// is valid UTF-8 and stays a character the phone can speak.
+		return bad[string](CodeBadCharacter, field)
 	}
 	for _, r := range s {
 		line := lineBreaks && (r == '\t' || r == '\n' || r == '\r')
@@ -1209,40 +1382,68 @@ func timestampField(value any, field string) (int64, *Refusal) {
 	return n, nil
 }
 
-// intValue reads a value as an integer when it holds one: a decoded JSON number
-// whose literal is a safe integer (1e3 and 1700000000000.0 are integers to
-// Number.isSafeInteger, so they are integers here), or an int or int64 a caller
-// built a record with.
-func intValue(value any) (int64, bool) {
+// numericValue reads any value this package accepts as a number, as the double
+// it holds. It is the ONE place the accepted set is written down, so validation
+// and canonicalisation cannot come to different answers about a type: the
+// json.Number the wire carries, and the int, int64 and float64 an
+// `encoding/json` caller builds a record with.
+//
+// float32 is NOT among them, and its absence is the decision rather than an
+// oversight: JavaScript has no float32 to agree with, and a 24-bit mantissa
+// cannot hold an epoch millisecond exactly, so a float32 is refused as the
+// wrong type — a type this protocol does not speak — rather than as a number
+// that is not a safe integer. int and int64 are not narrowed to a smaller
+// integer type either: Go has one integer type per width, they all hold the
+// same numbers, and the bound belongs to the value.
+//
+// A literal the double cannot hold (1e400) is a number and not a type error:
+// ParseFloat reports the range, the value is Infinity, and Infinity is what
+// JSON.parse gives JavaScript for the same bytes — so the safe-integer rule
+// refuses it, with the code the module spells for it.
+func numericValue(value any) (float64, bool) {
 	switch v := value.(type) {
 	case json.Number:
 		f, err := strconv.ParseFloat(string(v), 64)
-		if err != nil || f != math.Trunc(f) || math.Abs(f) > float64(maxSafeInteger) {
+		if err != nil && !errors.Is(err, strconv.ErrRange) {
 			return 0, false
 		}
-		return int64(f), true
+		return f, true
 	case int:
-		return int64(v), true
+		return float64(v), true
 	case int64:
-		return v, true
+		return float64(v), true
 	case float64:
-		if v != math.Trunc(v) || math.Abs(v) > float64(maxSafeInteger) {
-			return 0, false
-		}
-		return int64(v), true
+		return v, true
 	}
 	return 0, false
+}
+
+// safeInteger is the one place the safe-integer line is drawn: an integer
+// (1e3 and 1700000000000.0 are integers to Number.isSafeInteger, so they are
+// integers here) and no larger than Number.MAX_SAFE_INTEGER, past which the two
+// languages stop spelling a number the same way.
+func safeInteger(f float64) (int64, bool) {
+	if f != math.Trunc(f) || math.Abs(f) > float64(maxSafeInteger) {
+		return 0, false
+	}
+	return int64(f), true
+}
+
+// intValue reads a value as the integer it holds, when it holds one.
+func intValue(value any) (int64, bool) {
+	f, isNumber := numericValue(value)
+	if !isNumber {
+		return 0, false
+	}
+	return safeInteger(f)
 }
 
 // isNumber reports whether a value is a number at all — the difference between
 // a value of the wrong type and a number that is not an integer millisecond,
 // which the module spells as two different codes.
 func isNumber(value any) bool {
-	switch value.(type) {
-	case json.Number, int, int64, float32, float64:
-		return true
-	}
-	return false
+	_, isNumber := numericValue(value)
+	return isNumber
 }
 
 // sortedKeys returns a record's own keys in byte order — which for UTF-8 is
@@ -1277,6 +1478,15 @@ func asObject(value any) (map[string]any, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// join spells the path of a value inside a record, the way this package's
+// refusals spell it: `action.target.run`, and `run` at the top level.
+func join(where, key string) string {
+	if where == "" {
+		return key
+	}
+	return where + "." + key
 }
 
 // has reports whether a record carries a key at all, which is a different

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -501,6 +502,360 @@ func TestCanonicalBytesRefusesValuesWithNoCanonicalForm(t *testing.T) {
 // back out of shared/mailbox-schema/index.js and compared, so an edit to either
 // side is a failing test rather than a message the phone accepts and the
 // consumer refuses.
+// TestSafeIntegerLineIsTheSameForEveryGoNumericType holds the number line at
+// every spelling Go can hand the validators: the json.Number the wire carries,
+// and the int, int64 and float64 an `encoding/json` caller builds. The module's
+// own tests pin the line — `index.test.js` declares `at: 2 ** 53` a
+// bad-timestamp and `canonicalBytes` throwing for it — so a spelling that
+// crosses it here is the same number with two verdicts, one per end.
+func TestSafeIntegerLineIsTheSameForEveryGoNumericType(t *testing.T) {
+	const max = int64(1)<<53 - 1
+	for _, tc := range []struct {
+		name   string
+		safe   any
+		unsafe []any
+	}{
+		{"a decoded literal", number("9007199254740991"), []any{number("9007199254740992"), number("1152921504606846976")}},
+		{"an int", int(max), []any{int(1) << 53, int(1) << 60}},
+		{"an int64", int64(max), []any{int64(1) << 53, int64(1) << 60}},
+		{"a float64", float64(max), []any{float64(int64(1) << 53), float64(int64(1) << 60)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := plainMessage(t)
+			record["at"] = tc.safe
+			if _, refusal := ValidateMessage(record); refusal != nil {
+				t.Errorf("the largest safe integer is refused %s, and Number.isSafeInteger accepts it", refusal)
+			}
+			if _, err := CanonicalBytes(record, "inbox"); err != nil {
+				t.Errorf("the largest safe integer has no canonical bytes: %v", err)
+			}
+			for _, value := range tc.unsafe {
+				record := plainMessage(t)
+				record["at"] = value
+				_, refusal := ValidateMessage(record)
+				if refusal == nil || refusal.Code != CodeBadTimestamp {
+					t.Errorf("%v (%T) is refused %v, wanted bad-timestamp: the number line is one line", value, value, refusal)
+				}
+				if _, err := CanonicalBytes(record, "inbox"); err == nil {
+					t.Errorf("%v (%T) has canonical bytes, and the module's serialiser throws for it", value, value)
+				}
+			}
+		})
+	}
+}
+
+// TestANumberPastTheDoublesIsStillANumber keeps the refusal for a literal the
+// double cannot hold on the right side of the type question: `1e400` is a JSON
+// number the decoder keeps as a literal, it parses to +Infinity, and Infinity
+// is a number that is not a safe integer — which is what JSON.parse gives
+// JavaScript for the same bytes, and therefore what the module answers
+// (bad-timestamp, not wrong-type).
+func TestANumberPastTheDoublesIsStillANumber(t *testing.T) {
+	record := plainMessage(t)
+	record["at"] = number("1e400")
+	_, refusal := ValidateMessage(record)
+	if refusal == nil || refusal.Code != CodeBadTimestamp {
+		t.Errorf("1e400 is refused %v, wanted bad-timestamp", refusal)
+	}
+	if _, err := CanonicalBytes(record, "inbox"); err == nil {
+		t.Error("1e400 is canonicalised, and no end can spell the double it is")
+	}
+}
+
+// TestFloatsAreRefusedInBothHalves states the type decision the two halves of
+// this package share: the numeric types a record may carry are json.Number
+// (the wire), int, int64 and float64 — an `encoding/json` caller's own types —
+// and nothing else. float32 is not among them: its 24-bit mantissa cannot hold
+// an epoch millisecond, JavaScript has no counterpart to agree with, and it is
+// refused as the wrong type rather than bad-timestamp because it is not a
+// number this protocol speaks. A float that is not an integer is the module's
+// bad-timestamp.
+func TestFloatsAreRefusedInBothHalves(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value any
+		want  Code
+	}{
+		{"a float32", float32(1700000000000), CodeWrongType},
+		{"a fractional float64", 1700000000000.5, CodeBadTimestamp},
+		{"a fractional literal", number("1700000000000.5"), CodeBadTimestamp},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := plainMessage(t)
+			record["at"] = tc.value
+			_, refusal := ValidateMessage(record)
+			if refusal == nil || refusal.Code != tc.want {
+				t.Errorf("%v (%T) is refused %v, wanted %s", tc.value, tc.value, refusal, tc.want)
+			}
+			if _, err := CanonicalBytes(record, "inbox"); err == nil {
+				t.Errorf("%v (%T) is canonicalised, and the other half of the package refuses it", tc.value, tc.value)
+			}
+		})
+	}
+}
+
+// TestAnythingValidatedCanBeCanonicalised is the property the two halves owe
+// each other: a record ValidateMessage accepts is a record CanonicalBytes can
+// serialise. Anything else is a record with two verdicts, and the second one
+// arrives only when the tag is made. Every numeric type this package accepts
+// goes into every position that takes a number, because a type accepted in one
+// field and refused in another is the same disagreement one field smaller.
+func TestAnythingValidatedCanBeCanonicalised(t *testing.T) {
+	const max = int64(1)<<53 - 1
+	for _, spelling := range []struct {
+		name  string
+		value any
+	}{
+		{"a decoded literal", number("1700000000000")},
+		{"an int", 1700000000000},
+		{"an int64", int64(1700000000000)},
+		{"a float64", float64(1700000000000)},
+		{"a safe float64 past the exact line", float64(max)},
+	} {
+		for _, where := range []struct {
+			name   string
+			vector string
+			put    func(Record)
+		}{
+			{"`at`", "plain message", func(r Record) { r["at"] = spelling.value }},
+			{"the confirmation's `at`", "action: merge a pull request", func(r Record) {
+				dig(t, r, "action", "confirmation")["at"] = spelling.value
+			}},
+			{"the target's `pr`", "action: merge a pull request", func(r Record) {
+				dig(t, r, "action", "target")["pr"] = spelling.value
+			}},
+		} {
+			t.Run(where.name+" spelled as "+spelling.name, func(t *testing.T) {
+				record := vectorCase(t, where.vector)
+				where.put(record)
+				acceptedAndSerialisable(t, record)
+			})
+		}
+	}
+	// The strings a Go caller can build, including the one the validator must
+	// refuse because no encoder would spell it: a record accepted here and
+	// refused at the tag is a message that can never be sent.
+	for _, spelling := range []struct {
+		name  string
+		value string
+	}{
+		{"astral characters", "a\U0001F600b"},
+		{"a literal replacement character", "a�b"},
+		{"a tab in a body", "a\tb"},
+	} {
+		t.Run("`text` carrying "+spelling.name, func(t *testing.T) {
+			record := plainMessage(t)
+			record["text"] = spelling.value
+			acceptedAndSerialisable(t, record)
+		})
+	}
+}
+
+// TestTheValidatorRefusesStringsItCannotSign is the same property from the
+// other side. Go cannot hold a lone surrogate as a character, so its Go
+// spelling is invalid UTF-8 — the one string CanonicalBytes refuses to sign,
+// because Go's encoder writes U+FFFD for it where the phone's keeps the half
+// it was given. The module refuses a lone surrogate in a value as
+// bad-character and in a key as bad-key, so the validator refuses it with the
+// same codes rather than passing on a record that can never be tagged.
+func TestTheValidatorRefusesStringsItCannotSign(t *testing.T) {
+	const lone = "a\xed\xa0\x80b" // U+D800 in WTF-8: what a Go string can spell of it
+	for _, tc := range []struct {
+		name  string
+		field string
+		value any
+		want  Code
+	}{
+		{"a lone surrogate in a body", "text", lone, CodeBadCharacter},
+		{"a lone surrogate in a sender", "sender", lone, CodeBadCharacter},
+		{"a lone surrogate in an id", "id", "m-\xed\xa0\x80", CodeBadKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := plainMessage(t)
+			record[tc.field] = tc.value
+			_, refusal := ValidateMessage(record)
+			if refusal == nil || refusal.Code != tc.want {
+				t.Errorf("it is refused %v, wanted %s", refusal, tc.want)
+			}
+			if _, err := CanonicalBytes(record, "inbox"); err == nil {
+				t.Error("it is canonicalised, and no encoder can spell it")
+			}
+		})
+	}
+	// U+FFFD itself is a character the phone can speak: a record carrying a
+	// literal one is not the decoder's laundering of anything.
+	record := plainMessage(t)
+	record["text"] = "a�b"
+	acceptedAndSerialisable(t, record)
+}
+
+// TestDecodeRefusesLoneSurrogateEscapes closes the door finding 3 names:
+// encoding/json turns an unpaired surrogate escape into U+FFFD and says
+// nothing, so by the time a string token comes back the record no longer
+// carries the fault — ValidateMessage would accept it and CanonicalBytes would
+// sign bytes the phone will not verify. The decoder is the last place the
+// distinction between a lone surrogate escape and a literal U+FFFD exists, so
+// the refusal is there, with the module's own code: bad-character in a value,
+// bad-key in a key.
+func TestDecodeRefusesLoneSurrogateEscapes(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		document  string
+		want      Code
+		wantField string
+	}{
+		{"a high half alone in a value", `{"id":"m-0001","text":"a\uD800b"}`, CodeBadCharacter, "text"},
+		{"a low half alone in a value", `{"id":"m-0001","text":"\uDE00"}`, CodeBadCharacter, "text"},
+		{"a high half at the end of a value", `{"id":"m-0001","text":"ab\uD83D"}`, CodeBadCharacter, "text"},
+		{"a high half alone in a key", `{"id":"m-0001","\uD800":"x"}`, CodeBadKey, "\uFFFD"},
+		{"a low half alone in a nested key", `{"id":"m-0001","action":{"\uDE00":"x"}}`, CodeBadKey, "action.\uFFFD"},
+		{"a high half alone in an option", `{"id":"m-0001","options":["a\uD83Db"]}`, CodeBadCharacter, "options[0]"},
+		{"a lone half spelled in lowercase hex", `{"id":"m-0001","text":"a\ud800b"}`, CodeBadCharacter, "text"},
+		{"a lone half after a pair", `{"id":"m-0001","text":"\ud83d\ude00\ud800"}`, CodeBadCharacter, "text"},
+		{"a lone half after a pair in capitals", `{"id":"m-0001","text":"\uD83D\uDE00\uD800x"}`, CodeBadCharacter, "text"},
+		{"a lone half after an escaped backslash", `{"id":"m-0001","text":"\\\ud800"}`, CodeBadCharacter, "text"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Decode([]byte(tc.document))
+			if err == nil {
+				t.Fatalf("the decoder accepted a lone surrogate escape: it is laundered to U+FFFD and then signed")
+			}
+			var refusal *Refusal
+			if !errors.As(err, &refusal) {
+				t.Fatalf("the refusal is %v (%T), wanted the module's own code", err, err)
+			}
+			if refusal.Code != tc.want {
+				t.Errorf("the refusal is %s, wanted %s", refusal.Code, tc.want)
+			}
+			if refusal.Field != tc.wantField {
+				t.Errorf("the refusal names %q, wanted %q: a refusal a reader cannot place is a refusal nobody can act on", refusal.Field, tc.wantField)
+			}
+		})
+	}
+
+	// And the escapes that are not a fault: a pair is one character, an
+	// escaped backslash is six characters of text, and a literal U+FFFD is a
+	// character the phone can speak.
+	for _, tc := range []struct {
+		name     string
+		document string
+		field    string
+		want     any
+	}{
+		{"a paired surrogate", `{"text":"\uD83D\ude00"}`, "text", "\U0001F600"},
+		{"a pair spelled in lowercase hex", `{"text":"\ud83d\ude00"}`, "text", "\U0001F600"},
+		{"two paired surrogates", `{"text":"\uD83D\ude00\uD83D\ude01"}`, "text", "\U0001F600\U0001F601"},
+		{"a paired surrogate in a key", `{"\uD83D\ude00":"x"}`, "\U0001F600", "x"},
+		{"an escaped backslash before u", `{"text":"\\uD800"}`, "text", `\uD800`},
+		{"two escaped backslashes and two u's", `{"text":"\\\\uD83D\\\\uDE00"}`, "text", `\\uD83D\\uDE00`},
+		{"an escape that is not a surrogate", `{"text":"\u00e9"}`, "text", "é"},
+		{"a literal replacement character", `{"text":"a` + "�" + `b"}`, "text", "a�b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record, err := Decode([]byte(tc.document))
+			if err != nil {
+				t.Fatalf("the decoder refused it: %v", err)
+			}
+			if got := record[tc.field]; got != tc.want {
+				t.Errorf("it decoded to %v, wanted %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEveryRefusalCodeMatchesTheModule is finding 4: Code's own doc says a
+// reworded refusal should be a failing test here, and eight of the eighteen
+// codes were not held to anything. The five vocabularies are bound to the
+// module by TestBoundsMatchTheSharedModule; the codes are bound here, by
+// reading REFUSALS out of index.js and requiring the same set.
+func TestEveryRefusalCodeMatchesTheModule(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "shared", "mailbox-schema", "index.js"))
+	if err != nil {
+		t.Fatalf("reading the module: %v", err)
+	}
+	block := jsRefusals.FindStringSubmatch(string(source))
+	if block == nil {
+		t.Fatal("the module no longer declares REFUSALS: this package's codes have nothing to be held to")
+	}
+	declared := map[string]string{}
+	for _, m := range jsRefusal.FindAllStringSubmatch(block[1], -1) {
+		declared[m[1]] = m[2]
+	}
+	if len(declared) != 18 {
+		t.Errorf("the module declares %d refusal codes: a new one is a code to bind, not to ignore", len(declared))
+	}
+	if len(Codes) != 18 {
+		t.Errorf("this package speaks %d codes, the module declares %d", len(Codes), len(declared))
+	}
+	want := make([]string, 0, len(declared))
+	for _, value := range declared {
+		want = append(want, value)
+	}
+	got := make([]string, 0, len(Codes))
+	seen := map[Code]bool{}
+	for _, code := range Codes {
+		if seen[code] {
+			t.Errorf("the code %s is listed twice in Codes", code)
+		}
+		seen[code] = true
+		got = append(got, string(code))
+	}
+	sort.Strings(want)
+	sort.Strings(got)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("this package speaks  %v\nthe module refuses with %v", got, want)
+	}
+}
+
+// acceptedAndSerialisable is the property itself, in one place: the record
+// must validate, and the bytes must then exist.
+func acceptedAndSerialisable(t *testing.T, record Record) {
+	t.Helper()
+	if _, refusal := ValidateMessage(record); refusal != nil {
+		t.Fatalf("the record is refused %s, and the property is about the records that are accepted", refusal)
+	}
+	if _, err := CanonicalBytes(record, "inbox"); err != nil {
+		t.Errorf("ValidateMessage accepts this record and CanonicalBytes cannot serialise it: %v", err)
+	}
+}
+
+// plainMessage is the vector file's plain message, freshly decoded: a valid
+// record with one field of each type.
+func plainMessage(t *testing.T) Record {
+	t.Helper()
+	return vectorCase(t, "plain message")
+}
+
+// vectorCase is one case's record as the file carries it, decoded by the
+// package's own decoder. Each call re-reads the file, so a test that mutates
+// what it is given cannot reach another test's record.
+func vectorCase(t *testing.T, name string) Record {
+	t.Helper()
+	for _, entry := range list(t, loadVectors(t)["cases"], "cases") {
+		vector := object(t, entry, "case")
+		if text(t, vector["name"], "name") == name {
+			return Record(object(t, vector["message"], "message"))
+		}
+	}
+	t.Fatalf("the vector file carries no %q case", name)
+	return nil
+}
+
+// dig returns the object a record holds at a path, so a test can put a value
+// inside a nested record.
+func dig(t *testing.T, record Record, keys ...string) map[string]any {
+	t.Helper()
+	here := map[string]any(record)
+	for i, key := range keys {
+		next, ok := here[key].(map[string]any)
+		if !ok {
+			t.Fatalf("%s is not an object in the vector", strings.Join(keys[:i+1], "."))
+		}
+		here = next
+	}
+	return here
+}
+
 func TestBoundsMatchTheSharedModule(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "..", "shared", "mailbox-schema", "index.js"))
 	if err != nil {
@@ -564,6 +919,10 @@ var (
 	jsBound      = regexp.MustCompile(`(?m)^export const ([A-Z_]+) = (\d+);$`)
 	jsVocabulary = regexp.MustCompile(`(?s)export const ([A-Z_]+) = Object\.freeze\(\[(.*?)\]\)`)
 	jsString     = regexp.MustCompile(`'([^']*)'`)
+	// REFUSALS is an object, not a list: the name is the family and the value
+	// is the code the two ends speak, which is the half this package binds.
+	jsRefusals = regexp.MustCompile(`(?s)export const REFUSALS = Object\.freeze\(\{(.*?)\n\}\);`)
+	jsRefusal  = regexp.MustCompile(`(?m)^\s*([A-Z_]+): '([^']*)',$`)
 )
 
 // tagOf is the tag HMAC-SHA-256 produces over canonical bytes: mac.js's own
