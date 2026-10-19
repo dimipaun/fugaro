@@ -656,57 +656,67 @@ func TestDocsCheck81RestoreUsesTheFirebaseProject(t *testing.T) {
 // ("each status with its refused body `Permission denied`", "the five 401s and
 // their bodies"). An owner following the check could not record what those
 // lines demand. TOK now keeps the body and puts the status on a line of its
-// own; step 6's two columns, which are thirty-four statuses and no bodies,
-// use CODE (the status alone), and that exception is the check's own.
+// own. Step 6 was then moved to a second, status-only `CODE` helper, and the
+// review of PR #580 found that its FACT line asks for bodies too ("the first
+// thirteen are 200, with the body being whatever that node holds ... and the
+// second twenty-one are 401 with `Permission denied`"): the two columns are
+// read through TOK as well, and no form of the helper discards a body.
 func TestDocsCheck81TokKeepsTheBody(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
 	section := docSection(t, path, doc, "## Check 81:")
 	helpers := codeBlockAfter(t, section, "# === Check 81: the helpers")
 
-	var tok, code string
+	var tok string
 	for _, line := range strings.Split(helpers, "\n") {
-		switch {
-		case strings.HasPrefix(strings.TrimSpace(line), "TOK()"):
+		if strings.HasPrefix(strings.TrimSpace(line), "TOK()") {
 			tok = line
-		case strings.HasPrefix(strings.TrimSpace(line), "CODE()"):
-			code = line
 		}
 	}
 	if tok == "" {
 		t.Fatalf("## Check 81: the helpers define no `TOK()`, so this test cannot see whether it keeps the body: read the helper block again")
 	}
 	if strings.Contains(tok, "/dev/null") {
-		t.Errorf("## Check 81: `TOK` still discards the body:\n%s\nthe FACT lines of steps 3, 4, 5 and 7 ask for each status with its body, and a status-only helper cannot produce them", strings.TrimSpace(tok))
+		t.Errorf("## Check 81: `TOK` still discards the body:\n%s\nthe FACT lines of steps 3, 4, 5, 6 and 7 ask for each status with its body, and a status-only helper cannot produce them", strings.TrimSpace(tok))
 	}
 	if !strings.Contains(tok, "%{http_code}") {
-		t.Errorf("## Check 81: `TOK` does not print the status:\n%s\nit is the helper every refusal line in steps 3, 4, 5 and 7 goes through", strings.TrimSpace(tok))
-	}
-	if code == "" || !strings.Contains(code, "/dev/null") {
-		t.Errorf("## Check 81: there is no `CODE` helper printing the status alone (step 6's two columns are thirty-four statuses; printing a body under each buries the column): got %q", code)
+		t.Errorf("## Check 81: `TOK` does not print the status:\n%s\nit is the helper every line in steps 3, 4, 5, 6 and 7 goes through", strings.TrimSpace(tok))
 	}
 
 	steps := []struct{ from, to string }{
 		{"3. **The fence's negative half", "4. **The user reads"},
 		{"4. **The user reads", "5. **The user's second write"},
 		{"5. **The user's second write", "6. **The granted read nodes"},
+		{"6. **The granted read nodes", "7. **A token whose `mu`"},
 		{"7. **A token whose `mu`", "8. **The fence is the deployed"},
 	}
 	for _, st := range steps {
 		step := stepText(t, section, st.from, st.to)
-		if !strings.Contains(step, "body") && !strings.Contains(step, "bodies") {
-			t.Fatalf("check 81 %s: its FACT lines no longer mention a body, so this test's premise (a body is asked for here) is gone", st.from)
+		// The premise is the step's own FACT lines, not the word anywhere in
+		// it: step 6's prose mentions a `null` body in passing, so a check
+		// over the whole step would stay green after its FACT line stopped
+		// asking for one.
+		asks := false
+		for _, para := range paragraphsOf(step) {
+			if !strings.HasPrefix(strings.TrimSpace(para), "**FACT:**") {
+				continue
+			}
+			if strings.Contains(para, "body") || strings.Contains(para, "bodies") {
+				asks = true
+			}
+		}
+		if !asks {
+			t.Fatalf("check 81 %s: no FACT paragraph mentions a body, so this test's premise (a body is asked for here) is gone", st.from)
 		}
 		if !strings.Contains(step, "TOK ") {
 			t.Errorf("check 81 %s: its FACT lines ask for the bodies and the step calls no `TOK`: the bodies cannot be recorded", st.from)
 		}
-		if strings.Contains(step, "CODE ") {
-			t.Errorf("check 81 %s: the step uses the status-only `CODE` helper and its FACT lines ask for bodies: use TOK here", st.from)
-		}
 	}
-	step6 := stepText(t, section, "6. **The granted read nodes", "7. **A token whose `mu`")
-	if strings.Contains(step6, "TOK ") || !strings.Contains(step6, "CODE ") {
-		t.Errorf("check 81 step 6: the two columns do not use the status-only `CODE` helper: they are thirty-four paths whose evidence is the status, and a body under each one buries the column")
+	// No form of the helper may throw a body away: step 6's FACT asks for the
+	// bodies its two columns answer with (the node's value, or `null`), so a
+	// status-only helper here is a FACT line the owner cannot fill in.
+	if strings.Contains(helpers, "-o /dev/null") {
+		t.Errorf("## Check 81: the helper block defines a form that discards the body (`-o /dev/null`): every step whose FACT line asks for a body has to be able to record it, step 6's columns included")
 	}
 }
 
@@ -962,6 +972,17 @@ func TestDocsCheck81Step5CountsItsTokLines(t *testing.T) {
 			t.Errorf("check 81 step 5's %s is\n%s\nwhich does not carry %s: the position the FACT line names and the command it describes have to be the same line", want.ord, strings.TrimSpace(toks5[want.n-1]), want.cmd)
 		}
 	}
+
+	// Step 7 counts the same way, over a block of five `TOK` lines and no
+	// seed: "the five 401s and their bodies". It is the third count of this
+	// kind in the section, so it is read against the block here too -- an
+	// undercount is the finding this test exists for (PR #580's rounds 6
+	// and 7).
+	step7 := stepText(t, section, "7. **A token whose `mu`", "8. **The fence is the deployed")
+	toks7 := tokLines(step7, `MI=$(signin "$BOB" "{\"mu\":\"$ALICE\"}")`)
+	if len(toks7) != 5 || !strings.Contains(step7, "the five 401s") {
+		t.Errorf("check 81 step 7's block has %d `TOK` lines and its FACT line does not say `the five 401s`: every line in it is a refusal, so the count in the FACT line is the block's own", len(toks7))
+	}
 }
 
 // TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates: the paragraph that
@@ -1012,6 +1033,57 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 	}
 	if !strings.Contains(para, "`RUN`") {
 		t.Errorf("## Check 81: the paragraph does not file runs/** and agents/** under `RUN`: the template gates both with it (lines 30 and 153), and calling them `TOKEN` names a predicate a mu token fails for another reason than the one the sentence is making")
+	}
+}
+
+// TestDocsCheck81SeedCountMatchesTheBlocks: check 81 tells the owner how much
+// of the project it writes by hand, in two sentences -- "N nodes under Alice's
+// mailbox are seeded with IAM" (what changes in the project) and "the N nodes
+// it reads and acks ... are **seeded with the operator's IAM credentials**"
+// (what the check does not cover). Both said two, and the blocks seed three:
+// step 4's outbox message and heartbeat, and step 5's second outbox message,
+// which the value guard needs because a `false` written to the message step 5
+// already acked would be refused by `!data.exists()` and prove nothing about
+// the boolean. An owner reading "two" would look for one seed fewer than the
+// check writes into the installation. The count is derived from the blocks
+// here, so a fourth seed fails this test until the prose counts it too.
+func TestDocsCheck81SeedCountMatchesTheBlocks(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 81:")
+
+	// The seeds are the steps' own IAM writes: `?access_token=$AT`, which only
+	// the seeding and the Restore use, so the Restore is cut off first.
+	i := strings.Index(section, "**Restore.**")
+	if i < 0 {
+		t.Fatalf("## Check 81: has no \"**Restore.**\" paragraph, so this test cannot tell the steps' seeds from the Restore's deletes")
+	}
+	steps := section[:i]
+	seeds := strings.Count(steps, "?access_token=$AT")
+	if seeds == 0 {
+		t.Fatalf("## Check 81: no step writes with `?access_token=$AT`: the seeding this test counts is gone from the blocks, so the sentences below cannot be checked against them")
+	}
+	word, ok := map[int]string{1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}[seeds]
+	if !ok {
+		t.Fatalf("check 81's steps make %d IAM seeds and this test has no word for that count: write one", seeds)
+	}
+	for _, stem := range []string{
+		"nodes under Alice's mailbox are seeded with IAM",
+		"are **seeded with the operator's IAM credentials**",
+	} {
+		var para string
+		for _, p := range paragraphsOf(section) {
+			if strings.Contains(p, stem) {
+				para = p
+				break
+			}
+		}
+		if para == "" {
+			t.Fatalf("## Check 81: no paragraph says %q: this test holds that sentence to the blocks' seed count, so it cannot check a sentence that is not there", stem)
+		}
+		if !strings.Contains(strings.ToLower(para), strings.ToLower(word)+" nodes") {
+			t.Errorf("## Check 81: the paragraph saying %q does not count the seeds as %q, and the blocks make %d IAM writes (`?access_token=$AT` in the steps): an owner reading a smaller number looks for a seed the check never made, and one reading a larger number for a node the Restore does not remove", stem, word+" nodes", seeds)
+		}
 	}
 }
 
