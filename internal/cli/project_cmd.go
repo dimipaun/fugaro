@@ -196,9 +196,26 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err := checkPolicyBytes(body); err != nil {
 			return err
 		}
+		// The per-repository admissions (O4) are written *before* the shared
+		// node, and the direction is the whole of the reasoning: the child is a
+		// copy of an admission the shared node already implies (inverted from
+		// accounts.<name>.allow_repos), and a publish that stops between the two
+		// writes leaves the copy ahead of its source. Ahead in the shrinking
+		// direction is what a publish is for — a repository whose account the
+		// operator just removed stops being admitted here first — while the
+		// other order can leave a child admitting an account the shared node no
+		// longer covers, which is a revocation that silently did not happen.
+		// The children are one atomic patch, so they are never half-written.
+		admissions, err := publishAdmissions(ctx, db, lc, pol)
+		if err != nil {
+			return err
+		}
 		err = db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(body))
 		switch {
 		case err == nil:
+			for _, line := range admissions {
+				fmt.Fprintln(out, line)
+			}
 			// The diff is printed after the write, not before it (the review
 			// finding on this change): it is a claim about the node as it now
 			// is, and a write that came back refused — the policy changed
@@ -656,6 +673,20 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// release writes it (see above), so the node's entries are the only ones.
 	if old != nil {
 		pol.CloneURLs = old.CloneURLs
+		// The credentials block is kept too, and for the same reason plus a
+		// stronger one: D153 makes every member of it operator-written policy
+		// (the cascade's fallback, its threshold, its backoff and D142's two
+		// controls), so a publish is not where any of them is decided and a
+		// publish that dropped the block would put a project back on the defaults
+		// it never chose — for `fallback: auto` with an enforce cap, silently back
+		// onto oauth-only. The node is the only place the block exists.
+		//
+		// Copied as the typed value, where clone_urls and routing are also
+		// patched in as document members (policyNodeBytes): the block is strict
+		// inside, so a member this Fugaro does not model is refused by
+		// publishedPolicyOf before a publish gets here, and what this assignment
+		// re-encodes is therefore the whole of the operator's block.
+		pol.Credentials = old.Credentials
 	}
 	return pol, keepRouting, nil
 }
@@ -808,6 +839,17 @@ func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouti
 			return nil, userErr("building the policy: %v", err)
 		}
 	}
+	// The credentials member is *not* patched here, unlike clone_urls and
+	// routing, and that is a deliberate difference rather than an oversight.
+	// Those two are shared with releases that know members this one does not:
+	// Decode tolerates an unmodelled key inside them, so a re-encode of the
+	// decoded value would drop it and the node's own bytes are what has to
+	// survive. This block is strict inside (the package doc's "strict in the
+	// other direction"), so an unmodelled key in it is refused by
+	// publishedPolicyOf before this function is reached, and every block that
+	// gets here is one this Fugaro models *whole* — the typed assignment in
+	// buildProjectPolicy re-encodes it losslessly. Carrying it as a document
+	// member on top would be code no test can tell the difference in.
 	routing, ok, err := jsonMember(oldRaw, "routing")
 	if err != nil {
 		// The node decoded as a policy a moment ago (publishedPolicyOf), so a
@@ -1076,6 +1118,107 @@ func patchPolicyJSON(raw []byte, key string, val any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// ------------------------------------------------- per-repository admissions
+
+// publishAdmissions writes each repository's admitted Claude account names into
+// its own node under config/policy/repos (O4), and removes the children of the
+// repositories no account admits any more. It returns the lines the caller
+// prints once the shared node's own write has succeeded.
+//
+// The admissions are the accounts block inverted: accounts.<name>.allow_repos
+// says which repositories an account's token may be used by, and the service
+// that holds those tokens reads the question the other way round — for this
+// repository, which accounts may it use (the plan's C1.11). The names come from
+// the same derived block the shared node carries (projectpolicy.DeriveAccounts,
+// from the operator's config), so the two are one answer written twice, and the
+// node holds names only: an account's token is a secret version the service
+// reads as its own service account, never something published here.
+//
+// The key is the repository's slug — task.Slug(provider, owner/name), the
+// string the run's own token carries as its `fs` claim and the key
+// config/policy/repos/$slug is written under — so the repository whose run may
+// read a child is exactly the repository the child is about.
+//
+// A repository some account covers has a child; one no account covers has
+// none. The absence is the whole statement ("this repository is admitted to no
+// account"), and it is what a node with an empty list would have to mean
+// anyway — DecodeRepo refuses that spelling rather than reading it.
+//
+// The children are written in one Patch, so a set of admissions is never
+// half-applied; a stale child is removed only after it decodes as this shape,
+// because a node this Fugaro cannot read is not a node it may delete (it is
+// named instead, and the operator removes it by hand).
+func publishAdmissions(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, pol *projectpolicy.Policy) ([]string, error) {
+	desired, err := repoAdmissions(pol)
+	if err != nil {
+		return nil, err
+	}
+	var existing map[string]json.RawMessage
+	if _, err := db.Get(ctx, projectpolicy.PathRepos(), &existing); err != nil {
+		return nil, dbErr(lc, err, false)
+	}
+	updates := make(map[string]any, len(desired))
+	var lines []string
+	for _, slug := range slices.Sorted(maps.Keys(desired)) {
+		updates[slug] = projectpolicy.RepoPolicy{Credentials: projectpolicy.RepoCredentials{Accounts: desired[slug]}}
+		lines = append(lines, fmt.Sprintf("  admits %s: %s", slug, strings.Join(desired[slug], ", ")))
+	}
+	for _, key := range slices.Sorted(maps.Keys(existing)) {
+		if _, ok := desired[key]; ok {
+			continue
+		}
+		if _, found, err := projectpolicy.DecodeRepo(existing[key]); err != nil {
+			return nil, userErr("%s/%s is a node this Fugaro cannot read (%v), so it will not be removed: this publish is what removes a repository's admissions, and a node it does not understand is one it cannot say the meaning of; fix it by hand, or remove it with 'fugaro project policy publish --delete'",
+				projectpolicy.PathRepos(), key, err)
+		} else if !found {
+			continue // a null child is no child
+		}
+		updates[key] = nil
+		lines = append(lines, fmt.Sprintf("  admits %s: removed (no account admits this repository)", key))
+	}
+	if len(updates) == 0 {
+		return nil, nil
+	}
+	if err := db.Patch(ctx, projectpolicy.PathRepos(), updates); err != nil {
+		return nil, dbErr(lc, err, true)
+	}
+	return lines, nil
+}
+
+// repoAdmissions is the accounts block inverted: the slug of each repository an
+// account admits, to the sorted names of the accounts admitting it.
+//
+// The entries are canonical names (projectpolicy.Canonical's spelling,
+// validated by the node's
+// own rules before this runs), and task.Slug is what turns one into the key the
+// repository's own run token carries. A canonical name that task.Slug refuses
+// is a name the node's rules already refused, so this is the belt to their
+// braces: publishing an admissions child for a slug nothing can look up is
+// worse than refusing the publish.
+func repoAdmissions(pol *projectpolicy.Policy) (map[string][]string, error) {
+	if pol == nil || len(pol.Accounts) == 0 {
+		return nil, nil
+	}
+	out := make(map[string][]string, len(pol.Accounts))
+	for _, name := range pol.AccountNames() {
+		for _, canonical := range pol.Accounts[name].AllowRepos {
+			provider, repo, ok := strings.Cut(canonical, "/")
+			if !ok || provider == "" || repo == "" {
+				return nil, userErr("the accounts block holds %q for account %s, which is not a canonical repository name (provider/owner/name): this publish cannot say which repository's node that admission belongs to", canonical, name)
+			}
+			slug, err := task.Slug(provider, repo)
+			if err != nil {
+				return nil, userErr("the accounts block holds %q for account %s: %v", canonical, name, err)
+			}
+			out[slug] = append(out[slug], name)
+		}
+	}
+	for slug := range out {
+		slices.Sort(out[slug])
+	}
+	return out, nil
+}
+
 // printPolicyDiff shows what the write changes. An absent node is printed in
 // full; an existing one prints the lines that differ — the budget and the
 // allow-list, every field of every provider entry, and every price override —
@@ -1133,6 +1276,17 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	for _, canonical := range slices.Sorted(maps.Keys(new.CloneURLs)) {
 		fmt.Fprintf(out, "  clone_urls %s kept: %s\n", canonical, new.CloneURLs[canonical])
 	}
+	// The credentials block is operator-written policy about spending (D152,
+	// D153, D142) and no command of this release writes one, so a publish keeps
+	// it — which is a fact the operator reading this diff has to be told, the
+	// way the clone URLs' line tells them: a block that vanished here would
+	// silently put a project back on oauth-only (or back on the defaults it
+	// never chose), and the node is the only place it exists. The members
+	// printed are the ones the node *writes*; a member it leaves out is its
+	// default, and the line does not invent it.
+	if new.Credentials != nil {
+		fmt.Fprintf(out, "  credentials kept: %s\n", credentialsText(new.Credentials))
+	}
 	for _, r := range new.AllowRepos {
 		if src, ok := sources[r]; ok {
 			fmt.Fprintf(out, "  allow_repos %s (%s)\n", r, src)
@@ -1140,6 +1294,42 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 			fmt.Fprintf(out, "  allow_repos %s (kept from the published node)\n", r)
 		}
 	}
+}
+
+// credentialsText is the credentials block as one line, member by member and
+// only the members the node writes: the block's absent members are its defaults
+// (projectpolicy.Credentials' accessors), and this line is about what the node
+// says, not about what a reader would resolve. A written empty block prints as
+// the block it is.
+func credentialsText(c *projectpolicy.Credentials) string {
+	if c == nil {
+		return "none"
+	}
+	var parts []string
+	if c.Fallback != "" {
+		parts = append(parts, "fallback "+c.Fallback)
+	}
+	if c.WaitThreshold != "" {
+		parts = append(parts, "wait_threshold "+c.WaitThreshold)
+	}
+	if c.Backoff != nil {
+		if c.Backoff.Initial != "" {
+			parts = append(parts, "backoff.initial "+c.Backoff.Initial)
+		}
+		if c.Backoff.Cap != "" {
+			parts = append(parts, "backoff.cap "+c.Backoff.Cap)
+		}
+	}
+	if c.StopAfterExhaustionPerWindow != nil {
+		parts = append(parts, fmt.Sprintf("stop_after_exhaustion_per_window %v", *c.StopAfterExhaustionPerWindow))
+	}
+	if c.ConcurrencyPerToken != nil {
+		parts = append(parts, fmt.Sprintf("concurrency_per_token %d", *c.ConcurrencyPerToken))
+	}
+	if len(parts) == 0 {
+		return "written with every member absent: the defaults"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // accountLines is one line per account of the accounts block, for the diff
