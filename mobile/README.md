@@ -461,6 +461,8 @@ being the code that ran. Both are listed here.
 | The confirmation is a real utterance and spends one action. | `src/demo/index.test.js`: the phrase is sent (a signed write), its id is minted fresh and differs from the command's, the record carries `demo-confirmation-1`, and a second tap is refused by the machine. |
 | The question is P6.5's queue. | `src/demo/index.test.js`: the queue's `pending` is what the screen shows, with the safe answer beside it. |
 | Entering twice is one demo, whenever the second call arrives. | `src/demo/index.test.js`: a second call after the run returns the same state; a second call **during** it (a double tap, which lands in the same tick) joins the run in flight, so the sample sentences are sent once and the demo publishes once; and a `leave()` during a run leaves the demo off rather than letting the run land behind it. |
+| Entering after a `leave()` starts a demo, even if the left run is still winding down. | The same file: a tap arriving while an abandoned run is in flight starts a whole new run (joining the abandoned one would answer it with the inactive state and start nothing), and the abandoned run ending does not take the new run's place in flight with it. |
+| Leaving during a confirmation is answered, not thrown at. | The same file: `confirm()` holds the run it started with across the send, so a `leave()` in between returns the inactive state rather than reading the module's `running` (which is null by then) and throwing at a screen; a phrase left in flight is dropped rather than recorded against the demo entered after it. |
 | The banner and the way out are the shell's, on every screen. | `src/app/root.test.js`, asserted with the demo off and on, and end to end with the real controller and the real screens. |
 | `MemoryMailboxStore.deliver` is the other end's write and not a phone write. | `src/mailbox/store.test.js`. It is what keeps the demo from seeding the tree through `write`, which the one-write-path scan fences to the client. |
 | The Play form text promises the control the app has. | `src/demo/safety.test.js` reads `docs/mobile/play-review-access.md` and requires the sentence the owner pastes, with the control's own words (`TRY_DEMO`), and the README required to carry the same three strings. |
@@ -480,6 +482,9 @@ being the code that ran. Both are listed here.
 | the in-flight guard is removed, leaving the old `running` check alone | `two overlapping enters are one demo: the double tap cannot send twice` |
 | the in-flight guard is assigned only after the first await | the same test |
 | a run left behind by `leave()` is allowed to land | `leaving while the demo is still being built leaves it off` |
+| the in-flight slot is joined without checking the epoch it was started in | `entering again while an abandoned run is still in flight starts the demo`, `a run ending does not clear the run that replaced it` |
+| an ending run clears the slot unconditionally | `a run ending does not clear the run that replaced it` |
+| `confirm()` reads the module's `running` again after the send | `leaving during a confirmation is answered, not thrown at`, `a confirmation in flight does not land on the demo entered after it` |
 | a reply's `acked` state is not shown | `the screen shows the app's own run...` |
 | the sample clock moves by a millisecond | `the clock is fixed, and the data is frozen` |
 | the key source answers for any item | `the demo's key source answers for one item...` |
