@@ -1495,9 +1495,35 @@ func TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit(t *testing.T) {
 		// pull request this document ships in, so its artifacts are on `main`
 		// and have no merge commit to be named by while it is written.
 		"**\"merged with this change\"** means the artifact is on `main` as of **PR #592**, the pull request that carries this revision",
+		// The fourth notation, and the one P3.5 needed: its directory is in
+		// this revision's tree while its own pull request is a draft for
+		// 0.9.5, so "merged with this change" -- defined above as on `main` as
+		// of #592 -- would be false of it. Without this notation the list had
+		// no true cell to put in P3.5's row.
+		"**\"merged in this revision's tree, draft\"** means the artifact is **in the tree of the pull request that carries this revision**",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q; section 2 defines the notations the rest of the document is read with", path, want)
+		}
+	}
+	// And the list's row for P3.5 uses that fourth notation rather than the
+	// third: the directory is in this revision's tree, and P3.5's own pull
+	// request is a draft, so "merged with this change" -- on `main` as of #592
+	// -- is a claim about `main` that is not true of it. Both halves are
+	// pinned, so the two notations cannot collapse into one by an edit to the
+	// table alone.
+	for _, want := range []string{
+		"| P3.5 | `mobile/src/voice` | not merged | merged in this revision's tree, draft |",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q; P3.5's work is in this revision's tree and its own pull request is a 0.9.5 draft, which is the fourth notation's case", path, want)
+		}
+	}
+	for _, banned := range []string{
+		"| P3.5 | `mobile/src/voice` | not merged | merged with this change |",
+	} {
+		if strings.Contains(recon, banned) {
+			t.Errorf("%s carries %q again: \"merged with this change\" is defined as on `main` as of #592, and P3.5's pull request is a draft that has not merged", path, banned)
 		}
 	}
 	// Every use of the shorthand names a pull request that is still open. #592

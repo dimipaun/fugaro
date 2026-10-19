@@ -81,13 +81,17 @@ var jsCommentLeaderRE = regexp.MustCompile(`\n//[ \t]?`)
 // Paragraph-level, because that is the unit a reader reads: a paragraph that
 // says "not merged" and names a task whose directory the tree carries is the
 // offence, wherever in `mobile/` it is. A paragraph about a task that really has
-// not merged (P3.5's `mobile/src/voice/` today) is the control and passes.
+// not merged (P3.3's `mobile/src/jobs/`, the only Phase 3 directory the tree
+// still does not carry) is the control and passes.
 //
 // Mutation (verified, run and restored): put "is **not merged**" back into
 // mobile/src/mailbox/speaker.js's header, or write "P3.2 (`mobile/src/feed`) is
 // not merged" into any file under mobile/: this fails, both ways. A paragraph
-// saying "P3.5 is not merged" stays green, because `mobile/src/voice/` is not in
-// the tree.
+// saying "P3.3 is not merged" stays green, because `mobile/src/jobs/` is not in
+// the tree. The control used to be P3.5, and it moved when P3.5's work arrived
+// in this revision's tree: `mobile/src/voice/` is there now, so a paragraph
+// saying "P3.5 is not merged" is the offence rather than the control, and the
+// only directory left to play that part is P3.3's.
 func TestDocsMobilePhase3NotMergedClaimsAgreeWithTheTree(t *testing.T) {
 	var files []string
 	err := filepath.WalkDir("../../mobile", func(path string, entry fs.DirEntry, err error) error {
