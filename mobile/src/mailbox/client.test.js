@@ -1718,3 +1718,34 @@ test('the client never relies on the SDK\'s offline queue: nothing is ever issue
   assert.equal(h.valueAt(`${INBOX}/m-1`), null);
   assert.equal(h.valueAt(`${INBOX}/handed-over`), null);
 });
+
+test('the gate refusal has two shapes, and only `send` carries a sentence', async () => {
+  // README's bullet tells the screens (P6.9's text screen, P6.12's voice screen)
+  // which refusal they may render: `send` answers with a sentence and whether it
+  // was spoken, `flush` and `poll` answer with the code alone. The claim was
+  // wrong in this file's README until the PR review of P6.10, and a claim about
+  // what a screen renders that only lives in prose drifts again -- so the two
+  // shapes are asserted here, and the `message` key's absence is the assertion.
+  const h = await harness();
+  h.connection.setOnline(false);
+
+  const spoken = await h.client.send('cancel the docs refactor');
+  assert.equal(spoken.message, OFFLINE_SPEECH[GATE_CODES.NO_CONNECTION]);
+  assert.equal(typeof spoken.told, 'boolean', '`send` says whether it was heard');
+
+  for (const [what, refused] of [
+    ['flush', await h.client.flush()],
+    ['poll', await h.client.poll()],
+  ]) {
+    assert.deepEqual(
+      refused,
+      { ok: false, code: GATE_CODES.NO_CONNECTION, field: 'connection' },
+      `a refused ${what} is the bare refusal`,
+    );
+    assert.deepEqual(
+      Object.keys(refused).sort(),
+      ['code', 'field', 'ok'],
+      `nothing to render and nothing to speak on a refused ${what}`,
+    );
+  }
+});

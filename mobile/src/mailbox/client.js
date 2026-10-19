@@ -110,10 +110,13 @@ import { STORE_CODES } from './store.js';
  * **It is not the window the consumer accepts these records for, and saying so
  * was wrong** (the PR #604 review). P1.1's window is per-kind (D173): a prompt
  * is accepted inside the prompt TTL, a command inside `windowMs` -- the 6-hour
- * replay window, its own default. Every record this client writes carries no
+ * replay window, its own default. Every record this client RETRIES carries no
  * `kind`, so the consumer reads it as a command, and a retry more than six
  * hours after the utterance is still made by the phone and refused at the other
- * end as a `replay`. The phone cannot know better: `windowMs` is the consumer's
+ * end as a `replay`. (An action record does carry `kind: 'action'` -- P6.10,
+ * D169 -- but `send` writes it once and forgets it, so it is never retried and
+ * never meets this window on a second attempt; it is judged by the consumer's
+ * action rules instead.) The phone cannot know better: `windowMs` is the consumer's
  * setting (P1.1 takes it per state) and the phone is not its reader. So the 72
  * h here bounds the PHONE's effort and matches the mailbox's retention -- the
  * facts of it, in the plan's O5 and D118 -- and `client.test.js` holds both

@@ -193,9 +193,14 @@ number). `MAILBOX_TTL_MS` is D118's retention TTL and the phone's own bound on
 how long it keeps trying. What the consumer **accepts** is P1.1's per-kind
 window (D173): a prompt inside the prompt TTL (72 h), a command inside
 `windowMs` -- the **6-hour replay window**, P1.1's own default. The records this
-client writes carry no `kind`, so the consumer reads them as commands: a retry
-made ten hours after the utterance is still attempted by the phone and refused
-at the other end as a **replay**. The phone cannot know the consumer's window
+client **retries** carry no `kind`, so the consumer reads them as commands: a
+retry made ten hours after the utterance is still attempted by the phone and
+refused at the other end as a **replay**. (An action record is the exception,
+and it is one because P6.10 never retries it: `send(text, {action})` writes it
+with `kind: 'action'` and forgets it, so no second attempt of it ever meets
+this window -- the consumer judges it by its action rules, not by the replay
+one. So the sentence above is about what `flush` re-sends, and an action record
+is never one of those.) The phone cannot know the consumer's window
 (P1.1 takes it per state, and the phone is not its reader), which is why the
 number here is the mailbox's and not the consumer's -- and why the test asserts
 both numbers against their own modules rather than one window against the other.
@@ -233,10 +238,22 @@ client.pending();  // [] -- nothing was queued
 
 * **Nothing is written, and the owner is told.** `send`, `flush` and `poll` ask
   the connection gate **before** any read, write, key read or speak, so nothing
-  reaches the SDK and nothing reaches its queue. The refusal carries the code,
-  the field, the sentence and whether it was spoken (`told`); the sentence comes
-  from `OFFLINE_SPEECH`, one table, so this module and the screens that render
-  it cannot end up saying two different things about one reason.
+  reaches the SDK and nothing reaches its queue. **The owner is told by `send`
+  only, and that is the shape a screen may rely on**: a refused `send` answers
+  `{ ok: false, code, field, message, told }` -- the sentence from
+  `OFFLINE_SPEECH`, one table, so this module and the screens that render it
+  cannot end up saying two different things about one reason -- plus whether it
+  was spoken. A refused `flush` or `poll` answers the bare
+  `{ ok: false, code, field }` (`refuse` in `client.js`), with **no `message`
+  and no `told`**: there is nothing honest to say and nothing to speak. A poll
+  is a read and may run with no screen in front of it, so a sentence spoken
+  from it would talk to the owner because a refresh failed; a flush reports by
+  the pending records it could not deliver, and `OFFLINE_SPEECH`'s sentences
+  ("I have not sent **that**") have no referent for a re-send of a record the
+  owner already spoke. A screen that switches on a refusal must therefore read
+  `code` for `flush`/`poll` and `message` only for `send` -- a screen that
+  renders `refusal.message` for a refused flush renders nothing, which is the
+  bug this paragraph exists to prevent.
 * **`send` asks the presence gate too**, over the **last poll's heartbeat,
   re-judged at the moment the owner speaks** -- not the verdict the poll
   computed. A consumer that was live five minutes ago and has gone quiet since
@@ -262,7 +279,7 @@ which is why a stale consumer is caught by an ordinary send and not only by a
 there: nothing is written, and there is no unsent text either, because resending
 a destructive command means confirming it again.
 
-## The one limit of the gate, named
+## The limits of the gate, named
 
 **A phone that has never polled has observed nothing, and the gate lets it
 send.** D167's two conditions are "no connection" and "the consumer stale or
@@ -285,6 +302,26 @@ alternative -- a `cancelPending()` on the database port, and the client calling
 it before every write -- would widen P3.6's two-method port to guard against a
 race it cannot detect anyway, and `store.js` keeps the SDK's cancel on the double
 (`cancelPending`, tested) precisely to show what is NOT being relied on.
+
+**The unsent list grows, and nothing retires an entry.** `unsent` is an
+append-only array in the client's closure: one entry per gated utterance, for
+the life of the process, with no bound and no way for a screen to drop one --
+the client object is frozen to seven names (P3.6's contract test holds it
+there), and none of them removes an entry. It is named here rather than left to
+be found, and the bound that exists is only a practical one: an entry is one
+utterance's text (`TEXT_MAX`, 4096 characters, one entry per push), the list is
+in memory and dies with the app, and it only grows while the phone is offline
+and the owner keeps speaking. Two things follow. First, this is a **screen's
+decisions and not this module's**: P6.9's text screen and P6.12's voice screen
+own what "resend" and "discard" do, and a retire affordance added here would be
+this module inventing an owner-facing verb nobody asked it for -- P6.10's write
+set is the plan's two paths and nothing else. Second, the accumulation is
+genuine and is the reason `pending()` (bounded by D118's TTL and drained by
+`flush`) is a different list from this one: `pending` is the phone's retry
+queue, and `unsent` is the owner's text, which this module deliberately never
+sends on its own. If a later task wants a bound here, the honest one is a
+retire method beside `unsent()` -- not a cap that silently drops the sentence
+the owner was about to resend.
 
 ## Two known limits, named rather than left to be found
 

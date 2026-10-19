@@ -99,6 +99,7 @@ require_clean() { # file
   fi
 }
 require_clean "$F"
+require_clean mobile/src/mailbox/gate.js
 require_clean mobile/src/mailbox/mac.js
 require_clean mobile/src/mailbox/store.js
 require_clean mobile/src/accounts/secure-store.js
@@ -330,7 +331,13 @@ run "the leak fence searches only for material a match is evidence about (the cl
   "  return true;" \
   mobile/src/accounts/secure-store.js src/mailbox/client.test.js
 
-# 10. The offline gate (P6.10; D167, G21). Seven guards in client.js, four in
+run "the store is written in one file only (the scan)" \
+  "export function createRoot({ React, store, View, Text }) {" \
+  "export async function aSecondWritePath(store) { return store.write('mailbox/u/inbox/x', 1); }
+export function createRoot({ React, store, View, Text }) {" \
+  mobile/src/app/root.js src/mailbox/write-path.test.js
+
+# 10. The offline gate (P6.10; D167, G21). Eleven guards in client.js, four in
 #     gate.js and one in the store's SDK model -- and the store's is proved
 #     twice, once against its own suite and once against the client's, because
 #     "the SDK queue would have noticed" is the control the client's claim rests
@@ -378,6 +385,12 @@ run "poll does nothing at all with no connection" \
     if (!online.ok) return refuse(online.code, online.field);" \
   "    const online = evaluateGate({ online: connection.isOnline() });
     if (false) return refuse(online.code, online.field);"
+run "a refused flush carries no sentence to render or to speak" \
+  "    if (!verdict.ok) return refuse(verdict.code, verdict.field);" \
+  "    if (!verdict.ok) return Object.freeze({ ok: false, code: verdict.code, field: verdict.field, message: offlineSpeech(verdict.code), told: false });"
+run "a refused poll carries no sentence to render or to speak" \
+  "    if (!online.ok) return refuse(online.code, online.field);" \
+  "    if (!online.ok) return Object.freeze({ ok: false, code: online.code, field: online.field, message: offlineSpeech(online.code), told: false });"
 run "a connection that is not \`true\` is offline (gate.js)" \
   "  if (online !== true) return refuse(GATE_CODES.NO_CONNECTION, 'connection');" \
   "  if (online !== true && online !== false) return refuse(GATE_CODES.NO_CONNECTION, 'connection');" \
@@ -416,12 +429,6 @@ run "the SDK's queue is real, which is what the client's claim rests on (store.j
       return Object.freeze({ ok: true });
     }" \
   mobile/src/mailbox/store.js src/mailbox/client.test.js
-
-run "the store is written in one file only (the scan)" \
-  "export function createRoot({ React, store, View, Text }) {" \
-  "export async function aSecondWritePath(store) { return store.write('mailbox/u/inbox/x', 1); }
-export function createRoot({ React, store, View, Text }) {" \
-  mobile/src/app/root.js src/mailbox/write-path.test.js
 
 echo
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"
