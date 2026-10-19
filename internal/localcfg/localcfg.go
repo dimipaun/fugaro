@@ -522,15 +522,23 @@ func validateBatch(bad func(string, ...any), c *Config) {
 		// omitted key means.
 		bad("batch.task_timeout %v: it must be more than 0, or left out for the default (%v)", b.TaskTimeout.Duration, backend.MaxRunTime)
 	}
-	for _, k := range slices.Sorted(maps.Keys(b.Secrets)) {
-		// The value is never printed: it is refused precisely because a
-		// value can be written where a name belongs, and a refusal that
-		// quoted it would put the value in a log (design §1.6, C10).
+	// Each entry is named by its position in the sorted map, and never by its
+	// key: neither side of the map is printed, because **either** side can hold
+	// a secret's value. The value slot is the one a value is usually written
+	// into, but the key slot is no safer -- an environment variable name and an
+	// access key id can be spelled identically (`AKIAIOSFODNN7EXAMPLE` is
+	// both), so a key that fails batchEnvNameRE may be the very value this
+	// section must never carry, and a refusal that quoted it would put it on
+	// stderr, in a log and in an issue report. It is the same reasoning and the
+	// same shape as internal/backend/batch/batch.go's checkSecrets, which names
+	// its entry by position for this reason (design §1.6, C10).
+	keys := slices.Sorted(maps.Keys(b.Secrets))
+	for i, k := range keys {
 		if !batchEnvNameRE.MatchString(k) {
-			bad("batch.secrets.%s: a key is an environment variable name (letters, digits and _, not starting with a digit)", k)
+			bad("batch.secrets: entry %d of %d has a key that is not an environment variable name (letters, digits and _, not starting with a digit). The refused key is not repeated here: a secret's value can be spelled like one, so a value written where the name belongs stops here, and a refusal is not the place to print it", i+1, len(keys))
 		}
 		if !batchSecretNameRE.MatchString(b.Secrets[k]) {
-			bad("batch.secrets.%s: the value is not a Secret Manager secret's resource name (projects/<p>/secrets/<name>): it must be a name, never the secret itself, because the job definition is readable by anyone with batch.jobs.get", k)
+			bad("batch.secrets: entry %d of %d is not a Secret Manager secret's resource name (projects/<p>/secrets/<name>), and is named by its position and not by its key for the same reason: it must be a name, never the secret itself, because the job definition is readable by anyone with batch.jobs.get", i+1, len(keys))
 		}
 	}
 }

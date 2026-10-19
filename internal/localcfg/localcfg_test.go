@@ -549,17 +549,21 @@ func TestBatchSectionValidation(t *testing.T) {
 			"batch.service_account",
 		},
 		"negative gid": {replace("socket_gid: 412", "socket_gid: -1"), "batch.socket_gid"},
+		// The secrets cases name the entry by position, never by its key: a
+		// key that failed the environment-variable-name rule may itself be a
+		// secret's value, so neither message repeats what it refused (the
+		// assertions below hold both halves of that).
 		"secret key with a dash": {
 			replace("    ANTHROPIC_API_KEY:", "    ANTHROPIC-API-KEY:"),
-			"batch.secrets.ANTHROPIC-API-KEY",
+			"batch.secrets: entry 1 of 2",
 		},
 		"secret value instead of a name": {
 			replace("projects/my-project/secrets/anthropic-api-key", "sk-ant-not-a-secret-name"),
-			"batch.secrets.ANTHROPIC_API_KEY",
+			"batch.secrets: entry 1 of 2",
 		},
 		"secret in another project's name shape": {
 			replace("projects/my-project/secrets/anthropic-api-key", "my-project/anthropic-api-key"),
-			"batch.secrets.ANTHROPIC_API_KEY",
+			"batch.secrets: entry 1 of 2",
 		},
 		"zero timeout":     {replace("task_timeout: 1h30m", "task_timeout: 0s"), "batch.task_timeout"},
 		"negative timeout": {replace("task_timeout: 1h30m", "task_timeout: -5m"), "batch.task_timeout"},
@@ -575,13 +579,39 @@ func TestBatchSectionValidation(t *testing.T) {
 			}
 		})
 	}
-	// A refusal of a secret's value must not quote the value: it is refused
-	// because a value can be written where a name belongs, and a message that
-	// printed it would put the value in a log or a terminal.
-	if _, err := Parse([]byte(replace("projects/my-project/secrets/anthropic-api-key", "sk-ant-not-a-secret-name"))); err == nil {
-		t.Fatal("a secret value in the name slot was accepted")
-	} else if strings.Contains(err.Error(), "sk-ant-not-a-secret-name") {
-		t.Errorf("the refusal quotes the secret value: %v", err)
+	// Neither refusal may quote what it refused, on either side of the map: a
+	// value written where a name belongs is the case this section exists to
+	// catch, and a message that printed it would put the value in a log or a
+	// terminal. The key slot needs this as much as the value slot -- an
+	// environment variable name and an access key id can be spelled
+	// identically, so a refused key may be the value (the same rule
+	// internal/backend/batch/batch.go's checkSecrets follows).
+	for _, tc := range []struct{ name, old, new, value string }{
+		{"value in the name slot", "projects/my-project/secrets/anthropic-api-key", "sk-ant-not-a-secret-name", "sk-ant-not-a-secret-name"},
+		{"value in the key slot", "    ANTHROPIC_API_KEY:", "    sk-ant-api03-EXAMPLE:", "sk-ant-api03-EXAMPLE"},
+	} {
+		err := func() error { _, err := Parse([]byte(replace(tc.old, tc.new))); return err }()
+		if err == nil {
+			t.Fatalf("%s: a secret's value was accepted", tc.name)
+		}
+		if strings.Contains(err.Error(), tc.value) {
+			t.Errorf("%s: the refusal quotes the secret value: %v", tc.name, err)
+		}
+	}
+	// A key that is spelled like a legal environment variable name is still
+	// checked, and still accepted: nothing here can tell an access key id from
+	// a variable's name when the two are spelled the same, which is the
+	// limitation internal/backend/batch/batch.go's checkSecrets documents.
+	// What the refusal above must never do is repeat it.
+	if _, err := Parse([]byte(replace("    ANTHROPIC_API_KEY:", "    AKIAIOSFODNN7EXAMPLE:"))); err != nil {
+		t.Errorf("a key spelled like an environment variable name is refused, and it may be one: %v", err)
+	}
+	// The refusal of a bad key does not name the other entry either: the
+	// sample's GITHUB_TOKEN is a name here, so a message that mentioned it
+	// would be quoting a key nobody refused.
+	if _, err := Parse([]byte(replace("    ANTHROPIC_API_KEY:", "    sk-ant-api03-EXAMPLE:"))); err != nil &&
+		strings.Contains(err.Error(), "GITHUB_TOKEN") {
+		t.Errorf("the key-slot refusal names another entry: %v", err)
 	}
 	// A missing gid is not a broken gid: 0 is the recorded state "this
 	// installation has no socket", which the backend refuses a Docker run
