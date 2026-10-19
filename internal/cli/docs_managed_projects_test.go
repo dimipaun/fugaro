@@ -115,22 +115,6 @@ var check68Guard = []string{
 	"  || { echo \"Check 68 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)\" >&2; exit 1; }",
 }
 
-// managedCheckSection returns the whole section of docs/gcp-live-checklist.md
-// whose heading starts with marker, up to the next `## ` heading (or the end
-// of the file, which is where Check 68 sits).
-func managedCheckSection(t *testing.T, path, doc, marker string) string {
-	t.Helper()
-	i := strings.Index(doc, marker)
-	if i < 0 {
-		t.Fatalf("%s has no %q heading", path, marker)
-	}
-	rest := doc[i:]
-	if j := strings.Index(rest[len(marker):], "\n## "); j >= 0 {
-		return rest[:len(marker)+j]
-	}
-	return rest
-}
-
 // logicalCommands joins each backslash continuation in a fenced block into one
 // line and drops comments, so a command spread over several lines is read as
 // the one command it is. Without this, a rule spelled "every command carries
@@ -224,7 +208,7 @@ func TestManagedChecklistGuardsCarryCheck43sStops(t *testing.T) {
 		{"67b", "## Check 67b:", check67bGuard},
 		{"68", "## Check 68:", check68Guard},
 	} {
-		got := stops(managedCheckSection(t, path, doc, c.heading))
+		got := stops(docSection(t, path, doc, c.heading))
 		for _, key := range []string{"doctor", "origin", "doctor-line", "origin-line"} {
 			if name(got[key], c.check) != name(ref[key], "43") {
 				t.Errorf("Check %s's %s is no longer Check 43's:\n  got  %s\n  want %s", c.check, key, got[key], ref[key])
@@ -255,7 +239,7 @@ func TestManagedChecklistGuardsCarryCheck43sStops(t *testing.T) {
 func TestChecklistHasCheck67a(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
-	section := managedCheckSection(t, path, doc, "## Check 67a:")
+	section := docSection(t, path, doc, "## Check 67a:")
 
 	// 1. Whose check it is, and where it runs.
 	row := ""
@@ -378,9 +362,9 @@ func TestChecklistHasCheck67a(t *testing.T) {
 	//     from it, `internal/cli/init_project.go:66`), so a creation that
 	//     passes only `--link-billing` is refused before anything exists;
 	//   - the second checkout has to move `gcp_project:` as well as `project:`
-	//     (`setGCPProjectLine`, `init_fugaroyaml.go:76`; `restoreGCPProjectLine`,
-	//     `restore.go:1040`, refuse a differing value rather than resolving it),
-	//     or step 2's own onboarding and 67b's restore both stop;
+	//     (`setGCPProjectLine`; `restoreGCPProjectLine` in `restore.go`, which
+	//     refuses a differing value rather than resolving it), or step 2's own
+	//     onboarding and 67b's restore both stop;
 	//   - the marker's ORIGINAL bytes have to be copied before the doctored
 	//     ones are uploaded, or the restore the section instructs has nothing
 	//     to restore from and steps 5 to 7 run against a marker that reads as
@@ -615,7 +599,7 @@ func TestChecklistHasCheck67a(t *testing.T) {
 func TestChecklistHasCheck67b(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
-	section := managedCheckSection(t, path, doc, "## Check 67b:")
+	section := docSection(t, path, doc, "## Check 67b:")
 
 	row := ""
 	for _, line := range strings.Split(doc, "\n") {
@@ -774,7 +758,7 @@ func TestChecklistHasCheck67b(t *testing.T) {
 func TestChecklistHasCheck68(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
-	section := managedCheckSection(t, path, doc, "## Check 68:")
+	section := docSection(t, path, doc, "## Check 68:")
 
 	row := ""
 	for _, line := range strings.Split(doc, "\n") {
@@ -1106,7 +1090,7 @@ func TestManagedChecklistAddressVariablesAreGuarded(t *testing.T) {
 
 	uses := regexp.MustCompile(`\$\{([A-Z_][A-Z0-9_]*):\?`)
 	for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
-		section := managedCheckSection(t, path, doc, h)
+		section := docSection(t, path, doc, h)
 		blocks := bashBlocks(section)
 		if len(blocks) == 0 {
 			t.Fatalf("%s has no fenced bash block", h)
@@ -1234,26 +1218,32 @@ func TestManagedChecklistSectionsArePinned(t *testing.T) {
 	// than a sentence, and a sentence is what a reader skims.
 	for _, bad := range []string{"`belong`", "EdgeWeb", "EdgeServer"} {
 		for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
-			if strings.Contains(managedCheckSection(t, path, doc, h), bad) {
+			if strings.Contains(docSection(t, path, doc, h), bad) {
 				t.Errorf("%s names %q", h, bad)
 			}
 		}
 	}
 
 	// The line citations, in a document that cites exactly: `managed_apply.go`'s
-	// `applied …` print is 289 (not 288), `restoreGCPProjectLine` is declared at
-	// restore.go:1015 with its refusal at 1042 (not 1040), and the operator's
-	// grant is `google_service_account_iam_member.operator` at workflow/sa.tf:12
-	// with its `role` line at 16. A citation one line out sends a reader to the
+	// `applied …` print is pinned a line below the statement above it,
+	// `restoreGCPProjectLine`'s citation is pinned against the line restore.go
+	// declares it on (TestManagedChecklistCitationsNameSymbols), and the
+	// operator's grant is `google_service_account_iam_member.operator` with
+	// its `role` line after it. A citation one line out sends a reader to the
 	// blank line above the thing.
 	for _, want := range []string{
 		"internal/cli/managed_apply.go:289",
-		"internal/cli/restore.go:1015",
+		// The restore.go citation is derived from the source rather than
+		// written here: the line is what a reader is sent to, so it is
+		// checked against the line restore.go declares the symbol on, and an
+		// edit that moves either one fails here instead of leaving a number
+		// that was true once.
+		"internal/cli/" + declaredLine(t, "restore.go", "func restoreGCPProjectLine("),
 		"deploy/terraform/gcp/modules/workflow/sa.tf:12",
 	} {
 		found := false
 		for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
-			if strings.Contains(managedCheckSection(t, path, doc, h), want) {
+			if strings.Contains(docSection(t, path, doc, h), want) {
 				found = true
 			}
 		}
@@ -1263,11 +1253,10 @@ func TestManagedChecklistSectionsArePinned(t *testing.T) {
 	}
 	for _, bad := range []string{
 		"internal/cli/managed_apply.go:288",
-		"internal/cli/restore.go:1040",
 		"deploy/terraform/gcp/modules/workflow/sa.tf:13",
 	} {
 		for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
-			if strings.Contains(managedCheckSection(t, path, doc, h), bad) {
+			if strings.Contains(docSection(t, path, doc, h), bad) {
 				t.Errorf("%s cites %q, which is a line off", h, bad)
 			}
 		}
@@ -1277,7 +1266,7 @@ func TestManagedChecklistSectionsArePinned(t *testing.T) {
 	// check reads permissions and bindings, never a key or a token value.
 	for _, bad := range []string{"AIza", "-----BEGIN", "PRIVATE KEY", "client_secret", "Bearer "} {
 		for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
-			if strings.Contains(managedCheckSection(t, path, doc, h), bad) {
+			if strings.Contains(docSection(t, path, doc, h), bad) {
 				t.Errorf("%s carries the secret-shaped literal %q", h, bad)
 			}
 		}
@@ -1294,7 +1283,7 @@ func TestManagedChecklistSectionsArePinned(t *testing.T) {
 		return
 	}
 	for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
-		blocks := bashBlocks(managedCheckSection(t, path, doc, h))
+		blocks := bashBlocks(docSection(t, path, doc, h))
 		if len(blocks) < 6 {
 			t.Errorf("%s has %d fenced bash blocks; the extractor or the section lost some", h, len(blocks))
 		}
@@ -1308,4 +1297,185 @@ func TestManagedChecklistSectionsArePinned(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestManagedChecklistSectionsUseDocSection is the review's second finding:
+// managedCheckSection was a copy of docSection (docs_providers_test.go), same
+// package, same behaviour, and a second copy is a second place for the
+// boundary rule to drift. The helper is gone; what is pinned here is both
+// halves of that: no `managedCheckSection` in this file, and the boundary
+// docSection itself draws — measured on the real document, because the three
+// managed sections are the ones whose trimming now matters (67a must stop at
+// 67b's heading, and 68 at 69a's).
+func TestManagedChecklistSectionsUseDocSection(t *testing.T) {
+	src, err := os.ReadFile("docs_managed_projects_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The needles are split so this test's own source -- which carries the
+	// words below -- is not what it finds.
+	name := "managedCheckSection"
+	if strings.Contains(string(src), "func "+name+"(") {
+		t.Error("docs_managed_projects_test.go defines managedCheckSection again: docSection is the same helper and lives in docs_providers_test.go")
+	}
+	if strings.Contains(string(src), name+"(t,") {
+		t.Error("docs_managed_projects_test.go still calls managedCheckSection: use docSection")
+	}
+
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	// The boundary, on the three sections: each ends at the NEXT `## ` heading.
+	for _, c := range []struct{ heading, next string }{
+		{"## Check 67a:", "## Check 67b:"},
+		{"## Check 67b:", "## Check 68:"},
+		{"## Check 68:", "## Check 69a:"},
+	} {
+		section := docSection(t, path, doc, c.heading)
+		if !strings.HasPrefix(section, c.heading) {
+			t.Errorf("docSection(%q) does not start at its own heading", c.heading)
+		}
+		if strings.Contains(section, c.next) {
+			t.Errorf("docSection(%q) runs past %q, so every assertion anchored to it reads the next section too", c.heading, c.next)
+		}
+	}
+	// And the boundary the other way: the section before it is not swallowed.
+	if strings.Contains(docSection(t, path, doc, "## Check 58"), "## Check 67a:") {
+		t.Error("docSection(\"## Check 58\") runs into Check 67a")
+	}
+}
+
+// TestManagedChecklistCitationsNameSymbols is the review's first finding: the
+// comment in this file cited restoreGCPProjectLine by line number, and the
+// number was stale by two — the declaration and the refusal are far enough
+// apart that the next edit above either one moves it again. The rule now is
+// the symbol, in this file and in the section that makes the same claim; the
+// one place a line is the subject (the `applied …` print) keeps its line,
+// which is the line the review that asked for it named.
+func TestManagedChecklistCitationsNameSymbols(t *testing.T) {
+	line := regexp.MustCompile(`restore\.go:\d+`)
+
+	src, err := os.ReadFile("docs_managed_projects_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := line.FindString(string(src)); m != "" {
+		t.Errorf("docs_managed_projects_test.go cites restore.go by line (%s): cite restoreGCPProjectLine, the symbol", m)
+	}
+	if !strings.Contains(string(src), "restoreGCPProjectLine") {
+		t.Error("docs_managed_projects_test.go no longer names restoreGCPProjectLine at all")
+	}
+
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 67a:")
+	if !strings.Contains(section, "`restoreGCPProjectLine`") {
+		t.Error("Check 67a no longer cites restoreGCPProjectLine by name")
+	}
+	// The doc keeps its line citation for this one -- an earlier review asked
+	// the file to cite exactly -- so "exactly" has to be checked against the
+	// source rather than trusted: whatever line Check 67a gives for
+	// restoreGCPProjectLine must be the line restore.go declares it on. A
+	// citation that drifts fails here instead of at the reader.
+	want := declaredLine(t, "restore.go", "func restoreGCPProjectLine(")
+	cited := false
+	for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
+		for _, m := range line.FindAllString(docSection(t, path, doc, h), -1) {
+			cited = true
+			if m != want {
+				t.Errorf("%s cites %s; restore.go declares restoreGCPProjectLine on %s", h, m, want)
+			}
+		}
+	}
+	if !cited {
+		t.Error("no managed section cites restore.go by line any more: if the citation was dropped rather than corrected, drop this half of the test with it")
+	}
+	// The line citation the earlier review asked to be exact stays exact: it
+	// names a print, and the line is what the reader is sent to.
+	for _, want := range []string{"internal/cli/managed_apply.go:289", "deploy/terraform/gcp/modules/workflow/sa.tf:12"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 67a no longer carries the line citation %q", want)
+		}
+	}
+}
+
+// TestRestoreReadsTheConfigBeforeTheFreshIDRule is the review's third finding,
+// in the production order it is about: Check 67b's step 2 says
+// restoreNewProjectID "runs before the config is read and before any cloud
+// call", and restorePreflight calls selectProject — which reads the project
+// config the rule then takes as its argument — first. The order is pinned in
+// the source, and the claim is pinned in the section.
+func TestRestoreReadsTheConfigBeforeTheFreshIDRule(t *testing.T) {
+	src, err := os.ReadFile("restore.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// bodyOf is the pattern the other source-reading tests in this package
+	// use (init_retires_leftover_test.go): from the signature to the next
+	// top-level func, so an assertion cannot be satisfied by a call elsewhere
+	// in the file.
+	bodyOf := func(sig string) string {
+		t.Helper()
+		i := strings.Index(string(src), sig)
+		if i < 0 {
+			t.Fatalf("restore.go no longer declares %s", sig)
+		}
+		body := string(src)[i:]
+		if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
+			body = body[:j+1]
+		}
+		return body
+	}
+	body := bodyOf("func restorePreflight(")
+	sel := strings.Index(body, "selectProject(ctx, o.cloud)")
+	// The bare call, not the one statement: what the claim is about is the
+	// rule running, and an earlier call -- of any shape -- would break it.
+	fresh := strings.Index(body, "restoreNewProjectID(")
+	switch {
+	case sel < 0 || fresh < 0:
+		t.Fatalf("restorePreflight no longer holds both the selection (%d) and the fresh-ID rule (%d): the order this test pins is not the order it has", sel, fresh)
+	case sel > fresh:
+		t.Error("restorePreflight now calls restoreNewProjectID before the selection: Check 67b's step 2 must stop claiming the config is read after it, and this test says which one moved")
+	}
+	// restoreNewProjectID reads the config it is handed rather than reading one
+	// itself, which is why the refusal can be before the budget and the
+	// creation and still after the config.
+	rule := bodyOf("func restoreNewProjectID(")
+	if !strings.Contains(rule, "lc *localcfg.Config") {
+		t.Error("restoreNewProjectID no longer takes the project config as its argument")
+	}
+
+	const path = "docs/gcp-live-checklist.md"
+	section := docSection(t, path, readDoc(t, path), "## Check 67b:")
+	if strings.Contains(section, "runs before the config is read") {
+		t.Error("Check 67b's step 2 still says restoreNewProjectID runs before the config is read, and restorePreflight selects (and so reads) it first")
+	}
+	for _, want := range []string{
+		"runs after the selection has read the project config",
+		"before the root, the checkout's `gcp_project:` line, the old project's status, the budget and any creation",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 67b's step 2 does not say %q", want)
+		}
+	}
+}
+
+// declaredLine returns "file:line" for the line file (read from this
+// package's own directory) declares signature on, so a citation in the
+// checklist can be checked against the source it points at rather than
+// trusted. The last occurrence wins is NOT assumed: the first line whose
+// trimmed text starts with the signature is the declaration, and a signature
+// the file does not carry fails the test instead of returning 0.
+func declaredLine(t *testing.T, file, signature string) string {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, signature) {
+			return fmt.Sprintf("%s:%d", file, i+1)
+		}
+	}
+	t.Fatalf("%s no longer declares %s: the citation this test checks against has moved or gone", file, signature)
+	return ""
 }
