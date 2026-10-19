@@ -658,6 +658,16 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	}
 	silent := lc.Routing == nil || lc.Routing.Claude == nil
 	switch {
+	// The cascade first, and with its own sentence: it is a switch a publish
+	// must not leave on or turn off on its own either, and it is not a route,
+	// so the route refusal's reason is false of it. See nodeTurnsTheCascadeOn.
+	case silent && !removeRouting && nodeTurnsTheCascadeOn(old):
+		why := "your config sets no routing"
+		if lc.Routing != nil {
+			why = "your config's routing block names no Claude switch"
+		}
+		return nil, false, userErr("the policy published at %s turns the credentials cascade on (routing: %s), and %s: publishing from here would turn it off, and the cascade is the switch that lets a run's Claude calls fall through to the project's other credentials — with credentials.fallback: auto it also lets them spend the paid tiers. Write routing: {claude: {via: cascade}} in %s to keep it, write routing: {claude: {via: direct}} to turn it off on purpose, or pass --remove-routing to drop the block itself on purpose",
+			projectpolicy.PathShared(), routingText(old.Routing), why, lc.Name)
 	case silent && !removeRouting && nodeRoutesClaude(old):
 		why := "your config sets no routing"
 		if lc.Routing != nil {
@@ -728,22 +738,9 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 // nodeRoutesClaude reports whether the node being replaced carries a routing
 // block that sends Claude calls somewhere: a via that is a route — openrouter,
 // or auto, which is openrouter when the run holds no Anthropic key (D1b). An
-// absent block, and via: direct, route nothing and are safe to carry over or
-// leave behind.
-//
-// via: cascade is not one of them, and reading it as one was the review finding
-// on this change: the refusal this predicate feeds says the publish "would turn
-// that route off, and a route that goes away is a Claude call that stops being
-// sent where it was put", and that sentence is false of the cascade. The
-// cascade decides which credential carries a call and never which route one
-// takes (projectpolicy.RouteCascade: O3, D150) — while tier C for Claude is off,
-// every cascaded call still goes to Anthropic under the ID the pin already
-// names — so a config silent about routing leaves a cascaded node doing exactly
-// what it did. Keeping the block is then the treatment via: direct gets
-// (keepRouting), and --remove-routing remains the way to drop the block itself
-// on purpose. The kept cascade is not hidden by this: skewWarning reports it,
-// and an older reader that does not know the value still refuses the node,
-// which is what that warning is for.
+// absent block, via: direct and via: cascade are not routes: the first two route
+// nothing, and the cascade decides which credential carries a call and never
+// where the call goes (nodeTurnsTheCascadeOn, below).
 func nodeRoutesClaude(p *projectpolicy.Policy) bool {
 	if p == nil || p.Routing == nil || p.Routing.Claude == nil {
 		return false
@@ -754,6 +751,34 @@ func nodeRoutesClaude(p *projectpolicy.Policy) bool {
 	default:
 		return false
 	}
+}
+
+// nodeTurnsTheCascadeOn reports whether the node being replaced carries the
+// switch that turns the credentials cascade on: routing.claude.via: cascade
+// (O2, O3; the spelling O3 settled). It is asked separately from
+// nodeRoutesClaude because the two answers need different sentences, not
+// because either is less of a switch: both refuse a publish that is silent
+// about routing, and for opposite-sounding reasons.
+//
+// A route that goes away is a Claude call that stops being sent where it was
+// put, which is what nodeRoutesClaude's refusal says. The cascade going away
+// sends every call where it always went and changes only which credential pays
+// for it — that is exactly why it must be refused too, and not carried over in
+// silence: the cascade is what hands a run the project's other credentials
+// (the donated tier-A subscription tokens, and with credentials.fallback: auto
+// the paid tiers). Deleting routing.claude from the config reads as "cascade
+// off", and until commit 653decaf this publish refused on that reading; that
+// commit narrowed the predicate to the routes, on the correct ground that the
+// cascade is not a route but the wrong conclusion that nothing therefore needed
+// refusing, so a publish kept the switch and only the version warning mentioned
+// it. The independent security review's major finding on that commit.
+//
+// What ends it is the same as for a route: writing the switch the operator
+// means (via: direct turns the cascade off and is an inert block, so it is kept
+// and costs nothing), or --remove-routing to drop the block itself on purpose.
+func nodeTurnsTheCascadeOn(p *projectpolicy.Policy) bool {
+	return p != nil && p.Routing != nil && p.Routing.Claude != nil &&
+		p.Routing.Claude.ViaValue() == projectpolicy.RouteCascade
 }
 
 // policyProviders is the policy's providers block, built from the operator's

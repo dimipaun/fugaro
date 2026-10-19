@@ -2470,21 +2470,19 @@ func TestProjectPolicyPublishRefusesToDropARoutingBlock(t *testing.T) {
 	}
 }
 
-// TestProjectPolicyPublishKeepsACascadeTheConfigDoesNotWrite: the refusal above
-// is about a route going away, and the cascade is not a route. via: cascade
-// changes which credential carries a Claude call and never where the call goes
-// (projectpolicy.RouteCascade: O3, D150) — while tier C for Claude is off, a
-// cascaded call still goes to Anthropic under the ID the pin already names — so
-// a config that says nothing about routing is not asking for anything a
-// cascaded node would stop doing. The publish therefore goes through and the
-// node keeps its cascade, exactly as it keeps an inert via: direct, and
-// --remove-routing is still how the block itself is dropped on purpose.
+// TestProjectPolicyPublishRefusesToTurnTheCascadeOff: deleting routing.claude
+// from the operator's config means "the cascade is off", and a publish is the
+// one place that difference is settled — so it refuses, rather than keeping a
+// switch the config no longer writes. The cascade is not a route (it decides
+// which credential carries a Claude call, never where the call goes:
+// projectpolicy.RouteCascade, O3, D150), so it is refused with a sentence
+// written for the cascade — what the switch hands out, and the ways to say it
+// goes on purpose.
 //
-// This is the review finding on this change: the predicate that decides whether
-// the node routes read "a via other than direct", which made the cascade look
-// like a route that goes away, and the refusal it produced gave a reason that is
-// false of the cascade.
-func TestProjectPolicyPublishKeepsACascadeTheConfigDoesNotWrite(t *testing.T) {
+// This is the independent review's major finding on 653decaf: that commit read
+// "a via other than direct" as the routes only, which stopped refusing the
+// cascade, and the publish then kept it in silence.
+func TestProjectPolicyPublishRefusesToTurnTheCascadeOff(t *testing.T) {
 	f := newProjectFixtureWith(t, projectProvidersYAML, "routing:\n  claude:\n    via: cascade\n")
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
@@ -2493,31 +2491,45 @@ func TestProjectPolicyPublishKeepsACascadeTheConfigDoesNotWrite(t *testing.T) {
 	if pol.Routing == nil || pol.Routing.Claude == nil || pol.Routing.Claude.ViaValue() != config.RouteCascade {
 		t.Fatalf("the fixture did not publish the cascade this case is about: %+v\n%s", pol.Routing, nodeJSON(t, f, projectpolicy.PathShared()))
 	}
+	before := nodeJSON(t, f, projectpolicy.PathShared())
 
-	// The operator's config loses the switch. The cascade is not a route, so
-	// there is nothing here to account for.
+	// The config loses the switch: that turns the cascade off, and a publish
+	// must not decide it did not mean that.
 	rewriteRoutingBlock(t, f, "")
-	out, _, err := execute(t, "project", "policy", "publish")
-	if err != nil {
-		t.Fatalf("the publish refused a node whose only switch is the cascade: %v", err)
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("the publish went through and kept the cascade the config no longer writes:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
 	}
-	if strings.Contains(out, "cannot account for") {
-		t.Errorf("the publish says it cannot account for a cascade it does not touch:\n%s", out)
-	}
-	// The block is kept as it is, so the diff has nothing to say about it. (The
-	// warning below does name routing.claude, and must: it is the sentence that
-	// tells the operator what a member older readers refuse costs them.)
-	for _, marker := range []string{"+ routing.claude", "~ routing.claude", "- routing.claude"} {
-		if strings.Contains(out, marker) {
-			t.Errorf("a publish with no switch in the config printed a routing change %q:\n%s", marker, out)
+	for _, want := range []string{"credentials cascade", "claude via cascade", "via: cascade", "via: direct", "--remove-routing"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
 	}
-	if !strings.Contains(out, "routing.claude.via: cascade, which a Fugaro older than") {
-		t.Errorf("the publish does not warn about the cascade it kept:\n%s", out)
+	if now := nodeJSON(t, f, projectpolicy.PathShared()); now != before {
+		t.Errorf("the refused publish changed the node:\n%s", now)
 	}
-	pol = publishedPolicy(t, f)
-	if pol.Routing == nil || pol.Routing.Claude == nil || pol.Routing.Claude.ViaValue() != config.RouteCascade {
-		t.Errorf("the publish turned the cascade off: %+v\n%s", pol.Routing, nodeJSON(t, f, projectpolicy.PathShared()))
+
+	// The remedy that keeps it: write the switch again.
+	rewriteRoutingBlock(t, f, "routing:\n  claude:\n    via: cascade\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("the remedy the refusal names does not work: %v", err)
+	}
+	if pol := publishedPolicy(t, f); pol.Routing == nil || pol.Routing.Claude.ViaValue() != config.RouteCascade {
+		t.Errorf("the config's cascade did not come back: %+v", pol.Routing)
+	}
+
+	// The remedy that ends it: --remove-routing, and the diff prints the drop
+	// rather than making it quietly.
+	rewriteRoutingBlock(t, f, "")
+	out, _, err := execute(t, "project", "policy", "publish", "--remove-routing")
+	if err != nil {
+		t.Fatalf("--remove-routing did not drop the cascade: %v", err)
+	}
+	if !strings.Contains(out, "- routing.claude.via: cascade") {
+		t.Errorf("the diff does not print the removal of the cascade:\n%s", out)
+	}
+	if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing"); ok {
+		t.Errorf("the node still carries a routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
 	}
 }
 
