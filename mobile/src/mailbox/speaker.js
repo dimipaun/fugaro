@@ -5,13 +5,17 @@
 // replies, and it has to know whether the speaking happened: the plan's own
 // verification is that it "acks a message only after it has spoken it", which
 // is a statement about a failed speak as much as a successful one. The audio
-// interfaces are **P3.4** (`mobile/src/audio/`, PR #592), and P3.4 is not
-// merged on `main`: this task does not depend on unmerged code. So what P3.6
-// defines here is the smallest seam the client's rule needs -- one async call
-// that takes text and answers whether it was spoken -- and nothing about
-// voices, queues, barge-in, latency or the platform's own players. Those are
-// P3.4's (the interfaces) and P3.5's (the screen, and the interrupt switch),
-// and when they land this port is what they implement.
+// interfaces are **P3.4** (`mobile/src/audio/`, PR #592), which P3.6 was
+// written without: the audio module had no directory in the tree then, and this
+// task may not depend on code that is not on `main`. **P3.4 has since merged
+// with this change** -- `mobile/src/audio/` is the tree's now -- and this client
+// is still handed this module's own port rather than P3.4's, because wiring the
+// two together is a task nobody has taken. So what P3.6 defines here is the
+// smallest seam the client's rule needs -- one async call that takes text and
+// answers whether it was spoken -- and nothing about voices, queues, barge-in,
+// latency or the platform's own players. Those are P3.4's (the interfaces) and
+// P3.5's (the screen, and the interrupt switch), and this port is what P3.4's
+// text-to-speech interface implements once the two are wired.
 //
 // The seam is deliberately narrower than an audio API on purpose: the client
 // makes exactly one audio decision (do not ack what was not spoken), and a

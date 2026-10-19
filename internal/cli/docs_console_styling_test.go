@@ -40,7 +40,7 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 		"## 4. Layout",
 		"## 5. Wiring (SECURITY-SENSITIVE)",
 		"## 6. Tests",
-		"## 7. The build plan (Phase 6, UNAPPROVED)",
+		"## 7. The build plan (Phase 6)",
 		"## 8. Open for the owner",
 		"## 9. Alternatives considered",
 		"## 10. Design brief for the Claude Design canvas",
@@ -670,22 +670,29 @@ func mdHeadingSlug(heading string) string {
 	return b.String()
 }
 
-// TestDocsConsoleStylingPlanTasksAreUnapproved (the console plan's phase 6,
-// added 2026-10-19 with the design above):
+// TestDocsConsoleStylingPlanTasksAreApproved (the console plan's phase 6, added
+// 2026-10-19 with the design above, and rewritten the same day to the owner's
+// approval of it):
 // the plan carries the styling work in its own numbering and carries it as
-// UNAPPROVED. Two things have to hold together and neither is visible from the
-// other — the six tasks exist as headings, and the file says in the phase's own
-// heading, its summary row and its PR rows that the owner has not approved any
-// of them. The wiring task's `SECURITY-SENSITIVE` flag is checked by
+// APPROVED by the owner on 2026-10-19. Two things have to hold together and
+// neither is visible from the other — the six tasks exist as headings, and the
+// file says in the phase's own heading, its summary row and its PR rows that the
+// owner approved them. The approval is a dated fact and the date is pinned with
+// it: a marker that says `APPROVED` without saying when is a claim the next
+// reader has to take on trust, and the four places below are the four the file
+// can be read from. The wiring task's `SECURITY-SENSITIVE` flag is checked by
 // TestPlanRule9ListsEveryFlaggedHeading, which is why this test does not repeat
 // rule 9's list; what it adds is that the flag is on a task that *exists* in a
-// phase that *says* it is unapproved.
-func TestDocsConsoleStylingPlanTasksAreUnapproved(t *testing.T) {
+// phase that *says* it is approved. The gate at the foot of the plan keeps its
+// own 2026-10-15 text as history, so this test asserts the approval is recorded
+// there as well rather than that the older sentences are gone — a history that
+// is deleted is a history nobody can check the approval against.
+func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 	const path = "docs/plans/2026-10-15-desktop-console.md"
 	plan := readDoc(t, path)
 	for _, want := range []string{
-		// The phase, in the file's numbering, marked unapproved in its heading.
-		"## Phase 6 — The console's style — UNAPPROVED",
+		// The phase, in the file's numbering, carrying the approval in its heading.
+		"## Phase 6 — The console's style — APPROVED by the owner on 2026-10-19",
 		// The six tasks. 6.2's heading is the flagged one.
 		"### Task 6.1: The token layer",
 		"### Task 6.2: The wiring — SECURITY-SENSITIVE, independent opus review",
@@ -699,10 +706,12 @@ func TestDocsConsoleStylingPlanTasksAreUnapproved(t *testing.T) {
 		"src/renderer/theme/palette.css",
 		"src/renderer/theme/base.css",
 		"src/renderer/theme/screens.css",
-		// The authority the phase defers to, and the gate it does not pass.
+		// The authority the phase defers to, the approval itself, and the gate
+		// that now records it.
 		"docs/design/console-styling.md",
-		"These six tasks are `UNAPPROVED`",
+		"These six tasks are `APPROVED by the owner on 2026-10-19`",
 		"OWNER APPROVAL GATE",
+		"**Phase 6, and only Phase 6, is `APPROVED by the owner on 2026-10-19`",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s lacks %q: phase 6's tasks are the styling design's build plan, and a task that leaves the plan must leave this test", path, want)
@@ -722,7 +731,7 @@ func TestDocsConsoleStylingPlanTasksAreUnapproved(t *testing.T) {
 			return rest[:len(start)+j]
 		}
 		return rest
-	}("## Phase 6 — The console's style — UNAPPROVED", "\n## Cross-task dependencies")
+	}("## Phase 6 — The console's style — APPROVED by the owner on 2026-10-19", "\n## Cross-task dependencies")
 	for _, q := range []string{"**Q1**", "**Q2**", "**Q3**", "**Q4**", "**Q5**", "**Q6**"} {
 		if !strings.Contains(section, q) {
 			t.Errorf("%s: phase 6 no longer names %s among the questions the owner decides before it starts", path, q)
@@ -734,21 +743,21 @@ func TestDocsConsoleStylingPlanTasksAreUnapproved(t *testing.T) {
 		t.Errorf("%s: the MVP list no longer says phase 6 is not on it, which is the design's recommendation (its Q6) and would otherwise read as an omission", path)
 	}
 
-	// The other two places the file can say a phase is unapproved, because the
+	// The other two places the file can carry a phase's approval, because the
 	// docstring above claims all three and the heading alone is the one a reader
 	// who never scrolls to the tables would check. The plan's own preamble
 	// promises a Phase-summary row and the phase's PR rows, so this is also the
 	// check that the promise landed.
-	if !strings.Contains(plan, "| **6. The console's style — UNAPPROVED** |") {
-		t.Errorf("%s: the Phase summary has no row for phase 6 marked UNAPPROVED; the phase is listed in that table like every other one, and a row without the marker is a phase a reader takes as approved", path)
+	if !strings.Contains(plan, "| **6. The console's style — APPROVED by the owner on 2026-10-19** |") {
+		t.Errorf("%s: the Phase summary has no row for phase 6 carrying the approval; the phase is listed in that table like every other one, and a row without the dated marker is a phase a reader cannot tell the state of", path)
 	}
 	prRows := mdTableRows(plan, mdPRRowRE)
 	if len(prRows) != 5 {
 		t.Errorf("%s: the PR groups table holds %d rows for phase 6 (J to J5); the phase is six tasks across five PR groups — J3 is the two PRs of Tasks 6.3 and 6.4 — and this count is the number the design's §7 states", path, len(prRows))
 	}
 	for _, row := range prRows {
-		if !strings.Contains(row, "UNAPPROVED") {
-			t.Errorf("%s: the PR groups row %q does not say UNAPPROVED; every row the phase occupies carries the marker, since a PR group is what a reviewer merges", path, strings.TrimSpace(row))
+		if !strings.Contains(row, "APPROVED by the owner on 2026-10-19") {
+			t.Errorf("%s: the PR groups row %q does not carry the approval; every row the phase occupies carries the marker, since a PR group is what a reviewer merges", path, strings.TrimSpace(row))
 		}
 	}
 
@@ -765,9 +774,160 @@ func TestDocsConsoleStylingPlanTasksAreUnapproved(t *testing.T) {
 		"**five** rows in the PR groups table",
 		"**four** lines in the File Structure tree",
 		"**six** `### Task 6.n:` headings",
+		// The ruling is not a fact about the gate alone, and this is the half of it
+		// a reader of the design would otherwise trip over: Q1 took option (b), dark
+		// only, and the design's §3.6 prescribed the two-set mechanism option (a)
+		// needs — `color-scheme: light dark`, `light-dark()`, `prefers-color-scheme`
+		// and a `[data-theme='light']` block, which is exactly what Task 6.1's token
+		// test now fails by name on. A design that keeps prescribing a light set, and
+		// a task that keeps building a switch to nowhere, are the same defect as a
+		// phase that still says `UNAPPROVED`: the next round implements what it
+		// reads. Each string below is the sentence that records the ruling, in the
+		// section or the task a reader of that subject finds it in, and the three
+		// places that still needed it are §3.6, §4.1 and §8 of the design and Tasks
+		// 6.5 and 6.6 of the plan.
+		"**The owner's Q1 ruling of 2026-10-19 supersedes the mechanism below",
+		"**Under the owner's Q1 ruling of 2026-10-19 the window paints one ground",
+		"**Under the owner's Q1 ruling of 2026-10-19 there is one value set",
+		"**ANSWERED by the owner on 2026-10-19: option (b), dark only**",
 	} {
 		if !strings.Contains(mdFlat(design), want) {
 			t.Errorf("docs/design/console-styling.md: §7 does not say %q; that sentence is how the design tells a reader where the phase landed, and each of its counts is a fact about the plan that this test just counted", want)
+		}
+	}
+
+	// And the plan's own three: the paragraph that records what the approval
+	// answered and what it did not, and the two tasks that would build the switch
+	// the ruling removed. Task 6.5 keeps its heading as the record of what it was
+	// scheduled to do, so what a reader needs is the sentence under it.
+	for _, want := range []struct{ has, because string }{
+		{"**Q2 to Q6 are not answered here and stand as the design's", "the approval answered Q1 alone, and a paragraph claiming all six contradicts the gate at the foot of this file and the design's §8"},
+		{"**The owner's Q1 ruling of 2026-10-19 removes the switch this task is named for", "Task 6.5's scope is `CONSOLE_THEME`, `matchMedia` and `nativeTheme`, and implementing it as written would build a switch with one side to it"},
+		{"**Under the owner's Q1 ruling that assertion cannot read \"differs between the", "Task 6.6's assertion and the recording it guards are the phase's last step, and both were written for two schemes"},
+	} {
+		if !strings.Contains(mdFlat(plan), want.has) {
+			t.Errorf("%s: does not say %q — %s", path, want.has, want.because)
+		}
+	}
+
+	// And the phase paragraph's closing claim — "every place in the design and
+	// this file that assumed two value sets is marked with the ruling" — is read
+	// rather than trusted. A two-set phrase is not a typo: it is the sentence the
+	// next round implements, so each one has to say either the ruling itself or
+	// that it is the record of the mechanism the ruling removed. The paragraphs
+	// are the unit because that is the unit a reader takes a fact from, and a
+	// paragraph is marked on its **own** text: an exemption that ran from a
+	// marked paragraph to the end of its section was an exemption a planted
+	// sentence could hide behind — every paragraph of §3.6, §4.1 and §8 of the
+	// design sits under a ruling sentence somewhere above it, so a two-set
+	// sentence added there passed. Whitespace is collapsed before the match,
+	// since a phrase that a rewrap splits across two lines is the same phrase to
+	// a reader and has to be the same phrase here.
+	twoSetPhrases := []string{
+		"light and dark",
+		"light dark",
+		"light-dark(",
+		"prefers-color-scheme",
+		"color-scheme: light",
+		"both value sets",
+		"two value sets",
+		"two grounds",
+		"two --ground",
+		"two literals",
+		"two schemes",
+		"two sets",
+		"both sets",
+		"in each set",
+		"the light set",
+		"matchmedia",
+		"themechoice",
+		"data-theme='light'",
+		`data-theme="light"`,
+	}
+	twoSetMarkers := []string{
+		"2026-10-19",
+		"q1",
+		"as first written",
+		"as designed",
+		"as the two-set",
+		"the record of",
+		"record of option",
+		"deferred",
+		"would have",
+		"did not take",
+		"the ruling",
+		"as shipped",
+		"removed",
+		"supersedes",
+		"kept",
+	}
+	paragraphs := func(text string) []string {
+		var out []string
+		var cur []string
+		flush := func() {
+			if len(cur) > 0 {
+				out = append(out, strings.Join(cur, "\n"))
+				cur = nil
+			}
+		}
+		for _, line := range strings.Split(text, "\n") {
+			if strings.TrimSpace(line) == "" {
+				flush()
+				continue
+			}
+			cur = append(cur, line)
+		}
+		flush()
+		return out
+	}
+	for _, doc := range []struct{ path, text string }{
+		{path, plan},
+		{"docs/design/console-styling.md", design},
+	} {
+		paras := paragraphs(doc.text)
+		for _, para := range paras {
+			lower := strings.ToLower(mdFlat(para))
+			marked := false
+			for _, marker := range twoSetMarkers {
+				if strings.Contains(lower, marker) {
+					marked = true
+					break
+				}
+			}
+			if marked {
+				continue
+			}
+			var found []string
+			for _, phrase := range twoSetPhrases {
+				if strings.Contains(lower, phrase) {
+					found = append(found, phrase)
+				}
+			}
+			if len(found) == 0 {
+				continue
+			}
+			t.Errorf("%s: the paragraph %q assumes two value sets (%s) and says nothing about the owner's Q1 ruling of 2026-10-19; one value set ships, so the paragraph itself has to carry the ruling or say that it is the record of the mechanism the ruling removed, and the phase paragraph claims every such place does", doc.path, truncate(strings.Join(strings.Fields(para), " "), 120), strings.Join(found, ", "))
+		}
+	}
+
+	// The design's §6.5 item 4 describes this pin, and an implementer reads that
+	// sentence rather than this file — so the sentence's own enumeration of the
+	// phrases and the marks is checked against the slices above, in the direction
+	// that matters: a sentence naming fewer of them than the scan reads is a
+	// sentence from which a weaker scan is written. The round that added this
+	// check found exactly that — the sentence listed fifteen phrases and eight
+	// marks while the pin read nineteen and fifteen, and nothing failed.
+	const designPath = "docs/design/console-styling.md"
+	item4 := mdItem(t, designPath, design, "### 6.5 The docs test", "\n---\n\n## 7. ", 4)
+	flatItem4 := strings.ToLower(mdFlat(item4))
+	for _, phrase := range twoSetPhrases {
+		if !strings.Contains(flatItem4, phrase) {
+			t.Errorf("%s: §6.5 item 4 does not name the phrase %q, which the two-set pin reads; a reader who writes the scan from that sentence writes a weaker one than the one that shipped", designPath, phrase)
+		}
+	}
+	for _, marker := range twoSetMarkers {
+		if !strings.Contains(flatItem4, marker) {
+			t.Errorf("%s: §6.5 item 4 does not name the mark %q, which the two-set pin accepts; a reader who writes the scan from that sentence rejects marked paragraphs the pin passes", designPath, marker)
 		}
 	}
 }
@@ -861,6 +1021,30 @@ func mdNextNonBlank(lines []string, i int) int {
 // words, and a rewrap would fail a test about the meaning.
 func mdFlat(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// mdFileLists splits a task's **Files** clause into the list the ruling keeps
+// and the list the clause keeps as the record of the scope it was written from,
+// which both documents open with "*As designed:*". Only backticked spans that
+// look like paths are returned — they carry a slash — so the prose's mention of
+// an attribute or a literal (`tabindex`, `#0A0E16`) is not mistaken for a file.
+// A clause with no record returns the whole list as the ruled one, which is what
+// a comparison against the other document then has to answer for.
+func mdFileLists(clause string) (ruled, record []string) {
+	cut := strings.Index(clause, "*As designed:*")
+	if cut < 0 {
+		cut = len(clause)
+	}
+	paths := func(s string) []string {
+		var out []string
+		for _, m := range mdCodeSpanRE.FindAllStringSubmatch(s, -1) {
+			if strings.Contains(m[1], "/") {
+				out = append(out, m[1])
+			}
+		}
+		return out
+	}
+	return paths(clause[:cut]), paths(clause[cut:])
 }
 
 // mdForwardRefRE matches a named task and the number it carries.
@@ -1051,6 +1235,37 @@ func TestDocsConsoleStylingPhaseOrdering(t *testing.T) {
 	}
 	if !strings.Contains(flatDesign, "already says `data-theme='light'` today") {
 		t.Errorf("%s: §6.2 does not say the light run's root already carries `data-theme='light'`; each spec draws its screen with the theme it names (`mount(theLastFrame(), 'light')`) and `renderLive` stamps that argument, so the two runs already disagree about the attribute", designPath)
+	}
+
+	// And the two documents' Task 6.5 **Files** lists agree on the files the
+	// *ruled* scope keeps. The ruling removed the switch, not the keyboard: the
+	// nav's tablist behaviour and its roving `tabindex` are §4.3's, they live in
+	// `entry.ts`, and the case that fails on a regression is `entry-wiring`'s —
+	// which the plan's Task 6.5 names and the design's §7.5 stopped naming when
+	// its clause was rewritten to the one-set form, leaving §7.5's own Scope and
+	// Reviewer tier saying the entry is this task's while its Files said it was
+	// untouched. A reader who takes the file list as the task's writes the
+	// switch and skips the keyboard.
+	if designFiles, ok := mdClause(t, designPath, designTasks[4], "Files"); !ok {
+		t.Errorf("%s: §7.5 has no **Files** clause; every task in this phase states what it touches", designPath)
+	} else if planFiles, ok := mdClause(t, planPath, planTasks[4], "Files"); !ok {
+		t.Errorf("%s: Task 6.5 has no **Files** clause; every task in this phase states what it touches", planPath)
+	} else {
+		// The comparison is file for file, not a spot check: the design's clause
+		// says it is the plan's list, and the round that added this pin found the
+		// two lists disagreeing about *which* files the ruling keeps — the design
+		// dropped `entry.ts` (and with it the keyboard the ruled scope still owns)
+		// while the plan dropped the picker's script and the window unit test but
+		// kept the entry. Two names agreeing is what a spot check shows; the third
+		// file is where a list can still be wrong.
+		designRuled, designRecord := mdFileLists(designFiles)
+		planRuled, planRecord := mdFileLists(planFiles)
+		if got, want := strings.Join(planRuled, ", "), strings.Join(designRuled, ", "); got != want {
+			t.Errorf("%s: Task 6.5's **Files** names %s, and §7.5 names %s; §7.5's clause says it is the plan's list, so the two agree file for file — the ruled scope keeps the nav's tablist behaviour (§4.3, in the entry) and the roving-tabindex case, and drops the picker's script and the window unit test", planPath, got, want)
+		}
+		if got, want := strings.Join(planRecord, ", "), strings.Join(designRecord, ", "); got != want {
+			t.Errorf("%s: Task 6.5's **Files** keeps %s as the record of the two-set scope, and §7.5 keeps %s; the record is what tells a reader which files left the list and why, so both documents keep the same one", planPath, got, want)
+		}
 	}
 	for _, stale := range []struct{ doc, path, claim string }{
 		// The design's own record of the retracted claim quotes it, so the only
@@ -1282,6 +1497,30 @@ func TestDocsConsoleStylingCountsMatch(t *testing.T) {
 		}
 	}
 
+	// And §6.5's tenth item counts those same mutations by pointing at §7.7, so
+	// the two numbers have to be one number. The round that added the Files pin
+	// bumped §7.7 to eight and left §6.5 saying seven; nothing failed, because
+	// every check above counts a sentence against the list beside it and this
+	// sentence's list is in the other section. A count is the same arithmetic
+	// wherever it is written, including when it is written one indirection out.
+	item10 := mdItem(t, path, doc, "### 6.5 The docs test", "\n---\n\n## 7. ", 10)
+	pointed := regexp.MustCompile(`the (\w+) mutations are named`).FindStringSubmatch(mdFlat(item10))
+	carried := regexp.MustCompile(`carries (\w+) of its own`).FindStringSubmatch(mdBetween(t, path, doc, "And the ordering test (§6.5's tenth)", "\n---\n"))
+	if pointed == nil {
+		t.Errorf("%s: §6.5's tenth item no longer says how many mutations it is proved by and where they are named; the sentence a reader follows to §7.7 is what this check reads", path)
+	} else if carried == nil {
+		t.Errorf("%s: §7.7 no longer states the ordering test's mutation count, so §6.5's %q cannot be checked against it", path, pointed[0])
+	} else {
+		here, okHere := mdWordValue(pointed[1])
+		there, okThere := mdWordValue(carried[1])
+		switch {
+		case !okHere || !okThere:
+			t.Errorf("%s: the two counts of the ordering test's mutations are %q and %q, one of which is not a word this test knows", path, pointed[1], carried[1])
+		case here != there:
+			t.Errorf("%s: §6.5's tenth item says the %s mutations are named in §7.7 and §7.7 carries %s of its own; the two sentences count the same list, so a revision that bumps one has to bump the other", path, pointed[1], carried[1])
+		}
+	}
+
 	// §5.3 and §5.6 name the places the bundle case counts the list it gains an
 	// entry in. There are two counts and they are arithmetic — the packaged-files
 	// list is the two preload paths plus `SERVED_FILES`, so its literal is the
@@ -1353,6 +1592,24 @@ func mdBetween(t *testing.T, path, doc, start, end string) string {
 		t.Fatalf("%s: %q does not end before %q, so this test cannot tell where the section stops", path, start, end)
 	}
 	return rest[:len(start)+j]
+}
+
+// mdItem returns the text of one numbered item of a section's ordered list, from
+// its own number to the next item's, so a case reads the item it names rather
+// than the whole list around it.
+func mdItem(t *testing.T, path, doc, sectionStart, sectionEnd string, n int) string {
+	t.Helper()
+	section := mdBetween(t, path, doc, sectionStart, sectionEnd)
+	start := regexp.MustCompile(`(?m)^` + strconv.Itoa(n) + `\. `).FindStringIndex(section)
+	if start == nil {
+		t.Fatalf("%s: the section starting %q has no item %d; this test reads that item", path, sectionStart, n)
+	}
+	rest := section[start[1]:]
+	next := regexp.MustCompile(`(?m)^` + strconv.Itoa(n+1) + `\. `).FindStringIndex(rest)
+	if next == nil {
+		t.Fatalf("%s: item %d of the section starting %q does not end before an item %d, so this test cannot tell where it stops", path, n, sectionStart, n+1)
+	}
+	return section[start[0] : start[1]+next[0]]
 }
 
 // taskIndex maps a task's name to its position among phase 6's six tasks, so a
