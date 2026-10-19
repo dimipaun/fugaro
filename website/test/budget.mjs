@@ -88,8 +88,8 @@
 // bullet up from this file's name in its gates list: the same rounds, the same causes and the
 // same deltas — `main`'s fix rounds and this branch's redesign's own; the `fugaro watch`
 // picture landing on the homepage; the menu's drawer coming out and the script's comments going
-// back in step with it; the console's release turning `features.console_downloads` on; and
-// Getting Started's three bands — each re-derived in the commit that moved it (D192). None of
+// back in step with it; the console's release turning `features.console_downloads` on;
+// Getting Started's three bands; and the console's screenshot slider — each re-derived in the commit that moved it (D192). None of
 // those figures is repeated here, because a figure in a comment is a figure that moves with
 // nothing when the build moves, which is what happened to the copy that used to be in this one;
 // the case below reads the README's figures and holds them to the build it makes itself.

@@ -274,7 +274,14 @@ here goes stale the way the byte budgets did before D192.
   artifact's published name as a link, the release's own SHA-256 beside it, and the command
   that checks a download against the release's sums file — Getting Started's console option
   and the hero's link to the console. The page weight and the script stay where they were: the
-  heaviest page is the docs hub, which renders none of the three.
+  heaviest page is the docs hub, which renders none of the three. **And a later round is the
+  console's screenshot slider** (the owner's feedback of 2026-10-19: a slider at the top of the
+  console page, data-driven from `website/data/console-screens.yaml` and shipping empty until
+  the owner takes the pictures), which moved the site figure alone once more, by the
+  component's stylesheet: Astro inlines it into the console page that imports it, whether or
+  not the slider renders, so the bytes are in the build while the list is empty and while it is
+  not. The page weight and the script stay where they were: the console page is not the
+  heaviest page, and the slider ships no script at all.
   **The figures themselves are the ones `website/README.md` writes, and they are written
   there and nowhere else**: `website/test/budget.mjs` reads them from there and holds each to
   the build it can measure, and a derivation that names another build fails, which is what
