@@ -45,7 +45,7 @@ not exist. Recording them here so the next reader does not repeat them.
 
 | Spec concept (§) | What the repository has |
 | --- | --- |
-| A **Fugaro project** (§2, §4) | Defined: *"one GCP project, plus (from M9) one Firebase project … its repositories; its people lists …; one local config"* (`docs/design/v1.md:26`). The spec's "one coordinator per Fugaro project, deployed into that project's Firebase/GCP project" is therefore well-formed — and it is the same object the repo calls an **installation** (`docs/design/v1.md:33`). |
+| A **Fugaro project** (§2, §4) | Defined: *"one GCP project, plus (from M9) one Firebase project … its repositories; its people lists …; one local config"* (`docs/design/v1.md`). The spec's "one coordinator per Fugaro project, deployed into that project's Firebase/GCP project" is therefore well-formed — and it is the same object the repo calls an **installation** (`docs/design/v1.md`). |
 | **Cloud Run service, scale-to-zero** (§4) | **No Cloud Run *service* exists anywhere.** Every workload is `google_cloud_run_v2_job` (history `modules/installation/history.tf:70`; project jobs `modules/project/job.tf:10`; workflow jobs `modules/workflow/job.tf:4`; repo check `modules/repo/check.tf:16`). The type is not even in the plan allowlist (`internal/infra/tf/cover.go:22`). See **#2**. |
 | **Provisioning: "part of project init's existing Terraform"** (§4) | `fugaro init` applies the **installation** root (`internal/cli/init.go:1494 installRoot`), behind one interactive confirmation that covers a plan only if every resource type is allowlisted (`internal/infra/tf/cover.go:22 allowedTypes`, `:89 grantRules`) and every grant is in `grantRules`; anything else gets its own typed confirmation (`internal/cli/init_review.go:77 runCovers`, `:127 notCovered`). See **#3**. |
 | **Access: "whoever can reach the project's coordinator is in the project; no extra permission model in v1"** (§4) | The opposite is the standing design: the compute module **refuses** `allUsers`, `allAuthenticatedUsers` and `domain:` members (`deploy/terraform/gcp/modules/compute/variables.tf:122,144`), launchers are per-person IAM members on one job (`modules/project/iam.tf:7`), and `SECURITY.md:40` puts the trust boundary at the repository and the task source, never at network reach. See **#4**. |
@@ -54,11 +54,11 @@ not exist. Recording them here so the next reader does not repeat them.
 | **GitHub as ground truth** (§6) | `gitprov.Provider` reads `Repository`, `PullRequest`, `Comments`, `FetchPRHead` (`internal/gitprov/gitprov.go:185-246`), and `github.MintInstallationToken(ctx, o, perms)` mints a token **scoped to one repository** (`internal/gitprov/github/apptoken.go:174`). See **#9**, **#10**. |
 | **Intent signals from local orchestrators, before code exists** (§6) | No channel exists. The only per-person fact written today is `launch.json`'s `launched_by` (`internal/runstore/launch.go`), a **self-declared email** (`internal/cli/run.go:1731`, from `localcfg.Config.Me`). See **#11**. |
 | **MCP server over HTTP** (§7) | No MCP server, no MCP dependency. The only HTTP server in the repository is the per-run budget gateway, bound to loopback (`internal/gateway/gateway.go:190-202`, `127.0.0.1:0`). See **#8**. |
-| **Two model tiers; "reuses the project's existing key management and security service"** (§8) | The security service does not exist (`docs/credentials-service/README.md:3` — *"plan only; nothing is implemented"*). Model configuration today is per **slot**, not per tier (`agent.models.coder|reviewer|background`, `docs/design/m10-multi-model.md:62`) plus the routing switch (`internal/config/routing.go:42-61`). See **#21**, **#22**, **#23**. |
+| **Two model tiers; "reuses the project's existing key management and security service"** (§8) | The security service does not exist (`docs/credentials-service/README.md:3` — *"plan only; nothing is implemented"*). Model configuration today is per **slot**, not per tier (`agent.models.coder|reviewer|background`, `docs/design/m10-multi-model.md`) plus the routing switch (`internal/config/routing.go:42-61`). See **#21**, **#22**, **#23**. |
 | **Concurrency: Firestore transactions or a per-project lock** (§9) | The Firestore client has **no transactions**; the only lock is per-branch, in GCS (`internal/lock/lock.go:1-5`, key `locks/<slug>/<branch-hash>`). The repo's concurrency idiom is generation-matched GCS writes (`internal/blobx/blobx.go:238,334,365`), RTDB `PutIfMatch` ETag CAS (`internal/budget/kill.go:141`) and deterministic doc IDs with update-time preconditions (`internal/budget/rollover.go:511,526`). See **#16**, **#17**. |
 | **Daily token-spend cap that "counts toward the project's existing spend caps"** (§9) | The existing caps are **per run**, keyed to a run's Firebase identity (`internal/budget/token/token.go:83-88 Claims`; `internal/budget/evaluate.go:135 Evaluate`). A long-lived service has no run identity. See **#25**. |
 | **Drift reconciliation: a scheduled job via the same Terraform** (§9) | This shape exists: Cloud Scheduler → HTTP POST to the Cloud Run Admin `jobs:run` API (`deploy/terraform/gcp/modules/installation/history.tf:180`, `*/15 * * * *`; a daily rollover at `:223`). It targets a **job**, not a service. See **#18**. |
-| **Console project-wide view; "ask the coordinator"** (§10) | The console's nav is Live / Spend / Projects (`console/src/renderer/entry.ts:490-496`); its data plane is one interface over the `fugaro` CLI as a sidecar (`console/src/source/cli.ts:1-8`), with thirteen read operations and one `link.openExternal` (`console/src/main/ipc.ts:307-558`, fourteen entries). The v2 *spec*'s "Overview" is unbuilt, and v2's ruling is one write only — launch (D22, `docs/design/desktop-console-v2.md:244`). See **#27**, **#28**. |
+| **Console project-wide view; "ask the coordinator"** (§10) | The console's nav is Live / Spend / Projects (`console/src/renderer/entry.ts:490-496`); its data plane is one interface over the `fugaro` CLI as a sidecar (`console/src/source/cli.ts:1-8`), with thirteen read operations and one `link.openExternal` (`console/src/main/ipc.ts:307-558`, fourteen entries). The v2 *spec*'s "Overview" is unbuilt, and v2's ruling is one write only — launch (D22, `docs/design/desktop-console-v2.md`). See **#27**, **#28**. |
 | **Advisory, not authoritative; "never blocks or reorders merges"** (§3) | Consistent with the repo, and it has a hard consequence: the coordinator must hold **no GitHub write permission**. The App's per-run token asks for `contents: write, pull_requests: write, issues: read, metadata: read` (`internal/gitprov/github/apptoken.go:83`); a read-only set is not merely expressible, it is **minted today** — `{contents: read, metadata: read}` (`:89 buildTokenPermissions`, exported at `:93`) — by two callers, both of which only clone (`internal/cli/gitcred.go:107`, `internal/cli/imagecheck.go:517`). See **#9**, **Q3**. |
 | **Self-hosted; no Fugaro-operated central service** (§3) | Consistent: everything is per-installation, and managed projects are gated off in this release (`internal/cli/recipes_skew.go:169 managedDeployerShipped = false`). |
 | **"Works with any MCP-capable agent, not only Claude"** (§7) | The repository drives **only Claude Code** (`docs/base-image.md`). A front door for arbitrary MCP clients is a new integration and a new untrusted-input surface. See **#8**, **#13**. |
@@ -74,10 +74,11 @@ answer to that question is in §3. The findings themselves are unchanged by the 
 ### Deployment and provisioning
 
 **#1 — "One coordinator per Fugaro project, deployed into that project's Firebase/GCP project" is well-formed, and it names the installation. — Exists.**
-`docs/design/v1.md:26` defines a Fugaro project as *"one GCP project, plus (from M9) one
+`docs/design/v1.md` defines a Fugaro project as *"one GCP project, plus (from M9) one
 Firebase project … its repositories; its people lists (`launchers`, `operators`, and from
-M9 `budget_admins`); one local config"*, and `:33` defines the **installation** as *"the
-project's cloud-side setup, as `fugaro init` creates it"*. So the spec's unit of
+M9 `budget_admins`); one local config"*, and the same document's **Installation** entry
+defines the **installation** as *"the project's cloud-side setup, as `fugaro init` creates
+it"*. So the spec's unit of
 deployment and the repo's unit of cloud setup are the same object under two names.
 *Consequence:* the spec's "per project" and the mobile design's "per installation"
 (`docs/design/always-on-orchestrator.md` §4.1, PR #632) are **not** in conflict — but a
@@ -267,7 +268,7 @@ that mints across repositories. → **Q3**, **Q12**.
 `docs/releases/vX.Y.Z.md` and `docs/release.md`. Nothing in the tree maps a PR to a
 release, or a PR to another PR. The v2 console spec proposes a dependency graph and an
 Overview view, and both are explicitly unbuilt
-(`docs/design/desktop-console-v2.md:3` — *"**Nothing in v2 is approved or built**"*).
+(`docs/design/desktop-console-v2.md` — *"**Nothing in v2 is approved or built**"*).
 *Consequence:* four of the spec's six state items (§5) are greenfield. They are also the
 four that need **no** LLM, which is what makes finding **#28** possible.
 
@@ -444,7 +445,7 @@ dependency on unbuilt work). There is no third reading. → **Q4**.
 
 **#23 — A "two-tier" model config has no home in the config schema; the nearest concept is a per-slot model. — Gap.**
 Today's model configuration is per **slot**: `agent.model` and
-`agent.models.{coder,reviewer,background}` (`docs/design/m10-multi-model.md:62`), with the
+`agent.models.{coder,reviewer,background}` (`docs/design/m10-multi-model.md`), with the
 routing switch `routing.claude: {via: direct|openrouter|auto, models: [...]}`
 (`internal/config/routing.go:42-61`, values at `:14-24`, validated by `CheckRouting` at
 `:98`). A published project policy can carry `providers`, `model_prices` and `routing`
@@ -496,7 +497,7 @@ From the price catalog the repo ships (`internal/pricing/catalog/catalog.json`,
 `checked_at 2026-10-14`): `deepseek/deepseek-v4.1-flash` is $0.01584–$0.60 per million
 input tokens and $0.18–$2.40 per million output; the catalog's own note is that *"a run
 that charges $5 may really cost up to about $189"* under the cheapest-endpoint
-undercharge (`docs/design/provider-price-catalog.md:12`). The built-in Claude table
+undercharge (`docs/design/provider-price-catalog.md`, on *"`cheapest` can undercharge"*). The built-in Claude table
 (`internal/pricing/table.go Embedded()`) is Haiku 4.5 $1/$5, Sonnet 5.5 $2/$10,
 Opus 5.5 $4/$20, Fable 5.1 $10/$50 (cited by symbol rather than by line: the function's body
 is a list that gains a model at a time, and a line range here was already wrong once — Fable
@@ -527,8 +528,8 @@ interface (`console/src/source/source.ts`, `console/src/source/cli.ts:1-8`) whos
 implementation spawns the installed `fugaro`. The IPC table is fourteen entries — thirteen
 reads plus `link.openExternal` (`console/src/main/ipc.ts:307-558`). v1 is *"strictly
 read-only"*
-(`docs/design/desktop-console.md:404`, D2), and v2's ruling is **one** write — launch,
-through `fugaro run`, *"with no command queue"* (`docs/design/desktop-console-v2.md:244`,
+(`docs/design/desktop-console.md`, D2), and v2's ruling is **one** write — launch,
+through `fugaro run`, *"with no command queue"* (`docs/design/desktop-console-v2.md`,
 D22). So the console's §10 "ask the coordinator" is a **new** interaction, and it is the
 only one in the spec that makes the console send free text to a model.
 *Consequence:* the console can gain the project view as new **read** operations over the
@@ -563,11 +564,11 @@ Two contradictions with this spec:
 - **A model credential in the resident service.** PR #632 forbids it; this spec's §8
   requires it. That one is real.
 What the two share, and should not each invent separately: the identity model, credential
-handling, spend caps, and the hosting module. `docs/mobile/reconciliation.md:326` (D115)
+handling, spend caps, and the hosting module. `docs/mobile/reconciliation.md` (D115)
 already sets the conditions for phase 2 — *"the model credential lives in a secret manager
 **in the installation's own project**, the service runs as a dedicated identity with a
 narrow IAM role, it is behind the **same launch claim** (`runstore.Claim`) and the same
-budget caps"* — and `docs/mobile/implementation-plan.md:568` (P5.1) records it as
+budget caps"* — and `docs/mobile/implementation-plan.md` (P5.1) records it as
 **UNSCHEDULED** and **SECURITY-SENSITIVE** precisely *"because it holds a model credential
 in the cloud … and it holds `fugaro run` authority."*
 *Consequence:* shipping the coordinator's LLM half without a ruling **decides D115's phase
@@ -702,7 +703,7 @@ not lost:
 **Changes spec §2, §4, §8.**
 - **(A) Recommended — one resident service per installation, with the coordinator as a role it plays.** PR #632's design already puts it per installation with a scheduler tick and a dedicated service account, which is the same unit as "per Fugaro project" (finding **#1**); the coordinator adds the project-wide state and the MCP front door. Cost: PR #632's *"never a model credential in the resident service"* and this spec's §8 cannot both hold — so this option means **Q4 (A)** for v1 and the model credential arrives only when the credentials service does.
 - **(B) Two services: the orchestrator (per installation, `fugaro run` authority, no model credential) and the coordinator (advisory, project-wide state).** Cost: two always-on surfaces, two service accounts, two sets of grants — and the coordinator still needs its own answer to Q4.
-- **(C) The coordinator absorbs the orchestrator's `fugaro run` authority too.** **Refused as written**: that is mobile D115's deferred question (`docs/mobile/reconciliation.md:326`), and answering it here decides it implicitly.
+- **(C) The coordinator absorbs the orchestrator's `fugaro run` authority too.** **Refused as written**: that is mobile D115's deferred question (`docs/mobile/reconciliation.md`), and answering it here decides it implicitly.
 *Consequence:* (A) is the option that does not decide D115 by accident, and it is the reason this question exists at all.
 
 **Answered 2026-10-19: option (A)** — one resident service per installation, with the coordinator as a role it plays, which means **Q4 (A)** for v1 and the model credential arriving only when the credentials service does.
@@ -786,13 +787,13 @@ the README and for whatever plan follows.
 
 | Word | What it means **here** | Where it is already used |
 | --- | --- | --- |
-| **Fugaro project** | A semantic project of several repositories and people: one GCP project, one Firebase project, its repositories, its people lists, one local config. | `docs/design/v1.md:26`. The spec's §2/§4 unit. |
-| **Installation** | *The same object as a Fugaro project*, named from the cloud side: what `fugaro init` creates. | `docs/design/v1.md:33`; `deploy/terraform/gcp/roots/installation/`. The mobile and orchestrator designs say "per installation" where this spec says "per project" — the same thing (finding **#1**). |
-| **Orchestrator** | **The local agent a developer runs**, one per developer (or per thread of work). | `docs/design/desktop-console-spec-v2.md:25,29`; `docs/mobile/spec.md:8-9`. The spec's §1/§6 use. |
+| **Fugaro project** | A semantic project of several repositories and people: one GCP project, one Firebase project, its repositories, its people lists, one local config. | `docs/design/v1.md`. The spec's §2/§4 unit. |
+| **Installation** | *The same object as a Fugaro project*, named from the cloud side: what `fugaro init` creates. | `docs/design/v1.md`; `deploy/terraform/gcp/roots/installation/`. The mobile and orchestrator designs say "per installation" where this spec says "per project" — the same thing (finding **#1**). |
+| **Orchestrator** | **The local agent a developer runs**, one per developer (or per thread of work). | `docs/design/desktop-console-spec-v2.md`, on *"Multiple orchestrators: typically one per thread of work"*; `docs/mobile/spec.md`, on *"Phase 1: orchestrator runs on the owner's laptop"*. The spec's §1/§6 use. |
 | **Coordinator** | **This design's new per-project service.** Aggregates what every orchestrator is doing, owns project-level state, is advisory. | New. **But the word is already taken twice in-tree** for something else: a review-process role (`docs/plans/2026-09-30-m9a-gateway-and-project-identity.md:1173`) and a designation in a test fixture (`shared/mailbox/index.test.js:1683`). |
-| **Always-on orchestrator** | The mobile design's phase-2 resident service: one per installation, `fugaro run` authority, no model credential. The coordinator's close sibling. | `docs/design/always-on-orchestrator.md` (PR #632); `docs/mobile/spec.md:9`; D115. |
-| **Front agent** | The mobile design's P5.4: the phone's conversational agent. | `docs/mobile/implementation-plan.md:582`. Distinct from both of the above. |
-| **Summarising agent** | The mobile design's agent beside the orchestrator, which condenses task events into spoken updates. | `docs/mobile/spec.md:26`. The nearest existing thing to a "coordinator" in the mobile design, and not the same. |
+| **Always-on orchestrator** | The mobile design's phase-2 resident service: one per installation, `fugaro run` authority, no model credential. The coordinator's close sibling. | `docs/design/always-on-orchestrator.md` (PR #632); `docs/mobile/spec.md`, on *"Phase 2: orchestrator moves to an always-on cloud service"*; D115. |
+| **Front agent** | The mobile design's P5.4: the phone's conversational agent. | `docs/mobile/implementation-plan.md`, under **Task P5.4**. Distinct from both of the above. |
+| **Summarising agent** | The mobile design's agent beside the orchestrator, which condenses task events into spoken updates. | `docs/mobile/spec.md`, on *"**Summarising agent** sits beside the orchestrator"*. The nearest existing thing to a "coordinator" in the mobile design, and not the same. |
 | **Run** | One execution of a coding agent in a fresh Cloud Run container, ending in a pull request. | `internal/runstore/`, `internal/backend/`. The unit every budget cap is keyed to. |
 | **Launcher / operator / budget admin** | The three people lists. Launchers start runs; operators hold the run bucket and the preload account; budget admins may write the database. | `internal/infra/firebase.go:117-120`; `internal/localcfg/localcfg.go:360-365`. Q2's answer is that callers are per-person IAM members on the coordinator, as a launcher is granted today, so the access list has to be said explicitly. |
 | **Project job** | A **shared** Cloud Run job one repository's workflow can run in another's name, created by the `project` Terraform module. | `deploy/terraform/gcp/modules/project/job.tf:10`; `SECURITY.md:93`. **Not** the coordinator, and **not** "the project's job". |

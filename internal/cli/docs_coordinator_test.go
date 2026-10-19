@@ -1291,7 +1291,7 @@ func coordinatorAnchorLine(t *testing.T, doc, anchor, what string) (string, int,
 		at, found = i+1, line
 	}
 	if at < 0 {
-		t.Errorf("%s carries no line with %q, and that is the anchor %s is read from: the block is cited by its own label in the document that allocates it, so a label the document does not carry is a number no reader can find there",
+		t.Errorf("%s carries no line with %q, and that is the anchor %s is read from: a citation by content is a claim that the document carries that phrase, and a phrase the document does not carry is a citation no reader can follow",
 			doc, anchor, what)
 		return "", 0, false
 	}
@@ -1496,6 +1496,133 @@ func TestDocsCoordinatorNumbersTableIsReadFromItsSources(t *testing.T) {
 			}
 		}
 	}
+}
+
+// coordinatorContentAnchoredDirs are the trees the reconciliation cites by content and never by
+// line number: `docs/design/` and `docs/mobile/`, which other works add sections and rows to
+// while this one sits in review. A line number into one of them goes stale silently -- nothing
+// about a number says which sentence it meant -- and it went stale here: the sentence that cites
+// `docs/design/desktop-console.md` for D2 pointed at `:404`, a table's separator rule, when the
+// D2 row it is about is at 406.
+var coordinatorContentAnchoredDirs = []string{"docs/design/", "docs/mobile/"}
+
+// coordinatorContentAnchored reports whether a cited path is in one of those trees.
+func coordinatorContentAnchored(path string) bool {
+	for _, dir := range coordinatorContentAnchoredDirs {
+		if strings.HasPrefix(path, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+// coordinatorContentAnchor holds one citation into those trees to the content it names: anchor
+// is the text of the one line of doc that carries the claim, written exactly as doc writes it.
+// The line number is not written down anywhere, here or in the prose -- it is found, which is
+// what makes inserting a paragraph above it somebody else's change to make.
+type coordinatorContentAnchor struct {
+	doc    string // the document the reconciliation cites
+	claim  string // the claim the citation makes about it
+	anchor string // the text of the one line in doc that carries the claim
+}
+
+// coordinatorContentAnchors are those citations, one entry per claim. Every document the
+// reconciliation cites under either tree has at least one entry here, and the test below fails
+// when one does not: an anchored citation with no anchor behind it is the state the line numbers
+// left these citations in, where the only thing checked was that some line existed.
+var coordinatorContentAnchors = []coordinatorContentAnchor{
+	{"docs/design/v1.md", "a Fugaro project, the spec's §2/§4 unit", "**Fugaro project** (the word users see)"},
+	{"docs/design/v1.md", "the installation, the same object named from the cloud side", "**Installation.** The project's cloud-side setup"},
+	{"docs/design/desktop-console-v2.md", "v2's status: nothing in it is approved or built", "**Nothing in v2 is approved or built**"},
+	{"docs/design/desktop-console-v2.md", "D22, the one write: launch", "| **D22** | Does v2's first slice contain any write at all?"},
+	{"docs/design/desktop-console.md", "D2: v1 is strictly read-only", "| **D2** | Is v1 strictly read-only, with kill/resume/cancel deferred?"},
+	{"docs/design/desktop-console-spec-v2.md", "the orchestrator, one per thread of work", "- Multiple orchestrators: typically one per thread of work"},
+	{"docs/design/m10-multi-model.md", "the model config is per slot, not per tier", "`agent.models.coder|reviewer|background`, `agent.model`, `budget.allowed_models`"},
+	{"docs/design/provider-price-catalog.md", "the catalog's own design admits `cheapest` can undercharge", "**`cheapest` can undercharge, and this design says so plainly rather than hiding it.**"},
+	{"docs/mobile/reconciliation.md", "mobile D115, phase 2 hosting", "| **D115** | **Phase 2 hosting: who holds the model credential?**"},
+	{"docs/mobile/implementation-plan.md", "P5.1, the always-on orchestrator, and its state", "### Task P5.1: Phase 2 hosting"},
+	{"docs/mobile/implementation-plan.md", "P5.4, the conversational front agent", "### Task P5.4: The conversational front agent"},
+	{"docs/mobile/spec.md", "phase 1: the orchestrator on the owner's laptop", "- Phase 1: orchestrator runs on the owner's laptop"},
+	{"docs/mobile/spec.md", "phase 2: the orchestrator moves to an always-on service", "- Phase 2: orchestrator moves to an always-on cloud service"},
+	{"docs/mobile/spec.md", "the summarising agent beside the orchestrator", "- **Summarising agent** sits beside the orchestrator"},
+}
+
+// TestDocsCoordinatorFrequentCitationsAreAnchoredByContent: the reconciliation carries no line
+// number into the documents other works edit, and every citation it makes into one of them is
+// held to the content it names.
+//
+// This is the rule the README's numbers table was fixed under, applied to the reconciliation
+// itself, and for the same reason: a citation into a document that grows rows and sections every
+// week is a citation that rots while nobody is looking. The line numbers these replaced were
+// checked only for being inside the file -- coordinatorCheckCitedLines reads the number and
+// never the sentence -- so a paragraph inserted above one moved the claim and left the citation
+// green. Two assertions hold the rule:
+//
+//   - no citation under `docs/design/` or `docs/mobile/` carries a line number, so a later edit
+//     cannot put one back and get the old, silently-rotting check;
+//   - every document cited under either tree is named by at least one anchor in the table above,
+//     and each anchor is carried by exactly one line of its document, so the claim and the line
+//     behind it are the same fact and a document that stops making the claim fails.
+//
+// The line each anchor lands on is logged rather than written down, which is the whole
+// difference between this and the numbers it replaced: a citation that names the sentence it
+// means survives the paragraph somebody else inserts above it.
+func TestDocsCoordinatorFrequentCitationsAreAnchoredByContent(t *testing.T) {
+	doc := readDoc(t, coordinatorReconciled)
+	matches := coordinatorCitationRE.FindAllStringSubmatch(doc, -1)
+	if len(matches) == 0 {
+		t.Fatalf("%s cites no path at all: this test would otherwise check nothing", coordinatorReconciled)
+	}
+
+	// The rule first, and over every occurrence: a line number is what a later edit will
+	// reintroduce, and the anchors below would happily co-exist with one.
+	for _, m := range matches {
+		path, spec := m[1], m[2]
+		if spec == "" || !coordinatorContentAnchored(path) {
+			continue
+		}
+		t.Errorf("%s cites %s at %s: a line number into a document other works add to is stale the moment one of them inserts a paragraph above it, and nothing here would notice -- cite the content it means and hold it in coordinatorContentAnchors instead",
+			coordinatorReconciled, path, spec)
+	}
+
+	// Then the anchors, and then the two censuses that keep the table honest: a cited document
+	// with no anchor is unchecked, and an anchor for a document nothing cites is a pin that has
+	// outlived the claim it was written for.
+	cited := map[string]bool{}
+	for _, m := range matches {
+		if !coordinatorContentAnchored(m[1]) {
+			continue
+		}
+		if _, excused := coordinatorCitationExceptions[m[1]]; excused {
+			continue
+		}
+		cited[m[1]] = true
+	}
+	if len(cited) == 0 {
+		t.Fatalf("%s cites no document under %s: this test would otherwise check nothing",
+			coordinatorReconciled, strings.Join(coordinatorContentAnchoredDirs, " or "))
+	}
+	anchored := map[string]bool{}
+	for _, a := range coordinatorContentAnchors {
+		anchored[a.doc] = true
+		if _, at, ok := coordinatorAnchorLine(t, a.doc, a.anchor, a.claim); ok {
+			t.Logf("%s: %s is at line %d", a.doc, a.claim, at)
+		}
+	}
+	for path := range cited {
+		if !anchored[path] {
+			t.Errorf("%s cites %s by content, and no anchor in coordinatorContentAnchors is read from it: the citation names a document and no longer says where in it, so nothing holds it to the sentence it means",
+				coordinatorReconciled, path)
+		}
+	}
+	for path := range anchored {
+		if !cited[path] {
+			t.Errorf("coordinatorContentAnchors holds an anchor in %s, and %s no longer cites it: delete the entry, or the next citation that lands on that document is checked against a claim that document has stopped making",
+				path, coordinatorReconciled)
+		}
+	}
+	t.Logf("%s: %d documents cited under %s held by %d content anchors, none of them by a line number",
+		coordinatorReconciled, len(anchored), strings.Join(coordinatorContentAnchoredDirs, " and "), len(coordinatorContentAnchors))
 }
 
 // coordinatorLineNumbers reads the line numbers out of a spec that
