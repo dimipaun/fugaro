@@ -3,6 +3,7 @@ package cli
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"regexp"
 	"slices"
@@ -1532,6 +1533,18 @@ func TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit(t *testing.T) {
 			t.Errorf("docs/voice-module/README.md carries %q again: #592 is the pull request that carries this reconciliation, so it has merged with this change", banned)
 		}
 	}
+	// The same fact in the reconciliation's own audit paragraph, which read
+	// "`⊂ PR #n` is now used only for a pull request that is **still open** --
+	// #584 and #592, the two this document reads on a branch that is not
+	// `main`". One of those two is now this document's own merged pull request,
+	// so the sentence would contradict the notation it states two sections on.
+	for _, banned := range []string{
+		"#584 and #592, the two this document reads on a branch that is not `main`",
+	} {
+		if strings.Contains(recon, banned) {
+			t.Errorf("%s carries %q again: #592 has merged with this change, so #584 is the only pull request left in that list", path, banned)
+		}
+	}
 	// And section 0's table gives both halves: the commit each merged pull
 	// request's work is on main as, the one that is still open, and this
 	// revision's own pull request, whose merge commit is the one this revision
@@ -1547,6 +1560,117 @@ func TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit(t *testing.T) {
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q; section 0's table is where a reader checks whether a branch read is main now", path, want)
+		}
+	}
+}
+
+// voiceModuleBranchTableHeader opens section 0's table of the pull requests
+// this document read.
+const voiceModuleBranchTableHeader = "| PR | Branch | Tip read | What it is now | Read for |"
+
+// voiceModuleBranchStatuses returns section 0's table as the "What it is now"
+// cell of each row, in the order the table writes them.
+func voiceModuleBranchStatuses(t *testing.T, recon string) []string {
+	t.Helper()
+	lines := strings.Split(recon, "\n")
+	start := slices.Index(lines, voiceModuleBranchTableHeader)
+	if start < 0 {
+		t.Fatalf("reconciliation.md no longer carries section 0's branch table (%s)", voiceModuleBranchTableHeader)
+	}
+	var statuses []string
+	for _, line := range lines[start+2:] {
+		if !strings.HasPrefix(line, "|") {
+			break
+		}
+		cells := markdownTableCells(line)
+		if len(cells) != 5 {
+			t.Fatalf("section 0's table row %q has %d cells, want 5", line, len(cells))
+		}
+		statuses = append(statuses, strings.TrimSpace(cells[3]))
+	}
+	if len(statuses) == 0 {
+		t.Fatal("section 0's branch table has no rows: an empty table would agree with any count")
+	}
+	return statuses
+}
+
+// voiceModuleCountWord spells a small count the way section 2 writes it.
+func voiceModuleCountWord(n int) string {
+	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"}
+	if n < 0 || n >= len(words) {
+		return strconv.Itoa(n)
+	}
+	return words[n]
+}
+
+// TestDocsVoiceModuleReconciliationCountsMergedBranchesFromItsOwnTable: section
+// 2's notation paragraph says how many of the pull requests this document read
+// have merged since it was written, and that number is section 0's own -- the
+// count of rows in its table whose "What it is now" cell says the pull request
+// merged. A cloud review found the two had drifted: section 0's table and
+// docs/voice-module/README.md were both updated to **six** when #592 merged
+// with this change, and section 2 still said "the five pull requests that
+// merged after this document was written". So the count is derived here rather
+// than written down: the table decides it, and the sentence has to agree.
+//
+// Mutations, each run and restored: put "the five pull requests that merged"
+// back into section 2 while the table carries six merged rows -- this fails,
+// naming both numbers. Flipping one row's status to "still open" fails it too,
+// in the other direction. It is entry (108) of the log below.
+func TestDocsVoiceModuleReconciliationCountsMergedBranchesFromItsOwnTable(t *testing.T) {
+	const path = "docs/voice-module/reconciliation.md"
+	recon := readDoc(t, path)
+	statuses := voiceModuleBranchStatuses(t, recon)
+	merged, open := 0, 0
+	for _, status := range statuses {
+		switch {
+		case strings.HasPrefix(status, "merged") || strings.Contains(status, "merged with this change"):
+			merged++
+		case strings.Contains(status, "still open"):
+			open++
+		default:
+			t.Errorf("section 0's table row says %q, which is neither merged nor still open", status)
+		}
+	}
+	if merged == 0 || open == 0 {
+		t.Fatalf("section 0's table reads %d merged and %d open rows: the table is the count's only source", merged, open)
+	}
+	want := fmt.Sprintf("the **%s** pull requests that merged after this document was written", voiceModuleCountWord(merged))
+	if !strings.Contains(recon, want) {
+		t.Errorf("%s lacks %q: section 0's table carries %d merged rows and %d open ones, and section 2's notation paragraph is where a reader learns which is which", path, want, merged, open)
+	}
+}
+
+// TestDocsVoiceModuleReconciliationDoesNotCreditThisPRWithTheConsoleHelper: a
+// cloud review found this revision had rewritten "⊂ **PR #592** and D40 give
+// the console a supervised helper for the Agent SDK" as a statement about
+// `main` -- "PR #592, merged with this change, and D40 give the console a
+// supervised helper" -- which is false twice over: #592 carries
+// `mobile/src/audio/` and nothing else, and this document's own finding says
+// D40's helper is **designed and unbuilt**. The sentence is D40's alone, and
+// both halves are pinned here: the false attribution may not come back, and the
+// fact it contradicted has to still be in the document.
+//
+// Mutation, run and restored: write "PR #592, merged with this change, and
+// D40 give the console a supervised helper" into section 5's Q6 again -- this
+// fails. It is entry (109) of the log below.
+func TestDocsVoiceModuleReconciliationDoesNotCreditThisPRWithTheConsoleHelper(t *testing.T) {
+	const path = "docs/voice-module/reconciliation.md"
+	recon := readDoc(t, path)
+	for _, banned := range []string{
+		"PR #592, merged with this change, and D40 give the console a supervised helper",
+		"⊂ **PR #592** and D40 give the console a supervised helper",
+	} {
+		if strings.Contains(recon, banned) {
+			t.Errorf("%s says %q: #592 carries `mobile/src/audio/` and nothing else, and D40's helper is designed and unbuilt, so the helper is D40's alone", path, banned)
+		}
+	}
+	for _, want := range []string{
+		"D40 gives the console a supervised helper for the Agent SDK -- **designed and unbuilt**",
+		"designed and unbuilt: the Agent SDK in a separate supervised helper process",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q: that is what the document says the console's helper is, and the sentence the review corrected depended on it", path, want)
 		}
 	}
 }
@@ -1829,7 +1953,7 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 	}
 }
 
-// Mutation (verified, run and restored): 104 entries, numbered (1)–(104).
+// Mutation (verified, run and restored): 110 entries, numbered (1)–(110).
 // And twelve for the merged-phase-3 round: the documents said P3.4 was not
 // merged and PR #592 was still open, which the merge made false, and the list
 // of what is not merged was checked against the tree from a copy of itself
@@ -1875,6 +1999,39 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 // same fact as section 0's table, and this mutation is why both halves are
 // pinned -- the row was unchecked until it was, and the mutation came back
 // green.
+// And five for the round that followed: the merge put `mobile/src/audio/` on
+// `main`, and four sentences under `mobile/` went on saying P3.4 had not
+// merged, while section 2 of the reconciliation kept a count the table beside
+// it had already outgrown.
+// (105) Putting "and P3.4 is not merged on `main`" back into
+// mobile/src/mailbox/speaker.js's header fails
+// TestDocsMobilePhase3NotMergedClaimsAgreeWithTheTree with `mobile/src/mailbox/
+// speaker.js says P3.4 is not merged, and mobile/src/audio is in the tree`:
+// that test reads the claim out of the document and asks the tree.
+// (106) Writing "P3.2 (`mobile/src/feed`) is **not merged**" into
+// mobile/src/mailbox/README.md fails it the same way, naming P3.2 and
+// `mobile/src/feed`: the check is not about P3.4, it is about any task the
+// tree has outgrown.
+// (107) The control, and the reason (105) and (106) are not a phrase grep:
+// writing "P3.5 (`mobile/src/voice`) is **not merged**" into the same file
+// stays GREEN, because `mobile/src/voice/` is not in the tree -- P3.5 has not
+// merged, and the sentence is true.
+// (108) Putting "the five pull requests that merged after this document was
+// written" back into section 2 fails
+// TestDocsVoiceModuleReconciliationCountsMergedBranchesFromItsOwnTable: the
+// count is read off section 0's own table, which carries six merged rows, and
+// the sentence has to say the number the table holds.
+// (109) Writing "PR #592, merged with this change, and D40 give the console a
+// supervised helper for the Agent SDK" into section 5's Q6 again fails
+// TestDocsVoiceModuleReconciliationDoesNotCreditThisPRWithTheConsoleHelper:
+// #592 carries `mobile/src/audio/` and nothing else, and the document's own
+// pipeline finding says D40's helper is designed and unbuilt.
+// (110) Putting "#584 and #592, the two this document reads on a branch that is
+// not `main`" back into the audit paragraph fails
+// TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit: this revision's
+// own pull request is one of those two, and it has merged with this change --
+// the mutation came back GREEN before the sentence was pinned, which is why the
+// ban is there now.
 // (64) Giving a merged pull request's work the branch-only shorthand again
 // ("the reader on `main` (`ebe69147`) subscribes" -> "the reader ⊂ PR #590
 // subscribes") fails TestDocsVoiceModuleReconciliationNamesMergedWorkByItsCommit:

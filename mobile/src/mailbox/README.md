@@ -245,11 +245,15 @@ makes is signed by it. The alternative -- putting `acked` inside the tag -- is
 not available: the ack is written after the tag was made, and a launcher that
 could not ack could not release a prompt either.
 
-## The audio stub (P3.4 is not merged)
+## The audio stub (P3.4 has merged; this client is not wired to it yet)
 
 P3.4 (`mobile/src/audio/`, the AudioIn/STT/TTS interfaces and their fakes, PR
-#592) is **not merged**, and this task may not depend on unmerged code. So
-`speaker.js` is a one-method seam of this task's own -- `speak(text)` returning
+#592) landed after this task: it had no directory in the tree when P3.6 was
+written, and this task may not depend on code that is not on `main`. **It has
+since merged with this change** -- `mobile/src/audio/` is the tree's now -- and
+this client still takes this module's own port rather than P3.4's, because
+nothing has wired the two together. So `speaker.js` is a one-method seam of this
+task's own -- `speak(text)` returning
 `{ ok: true }`, or `{ ok: false, code, field }` with a code from
 `SPEAK_CODES` (`bad-text`, `speak-failed`) -- with `MemorySpeaker` as its
 double. (The refusal shape was written as `{ id, code }` here until the
@@ -257,9 +261,9 @@ review's last round; that is the shape of the client's own `unspoken` list,
 which names the message the refusal is about, not the port's.) What
 P3.6 needs from it is exactly one thing: **whether the utterance was spoken**,
 because the ack is written only after it was. Voices, queues, barge-in,
-interruption and latency are P3.4's and P3.5's, and none of them is here. When
-P3.4 merges, `speaker.js` is the file that goes, and its `MemorySpeaker` is what
-the P3.4 fakes replace.
+interruption and latency are P3.4's and P3.5's, and none of them is here.
+`speaker.js` is the file that goes, and its `MemorySpeaker` is what the P3.4
+fakes replace; the merge has happened and the wiring has not.
 
 The **secure store is not stubbed**: P3.1 is merged and its `SecretStore` is
 reused, with one addition (below).
