@@ -116,6 +116,11 @@ guards=0
 # The pattern is the module's own, run from the package directory so that the
 # glob is node's to expand (quoted), exactly as mobile/package.json's script
 # does.
+#
+# It also keeps the names of the tests that failed, because "the suite went red"
+# is a claim a reader has to be able to check: the README's mutation table names
+# the tests, and the harness prints the same names next to the verdict, so the
+# two can be compared rather than trusted.
 suite() { # suite-pattern (module-relative to mobile/)
   local out code tests fails
   out=$( (cd mobile && node --test "${1:-$SUITE}") 2>&1 )
@@ -124,6 +129,13 @@ suite() { # suite-pattern (module-relative to mobile/)
   # spec reporter (node 23+ default); both forms are read.
   tests=$(printf '%s\n' "$out" | sed -En 's/^(#|ℹ) tests ([0-9]+)$/\2/p' | tail -1)
   fails=$(printf '%s\n' "$out" | sed -En 's/^(#|ℹ) fail ([0-9]+)$/\2/p' | tail -1)
+  # `not ok 3 - the name` under TAP, `✖ the name` under the spec reporter.
+  # (`paste -d'; '` would alternate `;` and ` `, which reads as a missing
+  # separator, so the join is spelled out.)
+  LAST_FAILS=$(printf '%s\n' "$out" \
+    | sed -En -e 's/^not ok [0-9]+ - (.*)$/\1/p' -e 's/^[[:space:]]*✖ (.*)$/\1/p' \
+    | sed -E 's/ \([0-9.]+m?s\)$//' \
+    | awk '!seen[$0]++ {printf "%s%s", (n++ ? "; " : ""), $0}')
   LAST_OUT=$out
   LAST_TESTS=${tests:-0}
   [ "$code" -eq 0 ] && [ "$LAST_TESTS" -ge 1 ] && [ "${fails:-1}" -eq 0 ]
@@ -162,6 +174,7 @@ PY
     survivors=$((survivors + 1))
   else
     echo "killed        $name"
+    echo "              went red: ${LAST_FAILS:-<the runner failed before naming a test>}"
     last_outcome=killed
     killed=$((killed + 1))
   fi
@@ -231,20 +244,41 @@ run "the switch is validated" \
   mobile/src/voice/interrupt.js
 
 # 4. The queue, and the four sentences of the plan's verification (screen.js).
+#    The patterns carry the lines around them because `drain`'s decision and the
+#    `state()` snapshot read alike: a mutation must land in the one it names.
 run "the queue is drained only when the switch is on" \
-  "        switch: switchValue," "        switch: INTERRUPT_SWITCH.ON,"
+  "      const verdict = interruptDecision({
+        switch: switchValue,
+        severity: queue[i].severity," \
+  "      const verdict = interruptDecision({
+        switch: INTERRUPT_SWITCH.ON,
+        severity: queue[i].severity,"
 run "an update below the digest's top is not spoken" \
   "        highest," "        highest: queue[i].severity,"
 run "the pipeline's own speaking() and turn() are what the decision sees" \
-  "        speaking: pipeline.speaking(),
+  "        highest,
+        speaking: pipeline.speaking(),
         turn: pipeline.turn()," \
-  "        speaking: false,
+  "        highest,
+        speaking: false,
         turn: false,"
 run "an update is queued only against a digest that has arrived" \
   "      if (highest === null) return refuse(SCREEN_CODES.NO_DIGEST, 'digest');" ""
+run "an update below the digest's top is queued, not dropped" \
+  "      queue.push(Object.freeze({ text: update.text, severity: update.severity }));" \
+  "      if (update.severity !== highest) return Object.freeze({ ok: true, queued: queue.length });
+      queue.push(Object.freeze({ text: update.text, severity: update.severity }));"
 run "a full queue refuses rather than evicting" \
   "      if (queue.length >= queueCap) return refuse(SCREEN_CODES.QUEUE_FULL, 'queue');" \
   "      if (queue.length >= queueCap) queue.shift();"
+# NOT here, deliberately: `drain`'s `return` after the one utterance it starts.
+# Removing it does not make the suite go red, and the harness says so rather
+# than claiming a kill: the loop asks `interruptDecision` again on its next
+# pass, and P3.4's fake flips `speaking()` synchronously inside `say`, so the
+# second update is refused for exactly the reason the tests already prove. The
+# `return` is there for an engine that answers asynchronously, and no test
+# written against a synchronous fake can tell the two apart. `mobile/README.md`
+# records it in the same words.
 run "the utterance ending is a boundary" \
   "  pipeline.on('utterance', () => drain());" ""
 run "the turn's final is a boundary" \
@@ -347,21 +381,26 @@ run "the module reaches no database of its own" \
 const db = () => getDatabase;"
 
 # 10. The README's table, which is the scan's list (the drift this cross-check
-#     exists for).
+#     exists for). P3.4's table is above it in the same file and shares most of
+#     its rows, so a pattern here names the voice table's own wording -- the
+#     header is deliberately not P3.4's, and the rows that are word-for-word the
+#     same carry the row above them as context.
 run "the README's rule table is the scan's own header" \
   "| Rule | Exactly what the voice scan forbids | Why |" \
   "| Rule | What the scan forbids | Why |" \
   mobile/README.md src/voice/index.test.js
 run "the README's tokens are in the scan's order" \
-  "| no clock | \`Date\`, \`performance.now\`, \`hrtime\` |" \
-  "| no clock | \`performance.now\`, \`Date\`, \`hrtime\` |" \
+  "| no clock | \`Date\`, \`performance.now\`, \`hrtime\` | D117: the clock is the server-anchored one the screen is handed, so this module reads none |" \
+  "| no clock | \`performance.now\`, \`Date\`, \`hrtime\` | D117: the clock is the server-anchored one the screen is handed, so this module reads none |" \
   mobile/README.md src/voice/index.test.js
 run "the README names every token the scan carries" \
   "| no database of its own | \`firebase\`, \`Firestore\`, \`getDatabase\`, \`reference(\`, \`AsyncStorage\` |" \
   "| no database of its own | \`firebase\`, \`Firestore\`, \`getDatabase\`, \`AsyncStorage\` |" \
   mobile/README.md src/voice/index.test.js
 run "the README loses no rule row" \
-  "| no logging | \`console.\` | a transcript in a log line is a transcript outside the mailbox |" "" \
+  "| no logging | \`console.\` | a transcript in a log line is a transcript outside the mailbox |
+| nothing is read from the environment | \`process.env\` | a screen configured by an environment variable is a screen no test can build the same way twice |" \
+  "| nothing is read from the environment | \`process.env\` | a screen configured by an environment variable is a screen no test can build the same way twice |" \
   mobile/README.md src/voice/index.test.js
 
 echo

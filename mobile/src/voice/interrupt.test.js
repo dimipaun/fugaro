@@ -52,7 +52,14 @@ test('with the switch off nothing interrupts, whatever the severity is', () => {
     { ...decide({ switch: INTERRUPT_SWITCH.OFF }) },
     { interrupt: false, reason: INTERRUPT_REASON.SWITCH_OFF },
   );
-  assert.equal(decide({ switch: INTERRUPT_SWITCH.OFF, severity: 'info' }).interrupt, false);
+  // ... and the severity does not get a vote on the reason either: with the
+  // switch off, an update below the ladder's top is still refused for the
+  // switch. A screen showing "not the digest's highest" here would be showing
+  // the owner a reason their own setting does not change.
+  assert.deepEqual(
+    { ...decide({ switch: INTERRUPT_SWITCH.OFF, severity: 'info', highest: 'kill' }) },
+    { interrupt: false, reason: INTERRUPT_REASON.SWITCH_OFF },
+  );
   assert.equal(decide({ switch: INTERRUPT_SWITCH.OFF, speaking: true, turn: true }).reason, INTERRUPT_REASON.SWITCH_OFF);
 });
 

@@ -819,51 +819,74 @@ they are held to.
 
 ### Mutations run against this task
 
-Each was planted, the run went red on the named test, and the bug was removed.
-The tests are run with `node --test "src/**/*.test.js"` -- the app's whole
-suite, all passing -- and the four sentences of `screen.test.js` and
-`interrupt.test.js` are the plan's own verification.
+Each was planted, the suite went red on the named tests, and the bug was
+removed. **The whole table is reproduced by `src/voice/mutation-proof.sh`**,
+which prints one line per mutation with the tests that went red beside it, so
+the table can be checked rather than trusted. That script runs this module's own
+suite (`node --test 'src/voice/*.test.js'`, from `mobile/`) and not the app's
+whole one, because the mutations are all here and a failure in a neighbouring
+module would be indistinguishable from a killed guard; it **finds a working
+node** rather than assuming one (this repository's base image keeps node off
+`PATH` on purpose); and it refuses to report a verdict it could not have run --
+the pristine suite must pass first, with a test count, because `node --test`
+exits 0 over a glob that matched nothing, and then a mutation that *must* be
+caught is planted before any real one is trusted. `npm test` --
+`node --test "src/**/*.test.js"`, the app's whole suite, **427 tests, all
+passing** -- is what the pull request reports as the module's verification.
 
 **The column names the tests that went red; it does not count them**, for the
 reason P3.4's table gives: a count is a claim about a suite that grows, and a
 cascade makes it meaningless even sooner.
 
+One line is deliberately **not** in the table. `drain` returns after the one
+utterance it starts, and removing that `return` does **not** make the suite go
+red: the loop asks `interruptDecision` again on its next pass, and P3.4's fake
+flips `speaking()` synchronously inside `say`, so a second update is refused for
+the reason the tests already prove. The `return` is there for an engine that
+answers asynchronously, and no test written against a synchronous fake can tell
+the two apart -- so it is written down here rather than claimed as a kill.
+
 | Mutation | Went red |
 | --- | --- |
-| `interruptDecision` judges the boundary before the severity | `with the switch on, a severity below the digest's highest does not interrupt` and `the severity is judged before the boundary` |
-| the switch is judged after the severity | `with the switch off nothing interrupts, whatever the severity is` |
-| `speaking` stops being a boundary | `an in-progress utterance is never spoken over` and the plan's second sentence |
-| the user's turn stops being a boundary | `the user's turn is a boundary too` and `an update waits for the user's turn to close` |
-| `severityRank` is replaced by string equality (an off-ladder severity ranks as `info`) | `a switch that is neither off nor on, and a severity off the ladder, are wiring bugs and they throw` |
-| `drain` splices every queued update instead of one | `one utterance at a time: two queued updates are spoken one after the other` |
-| `drain` ignores the switch | the plan's first sentence |
-| `drain` speaks an update below the digest's top | the plan's fourth sentence |
-| a below-the-top update is dropped instead of queued | the plan's fourth sentence |
-| the queue evicts its oldest entry instead of refusing | `the queue is bounded, and refuses rather than dropping what is in it` |
-| `offer` queues without a digest | `a digest that arrives after the queue does not speak an update it does not cover` |
-| `accept` stops refusing while offline | the plan's second sentence and `a transcript that arrives while offline is refused too` |
-| `accept` refuses on `stale` as well as `offline` | `stale is not offline: a heartbeat three intervals old still accepts a message` |
-| `accept` refuses before validating the text | `an update that is not an update, and a switch that is not a switch, are refusals with a code` |
-| the offline refusal is returned but not recorded | the plan's second sentence (`state().refused`) |
-| the `message` event stops being accepted | `a transcript that arrives while offline is refused too` and `an update waits for the user's turn to close` |
-| the `message` event stops draining the queue | `an update waits for the user's turn to close, and is spoken after it` |
-| the `utterance` event stops draining the queue | the plan's second sentence |
-| the `unavailable` event stops being recorded | `D122: a refused microphone is shown` |
-| `takeLease` swallows `already-claimed` | the plan's third sentence |
-| `takeLease` does not adopt P1.2's returned state | the plan's third sentence |
-| `releaseLease` releases another consumer's lease | the plan's third sentence |
-| `setLease` accepts a state P1.2 refuses | `a lease state that is not one is refused` |
-| the lease gates `accept` | `the lease does not gate the app` |
-| the speaker maps `interrupted` to `ok: true` | `a reply that played out is a spoken verdict, and one that did not is not` and `a reply the pipeline could not speak is not acked` |
-| the speaker maps `bad-text` to `speak-failed` | `a reply that played out is a spoken verdict, and one that did not is not` |
-| `setSwitch` accepts a third value | `an update that is not an update, and a switch that is not a switch, are refusals with a code` |
-| `setDigest` accepts an off-ladder severity | the same |
-| the door grows one more export | `the door exports exactly this` |
-| the file walk stops recursing | `the walk is recursive, so a file in a subdirectory is part of the module` |
-| a `Date.now()` planted in `screen.js` | `no clock` |
-| a `getDatabase()` planted in `screen.js` | `no database of its own` |
-| the README's rule table header is renamed | `the README's rule table and the scan are the same list` |
-| the README's tokens are reordered within a row | the same |
+| `the ladder is ranked, not compared as a word` | `a switch that is neither off nor on, and a severity off the ladder, are wiring bugs and they throw` |
+| `the boundary is judged after the severity` | `the severity is judged before the boundary, so a low severity says so even while the user speaks` |
+| `the switch is judged first, before the ladder` | `with the switch off nothing interrupts, whatever the severity is` |
+| `an utterance in flight is a boundary` | `an in-progress utterance is never spoken over` and `with the switch on, an update waits for the boundary and is never spoken over an utterance` and `one utterance at a time: two queued updates are spoken one after the other, not together` |
+| `the user's turn is a boundary` | `the user's turn is a boundary too: nothing interrupts while they are being listened to` and `with the switch on, an update waits for the user's turn to close, and is spoken after it` |
+| `the switch is validated` | `a switch that is neither off nor on, and a severity off the ladder, are wiring bugs and they throw` |
+| `the queue is drained only when the switch is on` | `the plan, sentence one: with the switch off a proactive update is queued, and not spoken` and `the queue is bounded, and refuses rather than dropping what is in it` |
+| `an update below the digest's top is not spoken` | `the plan, sentence four: the digest's highest severity is the only thing that interrupts` |
+| `the pipeline's own speaking() and turn() are what the decision sees` | `with the switch on, an update waits for the boundary and is never spoken over an utterance` and `with the switch on, an update waits for the user's turn to close, and is spoken after it` and `one utterance at a time: two queued updates are spoken one after the other, not together` |
+| `an update is queued only against a digest that has arrived` | `a digest that arrives after the queue does not speak an update it does not cover` |
+| `an update below the digest's top is queued, not dropped` | `the plan, sentence four: the digest's highest severity is the only thing that interrupts` |
+| `a full queue refuses rather than evicting` | `the queue is bounded, and refuses rather than dropping what is in it` |
+| `the utterance ending is a boundary` | `with the switch on, an update waits for the boundary and is never spoken over an utterance` and `one utterance at a time: two queued updates are spoken one after the other, not together` |
+| `the turn's final is a boundary` | `with the switch on, an update waits for the user's turn to close, and is spoken after it` |
+| `the turn's final is a message the app accepts` | `with the switch on, an update waits for the user's turn to close, and is spoken after it` and `a transcript that arrives while offline is refused too, and nothing is written` |
+| `the OS's refusal of the microphone is recorded` | `D122: a refused microphone is shown, and the screen keeps working without it` |
+| `the app refuses to accept a message while offline` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` and `a transcript that arrives while offline is refused too, and nothing is written` |
+| `the refusal is shown, not only returned` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` and `a transcript that arrives while offline is refused too, and nothing is written` |
+| `only offline refuses: stale is still an orchestrator` | `stale is not offline: a heartbeat three intervals old still accepts a message` |
+| `the message is judged before the presence is` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` |
+| `an empty message is refused as an empty message` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` |
+| `a lease another consumer holds is surfaced` | `the plan, sentence three: a lease held by another consumer is surfaced rather than ignored` and `a lease the other consumer has let go of is the phone's to take, and it is taken` and `the lease does not gate the app: the phone sends while another consumer holds it` |
+| `the state P1.2 hands back is adopted, refused or not` | `a lease the other consumer has let go of is the phone's to take, and it is taken` |
+| `a release is never a takeover` | `the plan, sentence three: a lease held by another consumer is surfaced rather than ignored` |
+| `a lease state P1.2 will not read is refused` | `a lease state that is not one is refused, and the screen keeps the one it had` |
+| `the lease does not gate the app` | `the lease does not gate the app: the phone sends while another consumer holds it` |
+| `the switch has two values and no third` | `an update that is not an update, and a switch that is not a switch, are refusals with a code` |
+| `the digest's severity is on P1.3's ladder` | `an update that is not an update, and a switch that is not a switch, are refusals with a code` |
+| `an interrupted utterance is not a spoken one` | `a reply that played out is a spoken verdict, and one that did not is not` |
+| `the one refusal a caller can fix is carried through as itself` | `a reply that played out is a spoken verdict, and one that did not is not` |
+| `the port refuses a pipeline that is not one` | `the port refuses a pipeline that is not one, at the point the app is built` |
+| `the door's export list is the module's surface` | `the door exports exactly this, and every name is the screen, its switch or the speaker seam` |
+| `the file walk is recursive` | `the walk is recursive, so a file in a subdirectory is part of the module` |
+| `the module reads no clock` | `no clock — D117: the clock is the server-anchored one the screen is handed, so this module reads none` |
+| `the module reaches no database of its own` | `no database of its own — D113: the mailbox client is the app's only write path, and a screen that could reach a database could be a second one` |
+| `the README's rule table is the scan's own header` | `the README's rule table and the scan are the same list` |
+| `the README's tokens are in the scan's order` | `the README's rule table and the scan are the same list` |
+| `the README names every token the scan carries` | `the README's rule table and the scan are the same list` |
+| `the README loses no rule row` | `the README's rule table and the scan are the same list` |
 
 ## What is not verified here
 
@@ -893,9 +916,14 @@ cascade makes it meaningless even sooner.
   and the actual interruption latency have not been exercised anywhere: D122's
   two denials are tested as *values the port returns*, which is what P3.5's
   "tap to speak" fallback is built on, not as an OS behaviour.
-* **The voice screen (P3.5) and the mailbox client's use of this pipeline.** The
-  screen is not here; the mailbox client (P3.6) is, but is not wired to this
-  pipeline (it speaks through its own `src/mailbox/speaker.js` seam).
+* **The screen's own edges, and where it stops.** P3.5 (above) is the screen,
+  and `src/voice/speaker.js` wires the client's `speak(text)` port to this
+  pipeline, so "ack only after it has spoken" now runs over the real audio
+  ports. What is still not exercised: **a real engine** (the first store build
+  is voiceless, and the pipeline is driven by P3.4's fakes), **P6.12's spoken
+  confirmation** (the seam is left, and nothing of it is implemented) and
+  **P6.5's wider interrupt table**, which the screen deliberately does not
+  compose with -- `src/voice/interrupt.js` and the P3.5 section above say so.
   The pipeline takes the message's `sender`, `newId` and `now` as injected
   values precisely because P3.6 owns them (D117's server-anchored clock, the
   account's identity), and **redaction, the MAC and the write are P3.6's**:
