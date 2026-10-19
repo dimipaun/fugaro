@@ -82,8 +82,11 @@ import (
 //   - batch.jobs.get and batch.jobs.delete -- the queue deadline (§1.4) needs
 //     both. A job stuck QUEUED past the deadline counts against max_parallel
 //     and can wait out Batch's own 2-day ceiling, and the verb that clears it
-//     is jobs.delete: jobs.cancel is NOT a permission Google has (the Batch
-//     API lists jobs.create, delete, get and list and nothing else), so the
+//     is jobs.delete: jobs.cancel is NOT a permission Google defines. The
+//     API's *methods* on a job do include cancel -- which is why `gcloud batch
+//     jobs cancel` exists and §9 of the design uses it -- but the permissions
+//     it defines on jobs are create, get, list and delete, and
+//     `batch.jobs.cancel` is in no permission list and no predefined role: the
 //     six-permission role this file used to describe could never be created --
 //     which is what kept --provision-batch refused until the role was fixed.
 //     delete is also the destructive one, and the reason for a separate

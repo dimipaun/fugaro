@@ -216,7 +216,13 @@ if [ -n "$BUILD" ]; then
   # already has while this build fails loudly.
   SOCKET_GID=""
   if [ -n "$BUILT" ]; then
-    SOCKET_GID="$(printf '%s\n' "$SERIAL" | sed -n "s/.*${GID_MARKER}//p" | tail -n 1)"
+    # `tr -d '\r'` before the match, not after: the serial console is a tty and
+    # its lines end CRLF, so the last line of the marker match is the gid with
+    # a trailing carriage return -- which the case below reads as "not a
+    # number" and refuses, on every build, with an image never created and
+    # nothing else to show for it. The fake gcloud the tests drive prints LF,
+    # so only this strip makes the two alike.
+    SOCKET_GID="$(printf '%s\n' "$SERIAL" | tr -d '\r' | sed -n "s/.*${GID_MARKER}//p" | tail -n 1)"
     case "$SOCKET_GID" in
       '' | *[!0-9]*)
         say "the builder VM printed no usable socket gid (${GID_MARKER}${SOCKET_GID}): expected the gid of /var/run/docker.sock, so no image is created"

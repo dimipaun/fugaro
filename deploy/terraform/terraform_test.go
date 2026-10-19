@@ -2632,9 +2632,13 @@ case "$args" in
       # The builder VM's serial output, as its startup script writes it: the
       # gid it read off its own socket, then the marker the build waits for.
       # NO_SOCKET_GID drops the first line, which is a build whose VM never
-      # printed a gid.
-      if [ -z "$NO_SOCKET_GID" ]; then printf '%s\n' "${SOCKET_GID_LINE:-fugaro-preload-socket-gid=998}"; fi
-      printf '%s\n' "$MARKER"; exit 0;;
+      # printed a gid. SERIAL_CRLF ends the lines the way the real serial
+      # console does (a tty, so CRLF), which is the shape the gid parse has to
+      # survive -- see the carriage-return case in the rebuild test.
+      crlf=""
+      if [ -n "$SERIAL_CRLF" ]; then crlf="$(printf '\r')"; fi
+      if [ -z "$NO_SOCKET_GID" ]; then printf '%s%s\n' "${SOCKET_GID_LINE:-fugaro-preload-socket-gid=998}" "$crlf"; fi
+      printf '%s%s\n' "$MARKER" "$crlf"; exit 0;;
   *"instances stop "*) exit 0;;
   *"instances delete "*)
       # A delete that will not go: step 7 tolerates it, and the flag it reads
@@ -2862,6 +2866,33 @@ func TestComputePreloadShellDecidesAndReplaces(t *testing.T) {
 		// still goes: the build failed, and a failed build is not a leak.
 		if d := gcloudCalls(t, calls, "instances delete"); len(d) == 0 {
 			t.Errorf("the builder VM was left behind by a build that made no image:\n%s", strings.Join(calls, "\n"))
+		}
+	})
+
+	t.Run("a gid line ending CRLF is still a gid", func(t *testing.T) {
+		// The serial console is a tty: its lines end CRLF, so the marker
+		// match's last line is "998\r", and a parse that does not strip the
+		// carriage return reads that as "not a number" and refuses -- on a
+		// real GCP build, every time, while a fixture printing LF stays green.
+		// This is the fixture printing what the console prints.
+		out, err, calls := preloadFixture(t, map[string]string{
+			"IMAGE_ROW":   preloadRow(t, "batch-cos-stable-official-2020-01-01-00-00-00", 200*24*time.Hour),
+			"IMAGE_LIST":  "",
+			"MARKER":      "fugaro-preload-built",
+			"SERIAL_CRLF": "1",
+		})
+		if err != nil {
+			t.Fatalf("preload.sh exited %v on CRLF serial output:\n%s", err, out)
+		}
+		if strings.Contains(out, "no usable socket gid") {
+			t.Errorf("preload.sh read the carriage return as part of the gid:\n%s", out)
+		}
+		created := gcloudCalls(t, calls, "images create")
+		if len(created) != 1 {
+			t.Fatalf("the rebuild made %d generations on CRLF serial output, want 1:\n%s", len(created), strings.Join(calls, "\n"))
+		}
+		if !slices.Contains(created[0], "--labels=fugaro=managed,base-release="+baseRelease+",socket-gid="+preloadSocketGID) {
+			t.Errorf("the generation built from CRLF serial output does not record the gid: %s", strings.Join(created[0], " "))
 		}
 	})
 
