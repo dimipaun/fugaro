@@ -523,7 +523,7 @@ probe account carries predefined grants only).
 | 101 | Revocation, and the Auth user's token timing (plan Task P6.11; D166, U2): `fugaro pair revoke <name>` deletes the device node and the device's **next** read **and** next write are denied immediately, while the phone's cached ID token is still unexpired — so what denies the device is the node and not the token; the deleted Auth user's ID token stays valid until its `exp` (U2's live half, measured in wall-clock seconds); the deployed rules put **no time limit** on a pairing session (a `p~` uid may write its request once and read its delivery for as long as its Auth user exists, and the node outlives the five-minute token), so an abandoned session's leftovers are recorded rather than assumed gone, and the sweep removes an `m~` user whose node is gone; and the device's own MAC key can no longer get a message past the consumer | See "Check 101" below; **you** run it, at your own terminal and on your own phone, against installation `fugaro` (project `fugaro-dev`) and **never `belong`**, re-running Check 100's guard block with this check's device name | One pairing, one revocation, one Auth read and one sweeper run. **USER-RUN, NOT RUN.** |
 | 102 | The wake word's recognition rate on the oldest supported device (plan Task P6.11; D164, D123, and check 85's scope as amended on 2026-10-19): the closed alias set **read out of `shared/command` rather than remembered**, a fixed script of spoken utterances, and the three rates over it — heard when spoken, a spoken app command routed as one, and **false accepts** (speech not addressed to the app taken as a wake word, which is the direction that intercepts the agent's speech) — plus the fail-closed direction D164 answered for: an utterance heard as "Fugaro …" that matches no command is answered "I didn't catch that" and **is never forwarded to the agent** | See "Check 102" below; **you** run it, on your own phone in your own voice, against installation `fugaro` (project `fugaro-dev`) and **never `belong`** — the alias set is read out of the tree by the guard block, and the script is fixed before the first utterance | No cloud cost and no upload: on-device STT only (Global Constraint 12), and the numbers this check records are the ones check 85's bake-off has to include. **USER-RUN, NOT RUN.** |
 | 103 | A spoken cancel and a spoken merge, with their read-backs and the three refusals — **sandbox repository only** (plan Task P6.11; D169, the owner's D128 amendment of 2026-10-17, U4): "Fugaro, cancel …" is read back **from the resolved run id** and only a separate "Fugaro, confirm" makes the consumer run `fugaro cancel RUN` itself; "Fugaro, merge …" is read back with the repository, the PR number **and the PR's current head SHA**, and its confirmation makes the consumer run `gh pr merge <n> --repo edgeappinc/fugarosandbox` **under the operator's own `gh` login**; and the refusals — a **misheard confirm** ("conform", "confirmed it", "yes"), a **replayed confirm** (the same confirmation id or utterance id twice) and a **confirm for another target** (a second read-back outstanding, the pending action changed, or the PR's head moved since the read-back) each authorise nothing, while a **launch** ("kick off …") goes through with **no** read-back and no confirmation (D162) | See "Check 103" below; **you** run it, on installation `fugaro` (project `fugaro-dev`) and **never `belong`**, and **only** against a throwaway pull request this check itself opens in the sandbox repository `edgeappinc/fugarosandbox` — the merge step re-runs its own hard stop, which refuses any pull request that is not this check's own open one in that repository, before `gh pr merge` is reached | One throwaway pull request and its branch in the sandbox repository, one or two small sandbox runs (one of them cancelled), and the merge the confirmation performs. **USER-RUN, NOT RUN.** |
-| 104 | Offline: no command is sent and none is queued (plan Task P6.11; D167, U3): with no connection — and again with the network up but the consumer stale or stopped — the app **refuses to send**, says why, and keeps the utterance only as unsent text the user can resend; the mailbox is read back **before and after**, so nothing was written; the SDK's own offline write queue is never relied on (the reconnect delivers **nothing**), and a **destructive action record is never queued**, so a read-back spoken offline does not become an action when the connection returns; and the text screen, which is D167's fallback, is refused the same way | See "Check 104" below; **you** run it, on your own phone, against installation `fugaro` (project `fugaro-dev`) and **never `belong`**, re-running Check 100's guard block with this check's device name | No cloud cost: the check's point is that nothing is sent, and its evidence is an empty mailbox read twice. **USER-RUN, NOT RUN.** |
+| 104 | Offline: no command is sent and none is queued (plan Task P6.11; D167, U3): with no connection — and again with the network up but the consumer stale or stopped — the app **refuses to send**, says why, and keeps the utterance only as unsent text the user can resend; the mailbox is read back **before and after**, so nothing was written; the SDK's own offline write queue is never relied on (the reconnect delivers **nothing**), and a **destructive action record is never queued**, so a read-back spoken offline does not become an action when the connection returns; and the text screen, which is D167's fallback, is refused the same way | See "Check 104" below; **you** run it, on your own phone, against installation `fugaro` (project `fugaro-dev`) and **never `belong`**, re-running Check 100's guard block **unchanged** against Check 100's own pairing, `chk100`, which this check borrows and neither pairs nor revokes | No cloud cost: the check's point is that nothing is sent, and its evidence is an empty mailbox read twice. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -4442,16 +4442,20 @@ how it is undone:** one pairing per attempt (one `p~` Auth user, one `pairing/<u
 name, and the Restore revokes them; the pairing nodes of an abandoned session are recorded and
 left to the sweep rather than deleted by hand.
 
-⚠ **Set these, and pass the three hard stops, by running ONE block — and re-run that whole block
+⚠ **Set these, and pass the two hard stops, by running ONE block — and re-run that whole block
 at the start of every step and before the Restore.** It is Check 43's guard shape in this
-check's variables: the same three stops, the same `${VAR:?}` discipline. It makes one local
-`fugaro doctor` call and two `fugaro pair ls` calls, and nothing below the three stops runs
-unless all three pass.
+check's variables: the same project assertion and the same `${VAR:?}` discipline, minus Check
+43's third stop (the checkout's `origin`), because this check needs **no repository at all** and
+names none. It makes one local `fugaro doctor` call and two `fugaro pair ls` calls, and nothing
+below the two stops runs unless both pass. **The `pair ls` calls report and never stop**: the
+block is re-run after this check has paired its own device, so a stop on "a device named `$N`
+is already paired" would put steps 4–7 and the Restore out of reach — the one place a second
+device under this name is refused is the pairing step's own stop, which is not re-run.
 
 ```bash
 # === Check 100: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
 # step (1, 2, 3, 4, 5, 6, Restore). It is idempotent, and nothing below the
-# three hard stops runs unless all three pass. ===
+# two hard stops runs unless both pass. ===
 P=fugaro-dev                 # HARD-CODED, and never read from gcloud
 N=chk100                     # this check's device name: the ONLY device it pairs or revokes
 A=chk100@fugaro.invalid      # the account this check's phone signs in with: this check's own, never the owner's
@@ -4462,11 +4466,13 @@ A=chk100@fugaro.invalid      # the account this check's phone signs in with: thi
   || { echo "Check 100 stopped: re-run the whole setup block (P=$P must be fugaro-dev; N=$N A=$A must not be empty)" >&2; exit 1; }
 fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 100 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
-# The fresh-device rule: this check pairs one device and revokes it, so a device
-# already carrying its name is a leftover attempt, not something to pair beside.
+# The fresh-device state, REPORTED and not stopped on. This block is re-run at
+# the start of every step, and from step 3 on this check's own device is paired,
+# so a stop here would make steps 4-7 and the Restore unreachable and would make
+# its own message circular. What refuses a second device under this name is the
+# pairing step's own stop, which is run once and is not re-run afterwards.
 if fugaro pair ls --project fugaro 2>/dev/null | grep -q "${N:?}"; then
-  echo "Check 100 stopped: a device named $N is already paired on this installation — revoke it (fugaro pair revoke $N) or run the Restore first, rather than pairing a second one under this check's name" >&2
-  exit 1
+  echo "Check 100 note: a device named $N is already paired on this installation. That is expected from step 3 on, and for a check that borrows an existing pairing; it is a leftover attempt from an earlier run only if you are about to pair, and the pairing step refuses a second device under this name rather than pairing beside it." >&2
 fi
 if fugaro pair ls --project fugaro 2>/dev/null | grep -qi 'belong'; then
   echo "Check 100 note: this installation has a belong device paired. No step below names, revokes or reads it; it is not this check's." >&2
@@ -4476,7 +4482,7 @@ fi
 
 **A step whose command does not exist yet is a step this check runs later.** P6.6 (`fugaro pair`)
 and P6.8 (pairing in the app) have not shipped, so `fugaro pair ls` prints nothing on this tree
-today and the guard's fresh-device stop passes trivially. That is the register's own rule
+today and the guard's fresh-device note never fires and step 2's stop never triggers. That is the register's own rule
 working rather than a defect: **the text is written now and running it is the owner's, later**,
 and each step's FACT is what the command printed — never a format remembered from the plan.
 
@@ -4487,8 +4493,23 @@ and each step's FACT is what the command printed — never a format remembered f
    stands before this check pairs anything** — a `belong` device may appear in it, and that is
    recorded as not this check's rather than acted on.
 
-2. **The QR, the request node, and the code the phone shows.** Run
-   `fugaro pair --project fugaro --name "$N"` and scan the QR with the phone's camera.
+2. **The QR, the request node, and the code the phone shows.** This is the **only** step that
+   pairs, so this is where a second device under this check's name is refused. The stop is here
+   and not in the guard block because the guard block is re-run at the start of every later step,
+   by which time this check's own device is paired; this block is run **once**, with the guard
+   block just re-run above it, so `P`, `N` and `A` are set.
+
+   ```bash
+   # === Check 100: the pairing step's own stop. Run ONCE, here, and never
+   # re-run: re-running this step after the pairing succeeded would mint a
+   # second device under this check's name. ===
+   if fugaro pair ls --project fugaro 2>/dev/null | grep -q "${N:?}"; then
+     echo "Check 100 stopped: a device named $N is already paired on this installation, so this is an earlier attempt that did not finish — either carry on at step 4 with the device that is already paired, or run the Restore (fugaro pair revoke \"$N\") and start this check again. Pairing a second device under this name would leave two device nodes, two m~ users and two keychain items behind, and the Restore would revoke one of them." >&2
+     exit 1
+   fi
+   ```
+
+   Then run `fugaro pair --project fugaro --name "$N"` and scan the QR with the phone's camera.
    **FACT:** that the QR carries the Firebase config and **one** token and **no key**; the
    token's `exp` in **whole minutes**, read locally from the token, which must be **at most 5**;
    the pairing uid's prefix, which must be `p~`; the code the phone shows and the fingerprint it
@@ -4588,15 +4609,21 @@ exists, and the node outlives the five-minute token).
 
 **Method.** The same installation and the same phone as Check 100. **Check 100's setup + guard
 block is re-run at the start of every step below, with `N=chk101`** — that one line is the only
-change, and the three hard stops are the same three. **Never `belong`**: nothing here names,
+change, and the two hard stops are the same two. The guard block **reports** a device already
+carrying `$N` rather than stopping on it — it is re-run after step 1 has paired this check's own
+device, so a stop there would put steps 2–9 out of reach — and the stop that refuses a second
+device under this name is **step 1's**, which is Check 100's step 2 and is run once.
+**Never `belong`**: nothing here names,
 reads or revokes a `belong` device, and the one place one can appear is `fugaro pair ls`, which
 this check reads for its own device only. **No agent runs any step of this check — every command
 is yours.** What changes is one pairing and its revocation, and the Restore has nothing left to
 revoke: step 3 is the revocation.
 
 1. **Pair the device this check will revoke.** Check 100's steps 2 and 3, with `101` in the
-   messages. **FACT:** the device uid's `m~` prefix, the device node's path, and the app holding
-   the account.
+   messages — **step 2's own stop included**, which with `N=chk101` refuses to pair a second
+   `chk101` beside one an earlier attempt left behind (continue at step 2 with the paired device,
+   or `fugaro pair revoke "chk101"` and start again). It is run **once**, here. **FACT:** the
+   device uid's `m~` prefix, the device node's path, and the app holding the account.
 
 2. **A read and a write that work, before the revoke.** This is the baseline the next step is
    measured against, and without it a denial proves nothing. **FACT:** the phone reads its own
@@ -4622,8 +4649,10 @@ revoke: step 3 is the revocation.
    own state says so (its wording), nothing is written, and the wall clock. A device that was
    revoked and whose token has run out must be in a state the user can see, not a silent one.
 
-6. **A pairing session's own timing.** Mint a pairing token (`fugaro pair` with a name this check
-   then abandons), sign in with it, write the request node, and **do not complete the pairing**.
+6. **A pairing session's own timing.** Mint a pairing token with a name this check then abandons —
+   `fugaro pair --project fugaro --name chk101-abandoned`, and **not `$N`**, which step 1 paired
+   and step 3 revoked and whose name must stay free for a re-run — sign in with it, write the
+   request node, and **do not complete the pairing**.
    **FACT:** after the token's `exp` has passed, that the `p~` Auth user and its `pairing/<uid>`
    nodes **still exist** — the deployed rules put no time limit on them, which is P6.6's
    carried-over paragraph read live — so the session is one-shot **by construction** (one
@@ -4947,8 +4976,12 @@ utterance only as unsent text — and **a destructive action record is never que
 exists to prove the app does not depend on).
 
 **Method.** The phone (Check 100's pairing) and the consumer on the laptop. **Check 100's setup
-+ guard block is re-run at the start of every step below, with `N=chk104`** — that one line is
-the only change. **Never `belong`**: the phone is paired with installation `fugaro` (project
++ guard block is re-run at the start of every step below, `N=chk100` unchanged** — nothing in it
+changes, because **this check pairs no device and revokes none**: `chk100` is Check 100's
+pairing, borrowed here, and the guard's "a device named `chk100` is already paired" note is this
+check's **precondition** rather than a leftover. So run 104 on a **paired** phone — between Check
+100's step 3 and its Restore, or on a pairing you made and will revoke yourself — and its Restore
+revokes nothing. **Never `belong`**: the phone is paired with installation `fugaro` (project
 `fugaro-dev`) for this check, and no step reads or speaks to a `belong` device. **No agent runs
 any step of this check — every command and every utterance is yours.** Nothing here costs
 anything: the point of the check is that **nothing is sent**, and its evidence is a mailbox read
@@ -4997,6 +5030,9 @@ twice.
 7. **Restore.** Bring the network and the consumer back. **FACT:** the unsent text from step 2 is
    still there and can be resent by hand — resend one, so the pass is proved rather than assumed —
    and the step-4 action is **not** among the things that ran when the connection returned.
+   **No device is revoked here**: this check paired none and borrowed `chk100`, so `chk100` is
+   revoked by **Check 100's own Restore** (or by the pairing's owner, if you paired one for this
+   check yourself) — and that is recorded rather than done here.
 
 **Passes when:** with no connection, and again with a stale or stopped consumer, the app refuses
 to send, says why, and keeps the utterance only as unsent text; the mailbox read before and after
