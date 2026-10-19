@@ -196,6 +196,26 @@ test('the lines are the table\'s fields, in the table\'s order, and frozen', () 
   assert.ok(drawn.every((line) => Object.isFrozen(line)));
 });
 
+test('a field the feed did not build is not printed as a number', () => {
+  // `lines` is reachable with a list a caller assembled by hand (it asks only
+  // that the list be one `jobList` shaped). A field that is not a figure is
+  // **not a number**: `5` here is a bare value with no availability state, and
+  // printing it would put a measurement on the screen that nothing measured.
+  // The gap mark is what a figure-less field draws.
+  const hand = {
+    ok: true,
+    project: 'fugaro',
+    day: '2026-10-19',
+    broken: false,
+    connection: 'live',
+    note: null,
+    row: { ...jobList({ snapshot: snapshotOf(documentOf()) }).row, counted: 5 },
+    heartbeat: { state: 'unknown', verified: false, reason: null, ageMs: null },
+  };
+  assert.equal(lineText(hand, 'Spend (counted)'), GAP_MARK);
+  assert.equal(text(hand).includes('Spend (counted): 5'), false);
+});
+
 test('lines needs a list, not a refusal', () => {
   const refused = jobList({ snapshot: null });
   assert.equal(refused.ok, false);

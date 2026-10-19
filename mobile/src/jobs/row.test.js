@@ -150,6 +150,28 @@ test('a kill switch is on or off, and off is a state and not a missing value', (
   assert.equal(on.row.kill.reason, 'over budget');
 });
 
+test('a figure the feed did not build is refused, not put on the row', () => {
+  // Every field of the row is a **figure** -- a value with an availability
+  // state, built by `document.js`. The table's names are also the wire's names,
+  // so a hand-rebuilt document is a plausible-looking object whose `dailyCap` is
+  // a bare `50`: a row built from it would carry a number `lines.js` cannot
+  // print without inventing a mark, and `shown` would be reading a field nothing
+  // judged. It is a refusal, and a *row* refusal rather than a document one --
+  // the document is a document, and it is the field that is wrong.
+  for (const name of ['counted', 'spent', 'notional', 'dailyCap', 'percent']) {
+    const hand = structuredClone(documentOf());
+    hand.total[name] = 50;
+    const built = projectRow(hand);
+    assert.equal(built.ok, false, name);
+    assert.equal(built.code, LIST_CODES.BAD_ROW, name);
+    assert.equal(built.field, name, name);
+  }
+  // ... and a figure that is missing altogether, which is the same refusal.
+  const missing = structuredClone(documentOf());
+  delete missing.total.percent;
+  assert.equal(projectRow(missing).code, LIST_CODES.BAD_ROW);
+});
+
 test('a kill switch the feed did not build is refused', () => {
   // A document a caller rebuilt by hand rather than one the feed judged: the
   // shape is right and the kill block is not, and the row is refused rather
@@ -173,6 +195,18 @@ test('a row is only built from a live document', () => {
   const degraded = validateDocument({ project: 'fugaro', runs: [], totals: {}, warnings: [], degraded: true, notice: 'no budget backend' });
   assert.equal(degraded.ok, true);
   assert.equal(projectRow(degraded.document).code, LIST_CODES.BAD_DOCUMENT);
+
+  // The degraded shape the feed builds carries no `total` at all, so the check
+  // above would pass for the wrong reason. This is the case the flag itself is
+  // for: a document a caller rebuilt with `degraded` set and a total beside it.
+  // §10.8 -- a degraded read renders as degraded, never as a spend whatever the
+  // leftover numbers say.
+  const flagged = structuredClone(documentOf());
+  flagged.degraded = true;
+  const built = projectRow(flagged);
+  assert.equal(built.ok, false);
+  assert.equal(built.code, LIST_CODES.BAD_DOCUMENT);
+  assert.equal(built.field, 'degraded');
 });
 
 test('the row is frozen, and so is every entry of the table', () => {
