@@ -1001,8 +1001,8 @@ symbols **are in the tree now**, so this cites the tree rather than a branch:
   `canonicalBytes` with **D171's per-pairing key**, which "*nothing here reads, stores, derives,
   logs or defaults*".
 
-**So the B4 conclusion stands, on true evidence rather than on the first draft's invented
-symbols**: the rules can require a well-shaped tag and cannot check its value, and the **only**
+**So the conclusion the paragraph above reaches stands, on true evidence rather than on the
+first draft's invented symbols**: the rules can require a well-shaped tag and cannot check its value, and the **only**
 thing that catches a forged one is the **app verifying the tag with the per-pairing key** (§4
 rule 11, P6.3/D169, P6.7). A compromised sender — **which is the realistic way attacker 2 gets
 the credential, and should be named as the capability's holder rather than "an outsider"** —
@@ -1218,7 +1218,7 @@ written **per channel**: with direct FCM, no third party beyond Google and Apple
 **with a relay, the relay is a third party that sees the payload and the token** and the
 statement must name it. *(The first draft's sentence — "no third party … on the recommended
 channel — which is itself an argument for not choosing Expo's relay" — asserted the settled
-recommendation §3.3's B5 correction withdrew, and is replaced here.)*
+recommendation that §3.3 and Q7 withdrew, and is replaced here.)*
 
 ## 10. The alternatives, with a recommendation
 

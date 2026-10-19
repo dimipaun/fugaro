@@ -869,6 +869,62 @@ func TestDocsMobilePushPlanRecordsTheDesignsPrerequisites(t *testing.T) {
 	}
 }
 
+// TestDocsMobilePushReadmeAgreesPhase6IsApproved: docs/mobile/README.md's
+// current status line — the first thing a reader of the directory sees — still
+// said "Its tasks are **Phase 6 of the plan, proposed and NOT APPROVED**; this
+// changes no approval", the same claim the plan's own Phase 6 rows lost on
+// 2026-10-18 (TestDocsMobilePlanPhase6IsApproved), and a claim that contradicted
+// the line's own first sentence ("the owner approved Phase 2 (P2.1, P2.2) on
+// 2026-10-17"). This PR edits both files, so the two have to agree about the
+// approval, and the line's own open questions have to be attributed: it called
+// the reconciliation's items settled two sentences before naming the design's
+// Q1–Q10 as open, which reads as a contradiction until each set is named.
+//
+// The guard reads the *current* status line, not the file: line 5 is the status
+// "as first written, kept", and its "no task is approved" is deliberately the
+// 2026-10-17 wording, still true of the moment it describes.
+//
+// Mutation (verified, run and restored): put "proposed and NOT APPROVED" back
+// into the current line, delete "merged as #601" from it, or drop the clause
+// that says whose questions the Q1–Q10 are: this test fails, each way.
+func TestDocsMobilePushReadmeAgreesPhase6IsApproved(t *testing.T) {
+	const path = "docs/mobile/README.md"
+	doc := readDoc(t, path)
+
+	line := ""
+	for _, l := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(l, "**Status (2026-10-17, later):") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatalf("%s's current status line no longer opens with %q; update this guard's marker", path, "**Status (2026-10-17, later):")
+	}
+
+	for _, bad := range []string{
+		"proposed and NOT APPROVED",
+		"no task is approved",
+	} {
+		if strings.Contains(line, bad) {
+			t.Errorf("%s's status line still says %q, which the owner's approval of Phase 6 on 2026-10-18 — and its own first sentence about Phase 2 — made false: %s", path, bad, line)
+		}
+	}
+	for _, want := range []string{
+		// The approval, recorded the way the plan records it.
+		"Phase 6 of the plan, which the owner approved on 2026-10-18",
+		// And the part of the phase that is in the tree, so the line does not
+		// read as if approving it left everything unbuilt.
+		"merged as #601",
+		// Which document the open questions belong to.
+		"the design's own questions, distinct from the reconciliation's settled items above",
+	} {
+		if !strings.Contains(normSpace(line), normSpace(want)) {
+			t.Errorf("%s's status line lacks %q: the README and the plan have to give one account of Phase 6, and the line has to say whose open questions the Q1–Q10 are", path, want)
+		}
+	}
+}
+
 // TestDocsMobilePushSenderCategoriesExcludeFinishedAndFailed: §3.6(B) listed the
 // run registry among "the sources §1's reconciled category set has", §3.7
 // illustrated dedupe with a run ending `infra_error` sending "failed", §3.6(A)
