@@ -23,6 +23,21 @@
  * **The steps are one list.** Each step is a list item with its own heading, so a screen
  * reader reads five steps in the section's order; nothing here is a picture, and nothing
  * depends on a font, a colour or an animation to be read.
+ *
+ * **And the list is one vertical timeline** (the owner's feedback of 2026-10-19: "The run,
+ * step by step section does not look good"). What it was: the five steps were a
+ * `repeat(auto-fit, minmax(18rem, 1fr))` grid, so a desktop read three blocks beside two with
+ * a hole in the last row, a tablet read two-by-two, and nothing joined one step to the next —
+ * five short paragraphs in boxes, which is a list of facts rather than a run. What it is now:
+ * one column at every width, each step a numbered marker on a rail with a one-pixel line drawn
+ * from it down to the marker below, and the step's name and its line in the column beside the
+ * rail. The line is drawn by the step's own `::before` and not by the list, because it has to
+ * stop at the last step: the geometry is `top` at the marker's own height and `bottom` at the
+ * step's, so the segment between two steps is exactly the step's own bottom padding — and the
+ * last step draws none. `website/test/base-styles.mjs` reads the three claims that shape makes
+ * (one column at 360, 768 and 1280; a line that joins the steps and stops at the last one; and
+ * nothing in the section wider than a phone's content box) and refuses each of them being
+ * broken.
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -78,7 +93,10 @@ const STEPS = [
   },
   {
     name: 'Loop',
-    line: 'Claude Code implements, writes tests, runs the build and tests through a recording wrapper, reviews and fixes',
+    // The step's whole sentence: the loop is implement, verify and review, for as many rounds
+    // as the repository configures, and the tail is the part of it that says the rounds repeat
+    // (the owner's feedback of 2026-10-19 names the review and fix rounds as a step of the run).
+    line: 'Claude Code implements, writes tests, runs the build and tests through a recording wrapper, reviews and fixes, for as many review rounds as configured.',
   },
   {
     name: 'Push and open the pull request',
@@ -146,11 +164,16 @@ function slug(name: string): string {
     {
       STEPS.map((step, index) => (
         <li class="run-step" data-step={slug(step.name)} data-source="README.md#How it works">
-          <h3 class="run-step-name">
-            <span class="run-step-number" aria-hidden="true">{index + 1}</span>
-            {step.name}
-          </h3>
-          <p class="run-step-line">{step.line}</p>
+          {/* The step's place in the run, on the rail: the list carries the order, so this is
+              decoration and a screen reader reads the `<ol>` instead. It is a sibling of the
+              step's heading rather than inside it, because it is a column of the step's own
+              grid — the rail the line is drawn down — and the heading and its line are the
+              column beside it. */}
+          <span class="run-step-number" aria-hidden="true">{index + 1}</span>
+          <div class="run-step-body">
+            <h3 class="run-step-name">{step.name}</h3>
+            <p class="run-step-line">{step.line}</p>
+          </div>
         </li>
       ))
     }
@@ -162,26 +185,30 @@ function slug(name: string): string {
 <style>
   /* Tokens only (W1.2), and the same accent vocabulary the diagram above uses, so the two
      read as one page: the steps are quieter than the picture — the picture is what the
-     section is for — and the numbers are outlines rather than fills, which is the whole of
-     the difference.
+     section is for — and the accent here is the markers' outline rather than their fill,
+     which is the whole of the difference.
 
      **The detail takes the page's column, not the measure.** The review of this branch saw
      the zoom-in below the picture drawn as a narrow left column: the five steps are an
      `<ol>`, `base.css` holds a list to `--measure` (68 ch, about 578 px at the body's 17 px),
      and each line inside it carried the same cap again — so two thirds of the column the
      picture above fills were empty beside the detail of it. The list declares `max-width:
-     none` for the same reason the flow's does (see `ArchitectureDiagram.astro`), and it lays
-     the five steps out as a grid of the page's own width rather than as one column of prose.
-     `repeat(auto-fit, minmax(18rem, 1fr))` is the same rule the chat's turns use: three
-     columns on a desktop, one on a phone, and no breakpoint of this component's own to keep
-     in step with the layout's.
+     none` for the same reason the flow's does (see `ArchitectureDiagram.astro`).
 
      **And it starts at the page's own left edge** (review round 3, item 3d). This rule used
      to carry `var(--space-md)` of inline padding of its own — 24 px on top of the gutter
      `main` already gives it — so "The run, step by step" and the five steps under it were
      indented 24 px relative to the `h1` and to the picture between them, which is the defect
      the review measured. The vertical padding stays: the space above the heading is the
-     breathing room between the picture and the detail of it. */
+     breathing room between the picture and the detail of it.
+
+     **The run is one column, at every width** (the owner's feedback of 2026-10-19). There is
+     no breakpoint in this stylesheet and nothing here needs one: the timeline is the same
+     shape at 360 px as at 1280, which is what a sequence reads as. The widths the shape is
+     read at are `website/test/base-styles.mjs`'s, and the grid's single track is declared
+     rather than left implicit so that the one-column rule is a declaration a check can read.
+     `minmax(0, 1fr)` and not `1fr`: the track may shrink below its longest unbreakable line,
+     which is the same guard `base.css` gives every box in `main`. */
   .run-detail {
     max-width: var(--page-max);
     margin: 0 auto;
@@ -189,7 +216,7 @@ function slug(name: string): string {
   }
 
   .run-detail-title {
-    margin: 0 0 var(--space-md);
+    margin: 0 0 var(--space-lg);
     font-family: var(--font-sans);
     font-size: var(--font-size-2xl);
     font-weight: var(--weight-semibold);
@@ -198,41 +225,95 @@ function slug(name: string): string {
   }
 
   .run-steps {
-    /* See the block comment above: the list is the page's width, and it is a grid of the
-       page's width — an `<ol>` inherits `base.css`'s measure otherwise. */
+    /* See the block comment above: the list is the page's width — an `<ol>` inherits
+       `base.css`'s measure otherwise — and it is one column of it. */
     max-width: none;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
-    gap: var(--space-md);
+    grid-template-columns: minmax(0, 1fr);
     margin: 0;
     padding: 0;
     list-style: none;
   }
 
+  /* A step: the rail and its marker in the first column, the step's name and its line in the
+     second. `align-items: start` is what keeps a long line off the marker's box — the marker
+     is a fixed square and stretches nowhere — and the step's own bottom padding is the room
+     between it and the step below, which the line below is drawn down. */
   .run-step {
+    position: relative;
     display: grid;
+    grid-template-columns: var(--space-lg) minmax(0, 1fr);
+    align-items: start;
+    column-gap: var(--space-md);
+    padding-bottom: var(--space-lg);
+  }
+
+  .run-step:last-child {
+    padding-bottom: 0;
+  }
+
+  /* The line between two steps, drawn by the step above: `top` is the marker's own height —
+     the line starts where the marker ends — and `bottom` is the step's own edge, which is the
+     next step's top, where its marker begins. So the segment a reader sees between two markers
+     is exactly the room the step above carries, and the last step, which has no step below it,
+     draws none: there is no line hanging off the end of the run. `--border` is the site's
+     separator — one pixel of it against the ground — and it is deliberately the quiet half of
+     the picture: the markers carry the accent and the rail joins them. */
+  .run-step:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    top: var(--space-lg);
+    bottom: 0;
+    left: calc(var(--space-lg) / 2);
+    width: var(--border-width);
+    margin-left: calc(var(--border-width) / -2);
+    background: var(--border);
+  }
+
+  /* The marker: the step's number in a drawn circle, one step of the rail's own width so that
+     the line above and below it meet its centre. Outlined in the accent rather than filled —
+     the picture above is what the page opens with, and five filled dots under it would
+     compete with it — and `box-sizing: border-box` keeps the outline inside that width, which
+     is the whole reason the line is centred on it. */
+  .run-step-number {
+    box-sizing: border-box;
+    display: grid;
+    place-items: center;
+    width: var(--space-lg);
+    height: var(--space-lg);
+    border: var(--border-width) solid var(--accent);
+    border-radius: var(--radius-pill);
+    background: var(--ground);
+    color: var(--accent-on-dark);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    font-weight: var(--weight-semibold);
+    line-height: 1;
+  }
+
+  /* What the step says. `min-height` is the marker's own box, so the name's first line sits on
+     the marker's centre whatever the step's line below it does, and `align-content: start`
+     packs the two from the top of a step the grid may have stretched. */
+  .run-step-body {
+    display: grid;
+    align-content: start;
     gap: var(--space-2xs);
-    padding-left: var(--space-sm);
-    border-left: calc(var(--border-width) * 2) solid var(--accent);
+    min-width: 0;
   }
 
   .run-step-name {
     display: flex;
-    align-items: baseline;
-    gap: var(--space-xs);
+    align-items: center;
+    min-height: var(--space-lg);
     margin: 0;
     font-family: var(--font-sans);
-    font-size: var(--font-size-base);
+    font-size: var(--font-size-lg);
     font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
     color: var(--text);
-  }
-
-  .run-step-number {
-    flex: none;
-    font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
-    font-weight: var(--weight-normal);
-    color: var(--text-muted);
+    /* A name longer than its column — a future step the section words in one long word —
+       breaks rather than running out of the page. */
+    overflow-wrap: anywhere;
   }
 
   .run-step-line {
@@ -244,8 +325,12 @@ function slug(name: string): string {
     overflow-wrap: anywhere;
   }
 
+  /* The one fact under the steps, in the column their own lines are in: the section then
+     reads as one column — the title and the rail at the page's left edge, every line of the
+     run from the same place — and the note is set off from them by the room above it rather
+     than by a rule, so it closes the timeline instead of joining it. */
   .run-note {
-    margin: var(--space-lg) 0 0;
+    margin: var(--space-xl) 0 0 calc(var(--space-lg) + var(--space-md));
     max-width: var(--measure);
     color: var(--text);
     font-size: var(--font-size-sm);
