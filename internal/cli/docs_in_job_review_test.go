@@ -275,8 +275,16 @@ func TestDocsInJobReviewCitationsExist(t *testing.T) {
 		"internal/runner/cost.go",
 		"internal/runner/policy.go",
 		"schemas/result.schema.json",
-		"console/docs/json-contract.md",
-		"console/src/shared/schema.ts",
+		// The reconciliation also cites the console's own json-contract.md and
+		// its shared schema module (finding #26: the console reads the CLI's
+		// JSON, never result.json, and keys its documents by `shape`). Those two
+		// are deliberately NOT stat'ed here, and the path is not even spelled
+		// out in this comment: this is a .go file of the module, and
+		// TestConsoleIsOutsideTheGoModule's consoleBoundaryAllowList is a
+		// one-entry exception (the console contract's own docs test) that a
+		// second entry may only widen by argument. That boundary scans a Go
+		// file's text, comments included, but not the markdown of docs/, so the
+		// pin stops at the module's edge and the claim is carried by the prose.
 		"internal/watch/plain.go",
 		"internal/watch/render.go",
 		"internal/watch/finished.go",
