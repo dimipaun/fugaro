@@ -268,7 +268,7 @@ P3.6 is the task that needed it; the PR says so.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 23 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 29 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
@@ -309,6 +309,12 @@ than a claim.
 | a read's node is assigned instead of defined (in `store.js`) | `a node named `__proto__` is an own key of the read, and pollutes nothing` -- and, run against `client.test.js`, `a message in a node named `__proto__` is read, spoken and acked like any other` |
 | an intermediate container is assigned instead of defined (in `store.js`) | the same test (the pollution half of it) |
 | a second write path is planted in `src/app/root.js` | the three rules of `write-path.test.js` |
+| `flush`'s clock refusal drops (last review round) | `a clock that is not a time is refused by flush and by poll, and nothing is done first` |
+| `poll`'s clock refusal drops | the same test |
+| `poll`'s key refusal drops (`!verdicts.ok`) | `poll without a usable key is refused before it speaks or acks` |
+| the `exists`-as-landed guard drops in `flushMutating` | `a message that is already there is a landed write, not a failure` (its planted-value half is what shows the re-write landed) |
+| the read's `validateMessage` drops (a record the schema refuses is verified anyway) | `a message with no tag, and a tag of the wrong shape, are dropped` |
+| the heartbeat mapping's field guard drops | `the one mapping between the schema's heartbeat and P1.4's rule is named and tested` |
 
 Two of those mutations **survived** when the proof was first run, and both were
 fixed rather than argued away -- the two guards had no test that could tell them
