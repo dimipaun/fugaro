@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -1706,6 +1707,19 @@ func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "cannot add one") {
 				t.Errorf("the refusal says a budget cannot be added:\n%v", err)
+			}
+			// And it is scoped to the state it applies to (round-2 review, nit
+			// 3): the flag replaces a creation fact that records no amount, so
+			// the sentence offering it has to be about that fact, and the state
+			// this command's own --managed creation leaves — a version-2 fact
+			// that records an amount — has to be given the way out it has,
+			// which is not the flag. A message that offered the flag for both
+			// (the inherited one) would hand the owner a command that refuses.
+			if !regexp.MustCompile(`records none[^.]*fugaro managed flag ` + regexp.QuoteMeta(newProj) + ` --budget N`).MatchString(err.Error()) {
+				t.Errorf("the refusal does not scope the flag to a creation fact that records no amount:\n%v", err)
+			}
+			if want := "no command of ours rewrites one that does"; !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not say what applies to a fact that records an amount (want %q):\n%v", want, err)
 			}
 			if len(r.crm.Creates()) != 1 {
 				t.Errorf("%d creation(s), want 1", len(r.crm.Creates()))

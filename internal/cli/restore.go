@@ -346,8 +346,18 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 		case errors.As(err, &notOpen):
 			// The creation is this run's and complete; only the budget gate
 			// refused. The config stays moved (no putBack), the checkout does not.
+			//
+			// Both ways out are offered and each is scoped to the state it
+			// applies to, because the states are not one: what this command's
+			// own --managed creation writes is a version-2 fact that records
+			// the amount the restore was given, and the one object the owner's
+			// flag replaces is a version-1 creation fact, which records none
+			// (internal/infra/managed, WriteFlag's own rule). The inherited
+			// message handed the flag to both (round-2 review, nit 3), which
+			// offers a command that would refuse for the state this command
+			// actually leaves.
 			moved = false
-			return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so it is a complete managed project except for the apply, and the project config now names it (its previous content is in the backup %s); the checkout's gcp_project: line did not move. If the marker read failed for a passing reason, change that line to gcp_project: %s and run fugaro managed apply %s to finish. If the marker records no valid budget, the owner can add one with `fugaro managed flag %s --budget N --budget-currency CCC` at their own terminal (Task 6.1; it replaces the fact that records none) — or shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
+			return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so it is a complete managed project except for the apply, and the project config now names it (its previous content is in the backup %s); the checkout's gcp_project: line did not move. If the marker read failed for a passing reason, change that line to gcp_project: %s and run fugaro managed apply %s to finish. Otherwise the fact in the runs bucket is what refuses the apply, and what can replace it depends on what it records: a creation fact that records none is what `fugaro managed flag %s --budget N --budget-currency CCC`, run at the owner's own terminal, replaces with the version that records the amount (Task 6.1), while the fact this run's --managed creation writes already records one, and no command of ours rewrites one that does — so for it, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
 				rr.newID, rr.backup, rr.newID, rr.rootArg, rr.newID, rr.newID, rr.newID)
 		case errors.As(err, &unmarked):
 			// The creation is this run's and half marked: the fact is in the

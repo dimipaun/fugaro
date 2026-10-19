@@ -453,7 +453,16 @@ func writeManagedLabel(ctx context.Context, c *crm.Service, project, who string)
 		labels[k] = v
 	}
 	labels[ProjectLabelKey] = ProjectLabelValue
-	if _, err := c.Projects.Update(project, &crm.Project{Labels: labels}).Context(ctx).Do(); err != nil {
+	// The project read above, with one field changed, is what goes back, and
+	// the whole object rather than the labels alone: projects.update replaces
+	// the project's editable state — the display name and the label map — with
+	// the request's, so a body holding only labels takes the owner's display
+	// name off the project. gcloud and Terraform send the object they read for
+	// the same reason. The labels go in as the copy built above rather than as
+	// p.Labels itself, so that nothing here edits the map the read answered
+	// with.
+	p.Labels = labels
+	if _, err := c.Projects.Update(project, p).Context(ctx).Do(); err != nil {
 		return fmt.Errorf("labelling project %s %s=%s: %w", project, ProjectLabelKey, ProjectLabelValue, err)
 	}
 	return nil

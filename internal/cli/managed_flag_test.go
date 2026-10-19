@@ -128,6 +128,12 @@ func TestManagedFlagWritesTheLabelToo(t *testing.T) {
 	// Manager update replaces the whole map, so this is what a write that
 	// sent only its own key back would drop.
 	r.crm.SetLabels(initProject, map[string]string{"environment": "prod"})
+	// And a display name, which the label write has to keep for the same
+	// reason and by the same mechanism: an update replaces the project's
+	// editable fields, so a body that carried the labels alone would take the
+	// owner's name off the project (the round-2 review's should-fix, and
+	// internal/infra/managed's own test of both writers).
+	r.crm.SetDisplayName(initProject, "Belong production")
 	terminal(t, true)
 	out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
 	if err != nil {
@@ -138,6 +144,9 @@ func TestManagedFlagWritesTheLabelToo(t *testing.T) {
 	}
 	if got := r.crm.Labels(initProject)["environment"]; got != "prod" {
 		t.Errorf("the project's own environment label is %q after the flag, want it kept", got)
+	}
+	if got := r.crm.DisplayName(initProject); got != "Belong production" {
+		t.Errorf("the project's display name is %q after the flag, want it kept", got)
 	}
 	// The confirmation says it before it happens: the operator typing the ID
 	// is agreeing to both writes, so both are in the text they read.

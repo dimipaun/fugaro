@@ -10,8 +10,11 @@ import (
 )
 
 // CRM is a fake of the Cloud Resource Manager v1 calls Fugaro makes:
-// projects get, for the project's number and its labels, and projects update,
-// for the label the run that created a project writes on it.
+// projects get, for the project's number, its display name and its labels,
+// and projects update, for the label the run that created a project writes on
+// it. An update replaces the project's editable state with what the request
+// carries, as the real API does, so a caller must send back the project it
+// read (see handle, and TestProjectUpdateReplacesTheProjectsEditableFields).
 //
 // Like the real API, it answers a project it doesn't know with 403, not
 // 404, so a caller can't tell a missing project from one it may not read.
@@ -21,6 +24,8 @@ type CRM struct {
 	mu       sync.Mutex
 	projects map[string]int64
 	labels   map[string]map[string]string
+	names    map[string]string // the display name, as the v1 API answers it under "name"
+	named    map[string]bool   // whether the fake knows a name; a project only added answers its ID
 	policies map[string][]Binding
 	states   map[string]string
 	noGet    map[string]bool // projects whose plain read answers 403 (the policy stays readable)
@@ -73,7 +78,8 @@ var (
 // NewCRM starts a Resource Manager fake that lives until the test ends.
 func NewCRM(t *testing.T) *CRM {
 	t.Helper()
-	f := &CRM{projects: map[string]int64{}, labels: map[string]map[string]string{}, policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
+	f := &CRM{projects: map[string]int64{}, labels: map[string]map[string]string{}, names: map[string]string{}, named: map[string]bool{},
+		policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
 		noPolicy: map[string]bool{}, noUpdate: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{},
 		nextProj: FirstCreatedProjectNumber - 1}
 	f.Server = newServer(t, f.handle)
@@ -112,6 +118,35 @@ func (f *CRM) Labels(project string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// SetDisplayName gives project a display name of its own, the field the v1
+// API answers as "name" and an update replaces whole (see handle).
+func (f *CRM) SetDisplayName(project, name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.names[project] = name
+	f.named[project] = true
+}
+
+// DisplayName is the project's display name as the fake answers it: the name
+// it was given, and its own ID for a project that only exists (AddProject
+// makes a project exist and nothing more, which is what this fake answered
+// before it knew about display names at all). It is "" for a project whose
+// name an update took off it, which is the state a caller that sends a
+// body without one leaves behind.
+func (f *CRM) DisplayName(project string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.displayName(project)
+}
+
+// displayName is DisplayName's answer. The caller holds mu.
+func (f *CRM) displayName(id string) string {
+	if !f.named[id] {
+		return id
+	}
+	return f.names[id]
 }
 
 // SetPolicy sets the bindings of project's IAM policy.
@@ -328,25 +363,36 @@ func (f *CRM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		var in struct {
+			Name   string            `json:"name"`
 			Labels map[string]string `json:"labels"`
 		}
 		if err := json.Unmarshal(body, &in); err != nil {
 			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a project is required")
 			return
 		}
-		// The real API replaces the whole label map on an update, not just
-		// the keys the caller sent, which is what makes a writer that sends
-		// only its own key drop every other label.
+		// The real API replaces the project's editable state with what the
+		// request carries — the display name and the whole label map — not
+		// just the fields the caller meant to change. That is what makes a
+		// writer that sends only its own key drop every other label, and one
+		// that sends a project object it built rather than the one it read
+		// take the owner's display name off the project. gcloud and Terraform
+		// send the whole object back, which is why they change one field.
+		f.names[m[1]] = in.Name
+		f.named[m[1]] = true
 		f.labels[m[1]] = in.Labels
 	}
 	writeJSON(w, http.StatusOK, f.projectJSON(m[1], n))
 }
 
 // projectJSON is a project as the v1 API answers it: the number is a string,
-// and labels are there only when the project carries any.
+// and the display name (the resource's "name") and labels are there only when
+// the project carries any — the client's omitempty, on the way back.
 func (f *CRM) projectJSON(id string, n int64) map[string]any {
 	out := map[string]any{
-		"projectId": id, "projectNumber": strconv.FormatInt(n, 10), "lifecycleState": cmpOr(f.states[id], "ACTIVE"), "name": id,
+		"projectId": id, "projectNumber": strconv.FormatInt(n, 10), "lifecycleState": cmpOr(f.states[id], "ACTIVE"),
+	}
+	if name := f.displayName(id); name != "" {
+		out["name"] = name
 	}
 	if ls := f.labels[id]; len(ls) > 0 {
 		out["labels"] = ls

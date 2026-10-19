@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	crm "google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	storage "google.golang.org/api/storage/v1"
@@ -687,6 +688,48 @@ func TestWriteManagedLabelForFlag(t *testing.T) {
 	// rather than a panic.
 	if err := WriteManagedLabelForFlag(ctx, nil, testProject); err == nil {
 		t.Error("the write was made with no Resource Manager client")
+	}
+}
+
+// TestWriteManagedLabelKeepsTheProjectsDisplayName is the round-2 review's
+// should-fix, and it is about the request and not about the label: Resource
+// Manager v1 projects.update replaces the project's editable state with what
+// the request carries — the display name and the whole label map — so a writer
+// that sends a Project holding only the labels it computed takes the owner's
+// display name off the project, silently, on every project it labels. gcloud
+// and Terraform both read the project, change the field they mean to change
+// and send the whole object back for exactly this reason.
+//
+// The fake models that replacement (gcpfake.CRM, and its own test pins it), so
+// the assertion here is the API's: after each writer has run, the project
+// still has the display name it had. It covers both writers, because both end
+// in the same update and a fix in one would leave the other clearing names.
+func TestWriteManagedLabelKeepsTheProjectsDisplayName(t *testing.T) {
+	ctx := context.Background()
+	const name = "Belong production"
+	for what, write := range map[string]func(context.Context, *crm.Service) error{
+		"the creating run's write": func(ctx context.Context, c *crm.Service) error {
+			return WriteManagedLabel(ctx, c, testProject, testProject)
+		},
+		"the owner's flag": func(ctx context.Context, c *crm.Service) error {
+			return WriteManagedLabelForFlag(ctx, c, testProject)
+		},
+	} {
+		t.Run(what, func(t *testing.T) {
+			c, cf := newCRM(t)
+			cf.AddProject(testProject, testProjectNumber)
+			cf.SetDisplayName(testProject, name)
+			cf.SetLabels(testProject, map[string]string{"environment": "prod"})
+			if err := write(ctx, c); err != nil {
+				t.Fatalf("the write = %v, want the label written", err)
+			}
+			if got := cf.DisplayName(testProject); got != name {
+				t.Errorf("the project's display name is %q after the label write, want %q: an update replaces the project's editable fields, so the writer has to send the project it read", got, name)
+			}
+			if got, want := cf.Labels(testProject), map[string]string{"environment": "prod", ProjectLabelKey: ProjectLabelValue}; !maps.Equal(got, want) {
+				t.Errorf("the project carries %v, want %v", got, want)
+			}
+		})
 	}
 }
 
