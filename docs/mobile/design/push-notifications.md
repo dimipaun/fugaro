@@ -537,9 +537,9 @@ same thing now.
   send to that device only if it also holds the FCM send credential (§3.6) — and §3.3's
   multi-installation change leaves each *node* belonging to one **paired account** (§3.5's unit
   sentence): it lives in that installation's database, it holds that installation's single
-  registration, and **no launcher can read another installation's node at all** — the
-  per-installation sentence above is per installation precisely because the IAM read does not
-  cross projects.
+  registration, and **no launcher can read another installation's node at all**: the IAM roles
+  above are granted inside one installation, so a phone paired into two of them is invisible to
+  the other's principals rather than readable by them.
 
 **The generation.** Both nodes land in **rules generation 3, and that generation is in the
 tree**: `origin/main` at `371038f` (read 2026-10-19) carries
