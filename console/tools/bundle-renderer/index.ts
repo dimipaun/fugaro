@@ -637,16 +637,19 @@ const QUOTED_STRING_RE = /(["'])((?:(?!\1)[^\n])*)\1/g
  * of the false-positive surface (review M1, second pass: the prose here named a
  * shape that does not reproduce).
  *
+ * **"The start of the string" means the start as the URL parser reads it**, and
+ * that refinement is the second pass's own (review M1, left open by #701): the
+ * parser removes ASCII tab and newline wherever they are and strips the leading
+ * and trailing C0 controls and spaces *before* it reads a scheme, so
+ * `image-set(" https://…" 1x)` is a remote load with its scheme behind a byte the
+ * old test required at character 0. Both scans now read the target through
+ * `isRemoteTarget`, which is `urlParserTarget`'s answer, and the refusal still
+ * quotes the string as it is written.
+ *
  * It cannot be relaxed by skipping comments, either: a scan that struck out
  * comment syntax would hide an escape behind an opening comment marker written
  * *inside* a string, which is the bypass the backslash rule exists to close.
  * Neither stylesheet in the tree holds `://` at all.
- *
- * The target test is `isRemoteTarget`, the `url()` scan's own, and it reads the
- * string as the URL parser would -- tab and newline removed, the leading and
- * trailing C0 controls and spaces stripped. So `image-set(" https://…" 1x)` is
- * refused for the same reason `image-set("https://…" 1x)` is: a leading space
- * does not stop a string being a URL (review M1, left open by #701).
  */
 export function quotedRemoteIn(css: string): string | null {
   for (const match of css.matchAll(QUOTED_STRING_RE)) {
