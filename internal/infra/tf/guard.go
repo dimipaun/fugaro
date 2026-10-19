@@ -47,6 +47,45 @@ func Guard(p *Plan, allowDelete []string) error {
 // modes: the advice is one sentence, and the sentences beside it are not
 // advice but the reason.
 func GuardWith(p *Plan, allowDelete []string, advice string) error {
+	return guardWith(p, advice, func(rc ResourceChange) (bool, string) {
+		return slices.Contains(allowDelete, rc.Address), ""
+	})
+}
+
+// GuardEntries is Guard over the owner's own delete list: an entries list
+// holds, for each approved address, the identity of the object that was there
+// when the owner approved it, and a removal is admitted only when the entry's
+// identity is the identity of the object the plan removes (Approves) — so an
+// address that is listed for one object is not an approval of another one that
+// a later plan carries at it (design §6 item 5, plan Task 6.3).
+//
+// It is GuardWith for the managed apply's own list and nothing else: the
+// addresses a project's owner approves, read from fugaro/allow-delete.json.
+// Every other caller keeps Guard's address list, where the address alone is
+// the approval — those are the sessions' own --allow-delete flags, given at a
+// terminal about a root the person is looking at, and a plan's before view is
+// not what they are approving.
+//
+// Everything else is Guard's: the same walk, the same threshold for what is a
+// removal, the same refusal of a moved object whatever the list says, and the
+// same items — the entry's own answer is added as the reason beside the
+// actions, so the person reads what the plan removes.
+func GuardEntries(p *Plan, entries []DeleteEntry, advice string) error {
+	return guardWith(p, advice, func(rc ResourceChange) (bool, string) {
+		return Approves(entries, rc)
+	})
+}
+
+// admit is what decides one removal: whether the list the caller holds admits
+// it, and, when it does not, the reason to print beside the change's actions.
+// An empty reason is the list's own "the address is not on it", which is the
+// item shape Guard has always written for that case.
+type admit func(rc ResourceChange) (bool, string)
+
+// guardWith is the walk Guard, GuardWith and GuardEntries share, so the three
+// cannot drift about what a removal is, which removals no list clears, or how
+// a refusal reads.
+func guardWith(p *Plan, advice string, admits admit) error {
 	if p == nil {
 		return errors.New("guard: no plan")
 	}
@@ -70,13 +109,19 @@ func GuardWith(p *Plan, allowDelete []string, advice string) error {
 		if !slices.Contains(acts, "delete") {
 			continue
 		}
+		ok, why := admits(rc)
 		switch {
-		case !slices.Contains(allowDelete, rc.Address):
-			refused = append(refused, fmt.Sprintf("%s (%s)", addr, said))
-		case removesUnderAnotherAddress(rc):
+		case ok && removesUnderAnotherAddress(rc):
 			// A listed address names what may be removed at that address,
 			// never an object moved there from another one.
 			refused = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, movedRemovalReason(rc)))
+		case ok:
+		case why == "":
+			// The list does not name this address: the item Guard has always
+			// written, with the actions and nothing beside them.
+			refused = append(refused, fmt.Sprintf("%s (%s)", addr, said))
+		default:
+			refused = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, why))
 		}
 	}
 	if len(refused) == 0 {
@@ -109,6 +154,39 @@ func Listable(p *Plan, allowDelete []string) []string {
 			continue
 		}
 		if slices.Contains(allowDelete, rc.Address) || removesUnderAnotherAddress(rc) {
+			continue
+		}
+		out = append(out, rc.Address)
+	}
+	return out
+}
+
+// ListableEntries is Listable for the owner's delete list: the addresses the
+// guard refused that a new entry would admit — one naming the address AND the
+// identity of the object this plan removes (Approves). An entry that names the
+// address for another object is one of them: the removal is refused because
+// the entry is about a different object, and an entry about this one clears it.
+// What no entry clears is what Listable already excludes: a moved object, an
+// action the guard does not know, a change with no actions.
+//
+// It exists so the advice a refusal ends with is still true under the entries
+// rule: "an address the owner approves is listed there" is an instruction that
+// leads somewhere only when the address is one the owner can approve, and the
+// address alone is no longer an approval.
+func ListableEntries(p *Plan, entries []DeleteEntry) []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	for _, rc := range p.ResourceChanges {
+		acts := rc.Change.Actions
+		if !slices.Contains(acts, "delete") || slices.ContainsFunc(acts, func(a string) bool { return !knownActions[a] }) {
+			continue
+		}
+		if removesUnderAnotherAddress(rc) {
+			continue
+		}
+		if ok, _ := Approves(entries, rc); ok {
 			continue
 		}
 		out = append(out, rc.Address)
