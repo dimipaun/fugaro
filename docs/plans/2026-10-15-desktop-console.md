@@ -1340,9 +1340,13 @@ is three files: the vocabulary, the values, and the first rules that read them.
 **Tests.** The forced-colors smoke's chrome half — the current view still marked and the
 chrome's boundary still visible under `emulateMedia({ forcedColors: 'active' })`, written
 first, which is this task's red step; and `entry.spec.ts`'s existing body-children
-assertion. **Not the computed-background assertion**: it asserts the two schemes paint
-*different* backgrounds, and they cannot until the theme choice is wired, so it belongs to
-the task that wires it and records the two pictures (design §6.2).
+assertion. **Not the computed-background assertion**: it reads a *computed* background off a
+screen root, so it can pass only once a rule paints one, and the rules that paint a screen
+root are the stylesheets this phase lands. It goes with the recording it guards, because
+that is where the golden baselines are re-made — **what it waits for is the stylesheet, not
+the theme choice**: the four golden specs never read `CONSOLE_THEME`, each draws its run
+with the theme it names, and the light run's root already says `data-theme='light'` today
+(design §6.2).
 
 **Command:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run
 test:e2e -- entry` — the four golden tests are skipped, as they are in 6.4 and 6.5: this
@@ -1396,8 +1400,9 @@ inventory lists — checked against a list derived from the screens' own class l
 rule that styles a class nothing emits fails; the `--border`-is-decorative scan of
 `base.css` and `screens.css`; the forced-colors smoke per screen — every state word still in
 the DOM and the row boundary still visible. **Not the computed-background assertion**,
-which belongs to the task that wires the theme choice and records the two pictures, for the
-reason Task 6.3 gives.
+which belongs with the recording it guards, for the reason Task 6.3 gives: it waits on the
+stylesheets that paint a screen root, not on the theme choice, which the four golden specs
+never read.
 
 **Command:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run test:e2e`
 

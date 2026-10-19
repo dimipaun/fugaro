@@ -136,9 +136,9 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	}
 	// §2.3's two derived attributes are not "a formatted percent" in general:
 	// `bar()` writes `data-fill` from the same percent reading it writes
-	// `data-state` from, so that one is a measured percent or `n/a`; `spark()`
-	// builds each `data-height` as a measured share or a gap, so that one is a
-	// measured percent or the em dash and never `n/a`.
+	// `data-state` from, so that one is a measured percent or `n/a`; the
+	// sparkline's heights are built as a measured share or a gap, so `data-height`
+	// is a measured percent or the em dash and never `n/a`.
 	liveSection := mdBetween(t, path, doc, "### 2.3 Live", "### 2.4 Spend")
 	if fill := mdRow(t, path, liveSection, "| `data-fill` |"); !strings.Contains(fill, "and **nothing else**") {
 		t.Errorf("%s: §2.3's `data-fill` row does not give the attribute's real value set; a percent reading is measured or unavailable, so a marked form or the em dash cannot appear", path)
@@ -151,6 +151,17 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	// attribute, so a rule keyed on `[data-height]` misses exactly that bar.
 	if height := mdRow(t, path, liveSection, "| `data-height` |"); !strings.Contains(height, "no `data-height` at all") {
 		t.Errorf("%s: §2.3's `data-height` row claims every sparkline bar carries the attribute; the empty sparkline's single bar sets only `data-state`, so a `[data-height]` rule selects nothing on it", path)
+	}
+	// The row's construction has to name the function that holds it. The heights
+	// are built in `sparkline()` (`live.ts` 472-490) as `gap(...)` or
+	// `measured(share)`; `spark()` (896-925) only draws those bars and copies each
+	// height's state into the attribute. A row that credits `spark()` with the
+	// construction sends a reader to the wrong function to check it — the
+	// conclusion ("a bar is `measured` or `gap`") survives either way, which is
+	// exactly why this misattribution is worth pinning rather than trusting.
+	if height := mdRow(t, path, liveSection, "| `data-height` |"); !strings.Contains(height, "`sparkline()` builds every one") ||
+		strings.Contains(height, "`spark()` builds every one") {
+		t.Errorf("%s: §2.3's `data-height` row does not credit `sparkline()` with building the bar heights (`live.ts` 472-490); `spark()` draws the bars and reads `point.height.state`, so naming it as the constructor sends a reader to the wrong function", path)
 	}
 	// `data-silence`'s value set is narrower than `formatReading`'s, because the
 	// banner is drawn only for a stale feed and a stale feed always has a
@@ -1022,6 +1033,18 @@ func TestDocsConsoleStylingPhaseOrdering(t *testing.T) {
 	// app's boot path, which none of the four specs reads. The frames are identical
 	// because no stylesheet paints anything (§1.3) — which is the dependency the
 	// task has: the stylesheet, not the theme switch.
+	//
+	// **The guards below are anchored to the live form of the claim, not to the
+	// wording a previous revision happened to use.** The first draft of this
+	// correction guarded on "they cannot until Task 6.5 wires" while the plan's
+	// surviving sentences read "they cannot until the theme choice is wired" and
+	// "belongs to the task that wires it" — so neither `strings.Contains` could
+	// ever be true and the pair was inert against exactly the regression it was
+	// written for: an implementer who reads Task 6.3 defers the assertion to the
+	// task that "wires the theme choice", and Task 6.6's red step loses the
+	// assertion it lands with. A guard is the sentence a reader would have to
+	// write to be wrong again, and that is what each of these is; every one is
+	// mutation-proven by re-planting its claim.
 	flatDesign, flatPlan := mdFlat(design), mdFlat(plan)
 	if !strings.Contains(flatDesign, "The four golden specs never read it") {
 		t.Errorf("%s: §6.2 does not say the golden specs never read `CONSOLE_THEME`; the assertion's dependency is the stylesheet, and a reader who is told the theme switch is its precondition wires the wrong task", designPath)
@@ -1030,13 +1053,44 @@ func TestDocsConsoleStylingPhaseOrdering(t *testing.T) {
 		t.Errorf("%s: §6.2 does not say the light run's root already carries `data-theme='light'`; each spec draws its screen with the theme it names (`mount(theLastFrame(), 'light')`) and `renderLive` stamps that argument, so the two runs already disagree about the attribute", designPath)
 	}
 	for _, stale := range []struct{ doc, path, claim string }{
+		// The design's own record of the retracted claim quotes it, so the only
+		// wording that can be guarded here is the wording of a *re-planted*
+		// assertion rather than of the record: the sentence that made the light
+		// run the dark one, stated as the design's own fact.
 		{flatDesign, designPath, "in a light-scheme run the root still says"},
-		{flatDesign, designPath, "Written in Task 6.3 or 6.4 it would fail"},
+		{flatDesign, designPath, "so the light run still says `data-theme='dark'`"},
+		// The plan's two live forms, worded as Tasks 6.3 and 6.4 actually worded
+		// them before this round — and the general shape they share, so a
+		// re-worded reversal ("the task that wires CONSOLE_THEME") is caught too.
+		{flatPlan, planPath, "cannot until the theme choice is wired"},
+		{flatPlan, planPath, "belongs to the task that wires the theme choice"},
 		{flatPlan, planPath, "every screen stamped its root `data-theme='dark'` in both schemes"},
-		{flatPlan, planPath, "they cannot until Task 6.5 wires"},
+		{flatPlan, planPath, "the task that wires it and records the two pictures"},
 	} {
 		if strings.Contains(stale.doc, stale.claim) {
 			t.Errorf("%s: the document still carries %q; the golden specs pass the theme to the renderer themselves and never read `CONSOLE_THEME`, so neither the claim nor the dependency it supported holds", stale.path, stale.claim)
+		}
+	}
+	// And the corrected claim is *required*, in the two tasks that carried the
+	// wrong one: a paragraph that simply drops the sentence rather than fixing it
+	// would leave the reader with no answer at all, and the guards above would
+	// pass on the silence. Each clause has to say where the assertion's
+	// precondition really is.
+	for _, want := range []struct {
+		task  int
+		label string
+		want  string
+		why   string
+	}{
+		{2, "Tests", "what it waits for is the stylesheet, not", "Task 6.3's **Tests** clause must say the computed-background assertion waits on the stylesheet rather than on the theme choice; it is the paragraph an implementer reads to decide which task lands the assertion"},
+		{3, "Tests", "it waits on the stylesheets that paint a screen root, not on the theme choice", "Task 6.4's **Tests** clause must repeat the corrected reason rather than point back at a rationale that no longer exists"},
+	} {
+		clause, ok := mdClause(t, planPath, planTasks[want.task], want.label)
+		if !ok {
+			t.Fatalf("%s: Task 6.%d has no **%s** clause; this check is about what that paragraph says", planPath, want.task+1, want.label)
+		}
+		if !strings.Contains(mdFlat(clause), want.want) {
+			t.Errorf("%s: Task 6.%d's **%s** clause does not say %q; %s", planPath, want.task+1, want.label, want.want, want.why)
 		}
 	}
 	if clause, ok := mdClause(t, planPath, planTasks[5], "Depends on"); !ok || !strings.Contains(clause, "Task 6.4 (**hard**)") {
