@@ -3,8 +3,11 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
 // Since 0.7.0 launchers hold objectViewer and a runs/-conditioned objectUser
@@ -84,6 +87,71 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 			if !strings.Contains(string(data), want) {
 				t.Errorf("%s lacks %q", file, want)
 			}
+		}
+	}
+}
+
+// The design doc that gcp/names.go, internal/infra/hardening.go and
+// internal/infra/tf/cover.go cite as the contract states the launchers'
+// condition in four places — §3's end-state table, §4's H5 bullets, §5's H6
+// person row and §12's H5 row — and the file is excluded from the stale scan
+// above because it also records what the 0.7.0 decision was. When the sealed
+// budget token moved to tokens/ (budget-token-channel.md §7.2, D16) §3 was
+// regenerated and the three lower places were left stating the runs/-only
+// pair, contradicting the table and the code. This pins them:
+//
+//   - every launchers' clause the doc spells out, with <bucket> for the
+//     bucket name, is one the code writes for that same placeholder, and
+//     every clause the code writes is spelled out — so a doc that drops the
+//     tokens/ clause, or invents one, fails against gcp.LauncherBucketCondition;
+//   - the title statements are the current title, built from
+//     gcp.LauncherBucketConditionTitle, and the three stale sentences are
+//     gone. The pre-seal pair may be *named* in H5's own note (doctor has to
+//     recognise it), which is why the ban is on the sentences that read as
+//     the current grant rather than on the older title string.
+func TestDocsBucketIAMStatesTheLaunchersCurrentCondition(t *testing.T) {
+	const path = "../../docs/design/bucket-iam.md"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+
+	clause := regexp.MustCompile(`resource\.name\.startsWith\("projects/_/buckets/<bucket>/objects/([a-z]+)/"\)`)
+	spelled := map[string]bool{}
+	for _, m := range clause.FindAllStringSubmatch(doc, -1) {
+		spelled[m[1]] = true
+	}
+	if len(spelled) == 0 {
+		t.Fatalf("%s spells no launchers' clause with the <bucket> placeholder: has H5 been rewritten without one?", path)
+	}
+	for _, m := range regexp.MustCompile(`/objects/([a-z]+)/"\)`).FindAllStringSubmatch(gcp.LauncherBucketCondition("bucket"), -1) {
+		if !spelled[m[1]] {
+			t.Errorf("%s does not spell the %s/ clause gcp.LauncherBucketCondition writes", path, m[1])
+		}
+		delete(spelled, m[1])
+	}
+	for p := range spelled {
+		t.Errorf("%s spells a %s/ clause, which is not one of the two gcp.LauncherBucketCondition writes", path, p)
+	}
+
+	title := gcp.LauncherBucketConditionTitle
+	for _, stale := range []string{
+		"- `gcp.LauncherBucketConditionTitle` is `fugaro-launchers-runs`, with no description, as for the job grants.",
+		"| `objectUser` | person | the condition is exactly `{title: fugaro-launchers-runs, expression: LauncherBucketCondition(b)}` for a bucket `b` in `Cover.Buckets` |",
+		"| H5 | Where the condition lives | Go (`gcp.LauncherBucketCondition`), passed as a tfvar, title `fugaro-launchers-runs` | HCL-computed |",
+	} {
+		if strings.Contains(doc, stale) {
+			t.Errorf("%s still states the launchers' pre-seal condition as the current one: %q", path, stale)
+		}
+	}
+	for _, want := range []string{
+		"`gcp.LauncherBucketConditionTitle` is `" + title + "`",
+		"`{title: " + title + ", expression: LauncherBucketCondition(b)}`",
+		"passed as a tfvar, title `" + title + "`",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s lacks %q", path, want)
 		}
 	}
 }

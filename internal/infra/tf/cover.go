@@ -1085,12 +1085,6 @@ var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_
 // tokens/<slug>/ of a bucket, nothing before it and nothing after it.
 var tokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/` + gcp.TokenBucketPrefix + `/([a-z0-9][a-z0-9_-]*)/"\)$`)
 
-// projectTokenClause is the one clause of a project job account's read-only
-// grant on the bucket's budget token objects, as
-// gcp.ProjectTokenBucketCondition writes it: the whole of tokens/ of a
-// bucket, no slug segment (plan task 3.2 step 2).
-var projectTokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/` + gcp.TokenBucketPrefix + `/"\)$`)
-
 // bucketCondition says why a bucket grant's condition is not the modules'
 // (docs/design/bucket-iam.md H6), "" when it is: objectAdmin carries none; an
 // objectViewer carries none, except an account's, which may carry exactly

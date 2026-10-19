@@ -38,6 +38,14 @@ func TestRunsBucketFindings(t *testing.T) {
 		}
 		return n
 	}
+	only := func(fs []BucketFinding, m string) (out []BucketFinding) {
+		for _, f := range fs {
+			if f.Member == m {
+				out = append(out, f)
+			}
+		}
+		return out
+	}
 	t.Run("hardened", func(t *testing.T) {
 		fs := RunsBucketFindings(&storage.Policy{Bindings: hardened}, b, hardeningProject, []string{a, o}, []string{o})
 		if sev(fs, "warning") != 0 || sev(fs, "info") != 1 {
@@ -48,19 +56,71 @@ func TestRunsBucketFindings(t *testing.T) {
 	// tokens/: its launchers still carry the runs/-only write, so they cannot
 	// write the sealed token. The install guard says so, and its fix is
 	// fugaro init, which replaces the grant.
+	//
+	// That binding is *the launchers' own*, one release behind, and not a
+	// conditional write nobody planned: the generic finding's fix is a
+	// removal of every objectUser binding the member holds on the bucket,
+	// which would take a launcher's only write grant away and stop every
+	// launch until init is re-run. So the pre-seal pair is recognised for
+	// what it is — narrower than the current one, never wider — and the
+	// member's one finding is the missing-grant warning below. The
+	// assertions say both halves: the warning is there, and nothing in the
+	// result tells the operator to remove a grant.
 	t.Run("the launchers' pre-seal runs/-only write", func(t *testing.T) {
-		old := &storage.Expr{Title: "fugaro-launchers-runs", Expression: `resource.name.startsWith("projects/_/buckets/` + b + `/objects/runs/")`}
+		old := &storage.Expr{Title: gcp.LauncherBucketConditionRunsTitle, Expression: gcp.LauncherBucketConditionRuns(b)}
 		p := &storage.Policy{Bindings: slices.Clone(hardened)}
 		p.Bindings[2] = &storage.PolicyBindings{Role: "roles/storage.objectUser", Members: []string{a}, Condition: old}
 		fs := RunsBucketFindings(p, b, hardeningProject, []string{a, o}, []string{o})
-		found := false
+		forLauncher := only(fs, a)
+		if len(forLauncher) != 1 {
+			t.Fatalf("a launcher on the pre-seal grant gets %d findings, want the missing-grant one alone: %+v", len(forLauncher), fs)
+		}
+		f := forLauncher[0]
+		if !strings.Contains(f.Problem, "lacks") || !strings.Contains(f.Problem, "tokens/") || !strings.Contains(f.Fix, "fugaro init") {
+			t.Fatalf("a launcher without the tokens/ write is not reported: %+v", f)
+		}
 		for _, f := range fs {
-			if f.Severity == "warning" && strings.Contains(f.Problem, "lacks") && strings.Contains(f.Problem, "tokens/") && strings.Contains(f.Fix, "fugaro init") {
-				found = true
+			if strings.Contains(f.Fix, "remove-iam-policy-binding") {
+				t.Errorf("doctor offers to remove a grant on this policy, and the launcher's pre-seal binding is the only write grant it holds: %+v", f)
+			}
+			if strings.Contains(f.Problem, "under a condition that is not the launchers' runs/ and tokens/ condition") {
+				t.Errorf("the launchers' own pre-seal condition is reported as a stray conditional write: %+v", f)
 			}
 		}
-		if !found {
-			t.Fatalf("a launcher without the tokens/ write is not reported: %+v", fs)
+	})
+	// The same binding in another member's hands: not a launcher (so the
+	// missing-grant loop says nothing about them), and still never a removal
+	// — init is what replaces it.
+	t.Run("the pre-seal write held by someone else", func(t *testing.T) {
+		p := &storage.Policy{Bindings: append(slices.Clone(hardened), &storage.PolicyBindings{Role: "roles/storage.objectUser",
+			Members:   []string{"user:gone@example.com"},
+			Condition: &storage.Expr{Title: gcp.LauncherBucketConditionRunsTitle, Expression: gcp.LauncherBucketConditionRuns(b)}})}
+		fs := RunsBucketFindings(p, b, hardeningProject, []string{a, o}, []string{o})
+		mine := only(fs, "user:gone@example.com")
+		if len(mine) != 1 {
+			t.Fatalf("findings %+v", fs)
+		}
+		f := mine[0]
+		if !strings.Contains(f.Problem, gcp.LauncherBucketConditionRunsTitle) || !strings.Contains(f.Fix, "fugaro init") {
+			t.Fatalf("the pre-seal launcher condition is not reported as such: %+v", f)
+		}
+		if strings.Contains(f.Fix, "remove-iam-policy-binding") {
+			t.Fatalf("doctor offers to remove a grant that is the launchers' own, a release behind: %+v", f)
+		}
+	})
+	// A runs/-only expression under *another* title is not that binding: it
+	// is a condition nobody planned, and the removal finding stands.
+	t.Run("a runs/-only write under another title is still a stray condition", func(t *testing.T) {
+		p := &storage.Policy{Bindings: append(slices.Clone(hardened), &storage.PolicyBindings{Role: "roles/storage.objectUser",
+			Members:   []string{"user:x@example.com"},
+			Condition: &storage.Expr{Title: "t", Expression: gcp.LauncherBucketConditionRuns(b)}})}
+		fs := RunsBucketFindings(p, b, hardeningProject, []string{a, o}, []string{o})
+		mine := only(fs, "user:x@example.com")
+		if len(mine) != 1 {
+			t.Fatalf("findings %+v", fs)
+		}
+		if !strings.Contains(mine[0].Fix, "remove-iam-policy-binding") {
+			t.Fatalf("a conditional write nobody planned is not reported for removal: %+v", mine[0])
 		}
 	})
 	t.Run("not hardened: a launcher with objectAdmin and no launcher grants", func(t *testing.T) {

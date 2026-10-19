@@ -572,16 +572,20 @@ func TestPolicyNonIntegerMarkerHaltsTheRun(t *testing.T) {
 }
 
 // The single token take (finding 2): the policy read and the session share one
-// TakeObject, because the call deletes the object as it reads it. A second take
-// inside the run would find nothing and stop it, so a run that finishes — with
-// a policy published, so that both readers use the identity — is the assertion.
-// The exchange itself happens twice (once for the client the policy is read
-// with, once in budget.Open), with the same custom token and the same claims.
+// TakeObject, and one client built from it. The take is read-only — the job
+// account's grant on tokens/ is (D16) — so this is not an object that
+// disappears under a second reader: the object is still in the bucket at the
+// end, and a second take would succeed. What the sharing is observed by is the
+// identity, built once (projectpolicy.go's budgetClient) and used by both: the
+// policy the run enforces is read with the same id token its session meters
+// against, and an unmemoized read would exchange once per caller (two
+// exchanges here, not four). The run has a policy published, so both readers
+// use the identity.
 func TestTokenIsTakenOnce(t *testing.T) {
 	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":3,"budget":{"mode":"enforce","per_run_usd":5}}`, capScript(1)...)
 	rec, err := b.run(t, calling(new([]int), implement("feature"), call{sonnet, 4000}), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
-		t.Fatalf("rec = %+v, err = %v: the run could not take the token twice", rec, err)
+		t.Fatalf("rec = %+v, err = %v: the run did not finish with the policy read and the session on one identity", rec, err)
 	}
 	if s := sourceOf(t, rec, "mode"); s != "policy" {
 		t.Fatalf("mode source = %q: the policy was not read", s)
