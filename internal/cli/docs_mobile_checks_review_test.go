@@ -1036,18 +1036,24 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 	}
 }
 
-// TestDocsCheck81SeedCountMatchesTheBlocks: check 81 tells the owner how much
-// of the project it writes by hand, in two sentences -- "N nodes under Alice's
-// mailbox are seeded with IAM" (what changes in the project) and "the N nodes
-// it reads and acks ... are **seeded with the operator's IAM credentials**"
-// (what the check does not cover). Both said two, and the blocks seed three:
-// step 4's outbox message and heartbeat, and step 5's second outbox message,
-// which the value guard needs because a `false` written to the message step 5
-// already acked would be refused by `!data.exists()` and prove nothing about
-// the boolean. An owner reading "two" would look for one seed fewer than the
-// check writes into the installation. The count is derived from the blocks
-// here, so a fourth seed fails this test until the prose counts it too.
-func TestDocsCheck81SeedCountMatchesTheBlocks(t *testing.T) {
+// TestDocsCheck81CountsMatchTheBlocks: check 81 tells the owner how much of
+// the project it writes and how many credentials it handles, in the section
+// and in its register row -- the summary read *before* the section. Two
+// sentences of the section count the IAM seeds ("N nodes under Alice's mailbox
+// are seeded with IAM", "the N nodes it reads and acks ... are **seeded with
+// the operator's IAM credentials**") and both said two; the register row
+// counted them twice too ("two nodes are seeded with your own IAM
+// credentials", "two seeded nodes"), and the review of PR #580 found the row
+// still at two after the section had been corrected -- the row sits outside
+// `## Check 81:`, so nothing read it. The blocks seed three: step 4's outbox
+// message and heartbeat, and step 5's second outbox message, which the value
+// guard needs because a `false` written to the message step 5 already acked
+// would be refused by `!data.exists()` and prove nothing about the boolean.
+// The row's other count is read here too: it said two minted custom tokens
+// where the section mints four (step 1's two, step 7's mismatch token and its
+// residual's). Every count is derived from the blocks, so an edit that changes
+// what the check does fails this test until the prose counts it.
+func TestDocsCheck81CountsMatchTheBlocks(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
 	section := docSection(t, path, doc, "## Check 81:")
@@ -1084,6 +1090,84 @@ func TestDocsCheck81SeedCountMatchesTheBlocks(t *testing.T) {
 		if !strings.Contains(strings.ToLower(para), strings.ToLower(word)+" nodes") {
 			t.Errorf("## Check 81: the paragraph saying %q does not count the seeds as %q, and the blocks make %d IAM writes (`?access_token=$AT` in the steps): an owner reading a smaller number looks for a seed the check never made, and one reading a larger number for a node the Restore does not remove", stem, word+" nodes", seeds)
 		}
+	}
+
+	// The register row is the summary the owner reads *before* the section, and
+	// it counts the seeds twice ("three nodes are seeded with your own IAM
+	// credentials ... three seeded nodes"). It sits outside the section, so the
+	// loop above never sees it -- the review of PR #580 found both counts still
+	// at two there after the section had been corrected. The row is read the
+	// same way TestDocsCheck89RegisterRowDoesNotClaimTheGuardReadsTheTrack
+	// reads check 89's.
+	row := registerRow(t, doc, "81")
+	for _, phrase := range []string{word + " nodes are seeded", word + " seeded nodes"} {
+		if !strings.Contains(strings.ToLower(row), strings.ToLower(phrase)) {
+			t.Errorf("## Check 81: the register row does not say %q, and the blocks make %d IAM writes (`?access_token=$AT` in the steps): the row is the summary the owner reads before the section, so a smaller count there sends them looking for a seeded node that is not in the blocks -- and a larger one for a node the Restore does not remove", phrase, seeds)
+		}
+	}
+
+	// The credentials: every `signin "$uid"` in the section is one custom token
+	// minted and exchanged for an ID token -- step 1's two, step 7's mismatch
+	// token and the residual's, which the prose names.
+	tokens := strings.Count(section, `signin "$`)
+	tokWord, ok := map[int]string{1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}[tokens]
+	if !ok {
+		t.Fatalf("check 81 mints %d custom tokens and this test has no word for that count: write one", tokens)
+	}
+	if !strings.Contains(row, tokWord+" minted custom tokens") {
+		t.Errorf("## Check 81: the register row does not say %q, and the section mints %d custom tokens (`signin \"$uid\"`, step 1's two, step 7's mismatch token and the residual's): the row is what the owner reads before the section, and the tokens are the credentials the check handles", tokWord+" minted custom tokens", tokens)
+	}
+}
+
+// TestDocsCheck82IdentityPlatformFailureComesAfterTheDeploy: check 82's "What
+// failing looks like" used to say a project whose Identity Platform is not
+// initialized "fails the database step **before** the rules". The code does the
+// opposite: `deployDatabase` runs `db.Apply` -- the rules' `PutRules`, the
+// marker and the other database writes -- and only then `idp.initialize`
+// (`internal/cli/init_firebase.go`), which is why `internal/cli`'s
+// TestIdentityPlatformInitializedWhenMissing sees the run succeed and the mark
+// written with Identity Platform missing. The review of PR #580 found the
+// bullet inverted, and an owner debugging by it would believe generation 2 was
+// never deployed while it is live. The order is read out of the function here,
+// so a reordering fails this test until the bullet is rewritten with it.
+func TestDocsCheck82IdentityPlatformFailureComesAfterTheDeploy(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 82:")
+
+	var para string
+	for _, p := range paragraphsOf(section) {
+		if strings.Contains(p, "Identity Platform is not initialized") {
+			para = p
+			break
+		}
+	}
+	if para == "" {
+		t.Fatalf("## Check 82: no paragraph says a project's Identity Platform may not be initialized: this test holds that sentence to the code's order, so it cannot check a sentence that is not there")
+	}
+	if !strings.Contains(para, "**after** the rules") {
+		t.Errorf("## Check 82: the \"What failing looks like\" paragraph does not say an uninitialized Identity Platform fails the step **after** the rules: `deployDatabase` applies the database (rules, marker, mark, project name, mode) and initializes Identity Platform afterwards, so the bullet has to send the owner to a live generation 2, not to a deploy that never happened")
+	}
+	if strings.Contains(para, "**before** the rules") {
+		t.Errorf("## Check 82: the paragraph still says a failure at the Identity Platform step comes **before** the rules: that is the inverted claim the review of PR #580 found, and it would have the owner debugging a rules deploy that has already landed")
+	}
+
+	// The order the bullet describes, read out of the function it names.
+	src := readSrc(t, "init_firebase.go")
+	i := strings.Index(src, "func (r *initRun) deployDatabase(")
+	if i < 0 {
+		t.Fatalf("internal/cli/init_firebase.go has no deployDatabase: the check's account of the database step is written against that function")
+	}
+	body := src[i:]
+	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
+		body = body[:j+1]
+	}
+	apply, idp := strings.Index(body, "db.Apply(ctx)"), strings.Index(body, "idp.initialize(ctx)")
+	if apply < 0 || idp < 0 {
+		t.Fatalf("deployDatabase no longer calls db.Apply and idp.initialize: got %d and %d, and check 82's bullet is about their order", apply, idp)
+	}
+	if apply > idp {
+		t.Errorf("deployDatabase calls idp.initialize (%d) before db.Apply (%d): check 82's \"What failing looks like\" says an uninitialized Identity Platform fails the step **after** the rules, and this test holds the sentence to the code -- if the order really changed, rewrite the bullet with it", idp, apply)
 	}
 }
 
