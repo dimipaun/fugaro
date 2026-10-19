@@ -301,8 +301,9 @@ func TestBudgetKillBareRepoWithoutACheckoutRefuses(t *testing.T) {
 // after `budget set`, `budget kill` or `budget resume` becomes --repo= (which
 // the commands read as the checkout's repository), the space-separated form
 // every script writes is left alone, and nothing outside those three verbs is
-// touched -- show and preview keep taking owner/name, and `--repo` before the
-// verb is not this flag at all.
+// touched -- show's empty --repo means no repository filter, preview already
+// reads an absent --repo as the checkout's origin so it needs no rewrite, and
+// `--repo` before the verb is not this flag at all.
 func TestBudgetNormalizeRepoArgs(t *testing.T) {
 	cases := []struct {
 		name string
@@ -392,7 +393,10 @@ func TestBudgetBoolFlagsMatchTheFlags(t *testing.T) {
 
 // TestBudgetRepoFlagHelpSaysWhichSubcommands: the help text is where a person
 // finds out that --repo takes no value, and which subcommands read it that
-// way. show and preview do not, and the reader must not be left to guess.
+// way. set, kill and resume are the whole set that does; show's empty --repo
+// means no repository filter and preview already reads an absent --repo as the
+// checkout's origin, so neither claims the optional form, and the reader must
+// not be left to guess which is which.
 func TestBudgetRepoFlagHelpSaysWhichSubcommands(t *testing.T) {
 	for _, name := range []string{"set", "kill", "resume"} {
 		cmd, _, err := NewRootCmd().Find([]string{"budget", name})

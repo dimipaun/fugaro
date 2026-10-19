@@ -305,7 +305,9 @@ Halt every run of the project or of one repository (budget admins)
 
 Set the project's kill switch (--all) or one repository's (--repo [owner/name]),
 recording who, when and why. --repo with no value means the repository this
-checkout belongs to, as it does for set; show and preview need the owner/name.
+checkout belongs to, as it does for set. show takes owner/name (its empty
+--repo means no repository filter, not a checkout), and preview already
+means this checkout's repository without the flag.
 Runs in flight halt within seconds (a run in its last stage finishes pushing
 its work first) and new runs refuse. --all asks you to type the project's name
 (or pass --yes); one repository needs no confirmation.
@@ -482,8 +484,10 @@ to 100000, and a per-run cap may not exceed the daily cap of the same scope.
 
 --repo owner/name always works, from anywhere; the bare --repo is refused
 outside a checkout whose origin names a repository, and never stands for the
-project-wide caps. kill and resume take --repo the same way; show and preview
-need the owner/name.
+project-wide caps. kill and resume take --repo the same way. preview needs no
+bare form: left out, --repo already means this checkout's repository. show is
+the one whose empty --repo is not the checkout (it means no repository
+filter), so it takes owner/name.
 
 Raising a cap (setting one that was unset counts), or lowering the mode to
 observe, loosens what runs may spend, so it asks you to type the project's name

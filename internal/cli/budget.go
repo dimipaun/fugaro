@@ -740,8 +740,10 @@ func newBudgetSetCmd() *cobra.Command {
 			"--clear removes the scope's caps.\n\n" +
 			"--repo owner/name always works, from anywhere; the bare --repo is refused\n" +
 			"outside a checkout whose origin names a repository, and never stands for the\n" +
-			"project-wide caps. kill and resume take --repo the same way; show and preview\n" +
-			"need the owner/name.\n\n" +
+			"project-wide caps. kill and resume take --repo the same way. preview needs no\n" +
+			"bare form: left out, --repo already means this checkout's repository. show is\n" +
+			"the one whose empty --repo is not the checkout (it means no repository\n" +
+			"filter), so it takes owner/name.\n\n" +
 			"Raising a cap (setting one that was unset counts), or lowering the mode to\n" +
 			"observe, loosens what runs may spend, so it asks you to type the project's name\n" +
 			"(or pass --yes). Lowering needs no confirmation.",
@@ -1193,7 +1195,9 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 		use, short, long = "kill (--all | --repo [owner/name]) [--reason TEXT]", "Halt every run of the project or of one repository (budget admins)",
 			"Set the project's kill switch (--all) or one repository's (--repo [owner/name]),\n"+
 				"recording who, when and why. --repo with no value means the repository this\n"+
-				"checkout belongs to, as it does for set; show and preview need the owner/name.\n"+
+				"checkout belongs to, as it does for set. show takes owner/name (its empty\n"+
+				"--repo means no repository filter, not a checkout), and preview already\n"+
+				"means this checkout's repository without the flag.\n"+
 				"Runs in flight halt within seconds (a run in its last stage finishes pushing\n"+
 				"its work first) and new runs refuse. --all asks you to type the project's name\n"+
 				"(or pass --yes); one repository needs no confirmation."

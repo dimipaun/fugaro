@@ -100,10 +100,12 @@ func (o *secretsOptions) addFlags(cmd *cobra.Command) {
 //
 // It rewrites nothing outside the verbs optionalRepoVerbs lists: init's --repo
 // is a bool (the repository-scoped init), so `fugaro init --repo` must keep
-// parsing as the flag it is; `budget show` and `budget preview` keep taking
-// owner/name, so `budget show --repo` stays the flag error it is today rather
-// than quietly meaning something else; and no other command's --repo takes an
-// optional value.
+// parsing as the flag it is; `budget show`'s empty --repo means no repository
+// filter rather than this checkout, so `budget show --repo` stays the flag
+// error it is today rather than quietly meaning something else; `budget
+// preview` needs no rewrite, because it already reads an absent --repo as this
+// checkout's origin (runBudgetPreview, budget_preview.go); and no other
+// command's --repo takes an optional value.
 func NormalizeRepoArgs(args []string) []string {
 	out := slices.Clone(args)
 	// Everything before the verb -- the global flags and their values -- is
