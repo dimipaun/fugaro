@@ -9,6 +9,12 @@ documents. **Owner: Dimi Paun. Date: 2026-10-19.** The reconciliation was run ag
 `c6009b5f`, and every path and symbol in it was read at that commit; the citation check that
 backs that claim, and the shape of citation it does not cover, are stated in
 `internal/cli/docs_coordinator_test.go`'s own comment rather than left implied.
+Citations into `docs/design/` and `docs/mobile/` name the document and the phrase the
+citation turns on rather than a line number — those two trees gain sections, rows and
+paragraphs while this work sits in review, and a line number into one of them moves under
+the sentence it was written for without anything looking wrong.
+`TestDocsCoordinatorFrequentCitationsAreAnchoredByContent` holds every one of them to the
+single line of that document which carries the phrase.
 
 **All sixteen questions are answered, and none is approved.** The owner answered Q1–Q16 on
 **2026-10-19**, each by taking **option (A)**, the recommended one; each answer is recorded
