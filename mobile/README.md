@@ -145,7 +145,7 @@ only checked the refusal, and fails this one.
 | 6. `--repo` | not the phone's: its repository list is the owner's, and `len(repos)` is that list |
 | 7. the child's exit | not the phone's: there is no child to end and nothing to loop on |
 | 8. the console's allow-list | the console's |
-| the degraded shape (§10.8) | `document.js` recognises it by its `degraded` key, refuses a document that carries both halves, and `view.js` renders it **as degraded**, never as a zero spend |
+| the degraded shape (§10.8) | `document.js` recognises the CLI's own shape — `lsDoc` (`project`, `runs[]`, `totals`, `warnings[]`) **plus** `degraded` and `notice` — by its `degraded` key, judges the `lsDoc` half for its type and **drops** it (this app renders no run row), refuses a document that carries both halves, and `view.js` renders it **as degraded**, never as a zero spend |
 
 ### The two choices P3.2 had to make
 
@@ -155,11 +155,20 @@ here because a reviewer has to be able to disagree with them:
 1. **The burn rate and the cap fraction are recomputed on the phone** rather
    than not shown. The alternative would leave the live screen without the two
    numbers it exists for, and both inputs are inside the grant. What is
-   recomputed is recomputed **exactly as the CLI computes it**, from the same
-   constants and formulas (`internal/watch/build.go`'s `bar`, `internal/watch/state.go`'s
-   `State.Burn` and `burnOf`): a 5-minute window that needs a 60-second span
-   before it says anything, `perMin*60 > daily/8` for `fast`, and `100%` when
-   the cap is zero. The two figures are over **two different totals**, and that
+   recomputed is recomputed **from the CLI's own constants and formulas**
+   (`internal/watch/build.go`'s `bar`, `internal/watch/state.go`'s `State.Burn`
+   and `burnOf`): a 5-minute window that needs a 60-second span before it says
+   anything, `perMin*60 > daily/8` for `fast`, and `100%` when the cap is zero.
+   "From the CLI's constants", not "exactly as the CLI computes it", because
+   there are **two places this app cannot follow** and a reviewer should be able
+   to see both without reading the Go: `Build` blanks the burn block when
+   `len(b.Runs) == 0` (`internal/watch/build.go:332`), and this app is not
+   granted `agents/**`, so it has no runs to count; and `burnOf` prefers
+   `cfg.BurnAlertPerHour` — the operator's local
+   `watch.burn_alert_usd_per_hour` (`internal/localcfg/localcfg.go:145`), which
+   is not in the database — so the phone only ever computes the `daily/8`
+   fallback. Both divergences are written down in `src/feed/recompute.js`. The
+   two figures are over **two different totals**, and that
    is the CLI's own split rather than an accident here: the fraction is over
    **counted** ("only counted feeds it; notional counts toward no cap") while the
    rate is the slope of **spent + notional**, which is what `State.observe`
@@ -315,6 +324,44 @@ whenever **any** stream has been heard, in every branch, so a refusal or a
 failed read does not reset the clock: this reader was reporting an age of zero
 for a refusal, which tells a screen the feed has just been heard from when the
 truth is that the last thing heard was an hour ago and it was a rejection.
+
+### The second review
+
+Two review rounds of the same task found seven each, and the class is the same
+one again: **a rule the CLI has, restated here slightly differently.** Thirteen
+of the fourteen are fixed; each fix has a test and each test was mutation-proven.
+(The first round's fixes were lost to a refused push — Fugaro is not allowed to
+change workflow files — so the second round saw the same code and re-raised the
+ones it had.)
+
+| Mutation | Went red |
+| --- | --- |
+| the live field list judges the CLI's own degraded document (no discriminator first) | `the degraded shape is its own shape, recognised by its own key` |
+| `DEGRADED_FIELDS` loses `totals` (or `warnings`) | the same test — the `lsDoc` half is judged, not ignored |
+| the degraded branch is reached only after the live field list | the same test |
+| `refresh()` does not assemble after the rollover | `the rollover breaks the series at the rollover, not at the next delivery` |
+| `refresh()` subscribes before it sets `#paths`/`#day` | `the rollover subscribes the new day before a listener can answer` |
+| the rollover clears `#refused` by the store instead of the plan | `a refusal on a path that never delivered does not outlive its day` |
+| `ingest` judges the gate but not the plan | `ingest takes a value only for a path in the plan, not merely a granted one` |
+| the kill switch's strings are bounded but not cleaned | `a kill switch's strings are cleaned the way the CLI cleans them` |
+| `#dayChanged` is cleared by the first assembly inside the gap | `a changed day is a break, and the new day is re-subscribed` |
+| the door re-exports `isGranted` | both `index.js` tests |
+
+**The one refusal.** This app does **not** recompute the burn rate "exactly as
+the CLI computes it", and the README no longer says so: the two places it cannot
+follow are written into `recompute.js` and quoted in "The two choices P3.2 had
+to make" above. The reviewer's counter — that `Build`'s `len(b.Runs) == 0`
+zeroing "depends only on data the phone already holds" — is the part that does
+not hold: **live** runs are `runs/**` and `agents/**`, neither of which this app
+is granted, and the spend tree carries spend, not liveness.
+
+**The two dead exports** (`FIRST_FRAME_MS`, `gap()`) were the same class and are
+answered differently on purpose. `FIRST_FRAME_MS` was a threshold on the door
+that decided nothing — it is gone, and a test asserts it is not exported again.
+`gap()` and `STATE.GAP` are §1's **vocabulary**, not a threshold: the contract
+names five availability states, and `availability.js` now says in place that the
+constructor has no caller in P3.2 and that the day break §10.7 calls a gap is
+drawn as `drawable: null` instead.
 
 ## Which files may write a credential
 
