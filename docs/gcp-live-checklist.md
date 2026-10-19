@@ -4533,18 +4533,56 @@ for v in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL \
     echo "Check 90: $v was set in this shell and is now unset (its value is not printed)"
   fi
 done
-# Hard stop 1b: an `apiKeyHelper` setting is a fourth way, and it is not an
-# environment variable, so nothing above clears it: Claude Code runs the
-# configured helper and uses what it prints as the credential. It may be in
-# your user settings or in the two settings files of the directory you run
-# from; only whether one is THERE is printed, never what it holds or what it
-# would print — and the check stops rather than measuring the helper.
-for f in "$HOME/.claude/settings.json" .claude/settings.json .claude/settings.local.json; do
-  [ -f "$f" ] || continue
-  jq -e 'has("apiKeyHelper")' "$f" >/dev/null 2>&1 \
-    && { echo "Check 90 stopped: $f configures an apiKeyHelper, so claude may authenticate with what that helper prints instead of with the setup-token, and this check would then measure the wrong credential. Remove that setting (or run the check where it is not set) and re-run this block. Its value is not printed." >&2; exit 1; }
+# Hard stop 1b: a settings file is the other way these reach `claude`, and
+# nothing above touches it. Claude Code merges the settings files it reads and
+# applies their `env` block to its own environment, so a file carrying
+# ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, a CLAUDE_CODE_USE_* provider switch or
+# an `apiKeyHelper` has exactly the effect the `unset` above just removed.
+# `env` is not a corner case: it is the channel the repository's own design
+# names as equivalent to the process environment (design/agent-env.md §5.1,
+# which is `checkSettingsRouting` in internal/runner/agentenv.go), and the
+# names checked here are its list — `RoutingKeys`, internal/agent/settings.go:
+# `apiKeyHelper`, and in `env` a base URL, a credential, a proxy variable or a
+# CLAUDE_CODE_USE_* switch. A file that sets one STOPS the check; only the
+# file's path and the KEY NAMES are printed, never a value.
+#
+# Which files: the two in the directory you run from, your user settings, the
+# same file under $CLAUDE_CONFIG_DIR when that is set, and every regular file
+# in the managed settings directory of the two platforms this project runs on —
+# /etc/claude-code (what internal/agent/settings.go's ManagedSettingsPath
+# names) and macOS's "/Library/Application Support/ClaudeCode". That is one
+# level deep, which is what the runner's own check reads; a settings file
+# somewhere else on this machine is not read here.
+routing_keys() {   # $1: a settings file. Prints the routing key NAMES it sets.
+  jq -r '
+    (["ANTHROPIC_BASE_URL","ANTHROPIC_VERTEX_BASE_URL","ANTHROPIC_BEDROCK_BASE_URL",
+      "ANTHROPIC_API_KEY","ANTHROPIC_AUTH_TOKEN","CLAUDE_CODE_SKIP_VERTEX_AUTH",
+      "HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","NO_PROXY"]) as $want
+    | ([to_entries[] | select(.key | ascii_downcase == "apikeyhelper") | "apiKeyHelper"]
+       + [(.env? // {}) | objects | keys[] | ascii_upcase
+          | select(. as $u | ($want | index($u)) != null
+                          or ($u | startswith("CLAUDE_CODE_USE_")))]
+      ) | unique | .[]
+  ' "$1" 2>/dev/null
+}
+check_settings() {  # $1: a settings file. Stops this check on a routing key.
+  local keys
+  keys=$(routing_keys "$1") \
+    || { echo "Check 90 stopped: $1 is not settings JSON this guard can read, so it cannot say what Claude Code makes of it. Fix or remove it and re-run this block. Its value is not printed." >&2; exit 1; }
+  [ -n "$keys" ] || return 0
+  printf 'Check 90 stopped: %s sets %s, so claude may answer the control call with something other than the setup-token, and this check would then measure the wrong credential. Remove that key (or run the check where it is not set) and re-run this block. Only the key names are printed, never a value.\n' \
+    "$1" "$(printf '%s' "$keys" | tr '\n' ' ')" >&2
+  exit 1
+}
+for f in "$HOME/.claude/settings.json" .claude/settings.json .claude/settings.local.json \
+         "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"; do
+  [ -f "$f" ] && check_settings "$f"
 done
-echo "Check 90: no apiKeyHelper is configured in your user settings or this directory's"
+while IFS= read -r f; do
+  check_settings "$f"
+done < <(find "/Library/Application Support/ClaudeCode" /etc/claude-code \
+           -maxdepth 1 -type f 2>/dev/null)
+echo "Check 90: no settings file this guard reads sets apiKeyHelper or an env key that would send the call or its credential elsewhere"
 # Hard stop 2: the scratch directory is one THIS CHECK makes, and it is the
 # only thing step 9's `rm -rf` is ever allowed to name — never a path you
 # typed. `mktemp -d` gives it the shape that makes that safe (absolute, under
@@ -4580,11 +4618,11 @@ PORT=${PORT:-8787}                        # any free loopback port
 
 **The first time through, hard stop 3 stops you on purpose:** the token file does not exist until step 2 has made it, so run step 2, come back, and re-run this block — after that it passes unchanged at the start of every step.
 
-**Why hard stop 1 is first, and why it clears five variables and one setting.** The control in step 4 is only a control if it runs on the setup-token and nothing else, and `claude` reaches for four other things before it: with `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` in the shell, `claude` authenticates with that instead; with `CLAUDE_CODE_USE_VERTEX` or `CLAUDE_CODE_USE_BEDROCK` set, it runs against that cloud provider and authenticates through the cloud SDK's own identity, sending neither credential header at all; and a configured `apiKeyHelper` is a command Claude Code runs for a credential, which no environment variable clears. Any of the four makes the swap "work" with the proxy not being what made it work, and U1 would be recorded as answered from a call that never used the credential this check is about — on a machine with Vertex configured (the owner's), a call with `CLAUDE_CODE_USE_VERTEX` left set measures Vertex. So the shell's five variables are cleared and a configured `apiKeyHelper` stops the check, which is why the control can only succeed on the setup-token; each step's commands set `ANTHROPIC_BASE_URL` and the placeholder themselves, for that one command, so clearing them here costs nothing. **Which header the client actually sent is not left to be inferred:** the proxy's `FACT credential-header` line records the name (never a value), and a control whose line says `x-api-key`, or `(neither)`, is a control that ran on something other than the setup-token — record that and stop, whatever the call's outcome was.
+**Why hard stop 1 is first, and why it clears five variables *and* the routing keys of every settings file it reads.** The control in step 4 is only a control if it runs on the setup-token and nothing else, and `claude` reaches for four other things before it: with `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` in the shell, `claude` authenticates with that instead; with `CLAUDE_CODE_USE_VERTEX` or `CLAUDE_CODE_USE_BEDROCK` set, it runs against that cloud provider and authenticates through the cloud SDK's own identity, sending neither credential header at all; and a configured `apiKeyHelper` is a command Claude Code runs for a credential, which no environment variable clears. Any of the four makes the swap "work" with the proxy not being what made it work, and U1 would be recorded as answered from a call that never used the credential this check is about — on a machine with Vertex configured (the owner's), a call with `CLAUDE_CODE_USE_VERTEX` left set measures Vertex. So the shell's five variables are cleared, which is why the control can only succeed on the setup-token; each step's commands set `ANTHROPIC_BASE_URL` and the placeholder themselves, for that one command, so clearing them here costs nothing. **A settings file is a fifth way in, and the `unset` above does not touch it:** Claude Code applies a settings file's `env` block to its own environment, so a file that carries `ANTHROPIC_API_KEY`, a `CLAUDE_CODE_USE_*` switch or any other `RoutingKeys` entry (internal/agent/settings.go; design/agent-env.md §5.1) supplies exactly what the `unset` removed, and an `apiKeyHelper` supplies a credential no variable holds. With the shell cleared, such a file is the *effective* source, not a theoretical one — which is why hard stop 1b reads the settings files rather than only the shell, and stops on any of those keys rather than only on the helper. **Which header the client actually sent is not left to be inferred:** the proxy records the name (never a value) of the credential header each request carried, and step 4 runs the **observed control** — the same real token, through the proxy in `--no-swap` mode, which replaces nothing — precisely so that the control call carries that line; a line reading `x-api-key`, or `(neither)`, is a control that ran on something other than the setup-token, whatever the environment looks like. The direct control in the same step runs with no proxy in its path and therefore produces no `FACT credential-header` line at all: what it settles is the token, and the observed control is what says the client's own choice of credential matched what the swap assumes.
 
 **Hard stops end the shell they are run in, and that is the intended outcome.** Every stop above and below is `exit 1`; pasted into an interactive shell it closes the window, and `#` comments are honoured by a non-interactive shell and not by an interactive `zsh` without `setopt interactive_comments`. Both are Check 43's paragraphs, which apply here word for word ("Paste the block into a file, not straight into an interactive zsh"): save this block to a file and source it — `. ./chk90-env.sh`, in the shell you will run the steps in — so the variables are in that shell *and* the stop lands in it. Nothing after a stop may run, so a stop that closes the window is the fail-safe end: to keep the window, run the sourced block in a subshell (`( . ./chk90-env.sh )`), read the message, fix what it names, and source it again in the shell the steps run in — the subshell's variables are gone with it, so a step run in it would reach `claude` with them unset.
 
-**FACT:** `claude --version`; which of the five variables the guard reported as set and now unset (or that there was none of them to clear), and that no `apiKeyHelper` is configured — the environment the control ran in, without any of their values; and the token file's length and mode (`wc -c`, `ls -l`) — a length and a mode, never the value.
+**FACT:** `claude --version`; which of the five variables the guard reported as set and now unset (or that there was none of them to clear), and that no settings file the guard reads sets `apiKeyHelper` or an `env` key that would route the call — the environment the control ran in, without any of their values and without any settings key's value; and the token file's length and mode (`wc -c`, `ls -l`) — a length and a mode, never the value.
 
 ### Check 90 step 2: the token file — yours, typed by you
 
@@ -4599,18 +4637,22 @@ chmod 600 "$TOKEN_FILE"
 
 ### Check 90 step 3: the proxy, in full
 
-Write this into `$SCRATCH/proxy.py`. It listens on loopback only, deletes the client's `Authorization` and `x-api-key`, attaches the token read from `--token-file`, forwards every other header as it arrived, streams the response back as it arrives, and prints **header names and statuses only** — never a header value. A request whose `Host` is not this loopback address and port is **refused with 403 and not forwarded**: loopback is reachable from any page a browser loads, so a proxy that answered any `Host` could be made to spend your quota, and a DNS-rebinding page could read what it relays. It also records **by name** which credential header the client sent (`authorization`, `x-api-key`, both, or neither), which is what says whether a call was made with the credential this check swaps at all. It prints nothing out of a body either, with the one opt-in exception step 7 turns on: `--error-fields` prints the error object's own `type` and `message` of an **error** response (status ≥ 400), reads no other key of the body, and prints a fixed placeholder when the body carries no error object or is not JSON. The option is off by default, and every other flag leaves a body unread: `--drop` and `--delay` are what steps 6 and 8 use.
+Write this into `$SCRATCH/proxy.py`. It listens on loopback only, deletes the client's `Authorization` and `x-api-key`, attaches the token read from `--token-file`, forwards every other header as it arrived, streams the response back as it arrives, and prints **header names and statuses only** — never a header value. Its one other mode is `--no-swap`, which replaces nothing and attaches nothing: the client's own credential is forwarded unchanged, so the credential the client sent is the one the API sees. Step 4's **observed control** — the same real token in the environment, through this proxy — runs under it, because the point of that call is to record *which* credential header the client sent, and a mode that replaced the header would destroy the thing being observed. A request whose `Host` is not this loopback address and port is **refused with 403 and not forwarded**: loopback is reachable from any page a browser loads, so a proxy that answered any `Host` could be made to spend your quota, and a DNS-rebinding page could read what it relays. It also records **by name** which credential header the client sent (`authorization`, `x-api-key`, both, or neither), which is what says whether a call was made with the credential this check swaps at all. It prints nothing out of a body either, with the one opt-in exception step 7 turns on: `--error-fields` prints the error object's own `type` and `message` of an **error** response (status ≥ 400), reads no other key of the body, and prints a fixed placeholder when the body carries no error object or is not JSON. The option is off by default, and every other flag leaves a body unread: `--drop` and `--delay` are what steps 6 and 8 use.
 
 ```python
 #!/usr/bin/env python3
 """Check 90's proxy. Loopback only.
 
 It does one thing to the request: it deletes the client's Authorization and
-x-api-key and attaches the token read from --token-file. Everything else is
-forwarded as it arrived, the response is streamed back as it arrives, and the
-only things this program ever prints are header NAMES, statuses, and -- with
---error-fields, which is off by default -- an error response's own `type` and
-`message`.
+x-api-key and attaches the token read from --token-file -- unless --no-swap is
+given, in which case it changes no header and attaches no credential at all, so
+the credential the client sent is the one the API sees. --no-swap is step 4's
+observed control: that call exists to record WHICH credential header the client
+sent, so it must run under a mode that does not replace it, and --token-file is
+not read at all. Everything else is forwarded as it arrived, the response is
+streamed back as it arrives, and the only things this program ever prints are
+header NAMES, statuses, and -- with --error-fields, which is off by default --
+an error response's own `type` and `message`.
 
 Two things it refuses or records on the way, both of them about headers it
 never prints a value of:
@@ -4634,7 +4676,7 @@ whatever the body holds.
 import argparse, http.client, http.server, json, time
 
 ARGS = None
-TOKEN = ""
+TOKEN = None            # the credential this program attaches; None: --no-swap
 HOP = {"authorization", "x-api-key", "host", "content-length", "connection",
        "transfer-encoding", "accept-encoding", "expect", "proxy-connection",
        "keep-alive", "te", "upgrade"}
@@ -4675,6 +4717,21 @@ def credential_headers(headers):
     swaps, and the client's own choice is what says whether it did: an API-key
     or Vertex run sends x-api-key or neither, however the environment looks."""
     return [n for n in ("authorization", "x-api-key") if headers.get(n)]
+
+
+def forward_names(headers, no_swap):
+    """The header NAMES forwarded upstream, other than the ones this program
+    writes itself. The client's Authorization and x-api-key are NOT among them
+    -- this program replaces them with the token -- unless --no-swap is on, in
+    which case nothing is replaced and they are forwarded exactly as they
+    arrived: the credential the client sent is then the one the API sees, which
+    is what makes step 4's observed control a control rather than a call the
+    proxy answered for."""
+    names = [n for n in sorted({k.lower() for k in headers.keys()})
+             if n not in HOP and n not in DROP]
+    if no_swap:
+        names += [n for n in ("authorization", "x-api-key") if headers.get(n)]
+    return names
 
 
 def error_fields(body):
@@ -4725,8 +4782,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         body = self.read_body()
         fact("credential-header",
              ",".join(credential_headers(self.headers)) or "(neither)")
-        sent = [n for n in sorted({k.lower() for k in self.headers.keys()})
-                if n not in HOP and n not in DROP]
+        sent = forward_names(self.headers, ARGS.no_swap)
         fact("request", self.command, self.path, "headers:",
              ",".join(sent) or "(none)")
         if ARGS.delay:
@@ -4737,7 +4793,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             conn.putrequest(self.command, self.path, skip_host=True,
                             skip_accept_encoding=True)
             conn.putheader("Host", ARGS.upstream)
-            conn.putheader("Authorization", "Bearer " + TOKEN)
+            if TOKEN is not None:          # --no-swap: the client's own, above
+                conn.putheader("Authorization", "Bearer " + TOKEN)
             for n in sent:
                 conn.putheader(n, self.headers[n])
             conn.putheader("Content-Length", str(len(body)))
@@ -4784,7 +4841,13 @@ def main():
     global ARGS, TOKEN, DROP
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8787)
-    ap.add_argument("--token-file", required=True)
+    ap.add_argument("--token-file",
+                    help="the token attached to every request in place of the "
+                         "client's own credential; required unless --no-swap")
+    ap.add_argument("--no-swap", action="store_true",
+                    help="replace no header and attach no credential: forward "
+                         "the client's own credential unchanged, and only "
+                         "record its name (step 4's observed control)")
     ap.add_argument("--upstream", default="api.anthropic.com")
     ap.add_argument("--delay", type=float, default=0.0)
     ap.add_argument("--drop", action="append", default=[])
@@ -4794,7 +4857,10 @@ def main():
                          "error response (status >= 400), and nothing else of "
                          "any body")
     ARGS = ap.parse_args()
-    TOKEN = open(ARGS.token_file, "rb").read().strip().decode()
+    if not ARGS.no_swap and not ARGS.token_file:
+        ap.error("--token-file is required unless --no-swap is given")
+    if not ARGS.no_swap:
+        TOKEN = open(ARGS.token_file, "rb").read().strip().decode()
     DROP = {d.lower() for d in ARGS.drop}
     server = http.server.ThreadingHTTPServer(("127.0.0.1", ARGS.port), Handler)
     print("chk90proxy listening on 127.0.0.1:%d, upstream %s" % (ARGS.port, ARGS.upstream),
@@ -4814,10 +4880,21 @@ The control first — the same call with **no proxy** and the real token in the 
 CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")" claude -p "say ok"
 ```
 
-Then the swap. The placeholder below is a literal that is not a credential, it is what Claude Code puts in the `Authorization` header, and the proxy replaces it before anything leaves your machine:
+**That call produces no `FACT credential-header` line, because no proxy is in its path** — nothing observed it, and a line cannot be read off a call nothing observed. What it settles is the token: it works or it does not. **Which credential the client sends with this environment is the next call's business**, and it is the same token and the same environment: the **observed control**, through the proxy in `--no-swap` mode, which replaces no header and attaches no credential, so the client's own credential is the one the API sees and the proxy's `FACT credential-header` line names what the client sent.
 
 ```bash
 [ -e "$SCRATCH/proxy.pid" ] && kill "$(cat "$SCRATCH/proxy.pid")" 2>/dev/null   # a rerun of this step
+python3 "$SCRATCH/proxy.py" --no-swap --port "$PORT" > "$SCRATCH/proxy.log" 2>&1 &
+echo $! > "$SCRATCH/proxy.pid"
+sleep 1
+ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")" \
+  claude -p "say ok"
+```
+
+Then the swap. The placeholder below is a literal that is not a credential, it is what Claude Code puts in the `Authorization` header, and the proxy replaces it before anything leaves your machine:
+
+```bash
+kill "$(cat "$SCRATCH/proxy.pid")" 2>/dev/null
 python3 "$SCRATCH/proxy.py" --token-file "$TOKEN_FILE" --port "$PORT" > "$SCRATCH/proxy.log" 2>&1 &
 echo $! > "$SCRATCH/proxy.pid"
 sleep 1
@@ -4825,7 +4902,7 @@ ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" CLAUDE_CODE_OAUTH_TOKEN="placeholder
   claude -p "say ok"
 ```
 
-**FACT:** the `FACT credential-header` line of each call — the **name** of the credential header the client actually sent, never a value, and the check that the control and the swap both ran on the credential this check is about: a control line reading `x-api-key`, or `(neither)` (a Vertex or Bedrock run, or one on an `apiKeyHelper`), means the control measured something else, and the outcome says nothing about the swap; whether each call succeeded, the exact text either printed, and the header names on the `FACT request` line in `$SCRATCH/proxy.log`. (`ANTHROPIC_API_KEY="placeholder-not-a-credential"` runs the other client path — the API-key one, whose header is `x-api-key` — and is worth recording separately if you want the two side by side; the subscription path, `CLAUDE_CODE_OAUTH_TOKEN`, is the one tier A is built on.)
+**FACT:** the `FACT credential-header` line of the **observed control** and of the swap — the **name** of the credential header the client actually sent, never a value — which is the check that these calls ran on the credential this check is about: the observed control's line reading `x-api-key`, or `(neither)` (a Vertex or Bedrock run, or one on an `apiKeyHelper`), means the environment still routes the client somewhere else, so the control measured something other than the setup-token and its outcome says nothing about the swap — record that and stop rather than reading U1 out of it, and the swap's own success in that case would be the token the proxy attached rather than the client's credential. The **direct control** above has no such line: no proxy is in its path, nothing observed that call, and its evidence is its own outcome in an environment hard stops 1 and 1b have cleared of every other credential. Whether each call succeeded, the exact text either printed, and the header names on the `FACT request` line in `$SCRATCH/proxy.log`. (`ANTHROPIC_API_KEY="placeholder-not-a-credential"` runs the other client path — the API-key one, whose header is `x-api-key` — and is worth recording separately if you want the two side by side; the subscription path, `CLAUDE_CODE_OAUTH_TOKEN`, is the one tier A is built on.)
 
 ### Check 90 step 5: a long prompt, streaming through the proxy
 
@@ -4838,7 +4915,7 @@ ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" CLAUDE_CODE_OAUTH_TOKEN="placeholder
 
 ### Check 90 step 6: dropping each optional header in turn (U1 — the list tier A is written against)
 
-For each name the step-4 log printed, other than `authorization` and `x-api-key` (which the proxy removes by design), restart the proxy with `--drop <name>` and re-run step 4:
+For each name the step-4 log printed, other than `authorization` and `x-api-key` (which the proxy removes by design), restart the proxy with `--drop <name>` and re-run step 4's **swap** call — the one whose credential the proxy supplies, since that is the path a dropped header has to survive:
 
 ```bash
 kill "$(cat "$SCRATCH/proxy.pid")" 2>/dev/null
@@ -4868,7 +4945,7 @@ ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" CLAUDE_CODE_OAUTH_TOKEN="placeholder
 
 ### Check 90 step 8: the client's timeout and retries (U4)
 
-Restart the proxy with `--delay 90` and re-run step 4, timing it; raise the delay if the first was survived.
+Restart the proxy with `--delay 90` and re-run step 4's **swap** call — again the proxied one, since this measures the client against a proxy that answers slowly — timing it; raise the delay if the first was survived.
 
 ```bash
 kill "$(cat "$SCRATCH/proxy.pid")" 2>/dev/null
@@ -4898,11 +4975,11 @@ pgrep -f proxy.py                     # nothing: the proxy is gone
 
 The token file is yours to keep or delete, and revoking a `claude setup-token` value is done from the Claude account's own settings, not here. **If you want to keep it, copy it out before this step** — mode 600, outside every repository — because the delete above takes the scratch directory and everything in it. **Nothing was created in any cloud project, no repository was touched and no `fugaro` installation was involved** — the Restore's assertion is that the scratch directory and the proxy are gone.
 
-**Passes when:** the guard's hard stops held — in particular that step 1 reported each of `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_VERTEX` and `CLAUDE_CODE_USE_BEDROCK` it cleared, or that there was none to clear, and that no `apiKeyHelper` is configured, because a control run with any of those in play proves nothing about the swap — every call's `FACT credential-header` line reads `authorization` (the credential this check swaps; `x-api-key` or `(neither)` is a call made on something else, and it is recorded and stops the check rather than answering U1) — the control and the swapped call both succeed (step 4), the long prompt streams through the proxy (step 5), the header-name list is recorded (step 6), U2's stated validity and U3's answer — or the explicit record that no usage limit was observable — are recorded (steps 2 and 7), U4's timings and retry count are recorded (step 8) — with, when step 7 met a limit, Claude Code's own wording for it — and the scratch directory and the proxy are gone (step 9).
+**Passes when:** the guard's hard stops held — in particular that step 1 reported each of `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_VERTEX` and `CLAUDE_CODE_USE_BEDROCK` it cleared, or that there was none to clear, and that no settings file it reads sets `apiKeyHelper` or an `env` key that would route the call — because a control run with any of those in play proves nothing about the swap — every call of this check **that goes through the proxy** (step 4's observed control and its swap, and steps 5 to 8) has a `FACT credential-header` line reading `authorization` (the credential this check swaps; `x-api-key` or `(neither)` is a call made on something else, and it is recorded and stops the check rather than answering U1) — the direct control at the top of step 4 carries no such line at all, having no proxy in its path, and its own part is that it succeeded with the real token in the environment hard stops 1 and 1b cleared — the control, the observed control and the swapped call all succeed (step 4), the long prompt streams through the proxy (step 5), the header-name list is recorded (step 6), U2's stated validity and U3's answer — or the explicit record that no usage limit was observable — are recorded (steps 2 and 7), U4's timings and retry count are recorded (step 8) — with, when step 7 met a limit, Claude Code's own wording for it — and the scratch directory and the proxy are gone (step 9).
 
-**Fails when:** the swapped call fails **and the control succeeded**. Separate the two before concluding anything: a 401 whose body says the credential is invalid, or a request the API never saw, is a bug in the little program above and not a finding about subscription traffic. A failure that survives that look is the plan's **Global Constraint 4**: the TIER A tasks are dropped, the service ships with a B-only cascade, and the plan is amended in a docs PR before any further task starts. A token that fails the **control** too says nothing about the swap — record it and stop.
+**Fails when:** the swapped call fails **and the control succeeded**. Separate the two before concluding anything: a 401 whose body says the credential is invalid, or a request the API never saw, is a bug in the little program above and not a finding about subscription traffic. A failure that survives that look is the plan's **Global Constraint 4**: the TIER A tasks are dropped, the service ships with a B-only cascade, and the plan is amended in a docs PR before any further task starts. A token that fails the **control** too says nothing about the swap — record it and stop. And a swapped call whose `FACT credential-header` line is not `authorization`, or an **observed control** whose line is not, is not a failure of the swap either: it is a call made on something else, recorded and stopped on, and U1 is not read out of it.
 
-**Paste back:** `claude --version`; which of the five credential variables step 1 cleared (or that there was none) and that no `apiKeyHelper` is configured; the token's stated validity with the file's length and mode; the `FACT credential-header` lines and the control's and the swapped call's outcomes and texts; every `FACT request` and `FACT response` line (header **names** and statuses); the per-header drop results; the usage-limit status, the error object's own `type` and `message` and the reset headers, or the explicit record that none was observable; the U4 timings with the attempt count; and, when step 7 met a limit, what the client itself printed for it. **Never paste the token, a header value, or a body** — step 7's `type` and `message` are the only body fields the record carries. Until this check runs, tier A is **UNVERIFIED** and its row above stays **NOT RUN**.
+**Paste back:** `claude --version`; which of the five credential variables step 1 cleared (or that there was none) and that no settings file it reads sets `apiKeyHelper` or a routing `env` key; the token's stated validity with the file's length and mode; the `FACT credential-header` lines — the observed control's and the swap's, since the direct control has none — and the control's, the observed control's and the swapped call's outcomes and texts; every `FACT request` and `FACT response` line (header **names** and statuses); the per-header drop results; the usage-limit status, the error object's own `type` and `message` and the reset headers, or the explicit record that none was observable; the U4 timings with the attempt count; and, when step 7 met a limit, what the client itself printed for it. **Never paste the token, a header value, or a body** — step 7's `type` and `message` are the only body fields the record carries. Until this check runs, tier A is **UNVERIFIED** and its row above stays **NOT RUN**.
 
 ## Check 91: Cloud Run streaming — one long call through a throwaway service (installation `fugaro`, sandbox only, never `belong`; run by you; NOT RUN)
 

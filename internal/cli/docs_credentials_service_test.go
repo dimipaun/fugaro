@@ -2,13 +2,17 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/agent"
 )
 
 // The credentials service's Slice 0 writes two live checks into
@@ -98,37 +102,218 @@ func TestChecklistCheck90GuardClearsTheClientCredentialEnvironment(t *testing.T)
 			t.Errorf("Check 90's guard does not clear the client's own credential environment: it lacks %q", want)
 		}
 	}
-	// The fourth way in is a setting, not a variable, so nothing above clears
-	// it: each file Claude Code reads one from is checked, and a configured
-	// helper stops the block before the control runs.
+	// The fifth way in is a settings file, not a variable, so nothing above
+	// clears it: Claude Code applies a settings file's `env` block to its own
+	// environment, which the repository's own design calls the equivalent of
+	// the process environment (design/agent-env.md §5.1, `checkSettingsRouting`
+	// in internal/runner/agentenv.go), so a file carrying ANTHROPIC_API_KEY, a
+	// CLAUDE_CODE_USE_* switch or an `apiKeyHelper` supplies exactly what the
+	// `unset` above removed. The guard reads every settings file Claude Code
+	// reads — the directory's two, the user's, $CLAUDE_CONFIG_DIR's, and the
+	// managed directory's of both platforms this project runs on — and stops on
+	// any routing key.
 	for _, want := range []string{
-		`jq -e 'has("apiKeyHelper")'`,
-		"$HOME/.claude/settings.json",
+		`$HOME/.claude/settings.json`,
+		".claude/settings.json",
 		".claude/settings.local.json",
+		"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json",
+		`done < <(find "/Library/Application Support/ClaudeCode" /etc/claude-code \`,
+		"-maxdepth 1 -type f 2>/dev/null)",
 	} {
-		if !strings.Contains(flat, want) {
-			t.Errorf("Check 90's guard does not look for an apiKeyHelper where Claude Code reads one: it lacks %q, so a helper can answer the control call", want)
+		if !strings.Contains(guard, want) {
+			t.Errorf("Check 90's guard does not read the settings location %q, so a routing key there is what the control call would authenticate with", want)
 		}
 	}
-	helper := strings.Index(flat, `has("apiKeyHelper")`)
-	if helper == -1 {
-		t.Fatal("Check 90's guard never checks for an apiKeyHelper")
+	// Every file the guard names has to be handed to the check that stops on a
+	// routing key — reading a list of paths and doing nothing with them reads
+	// as a guard and is not one.
+	for _, want := range []string{
+		`[ -f "$f" ] && check_settings "$f"`,
+		"while IFS= read -r f; do\n  check_settings \"$f\"\ndone < <(find",
+	} {
+		if !strings.Contains(guard, want) {
+			t.Errorf("Check 90's guard lists settings files without checking them: it lacks %q, so a routing key in one of them answers the control call", want)
+		}
 	}
-	// The stop has to be the one the helper check itself takes (the sections
+	// The keys are the repository's own list, not this check's invention:
+	// `agent.RoutingKeys` (internal/agent/settings.go) is the list the runner
+	// refuses a stage for, and the guard's list has to be that list, plus every
+	// CLAUDE_CODE_USE_* switch. One name added to either side alone fails here.
+	names := chk90RoutingNames(t, guard)
+	if !strings.Contains(guard, `startswith("CLAUDE_CODE_USE_")`) {
+		t.Error("Check 90's guard does not stop on a CLAUDE_CODE_USE_* provider switch in a settings env, which is the owner's own Vertex configuration")
+	}
+	for _, want := range []string{"apiKeyHelper", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"} {
+		if !strings.Contains(guard, want) {
+			t.Errorf("Check 90's guard's routing-key list does not name %s, so a settings file carrying it can answer the control call", want)
+		}
+	}
+	env := map[string]string{"CLAUDE_CODE_USE_VERTEX": "chk90-a-value", "SOMETHING_ELSE": "chk90-a-value"}
+	for _, n := range names {
+		env[n] = "chk90-a-value"
+	}
+	settings, err := json.Marshal(map[string]any{"apiKeyHelper": "chk90-a-helper", "env": env})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := agent.RoutingKeys(settings)
+	if err != nil {
+		t.Fatalf("agent.RoutingKeys refused a settings file built from Check 90's own list: %v", err)
+	}
+	want := append(append([]string{}, names...), "apiKeyHelper", "CLAUDE_CODE_USE_VERTEX")
+	sort.Strings(want)
+	if strings.Join(keys, ",") != strings.Join(want, ",") {
+		t.Errorf("Check 90's guard stops on %v while the runner's own check (agent.RoutingKeys) reports %v: the two lists have to be the same one", want, keys)
+	}
+	// The stop has to be the one the settings check itself takes (the sections
 	// have many other stops, so "an exit 1 somewhere after it" would pass a
-	// guard that only warns about the helper).
-	if !strings.Contains(flat, "claude may authenticate with what that helper prints instead of with the setup-token") ||
-		!strings.Contains(flat, `and re-run this block. Its value is not printed." >&2; exit 1; }`) {
-		t.Fatal("Check 90's guard finds an apiKeyHelper but does not stop on it: a configured helper would answer the control call")
+	// guard that only warns about the file).
+	// The stop is read inside the function that takes it: the step has other
+	// stops, so "an exit 1 somewhere after the message" would pass a guard that
+	// only warned about the file.
+	stop := shellFunc(t, guard, "check_settings")
+	i := strings.Index(stop, "Check 90 stopped: %s sets %s")
+	if i == -1 {
+		t.Fatal("Check 90's guard finds a routing key in a settings file but never says it stops on one")
 	}
-	if !strings.Contains(flat[helper:], "no apiKeyHelper is configured") {
-		t.Error("Check 90's guard does not report that no apiKeyHelper is configured when it passes, so an unconfigured helper and an unchecked one read the same")
+	if stop = stop[i:]; !strings.Contains(stop, "claude may answer the control call with something other than the setup-token") ||
+		!strings.Contains(stop, "exit 1") || !strings.Contains(stop, "Only the key names are printed, never a value") {
+		t.Fatal("Check 90's guard finds a routing key but does not stop on it without printing a value: a settings file would then answer the control call")
+	}
+	if !strings.Contains(flat, "no settings file this guard reads sets apiKeyHelper or an env key") {
+		t.Error("Check 90's guard does not report that no settings file routes when it passes, so a checked-clean environment and an unread settings file read the same")
 	}
 	if !strings.Contains(check, "can only succeed on the setup-token") {
 		t.Error("Check 90's section does not say why the client's credential variables are cleared: that the control can only succeed on the setup-token")
 	}
 	if !strings.Contains(docFlat(check), "uses Vertex, which is exactly why this stop is here") {
 		t.Error("Check 90 does not say why the two provider variables are cleared: with CLAUDE_CODE_USE_VERTEX left set (as on the owner's machine) the control measures Vertex")
+	}
+	if !strings.Contains(docFlat(check), "A settings file is a fifth way in, and the `unset` above does not touch it") {
+		t.Error("Check 90 does not say why the settings files are read at all: a settings `env` supplies what the `unset` cleared, so with the shell cleared such a file is the effective source")
+	}
+}
+
+// chk90RoutingNames reads the routing-key list out of Check 90's guard: the jq
+// program's array, which is the list the guard stops a settings file for.
+func chk90RoutingNames(t *testing.T, guard string) []string {
+	t.Helper()
+	i := strings.Index(guard, `(["`)
+	if i == -1 {
+		t.Fatal("Check 90's guard no longer lists the routing keys it stops on")
+	}
+	rest := guard[i+3:]
+	j := strings.Index(rest, `]) as $want`)
+	if j == -1 {
+		t.Fatal("Check 90's guard's routing-key list does not end in `]) as $want`")
+	}
+	var names []string
+	for _, m := range regexp.MustCompile(`"([A-Z0-9_]+)"`).FindAllStringSubmatch(rest[:j], -1) {
+		names = append(names, m[1])
+	}
+	if len(names) == 0 {
+		t.Fatal("Check 90's guard's routing-key list is empty, so it stops on no key at all")
+	}
+	return names
+}
+
+// shellFunc returns the source of the shell function `name` as a fenced block
+// defines it: from `name() {` to the line that closes it.
+func shellFunc(t *testing.T, block, name string) string {
+	t.Helper()
+	i := strings.Index(block, name+"() {")
+	if i == -1 {
+		t.Fatalf("the block no longer defines the shell function %s", name)
+	}
+	rest := block[i:]
+	j := strings.Index(rest, "\n}\n")
+	if j == -1 {
+		t.Fatalf("the shell function %s is not closed by a line carrying a lone `}`", name)
+	}
+	return rest[:j+2]
+}
+
+// TestChecklistCheck90GuardStopsOnASettingsEnvKey runs the guard's own decision
+// rather than reading it: the shell function is taken out of step 1 and given
+// settings files, and it has to name the key that routes — `apiKeyHelper`, or an
+// `env` key that sends the call or its credential somewhere this check is not
+// looking — and never print a value. A guard that read only the helper, or only
+// the shell, would leave a settings `env` as the effective source once the
+// `unset` above cleared the shell (design/agent-env.md §5.1), which is the
+// difference between a control that measures the setup-token and one that
+// measures a Vertex service account.
+//
+// Mutation (run, restore): drop `CLAUDE_CODE_USE_` from the jq filter, drop the
+// `env` walk, drop the `apiKeyHelper` entry, print the value beside the name —
+// the test fails on each.
+func TestChecklistCheck90GuardStopsOnASettingsEnvKey(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH: the guard's own decision was not run")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is not on PATH: the guard's own decision was not run")
+	}
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk90Heading)
+	guard := stepBlock(t, checklistPath, check, "### Check 90 step 1: setup and guard")
+	dir := t.TempDir()
+	script := filepath.Join(dir, "routing_keys.sh")
+	if err := os.WriteFile(script, []byte(shellFunc(t, guard, "routing_keys")+"\nrouting_keys \"$1\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		body string
+		want []string
+		bad  bool
+	}{
+		{name: "a provider switch in env", body: `{"env": {"CLAUDE_CODE_USE_VERTEX": "chk90-a-value"}}`, want: []string{"CLAUDE_CODE_USE_VERTEX"}},
+		{name: "an API key in env", body: `{"env": {"ANTHROPIC_API_KEY": "chk90-a-value"}}`, want: []string{"ANTHROPIC_API_KEY"}},
+		{name: "a credential in env, lower case", body: `{"env": {"anthropic_auth_token": "chk90-a-value"}}`, want: []string{"ANTHROPIC_AUTH_TOKEN"}},
+		{name: "a base URL in env", body: `{"env": {"ANTHROPIC_BASE_URL": "http://chk90-a-value"}}`, want: []string{"ANTHROPIC_BASE_URL"}},
+		{name: "a proxy in env", body: `{"env": {"HTTPS_PROXY": "http://chk90-a-value"}}`, want: []string{"HTTPS_PROXY"}},
+		{name: "an apiKeyHelper", body: `{"apiKeyHelper": "chk90-a-command"}`, want: []string{"apiKeyHelper"}},
+		{name: "an apiKeyHelper, other case", body: `{"APIKEYHELPER": "chk90-a-command"}`, want: []string{"apiKeyHelper"}},
+		{name: "two keys at once", body: `{"apiKeyHelper": "chk90-a-command", "env": {"CLAUDE_CODE_USE_BEDROCK": "0"}}`, want: []string{"CLAUDE_CODE_USE_BEDROCK", "apiKeyHelper"}},
+		{name: "an ordinary setting", body: `{"env": {"SOME_SETTING": "chk90-a-value"}, "model": "claude-sonnet-5"}`},
+		{name: "a routing name outside env", body: `{"ANTHROPIC_BASE_URL": "http://chk90-a-value"}`},
+		{name: "an env that is not an object", body: `{"env": "chk90-a-value"}`},
+		{name: "not settings JSON", body: "chk90-not-json", bad: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := filepath.Join(dir, "settings.json")
+			if err := os.WriteFile(file, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			out, err := exec.CommandContext(ctx, bash, script, file).CombinedOutput()
+			cancel()
+			got := string(out)
+			if strings.Contains(got, "chk90-a-value") || strings.Contains(got, "chk90-a-command") {
+				t.Fatalf("Check 90's guard printed a settings value, not only the key name: %s", got)
+			}
+			if tc.bad {
+				if err == nil {
+					t.Fatalf("Check 90's guard read %s as a settings file it understands, so it cannot say what Claude Code makes of it: %s", tc.body, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Check 90's guard failed on %s (%v): %s", tc.body, err, got)
+			}
+			var keys []string
+			for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
+				if line = strings.TrimSpace(line); line != "" {
+					keys = append(keys, line)
+				}
+			}
+			sort.Strings(keys)
+			sort.Strings(tc.want)
+			if strings.Join(keys, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("Check 90's guard on %s named %v; it has to name %v and nothing else", tc.body, keys, tc.want)
+			}
+		})
 	}
 }
 
@@ -1179,7 +1364,7 @@ func TestChecklistCheck47IsSupersededNotHeld(t *testing.T) {
 func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	const path = "docs/credentials-service/implementation-plan.md"
 	doc := readDoc(t, path)
-	gc1 := docTail(t, path, doc, "1. **This pull request changes nineteen files")
+	gc1 := docTail(t, path, doc, "1. **This pull request changes twenty files")
 	if i := strings.Index(gc1, "\n2. **"); i != -1 {
 		gc1 = gc1[:i]
 	}
@@ -1224,12 +1409,12 @@ func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	}
 	// ... and it has to name them: the constraint's "the documents" was four
 	// credential documents, and the pull request's diff
-	// (`git diff origin/integration-0.9.0 --name-status`) is the nineteen
+	// (`git diff origin/integration-0.9.0 --name-status`) is the twenty
 	// paths below — the eight of the credentials service and the register, the
 	// four D130 and D131 supersede or amend, the documents the reviews
 	// corrected where they contradicted the tree (this run's SECURITY.md,
 	// docs/design/project-named-oauth-tokens.md and §7 of
-	// docs/design/project-centric.md among them), and the five test files.
+	// docs/design/project-centric.md among them), and the six test files.
 	// `spec.md` is the one document under docs/credentials-service/ that is not
 	// among them — it is already on the base, added by #512 — so a constraint
 	// that claims to add it describes someone else's change, and one that
@@ -1240,7 +1425,7 @@ func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	// The documents are enumerated before the sentence about spec.md, which is
 	// the one credential document this pull request leaves alone: a path named
 	// only in the constraint's closing sentence ("no file beyond those
-	// nineteen") would otherwise answer for a document the pull request does
+	// twenty") would otherwise answer for a document the pull request does
 	// not change.
 	docs := gc1
 	if i := strings.Index(gc1, "`docs/credentials-service/spec.md`"); i != -1 {
@@ -1266,6 +1451,7 @@ func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 		"internal/cli/docs_bucket_iam_test.go",
 		"internal/cli/docs_checkout_test.go",
 		rulesGuard,
+		"internal/cli/run_oauth_regression_test.go",
 	} {
 		where := gc1
 		if !strings.HasPrefix(file, "internal/") {
@@ -1278,7 +1464,7 @@ func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	}
 	// The documents this round's security review added to the constraint, named
 	// as documents it changes and not only in passing: GC1's closing sentence
-	// names SECURITY.md too ("no file beyond those nineteen"), which is not the
+	// names SECURITY.md too ("no file beyond those twenty"), which is not the
 	// same claim as listing it among the changed documents.
 	if !strings.Contains(docs, "`SECURITY.md`, `docs/design/project-named-oauth-tokens.md`") {
 		t.Error("Global Constraint 1 does not name SECURITY.md and docs/design/project-named-oauth-tokens.md among the documents this pull request changes: the stopgap they promise to replace is stated there")
@@ -1292,8 +1478,8 @@ func TestCredentialsPlanSaysWhatThisPullRequestChanges(t *testing.T) {
 	if strings.Contains(gc1, "it adds and edits `spec.md`") {
 		t.Error("Global Constraint 1 still says this pull request adds spec.md, which the base already carries")
 	}
-	if !strings.Contains(doc, "the fourteen documents and the five test files that pin them") {
-		t.Error("the plan's review focus does not say what this pull request is: the fourteen documents and the five test files that pin them")
+	if !strings.Contains(doc, "the fourteen documents and the six test files that pin them") {
+		t.Error("the plan's review focus does not say what this pull request is: the fourteen documents and the six test files that pin them")
 	}
 	if strings.Contains(doc, "the four documents and the two test files") {
 		t.Error("the plan's review focus still counts four documents, but the pull request changes eight")
@@ -1904,6 +2090,19 @@ func TestChecklistCheck90ProxyRecordsTheCredentialHeaderName(t *testing.T) {
 	if !strings.Contains(src, "never a value") {
 		t.Error("Check 90's proxy does not say that the credential-header line is a name and never a value")
 	}
+	// The line is only a reading of the client's own choice if the mode that
+	// produces it does not replace that choice: `--no-swap` forwards the
+	// client's credential unchanged, which is what step 4's observed control
+	// runs under.
+	if !strings.Contains(src, `"--no-swap"`) || !strings.Contains(src, "def forward_names(") {
+		t.Error("Check 90's proxy has no --no-swap mode, so the control's credential-header line can only be read from a call whose credential the proxy supplied")
+	}
+	if !strings.Contains(src, "if not ARGS.no_swap and not ARGS.token_file:") {
+		t.Error("Check 90's proxy does not require --token-file outside --no-swap, so a swap started without one would attach an empty credential")
+	}
+	if !strings.Contains(src, "if TOKEN is not None:") {
+		t.Error("Check 90's proxy attaches the token even under --no-swap, so the observed control's credential is the proxy's and not the client's")
+	}
 	for _, want := range []string{
 		"FACT credential-header",
 		"(neither)",
@@ -1945,6 +2144,15 @@ func TestChecklistCheck90ProxyRecordsTheCredentialHeaderName(t *testing.T) {
 		"CRED x-api-key x-api-key",
 		"CRED both authorization,x-api-key",
 		"CRED neither (neither)",
+		// The swap drops the client's own credential headers -- it attaches the
+		// token in their place -- while --no-swap forwards them as they
+		// arrived, which is what makes one a swap and the other an observation.
+		"FWD swap Authorization (none)",
+		"FWD swap x-api-key (none)",
+		"FWD swap neither content-type",
+		"FWD noswap Authorization authorization",
+		"FWD noswap x-api-key x-api-key",
+		"FWD noswap neither content-type",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the proxy's credential-header decision is wrong for %q; it printed:\n%s", want, got)
@@ -1954,6 +2162,62 @@ func TestChecklistCheck90ProxyRecordsTheCredentialHeaderName(t *testing.T) {
 	// program that echoed a value would put it in the output this test reads.
 	if strings.Contains(got, "chk90-name-only") {
 		t.Error("the proxy's credential-header line carries a value, not only a name")
+	}
+}
+
+// TestChecklistCheck90ControlIsObservedThroughTheProxy: a `FACT credential-header`
+// line cannot be read off a call that has no proxy in its path, so step 4 runs
+// the control twice — once directly, where the question is only whether the
+// token works at all, and once through the proxy in `--no-swap` mode with the
+// same real token, which replaces no header and therefore records the credential
+// the client itself sent. The commands and the prose are pinned together: a step
+// 4 that stops running the observed control, or a claim that a proxy line
+// reports a call the proxy never saw, fails here.
+//
+// Mutation (run, restore): delete the `--no-swap` invocation, run it with the
+// placeholder and `--token-file` instead of the real token, or put the
+// unqualified claim back into step 4's FACT or into "Passes when" — the test
+// fails on each.
+func TestChecklistCheck90ControlIsObservedThroughTheProxy(t *testing.T) {
+	doc := readDoc(t, checklistPath)
+	check := docSection(t, checklistPath, doc, chk90Heading)
+	step4 := stepBlock(t, checklistPath, check, "### Check 90 step 4:")
+	var direct, observed bool
+	for _, b := range fencedBlocks(step4) {
+		token := strings.Contains(b, `CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")"`)
+		switch {
+		case token && strings.Contains(b, "--no-swap"):
+			observed = true
+			if !strings.Contains(b, `ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT"`) {
+				t.Error("Check 90's observed control does not send the call to the proxy, so its credential-header line is not about this call")
+			}
+		case token && !strings.Contains(b, "proxy.py"):
+			direct = true
+		}
+	}
+	if !direct {
+		t.Error("Check 90 step 4 no longer runs a control with no proxy in its path, so a token that does not work at all can be mistaken for a swap that failed")
+	}
+	if !observed {
+		t.Error("Check 90 step 4 does not run the control through the proxy in --no-swap mode, so nothing observes which credential the control call carried and the FACT asks for a line that call never produces")
+	}
+	fact := docFlat(step4)
+	if !strings.Contains(fact, "has no such line: no proxy is in its path") {
+		t.Error("Check 90's step 4 FACT does not say the direct control produces no credential-header line, so a line that cannot exist is asked for")
+	}
+	if !strings.Contains(fact, "FACT credential-header` line of the **observed control**") {
+		t.Error("Check 90's step 4 FACT does not name the observed control as the call whose credential-header line it reads")
+	}
+	if strings.Contains(fact, "line of each call") {
+		t.Error("Check 90's step 4 FACT asks for the credential-header line of each call again, including the direct control that cannot produce one")
+	}
+	passes := docTail(t, checklistPath, check, "**Passes when:**")
+	flatPasses := docFlat(passes)
+	if !strings.Contains(flatPasses, "every call of this check **that goes through the proxy**") {
+		t.Error("Check 90's 'Passes when' does not scope the credential-header line to the calls that go through the proxy, so it requires a line the direct control cannot produce")
+	}
+	if strings.Contains(flatPasses, "every call's `FACT credential-header` line") {
+		t.Error("Check 90's 'Passes when' still asks every call for a credential-header line, including the control that has no proxy in its path")
 	}
 }
 
@@ -1982,6 +2246,13 @@ for name, m in [("Authorization", headers(Authorization="Bearer chk90-name-only"
                                  **{"x-api-key": "chk90-name-only"})),
                 ("neither", headers(**{"content-type": "application/json"}))]:
     print("CRED " + name + " " + (",".join(mod.credential_headers(m)) or "(neither)"))
+def fwd(mod, m, no_swap):
+    return ",".join(sorted(mod.forward_names(m, no_swap))) or "(none)"
+for name, m in [("Authorization", headers(Authorization="Bearer chk90-name-only")),
+                ("x-api-key", headers(**{"x-api-key": "chk90-name-only"})),
+                ("neither", headers(**{"content-type": "application/json"}))]:
+    print("FWD swap " + name + " " + fwd(mod, m, False))
+    print("FWD noswap " + name + " " + fwd(mod, m, True))
 `
 
 // TestChecklistCheck91RestoreKeepsItsRecordsUntilTheCountsAreZero: the scratch
