@@ -71,21 +71,64 @@ const BLOCK_DISPLAY = /^(block|flow-root|flex|grid|list-item|table|table-row|tab
  */
 const ITEM_DISPLAY = /^(flex|inline-flex|grid|inline-grid)$/
 
-/** The classes a selector names, whatever else it carries (`[data-astro-cid-x]`, a tag, `>`). */
+/** A selector list split on its top-level commas: commas inside `()` or `[]` are not separators. */
+function selectorParts(selector) {
+  const parts = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < selector.length; i++) {
+    const ch = selector[i]
+    if (ch === '(' || ch === '[') depth++
+    else if (ch === ')' || ch === ']') depth--
+    else if (ch === ',' && depth === 0) {
+      parts.push(selector.slice(start, i))
+      start = i + 1
+    }
+  }
+  parts.push(selector.slice(start))
+  return parts
+}
+
+/**
+ * The classes of a selector's **subject**: the last compound of each comma-separated selector,
+ * which is the element the rule actually styles. `.a .b{display:block}` says what `.b` is laid
+ * out as and nothing about `.a`, so crediting the declaration to `.a` too would hand an
+ * exemption to a class the page never gave one, and hide a genuinely glued word behind it.
+ * Combinators inside `:is()`/`:not()` or an attribute selector are not the selector's own, so
+ * the scan tracks brackets and parentheses.
+ */
 function classNames(selector) {
-  return [...selector.matchAll(/\.([A-Za-z_][-\w]*)/g)].map((match) => match[1])
+  const names = []
+  for (const part of selectorParts(selector)) {
+    let depth = 0
+    let start = 0
+    for (let i = 0; i < part.length; i++) {
+      const ch = part[i]
+      if (ch === '(' || ch === '[') depth++
+      else if (ch === ')' || ch === ']') depth--
+      else if (depth === 0 && /[\s>+~]/.test(ch)) start = i + 1
+    }
+    for (const match of part.slice(start).matchAll(/\.([A-Za-z_][-\w]*)/g)) names.push(match[1])
+  }
+  return names
 }
 
 /**
  * The `display` each class is given by a page's own inlined stylesheet. Astro inlines every
  * stylesheet a page uses into its `<style>` blocks, so this is the whole of the CSS that page
- * carries. A later rule wins, as it does in a browser, for the class it names.
+ * carries. A later rule wins for the class it names — **and only a rule that declares a
+ * `display` counts**: a rule that says nothing about it leaves what an earlier rule recorded,
+ * the way a browser does. Recording the absence would take the exemption away again, and the
+ * hero's row is the site's own case (`.hero-actions{display:flex}` followed by
+ * `.hero-actions a{…}` reads as "not laid out" without this, and the two capitalised links
+ * beside each other would be reported as a seam).
  */
 function displaysOf(doc) {
   const displays = new Map()
   for (const style of findAll(doc, 'style')) {
     for (const rule of cssRules(style.raw ?? '')) {
-      const display = cssDeclarations(rule.body).find(([property]) => property === 'display')?.[1] ?? ''
+      const display = cssDeclarations(rule.body).find(([property]) => property === 'display')?.[1]
+      if (display === undefined) continue
       for (const name of classNames(rule.selector)) displays.set(name, display)
     }
   }
@@ -214,5 +257,50 @@ test('the rule refuses a run-together word, and only where a reader sees one', (
     verdict(t, row('display:inline')).join('\n'),
     /"startedHow"/,
     'the gate accepts a glued row even when the stylesheet does not lay its children out apart, so the flex exemption is not being read from the page at all',
+  )
+
+  // Two ways a stylesheet can be read wrong on the way in, each in the site's own shape.
+  //
+  // The first: a rule that declares no `display` must not take back what an earlier rule
+  // recorded. `.hero-actions{display:flex}` is followed on the homepage by rules for what is
+  // inside it, and a reading that credits those with `display: ""` loses the flex exemption and
+  // reports the row's two links as a seam.
+  const cascade = (extra) =>
+    `<!doctype html><html><body><style>.row{display:flex}${extra}</style><div class="row"><a href="/x">Get started</a><a href="/y">How it works</a></div></body></html>`
+  assert.deepEqual(
+    verdict(t, cascade('.row a{color:red}')),
+    [],
+    'the gate refuses the flex row once a later rule says nothing about `display`, so a rule with no declaration of its own is being read as one that takes the exemption away',
+  )
+  // The same rule written again for the same class, still saying nothing about `display`: the
+  // exemption an earlier rule gave stands, and the row is quiet.
+  assert.deepEqual(
+    verdict(t, cascade('.row{color:red}')),
+    [],
+    'the gate refuses the flex row because a later rule for the same class carries no `display`, so a rule that declares nothing is being read as one that declares the row inline',
+  )
+  // And the control: the same row with no `display` written for it anywhere is glued, so the
+  // two cases above are not passing because the reading refuses nothing.
+  assert.match(
+    verdict(t, row('color:red')).join('\n'),
+    /"startedHow"/,
+    'the gate accepts the glued row when the stylesheet writes no `display` for it at all, so the cascade cases above would pass even if the reading exempted every row',
+  )
+
+  // The second: a declaration belongs to the selector's **subject**, never to a class the
+  // selector names further up. `.holder .item{display:block}` is about `.item`; `.holder` is an
+  // ancestor the rule only names, so its own text is inline text and a word glued to it is a
+  // seam like any other.
+  const subject = (selector) =>
+    `<!doctype html><html><body><style>${selector}</style><p><span class="holder">read only</span>fugaro</p></body></html>`
+  assert.match(
+    verdict(t, subject('.holder .item{display:block}')).join('\n'),
+    /"onlyfugaro"/,
+    'the gate exempts a class the selector names as an ancestor and not as its subject, so a word glued to that class is never reported',
+  )
+  assert.deepEqual(
+    verdict(t, subject('.holder{display:block}')),
+    [],
+    'the gate refuses the seam when the same declaration is written on the class itself, so the case above is not reading the subject at all',
   )
 })
