@@ -14,7 +14,9 @@
 //     against a positive allow-list of shapes. The scrub's own removed values are
 //     checked in memory, on a scrub of a SYNTHETIC input, never from a file: a
 //     file of hashes of removed values is a dictionary oracle and is not kept.
-//   - **the scrub refuses what it does not know**, and is deterministic.
+//   - **the scrub refuses what it does not know**, and is deterministic once its
+//     clock shift is given -- the shift itself is drawn per run (see
+//     scrub-vocabulary.test.ts and the README).
 
 import { readFileSync } from 'node:fs'
 

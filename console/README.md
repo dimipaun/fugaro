@@ -732,7 +732,9 @@ present); **every value in the file is invented**, so the header says
 installation produced these values). The raw recording is never committed and is
 deleted after the scrub. **It is not reproducible from this repository, by
 design:** the committed fixture is the only artefact, and nothing is kept that
-could lead back to a removed value (no list, no hash, no salt).
+could lead back to a removed value (no list, no hash, no salt). *A digest file
+was in this branch's history before review removed it; the paragraph three
+below says what that leaves exposed, and it is not nothing.*
 
 ```
 node node_modules/typescript/bin/tsc -p tsconfig.record-fixture.json
@@ -748,22 +750,62 @@ instead gets the removed values in memory, through a callback the scrub run is
 given, on a scrub of a synthetic input; nothing derived from a removed value is
 written anywhere.
 
-The scrub (`scrub.ts`) is deterministic and fail-closed: an unknown key is a
-refusal, and every key it copies has its own typed rule (numbers are copied; an
-enum is copied only if the value is in the CLI's vocabulary; a free string is
-refused unless the key has an explicit replacement). It replaces the project,
-repo, slug, run ID, title (`# Task: example task N`), models, requester and kill
-actor, PR URL, workflow, recipe and every dollar amount, and **shifts the whole
-clock by a fixed offset** (`now`, `day`, the header's `recorded`, `kill.at`, and
-the run IDs' timestamps, which are the shifted `now` minus the run's own age, so
+**That file is still in this repository's history, and this is the honest
+account of it.** PR #643's branch kept `removed-values.sha256` in its first
+commit (`d41f726b`, the digests of the values the scrub had replaced) until a
+review removed it. The PR was **squash-merged**, so that commit is not on `main`
+and no commit on `main` ever held it — but the pull request's own history on
+GitHub still does, and a squash does not delete anything from the remote. The
+file held unsalted SHA-256 digests, which are a dictionary: a small integer, a
+dollar amount or a repository name is recovered from a bare digest by trying
+candidates, so the values it covered must be treated as **exposed**, not merely
+removed. Those values were a public repository's name, the project's name and
+some development spend figures. Nothing here undoes that; the note is here
+because a reader of this file is the person most likely to believe the opposite.
+
+The scrub (`scrub.ts`) is fail-closed: an unknown key is a refusal, and every key
+it copies has its own typed rule (numbers are copied; an enum is copied only if
+the value is in the CLI's vocabulary; a free string is refused unless the key has
+an explicit replacement). It replaces the project, repo, slug, run ID, title
+(`# Task: example task N`), models, requester and kill actor, PR URL, workflow,
+recipe and every dollar amount, and **shifts the whole clock by a random offset
+drawn for the run** (`now`, `day`, the header's `recorded`, `kill.at`, and the
+run IDs' timestamps, which are the shifted `now` minus the run's own age, so
 every `age_seconds` stays consistent). Totals, percentages, `runs` and
 `run_hours` are recomputed from the invented rows so the document's invariants
 hold. The result then goes through the console's redactor with a public key (as
 `synthetic.ndjson` does), which is why the repo and slug read as pseudonyms
 (`r-...`, `slug-...`) and the project as `<project>`. Kept as the CLI wrote
 them, and only if in the fixed vocabulary listed in `scrub.ts` (`VOCAB`,
-`VERIFY_SHAPE`, `QUEUED_NOTE_SHAPE`): mode, stage, round, health, deadline, auth,
+`VERIFY_KINDS`, `QUEUED_NOTE_SHAPE`): mode, stage, round, health, deadline, auth,
 verify, connection state, `queued_note`, and the ages and burn numbers.
+
+**The clock shift is drawn, not committed** (owner review of PR #643, item 2).
+`scrubDocument` takes the offset as an argument and, given none, draws a
+crypto-random one of up to ±400 days; the tool never passes one and never prints
+it. So the scrub is **not reproducible byte for byte between runs**, and that is
+the point: the fixture of PR #643 was shifted by `TIME_SHIFT_MS`, a constant in
+the file, and that constant added back to its `now` gave the real recording
+instant exactly. The committed fixture was re-scrubbed from its own structure
+under a drawn offset (`console: re-scrub the normal fixture…`), so the file on
+`main` is not a shift of anything and the old constant is dead against it — it
+still recovers the instant from the *history* of that write, which is why the
+paragraph above says what it says. Nothing but the clock, the run IDs, the
+header's `recorded` and its checksum moved in that re-scrub: the invented
+project, repos, slugs, titles, amounts and verify lines are the ones they were.
+
+**The vocabularies are derived from the Go source, and a Go test holds them
+there.** Every list in `scrub.ts` names the writer it came from, and
+`TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource`
+(`internal/cli/docs_desktop_console_scrub_test.go`) reads the lists back out of
+the file and compares them with the constants the source writes them from — the
+runner's stage names, the config's allowed `agent.auth`, the budget's modes, the
+three verify kinds, and the connection, health, deadline, status and outcome
+tables. The list that was too *short* is the failure that review found: a stage
+the runner writes and the scrub does not know is not a leak, it is a recorder
+that throws on an ordinary run. `bootstrap`, `provision`, `review_first` and
+`finalize` were missing from `stage`, `vertex` from `auth`, and `warn` was a mode
+no CLI writes.
 
 **Not recorded, and stay invented**: `silent-then-lost`, `kill-mid-feed` and
 `repo-at-cap` (they need cloud writes), and the other cases still await a
@@ -779,7 +821,13 @@ read it.
 Held by `test/unit/normal-fixture.test.ts`: the shape, the invariants, a scan of
 every decoded key and string value (after NFKC, case and zero-width folding)
 against forbidden substrings and a positive allow-list of shapes, and the scrub's
-refusals, each mutation-proven.
+refusals, each mutation-proven. Held by `test/unit/scrub-vocabulary.test.ts`: that
+the scrub accepts every stage, auth and mode the CLI writes and refuses what it
+does not, that the verify shape is the one `internal/verify/verify.go` writes
+(every tail variant, the `FAILED` spelling, and the 120-rune clip) and refuses a
+line it cannot, that the nullable Go fields may be null, and that the clock shift
+is drawn per run — all mutation-proven, and the vocabularies themselves pinned
+against the Go source by the drift test named above.
 
 ### The eight recordings, and why seven of them are missing
 
