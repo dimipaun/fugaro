@@ -54,6 +54,19 @@ func job(image string, cmd, args []any) ResourceChange {
 	return rc("google_cloud_run_v2_job", map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{"containers": []any{c}}}}}}, map[string]any{}, "create")
 }
 
+// service is the credentials service as modules/installation/credentials.tf
+// declares it: one container running a base image of this run's registry,
+// with the invoker IAM check on.
+func service(image string) ResourceChange {
+	return rc("google_cloud_run_v2_service",
+		map[string]any{"invoker_iam_disabled": false, "template": []any{map[string]any{"containers": []any{map[string]any{"image": image}}}}},
+		map[string]any{}, "create")
+}
+
+// credImage is the credentials service's image: fugaro-credentials is a base
+// image of this run's registry like fugaro-base, so it passes the same check.
+const credImage = "us-east5-docker.pkg.dev/proj-1/fugaro-base/fugaro-credentials:0.9.5"
+
 func sched(uri, email string) ResourceChange {
 	return rc("google_cloud_scheduler_job", map[string]any{"http_target": []any{map[string]any{"uri": uri, "oauth_token": []any{map[string]any{"service_account_email": email}}}}}, map[string]any{}, "create")
 }
@@ -231,6 +244,33 @@ func TestCoverNotCovered(t *testing.T) {
 		"command unknown on the known sweep":                  {[]ResourceChange{jobUnknown([]any{"/usr/local/bin/fugaro"}, []any{"budget", "history", "--sweep"}, "command")}, false},
 		"containers unknown":                                  {[]ResourceChange{rc("google_cloud_run_v2_job", map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{}}}}}, map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{"containers": true}}}}}, "create")}, false},
 		"image unknown":                                       {[]ResourceChange{jobUnknown(nil, nil, "image")}, false},
+		// The credentials service (D146, D147). Its two attributes are what
+		// the row above the type's other checks is about: the invoker IAM
+		// check on (a run.invoker grant is the only way in), and a base image
+		// of this run's registry. The account and the grants beside it are
+		// the rows after these.
+		"credentials service as the module writes it": {[]ResourceChange{service(credImage)}, true},
+		"credentials service with the invoker check off": {[]ResourceChange{rc("google_cloud_run_v2_service",
+			map[string]any{"invoker_iam_disabled": true, "template": []any{map[string]any{"containers": []any{map[string]any{"image": credImage}}}}}, map[string]any{}, "create")}, false},
+		"credentials service with the invoker check unknown": {[]ResourceChange{rc("google_cloud_run_v2_service",
+			map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"image": credImage}}}}}, map[string]any{"invoker_iam_disabled": true}, "create")}, false},
+		"credentials service with a foreign image":         {[]ResourceChange{service("evil.example/x:1")}, false},
+		"credentials service with another project's image": {[]ResourceChange{service("us-east5-docker.pkg.dev/other/fugaro-base/fugaro-credentials:0.9.5")}, false},
+		"credentials service running a command": {[]ResourceChange{rc("google_cloud_run_v2_service",
+			map[string]any{"invoker_iam_disabled": false, "template": []any{map[string]any{"containers": []any{map[string]any{"image": credImage, "command": []any{"sh"}, "args": []any{"-c", "x"}}}}}}, map[string]any{}, "create")}, false},
+		"credentials service with unknown containers": {[]ResourceChange{rc("google_cloud_run_v2_service",
+			map[string]any{"invoker_iam_disabled": false, "template": []any{map[string]any{}}}, map[string]any{"template": []any{map[string]any{"containers": true}}}, "create")}, false},
+		"credentials service with no container": {[]ResourceChange{rc("google_cloud_run_v2_service",
+			map[string]any{"invoker_iam_disabled": false}, map[string]any{}, "create")}, false},
+		// Its grants: run.invoker for a run's own job account, and nothing
+		// else, for anyone else.
+		"invoker on the credentials service for a job account":           {[]ResourceChange{grant("google_cloud_run_v2_service_iam_member", "serviceAccount:fugaro-acme-0123abcd@proj-1.iam.gserviceaccount.com", "roles/run.invoker")}, true},
+		"invoker on the credentials service for the credentials account": {[]ResourceChange{grant("google_cloud_run_v2_service_iam_member", "serviceAccount:fugaro-credentials@proj-1.iam.gserviceaccount.com", "roles/run.invoker")}, true},
+		"invoker on the credentials service for a listed person":         {[]ResourceChange{grant("google_cloud_run_v2_service_iam_member", "user:me@example.com", "roles/run.invoker")}, false},
+		"invoker on the credentials service for a stranger":              {[]ResourceChange{grant("google_cloud_run_v2_service_iam_member", "serviceAccount:evil@proj-1.iam.gserviceaccount.com", "roles/run.invoker")}, false},
+		"a write role on the credentials service":                        {[]ResourceChange{grant("google_cloud_run_v2_service_iam_member", "serviceAccount:fugaro-acme-0123abcd@proj-1.iam.gserviceaccount.com", "roles/run.developer")}, false},
+		"the credentials account reading a secret":                       {[]ResourceChange{grant("google_secret_manager_secret_iam_member", "serviceAccount:fugaro-credentials@proj-1.iam.gserviceaccount.com", "roles/secretmanager.secretAccessor")}, true},
+		"the credentials account reading a secret in another project":    {[]ResourceChange{grant("google_secret_manager_secret_iam_member", "serviceAccount:fugaro-credentials@other.iam.gserviceaccount.com", "roles/secretmanager.secretAccessor")}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var p *Plan
@@ -391,6 +431,15 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 		"modules/installation/bucket.tf":  {`uniform_bucket_level_access = true`, `public_access_prevention    = "enforced"`},
 		"modules/firebase/firebase.tf":    {`identitytoolkit.googleapis.com`, `securetoken.googleapis.com`},
 		"modules/installation/budget.tf":  {`billing_account = var.budget.billing_account`},
+		// The credentials service: attributes() refuses it unless the
+		// invoker IAM check is on and its image is this run's own, so the
+		// module must keep both — and the image must come from the opt-in's
+		// variable, not from a literal this check would then be measuring.
+		"modules/installation/credentials.tf": {`invoker_iam_disabled = false`, `image = local.credentials.image`},
+		// Its one grant: run.invoker, made to the job account the same file's
+		// own account resource is (grantRules has that role for that type,
+		// toAccounts alone).
+		"modules/workflow/sa.tf": {`role     = "roles/run.invoker"`, `member   = google_service_account.job.member`},
 	}
 	for file, wants := range pins {
 		got := all[filepath.Join(root, "gcp", file)]

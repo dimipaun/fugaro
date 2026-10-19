@@ -26,7 +26,18 @@ var allowedTypes = map[string]bool{
 	"google_billing_budget":                          true,
 	"google_cloud_run_v2_job":                        true,
 	"google_cloud_run_v2_job_iam_member":             true,
-	"google_cloud_scheduler_job":                     true,
+	// The credentials service (design docs/credentials-service, D146, D147):
+	// a Cloud Run service, not a job, because a run reaches it with an HTTP
+	// call and it answers for as long as the call streams. It is Fugaro's own
+	// plumbing in the installation root, which `fugaro managed apply` never
+	// deploys; it is listed here because init's one confirmation covers the
+	// installation root's plan, and that plan holds it once an installation
+	// opts in. attributes() below holds it to the two things that make it
+	// safe to confirm: the invoker IAM check on (a run.invoker grant is the
+	// only way in) and a base image of this run's registry.
+	"google_cloud_run_v2_service":            true,
+	"google_cloud_run_v2_service_iam_member": true,
+	"google_cloud_scheduler_job":             true,
 	// The Batch backend's own root (design compute-backend §8.1 task 6) is a
 	// root of its own, applied by its own stage behind --provision-batch and
 	// its own typed confirmation: these three types are the NAT, its router
@@ -146,6 +157,15 @@ var grantRules = map[string]map[string]who{
 		customKey + "fugaroJobRunner": toPeople | toAccounts,
 		"roles/run.invoker":           toAccounts,
 	},
+	// The credentials service's one grant: a run's job account may call the
+	// cascade with its own identity (D135). A person may not (the service
+	// reads model credentials, and a person reaching it is a review the
+	// installation did not ask for), and no role but invoker is ever granted
+	// on it — an editor or an admin on the service could redeploy it with
+	// another image.
+	"google_cloud_run_v2_service_iam_member": {
+		"roles/run.invoker": toAccounts,
+	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,
 	},
@@ -217,6 +237,13 @@ type Cover struct {
 // and this one differ.
 const CloudAssetRole = "fugaroCloudAssetReader"
 
+// CredentialsAccountID is the credentials service's account (D146, D147).
+// Unlike the other fixed accounts it is not created on every installation —
+// only an installation that has opted in has one — but its ID is fixed, so a
+// plan may name it: the service's own secret grants go to it, and no other
+// principal may read a model credential once the opt-in is on.
+const CredentialsAccountID = "fugaro-credentials"
+
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
 // fixed service account IDs a toAccounts row accepts. Job and build accounts
 // are fugaro-<readable>-<8 hex>. The deployer account (DeployerAccountID) is
@@ -224,7 +251,7 @@ const CloudAssetRole = "fugaroCloudAssetReader"
 // else, so it is its own kind of principal (toDeployer).
 var (
 	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, DeployerRole, DeployerScopedRole}
-	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
+	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload", CredentialsAccountID}
 )
 
 // The deployer account of D75, and the condition that fences the half of it
@@ -1486,6 +1513,43 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 			}
 			if !known {
 				return "runs a command the modules do not set"
+			}
+			if why := c.checkSpecs(m, unk, append(slices.Clone(cp), "env"), proj); why != "" {
+				return why
+			}
+		}
+	case "google_cloud_run_v2_service":
+		// The credentials service (D146, D147). Two attributes are what
+		// stand between a covered plan and a service that reads the
+		// project's model credentials for anyone who can reach it: the
+		// invoker IAM check, which makes a run.invoker grant the only way
+		// in, and the image, which must be this run's own. A container
+		// command or args would be a second entry point the modules never
+		// set, so neither is allowed.
+		if a["invoker_iam_disabled"] != false {
+			return "a Cloud Run service whose invoker IAM check is off (invoker_iam_disabled is not false): any caller could reach it"
+		}
+		cs := objects(at(a["template"], "containers"))
+		unk := rc.Change.AfterUnknown
+		if unknownAt(unk, "template", 0, "containers") {
+			return "containers that are not known"
+		}
+		if len(cs) == 0 {
+			return "no container"
+		}
+		for i, m := range cs {
+			cp := []any{"template", 0, "containers", i}
+			for _, attr := range []string{"image", "command", "args"} {
+				if unknownAt(unk, append(slices.Clone(cp), attr)...) {
+					return "a container " + attr + " that is not known"
+				}
+			}
+			if img := str(m["image"]); !c.baseImageOK(img, proj) {
+				return fmt.Sprintf("runs the image %q, which is outside this run's registry %s/%s/ or not a base image of it in the shape this installation pins (%s/%s/%s/<owner>/fugaro-<kind>:<version>@sha256:<digest>)",
+					img, c.Registry, proj, c.Registry, proj, c.Ghcr)
+			}
+			if cmd, args := strList(m["command"]), strList(m["args"]); len(cmd) > 0 || len(args) > 0 {
+				return "runs a command or args the modules do not set"
 			}
 			if why := c.checkSpecs(m, unk, append(slices.Clone(cp), "env"), proj); why != "" {
 				return why

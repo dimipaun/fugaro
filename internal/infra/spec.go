@@ -140,6 +140,10 @@ type InstallationOutputs struct {
 	// roles) and its Cloud Run job.
 	HistoryServiceAccount string `json:"history_service_account"`
 	HistoryJob            string `json:"history_job"`
+	// CredentialsService is null for an installation that has not opted in
+	// (D147, the default), which is every installation applied before the
+	// opt-in existed.
+	CredentialsService *CredentialsService `json:"credentials_service"`
 }
 
 // RoleIDs are the custom roles' full names, projects/<p>/roles/<id>.
@@ -250,6 +254,19 @@ type CheckJobSpec struct {
 	GitSecretID string `json:"git_secret_id,omitempty"`
 }
 
+// CredentialsService is the installation's credentials service (design
+// docs/credentials-service, D146, D147), nil for an installation that has
+// not opted in: the Cloud Run service that alone holds the project's model
+// credentials. A repository root grants its job accounts run.invoker on it
+// and drops those secrets from their accessor grants (the workflow and
+// project modules), so this is the value that decides whether a run's job
+// holds a model credential at all.
+type CredentialsService struct {
+	Name    string   `json:"name"`
+	Region  string   `json:"region"`
+	Secrets []string `json:"secrets"` // logical names, project-wide containers
+}
+
 // RepoInstallation are the installation values a repository root needs.
 type RepoInstallation struct {
 	// ProjectName comes from the installation's outputs; the repository
@@ -263,6 +280,10 @@ type RepoInstallation struct {
 	RoleIDs                 RepoRoleIDs `json:"role_ids"`
 	Launchers               []string    `json:"launchers"`
 	Operators               []string    `json:"operators"`
+	// CredentialsService is absent (the key is not written at all) for an
+	// installation that has not opted in, so its repositories' tfvars are
+	// byte for byte what they were before the opt-in existed.
+	CredentialsService *CredentialsService `json:"credentials_service,omitempty"`
 }
 
 // RepoRoleIDs are the custom roles a repository root grants.
@@ -895,6 +916,8 @@ func Repo(in Inputs) (RepoSpec, error) {
 			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
 			Launchers:               c.inst.Launchers,
 			Operators:               c.inst.Operators,
+
+			CredentialsService: c.inst.CredentialsService,
 		},
 		GitHubAppID:              c.appID,
 		RepoURL:                  c.repoURL,

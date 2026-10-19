@@ -31,12 +31,24 @@ resource "google_service_account" "credentials" {
 # Deploying or updating the service acts as its account, so the operators
 # hold actAs on it and nobody else does: not the launchers, who never apply
 # the installation, and no repository's job account (Check 94 asserts it).
+#
+# The account is a literal path built from var.project and the opt-in's own
+# account ID, not the account resource's name attribute: that attribute is
+# unknown at plan time (the account is created by this same apply), and a
+# plan whose service-account grant does not say which account it is on is one
+# init's cover cannot check — onDeployer (internal/infra/tf) refuses it in a
+# module that creates the deployer account, which this one does, so the apply
+# would ask its own confirmation for the module's own grant. The ID is
+# validated as a service account ID by the variable, so the literal cannot
+# name anything but the account above.
 resource "google_service_account_iam_member" "credentials_operator" {
   for_each = toset(local.credentials == null ? [] : var.operators)
 
-  service_account_id = google_service_account.credentials[0].name
+  service_account_id = "projects/${var.project}/serviceAccounts/${var.credentials_service.account_id}@${var.project}.iam.gserviceaccount.com"
   role               = "roles/iam.serviceAccountUser"
   member             = each.value
+
+  depends_on = [google_service_account.credentials]
 }
 
 # The model secrets, and only those: one grant per secret the opt-in names,

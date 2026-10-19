@@ -2210,7 +2210,16 @@ var moduleResourceRE = regexp.MustCompile(`(?m)^resource\s+"([^"]+)"\s+"([^"]+)"
 // not produce for either fixture, each with the reason it is off. Every entry
 // is a hole in this guard, so it takes a reason: a resource that is merely
 // missing because nobody regenerated the golden does not belong here.
-var conditionalResources = map[string]string{}
+var conditionalResources = map[string]string{
+	// The job account's way into the credentials service (D135). It exists
+	// only for an installation that has opted in (credentials_service, D147),
+	// and both fixtures are installations that have not: their plan is the
+	// plan of every repository today, byte for byte, so neither Addresses()
+	// carries it. With the opt-in on the resource is created, and it is the
+	// retirement of an address in the state that is the hazard this guard
+	// watches for -- not its absence from a fixture that cannot produce it.
+	"google_cloud_run_v2_service_iam_member.credentials": "the credentials service is opt-in (D147) and both fixtures have it off",
+}
 
 // TestAddressesCoversEveryModuleResource is the drift guard the goldens
 // cannot be: every resource the repo and workflow modules declare must show

@@ -61,7 +61,7 @@ func managedPlanConfigured(rc ResourceChange, expressions map[string]json.RawMes
 const managedAccount = ManagedPrefix + "run@proj-1.iam.gserviceaccount.com"
 
 // TestManagedAllowedTypesGolden pins both halves of the decision against
-// literals: the 14 types a managed plan may contain, and the 12 entries of
+// literals: the 14 types a managed plan may contain, and the 17 entries of
 // allowedTypes it may not. A widening — or a type dropped without a reason —
 // is a diff in this test.
 func TestManagedAllowedTypesGolden(t *testing.T) {
@@ -86,6 +86,11 @@ func TestManagedAllowedTypesGolden(t *testing.T) {
 	}
 	wantDropped := []string{
 		"google_billing_budget",
+		// The credentials service (0.9.5, D146, D147): Fugaro's own
+		// plumbing in the owner-run installation root, the one identity
+		// that reads the project's model credentials.
+		"google_cloud_run_v2_service",
+		"google_cloud_run_v2_service_iam_member",
 		// main's compute module's network (0.9.0), dropped on the merge of
 		// main into next-0.8.5 as the fail-closed default.
 		"google_compute_firewall",

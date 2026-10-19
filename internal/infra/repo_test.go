@@ -100,6 +100,117 @@ func TestRepoRootVarsMatchModule(t *testing.T) {
 	}
 }
 
+// objectAttributes are the attribute names a variable's object type
+// declares, at the top level only: terraform fmt indents them by four
+// spaces, so a nested object's own attributes (deeper) are not counted and
+// neither is the type line itself.
+func objectAttributes(t *testing.T, path, name string) []string {
+	t.Helper()
+	b, err := fs.ReadFile(terraform.FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var block string
+	for _, m := range variableRE.FindAllStringSubmatch(string(b), -1) {
+		if m[1] == name {
+			block = m[2]
+		}
+	}
+	if block == "" {
+		t.Fatalf("%s declares no variable %s", path, name)
+	}
+	// Only the type: a validation block's own arguments are indented the
+	// same way, and the object's attributes are what is being checked.
+	i := strings.Index(block, "type = object({")
+	if i < 0 {
+		t.Fatalf("%s's variable %s is not an object type", path, name)
+	}
+	block = block[i:]
+	if end := strings.Index(block, "\n  })"); end >= 0 {
+		block = block[:end]
+	}
+	var got []string
+	for _, line := range strings.Split(block, "\n") {
+		if !strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "     ") || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if attr, _, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			got = append(got, strings.TrimSpace(attr))
+		}
+	}
+	return got
+}
+
+// Both `installation` objects — the repository root's and the repository
+// module's — name every attribute of RepoInstallation. An object-typed
+// variable silently drops a key its type does not name, so an attribute the
+// Go side writes into a repository's tfvars and Terraform does not declare
+// would disappear between `fugaro init --repo` and the plan with nothing
+// failing anywhere: the credentials service (D146, D147) is the second
+// value to travel this way, project_secrets (design
+// docs/design/project-secrets.md §5) the first.
+func TestRepoInstallationAttributesAreDeclared(t *testing.T) {
+	var want []string
+	typ := reflect.TypeFor[RepoInstallation]()
+	for i := range typ.NumField() {
+		tag, _, _ := strings.Cut(typ.Field(i).Tag.Get("json"), ",")
+		if tag != "-" {
+			want = append(want, tag)
+		}
+	}
+	slices.Sort(want)
+	for _, path := range []string{"gcp/roots/repo/variables.tf", "gcp/modules/repo/variables.tf"} {
+		got := objectAttributes(t, path, "installation")
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: the installation object declares %q, RepoInstallation's fields are %q", path, got, want)
+		}
+	}
+}
+
+// An installation that has not opted in writes no credentials_service key
+// into a repository's tfvars at all, so every existing repository's inputs
+// are what they were before the opt-in existed (and the Terraform variable's
+// own default, null, is what reads its absence). An installation that has
+// opted in carries the value through unchanged: the repository root hands it
+// to the workflow module, which drops those secrets from the job accounts'
+// accessor grants and grants them run.invoker on the service instead.
+func TestRepoVarsCarryTheCredentialsService(t *testing.T) {
+	in := sandboxInputs(t, m5Additions)
+	rootVars := func() []byte {
+		t.Helper()
+		spec, err := Repo(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := RepoRootVars(spec, RepoRootOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	if data := rootVars(); strings.Contains(string(data), "credentials_service") {
+		t.Errorf("an installation without the opt-in wrote a credentials_service key:\n%s", data)
+	}
+	in.Installation.CredentialsService = &CredentialsService{
+		Name:    "fugaro-credentials",
+		Region:  "us-east5",
+		Secrets: []string{"claude-oauth-token"},
+	}
+	var doc struct {
+		Installation struct {
+			CredentialsService *CredentialsService `json:"credentials_service"`
+		} `json:"installation"`
+	}
+	if err := json.Unmarshal(rootVars(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	got := doc.Installation.CredentialsService
+	if got == nil || !reflect.DeepEqual(*got, *in.Installation.CredentialsService) {
+		t.Errorf("the tfvars' installation.credentials_service = %+v, want %+v", got, in.Installation.CredentialsService)
+	}
+}
+
 func TestInstallationStateExists(t *testing.T) {
 	ctx := context.Background()
 	f := newCloud(t)

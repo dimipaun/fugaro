@@ -84,6 +84,10 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/modules/installation/versions.tf",
 		"gcp/modules/installation/variables.tf",
 		"gcp/modules/installation/outputs.tf",
+		// The credentials service (0.9.5, D146, D147): the opt-in's account,
+		// its secret grants and the Cloud Run service every job account is
+		// granted run.invoker on.
+		"gcp/modules/installation/credentials.tf",
 		"gcp/roots/installation/main.tf",
 		"gcp/roots/installation/variables.tf",
 		"gcp/roots/installation/outputs.tf",
@@ -1157,7 +1161,7 @@ var (
 	// build-submitter id is the installation's own role.
 	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|var\.build_submitter_role|google_project_iam_custom_role\.(launcher|build_submitter|token_minter|job_runner|reaper|preload_builder)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
 	// The member expressions an IAM member may use.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.history\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials)\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
 
 	// A custom role of this project, spelled as the literal path
 	// "projects/${var.project}/roles/<id>" rather than read from the role
@@ -2974,8 +2978,13 @@ func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
 	for _, want := range []string{
 		// One member per secret this job mounts, and none for a secret it
 		// does not: the list is the job's own secret_env, not the
-		// installation's secrets and not another job's.
-		"for_each = toset(values(var.job.secret_env))",
+		// installation's secrets and not another job's — less the model
+		// secrets when the installation has the credentials service on
+		// (0.9.5, D143, D146: the service's own account is then the only
+		// identity that reads one, and the job calls the cascade with its
+		// own identity instead, Check 94). The drop is the same one
+		// modules/workflow/sa.tf makes, by logical name.
+		"for_each = toset([\n    for name in values(var.job.secret_env) :\n    name if var.credentials_service == null || !contains(var.credentials_service.secrets, name)\n  ])",
 		// The secret's own ID, at the secret level: never the project.
 		"secret_id = var.secrets[each.value]",
 		"role      = \"roles/secretmanager.secretAccessor\"",

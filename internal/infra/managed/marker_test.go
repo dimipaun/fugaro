@@ -1559,7 +1559,7 @@ var runAccountGrants = setOf(
 	// The job account's (a run's own credential): the runs bucket under its
 	// condition, its secrets one by one, Vertex AI.
 	`google_project_iam_member | "roles/aiplatform.user" | project=var.project | google_service_account.job.member | for_each= | perms=`,
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset(values(var.workflow.secret_env)) | perms=`,
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset([ for name in values(var.workflow.secret_env) : name if var.credentials_service == null || !contains(var.credentials_service.secrets, name) ]) | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
 	// The same account's read-only grant on the budget token objects, in the
 	// workflow module (tokens/<slug>/, one repository) and in the project
@@ -1568,10 +1568,24 @@ var runAccountGrants = setOf(
 	// neither can write, replace or remove a token object — and what the
 	// shared job reads is sealed ciphertext (budget-token-channel.md §7.2).
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
+	// The credentials service's own account (0.9.5, D146, D147): the model
+	// secrets the opt-in names, one grant per container, and nothing else —
+	// no bucket, no project role, and no actAs but the operators' (which is
+	// in the operators' section below). The same drop above is what takes
+	// those secrets away from every job account once the opt-in is on, so
+	// this account is the only Fugaro identity that reads a model credential
+	// (Check 94).
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.project_secrets[each.value] | google_service_account.credentials[0].member | for_each=toset(local.credentials == null ? [] : local.credentials.secrets) [local.credentials=var.credentials_service] [local.credentials.secrets=] | perms=`,
+	// The job account's way into the cascade: run.invoker on the credentials
+	// service, the only door its ingress leaves (invoker_iam_disabled false,
+	// modules/installation/credentials.tf). It is a call, not a credential:
+	// the account holds no model secret any more.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.name | google_service_account.job.member | for_each= | perms=`,
+
 	// A project job account's (phase 3, modules/project/sa.tf): the same
 	// shape, its secrets keyed by the profile's mounts; its bucket grant is
 	// the workflow job's key above, under the widened condition.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset(values(var.job.secret_env)) | perms=`,
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset([ for name in values(var.job.secret_env) : name if var.credentials_service == null || !contains(var.credentials_service.secrets, name) ]) | perms=`,
 
 	// The build account's (a build's credential): its secrets, its own
 	// registry, the shared ones read-only, builds/ under its condition, actAs
@@ -1620,6 +1634,13 @@ var runAccountGrants = setOf(
 	`google_cloud_run_v2_job_iam_member | var.job_runner_role | name=google_cloud_run_v2_job.this[0].name | each.value | for_each=var.workflow.deploy_job ? toset(var.launchers) : toset([]) | perms=?`,
 	`google_logging_log_view_iam_member | "roles/logging.viewAccessor" | name=google_logging_log_view.runs[0].name | each.value | for_each=var.log_isolation ? toset(concat(var.launchers, var.operators)) : toset([]) | perms=`,
 	`google_secret_manager_secret_iam_member | each.value.role | secret_id=google_secret_manager_secret.project[each.value.secret].secret_id | each.value.member | for_each=merge( { for k, v in local.operator_project_secrets : "${k} secretVersionAdder" => merge(v, { role = "roles/secretmanager.secretVersionAdder" }) }, { for k, v in local.operator_project_secrets : "${k} viewer" => merge(v, { role = "roles/secretmanager.viewer" }) }, ) [local.operator_project_secrets={ for p in setproduct(keys(var.project_secrets), var.operators) : "${p[0]} ${p[1]}" => { secret = p[0], member = p[1] } }] | perms=?`,
+	// The operators' actAs on the credentials account: applying the service
+	// acts as it, and nobody else may. A conditional set of people, so the
+	// scan cannot resolve it (peopleSet) and it is pinned whole like the two
+	// below — the grant is the same toset(var.operators) every other
+	// operator grant is.
+	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id="projects/${var.project}/serviceAccounts/${var.credentials_service.account_id}@${var.project}.iam.gserviceaccount.com" | each.value | for_each=toset(local.credentials == null ? [] : var.operators) [local.credentials=var.credentials_service] | perms=`,
+
 	`google_secret_manager_secret_iam_member | each.value.role | secret_id=google_secret_manager_secret.this[each.value.secret].secret_id | each.value.member | for_each=merge( { for k, v in local.operator_secrets : "${k} secretVersionAdder" => merge(v, { role = "roles/secretmanager.secretVersionAdder" }) }, { for k, v in local.operator_secrets : "${k} viewer" => merge(v, { role = "roles/secretmanager.viewer" }) }, ) [local.operator_secrets={ for p in setproduct(keys(var.repo.secrets), var.installation.operators) : "${p[0]} ${p[1]}" => { secret = p[0], member = p[1] } }] | perms=?`,
 )
 
