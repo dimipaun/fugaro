@@ -1570,6 +1570,49 @@ func TestByTierCountersAreValidatedLikeSpent(t *testing.T) {
 	}
 }
 
+// TestAgentEntryFieldsAreTemplateChildren closes the loop between the Go type
+// and the rules: `/agents/$slug/$run` is a closed allowlist, so a field
+// budget.AgentEntry marshals that the template does not name is a write every
+// run makes and the database refuses. The two new children of this task were
+// found exactly that way -- the plan says the template is a closed allowlist,
+// "so these must be added here" -- and this test is what makes the next field
+// impossible to add on one side only.
+//
+// Hand mutation this fails on: adding a field to budget.AgentEntry without
+// naming it in the template (or the reverse: removing a child the struct still
+// writes).
+func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
+	// Every field set, so an omitempty one is marshalled too.
+	entry := budget.AgentEntry{
+		Repo: "aurora/web", Workflow: "implement", Title: "t", Stage: "code", Round: 1, Verify: "go",
+		Coder: "m", Reviewer: "m", Recipe: "r", Auth: "cascade", PRURL: "https://example.invalid/1",
+		Action: "tool Bash", Tokens: 1, StartedAt: 1, StageStartedAt: 1, StageDeadline: 1, UpdatedAt: 1,
+		Spent: 1, Halted: "budget", Credential: "a1", WaitingUntil: 2, RequestedBy: "alice@example.invalid",
+	}
+	b, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		t.Fatal(err)
+	}
+	paths := generatedPaths(t)
+	parent := "agents/" + slugForPath + "/$run"
+	for f := range fields {
+		if _, ok := paths[parent+"/"+f]; !ok {
+			t.Errorf("budget.AgentEntry marshals %q and the template does not generate /%s: the entry's $other guard refuses the write", f, parent+"/"+f)
+		}
+	}
+	// The interesting two, named so that a rename has to be argued: the
+	// cascade's current credential and the instant it expects to resume at.
+	for _, f := range []string{"credential", "waiting_until"} {
+		if _, ok := fields[f]; !ok {
+			t.Errorf("budget.AgentEntry no longer marshals %q", f)
+		}
+	}
+}
+
 // TestRulesPreexistingPathsUnchanged: every location the generation-3 document
 // carried (testdata/rules.generation3.json, a frozen copy of the golden as main
 // had it) still carries byte-for-byte the same rule. The new document may only
