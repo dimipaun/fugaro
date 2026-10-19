@@ -1648,6 +1648,8 @@ func TestTheUnquoterDecodesWhatItKeeps(t *testing.T) {
 		{"the first character above the BMP", `"\uD800\uDC00"`, "\U00010000"},
 		{"the last character, at the top of both ranges", `"\uDBFF\uDFFF"`, "\U0010FFFF"},
 		{"a lowercase hex escape whose first digit is the a of a-f", `"\uabcd"`, "\uabcd"},
+		{"a lowercase hex escape carrying the last letter of a-f", `"\uf0f0"`, "\uf0f0"},
+		{"an uppercase hex escape carrying the last letter of A-F", `"\uF0F0"`, "\uF0F0"},
 		{"an uppercase hex escape whose first digit is the A of A-F", `"\uABCD"`, "\uABCD"},
 		{"a pair beside a lone half", `"\uD83D\uDE00\uD800"`, "\U0001F600\xed\xa0\x80"},
 		{"a lone half beside a pair", `"\uD800\uD83D\uDE00"`, "\xed\xa0\x80\U0001F600"},
