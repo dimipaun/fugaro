@@ -63,19 +63,25 @@ import (
 // row, a `## Check 68:` section or a `## Check 57:` section; stop the `| 57 |`
 // row pointing at compute-backend.md §7.2; restore "The convention is the
 // register's and the mobile plan's"; drop the §5.3 attribution or lowercase the
-// plan's quoted sentence; reword a quoted sentence in its source file; or
-// delete a quotation from §13 — each fails this test.
+// plan's quoted sentence; reword a quoted sentence in its source file; delete a
+// quotation from §13; or point §5.3's 70b sentence at "the count below" when the
+// count is above it — each fails this test.
 
 // voiceSwitchSinceBaseline is the register's checks written since the baseline
-// a573870, as §13 of the design names them: the list both halves of the case
-// below read, and the list the two comments there state the length of.
+// a573870. §13 of the design names eight of them in its dated count — 49, 50,
+// 52, 58, 69a, 69b, 70a and 70c, read at 07022b1 — and names the ninth, 70b, in
+// its 70a–70c table row, which says all three are written; the run stops at 70c
+// because it is a count taken at 07022b1, before this PR's `| 70b |` row existed.
+// It is the list both halves of the case below read, and the list the two
+// comments there state the length of.
 var voiceSwitchSinceBaseline = []string{"49", "50", "52", "58", "69a", "69b", "70a", "70b", "70c"}
 
 // voiceSwitchSinceBaselineCount is that list's length as the comments state it.
 // It is written out rather than derived from `len` on purpose: the drift it
 // pins is a comment that says one number over a list of another — which is what
-// happened, "the eight written since the baseline" over nine entries — and a
-// derived count would follow the list and hide it.
+// happened here, "the eight written since the baseline" over nine entries (the
+// eight §13 counts, plus the 70b this PR writes) — and a derived count would
+// follow the list and hide it.
 const voiceSwitchSinceBaselineCount = 9
 
 func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
@@ -124,12 +130,15 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	// 1b. §13's reading of the register, read from the register rather than
 	// trusted — both directions of it. The row run it writes out is 1 (and 1b),
 	// 2–18 (11 also carries 11b), 19–23 and 26–38, 40–47, 49, 50, 52, 57, 58,
-	// 69a, 69b, 70a, 70b and 70c, so every one of those must have a row; and every
-	// number it says is written as a `## Check` section (19–47 with 39 living
-	// in the retire-image-mirror plan as 39a–39f, plus the nine written since
-	// the baseline) must have one. Without this half the test pins only what
-	// the register must NOT have: deleting `| 57 |`, `| 11b |` or `## Check 19`
-	// left it green.
+	// 69a, 69b, 70a and 70c — that is the run as §13 writes it, and it stops at
+	// 70c because the run is a count taken at 07022b1, before this PR's `| 70b |`
+	// row existed; §13's 70a–70c row is what names 70b as written, so the list
+	// this half wants is the run plus 70b. Every number in that list must have a
+	// row; and every number §13 says is written as a `## Check` section (19–47
+	// with 39 living in the retire-image-mirror plan as 39a–39f, plus the nine
+	// written since the baseline — §13's eight and 70b) must have one. Without
+	// this half the test pins only what the register must NOT have: deleting
+	// `| 57 |`, `| 11b |` or `## Check 19` left it green.
 	rows := summaryRows(t, checklistPath, checklist)
 	wantRows := []string{"1", "1b", "11b"}
 	for _, run := range []struct{ from, to int }{{2, 23}, {26, 38}, {40, 47}} {
@@ -140,7 +149,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	wantRows = append(wantRows, "49", "50", "52", "57", "58", "69a", "69b", "70a", "70b", "70c")
 	for _, n := range wantRows {
 		if !rows[n] {
-			t.Errorf("%s's summary table has no `| %s |` row, but %s §13's row run names %s as one; correct the design's reading or this test's list", checklistPath, n, designPath, n)
+			t.Errorf("%s's summary table has no `| %s |` row, but %s §13 names %s as a written row — in its row run, or, for 70b, in its 70a–70c row; correct the design's reading or this test's list", checklistPath, n, designPath, n)
 		}
 	}
 	// 24 and 25 are the reverse — a `## Check` section each and no summary row,
@@ -461,7 +470,9 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 // all three are written), so this is the same recount in the document that was missed.
 // The row and the section themselves are pinned by
 // TestWebsiteChecklistHasCheck70bRow and TestWebsiteChecklistHasCheck70bSection; what is
-// pinned here is that this document's sentence agrees with them.
+// pinned here is that this document's sentence agrees with them — and that it points at
+// the count it is about: §5.3's count is above the sentence, and nothing below it carries
+// one, so the direction word is pinned too.
 func TestVoiceDocRegisterNoteCounts70bAsWritten(t *testing.T) {
 	const voicePath = "docs/design/voice.md"
 	voice := flat(readDoc(t, voicePath))
@@ -472,10 +483,18 @@ func TestVoiceDocRegisterNoteCounts70bAsWritten(t *testing.T) {
 	for _, want := range []string{
 		"69c is not in the register",
 		"70b is written since that count",
+		"written since the count above by the website redesign's check-70b work",
 	} {
 		if !strings.Contains(voice, want) {
 			t.Errorf("%s §5.3's register note no longer carries %q: the note has to say which of the website redesign's three checks is written and which is not, or the reader takes the count above it for the register as it stands", voicePath, want)
 		}
+	}
+	// And the direction it points in. The count this sentence is about is §5.3's dated
+	// paragraph above it (the eight written since a573870, counted at 07022b1) and the note
+	// above the sentence in the same paragraph ("takes the list above to nine"); nothing below
+	// the sentence carries a count, so "the count below" sends the reader to nothing.
+	if strings.Contains(voice, "written since the count below") {
+		t.Errorf("%s §5.3 says 70b is \"written since the count below\", and the count is above the sentence: §5.3's dated paragraph is where the eight written since a573870 are counted, and the note above this sentence says it takes \"the list above\" to nine", voicePath)
 	}
 }
 
