@@ -705,17 +705,25 @@ recommended.
 
 ### Task P7.1: The config plugin, the native files, and the development build — SECURITY-SENSITIVE
 
-**Files.** `mobile/app.config.js` (the plugin entry, the two native config paths resolved from
-the environment, and the build-time guard), `mobile/eas.json` (**PR #675's file**, delivered
-from EAS file secrets), `mobile/firebase.json`, `mobile/.gitignore`, `mobile/package.json`,
+**Files.** `mobile/app.config.js` (**modified** — the plugin entry, the two native config paths
+resolved from the environment, and the build-time guard), `mobile/eas.json` (**modified** — the
+two `env` entries in each of its three build profiles), `mobile/firebase.json`, `mobile/.gitignore`, `mobile/package.json`,
 `mobile/README.md`, and `mobile/src/app-config.test.js` (the tracked-file and ignore rules,
-and the extension of the existing credential walk to `app.config.js`).
-**Depends on.** PR #675 (`app.config.js` and `eas.json` are **not on `main`**); **D199**,
-**D200**, and **D194** (the project exists before its file can).
+the extension of the existing credential walk to `app.config.js`, and **the ad-ID test**: the
+two Android ad switches `false`, no `AD_ID` permission, no `AdSupport` linked, with a planted
+control — the plan's §4.2 and §7.4, and the website's *the app carries no advertising
+identifier* sentence is what it holds).
+**Depends on.** **D199**, **D200**, and **D194** (the project exists before its file can). Both
+store-path files are on `main` — **PR #675** merged them — so P7.1 modifies them in place and
+waits on no pull request.
 **Verification.** `cd mobile && npm test` — both native config paths are untracked and
 ignored; `app.config.js` carries no `AIza…`-shaped value (against the planted control the file
 already has); a build profile with no `GOOGLE_SERVICES_JSON` in its `env` is refused by the
-guard's pure part; and the existing "no credential, no installation" walk still passes.
+guard's pure part; the existing "no credential, no installation" walk still passes; and the
+ad-ID walk passes. **The plan's §4.2 marks two names VERIFY** — the iOS pod/plugin option that
+links the ad-ID-free Analytics variant, and whether the Android permission removal is the
+plugin's own option — resolved here by reading the pinned `@react-native-firebase` source and
+the generated native files.
 **Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.** It decides which project
 the app's **default** Firebase app is, and it is the change that would put a native config
 file in the tree if it were wrong.
@@ -773,8 +781,9 @@ any step of 111, 112 or 113.**
 
 **P7.1 → P7.3 → P7.4 → P7.5 is the critical path**, four deep, and **P7.2 and P7.3 are
 parallel** (different directories, no shared file — `mobile/src/telemetry/` is split into two
-files with two owners rather than one directory with two). **PR #675 holds P7.1 and PR #689
-holds P7.4.** `mobile/` has **no CI job** (`.github/workflows/ci.yml` runs four jobs and none
+files with two owners rather than one directory with two). **PR #675 has merged and left P7.1's
+two store-path files on `main`** (`app.config.js`, `eas.json` — P7.1 modifies them in place),
+and **PR #689 holds P7.4.** `mobile/` has **no CI job** (`.github/workflows/ci.yml` runs four jobs and none
 of them runs the app's tests), so every `npm test` above runs **where someone runs it**, and a
 job for the app would be a **new staged workflow** — **this phase stages none**, and the owner
 decides whether one is wanted when the first task lands.
@@ -833,7 +842,7 @@ decides whether one is wanted when the first task lands.
 | P6.11 *(approved 2026-10-18)* | P6.4 | D126 |
 | P6.12 *(approved 2026-10-18)* | P3.5, P6.1, P6.2, P6.5 | D162, D169 |
 | P6.13 *(approved 2026-10-18)* | P6.7 | D118, D168 (amended) |
-| P7.1 *(proposed 2026-10-19)* | **PR #675** (`app.config.js`, `eas.json` — not on `main`) | **D199, D200**, **D194** (the project is the owner's step) |
+| P7.1 *(proposed 2026-10-19)* | none — **PR #675 merged `app.config.js` and `eas.json`, and P7.1 modifies them in place** | **D199, D200**, **D194** (the project is the owner's step) |
 | P7.2 *(proposed 2026-10-19)* | P7.1 | **D195**, D124 |
 | P7.3 *(proposed 2026-10-19)* | P7.1 | **D196** |
 | P7.4 *(proposed 2026-10-19)* | P7.3 | **D197**, and **PR #689** whichever way it lands |
@@ -872,8 +881,10 @@ decides whether one is wanted when the first task lands.
 9. **Phase 7 (telemetry) is proposed and unbuilt, and its own plan carries the UNVERIFIED list.**
    Added 2026-10-19. The flag names it requires, the EAS file-secret mechanism and
    `@react-native-firebase`'s support for a second Firebase project in one binary are **read
-   from memory of the SDKs' documentation and not from a page read today**; `mobile/app.config.js`
-   and `mobile/eas.json` are **PR #675's and are not on `main`**; `dev.fugaro.app` is the
+   from memory of the SDKs' documentation and not from a page read today — **including the
+   option that must switch ad-ID collection off on each platform (P7.1, and the plan's §14)**;
+   `mobile/app.config.js` and `mobile/eas.json` are **PR #675's and are on `main`** since that
+   branch was merged, so P7.1 modifies them in place; `dev.fugaro.app` is the
    brief's name for the first internal build's environment and **is in no file**; and the
    website's privacy page is stated as **PR #689** leaves it, which is not on this base. Each
    is listed in the plan's §14 rather than smoothed over, and P7.1 confirms the first three

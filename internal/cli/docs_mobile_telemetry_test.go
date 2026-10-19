@@ -17,10 +17,14 @@ import (
 // 2026-10-19, recorded there as D193).
 //
 // Nothing in the plan is built — there is no @react-native-firebase dependency,
-// no mobile/app.config.js, no mobile/eas.json and no google-services.json
-// anywhere in the tree — so no test can hold its behaviour. What a reader can
-// check today, and what this file pins, is the four things a plan of this shape
-// has to get right and a reviewer is least likely to check twice:
+// no mobile/firebase.json and no google-services.json anywhere in the tree — so
+// no test can hold its behaviour. The two store-path files it EDITS do exist
+// (mobile/app.config.js and mobile/eas.json, merged by PR #675), which is why
+// they are not in telemetryWillCreate and why
+// TestTelemetryPlanModifiesTheFilesPR675Merged holds the plan's sentences about
+// them. What a reader can check today, and what this file pins, is the things a
+// plan of this shape has to get right and a reviewer is least likely to check
+// twice:
 //
 //  1. **the numbers it takes.** D193–D200 is claimed to be the next FREE block,
 //     which is a claim about the tree, so it is read from the tree and not from
@@ -50,6 +54,14 @@ import (
 //     its own list rather than from planPaths, because planPaths cannot see the
 //     iOS one at all (see telemetryNativeConfig), and the blind spot is asserted
 //     rather than assumed.
+//  5. **the app carries no advertising identifier.** The website's privacy page
+//     promises it, so it is a requirement rather than a hope: the two Android
+//     switches `false`, the `AD_ID` permission removed from the merged manifest,
+//     the iOS Analytics variant that links no `AdSupport`, each read per row and
+//     each backed by the build-time test of §7.4 — which is what
+//     TestTelemetryPlanRequiresNoAdvertisingIdentifier holds. The two names that
+//     cannot be stated from memory are marked VERIFY with the way to verify them
+//     named, and the test requires that marking rather than a guessed option.
 //
 // The last assertion is the path walk the other plan pins use (planPaths): every
 // repository path the document names must exist, so a plan that cites a file the
@@ -63,7 +75,13 @@ import (
 // write as its highest section; un-date the Check 110 row's "nothing above 109"
 // claim; record 105, 106 and 107 as taken in the coordinator's checks row; take a
 // number in D193–D200 from a third document under docs/; or cite a path the tree
-// does not have — this test fails, each of them.
+// does not have — this test fails, each of them. And, for the corrections the
+// rounds since then forced: let `mobile/app.config.js` back into
+// telemetryWillCreate, say the plan's two store-path files are not on `main`, put
+// "D192's rule" back on P7.4's word ceilings, let either README row claim 110 for
+// its own design, flip a §4.2 ad-ID row to `true`, drop the iOS row's VERIFY, or
+// empty the ad-ID requirement out of §7.4 or out of P7.1 — each of those fails
+// too, run and restored like the rest.
 const telemetryPlan = "docs/plans/2026-10-19-mobile-telemetry.md"
 
 // The two allocation documents, and the shapes a block is written in there:
@@ -405,15 +423,18 @@ func TestTelemetryPlanNamesTheFlagsExactly(t *testing.T) {
 	// own merge (the plan's §14 says so), and if one is renamed there the pin
 	// moves with it — which is the point of pinning it.
 	for _, flag := range []string{
-		"firebase_analytics_collection_enabled",    // Android, AndroidManifest meta-data
-		"FIREBASE_ANALYTICS_COLLECTION_ENABLED",    // iOS, Info.plist
-		"firebase_crashlytics_collection_enabled",  // Android, AndroidManifest meta-data
-		"FirebaseCrashlyticsCollectionEnabled",     // iOS, Info.plist
-		"google_analytics_adid_collection_enabled", // Android: the advertising id stays off
-		"analytics_auto_collection_enabled",        // firebase.json, react-native block
-		"crashlytics_auto_collection_enabled",      // firebase.json, react-native block
-		"setAnalyticsCollectionEnabled",            // the runtime call, after consent
-		"setCrashlyticsCollectionEnabled",          // the runtime call, after consent
+		"firebase_analytics_collection_enabled",                     // Android, AndroidManifest meta-data
+		"FIREBASE_ANALYTICS_COLLECTION_ENABLED",                     // iOS, Info.plist
+		"firebase_crashlytics_collection_enabled",                   // Android, AndroidManifest meta-data
+		"FirebaseCrashlyticsCollectionEnabled",                      // iOS, Info.plist
+		"google_analytics_adid_collection_enabled",                  // Android: the advertising id stays off
+		"google_analytics_default_allow_ad_personalization_signals", // Android: and is not used to personalise
+		"AdSupport", // iOS: the framework that must NOT be linked
+		"com.google.android.gms.permission.AD_ID", // Android: the permission that must NOT be declared
+		"analytics_auto_collection_enabled",       // firebase.json, react-native block
+		"crashlytics_auto_collection_enabled",     // firebase.json, react-native block
+		"setAnalyticsCollectionEnabled",           // the runtime call, after consent
+		"setCrashlyticsCollectionEnabled",         // the runtime call, after consent
 	} {
 		if !strings.Contains(section, flag) {
 			t.Errorf("%s's §4.2 does not name %q: the consent gate is recommended as OFF until opt-in, and a switch named approximately is a switch that is not thrown", telemetryPlan, flag)
@@ -429,6 +450,146 @@ func TestTelemetryPlanNamesTheFlagsExactly(t *testing.T) {
 	}
 	if !strings.Contains(section, "false") {
 		t.Errorf("%s's §4.2 states no required value: every native switch is recommended `false`, and that is the whole of the \"nothing is collected before consent\" claim", telemetryPlan)
+	}
+}
+
+// telemetryRowWith returns the line of a markdown table that carries the marker.
+// Per-row, because that is the unit a reader reads and the unit this file has
+// already been caught not checking (the file-table row that could lose its
+// numbers while another line still named them): a flag named in prose beside a
+// row that says `true` is not a requirement.
+func telemetryRowWith(t *testing.T, table, marker string) string {
+	t.Helper()
+	for _, line := range strings.Split(table, "\n") {
+		if strings.HasPrefix(line, "|") && strings.Contains(line, marker) {
+			return line
+		}
+	}
+	t.Fatalf("no table row carries %q: update this test's marker rather than letting the check pass vacuously", marker)
+	return ""
+}
+
+// TestTelemetryPlanRequiresNoAdvertisingIdentifier pins the addition the
+// website's privacy page forced. The page promises that **the app carries no
+// advertising identifier**; on its own that is a sentence about a build nobody
+// has checked, so the plan has to make it a requirement with something holding
+// it: the two Android switches thrown to false, the Android AD_ID permission
+// removed from the merged manifest, the iOS Analytics variant that links no
+// AdSupport, and a build-time test that fails if any of the three moves. The
+// parts that cannot be stated from memory are marked VERIFY with the way to
+// verify named, and this test requires that marking rather than a guessed name.
+func TestTelemetryPlanRequiresNoAdvertisingIdentifier(t *testing.T) {
+	doc := readDoc(t, telemetryPlan)
+	s42 := planSubsection(t, doc, "### 4.2 The flags, named exactly")
+
+	// Each switch, in its own row, with the value the row requires.
+	for _, tc := range []struct{ flag, want string }{
+		{"google_analytics_adid_collection_enabled", "false"},
+		{"google_analytics_default_allow_ad_personalization_signals", "false"},
+		{"com.google.android.gms.permission.AD_ID", "remove"},
+	} {
+		row := telemetryRowWith(t, s42, tc.flag)
+		if !strings.Contains(row, tc.want) {
+			t.Errorf("%s's §4.2 row for %q does not require %q: the row is what an implementer reads, and the advertising-identifier promise needs the switch thrown and the permission gone, not merely named. Row: %s", telemetryPlan, tc.flag, tc.want, strings.TrimSpace(row))
+		}
+	}
+	// Android's is a switch; iOS's is a variant of the SDK that is linked, and
+	// the plan says which framework must be absent from the binary. Read per ROW:
+	// a VERIFY somewhere else in §4.2 is not this item's VERIFY, which is how the
+	// first version of this check passed while the iOS row's marking was removed.
+	iosRow := telemetryRowWith(t, s42, "AdSupport")
+	for _, want := range []string{"AdSupport", "VERIFY"} {
+		if !strings.Contains(iosRow, want) {
+			t.Errorf("%s's §4.2 iOS row for the ad-ID-free Analytics variant does not carry %q: on iOS the promise is not a switch but the variant that is linked, and where the option's name cannot be read from a page today the plan says VERIFY. Row: %s", telemetryPlan, want, strings.TrimSpace(iosRow))
+		}
+	}
+	// The way to verify it is named, in §4.2 and in the UNVERIFIED list: the
+	// pinned package's own podspec and config plugin, and the generated files.
+	s14 := planSection(t, doc, "## 14. UNVERIFIED")
+	for _, tc := range []struct{ name, text, want string }{
+		{"§4.2", s42, "podspec"},
+		{"§4.2", s42, "Podfile.lock"},
+		{"§14", s14, "podspec"},
+		{"§14", s14, "Podfile.lock"},
+		{"§14", s14, "AndroidManifest.xml"},
+	} {
+		if !strings.Contains(tc.text, tc.want) {
+			t.Errorf("%s's %s does not name %q: a VERIFY with no way to verify it is a hope, and this one is named so the implementer knows what to read (the pinned @react-native-firebase package's source and the generated native project)", telemetryPlan, tc.name, tc.want)
+		}
+	}
+
+	// The build-time test, in the section that lists the tests, naming the
+	// generated files it reads and the planted control that proves it can fail.
+	s74 := planSubsection(t, doc, "### 7.4 The test that holds it")
+	for _, want := range []string{"ad-ID test", "AndroidManifest.xml", "Podfile.lock", "planted"} {
+		if !strings.Contains(s74, want) {
+			t.Errorf("%s's §7.4 does not name %q: the advertising-identifier promise is the one entry in the ban list held by the BUILD rather than by the app's code, so it needs a test over the generated native config with a control that proves the test can fail", telemetryPlan, want)
+		}
+	}
+
+	// And the integration task itself has to carry it: §7.4 says whose test it is,
+	// and P7.1 is where the switches, the manifest edit and the pod variant are
+	// actually done, so the task's own section names all three.
+	p71 := planSubsection(t, doc, "### Task P7.1:")
+	for _, want := range []string{"ad-ID", "AD_ID", "AdSupport", "false"} {
+		if !strings.Contains(p71, want) {
+			t.Errorf("%s's P7.1 does not name %q: the advertising-identifier promise is kept in the build the integration task produces, and a requirement that lives only in §4.2's table is a requirement the task's own reader never sees", telemetryPlan, want)
+		}
+	}
+
+	// The consent row says which way it recommends, and says that this one fact
+	// is not contingent on the answer.
+	decisions := planSection(t, doc, "## 3. Owner decisions")
+	d195 := telemetryRowWith(t, decisions, "| **D195** |")
+	if !strings.Contains(d195, "recommended: opt-in") {
+		t.Errorf("%s's D195 row does not say \"recommended: opt-in\": the owner has not answered opt-in against opt-out, and the plan's recommendation is what the row has to state as its recommendation", telemetryPlan)
+	}
+	if !strings.Contains(d195, "advertising identifier") {
+		t.Errorf("%s's D195 row does not say that the advertising identifier is collected under neither option: the consent answer is the owner's, and the ad-ID promise is not contingent on it", telemetryPlan)
+	}
+
+	// The two cross-references the promise leans on: the website's own statement
+	// (PR #689, whose text this plan lands against) and Play's form.
+	if !strings.Contains(readDoc(t, telemetryPlan), "#689") {
+		t.Errorf("%s does not name PR #689: the sentence the app's build is now required to keep true is the privacy page's, and that page's text is what #689 carries", telemetryPlan)
+	}
+	if !strings.Contains(strings.Join(strings.Fields(planSubsection(t, doc, "### 8.1 Play")), " "), "no Advertising ID") {
+		t.Errorf("%s's §8.1 does not state that Play's Data safety form carries no Advertising ID type: that answer is true only while the build keeps the id out, and it is the same fact the website states in prose", telemetryPlan)
+	}
+}
+
+// TestTelemetryPlanAttributesTheWordCeilingsToD188 pins a correction this
+// document needed twice over. The website's word ceilings -- a page's lead at
+// most 40 words, a page at most 250 -- are **D188's**; **D192** is the budget's
+// byte ceilings. P7.4's "Files" line attributed the word ceilings to "D192's
+// rule" while the same document's §8.3 said "The page's word ceiling is D188's"
+// and `docs/mobile/implementation-plan.md`'s P7.4 said D188. Two numbers that
+// both bound a page's length are exactly the pair a reader will not check twice,
+// so all three places are read here, one by one.
+func TestTelemetryPlanAttributesTheWordCeilingsToD188(t *testing.T) {
+	doc := readDoc(t, telemetryPlan)
+
+	s83 := planSubsection(t, doc, "### 8.3 ")
+	if !strings.Contains(telemetryPlain(s83), "The page's word ceiling is D188's") {
+		t.Errorf("%s's §8.3 no longer states that the page's word ceiling is D188's: that sentence is what P7.4's attribution has to agree with", telemetryPlan)
+	}
+
+	p74 := planSubsection(t, doc, "### Task P7.4:")
+	plain := telemetryPlain(p74)
+	if !strings.Contains(plain, "D188's rule") {
+		t.Errorf("%s's P7.4 does not attribute the website's word ceilings to D188's rule: the design decision that sets the word ceilings is D188, and the task that moves a page's word count is the task that has to name it", telemetryPlan)
+	}
+	if strings.Contains(plain, "D192's rule") {
+		t.Errorf("%s's P7.4 attributes the word ceilings to D192's rule: D192 is the byte budgets and D188 is the word ceilings, §8.3 of the same document says so, and a task sent to the wrong decision changes the wrong gate", telemetryPlan)
+	}
+
+	// The plan this one registers into says D188 too, and the two must not drift.
+	ip74 := planSubsection(t, readDoc(t, coordinatorMobilePlan), "### Task P7.4:")
+	if !strings.Contains(telemetryPlain(ip74), "D188") {
+		t.Errorf("%s's P7.4 does not name D188: the mobile plan and the telemetry plan answer the same question about the same page's gate, and the pin requires both", coordinatorMobilePlan)
+	}
+	if strings.Contains(telemetryPlain(ip74), "D192") {
+		t.Errorf("%s's P7.4 names D192 where the telemetry plan names D188 for the same word ceilings: the two documents register the same task and cannot attribute its gate to two different decisions", coordinatorMobilePlan)
 	}
 }
 
@@ -561,6 +722,36 @@ func TestTelemetryPlanIsRegisteredInTheMobileDocuments(t *testing.T) {
 		}
 	}
 
+	// **110 has one owner in both rows, and it is not either row's design.** The
+	// pair disagreed about 110 exactly as they had about 105–109: the Checks
+	// 100–109 row called it "the always-on orchestrator's" while the Check 110
+	// row's own dated note called it "this design's" — i.e. the voice design's,
+	// which is the row's subject and is not where the claim lives. The claim is
+	// PR #632's, which is what docs/coordinator/README.md's "Check 110" row
+	// records and what the plan and the mobile plan both say. Both rows must name
+	// the orchestrator's claim, and neither may attribute 110 to itself.
+	for _, row := range []struct{ name, text string }{
+		{"the Checks 100–109 row", reservedRow},
+		{"the Check 110 row", takenRow},
+	} {
+		if !strings.Contains(row.text, "always-on orchestrator") {
+			t.Errorf("docs/mobile/README.md's %s does not name 110 as the always-on orchestrator design's claim: 110 is PR #632's claim (docs/coordinator/README.md's \"Check 110\" row) and the two rows of this table have to agree about whose it is, not only about 111–113", row.name)
+		}
+		if strings.Contains(row.text, "this design's") {
+			t.Errorf("docs/mobile/README.md's %s attributes a number above 109 to \"this design\" (the row's own document): the claimants are the always-on orchestrator design (110) and the telemetry plan (111–113), and a row claiming a number for its own subject is how the same number gets two owners", row.name)
+		}
+	}
+	// The other two documents that record the number say the same thing, and this
+	// is the assertion that keeps the three from drifting apart again.
+	for _, tc := range []struct{ path, want string }{
+		{telemetryPlan, "110 is claimed"},
+		{"docs/mobile/implementation-plan.md", "110 is claimed by the always-on orchestrator design"},
+	} {
+		if !strings.Contains(telemetryPlain(readDoc(t, tc.path)), telemetryPlain(tc.want)) {
+			t.Errorf("%s does not carry %q: the telemetry plan takes 111–113 because 110 is claimed by another open work, and that reason has to be in the plan and in the plan it registers into", tc.path, tc.want)
+		}
+	}
+
 	// **The coordinator's table says the same thing.** It is the one table in this
 	// repository that lists every work's block and every work's checks, and the
 	// next writer reads the free block out of it — so a cell still saying the
@@ -611,16 +802,62 @@ func TestTelemetryPlanIsRegisteredInTheMobileDocuments(t *testing.T) {
 // one by one in TestTelemetryPlanKeepsTheNativeFilesOutOfGit instead — and
 // `mobile/google-services.json` is listed here as well as there, because it IS a
 // path the derivation sees and the excuse has to be given somewhere.
+//
+// `mobile/app.config.js` and `mobile/eas.json` used to be here, excused as PR
+// #675's files held off main. #675 merged, so both are in the tree and the
+// excuse became false — the first entry to rot exactly as the paragraph above
+// warns. They are gone from the map, which is what makes the derivation check
+// them like any other cited path, and TestTelemetryPlanModifiesTheFilesPR675Merged
+// holds the other half of that correction: the plan must say they are on main
+// and that P7.1 MODIFIES them, not create them.
 var telemetryWillCreate = map[string]string{
-	"mobile/app.config.js":                         "P7.1 (PR #675's file, not on main; the plugin entry, the guard and the gitignore)",
-	"mobile/eas.json":                              "P7.1 (PR #675's file, not on main; the two env entries per profile)",
-	"mobile/firebase.json":                         "P7.1 (the two react-native auto-collection switches, §4.2)",
+	"mobile/firebase.json":                         "P7.1 (the react-native auto-collection switches and the two ad-ID switches, §4.2)",
 	"mobile/google-services.json":                  "never — §4.3: delivered by an EAS file secret and kept out of git, so its absence here is the rule (checked beside `mobile/GoogleService-Info.plist` in TestTelemetryPlanKeepsTheNativeFilesOutOfGit)",
 	"mobile/src/telemetry/consent.js":              "P7.2 (the app's sheet logic, as a function of its ports)",
 	"mobile/src/telemetry/analytics-calls.test.js": "P7.3 (the scan of §4.2's rules with its planted positive controls)",
 	"mobile/src/telemetry/events.test.js":          "P7.3 (the never-send test, over a fixture account, mailbox and token)",
 	"shared/telemetry-consent":                     "P7.2 (the pure choice machine and the platform flag table)",
 	"mobile/src/telemetry":                         "P7.2 (consent.js) and P7.3 (the event module, the enum sets and the breadcrumbs)",
+}
+
+// TestTelemetryPlanModifiesTheFilesPR675Merged pins the correction #675's merge
+// forced. The plan was written while `mobile/app.config.js` and `mobile/eas.json`
+// were PR #675's and off main; it said so in eight places, and every one of them
+// became false the moment #675 merged. This test holds all three halves:
+// both files are in the tree, the plan says they are on main, and the plan's task
+// P7.1 names them as files it MODIFIES. It also bans the stale sentences, because
+// a plan that says "not on `main`" about a file the tree has sends its next
+// implementer to create a file that already exists.
+func TestTelemetryPlanModifiesTheFilesPR675Merged(t *testing.T) {
+	for _, p := range []string{"mobile/app.config.js", "mobile/eas.json"} {
+		if _, err := os.Stat("../../" + p); err != nil {
+			t.Fatalf("%s is not in the tree: PR #675 merged both store-path files, and the plan's sentences are written against that fact", p)
+		}
+	}
+	doc := telemetryPlain(readDoc(t, telemetryPlan))
+	for _, want := range []string{
+		"`mobile/app.config.js` and `mobile/eas.json` are on `main`",
+		"`mobile/app.config.js` (**modified**",
+		"`mobile/eas.json` (**modified**",
+	} {
+		if !strings.Contains(doc, telemetryPlain(want)) {
+			t.Errorf("%s does not say %q: PR #675 merged both files, so the plan must name them as existing files it modifies rather than files it waits on", telemetryPlan, want)
+		}
+	}
+	for _, stale := range []string{
+		"no `mobile/app.config.js`",
+		"the file arrives from PR #675",
+		"and PR #675 (for",
+		"PR #675's `app.config.js`",
+		"depends on #675 merging first",
+	} {
+		if strings.Contains(doc, telemetryPlain(stale)) {
+			t.Errorf("%s still carries %q: that reading was true while PR #675 was open and is false now that it has merged", telemetryPlan, stale)
+		}
+	}
+	if n := strings.Count(doc, "not on `main`"); n != 0 {
+		t.Errorf("%s says \"not on `main`\" %d time(s): every such sentence was about PR #675's two files, and #675 is merged", telemetryPlan, n)
+	}
 }
 
 func TestTelemetryPlanCitesOnlyPathsThatExist(t *testing.T) {

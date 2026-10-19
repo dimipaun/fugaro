@@ -20,10 +20,13 @@ approval in [mobile/implementation-plan.md](../mobile/implementation-plan.md).
   OWNER APPROVAL GATE is not passed for anything it names. The tasks below are **proposed**
   and each is **gated on the decision rows its "Depends on" line names**, exactly as Phase 6's
   tasks were gated on D160–D173 before the owner answered them.
-- **It is not built, and no test here holds a behaviour.** Nothing in this plan exists: there
-  is no `@react-native-firebase` dependency in `mobile/package.json`, no `mobile/app.config.js`,
-  no `mobile/eas.json`, no `google-services.json` and no `GoogleService-Info.plist` anywhere in
-  the tree. The one Go test this change adds
+- **It is not built, and no test here holds a behaviour.** Nothing this plan *adds* exists:
+  there is no `@react-native-firebase` dependency in `mobile/package.json`, no
+  `mobile/firebase.json`, no `mobile/src/telemetry/`, no `shared/telemetry-consent/`, no
+  `google-services.json` and no `GoogleService-Info.plist` anywhere in the tree. **Two files
+  this plan edits do exist**: `mobile/app.config.js` and `mobile/eas.json` are P4.4's, merged
+  to `main` by **PR #675**, and P7.1 **modifies** them (§1's third table row, P7.1's "Files").
+  The one Go test this change adds
   (`internal/cli/docs_mobile_telemetry_test.go`) pins **this document's own claims** and
   nothing else.
 - **It runs no live step and it holds no secret.** The Firebase project is created by the
@@ -56,7 +59,7 @@ inferred from a plan.
 |---|---|---|
 | The app is an Expo app at `mobile/`, its own artifact outside the Go module, with **no Firebase SDK wired at all** | `mobile/package.json` (`engines: node ">=22 <23"`, `npm ">=10"`, `test: node --test "src/**/*.test.js"`); `mobile/index.js` (the entry wires `expo-secure-store`, `expo-async-storage`, `react`, `react-native` — and nothing else) | The telemetry work is the **first** thing that would put a Firebase SDK in the app. It therefore meets the app's unbuilt Firebase wiring head-on, and §3's **D199** is that question. |
 | `mobile/app.json` carries the **EAS project id** and nothing Firebase-shaped | `mobile/app.json` (`expo.extra.eas.projectId = "70e67d4a-77d3-4110-9db6-e600266db345"`) | The EAS project the native config files would be delivered into already exists. |
-| **`mobile/app.config.js` and `mobile/eas.json` are not on `main`** — they are PR #675's, which the owner holds for the store path (P4.4, check 89) | `ls mobile/` on this base: `README.md`, `app.json`, `index.js`, `package-lock.json`, `package.json`, `src/` | Every task below that edits `app.config.js` or `eas.json` **depends on #675 merging first**, and says so. Neither file is written by this change. |
+| **`mobile/app.config.js` and `mobile/eas.json` are on `main`** — P4.4's, merged by **PR #675** for the store path (check 89) | `ls mobile/`: `README.md`, `app.config.js`, `app.json`, `eas.json`, `index.js`, `package-lock.json`, `package.json`, `src/`; `mobile/eas.json` carries three build profiles — **`development`**, **`preview`** and **`internal`** — over the EAS environments `development`, `preview` and `production` | P7.1 **modifies both existing files**: the plugin entry and the build-time guard in `app.config.js`, the two `env` entries in each of `eas.json`'s three build profiles, and the Firebase entries in `mobile/.gitignore`. **Neither file is created by this change, and this plan no longer waits on #675.** |
 | The app's account tuple is **four fields and holds no connection value** | `mobile/src/accounts/account.js` — `ACCOUNT_FIELDS = ['id', 'firebaseProjectId', 'authUid', 'fugaroProject']` | There is no `rtdbURL` and no web API key in an account today. D199 is the row that has to add them, and §3 explains why. |
 | The settings store **refuses an `AIza…` value outright**, and refuses the *word* `apiKey` as a key segment | `mobile/src/accounts/settings.js` — `SECRET_SHAPES` (whose Google entry is `['google-api-key', /^AIza[0-9A-Za-z_-]{35}$/]`), `judge` (which returns `SECRET_VALUE` for a match) and **`FORBIDDEN_KEY_SEGMENTS`**, the frozen list `apiKey` is a member of. **Cited by symbol, not by line**: a line number into a file this plan does not edit goes stale silently, and the symbols are what a reader greps for. | **This is the repository rule the brief names**: the Firebase web API key appears nowhere the app stores or the app ships. It is why D199's recommendation puts the installation's connection values in **secure storage**, not in the tuple's settings entry. |
 | The app's own config test already holds that rule for `app.json`, **with a planted `AIza…` value as its positive control** | `mobile/src/app-config.test.js:66` (the planted `expo.extra.firebase.apiKey`), `:71` (`['$.expo.extra.firebase.apiKey', 'google-api-key']`), `:98-99` (no `bundleIdentifier`, no `package`) | The fence exists and is mutation-proven. P7.1 extends it to the two **native** config files and to `app.config.js`; it does not invent a new rule. |
@@ -149,14 +152,21 @@ without the block moving. *(This paragraph said "the highest check section writt
 and `## Check 89` were all written by P4.2a before this plan, and the coordinator's own table
 carried the same stale reading, which this change corrects there too.)*
 
-**The open pull requests this plan lands against.** Four, and each one edits lines this plan
-edits: **#675** (`mobile/app.config.js` and `mobile/eas.json` — §4.3 and P7.1), **#689** (the
+**The open pull requests this plan lands against.** Three, and each one edits lines this plan
+edits: **#689** (the
 website's privacy page — §8.3 and P7.4), **#632** (the orchestrator's check 110 — this section and
 the coordinator's numbers table) and **#667** (P6.11: it writes `## Check 100`–`## Check 104` and
 their summary rows into the register, and edits the same check rows in `docs/coordinator/README.md`
 and `docs/mobile/README.md` that this plan edits). **#667 is the reason this plan takes nothing out
 of 100–109** — that block is the one its own pull request writes — and naming it beside the other
-three is what keeps the two changes from colliding whichever merges second.
+two is what keeps the two changes from colliding whichever merges second.
+
+**One pull request this plan named has merged since it was written.** **#675**
+(`mobile/app.config.js` and `mobile/eas.json` — P4.4's store path) is on `main` at this branch's
+head, so **P7.1 modifies those two files in place** rather than depending on them: the plugin
+entry, the build-time guard and the ignore entries in `app.config.js`, the two `env` entries in
+each of `eas.json`'s three build profiles (§1's third table row, §4.3, P7.1). No task below waits
+on #675, and the "Depends on" lines that used to say so now name the decision rows alone.
 
 ---
 
@@ -170,7 +180,7 @@ recommendations**, each with the alternative and what it costs, and each waits o
 |---|---|---|---|---|
 | **D193** | **Does the app carry Crashlytics and Analytics at all, and to whose Firebase project do they report?** The app serves **several installations** (D114), each with its own Firebase project, and the app signs in to that installation's Firebase with a **user** credential (D112, D111). "The app's analytics" is therefore ambiguous: the installation's project, or one the Fugaro project operates? | **Yes to both SDKs, and to one Firebase project that Fugaro (the project) operates** — not an installation's, not a user's. Reason: the question the telemetry answers is *"does the app work for people who are not the owner"*, and an installation's project can only answer it for that installation's owner; and no agent, and not the Fugaro owner, has any business reading a user's own project. | **In the installation's project.** Cost: the owner (and nobody else) can see the crashes, the data is the user's own project's, and *"shared with the developer"* is false for every install — the telemetry is useless for exactly the population it exists to measure. **Or no telemetry at all.** Cost: the app ships to two stores with no crash visibility, and the first real crash is reported by a user in prose, if at all. | **Owner answered 2026-10-19: yes to both SDKs, reporting to a Firebase project that Fugaro operates — not the user's own installation.** The owner answered **YES** to *"shared with the developer is true: is that intended"*. *Why:* the app is measured as one product, not per installation. **This row approves no task and allocates no phase.** |
 | **D194** | **Who creates and operates the Fugaro-operated Firebase project, and who may be a member of it?** A Firebase project is a Google Cloud project under an organization; its data leaves the user's machine and lands in a project with a membership list. | **The owner creates it, alone, by hand, and the only member is the owner.** One project (suggested id `fugaro-telemetry`, under the same organization as the installations, with its own billing link), one Firebase **Analytics** property and one **Crashlytics** app per platform, **two members at most — the owner's own account** — and **no service account, no CI identity and no agent access**. The app id it registers reads: *the app reports crashes and a closed set of events to a Fugaro-operated project; nobody else can read them; nothing from the mailbox or a message is in them.* The project is created **before** P7.1 can produce a config file, because the config file is the project's own. | **Put telemetry in an installation's project** (`fugaro-dev`, say). Cost: crashes from every tester land in the development installation's project, mixed with its own budgets and runs, readable by every launcher and budget admin of that installation (D113's grants) — telemetry readable by a *run token* is not telemetry a user can be told about. **Or a third-party crash service.** Cost: a second vendor, a second DPA, a second retention question, and the owner has already ruled for Crashlytics (D193). **Or let an agent create it.** Cost: an agent holding project-creation authority in the owner's organization. | *(empty — owner)* |
-| **D195** | **Consent and opt-out: is analytics collection OFF until the user opts in on first launch, or ON with an in-app switch and a link to `/privacy`? And is Crashlytics deferred the same way?** | **OFF until the user opts in, and Crashlytics deferred the same way** — one switch, both SDKs, nothing collected before it is on. The gate is a **first-launch sheet** carrying the switch, the sentence *"Fugaro sends anonymous usage and crash reports to Fugaro's own servers. No message, no mailbox and no account is ever sent. You can turn this off in Settings."*, and a link to `https://fugaro.dev/privacy/`. The choice is stored **on the device** only, and the sheet is shown again only from Settings. Reason: the user is in the EU (the owner's own brief says so), where reading or writing anything on a device that is not strictly necessary needs consent, and the SDKs write an app-instance id to the device the moment they start; and the site's own analytics already carries exactly this shape (D93, `website/src/pages/privacy.astro:61-84`), so the app and the site say the same thing in the same words. | **ON by default with a switch to turn it off** — the common shape and the one the stores expect. Cost: collection begins **before** the sheet is ever shown, so the first event, the app-instance id and any crash in the first seconds are collected without consent; in the EU that is the shape the site's own consent banner exists to avoid, and having the site ask and the app not is a contradiction a reader will notice. **Or opt-in for Analytics and always-on for Crashlytics** (crash reports are widely treated as a legitimate interest). Cost: a second consent story, a second paragraph in §8, and two switches where the brief asks for one. | *(empty — owner)* |
+| **D195** | **Consent and opt-out: is analytics collection OFF until the user opts in on first launch, or ON with an in-app switch and a link to `/privacy`? And is Crashlytics deferred the same way?** | **Collection defaults OFF until the user opts in — recommended: opt-in — and Crashlytics deferred the same way** — one switch, both SDKs, nothing collected before it is on. **The recommendation, not a ruling**: the owner has not yet answered opt-in against opt-out, and this row is where that choice is made. **One thing is not contingent on the answer**: the advertising identifier is collected under **neither** option — §4.2's switches are `false` in the build, Android declares no `AD_ID`, iOS links no `AdSupport`, and §7.4's test fails if that moves — because the website's privacy page promises *the app carries no advertising identifier* and a promise on the owner's own domain does not depend on a consent default. The gate is a **first-launch sheet** carrying the switch, the sentence *"Fugaro sends anonymous usage and crash reports to Fugaro's own servers. No message, no mailbox and no account is ever sent. You can turn this off in Settings."*, and a link to `https://fugaro.dev/privacy/`. The choice is stored **on the device** only, and the sheet is shown again only from Settings. Reason: the user is in the EU (the owner's own brief says so), where reading or writing anything on a device that is not strictly necessary needs consent, and the SDKs write an app-instance id to the device the moment they start; and the site's own analytics already carries exactly this shape (D93, `website/src/pages/privacy.astro:61-84`), so the app and the site say the same thing in the same words. | **ON by default with a switch to turn it off** — the common shape and the one the stores expect. Cost: collection begins **before** the sheet is ever shown, so the first event, the app-instance id and any crash in the first seconds are collected without consent; in the EU that is the shape the site's own consent banner exists to avoid, and having the site ask and the app not is a contradiction a reader will notice. **Or opt-in for Analytics and always-on for Crashlytics** (crash reports are widely treated as a legitimate interest). Cost: a second consent story, a second paragraph in §8, and two switches where the brief asks for one. | *(empty — owner)* |
 | **D196** | **What is sent, what is never sent, and what holds that line?** | **A closed allow-list of event names and parameter values, and a ban list that is checked by a scan** (§7). Nothing that names a message, a mailbox, an account, an installation or a repository is ever sent; the crash path is redacted through `shared/digest`'s `redact`; `setUserId`, `setUserProperty` and free-text custom keys are refused **outright** and a test fails on the call. Reason: the app's whole security model (D111–D113) is that a phone holds two items and writes two paths; a telemetry SDK that can carry free text is a third channel, and it is the only one that leaves the user's own infrastructure. | **Send everything the SDK collects by default and rely on the ban list being respected.** Cost: Firebase Analytics' default events carry an app-instance id and screen names, and Crashlytics' default reports carry the device model, the OS, log output and — unless it is switched off — the advertising id; "we never send message content" becomes an assertion about a library's defaults rather than about our code. **Or no allow-list, only review.** Cost: the first screen that logs a node path ships it, and no test notices. | *(empty — owner)* |
 | **D197** | **The store labels and the privacy page: which categories, and when do the website's words change?** The owner has already ticked Play's Data safety form: **Crash logs · Diagnostics · Other app performance data · Device or other IDs · User IDs · Other in-app messages**. The site's privacy page (`website/src/pages/privacy.astro`) describes the website's GA4 and says nothing about an app; PR **#689** (not on this base) keeps the site free of an analytics SDK claim. | **Answer the labels from what the SDKs actually collect, and change the website's page in the same release that ships the SDKs — not before, and not after.** The ticked set stays as it is (§8 explains, category by category, which of the six the app's own traffic justifies), the **App Store** label is answered from the same list, and the site's privacy page gains **the app's paragraph** in the same commit as the first build that carries a telemetry SDK. Reason: a label written before the traffic has been read is a guess, and a privacy page that promises "no analytics SDK" while a store build carries one is a false statement on the owner's own domain. | **Change the website page first, then ship the SDKs.** Cost: between the two commits the site says the app sends telemetry and the app sends none — the safe direction, but the page must then be honest about a build that does not exist. **Or ship the SDKs and change the page later.** Cost: the exact falsehood the brief warns about, published on `fugaro.dev/privacy/` for as long as the gap lasts. **Or narrow the ticked set before shipping.** Cost: a form re-answered twice, against a policy risk in the direction that matters (under-declaring). | *(empty — owner)* |
 | **D198** | **Which build carries the SDKs: the first, voice-less internal build on both stores, or the second?** | **The second build.** The first internal build ships **neither SDK**: its job is to prove the store path (P4.4, check 89), the development build, and the app's own wiring on a real device, and every one of those is easier to read without a native config plugin in the same change. The consent sheet, the allow-list scan, the redaction rule, the labels and the privacy page ship as **one unit** with the SDKs, and a first build that carried the SDKs without the website's paragraph would be D197's own failure mode, one release early. | **Crashlytics alone in the first build, Analytics in the second.** Cost: the labels and the privacy page are answered twice, and the first build still needs the consent gate (D195 defers both SDKs the same way), so the "one unit" is already split. **Or both in the first build.** Cost: the store path, the native project and the telemetry contract all change in one release, and a failure in any of the three is hard to attribute; it also puts the labels and the website paragraph under the first build's deadline. | *(empty — owner)* |
@@ -213,6 +223,9 @@ true of the *native* SDK and not merely of our JavaScript.
 | Crashlytics collection, native | Android, `AndroidManifest.xml` `<meta-data>` | **`firebase_crashlytics_collection_enabled`** | `false` |
 | Crashlytics collection, native | iOS, `Info.plist` | **`FirebaseCrashlyticsCollectionEnabled`** | `false` |
 | Advertising-id collection, native | Android, `AndroidManifest.xml` `<meta-data>` | **`google_analytics_adid_collection_enabled`** | `false` |
+| Ad-personalisation signals, native | Android, `AndroidManifest.xml` `<meta-data>` | **`google_analytics_default_allow_ad_personalization_signals`** | `false` |
+| Ad-ID support, linked at all | iOS, the Analytics pod `@react-native-firebase/analytics` makes CocoaPods link | **the Analytics variant with no ad-ID support** — the app links **no `AdSupport` framework** at all. **The pod/plugin option's exact name is to VERIFY** (§14, and the paragraph after this table) | ad-ID support **not linked** |
+| Advertising-id permission, declared at all | Android, `AndroidManifest.xml` `<uses-permission>` | **`com.google.android.gms.permission.AD_ID`** — **removed** from the merged manifest at prebuild (`tools:node="remove"`) | absent (not declared) |
 | Analytics auto-collection, the React Native layer | `firebase.json` at the app root, under `react-native` | **`analytics_auto_collection_enabled`** | `false` |
 | Crashlytics auto-collection, the React Native layer | `firebase.json` at the app root, under `react-native` | **`crashlytics_auto_collection_enabled`** | `false` |
 | Analytics collection, runtime | JS, `@react-native-firebase/analytics` | **`setAnalyticsCollectionEnabled(true)`** | called **only** after the stored choice is on |
@@ -224,6 +237,47 @@ native project, and corrects this table in the same commit if any is wrong** (§
 plan commits to is the *shape* — every switch that can gate collection is thrown to **off**
 natively, and the app turns collection on at runtime and never off-and-on again.
 
+**The app carries no advertising identifier, and that is a requirement here, not a hope.** The
+website's privacy page promises it — *the app carries no advertising identifier* is the sentence
+the owner's brief gives for the page (§8.3, and PR **#689**'s paragraph applied there) — and a
+promise on the owner's own domain is only true while something holds it. So the plan makes it
+structural, three ways, and none of them is a sentence in a policy document:
+
+1. **Android, the switch.** `google_analytics_adid_collection_enabled` and
+   `google_analytics_default_allow_ad_personalization_signals` are **`false`** in the app's
+   manifest meta-data, written by the config plugin (P7.1), so Analytics neither reads the
+   advertising id nor uses it to personalise ads.
+2. **Android, the permission.** The switches stop the SDK *reading* the id; they do not by
+   themselves stop the merged manifest from **declaring**
+   `com.google.android.gms.permission.AD_ID`, which is what the Play Console reads as an
+   advertising-id app. P7.1 therefore **removes the permission at prebuild**
+   (`<uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>`,
+   or the plugin's own option for it if the plugin has one — **VERIFY** which, per §14).
+3. **iOS, no ad-ID support linked at all.** The app links the Firebase Analytics variant that
+   **does not support the advertising identifier**, so the `AdSupport` framework is not in the
+   binary and there is no id for a later misconfiguration to read. The exact pod or plugin option
+   that selects it — the `@react-native-firebase/analytics` podspec's variant, or the config
+   plugin's iOS option — is **to VERIFY against `@react-native-firebase`'s own documentation**,
+   and the plan says so rather than naming one from memory (§14). **How it is verified**, at
+   P7.1's first commit and before the first store build: read the pinned version's
+   `node_modules/@react-native-firebase/analytics` podspec and `node_modules/@react-native-firebase/app`
+   config-plugin source for the option, apply it, run `npx expo prebuild`, and then read the
+   generated `ios/Podfile.lock` for `FirebaseAnalytics` and for the **absence** of `AdSupport`
+   (and read the Android manifest for the absent `AD_ID` permission, point 2). If the SDK turns
+   out to offer no such option, the fallback is the pod the docs name for the ad-ID-free
+   variant, and if there is none, the row D195 recommends is not buildable as written — which is
+   a finding for the owner, not a sentence to soften here.
+
+**The build-time test (§7.4's third test, P7.1).** A Node test in the app fails the build if
+**either** the generated native config **or** the plugin options enable ad-ID collection: the
+Android manifest must carry both switches as `false` and must not declare the `AD_ID`
+permission, and the iOS side must not link `AdSupport`. It is written the way the app's other
+fences are — with a **planted control**, a copy of the generated files with the switch flipped
+to `true`, so the rule is proved able to fail before the real files are judged. **On a machine
+with no prebuilt native project the test checks the plugin options and `mobile/firebase.json`
+and says which half it could not see**, rather than passing quietly: the same rule §4.3's
+tracked-file test follows.
+
 ### 4.3 The native config files are never committed, and how a build gets them
 
 **The two paths are `mobile/google-services.json` and `mobile/GoogleService-Info.plist`** —
@@ -232,8 +286,8 @@ default. They are **never** committed. The mechanism is four parts, and every on
 a test or a guard rather than a sentence:
 
 1. **`.gitignore`.** Both paths are ignored at the repository root's `.gitignore` and at
-   `mobile/.gitignore` (whichever PR #675 leaves the app using — P7.1 adds the entries to the
-   app's own ignore file so the rule travels with the app). **A path under `mobile/` that
+   `mobile/.gitignore` — the app's own ignore file, which P4.4 left in place and which P7.1
+   **appends to** so the rule travels with the app. **A path under `mobile/` that
    names `google-services` or `GoogleService-Info` is never tracked.**
 2. **A scan with a positive control.** P7.1 extends `mobile/src/app-config.test.js` (whose
    "no credential, no installation" walk already exists, with a planted `AIza…` value as its
@@ -278,8 +332,8 @@ Named plainly, because every one of them is the owner's and none is an agent's:
 1. **Create the project.** A Firebase project (Google Cloud project) under the owner's
    organization, suggested id **`fugaro-telemetry`**, with its own billing link, created by
    hand in the console. *Owner step.*
-2. **Register the two apps.** One Android app (the package id PR #675's `app.config.js`
-   gives the store build) and one iOS app (its bundle identifier). *Owner step.*
+2. **Register the two apps.** One Android app (the package id the app's `app.config.js`, merged
+   as PR #675, gives the store build) and one iOS app (its bundle identifier). *Owner step.*
 3. **Download the two native config files.** They are the artifacts §4.3 delivers. They go to
    the EAS project's file secrets and **nowhere else**. *Owner step.*
 4. **Turn on Analytics and Crashlytics** in the project, and note the property's **retention**
@@ -361,6 +415,13 @@ a list a test can hold:
   disagree about what a credential looks like.
 - **No free text at all.** Every parameter value is a **boolean or an enum**, and every enum's
   members are in this plan's list.
+- **No advertising identifier — and nothing that could start collecting one.** Android throws
+  `google_analytics_adid_collection_enabled` and
+  `google_analytics_default_allow_ad_personalization_signals` to `false` and declares **no**
+  `AD_ID` permission; iOS links **no** `AdSupport` framework (§4.2). This is the ban list's one
+  entry that is held by the **build** rather than by the app's own code, so §7.4's third test
+  holds the generated files, and the Play Data safety form's **no Advertising ID** answer
+  (§8.1) is true only while that test is green.
 
 ### 7.2 Sent — the closed allow-list
 
@@ -405,7 +466,9 @@ alternative is listed in D196**: turning auto-collection on and relying on the b
 
 ### 7.4 The test that holds it
 
-P7.3 adds **two** tests in `mobile/src/telemetry/`, both with positive controls, both in the
+P7.3 adds **two** tests in `mobile/src/telemetry/`, and P7.1 extends the app's own
+`mobile/src/app-config.test.js` with a **third** — the ad-ID test, whose subject is the build
+rather than the app's code. All three carry positive controls, all three in the
 shape the tree already uses (`mobile/src/mailbox/write-path.test.js`,
 `mobile/src/boundary.test.js`):
 
@@ -426,6 +489,24 @@ shape the tree already uses (`mobile/src/mailbox/write-path.test.js`,
    test asserts that **not one value from the fixture** appears in any captured event, that
    every parameter is a boolean or a member of its enum, and that `secretShaped` returns null
    for every string the capture holds. A planted run that logs a message's `text` fails it.
+3. **The ad-ID test (`mobile/src/app-config.test.js`, extended by P7.1).** The website promises
+   the app carries no advertising identifier (§4.2, §8.3), so the app's own config test — which
+   already walks `app.json` for a credential with a planted `AIza…` control — gains a third walk
+   over the **generated native config and the plugin options**:
+   - `android/app/src/main/AndroidManifest.xml` must carry
+     `firebase_analytics_collection_enabled`, `firebase_crashlytics_collection_enabled`,
+     `google_analytics_adid_collection_enabled` and
+     `google_analytics_default_allow_ad_personalization_signals` **all as `false`**, and must
+     **not** declare `com.google.android.gms.permission.AD_ID`;
+   - the iOS project must not link `AdSupport` (read from the generated `Podfile.lock`), and the
+     plugin options that select the ad-ID-free Analytics variant must be present (§4.2's
+     **VERIFY** item);
+   - the plugin options in `app.config.js` and the switches in `mobile/firebase.json` are checked
+     **always**, because they are source; the generated files are checked **when they exist**,
+     and the test **fails on a machine that has them and a `true`**, not one that has neither —
+     where it names the half it could not see instead, the rule §4.3's tracked-file test follows.
+   Each branch is proved to be able to fail: a planted copy of each generated file with the
+   switch flipped to `true`, and one with the `AD_ID` permission added back.
 
 **A lint that fails on any other analytics call** is exactly rule 1, and it is a test rather
 than a lint config on purpose: the repository's fences are tests with positive controls
@@ -454,6 +535,17 @@ sends, in **two** categories, and that is a deliberate choice — under-declarin
 risk, over-declaring is not — and no test can hold it, because no test can read the Play
 console.
 
+**And one category is narrower, on purpose: Play's Data safety form is answered with no
+Advertising ID type at all.** *Device or other IDs* covers the SDKs' own app-instance id — the
+table above says so — and the advertising identifier is a **different data type on that form**,
+which the app must not send because the website's privacy page promises that it carries none
+(§4.2, §8.3, PR **#689**). That answer is true only while §4.2's switches stay `false`, the
+`AD_ID` permission stays removed and iOS keeps linking no `AdSupport`; **§7.4's ad-ID test is
+what holds it**, and check **113** is where the owner confirms the submitted form matches what
+the app sends. **If that test ever has to be weakened, the Play answer and the website's
+sentence change in the same commit** — an advertising id collected under a form that says it is
+not is the one failure here that is a false statement to a regulator rather than a bug.
+
 ### 8.2 App Store — the privacy label
 
 Answered from the same list, as **Data Not Linked to You** unless stated:
@@ -465,6 +557,7 @@ Answered from the same list, as **Data Not Linked to You** unless stated:
 | **Diagnostics** → *Other Diagnostic Data* | Not Linked | the SDK's installation id |
 | **Identifiers** → *Device ID* | Not Linked | the SDK's app-instance id |
 | **Identifiers** → *User ID* | — | **not ticked**: `setUserId` is refused. Apple's form is answered per data type collected, and the app collects no user id. |
+| **Identifiers** → *Advertising Data* | — | **not ticked**, and this one is a promise rather than an answer: the app links no `AdSupport` and reads no advertising id (§4.2), the same fact the website's privacy page states in prose and Play's form carries as **no Advertising ID type** (§8.1). §7.4's ad-ID test is what keeps the two stores' answers true together. |
 | **Usage Data** → *Product Interaction* | Not Linked | the eight events of §7.2, if the owner ships Analytics (D198's second build). If Analytics does not ship, this row is **not ticked**. |
 
 **The label and Play's form are answered from one document** — this section — so the two
@@ -488,7 +581,13 @@ the app.** The site's "nothing phones home" check (`## Check 69b`) is a check ab
    what it never sends — §7.1's ban list in the page's own words, not in this plan's — and
    pointing at the in-app switch. In the flag-off branch the paragraph must **not** be hidden:
    the app's telemetry and the site's analytics are two different switches, and the reason the
-   page has two branches today is exactly that they are not the same fact.
+   page has two branches today is exactly that they are not the same fact. **And the paragraph
+   keeps the page's advertising-identifier sentence** — *the app carries no advertising
+   identifier*, the promise PR **#689**'s text and the owner's brief give the page — because
+   that is the one claim on the page that is held by the **build** rather than by the app's code:
+   §4.2's switches, the removed `AD_ID` permission, the unlinked `AdSupport` and §7.4's ad-ID
+   test are what make the sentence true, and **the two stores' answers carry the same fact**
+   (§8.1's no Advertising ID type, §8.2's unticked Advertising Data).
 2. **The page's word ceiling is D188's** (a page's lead at most 40 words, a page at most 250,
    with `/docs/`, `/security/` and `/changelog/` excepted) and the privacy page is **at** its
    ceiling already (`docs/website/implementation-plan.md:653`: *"The page is at the ceiling: a
@@ -545,19 +644,28 @@ approval gate for it, and each waits on the D-rows its line names.*
 
 ### Task P7.1: The config plugin, the native files, and the development build
 
-**Files.** `mobile/app.config.js` (the plugin entry, the two `googleServicesFile` paths read
-from the environment, the build-time guard), `mobile/eas.json` (the two `env` entries per
-build profile — **the file arrives from PR #675**), `mobile/firebase.json` (the app-root
+**Files.** `mobile/app.config.js` (**modified** — the plugin entry, the two `googleServicesFile`
+paths read from the environment, the build-time guard), `mobile/eas.json` (**modified** — the two
+`env` entries in each of its three build profiles, `development`, `preview` and `internal`),
+`mobile/firebase.json` (new — the app-root
 `react-native` block of §4.2), `mobile/.gitignore`, `mobile/package.json` (the three
 `@react-native-firebase` dependencies), `mobile/README.md` (the Expo Go sentence D200 asks
-for), and `mobile/src/app-config.test.js` (the tracked-file and ignore rules of §4.3, and the
-extension of the existing credential walk to `app.config.js`).
-**Depends on.** D199, D200, D194 (the project exists before its file can), and PR #675 (for
-`app.config.js` and `eas.json`).
+for), and `mobile/src/app-config.test.js` (the tracked-file and ignore rules of §4.3, the
+extension of the existing credential walk to `app.config.js`, and **the ad-ID test of §7.4**,
+which reads the plugin options, `mobile/firebase.json` and — when they exist — the generated
+`AndroidManifest.xml` and `Podfile.lock`).
+**Depends on.** D199, D200 and D194 (the project exists before its file can). **PR #675 is not
+a dependency**: it is merged, and P7.1 modifies the two files it added where they stand.
 **Verification.** `cd mobile && npm test` — the extended `app-config.test.js`: both native
 paths are untracked and ignored; `app.config.js` contains no `AIza…`-shaped value (planted
 control); a build profile with no `GOOGLE_SERVICES_JSON` in its `env` is refused by the guard's
-pure part; and the existing "no credential, no installation" walk still passes.
+pure part; the existing "no credential, no installation" walk still passes; and **the ad-ID
+walk passes** — the two Android ad switches are `false`, the manifest declares no `AD_ID`
+permission, and the iOS side links no `AdSupport`, each with a planted `true` control proved to
+fail the walk. §4.2's **VERIFY** item (the exact iOS pod/plugin option, and whether the Android
+permission removal is the plugin's own option) is resolved at this task's first commit by
+reading the pinned `@react-native-firebase` source, and §4.2's table is corrected in that commit
+if a name is wrong.
 **Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.** It is the change that
 decides which project the app's default Firebase app is (D199), and it is the change that
 would put a native config file in the tree if it were wrong.
@@ -598,7 +706,9 @@ the task that widens an existing scan's allow-list.
 **Files.** `docs/plans/2026-10-19-mobile-telemetry.md` (§8 is its text — **this document is
 its source**, and the task's deliverable is `website/src/pages/privacy.astro` and whatever
 `docs/` records the two store answers), plus `website/`'s own gates if the paragraph's word
-count moves (`website/test/budget.mjs` is the authority for the ceilings, D192's rule).
+count moves (`website/test/budget.mjs` is the authority for the ceilings, **D188's rule** —
+§8.3 says which decision the word ceiling belongs to; **D192** is the budget's byte ceilings and
+is not the number to change here).
 **Depends on.** P7.3 (the list the labels are answered from), D197, and PR #689 (whichever way
 it lands).
 **Verification.** `node --test` in `website/` (the site's own gates: the word ceilings, the
@@ -628,7 +738,7 @@ D195, D196 ───────────────────────
 P0.3 (shared/url, merged) ──► P7.2     │
                              P7.3 ─────┴─► P7.5
 D197 ──────────────────────────────────────┘
-PR #675 ──► P7.1            PR #689 ──► P7.4
+#675 (merged: app.config.js, eas.json) ──► P7.1    PR #689 ──► P7.4
 ```
 
 | Level | Tasks | Reviewer | Files touched |
@@ -748,11 +858,22 @@ are recorded in the file's own header.
 The repository's habit is to say what could not be read rather than to smooth it over. Each
 line below is a claim this plan makes **without** a source in this tree:
 
-1. **The flag names of §4.2.** Read from memory of the SDKs' documentation, not from a page
-   read on 2026-10-19. P7.1 confirms each against the SDK's own documentation and the
-   generated native project, and corrects §4.2 in the same commit if any name is wrong. The
-   *shape* the plan requires is independent of the spelling: every native switch is off and
-   the runtime call is what turns collection on.
+1. **The flag names of §4.2 — including the two that keep the advertising identifier out.** Read
+   from memory of the SDKs' documentation, not from a page read on 2026-10-19. P7.1 confirms
+   each against the SDK's own documentation and the generated native project, and corrects §4.2
+   in the same commit if any name is wrong. The *shape* the plan requires is independent of the
+   spelling: every native switch is off and the runtime call is what turns collection on.
+   **Two specifics are marked VERIFY in §4.2 and both are about the ad-ID promise**, which is
+   why they are called out here rather than left inside that table: (a) the **exact pod or plugin
+   option** that makes `@react-native-firebase/analytics` link the Firebase Analytics variant
+   with **no ad-ID support** — verified by reading the pinned package's podspec and config-plugin
+   source, then the generated `ios/Podfile.lock` for the absence of `AdSupport`; and (b) whether
+   removing `com.google.android.gms.permission.AD_ID` from the merged manifest is **the config
+   plugin's own option** or a `tools:node="remove"` entry this plan has to add — verified in the
+   same plugin source and then in the generated `AndroidManifest.xml`. **If neither exists, the
+   plan cannot make the website's sentence true as written** and that is a finding for the owner
+   at P7.1's first commit, not something to phrase away. Neither is a live action and neither
+   reads a credential.
 2. **EAS file secrets.** The `eas secret:create --type file` mechanism and the `eas.json`
    `env` reference of §4.3 are described from memory. **EAS also offers environment variables
    with file visibility**; P7.1 picks the one EAS documents on the day it is written, records
@@ -765,9 +886,11 @@ line below is a claim this plan makes **without** a source in this tree:
    here**. P7.1's first commit reads the SDK's own documentation for it, and if the named-app
    route is unavailable, **D199's alternative is what the owner is asked to weigh** — the plan
    states both rather than assuming the mechanism.
-4. **`mobile/app.config.js` and `mobile/eas.json`.** They are PR #675's and are **not on this
-   base**; §4.3's guard and §10's P7.1 are written against the shape that PR is described to
-   have, and P7.1 re-reads them at its own merge.
+4. **`mobile/app.config.js` and `mobile/eas.json`.** They are P4.4's, merged to `main` by **PR
+   #675** since this plan was written. §4.3's guard and §10's P7.1 are written against the shape
+   that PR landed — the dynamic `({ config }) => …` export, the three-state `EAS_BUILD` /
+   `FUGARO_REQUIRE_IDS` guard, and the three build profiles — and P7.1 re-reads both files at its
+   own merge, since a later change to either moves under this plan's sentences.
 5. **`dev.fugaro.app`.** The brief's name for the first internal build's environment. It is
    not in this tree. Nothing in this plan is built on it, and no task names it as a file.
 6. **The website's privacy page as PR #689 leaves it.** #689 is not on this base. §8.3 says
