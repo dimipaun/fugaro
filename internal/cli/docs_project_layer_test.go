@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -450,5 +452,72 @@ func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
 	}
 	if scanned < 100 {
 		t.Fatalf("scanned only %d files: the tree has moved, so this check saw nothing", scanned)
+	}
+}
+
+// TestDocsProjectLayerStatesThePolicyVersionItShips: docs/project-layer.md's
+// reference paragraph said, in the present tense, that "the policy is version 2
+// from fugaro 0.8.5" — and this change raises `projectpolicy.Version` to 3
+// (VersionSince[3] = "0.9.0", the release that states Claude accounts in the
+// node), so the sentence named a version no longer written and a release that
+// is not the one a reader of this page runs. The paragraph now leads with
+// version 3 and keeps version 2 as the gate that came before it, which is what
+// the table says.
+//
+// The version the page names is read from the constants rather than typed
+// twice, so the next bump fails here instead of shipping a page describing
+// another release's node.
+//
+// Mutation (verified, run and restored): put the old sentence back — "The
+// policy is version 2 from fugaro 0.8.5, the release that enforces a job
+// profile's admission list" — and this test fails naming it.
+func TestDocsProjectLayerStatesThePolicyVersionItShips(t *testing.T) {
+	doc := readDoc(t, "docs/project-layer.md")
+	rel, ok := projectpolicy.VersionRelease(projectpolicy.Version)
+	if !ok {
+		t.Fatalf("projectpolicy.VersionSince has no row for Version %d, and this page names the release each version came in", projectpolicy.Version)
+	}
+	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that states Claude accounts in it**", projectpolicy.Version, rel)
+	if !strings.Contains(doc, want) {
+		t.Errorf("docs/project-layer.md does not say %q: the page describes the node this release writes, and projectpolicy.Version/%d is that node", want, projectpolicy.Version)
+	}
+	// The stale sentence, and the table it disagrees with.
+	if stale := "The policy is version 2 from fugaro 0.8.5"; strings.Contains(doc, stale) {
+		t.Errorf("docs/project-layer.md still says %q: version 3 ships in 0.9.0, and a page naming 0.8.5's node as the current one sends an operator to the wrong release", stale)
+	}
+	for v, r := range projectpolicy.VersionSince {
+		if !strings.Contains(doc, r) {
+			t.Errorf("docs/project-layer.md names no release for policy version %d (%s): every version's row is what a refusal quotes, and the page is where an operator reads them", v, r)
+		}
+	}
+}
+
+// TestDocsReleaseChecklistNamesEveryPolicyVersion: docs/release.md's "Before
+// you tag" list is where a release is checked against the constants, and its
+// `VersionSince` bullet enumerated the table's rows — one and two only, while
+// this change adds row 3 ("0.9.0", the account axis). A checklist that stops at
+// the row before the one being shipped is a check that reads as complete and
+// is not, so the enumeration is read from the table itself here: every row must
+// be on the bullet, with the release the table holds.
+//
+// Mutation (verified, run and restored): delete "; 3 is the account axis — a
+// profile's `claude_accounts` and the `accounts` block it is gated by —
+// `"0.9.0"`" from the bullet — this fails naming version 3 and its release.
+func TestDocsReleaseChecklistNamesEveryPolicyVersion(t *testing.T) {
+	doc := readDoc(t, "docs/release.md")
+	var bullet string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.Contains(line, "`VersionSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no VersionSince bullet: the checklist is where a release verifies the table")
+	}
+	for v, rel := range projectpolicy.VersionSince {
+		if !strings.Contains(bullet, fmt.Sprintf("%d is ", v)) || !strings.Contains(bullet, `"`+rel+`"`) {
+			t.Errorf("docs/release.md's VersionSince bullet does not carry policy version %d's row (%s): every row the table holds belongs there, or the checklist reads as complete without it", v, rel)
+		}
 	}
 }

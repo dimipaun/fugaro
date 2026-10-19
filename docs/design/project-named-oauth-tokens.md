@@ -150,12 +150,16 @@ accounts:
   acme-team:
     allow_repos: ["github/acme/app", "github/acme/tools"]   # which repositories may use this token
   ops:
-    allow_repos: ["github/acme/infra"]
+    allow_repos: ["github/acme/app", "github/acme/tools", "github/acme/infra"]
 profiles:
   standard:
     provider: github
     claude_accounts: [acme-team, ops]   # NEW: one job per (profile, provider, account)
-    allow_repos: ["github/acme/app", "github/acme/tools", "github/acme/infra"]
+    allow_repos: ["github/acme/app", "github/acme/tools"]   # every account above covers every entry
+  infra:
+    provider: github
+    claude_accounts: [ops]
+    allow_repos: ["github/acme/infra"]
 ```
 
 - **Several accounts per profile, one job each** (D4). The deployer builds one job per (profile,

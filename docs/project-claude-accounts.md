@@ -136,12 +136,15 @@ project_secrets:
   claude-oauth-token:
     allow_data_to:
       - acme/webapp
+      - acme/tools
 ```
 
 `allow_data_to` is the same owner/name list a model provider carries: the repositories whose runs
 may use that token. It is also what decides whether the token's project-wide copy may exist at all
 (§2), and what `accounts.<name>.allow_repos` is derived from (§5). `default` is reserved and may
-not appear as a key of `claude_accounts`; its list is the `project_secrets` entry above.
+not appear as a key of `claude_accounts`; its list is the `project_secrets` entry above — here the
+same two repositories as `acme-team`, which is what lets the profile below list both accounts (the
+subset rule, §4).
 
 **The profile**, which is where the project says which accounts a shared job serves:
 
@@ -161,7 +164,10 @@ profiles:
 `profiles.<p>.claude_accounts` is a new field inside a profile entry, and it is the whole of how a
 profile states accounts: `fugaro init` deploys one job per entry (plus the profile's no-account
 job), and a Claude OAuth token in a profile's `secrets:` is still refused — that field is not how a
-profile mounts a token.
+profile mounts a token. The profile's `allow_repos` is the repositories that profile admits, and
+**every account it lists has to cover every one of them** (§4): the example above is valid because
+both `default` and `acme-team` carry both repositories, and a profile that admits a repository one
+of its accounts does not carry is refused at publish rather than deployed.
 
 ## 4. The rules `publish` and `fugaro init` enforce
 
@@ -185,8 +191,13 @@ they are about to deploy against the same block. The rules, and what a refusal s
   a key beside it is a credential no OAuth run of that job can use — and which credential the job
   serves would stop being answerable from the profile.
 
-A repository that a profile admits but no account of that profile covers is refused at publish, so
-the operator meets the decision where they make it rather than at a run.
+The subset rule is an **intersection, not a union**: a profile is not "some account of mine carries
+this repository" — the repositories it admits are the ones **every** account it lists carries. So a
+profile whose list names a repository that even one of its accounts does not carry is refused at
+publish (`projectpolicy`'s `validProfileAccounts`), with a refusal naming both lists and the
+repository in one and not the other: the repair is the account's `allow_data_to` (add the
+repository there and publish again) or the profile's `allow_repos`, and the operator meets that
+decision where they make it rather than at a run.
 
 ## 5. What `fugaro init` deploys, and the version-3 rollout
 

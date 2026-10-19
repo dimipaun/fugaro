@@ -377,3 +377,59 @@ func TestSealRedactRemovesBothSpellings(t *testing.T) {
 		t.Fatal("a nil error is not nil after redaction")
 	}
 }
+
+// envRecorder keeps the two environment lists apart: a backend that wraps the
+// fixture's own and records what the launcher handed it, then launches.
+type envRecorder struct {
+	backend.Backend
+	env, secretEnv []string
+}
+
+func (b *envRecorder) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.ExecutionRef, error) {
+	b.env, b.secretEnv = spec.Env, spec.SecretEnv
+	return b.Backend.Launch(ctx, spec)
+}
+
+// TestTheSealKeyTravelsAsASecretEnvEntry: the marker is a SECRET entry
+// (backend.LaunchSpec.SecretEnv, D15), never a plain one, and that is the whole
+// carrier's safety. A plain entry is part of the execution's ordinary
+// environment: it is visible in the job's definition and in every listing of
+// it, and no formatter redacts it — while a secret entry is carried only where
+// the design accepts its audience, and a backend that cannot carry one where
+// only the execution and the override's own audience read it refuses the
+// launch (the Batch backend's guard) rather than put the key in a job
+// definition. internal/backend/backend.go's LaunchSpec comments say exactly
+// that (Env is plain and carries no secret; the marker is SecretEnv's), and the
+// fact is pinned here, where a launcher that followed the old comment — the
+// marker in Env — would break it.
+//
+// Mutation (verified, run and restored): set lspec.Env instead of
+// lspec.SecretEnv in internal/cli/run.go's launch — this fails on the plain
+// list carrying the marker.
+func TestTheSealKeyTravelsAsASecretEnvEntry(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	env := memEnv(t, f.cloudFixture)
+	rec := &envRecorder{Backend: env.be}
+	env.be = rec
+	spec := raceSpec(t, env)
+	// launchRun, not the command: the command builds its own backend from the
+	// fixture, so only a direct launch hands the spec to a recorder.
+	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.env) != 0 {
+		t.Errorf("the launch put %v in the plain Env list: the budget marker's value is the launch's seal key, and a plain entry is readable through the job's definition by every launcher (backend.LaunchSpec.SecretEnv)", rec.env)
+	}
+	var key string
+	for _, kv := range rec.secretEnv {
+		if v, ok := strings.CutPrefix(kv, runner.BudgetTokenEnv+"="); ok {
+			key = v
+		}
+	}
+	if key == "" {
+		t.Fatalf("the seal key is not among the launch's secret entries: %v", rec.secretEnv)
+	}
+	if _, err := token.ParseKey(key); err != nil {
+		t.Fatalf("the marker's secret value is not a seal key: %v", err)
+	}
+}

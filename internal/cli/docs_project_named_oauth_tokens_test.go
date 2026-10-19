@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"gopkg.in/yaml.v3"
 )
 
 // The tests below pin the wording this feature's security cost is stated in —
@@ -199,6 +200,11 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 		"profiles.<p>.claude_accounts",
 		"allow_data_to",
 		"**The subset rule (D3).**",
+		// Which way the rule bites: every listed account covers every admitted
+		// repository (the intersection), not one of them (the union), and the
+		// refusal is the code's own.
+		"**intersection, not a union**",
+		"`projectpolicy`'s `validProfileAccounts`",
 		"**its own exact\n  `allow_repos`**",
 		"**No Anthropic API key beside the accounts (D4).**",
 		// What init deploys, and the rollout.
@@ -561,5 +567,173 @@ func TestDocsProjectClaudeAccountsStayOutOfSiteNav(t *testing.T) {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s does not say %q: a page that is not in the hub has to say so itself, or a reader takes it for the released CLI's", projectClaudeAccountsDoc, want)
 		}
+	}
+}
+
+// localConfigFragments merges a page's local-config yaml blocks into one
+// config, the way a reader following the page end to end would: its blocks are
+// edits to one file (each says so above itself), and a block that names none of
+// these key-roots — the guide's per-repository fugaro.yaml fragment, say —
+// contributes nothing.
+func localConfigFragments(t *testing.T, path string) (map[string]projectpolicy.Profile, map[string]config.ClaudeAccount, map[string]config.ProjectSecret) {
+	t.Helper()
+	blocks := fencedYAML(t, path)
+	profiles := map[string]projectpolicy.Profile{}
+	accounts := map[string]config.ClaudeAccount{}
+	secrets := map[string]config.ProjectSecret{}
+	for _, block := range blocks {
+		var frag struct {
+			ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts"`
+			ProjectSecrets map[string]config.ProjectSecret `yaml:"project_secrets"`
+			Profiles       map[string]config.JobProfile    `yaml:"profiles"`
+		}
+		if err := yaml.Unmarshal([]byte(block), &frag); err != nil {
+			t.Fatalf("%s: a yaml block does not parse: %v\n%s", path, err, block)
+		}
+		for name, a := range frag.ClaudeAccounts {
+			accounts[name] = a
+		}
+		for name, s := range frag.ProjectSecrets {
+			secrets[name] = s
+		}
+		for name, pr := range frag.Profiles {
+			// The three keys the page does not state, supplied here: a profile
+			// is held to the resources and the timeout class it deploys with,
+			// and the examples' subject is their accounts. Every other value
+			// validated below is the document's own text.
+			pr.CPU, pr.Memory, pr.TimeoutClass = 2, "4Gi", "6h"
+			profiles[name] = projectpolicy.Profile{JobProfile: pr}
+		}
+	}
+	return profiles, accounts, secrets
+}
+
+// fencedYAML is a document's fenced ```yaml blocks, verbatim.
+func fencedYAML(t *testing.T, path string) []string {
+	t.Helper()
+	doc := readDoc(t, path)
+	var out []string
+	for _, m := range regexp.MustCompile("(?s)```yaml\n(.*?)```").FindAllStringSubmatch(doc, -1) {
+		out = append(out, m[1])
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s has no yaml block: this test's extraction is looking at the wrong document", path)
+	}
+	return out
+}
+
+// TestDocsProjectClaudeAccountsExamplesValidate holds the guide's canonical
+// example to the rule the guide itself states. §3 presents the account block
+// and the profile as the operator's two edits, and §4 says publish and
+// `fugaro init` refuse a profile that admits a repository one of the accounts
+// it lists does not cover (projectpolicy's validProfileAccounts, D3's subset
+// rule). An example that cannot pass that rule is a config an operator copies
+// and is refused — and refused in a way that points at the wrong repair, since
+// the refusal names the profile's allow_repos first and the account's list
+// second.
+//
+// So the page's local-config blocks are merged into ONE config and put through
+// the pair internal/infra's ProjectJobs runs before it deploys a job:
+// projectpolicy.DeriveAccounts (the accounts block, derived from
+// claude_accounts and project_secrets exactly as publish derives it) and
+// projectpolicy.CheckProfiles (the profile rules, the subset rule among them).
+//
+// Mutation (verified, run and restored): narrow the guide's project_secrets
+// entry back to ["acme/webapp"] alone — this fails with validProfileAccounts'
+// own refusal, naming the profile's github/acme/tools.
+func TestDocsProjectClaudeAccountsExamplesValidate(t *testing.T) {
+	profiles, accounts, secrets := localConfigFragments(t, projectClaudeAccountsDoc)
+	if len(profiles) == 0 || len(accounts) == 0 {
+		t.Fatalf("%s's local-config blocks no longer carry both a claude_accounts and a profiles block: this test validates the pair §3 presents as the operator's two edits", projectClaudeAccountsDoc)
+	}
+	for name, pr := range profiles {
+		if len(pr.ClaudeAccounts) > 0 && len(pr.AllowRepos) == 0 {
+			// §4's own rule, checked here so the validation below is reached
+			// with a list rather than with the "write your own allow_repos"
+			// refusal: an example that lists accounts and no repositories is
+			// not the example the page describes.
+			t.Errorf("%s's profiles.%s lists claude_accounts and writes no allow_repos, which the page's own subset rule refuses", projectClaudeAccountsDoc, name)
+		}
+	}
+	derived, err := projectpolicy.DeriveAccounts(profiles, accounts, secrets)
+	if err != nil {
+		t.Fatalf("%s's example is refused where publish derives the accounts block: %v", projectClaudeAccountsDoc, err)
+	}
+	if err := projectpolicy.CheckProfiles(profiles, derived); err != nil {
+		t.Fatalf("%s's example is refused by the rules publish and `fugaro init` apply to a profile: %v", projectClaudeAccountsDoc, err)
+	}
+	// And the claim that makes it pass, one repository at a time: every
+	// repository a profile admits is covered by EVERY account it lists — the
+	// intersection §4 states, not the union an earlier revision of the page
+	// described.
+	for name, pr := range profiles {
+		for _, acct := range pr.ClaudeAccounts {
+			for _, repo := range pr.AllowRepos {
+				if !projectpolicy.AdmitRepo(derived[acct].AllowRepos, repo) {
+					t.Errorf("%s's profiles.%s admits %s and its account %q lists %v: every account a profile lists must cover every repository it admits",
+						projectClaudeAccountsDoc, name, repo, acct, derived[acct].AllowRepos)
+				}
+			}
+		}
+	}
+}
+
+// TestDocsProjectNamedOAuthTokensPolicyExampleValidates is the same rule over
+// the design's §4.1 block, which is the policy's own shape rather than the
+// local config's: its accounts carry allow_repos directly, so it is validated
+// as a policy — projectpolicy.CheckProfiles over the block's own accounts —
+// which is the rule `fugaro project policy publish` applies to a hand-written
+// node (decodeAccountBlock and validProfiles). The block is the one the prose
+// below it calls the subset rule's shape, so an example that contradicts that
+// prose is a design that would refuse the node it just showed.
+//
+// Mutation (verified, run and restored): put `ops` back to ["github/acme/infra"]
+// alone — this fails with validProfileAccounts' refusal, naming
+// github/acme/app.
+func TestDocsProjectNamedOAuthTokensPolicyExampleValidates(t *testing.T) {
+	const path = "docs/design/project-named-oauth-tokens.md"
+	var (
+		profiles map[string]projectpolicy.Profile
+		accounts map[string]projectpolicy.Account
+		blocks   int
+	)
+	for _, block := range fencedYAML(t, path) {
+		var frag struct {
+			Accounts map[string]struct {
+				AllowRepos []string `yaml:"allow_repos"`
+			} `yaml:"accounts"`
+			Profiles map[string]config.JobProfile `yaml:"profiles"`
+		}
+		if err := yaml.Unmarshal([]byte(block), &frag); err != nil {
+			t.Fatalf("%s: a yaml block does not parse: %v\n%s", path, err, block)
+		}
+		if len(frag.Accounts) == 0 || len(frag.Profiles) == 0 {
+			continue
+		}
+		blocks++
+		accounts = map[string]projectpolicy.Account{}
+		profiles = map[string]projectpolicy.Profile{}
+		for name, a := range frag.Accounts {
+			accounts[name] = projectpolicy.Account{AllowRepos: a.AllowRepos}
+		}
+		for name, pr := range frag.Profiles {
+			pr.CPU, pr.Memory, pr.TimeoutClass = 2, "4Gi", "6h"
+			profiles[name] = projectpolicy.Profile{JobProfile: pr}
+		}
+	}
+	if blocks != 1 {
+		t.Fatalf("%s carries %d block(s) with both an accounts and a profiles key, and this test validates the one §4.1 presents", path, blocks)
+	}
+	listing := 0
+	for _, pr := range profiles {
+		if len(pr.ClaudeAccounts) > 1 {
+			listing++
+		}
+	}
+	if listing == 0 {
+		t.Fatalf("%s's §4.1 block no longer shows a profile listing several accounts: the subset rule this test exercises is not reachable from it", path)
+	}
+	if err := projectpolicy.CheckProfiles(profiles, accounts); err != nil {
+		t.Fatalf("%s's §4.1 block is refused by the rule the design's own bullet below it states: %v", path, err)
 	}
 }
