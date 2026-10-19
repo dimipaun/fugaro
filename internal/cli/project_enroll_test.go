@@ -545,3 +545,35 @@ func TestProjectReposListsWithoutASpendHistory(t *testing.T) {
 		t.Errorf("the listing dropped the bucket's answer with the missing source:\n%s", out)
 	}
 }
+
+// A seen entry that is a slug and *is* admitted still says what it is: only
+// `*` can admit a name that is not a provider/owner/name at all, and an
+// operator reading the list has to know that the entry they see is the
+// storage key of a repository whose name nothing here records — otherwise the
+// allow-list's every-repository entry reads as if it had been checked against
+// named repositories.
+//
+// Mutation (verified, run and restored): drop the slug half of seenNote (the
+// `case r.Provider == ""` clause) — this test fails, an admitted slug printed
+// as if it were a canonical name.
+func TestProjectReposSeenSlugSaysWhatItIs(t *testing.T) {
+	f := newSeenFixture(t)
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"*"},
+	})
+	putRun(t, f.dir, "ghost-0123")
+	out, _, err := execute(t, "project", "repos", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	_, seen, _ := strings.Cut(out, "repositories seen here")
+	line := listLine(t, seen, "ghost-0123")
+	if !strings.Contains(line, "slug") {
+		t.Errorf("an admitted slug is printed as if it were a name: %s", line)
+	}
+	if strings.Contains(line, "not admitted") {
+		t.Errorf("an admitted repository is marked as refused: %s", line)
+	}
+}
