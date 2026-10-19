@@ -299,12 +299,16 @@ installation is its own Firebase project, and the app is multi-account** (D114: 
   FCM's `SENDER_ID_MISMATCH`/`UNREGISTERED` class of error). So a per-installation sender
   serves only that installation's devices, and **the app must hold one registration per
   installation it is signed into** — not one registration for the app. That is a real change to
-  §3.4's store, and the unit it changes is the **child**, not the node: the node stays **one
-  per device** — `config/admin/push/$uid`, keyed by the uid D166 already pairs — and it is
-  `token/` **under it that multiplies**, one `token/<installation>/` per installation the phone
-  is signed into (the diagram in §3.4 is the one place the shape is written down; every other
-  section states the unit the same way, "the node is per device, its `token/` children are per
-  installation").
+  §3.4's store, and the unit it changes is the **node**: **the node is per paired ACCOUNT** —
+  one (device × installation) — because `config/admin/push/$uid` is keyed by **one
+  installation's** Auth uid and lives in **that installation's** database, and D166 pairs a
+  fresh `m~` uid per installation. A phone signed into two installations therefore has **two
+  nodes, in two databases**, each holding exactly **one** registration: the token that
+  installation's project issued, and no other — a token minted for another project is rejected
+  by this one (the `SENDER_ID_MISMATCH` above). **A single node could not hold a list of
+  installations' tokens**, and no principal of one installation can read another's database to
+  fetch the rest: installation A's launchers hold IAM in A only. (§3.4's diagram draws the
+  node and §3.5's unit sentence states the unit; both say this and nothing else.)
 - **iOS needs an APNs key in every installation's project.** For FCM's relay to reach an iOS
   device, that device's *Firebase project* must carry an APNs authentication key. An APNs
   `.p8` key is **team-wide**: it can send to every app of the Apple Developer team that
@@ -388,12 +392,15 @@ writes it but pairing.
 config/admin/devices/$uid/            # D166's node. WRITTEN AND DELETED ONLY by `fugaro pair`
   ...                                 #   / `fugaro pair revoke` (P6.6): mac key name, added at.
                                       #   Its existence IS the allowlist (userClaim, P6.4).
-config/admin/push/$uid/               # THIS design's node — a SIBLING, never a child.
-                                      #   ONE PER DEVICE, keyed by the paired uid: §3.3's
-                                      #   multi-installation change multiplies the CHILDREN
-                                      #   under it, never the node (§3.5's unit sentence)
-  token/<installation>/               #   the provider registration token, per installation
-                                      #   (§3.3: FCM addresses one project per token)
+config/admin/push/$uid/               # THIS design's node — a SIBLING, never a child, and
+                                      #   ONE PER PAIRED ACCOUNT: `$uid` is one
+                                      #   installation's Auth uid and the node lives in
+                                      #   that installation's database, so a phone signed
+                                      #   into two installations has one node in each
+                                      #   (§3.5's unit sentence)
+  token                               #   the registration token THAT installation's
+                                      #   project issued — exactly one per node (§3.3:
+                                      #   FCM rejects a token minted for another project)
   platform                            #   "ios" | "android"
   updated_at                          #   epoch ms, server-written
   prefs/                              #   §3.8's per-category switches and quiet hours
@@ -457,14 +464,14 @@ writers, and they are the same command in its two modes. **Pairing and revoke ar
 writers of `devices/**`, and pairing writes nothing under `push/**` at all**: D165's pairing
 session carries no registration token, so there is none for it to write (§3.5 (a)). So no
 `devices/**` row may claim a `push/**` write, and no `push/**` row may claim a `devices/**`
-one, and none does. **The node is one per device; only its `token/<installation>/` children
-multiply (§3.3).**
+one, and none does. **The node is one per paired account (device × installation) and holds
+that installation's one registration (§3.3).**
 
 | node | writer | what it writes | what it must never do |
 | --- | --- | --- | --- |
 | `config/admin/devices/$uid` | **`fugaro pair`** (D165/P6.6) | creates the node, with the pairing's own fields | never re-creates a node `pair revoke` deleted (only a fresh, typed-code pairing does); **never writes `push/**`** — it has no registration token to write (§3.5 (a)), so the rows below are the push node's whole set |
 | `config/admin/devices/$uid` | **`fugaro pair revoke`** (D166/P6.6) | **deletes** the node — the one revocation act — **and the sibling `push/$uid` with it** (next-to-last row) | never writes anything before deleting |
-| `config/admin/push/$uid` (token, platform, updated_at) — one node per device; `token/<installation>/` per installation | **the registration principal** — §3.5 (b), Q3's recommendation, and the **only** registration path: the principal that applies the app's mailbox registration message, holding `roles/firebasedatabase.admin` (the consumer beside the orchestrator where the operator holds the role) | the token and platform from that message — **including a create**, since it is the node's first write: pairing does not make one, and after a revoke this recreates the node revoke deleted (§3.5 (b): that write after a revoke is the orphan §3.4 reaps) | never writes a MAC-less or unvalidated token, and **never writes `devices/**`** — because the admission is pairing's alone, whatever this principal writes leaves a device un-admitted |
+| `config/admin/push/$uid` (token, platform, updated_at) — one node per paired account, holding that installation's one registration | **the registration principal** — §3.5 (b), Q3's recommendation, and the **only** registration path: the principal that applies the app's mailbox registration message, holding `roles/firebasedatabase.admin` (the consumer beside the orchestrator where the operator holds the role) | the token and platform from that message — **including a create**, since it is the node's first write: pairing does not make one, and after a revoke this recreates the node revoke deleted (§3.5 (b): that write after a revoke is the orphan §3.4 reaps) | never writes a MAC-less or unvalidated token, and **never writes `devices/**`** — because the admission is pairing's alone, whatever this principal writes leaves a device un-admitted |
 | `config/admin/push/$uid/prefs` | **the same registration principal** (§3.8: the controls are written the same way, through the mailbox and (b)) | the per-category switches and the quiet-hours zone name and window | never writes a switch the app did not ask for, and never `devices/**` |
 | `config/admin/push/$uid/ledger` | **the sender** (§3.6, §3.7) — its **only** write to either node | the dedupe key of an event it has sent, the cap window's timestamps, and the pending intent it will retry (§6) | never writes a token, a platform or a pref, never writes **content** (§3.6: a device, a category, a timestamp, a state-change key), never `devices/**`, and never **creates** a node whose `devices/$uid` is absent |
 | `config/admin/push/$uid` | **the sender** (§3.6) | **deletes** a stale token entry, and deletes the whole node when it is empty or orphaned | never writes a marker, never writes a token, never **creates** a node (§3.4 "reaping deletes; it never marks") |
@@ -525,9 +532,11 @@ same thing now.
 - **The honest sentence:** a push token is readable by every launcher and operator of the
   installation, and by the sender. **It is not a credential** — holding it lets a principal
   send to that device only if it also holds the FCM send credential (§3.6) — and §3.3's
-  multi-installation change leaves the *node* one per device (§3.5's unit sentence): it is the
-  `token/<installation>/` children that are per installation, and one launcher reading the node
-  reads all of them at once.
+  multi-installation change leaves each *node* belonging to one **paired account** (§3.5's unit
+  sentence): it lives in that installation's database, it holds that installation's single
+  registration, and **no launcher can read another installation's node at all** — the
+  per-installation sentence above is per installation precisely because the IAM read does not
+  cross projects.
 
 **The generation.** Both nodes land in **rules generation 3, and that generation is in the
 tree**: `origin/main` at `371038f` (read 2026-10-19) carries
@@ -560,12 +569,15 @@ reap can recreate the node the rules consult — an orphaned `push/$uid` is iner
 deleted, never resurrected into an admission. This is the design's strongest property, and it
 survives only in the sibling shape.
 
-**The unit, stated once so no section states it differently: the node is per DEVICE, its
-children are per INSTALLATION.** `config/admin/push/$uid` is one node, keyed by the uid D166
-pairs; §3.3's multi-installation requirement multiplies `token/<installation>/` **under** it —
-one child per installation the phone is signed into — and touches neither the node's key nor
-its existence. (§3.3 states the requirement, §3.4's diagram draws the shape, the writers table
-and Q2 name the node; this is the sentence they all agree with.)
+**The unit, stated once so no section states it differently: the node is per paired ACCOUNT —
+one device × one installation — and holds that installation's single registration.**
+`config/admin/push/$uid` is keyed by the uid D166 paired **in that installation** (`m~<random>`,
+`mu = uid`), and the node lives in **that installation's** database, so §3.3's
+multi-installation phone has **one node in each installation it is paired into** and no node
+holds two installations' tokens: a token is meaningful only to the project that issued it
+(§3.3), and one installation's principals cannot read another's database at all. **(§3.3
+states the requirement, §3.4's diagram draws the shape, the writers table and Q2 name the
+node; this is the sentence they all agree with.)**
 
 **Rotation is the harder half, and it is an open question rather than a solved one (Q3).** Push
 tokens rotate: FCM and APNs issue new registration tokens on reinstall, on restore, on
@@ -614,11 +626,18 @@ app-data clear, and occasionally otherwise, and FCM reports a stale token back a
   **But read the message node before promising that this costs nothing, because the mailbox is
   as closed as the pairing node was.** `mailbox/$mb/inbox/$msg` in `rules.json.tmpl` names
   exactly `id`, `sender`, `text`, `at`, `mac`, `agent`, `kind`, `options`, `reply_to` and
-  `action`, ends in `"$other": { ".validate": false }`, and the schema agrees from the other
-  side: `shared/mailbox-schema/index.js`'s `FIELDS` is the same closed list, validated as
-  "any other field is refused", so a message carrying a `token` field is refused **by the
-  rules and by the validator** — `internal/budget/rules/emulator_mailbox_test.go` proves the
-  rules' half ("a message carrying the unknown field `acked`", and `expires_at` beside it).
+  `action`, ends in `"$other": { ".validate": false }`, and the schema closed its list from
+  the other side too: `shared/mailbox-schema/index.js`'s `FIELDS` is annotated "any other
+  field is refused". **The two closed lists are not identical, and the difference is worth
+  stating rather than glossing as "the same":** `FIELDS` has **eleven** members where the
+  inbox names ten — its extra one is **`acked`**, which `rules.json.tmpl` puts on the
+  **outbox** node only (the phone's write on a message the consumer wrote, §6.2/D113) and the
+  inbox's `$other` refuses. The validator has no direction check, so it accepts `acked`
+  wherever a message carries it and the rules do not; that one member aside the lists agree.
+  **`token` is in neither**, so a message carrying a `token` field is refused **by the rules
+  and by the validator** — `internal/budget/rules/emulator_mailbox_test.go` proves the rules'
+  half with a named field the inbox does not have ("a message carrying the unknown field
+  `acked`", and `expires_at` beside it).
   **So today the only field that can carry a registration token is `text`** (≤ `MaxText =
   4096`, rules.go), and the design **does not recommend** that: `text` is the mailbox's
   human-and-agent channel, and a consumer that decides "this message is a registration" by

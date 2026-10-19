@@ -756,6 +756,13 @@ func TestDocsMobilePushRegistrationTokenHasACarrier(t *testing.T) {
 		// problem: a quiet-hours zone has no field in the inbox either.
 		"the kind this design asks for is the app's **registration-and-preferences**",
 		"§3.8's controls stand under the same prerequisite",
+		// The two closed lists differ, and the design says by what: claiming
+		// they are "the same" is false — `FIELDS` carries `acked`, the inbox
+		// node does not (it is the outbox's), and the validator has no
+		// direction check.
+		"`FIELDS` has **eleven** members where the inbox names ten",
+		"its extra one is **`acked`**",
+		"The validator has no direction check",
 		"the plan's P5.2 dependency row records it",
 		// The reason the design does not simply add the field to the pairing
 		// request instead: a rules change that buys shape (a) alone.
@@ -764,6 +771,21 @@ func TestDocsMobilePushRegistrationTokenHasACarrier(t *testing.T) {
 		if !strings.Contains(flat, normSpace(want)) {
 			t.Errorf("%s lacks %q: a registration token with no flow that can carry it is the defect this guard exists for", docPath, want)
 		}
+	}
+
+	// The claim "the two lists differ by exactly `acked`, and only the outbox
+	// names it" is held against the two artifacts rather than remembered: the
+	// schema names `acked` in `FIELDS`, and the rules template names it exactly
+	// once — on the outbox node. A change that put it on the inbox too, or
+	// dropped it, makes this fail, so the paragraph is re-read rather than left
+	// standing on a list that moved.
+	schema := readDoc(t, "shared/mailbox-schema/index.js")
+	if !strings.Contains(schema, "'acked',") {
+		t.Errorf("%s no longer names `acked` in FIELDS, but the design's §3.5 (b) says the two closed lists differ by exactly that member", "shared/mailbox-schema/index.js")
+	}
+	rules := readDoc(t, "internal/budget/rules/rules.json.tmpl")
+	if got := strings.Count(rules, `"acked"`); got != 1 {
+		t.Errorf("%s names %q %d times, want 1 (the outbox node's child): the design's §3.5 (b) says the inbox refuses `acked` and only the outbox has it", "internal/budget/rules/rules.json.tmpl", "acked", got)
 	}
 
 	// The design has to name the task, not only "the consumer": a prerequisite
@@ -807,35 +829,56 @@ func TestDocsMobilePushRegistrationTokenHasACarrier(t *testing.T) {
 	}
 }
 
-// TestDocsMobilePushStatesTheNodeUnitOnce: §3.3 said "the node is per (device,
-// installation)" and §3.4 repeated it, while §3.4's own diagram (one
-// `config/admin/push/$uid`, with `token/<installation>/` children) and its
-// writers table said the opposite — the node is per device and the CHILDREN
-// multiply. Two statements of one unit cannot both stand, so the unit is stated
-// once (§3.5) and every other place has to say the same thing.
+// TestDocsMobilePushStatesTheNodeUnitOnce: the unit has been stated three ways
+// in three rounds — "per (device, installation)", then "one node per device,
+// with `token/<installation>/` children", and neither can hold. `$uid` is ONE
+// installation's Auth uid (D166 pairs a fresh `m~` uid per installation) and the
+// node lives in THAT installation's database, so a phone signed into two
+// installations has two nodes in two databases, each holding the one token its
+// own project issued — §3.3's own premise is that FCM rejects a token minted for
+// another project, and no principal of one installation can read another's
+// database. The node is therefore per PAIRED ACCOUNT (device × installation),
+// holding that installation's single registration: stated once in §3.5, and
+// agreed with in §3.3, §3.4's diagram, its table and its read paragraph. This
+// guard forbids the node-per-device reading and the installation list under one
+// node that goes with it.
 //
-// Mutation (verified, run and restored): re-writing either occurrence as "the
-// node is per (device, installation)", or dropping §3.5's unit sentence: this
-// test fails, each way.
+// Mutation (verified, run and restored): re-writing §3.3 as "the node stays one
+// per device", putting `token/<installation>/` back into the diagram or the
+// table, or dropping §3.5's unit sentence: this test fails, each way.
 func TestDocsMobilePushStatesTheNodeUnitOnce(t *testing.T) {
 	const docPath = "docs/mobile/design/push-notifications.md"
 	doc := readDoc(t, docPath)
 	flat := normSpace(doc)
 
-	if strings.Contains(flat, "per (device, installation)") {
-		t.Errorf("%s still calls the node per (device, installation), contradicting its own diagram and writers table: the node is per device and its `token/<installation>/` children are per installation (§3.3, §3.5)", docPath)
+	for _, stale := range []string{
+		// The node is not one per device: it cannot span two databases.
+		"one node per device",
+		"the node is one per device",
+		"the node stays **one per device**",
+		"the node is per DEVICE",
+		"ONE PER DEVICE",
+		// ...and no node holds a list of installations' tokens.
+		"token/<installation>",
+		"children are per INSTALLATION",
+	} {
+		if strings.Contains(flat, normSpace(stale)) {
+			t.Errorf("%s still says %q, but `config/admin/push/$uid` is keyed by one installation's uid and lives in that installation's database: the node is per paired account and holds that installation's single registration (§3.3, §3.5)", docPath, stale)
+		}
 	}
 	for _, want := range []string{
 		// §3.5, the one place the unit is stated.
-		"the node is per DEVICE, its children are per INSTALLATION",
+		"the node is per paired ACCOUNT — one device × one installation — and holds that installation's single registration",
 		// §3.3, where the requirement is derived.
-		"the node stays **one per device**",
-		"the node is per device, its `token/` children are per installation",
+		"the node is per paired ACCOUNT",
+		"two nodes, in two databases",
+		"A single node could not hold a list of installations' tokens",
 		// §3.4's diagram and its table intro.
-		"ONE PER DEVICE, keyed by the paired uid",
-		"**The node is one per device; only its `token/<installation>/` children multiply (§3.3).**",
+		"ONE PER PAIRED ACCOUNT",
+		"**The node is one per paired account (device × installation) and holds that installation's one registration (§3.3).**",
 		// §3.4's "who can read" paragraph, the sentence that had it wrong.
-		"leaves the *node* one per device (§3.5's unit sentence)",
+		"leaves each *node* belonging to one **paired account** (§3.5's unit sentence)",
+		"no launcher can read another installation's node at all",
 	} {
 		if !strings.Contains(flat, normSpace(want)) {
 			t.Errorf("%s lacks %q: the node's unit has to be stated once and agreed with everywhere else", docPath, want)
@@ -843,6 +886,12 @@ func TestDocsMobilePushStatesTheNodeUnitOnce(t *testing.T) {
 	}
 	if got := strings.Count(flat, "(§3.5's unit sentence)"); got < 2 {
 		t.Errorf("%s cites §3.5's unit sentence %d times, want at least 2 (the diagram and §3.4's read paragraph): a section that states the unit itself is a section that can disagree with it", docPath, got)
+	}
+	// §3.8 says the same thing in the opt-in sentence, which is the other place
+	// the unit is visible to a reader: one registration per installation, so
+	// opt-in is per device AND per installation.
+	if !strings.Contains(flat, "Push is opt-in per device and per installation") {
+		t.Errorf("%s's §3.8 no longer says push is opt-in per device and per installation: with the node per paired account that is the same unit, and the two sections have to keep saying it", docPath)
 	}
 }
 
