@@ -243,6 +243,86 @@ export function textOf(node) {
   return (node.children ?? []).map(textOf).join('')
 }
 
+// The elements a browser lays out as blocks: the text on either side of one is not the same
+// run of words, so a reader's word boundary is there even when the source wrote none.
+// Everything else is inline, and inline markup joins its neighbours verbatim. The document's
+// own containers are here too: a page's `<title>` is not laid out beside its body, so its text
+// is not part of the same run of words as the first thing a reader reads.
+export const BLOCK = new Set([
+  'address', 'article', 'aside', 'blockquote', 'body', 'br', 'dd', 'div', 'dl', 'dt',
+  'fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'head', 'header', 'hr', 'html', 'li', 'main', 'nav', 'noscript', 'ol', 'p', 'pre',
+  'section', 'table', 'tbody', 'td', 'template', 'tfoot', 'th', 'thead', 'title', 'tr', 'ul',
+])
+
+/**
+ * The runs of text a reader sees inside a node, in document order, as a flat list of strings:
+ * each direct text child, and the text a leaf element carries, with **no space invented
+ * between them**. Two runs that end up next to each other in this list are adjacent on the
+ * page, so a run that ends in a word character directly followed by one that starts in a word
+ * character is one glued word — `back and<code>fugaro secrets</code>` reads as "andfugaro".
+ * That defect is invisible in the built file's source and invisible to a reader that joins a
+ * node's children with a space as well, because the space it invents is the space that went
+ * missing (see `spacing.mjs`, whose rule this is).
+ *
+ * An inline element is not a word boundary: `<em>foo</em>bar` is the run `foo` and then the
+ * run `bar`. A block element is laid out apart from its neighbours, so its text is fenced with
+ * a single space on each side and that space is the list's marker for "a boundary a reader
+ * sees". `raw` content (a script or style body) and a `hidden` element contribute nothing,
+ * and an image contributes its alt text, as `textOf` above does.
+ *
+ * `isBlock` is the caller's answer to what is laid out apart, and it defaults to the list
+ * above by tag name. A page whose own stylesheet lays an element out as a block passes its own
+ * answer (`spacing.mjs` reads the page's stylesheet for exactly that), because a class that
+ * the site displays as a block is a boundary a reader sees just as a `<p>` is.
+ */
+export function textRuns(node, isBlock = (el) => BLOCK.has(el.name)) {
+  if (node.raw !== undefined || node.attrs?.has('hidden')) return []
+  if (node.text !== undefined) return [node.text]
+  const children = node.children ?? []
+  if (children.length === 0) return node.name === 'img' ? [node.attrs.get('alt') ?? ''] : []
+  const runs = []
+  for (const child of children) {
+    const inner = textRuns(child, isBlock)
+    if (inner.length === 0) {
+      if (isBlock(child)) runs.push(' ')
+      continue
+    }
+    if (isBlock(child)) runs.push(' ', ...inner, ' ')
+    else runs.push(...inner)
+  }
+  return runs
+}
+
+/** The text a reader sees inside a node, block boundaries included, with nothing invented
+ *  between two neighbours a browser runs together. */
+export function verbatimText(node, isBlock) {
+  return textRuns(node, isBlock).join('')
+}
+
+/**
+ * The places a text run ends in a word character and the next one starts in a word character:
+ * the two runs are one word to a reader, and the page did not write the space between them.
+ * Each finding is `{ before, after, glued }`, where `glued` is the word a reader reads — the
+ * word characters on either side of the seam, since a hyphen or a slash ends a word.
+ */
+export function runTogether(node, isBlock) {
+  const runs = textRuns(node, isBlock)
+  const out = []
+  for (let i = 1; i < runs.length; i++) {
+    const before = runs[i - 1]
+    const after = runs[i]
+    if (before === ' ' || after === ' ') continue
+    const left = before.slice(-1)
+    const right = after.slice(0, 1)
+    if (!/[a-z]/.test(left) || !/[a-z]/.test(right)) continue
+    const tail = /[a-z]+$/.exec(before)?.[0] ?? left
+    const head = /^[a-z]+/.exec(after)?.[0] ?? right
+    out.push({ before, after, glued: tail + head })
+  }
+  return out
+}
+
 export function hasAncestor(node, name) {
   for (let p = node.parent; p; p = p.parent) if (p.name === name) return true
   return false

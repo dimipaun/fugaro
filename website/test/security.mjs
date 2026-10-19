@@ -1,53 +1,69 @@
 // website/test/security.mjs — the security page (website plan, Task W1.8; the owner's brief
-// of 2026-10-19).
+// of 2026-10-19 and ruling D189).
 //
-// **The page is three things and nothing else**, and that is what this file holds it to: a
-// short high-level description of the security model and its boundaries (at most eight short
-// bullets), the document's own "Reporting a vulnerability" section, and a link to
-// `SECURITY.md` in the repository. The page used to render `SECURITY.md` whole, behind a
-// contents list built from its headings; the owner cut it on 2026-10-19, and the two checks
-// that made the old shape safe are kept in their new form below.
+// **The page is three things and nothing else**, and all three of them are the document's:
+// `SECURITY.md`'s own "In short" section, its own "Reporting a vulnerability" section, and a
+// link to the document in the repository. That is the brief's cut of the page, and D189's
+// answer to the one open question — where the summary comes from: **each long page's summary
+// is rendered from a file, never written on the page**, and this page's file is `SECURITY.md`
+// itself (`docs/website/redesign/reconciliation.md`, D189). The page used to render the
+// document whole, behind a contents list built from its headings, and then wrote a summary of
+// its own; both are gone, and this file is what holds the page to the new shape.
 //
 // Five things are checked, and each one is the mechanical form of a sentence in the brief:
 //
 //   1. **The page carries its three regions and no other text** (the brief: "Nothing else").
-//      Everything a reader sees inside the page's own `<article>` is its `h1`, the
-//      description, the reporting section and the policy link; a paragraph of introduction,
-//      a summary of a limit, or a second copy of anything fails here. The rule is applied
-//      twice over, because the page can grow two ways: the article's text has to be exactly
-//      the four regions' text (so nothing sits between them), and each region has to be the
-//      shape the brief gives it — a heading and one list, a heading and the document's
-//      paragraphs, the link and the sentence around it (so nothing sits inside one, where the
-//      first half of the rule would count it as the region's own text and pass it).
-//   2. **The reporting section is `SECURITY.md`'s own words** (the brief: "the real
-//      reporting instructions, unchanged in substance"). It is compared with the document in
-//      the repository, paragraph by paragraph, through one normalisation — inline markup off,
-//      whitespace removed — so the page cannot reword an instruction a reporter follows. The
-//      page renders the section out of `website/content/security.md`, the file `go run
-//      ./internal/clidoc` writes from `SECURITY.md`, and this check reads the source document
-//      rather than the generator's output: a test written against the thing it is meant to
-//      hold agrees with whatever that thing does (plan Review Focus).
-//   3. **The description is short** (the brief: "at most about 8 short bullets"): at most
-//      eight bullets, no nested list, each bullet at most 40 words, and the section at most
-//      220 words in all. The numbers are the brief's own ceiling and a ceiling on "short";
-//      what the bullets *claim* is the owner's reading, and every one of them names the
-//      source it comes from in a comment in `website/src/pages/security.astro`.
+//      Everything a reader sees inside the page's own `<article>` is its `h1`, the summary,
+//      the reporting section and the policy link; a paragraph of introduction, a summary of a
+//      limit, or a second copy of anything fails here. The rule is applied twice over, because
+//      the page can grow two ways: the article's text has to be exactly the four regions' text
+//      (so nothing sits between them), and each region has to be the shape the brief gives it
+//      — a heading and one list, a heading and the document's paragraphs, the link and the
+//      sentence around it (so nothing sits inside one, where the first half of the rule would
+//      count it as the region's own text and pass it).
+//   2. **The summary is `SECURITY.md`'s own "In short" section, bullet for bullet** (the
+//      brief: "a short high-level description of the security model and its boundaries";
+//      D189: "rendered from a file, never written on the page"). Each rendered bullet is
+//      compared with the document's own, through one normalisation — inline markup off,
+//      whitespace collapsed — so the page cannot soften a limit the owner states, and cannot
+//      lose a space either, and the section is held to a word ceiling so that "short" stays a
+//      measured thing. The bullets are the owner's sentences and this file does not shorten
+//      them: the ceiling is on the section, and a document edit that grows it re-derives the
+//      number in that commit.
+//   3. **The reporting section is `SECURITY.md`'s own words** (the brief: "the real reporting
+//      instructions, unchanged in substance"). Compared with the document paragraph by
+//      paragraph, the same way. The page renders both sections out of
+//      `website/content/security.md`, the file `go run ./internal/clidoc` writes from
+//      `SECURITY.md`, and this file reads the source document rather than the generator's
+//      output: a test written against the thing it is meant to hold agrees with whatever that
+//      thing does (plan Review Focus).
 //   4. **The link is `SECURITY.md`, at its own path in the repository** (the brief:
 //      `https://github.com/dimipaun/fugaro/blob/main/SECURITY.md`). The path is read from the
 //      generated file's own `source:` header and the repository from `site.yaml`, both of
-//      which `website/src/pages/security.astro` builds the URL from, so the page cannot
-//      point at a document this repository does not carry.
-//   5. **The page's head points at no file the build does not produce** (Global Constraint
-//      9). The one hint the layout composes is the sitemap, and whether the build ships one
-//      is read from the resolved `astro.config.mjs` — imported, not pattern-matched, which is
-//      the same rule `website/test/readme.mjs` applies to the same file.
+//      which `website/src/pages/security.astro` builds the URL from, so the page cannot point
+//      at a document this repository does not carry.
+//   5. **The page's head points at no file the build does not produce** (Global Constraint 9).
+//      The one hint the layout composes is the sitemap, and whether the build ships one is
+//      read from the resolved `astro.config.mjs` — imported, not pattern-matched, which is the
+//      same rule `website/test/readme.mjs` applies to the same file.
+//
+// **Two readers, and why the text is read the hard way** (round 3 of the review, findings 3 and
+// 4). The text of the page is read with `test/lib/html.mjs`'s `verbatimText`, which invents
+// nothing between two neighbouring runs of text, and the comparison collapses runs of
+// whitespace to one space rather than removing them. Both halves are deliberate and both were
+// the bug: the first version of this file read a node's children with `join(' ')` — inventing
+// exactly the space the build had removed — and compared the two sides with every space
+// deleted, which repairs the same damage a second time. A page whose summary read "is listed
+// infollowup.trusted" passed both. `spacing.mjs` is the gate that holds the whole site to that
+// defect by name, and the planted-defect case at the end of this file plants it here, so the
+// reader and the comparison cannot drift back apart from it.
 //
 // How it reads the page: the built artifact, `dist/security/index.html`, written by `npm run
 // build` — which `npm run check` runs before it runs any file here — through `DIST`, so
 // `FUGARO_GATES_DIST` points the whole gate at a planted copy and each of its refusals is
 // mutation-proved rather than asserted (the mechanism `budget.mjs` and `fold.mjs` use; the
 // case at the end of this file plants them). The regions are found by the marker attributes
-// the page's own markup carries (`data-security-page`, `data-security-model`,
+// the page's own markup carries (`data-security-page`, `data-security-summary`,
 // `data-security-reporting`, `data-security-policy`).
 
 import { test } from 'node:test'
@@ -55,21 +71,26 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DIST, REPO, SITE, findAll, parse } from './lib/html.mjs'
+import { DIST, REPO, SITE, findAll, parse, verbatimText } from './lib/html.mjs'
 
 /** The document the page renders, the file it is generated into, and the built page. */
 const SOURCE = 'SECURITY.md'
 const GENERATED = 'website/content/security.md'
 const BUILT = path.join('security', 'index.html')
 
-/** The section of the document the page renders, and the id its heading carries. */
+/** The two sections of the document the page renders, and the ids their headings carry. */
+const SUMMARY = 'In short'
+const SUMMARY_ID = 'in-short'
 const REPORTING = 'Reporting a vulnerability'
 const REPORTING_ID = 'reporting-a-vulnerability'
 
-/** The ceilings of check 3, which are the brief's "at most about 8 short bullets". */
-const MAX_BULLETS = 8
-const MAX_BULLET_WORDS = 40
-const MAX_MODEL_WORDS = 220
+/**
+ * The summary's word ceiling, which is the brief's "at most about 8 short bullets" as one
+ * number. It is measured against the document's own section — the page adds no words of its
+ * own to it — and it is re-derived in the commit that changes the section, the way the
+ * README's byte budgets are re-derived in the commit that moves those bytes.
+ */
+const MAX_SUMMARY_WORDS = 220
 
 /**
  * The words the pointer to the document may spend around its link: "The full policy is … in
@@ -109,18 +130,27 @@ function builtPage(dist) {
   return existsSync(file) ? readFileSync(file, 'utf8') : null
 }
 
-/** The text a reader sees inside a node, with an image's alt standing in for the image. */
+/**
+ * The text a reader sees inside a node. `textRuns` is the shared reader's own answer to what
+ * a run of text is — each direct text child, with nothing invented between two neighbours and
+ * a block boundary marked as a space — so the words counted below are the words the artifact
+ * carries and not the words a reader that joined children with a space would imagine (round 3,
+ * finding 4: the space it invented is the space that went missing).
+ */
 function text(node) {
-  if (node.text !== undefined) return node.text
-  if (node.name === 'img') return node.attrs.get('alt') ?? ''
-  if (node.raw !== undefined) return ''
-  if (node.attrs?.has('hidden')) return ''
-  return (node.children ?? []).map(text).join(' ')
+  return verbatimText(node)
 }
 
-/** Text reduced to the words themselves: no whitespace, so line breaks cannot differ. */
-function flatten(s) {
-  return s.replace(/\s+/g, '')
+/**
+ * The text as a reader reads it: runs of whitespace collapsed to one space and the ends
+ * trimmed, so a line break, a wrap or an indent cannot differ — and a space that went missing
+ * is still a missing space. That last half is the point of not removing whitespace outright:
+ * `flatten` in the first version of this file deleted every space on both sides before
+ * comparing, which is the same repair as joining a node's children with one, and it hid the
+ * defect it was meant to find (round 3, findings 3 and 4).
+ */
+function prose(s) {
+  return s.replace(/\s+/g, ' ').trim()
 }
 
 /** The words of a piece of text, the way a reader counts them. */
@@ -135,7 +165,7 @@ function childElements(node) {
 
 /**
  * The words a node says itself, with every element child's text taken out: the text a region
- * carries beside the elements the brief allows it. A `<p>` written into the description, or a
+ * carries beside the elements the brief allows it. A `<p>` written into the summary, or a
  * second sentence written into the pointer, is what this counts.
  */
 function ownWords(node) {
@@ -155,19 +185,30 @@ function inlineText(line) {
 }
 
 /**
- * The document's lines under its `## Reporting a vulnerability` heading, up to the next
- * heading of the same level or higher — the section the page renders, read from `SECURITY.md`
- * rather than from the generated file or from the page.
+ * The document's lines under a `## <heading>`, up to the next heading of the same level or
+ * higher — a section the page renders, read from `SECURITY.md` rather than from the
+ * generated file or from the page.
  */
-function reportingLines(document) {
+function sectionLines(document, heading) {
   const lines = document.split('\n')
-  const start = lines.findIndex((line) => line.trim() === `## ${REPORTING}`)
+  const start = lines.findIndex((line) => line.trim() === `## ${heading}`)
   if (start === -1) {
-    throw new Error(`${SOURCE} has no "## ${REPORTING}" heading, so the page this file checks has no reporting section to render`)
+    throw new Error(`${SOURCE} has no "## ${heading}" heading, so the page this file checks has no such section to render`)
   }
   const rest = lines.slice(start + 1)
   const end = rest.findIndex((line) => /^#{1,2}[ \t]/.test(line))
   return end === -1 ? rest : rest.slice(0, end)
+}
+
+/** The bullets of a section, each one line joined back together when the file wrapped it. */
+function bulletsOf(document, heading) {
+  const bullets = []
+  for (const line of sectionLines(document, heading)) {
+    const bullet = /^\s*[-*][ \t]+(.*)$/.exec(line)
+    if (bullet !== null) bullets.push(inlineText(bullet[1]))
+    else if (line.trim() !== '' && bullets.length > 0) bullets[bullets.length - 1] += ` ${inlineText(line)}`
+  }
+  return bullets
 }
 
 /** The paragraphs of a run of Markdown lines, as a reader reads them. */
@@ -222,27 +263,26 @@ export function securityFailures(dist = DIST) {
   // 1. The three regions, and nothing else. The `h1` is the page's own title and takes no
   //    marker: it is the whole of what the page says above its first section.
   const h1s = findAll(article, 'h1')
-  const model = marked(article, 'data-security-model', fail)
+  const summary = marked(article, 'data-security-summary', fail)
   const reporting = marked(article, 'data-security-reporting', fail)
   const policy = marked(article, 'data-security-policy', fail)
-  if (h1s.length !== 1 || model === null || reporting === null || policy === null) return out
+  if (h1s.length !== 1 || summary === null || reporting === null || policy === null) return out
 
-  const regions = [h1s[0], model, reporting, policy]
-  if (flatten(text(article)) !== flatten(regions.map(text).join(' '))) {
+  const regions = [h1s[0], summary, reporting, policy]
+  if (prose(text(article)) !== prose(regions.map(text).join(' '))) {
     fail(
-      `the page carries text outside its title, its description, the document's reporting section and the link to it: the page is those four things and nothing else (the owner's brief of 2026-10-19), so a sentence written anywhere else on it is a security claim the document does not make (D99)`,
+      `the page carries text outside its title, the document's summary, its reporting section and the link to it: the page is those four things and nothing else (the owner's brief of 2026-10-19), so a sentence written anywhere else on it is a security claim the document does not make (D99)`,
     )
   }
 
-  // 1b. And each region is the shape the brief gives it: the description is its heading and
-  //     its one list, the reporting section is its heading and the document's own paragraphs
+  // 1b. And each region is the shape the brief gives it: the summary is its heading and its
+  //     one list, the reporting section is its heading and the document's own paragraphs
   //     (compared below), and the pointer is the link and the few words that point at it. The
   //     balance above cannot see a sentence added *inside* a region — its text is counted
-  //     either way — so without this rule a paragraph slipped into the description, or a
-  //     second sentence slipped into the pointer, would read as part of the page's own
-  //     summary and pass.
+  //     either way — so without this rule a paragraph slipped into the summary, or a second
+  //     sentence slipped into the pointer, would read as part of the page's own text and pass.
   for (const { region, what, shape, allowed, own } of [
-    { region: model, what: 'the description', shape: 'its heading and its one list', allowed: ['h2', 'ul'], own: 0 },
+    { region: summary, what: 'the summary', shape: 'its heading and its one list', allowed: ['h2', 'ul'], own: 0 },
     { region: reporting, what: "the document's reporting section", shape: 'its heading and the document\'s paragraphs', allowed: ['h2', 'p'], own: 0 },
     { region: policy, what: 'the pointer to the document', shape: 'the link and the one sentence around it', allowed: ['a'], own: POINTER_WORDS },
   ]) {
@@ -255,54 +295,45 @@ export function securityFailures(dist = DIST) {
     const spoken = ownWords(region)
     if (spoken > own) {
       fail(
-        `${what} says ${spoken} words of its own around ${shape}: those words are the page's own, and the page's own text is the description and the one sentence pointing at the document (${own} words at most there; the owner's brief of 2026-10-19)`,
+        `${what} says ${spoken} words of its own around ${shape}: those words are the page's own, and the page's own text is the one sentence pointing at the document (${own} words at most there; the owner's brief of 2026-10-19)`,
       )
     }
   }
 
-  // 2. The reporting section is the document's own, word for word.
-  const expected = paragraphsOf(reportingLines(sourceDocument()))
-  const rendered = findAll(reporting, 'p')
-  const headings = findAll(reporting, 'h2')
-  if (headings.length !== 1 || flatten(text(headings[0])) !== flatten(REPORTING)) {
-    fail(`the reporting section is not under the document's own "${REPORTING}" heading: the page names the section a reporter is looking for (${SOURCE})`)
-  } else if (headings[0].attrs.get('id') !== REPORTING_ID) {
-    fail(`the reporting section's heading carries the id ${JSON.stringify(headings[0].attrs.get('id') ?? '')} and not "${REPORTING_ID}": the id is what a link into the section points at`)
-  }
-  if (rendered.length === 0) {
-    fail(`the reporting section carries no paragraph: ${SOURCE} writes the instructions to report a vulnerability there, and a section with no text sends a reporter nowhere`)
-  } else if (expected.length === 0) {
-    fail(`read no paragraph out of ${SOURCE}'s "${REPORTING}" section: the document has moved, so this check saw nothing`)
-  } else if (rendered.map((p) => flatten(text(p))).join('\u0000') !== expected.map(flatten).join('\u0000')) {
-    fail(
-      `${BUILT} does not render ${SOURCE}'s own reporting instructions: the page renders the document's section and does not reword it, because a reporter follows those words and a paraphrase is a claim the document does not make (D99)`,
-    )
-  }
+  // 2. The summary is the document's own "In short" section, bullet for bullet.
+  checkSection(summary, {
+    document: sourceDocument(),
+    heading: SUMMARY,
+    id: SUMMARY_ID,
+    fail,
+    what: 'summary',
+    kind: 'bullet',
+    label: 'the page describes the security model in the document\'s own words, and the summary is the file those words live in (D189)',
+  })
 
-  // 3. The description is short: at most eight bullets, no nested list, each bullet at most
-  //    forty words, and the section at most two hundred and twenty.
-  const lists = findAll(model, 'ul')
-  const bullets = findAll(model, 'li')
+  // 3. The reporting section is the document's own, word for word.
+  checkSection(reporting, {
+    document: sourceDocument(),
+    heading: REPORTING,
+    id: REPORTING_ID,
+    fail,
+    what: 'reporting',
+    kind: 'paragraph',
+    label: `the page renders the document's section and does not reword it, because a reporter follows those words and a paraphrase is a claim the document does not make (D99)`,
+  })
+
+  // 3b. The summary is short, and it is a list: the ceiling is the brief's "at most about 8
+  //     short bullets", and a nested list is a boundary the reader has to assemble.
+  const lists = findAll(summary, 'ul')
+  const items = findAll(summary, 'li')
   if (lists.length !== 1) {
-    fail(`the description carries ${lists.length} lists; the page's description is one list of bullets (the owner's brief of 2026-10-19)`)
-  } else if (bullets.some((b) => findAll(b, 'li').length > 0)) {
-    fail('the description carries a nested list: each boundary is one bullet, and a bullet inside a bullet is a boundary the reader has to assemble')
+    fail(`the summary carries ${lists.length} lists; the page's summary is one list of bullets (the owner's brief of 2026-10-19)`)
+  } else if (items.some((b) => findAll(b, 'li').length > 0)) {
+    fail('the summary carries a nested list: each bullet is one line of the document, and a bullet inside a bullet is a boundary the reader has to assemble')
   }
-  if (bullets.length === 0) {
-    fail('the description carries no bullet: the page describes the security model in at most eight bullets, and a description with nothing in it describes nothing')
-  } else if (bullets.length > MAX_BULLETS) {
-    fail(`the description carries ${bullets.length} bullets; the page describes the security model in at most ${MAX_BULLETS} (the owner's brief of 2026-10-19)`)
-  }
-  for (const bullet of bullets) {
-    const n = words(text(bullet))
-    if (n > MAX_BULLET_WORDS) {
-      fail(`a bullet of the description is ${n} words long: a bullet is short (at most ${MAX_BULLET_WORDS} words), because the description is high level and the detail is in the document (the owner's brief of 2026-10-19)`)
-    }
-    if (text(bullet).trim() === '') fail('the description carries an empty bullet')
-  }
-  const modelWords = words(text(model))
-  if (modelWords > MAX_MODEL_WORDS) {
-    fail(`the description is ${modelWords} words long; the page's description is at most ${MAX_MODEL_WORDS} words (the owner's brief of 2026-10-19)`)
+  const summaryWords = words(text(summary))
+  if (summaryWords > MAX_SUMMARY_WORDS) {
+    fail(`the summary is ${summaryWords} words long; the page's summary is at most ${MAX_SUMMARY_WORDS} words (the owner's brief of 2026-10-19), and a document edit that grows it re-derives the number in that commit`)
   }
 
   // 4. The link is the document, at its own path in the repository.
@@ -314,7 +345,7 @@ export function securityFailures(dist = DIST) {
     if (links[0].attrs.get('href') !== wanted) {
       fail(`the page links ${JSON.stringify(links[0].attrs.get('href') ?? '')} and not ${wanted}: the page sends a reader to the document it renders, and the repository and the path are read from site.yaml and the generated file's own header rather than typed into the page (W1.8 step 1)`)
     }
-    if (flatten(text(links[0])) !== flatten(SOURCE)) {
+    if (prose(text(links[0])) !== prose(SOURCE)) {
       fail(`the page's link says ${JSON.stringify(text(links[0]).trim())} and not the document's own path ${JSON.stringify(SOURCE)}`)
     }
   }
@@ -325,6 +356,32 @@ export function securityFailures(dist = DIST) {
     fail(`${GENERATED} says it was generated from ${JSON.stringify(declared)}, and the page this file checks is ${SOURCE}'s`)
   }
   return out
+}
+
+/**
+ * One rendered section against the document's own: the heading, its id, and its text line by
+ * line — bullets for the summary, paragraphs for the reporting section. The comparison is
+ * over the flattened text, so whitespace cannot differ and the markup the page adds (its
+ * `<strong>`, its `<code>`, its rewritten links) is not read as a difference in the words.
+ */
+function checkSection(region, { document, heading, id, fail, what, kind, label }) {
+  const headings = findAll(region, 'h2')
+  if (headings.length !== 1 || prose(text(headings[0])) !== prose(heading)) {
+    fail(`the ${what} is not under the document's own "${heading}" heading: the page renders that section of ${SOURCE}, heading included (D189)`)
+  } else if (headings[0].attrs.get('id') !== id) {
+    fail(`the ${what}'s heading carries the id ${JSON.stringify(headings[0].attrs.get('id') ?? '')} and not "${id}": the id is what a link into the section points at`)
+  }
+
+  const rendered = findAll(region, kind === 'bullet' ? 'li' : 'p')
+  const expected =
+    kind === 'bullet' ? bulletsOf(document, heading) : paragraphsOf(sectionLines(document, heading))
+  if (rendered.length === 0) {
+    fail(`the ${what} carries no ${kind}: ${SOURCE} writes the section's own ${kind}s, and a section with none of them renders nothing`)
+  } else if (expected.length === 0) {
+    fail(`read no ${kind} out of ${SOURCE}'s "${heading}" section: the document has moved, so this check saw nothing`)
+  } else if (rendered.map((node) => prose(text(node))).join('\u0000') !== expected.map(prose).join('\u0000')) {
+    fail(`${BUILT} does not render ${SOURCE}'s own ${what}: ${label}`)
+  }
 }
 
 // ---- the refusals, kept ----------------------------------------------------------------
@@ -354,33 +411,29 @@ test('the built security page is three things and nothing else', () => {
   assert.deepEqual(securityFailures(DIST), [], `the security page is not the three things the owner's brief of 2026-10-19 asks for:\n  ${securityFailures(DIST).join('\n  ')}`)
 })
 
-test('the page renders SECURITY.md\'s own reporting instructions', () => {
+test('the summary the page renders is SECURITY.md\'s own "In short" section', () => {
   const document = sourceDocument()
-  const expected = paragraphsOf(reportingLines(document))
-  assert.ok(expected.length >= 2, `read ${expected.length} paragraphs out of ${SOURCE}'s "${REPORTING}" section: the document has moved, so this check saw nothing`)
-  assert.ok(expected.join(' ').length > 200, `the "${REPORTING}" section of ${SOURCE} is ${expected.join(' ').length} characters: the section this page renders is the document's, so a stub would make every check in this file vacuous`)
+  const bullets = bulletsOf(document, SUMMARY)
+  assert.ok(bullets.length >= 4, `read ${bullets.length} bullets out of ${SOURCE}'s "${SUMMARY}" section: the document has moved, so this check saw nothing`)
+  assert.ok(bullets.join(' ').length > 200, `the "${SUMMARY}" section of ${SOURCE} is ${bullets.join(' ').length} characters: the section this page renders is the document's, so a stub would make every check in this file vacuous`)
   assert.deepEqual(securityFailures(DIST), [])
 })
 
-test('the description is the page\'s own, and the source of each bullet is written beside it', () => {
-  // The description is the page's own copy — the owner reviews it — so what this file can
-  // hold is its shape, which the gate above does. This case holds the audit trail instead:
-  // every bullet in `website/src/pages/security.astro` names the document it came from in a
-  // comment directly above it, because a high-level summary of a security model is only
-  // worth having if a reader can check each line.
+test('the summary is rendered from the document, and is not written on the page', () => {
+  // D189's rule, held from the other side: the summary lives in `SECURITY.md` and the page
+  // renders it, so the page's own source may not carry the summary's sentences. This is the
+  // check that notices the shape the owner's ruling rejected — a summary typed into the
+  // `.astro` file — which `securityFailures()` cannot see, because the built page is the same
+  // either way.
   const source = readFileSync(path.join(SITE, 'src', 'pages', 'security.astro'), 'utf8')
-  const section = /<section[^>]*data-security-model[^>]*>([\s\S]*?)<\/section>/.exec(source)?.[1]
-  assert.ok(section, 'website/src/pages/security.astro carries no `data-security-model` section: the page has moved, so this check saw nothing')
+  const bullets = bulletsOf(sourceDocument(), SUMMARY)
+  assert.ok(bullets.length >= 4, `read ${bullets.length} bullets out of ${SOURCE}'s "${SUMMARY}" section: the document has moved, so this check saw nothing`)
 
-  // The bullet, and the comment line directly above it: `<li>` here is the page's own markup
-  // and not a nested list, so the first closing tag is the bullet's own.
-  const bullets = [...section.matchAll(/(\{\/\*([\s\S]*?)\*\/\}\s*)?<li>([\s\S]*?)<\/li>/g)].map((m) => ({ note: m[2] ?? '', body: m[3] }))
-  assert.ok(bullets.length >= 5, `read ${bullets.length} bullets out of website/src/pages/security.astro: the page has moved, so this check saw nothing`)
   for (const bullet of bullets) {
-    assert.match(
-      bullet.note,
-      /SECURITY\.md|docs\//,
-      `the bullet starting ${JSON.stringify(bullet.body.trim().slice(0, 60))} carries no comment above it naming the source it comes from: every claim in the description names the SECURITY.md section (or the design document) it is a shorter form of, so a reader can check each line against the document`,
+    const opening = bullet.split(/\s+/).slice(0, 6).join(' ')
+    assert.ok(
+      !prose(source).includes(prose(opening)),
+      `website/src/pages/security.astro carries the document's own summary text (${JSON.stringify(opening)}…): the summary is rendered from ${SOURCE}'s "${SUMMARY}" section and never written on the page (D189), because a sentence typed here is one the document does not hold and cannot be kept in step with it`,
     )
   }
 })
@@ -393,34 +446,52 @@ test('the gate refuses each planted defect', (t) => {
   const extra = planted(html, /(<article\b[^>]*data-security-page[^>]*>)/, '$1\n<p>A friendly note about the model.</p>')
   assert.match(verdict(t, extra).join('\n'), /carries text outside/, 'an extra paragraph on the page is not refused')
 
-  // A paragraph slipped *inside* the description, which the balance cannot see: its text is
-  // counted as the description's either way.
-  const inside = planted(html, /(<section\b[^>]*data-security-model[^>]*>)/, '$1<p>A friendly note about the model.</p>')
-  assert.match(verdict(t, inside).join('\n'), /the description carries a <p> that is not part of it/, 'a paragraph inside the description is not refused')
+  // A paragraph slipped *inside* the summary, which the balance cannot see: its text is
+  // counted as the summary's either way.
+  const inside = planted(html, /(<section\b[^>]*data-security-summary[^>]*>)/, '$1<p>A friendly note about the model.</p>')
+  assert.match(verdict(t, inside).join('\n'), /the summary carries a <p> that is not part of it/, 'a paragraph inside the summary is not refused')
+
+  // A space the build removed at an inline boundary, which is the defect the round-2 reader
+  // could not see: it joined a node's children with a space, and the first version of the
+  // comparison deleted whitespace on both sides before comparing, so the invented space and
+  // the deleted one cancelled and the page passed. The reader here joins verbatim and the
+  // comparison collapses whitespace rather than removing it, so the missing space is a
+  // difference — and this case is what holds both halves of that (round 3, findings 3 and 4).
+  const glued = planted(html, /is listed in <code>followup\.trusted<\/code>/, 'is listed in<code>followup.trusted</code>')
+  assert.match(
+    verdict(t, glued).join('\n'),
+    /does not render SECURITY\.md's own summary/,
+    'a summary bullet with the space before its inline element removed is not refused, so the reader or the comparison is repairing the artifact',
+  )
+
+  // A reworded summary bullet: the one edit a page that renders a file is always tempted by.
+  const reworded = planted(html, 'Report a vulnerability through GitHub', 'Report a problem through GitHub')
+  assert.match(verdict(t, reworded).join('\n'), /does not render SECURITY\.md's own summary/, 'a reworded summary bullet is not refused')
+
+  // A summary section that is gone.
+  const missing = planted(html, /<section\b[^>]*data-security-summary[^>]*>[\s\S]*?<\/section>\s*/, '')
+  assert.match(verdict(t, missing).join('\n'), /data-security-summary/, 'a page with no summary section is not refused')
 
   // A second sentence slipped into the pointer, beside the link: the same hole, one region on.
   const pointed = planted(html, /(rel="noopener">SECURITY\.md<\/a>)/, '$1 Report it privately, never in a public issue.')
   assert.match(verdict(t, pointed).join('\n'), /the pointer to the document says \d+ words of its own/, 'a sentence added to the pointer is not refused')
 
-  // A ninth bullet.
-  const ninth = planted(html, /(<section\b[^>]*data-security-model[^>]*>[\s\S]*?)<\/ul>/, '$1<li>One more boundary.</li><li>And one more.</li></ul>')
-  assert.match(verdict(t, ninth).join('\n'), /at most 8/, 'bullets past the ceiling are not refused')
-
-  // A bullet that is no longer short.
-  const long = 'x '.repeat(45).trim()
-  const rambling = planted(html, /(<section\b[^>]*data-security-model[^>]*>[\s\S]*?)<\/ul>/, `$1<li>${long}</li></ul>`)
-  assert.match(verdict(t, rambling).join('\n'), /is short \(at most/, 'a bullet over the word ceiling is not refused')
-
-  // A reworded instruction: the one edit a security page is always tempted by.
-  const reworded = planted(html, 'Report a vulnerability</strong>', 'Report a problem</strong>')
-  assert.match(verdict(t, reworded).join('\n'), /does not render .*own reporting instructions/, 'a reworded reporting instruction is not refused')
+  // A reworded instruction: the other half of the same rule.
+  const instruction = planted(html, 'Report a vulnerability</strong>', 'Report a problem</strong>')
+  assert.match(verdict(t, instruction).join('\n'), /does not render SECURITY\.md's own reporting/, 'a reworded reporting instruction is not refused')
 
   // A reporting section that is gone.
-  const missing = planted(html, /<section\b[^>]*data-security-reporting[^>]*>[\s\S]*?<\/section>\s*/, '')
-  assert.match(verdict(t, missing).join('\n'), /data-security-reporting/, 'a page with no reporting section is not refused')
+  const noReporting = planted(html, /<section\b[^>]*data-security-reporting[^>]*>[\s\S]*?<\/section>\s*/, '')
+  assert.match(verdict(t, noReporting).join('\n'), /data-security-reporting/, 'a page with no reporting section is not refused')
 
   // A link to something other than the document.
-  const elsewhere = planted(html, /https:\/\/github\.com\/[^/]+\/[^/]+\/blob\/main\/[^"]+/, 'https://github.com/dimipaun/fugaro/blob/main/docs/design/v1.md')
+  // The plant is anchored on the pointer's own region: a bare URL pattern would find the
+  // summary's cross-references first, and the case would then prove nothing about the link.
+  const elsewhere = planted(
+    html,
+    /(data-security-policy[^<]*<a href=")[^"]*"/,
+    '$1https://github.com/dimipaun/fugaro/blob/main/docs/design/v1.md"',
+  )
   assert.match(verdict(t, elsewhere).join('\n'), /sends a reader to/, 'a policy link to another file is not refused')
 })
 

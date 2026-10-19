@@ -1,37 +1,47 @@
 ---
 /**
  * website/src/pages/security.astro — the security page (website plan, Task W1.8; the
- * owner's brief of 2026-10-19).
+ * owner's brief and ruling D189 of 2026-10-19).
  *
- * **The page is three things, and nothing else.** The owner's feedback of 2026-10-19 cut it
- * to exactly that: a short high-level description of the security model and its boundaries,
- * the document's own "Reporting a vulnerability" section, and a link to `SECURITY.md` in
- * the repository. So the page that used to render `SECURITY.md` in full, behind a contents
- * list built from its headings, now renders one section of it and writes its own summary
- * line by line — and `website/test/security.mjs` holds the page to that shape: the three
- * regions, at most eight short bullets in the first of them, and no other text.
+ * **The page is three things, and nothing else**, and all three of them come from the
+ * document:
+ *
+ *   1. the **summary** is `SECURITY.md`'s own "In short" section, rendered from the
+ *      generated copy of the document;
+ *   2. the **"Reporting a vulnerability" section**, rendered from the same copy;
+ *   3. a **link to `SECURITY.md`** in the repository.
+ *
+ * The page used to render `SECURITY.md` in full, behind a contents list built from its
+ * headings. The owner cut it to those three things, and D189 settled the one open question —
+ * where the summary comes from: **each long page's summary is rendered from a file, never
+ * written on the page**, and for this page the file is `SECURITY.md` itself, whose short
+ * "In short" section is the summary the page renders, written or approved by the owner as
+ * every `SECURITY.md` change is (`docs/website/redesign/reconciliation.md`, D189). So the
+ * page carries no summary prose of its own: a sentence here that the document does not state
+ * is the one thing a security page may not have (D99), and there is now nowhere to write one.
  *
  * Four decisions are visible in the file:
  *
- *   1. **The reporting section is the document's, byte for byte under the renderer.** It is
+ *   1. **Both sections are the document's, word for word under the renderer.** They are
  *      extracted from the generated `website/content/security.md` — the file `go run
  *      ./internal/clidoc` writes from `SECURITY.md`, which `loadSite()` validates and a
- *      missing or hand-edited copy of stops the build (W1.3 step 2) — and rendered here, so
- *      the instructions a reader follows are the document's own words and cannot drift from
- *      the file the page links to. A document that renamed or moved the section stops the
- *      build rather than shipping a page with nowhere to send a reader who has found a
- *      vulnerability.
- *   2. **The summary is the page's own, and every bullet names its source.** The owner's
- *      brief is that the description is high level and short; each bullet below therefore
- *      carries a comment naming the `SECURITY.md` section (or the design document) it comes
- *      from, and the page claims nothing those sources do not say: no bullet softens a
- *      limit the document states, and the two that are conditional (budget mode, the
- *      user-claim read grant) say so.
+ *      missing or hand-edited copy of stops the build (W1.3 step 2) — so what the page says
+ *      cannot drift from the file it links to. A document that renamed, moved or emptied
+ *      either section stops the build rather than shipping a page with a hole in it.
+ *      `website/test/security.mjs` holds both to the document, bullet for bullet and
+ *      paragraph for paragraph.
+ *   2. **A cross-reference inside the document becomes a link into the document.** The "In
+ *      short" bullets each end by naming the section they come from
+ *      (`([Known limits](#known-limits))`); the page does not render those sections, so the
+ *      pointer is rewritten to the document in the repository at the section it names. A
+ *      fragment that is not a heading of the document is dropped and listed for the owner
+ *      rather than rendered as a link that goes nowhere — `SECURITY.md` ships one
+ *      (`[Money](#money)`, whose section is a bullet and not a heading), and
+ *      `website/test/linkcheck.mjs` refuses a GitHub link whose fragment is not a heading.
  *   3. **The link is the repository's, and its path is read rather than typed.** The URL is
- *      built from `site.yaml`'s repository and the generated file's own `source:` header,
- *      so the page cannot point at a document this repository does not carry —
- *      `website/test/linkcheck.mjs` checks the path and the heading a GitHub link names.
- *   4. **The styles are global and token-only.** The reporting paragraphs arrive through
+ *      built from `site.yaml`'s repository and the generated file's own `source:` header, so
+ *      the page cannot point at a document this repository does not carry.
+ *   4. **The styles are global and token-only.** The rendered sections arrive through
  *      `set:html`, which Astro's scoped styles do not reach, so the block below is
  *      `is:global` and every selector is prefixed with the page's own marker attribute so it
  *      cannot reach another page. Colours come from W1.2's semantic tokens and never from a
@@ -42,37 +52,67 @@
  */
 import Base from '../layouts/Base.astro'
 import { loadSite } from '../content.ts'
+import { headingAnchor, headingText } from '../lib/github-slug.mjs'
 
 // The whole generated layer, validated: a missing or hand-edited security.md, or any other
 // fact the site renders, fails here with the file's name in the message (see 1 above).
 const site = loadSite()
 const securityDocument = site.documents['security.md']
 
+// The link's target: the file this page renders, in the repository `site.yaml` names. The
+// path is the generated file's own `source:` fact, so neither the repository nor the path is
+// written here, and `main` is the branch those files live on — the repository's default
+// branch, which every other GitHub link the site builds also names.
+const sourceHref = new URL(`blob/main/${securityDocument.source}`, `${site.facts.repository}/`).href
+
 // ---------------------------------------------------------------------------------------
-// The document's own reporting section.
+// The document's own sections, and the markup they are rendered with.
 // ---------------------------------------------------------------------------------------
 
-/** The section's heading, which is what the page renders and what it links to. */
+/** The two sections the page renders, as the document spells their headings. */
+const SUMMARY = 'In short'
 const REPORTING = 'Reporting a vulnerability'
+const SUMMARY_ID = 'in-short'
 const REPORTING_ID = 'reporting-a-vulnerability'
 
 /**
- * The document's lines under its `## Reporting a vulnerability` heading, up to the next
- * heading of the same level or higher. A document without the heading fails the build: the
- * page sends a reader there, and a page that sent them nowhere would be worse than a build
- * that stops.
+ * The document's lines under its `## <heading>`, up to the next heading of the same level or
+ * higher. A document without the heading fails the build: the page renders both sections and
+ * has nothing to fall back on, so a document that moved one stops the build rather than
+ * shipping a page with a hole in it.
  */
-function reportingLines(body: string): string[] {
-  const lines = body.split('\n')
-  const start = lines.findIndex((line) => line.trim() === `## ${REPORTING}`)
+function sectionLines(heading: string): string[] {
+  const lines = securityDocument.body.split('\n')
+  const start = lines.findIndex((line) => line.trim() === `## ${heading}`)
   if (start === -1) {
     throw new Error(
-      `${securityDocument.path} has no "## ${REPORTING}" heading, so this page has nowhere to send a reader who has found a vulnerability. The section is rendered from the document, so a document that moved it stops the build.`,
+      `${securityDocument.path} has no "## ${heading}" heading, and this page renders that section of it. The document is the page's whole text (D189), so a document that moved the section stops the build.`,
     )
   }
   const rest = lines.slice(start + 1)
   const end = rest.findIndex((line) => /^#{1,2}[ \t]/.test(line))
   return end === -1 ? rest : rest.slice(0, end)
+}
+
+/** The anchors the document's own headings carry, the way GitHub slugs them. */
+const documentAnchors = new Set(
+  securityDocument.body
+    .split('\n')
+    .map((line) => /^#{1,6}[ \t]+(.*)$/.exec(line.trim()))
+    .filter((match): match is RegExpExecArray => match !== null)
+    .map((match) => headingAnchor(headingText(match[1]))),
+)
+
+/**
+ * A link target in the document, as the page renders it. A path is the document's own and
+ * is left as it is; a cross-reference into a section the page does not carry becomes a link
+ * to the document in the repository, at the section it names — or at the document itself
+ * when the document has no such heading, which is the one case `SECURITY.md` ships today.
+ */
+function target(raw: string): string {
+  if (!raw.startsWith('#')) return raw
+  const fragment = raw.slice(1)
+  return documentAnchors.has(fragment) ? `${sourceHref}#${fragment}` : sourceHref
 }
 
 /** The document's inline markup, as HTML. */
@@ -86,9 +126,10 @@ function escapeHTML(text: string): string {
 
 /**
  * One line's inline markup: code spans, bold, italics and links, in the order the document
- * nests them, with everything else escaped. The subset is what the reporting section uses
- * and nothing else is guessed at, because a page that mangles a security sentence is worse
- * than one that does not render it (D99).
+ * nests them, with everything else escaped — and nothing added, so a space the document
+ * writes is a space the page renders. The subset is what the document's two sections use and
+ * nothing else is guessed at, because a page that mangles a security sentence is worse than
+ * one that does not render it (D99).
  */
 function inline(text: string): string {
   let html = ''
@@ -123,9 +164,9 @@ function inline(text: string): string {
     }
     if (text[i] === '[' && (match = /^\[([^\]]*)\]\(([^)\s]+)\)/.exec(rest)) !== null) {
       flush()
-      // The document's own target, escaped and not rewritten: a link in a security document
-      // is written as a path from the repository root.
-      html += `<a href="${escapeHTML(match[2])}">${inline(match[1])}</a>`
+      // The document's own link: its text is rendered as it stands and its target is read
+      // through `target()` above.
+      html += `<a href="${escapeHTML(target(match[2]))}">${inline(match[1])}</a>`
       i += match[0].length
       continue
     }
@@ -138,19 +179,45 @@ function inline(text: string): string {
   return html
 }
 
-/** The section's paragraphs, each rendered: the reporting section is two of them today. */
-const reportingParagraphs = reportingLines(securityDocument.body)
+/**
+ * A section's bullets, in the document's order, each one line joined back together when the
+ * file wrapped it. A line that is neither blank nor a bullet stops the build: the summary is
+ * the document's "In short" list, and a paragraph added under it is text the page would
+ * silently drop.
+ */
+function bulletLines(heading: string): string[] {
+  const bullets: string[] = []
+  for (const line of sectionLines(heading)) {
+    const bullet = /^\s*[-*][ \t]+(.*)$/.exec(line)
+    if (bullet !== null) {
+      bullets.push(bullet[1].trim())
+    } else if (line.trim() !== '') {
+      if (bullets.length === 0) {
+        throw new Error(
+          `${securityDocument.path}'s "## ${heading}" section opens with a line that is not a bullet (${JSON.stringify(line.trim())}), and this page renders the section as the list it is. The document is the page's whole text (D189), and a line this page dropped would be text a reader never sees.`,
+        )
+      }
+      bullets[bullets.length - 1] += ` ${line.trim()}`
+    }
+  }
+  if (bullets.length === 0) {
+    throw new Error(
+      `${securityDocument.path}'s "## ${heading}" section carries no bullet, and this page renders it as the list it is: an empty summary is a page that describes nothing (D189).`,
+    )
+  }
+  return bullets
+}
+
+/** The summary: the document's own "In short" bullets, each rendered as HTML. */
+const summaryBullets = bulletLines(SUMMARY).map(inline)
+
+/** The reporting section's paragraphs, each rendered: the section is two of them today. */
+const reportingParagraphs = sectionLines(REPORTING)
   .join('\n')
   .split(/\n[ \t]*\n/)
   .map((paragraph) => paragraph.replace(/\s+/g, ' ').trim())
   .filter((paragraph) => paragraph !== '')
   .map(inline)
-
-// The link's target: the file this page renders, in the repository `site.yaml` names. The
-// path is the generated file's own `source:` fact, so neither the repository nor the path is
-// written here, and `main` is the branch those files live on — the repository's default
-// branch, which every other GitHub link the site builds also names.
-const sourceHref = new URL(`blob/main/${securityDocument.source}`, `${site.facts.repository}/`).href
 ---
 
 <Base
@@ -160,87 +227,28 @@ const sourceHref = new URL(`blob/main/${securityDocument.source}`, `${site.facts
   <article class="security" data-security-page>
     <h1>Security</h1>
 
-    {/* The high-level description (1) and (2): one bullet per boundary, each naming the
-        source it comes from in the comment beside it. Every claim here is a sentence of
-        `SECURITY.md` in shorter words; the two conditional ones (budget mode off by default,
-        the phone's user-claim read grant) say what they are conditional on. */}
-    <section data-security-model>
-      <h2>The security model</h2>
+    {/* The document's own summary (D189): the "In short" section of SECURITY.md, rendered
+        bullet for bullet. Nothing here is written on this page; the text is the owner's. */}
+    <section data-security-summary>
+      <h2 id={SUMMARY_ID}>{SUMMARY}</h2>
       <ul>
-        {/* SECURITY.md, "What limits the blast radius today": one container per run. */}
-        <li>
-          <strong>What runs where.</strong> Every run gets a fresh container,
-          discarded when the run ends.
-        </li>
-        {/* SECURITY.md, "What limits the blast radius today": the two providers' own
-            credentials, each narrow — the GitHub token expires, Bitbucket's token is
-            Bitbucket's own scoping. */}
-        <li>
-          <strong>The git credential.</strong> On GitHub a run gets an installation token for
-          its one repository, expiring within about an hour; on Bitbucket, a repository access
-          token.
-        </li>
-        {/* SECURITY.md, "What limits the blast radius today": the App's own permissions. */}
-        <li>
-          <strong>CI workflows.</strong> A run cannot change <code>.github/workflows/</code>:
-          the App has no <code>workflows</code> permission.
-        </li>
-        {/* SECURITY.md, "Cloud keys stay in the cloud" and "Logs are isolated". */}
-        <li>
-          <strong>Secrets.</strong> No command copies a secret value back and
-          <code>fugaro secrets</code> never prints one. Logs are redacted of every mounted
-          secret; redaction is best effort.
-        </li>
-        {/* SECURITY.md, "What is not on by default": the gateway is off until you turn it on,
-            and what it does when it is on. */}
-        <li>
-          <strong>Spend.</strong> Budget mode is off by default. With it on, an API-key run's
-          calls go through a per-run gateway that pins the models and charges them against
-          your caps.
-        </li>
-        {/* SECURITY.md, "Money": the runs the caps do not bound, and the backstop to set
-            instead. The three cases are the document's own: OAuth has no gateway at all,
-            Vertex has no dollar cap in any mode, and an agent that reads the real key from
-            `/proc` spends outside the gateway. */}
-        <li>
-          <strong>Spend limits.</strong> An OAuth run has no gateway and Vertex has
-          no dollar cap, so the caps are not the whole limit. Set a credit limit on every key
-          you give Fugaro.
-        </li>
-        {/* docs/design/desktop-console.md §3.4 and D2, D14: read-only by an exact-argv
-            allow-list, which is the whole fence; docs/mobile/reconciliation.md §4 (b1) and
-            docs/mobile/README.md (D112's answer, the plan's P2.1): the four families the user
-            claim may read, and the mailbox that is the phone's database surface. */}
-        <li>
-          <strong>Console and phone.</strong> The console runs a fixed list of read-only
-          <code>fugaro</code> commands and has no write path. The phone reads the caps, spend
-          and kill switches under a user-claim read grant, and writes only its mailbox.
-        </li>
-        {/* SECURITY.md, "The assumption". */}
-        <li>
-          <strong>The boundary.</strong> Fugaro trusts the repository and the task: anyone who
-          can push to it or launch a run can steer the agent, and a run is not a sandbox for
-          code you would not run yourself.
-        </li>
+        {summaryBullets.map((bullet) => <li set:html={bullet} />)}
       </ul>
     </section>
 
-    {/* The document's own reporting section (1), rendered and not edited. */}
+    {/* The document's own reporting section, rendered and not edited. */}
     <section data-security-reporting>
       <h2 id={REPORTING_ID}>{REPORTING}</h2>
       {reportingParagraphs.map((paragraph) => <p set:html={paragraph} />)}
     </section>
 
-    {/* The pointer to the document itself (3). */}
-    <p class="policy" data-security-policy>
-      The full policy is <a href={sourceHref} rel="noopener">{securityDocument.source}</a> in
-      the repository.
-    </p>
+    {/* The pointer to the document itself. One sentence, and the page's own. */}
+    <p class="policy" data-security-policy>The full policy is <a href={sourceHref} rel="noopener">{securityDocument.source}</a> in the repository.</p>
   </article>
 </Base>
 
 <style is:global>
-  /* Global, because the reporting paragraphs arrive through `set:html` and Astro's scoped
+  /* Global, because the rendered sections arrive through `set:html` and Astro's scoped
      styles do not reach markup this page did not write; every selector is prefixed with
      `data-security-page`, so nothing here can reach another page. Colours are W1.2's tokens
      and this file carries no colour literal. */
@@ -263,23 +271,23 @@ const sourceHref = new URL(`blob/main/${securityDocument.source}`, `${site.facts
     margin: 0 0 var(--space-sm);
   }
 
-  [data-security-model] {
+  [data-security-summary] {
     margin: 0 0 var(--space-lg);
   }
 
-  [data-security-model] ul {
+  [data-security-summary] ul {
     list-style: none;
     margin: 0;
     padding: 0;
     max-width: var(--measure);
   }
 
-  [data-security-model] li {
+  [data-security-summary] li {
     margin: 0 0 var(--space-sm);
     line-height: var(--leading-normal);
   }
 
-  [data-security-model] strong {
+  [data-security-summary] strong {
     color: var(--text);
   }
 
