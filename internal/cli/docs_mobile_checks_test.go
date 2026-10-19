@@ -574,8 +574,12 @@ func TestDocsMobileChecksDeviceBookkeepingMatchesTheirSteps(t *testing.T) {
 	if !strings.Contains(section, "N=chk100") {
 		t.Error("Check 104 does not say it re-runs Check 100's guard block with N=chk100: it borrows Check 100's pairing, so the block is re-run unchanged and the device it reports is this check's precondition, not a leftover")
 	}
-	if !strings.Contains(section, "pairs no device and revokes none") {
-		t.Error("Check 104 does not say it pairs and revokes nothing: its Restore revokes no device, and a check whose Restore is silent about the pairing it borrowed is a reader's reason to revoke somebody else's device")
+	// The Method is where the reader is told, so the sentence has to be in the
+	// prose and not only in a bash comment: a comment is something they paste,
+	// and the contradiction this pin exists for was between the Method and the
+	// declaration.
+	if !strings.Contains(mobileFlat(mobileProse(docSection(t, path, doc, "## Check 104:"))), "pairs no device and revokes none") {
+		t.Error("Check 104 does not say it pairs and revokes nothing: its Restore revokes no device, and a check whose Method is silent about the pairing it borrowed is a reader's reason to revoke somebody else's device")
 	}
 	// The row and the section have to name the same device, which is the drift
 	// this pin exists for: the row said "this check's device name" while the
@@ -598,12 +602,32 @@ func TestDocsMobileChecksDeviceBookkeepingMatchesTheirSteps(t *testing.T) {
 	if strings.Contains(section, "N=chk") {
 		t.Error("Check 103 declares a device name of its own (`N=chk…`): it pairs no device and revokes none — its phone is Check 100's pairing — and no command in the section takes a device name, so the declaration reaches nothing but an assertion on itself and the fresh-device rule it suggests can never fire")
 	}
-	if !strings.Contains(section, "pairs no device and revokes none") {
+	if !strings.Contains(mobileFlat(mobileProse(docSection(t, path, doc, "## Check 103:"))), "pairs no device and revokes none") {
 		t.Error("Check 103 does not say it pairs and revokes nothing: its phone is Check 100's pairing, borrowed, and a check whose Method does not say so is a reader's reason to pair and revoke a device that is somebody else's")
 	}
 	if !strings.Contains(section, "chk100") {
 		t.Error("Check 103 does not name `chk100`, the pairing it borrows: the phone it speaks through is Check 100's, and a check that does not name it leaves the reader to guess which device node admits it")
 	}
+}
+
+// mobileProse returns a section with every fenced block removed, so an assertion
+// about what a check *tells its reader* cannot be satisfied by a comment inside a
+// block the reader pastes and runs. The contradiction this pin exists for was
+// between a check's Method and its guard block's declaration, and a bash comment is
+// on the other side of it.
+func mobileProse(section string) string {
+	var out []string
+	inFence := false
+	for _, line := range strings.Split(section, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inFence = !inFence
+			continue
+		}
+		if !inFence {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // TestDocsMobileChecksGuardBlocksNameEveryStep: a guard block that says which steps
