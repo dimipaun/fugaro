@@ -43,13 +43,14 @@
 
 import { join } from 'node:path'
 
-import { _electron as electron, expect, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import { APP_ENTRY_URL, APP_ORIGIN } from '../../src/main/protocol'
 import { PROJECT_MARKER } from '../../src/source/redact'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { launchConsole } from '../support/launch'
 
 // PROBE_ORIGIN is a name that cannot resolve (RFC 2606's `.invalid`), so a probe
 // that somehow got past both gates still talks to nobody.
@@ -122,7 +123,7 @@ test.describe('the hardened window', () => {
     // opens when no installation is chosen -- is not, and no spec touches the
     // machine's own console profile.
     cli.seedActiveInstallation()
-    app = await electron.launch({ args: cli.launchArgs(consoleDir), env: cli.env })
+    app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
     page = await app.firstWindow()
 
     // The second gate, installed before the page is used: no `http(s)` request
@@ -135,7 +136,7 @@ test.describe('the hardened window', () => {
   })
 
   test.afterAll(async () => {
-    await app.close()
+    await app?.close()
     cli.remove()
   })
 

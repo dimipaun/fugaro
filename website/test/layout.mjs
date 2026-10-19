@@ -37,7 +37,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { linkNodeModules } from './lib/build.mjs'
+import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -45,7 +45,7 @@ const REPO = path.dirname(SITE)
 // What a site build cannot read, and therefore what the copies below leave out: the Go
 // module's own tree and test data, the console application, and the installed and built
 // directories (the last two are symlinked and rebuilt instead).
-const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'plugin', 'schemas', 'deploy', 'testdata'])
+const SKIP = new Set(['.git', 'internal', 'cmd', 'console', 'schemas', 'deploy', 'testdata'])
 const SKIP_UNDER_WEBSITE = new Set(['node_modules', 'dist', '.astro'])
 
 // The probe page: a page that renders the layout, and through it the whole content
@@ -82,6 +82,9 @@ function copyOfTheRepository() {
       const name = path.basename(src)
       const parent = path.basename(path.dirname(src))
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
+      // `plugin/skills` is the one part of `plugin/` a build reads: the hero's chat
+      // quotes the skills (website/test/lib/build.mjs).
+      if (parent === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false
       return true
     },
@@ -423,21 +426,27 @@ test('a comment that mentions the sitemap package does not make the head point a
   assert.ok(!builtPage(built).includes('rel="sitemap"'), 'the page points at a sitemap the build does not produce')
 })
 
-test("the page description is README.md's own tagline line", async (t) => {
+test("the page description is README.md's own subline", async (t) => {
   const built = buildWith(t, () => {})
   const page = builtPage(built)
 
-  // The line under README.md's `# Fugaro` title, read here from the README rather than
-  // from the build: the site's tagline is the README's, and it is not a second copy of it
-  // (F48, D102). The README's markdown emphasis is not part of the sentence.
+  // The **second** line under README.md's `# Fugaro` title — the sentence under the
+  // headline — read here from the README rather than from the build: the site's promise is
+  // the README's, and it is not a second copy of it (F48, D102). The changes spec of
+  // 2026-10-18 (item 2) puts the subline in the description and not the headline, which is
+  // four words with no verb in them; this test is the named test change that moved with it.
+  // The README's markdown emphasis is not part of the sentence.
   const readme = repoFile('README.md').split('\n')
   const title = readme.findIndex((line) => line.trim() === '# Fugaro')
-  const tagline = readme
+  const subline = readme
     .slice(title + 1)
-    .find((line) => line.trim() !== '')
+    .filter((line) => line.trim() !== '')[1]
     .trim()
     .replace(/^\*\*(.+)\*\*$/, '$1')
     .trim()
 
-  assert.ok(page.includes(`<meta name="description" content="${tagline}"`), `the page's description is not the README's tagline ${JSON.stringify(tagline)}`)
+  assert.ok(
+    page.includes(`<meta name="description" content="${subline}"`),
+    `the page's description is not the README's subline ${JSON.stringify(subline)}: the description is the sentence under the headline, and a page that describes itself with the headline tells a search engine four words (changes spec item 2)`,
+  )
 })

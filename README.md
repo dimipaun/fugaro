@@ -2,7 +2,9 @@
 
 # Fugaro
 
-**Fleeting cloud workers for coding agents: one task, one container, one PR, then gone.**
+**Lambdas for coding agents**
+
+Ephemeral cloud jobs that turn tasks into pull requests.
 
 Website: [fugaro.dev](https://fugaro.dev)
 
@@ -30,7 +32,11 @@ You need Claude Code, a Google Cloud project with billing (or a billing account 
 brew install dimipaun/tap/fugaro                      # Homebrew cask (tested on macOS)
 ```
 
-Or download an archive from [Releases](https://github.com/dimipaun/fugaro/releases) (darwin and linux, amd64 and arm64) and [verify it with cosign](docs/release.md#verifying-a-release). `go install github.com/dimipaun/fugaro/cmd/fugaro@latest` is for development only: it builds a `dev` version with no release images or plugin pin. Then, in the repository's checkout:
+Or download an archive from [Releases](https://github.com/dimipaun/fugaro/releases) (darwin and linux, amd64 and arm64) and [verify it with cosign](docs/release.md#verifying-a-release). `go install github.com/dimipaun/fugaro/cmd/fugaro@latest` is for development only: it builds a `dev` version with no release images or plugin pin.
+
+Fugaro also has a desktop console — a graphical `fugaro watch`, with live run monitoring and spending graphs, read-only and with no telemetry of its own — and **it is not released yet**: the CLI above is the whole of what you can install today. When it ships it is published as its own release, built for macOS, and [the console page](https://fugaro.dev/console/) carries the download.
+
+Then, in the repository's checkout:
 
 1. Run `fugaro init` in your own terminal. It sets up the cloud side behind confirmations you type, asks for secrets at hidden prompts, and wires the Fugaro plugin into `.claude/settings.json`.
 2. Open Claude Code and run `/fugaro:setup`. It writes `fugaro.yaml` with you and opens a pull request; merge it, then run `fugaro init` again to add the repository's job and first image build.

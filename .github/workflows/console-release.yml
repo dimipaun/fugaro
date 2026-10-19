@@ -99,13 +99,63 @@
 #     release.yml and images.yml run it (D18).
 #   - **The order is: build the bundle, notarise it, staple it, and only then
 #     pack the .dmg and the .zip -- and what is verified is the bundle inside
-#     the shipped artifacts.** `npm run package` (Task 4.1's script: the pinned
-#     local electron-builder, `--mac --universal --publish never`) does the
-#     first part: electron-builder notarises and staples the .app while
-#     packing it and *before* it builds the targets, when the App Store Connect
-#     triple is in its environment. The .dmg is then signed (electron-builder
-#     leaves `dmg.sign` false), notarised and stapled here, because the disk
-#     image is its own artifact and Gatekeeper assesses it on open.
+#     the shipped artifacts. The packer notarises nothing here.** The packer
+#     (the pinned local electron-builder, `--mac --universal --publish never`)
+#     is run twice -- and only the first of the two rebuilds. First `npm run
+#     package -- --dir -c.mac.notarize=false`, which runs `npm run build` and
+#     then builds and signs the universal `.app` and nothing else:
+#     electron-builder's own notarise-and-staple is *inside* that command
+#     (`@electron/notarize` submits the bundle and staples the ticket while
+#     packing), so a lost connection to Apple there fails the pack with no way
+#     to retry just the staple -- what the October 2026 run's fourth attempt
+#     hit -- and the switch plus `--dir` keep that call and the targets out of
+#     the first pack. This file then zips the bundle and submits it once,
+#     staples the ticket to the bundle and validates it (see the next bullet),
+#     and only then runs `npm run package:targets -- --prepackaged "$APP"
+#     -c.mac.notarize=false` to build the `.dmg` and the `.zip` *from the
+#     stapled bundle*, so both artifacts carry a bundle that already holds its
+#     ticket. That second invocation is the variant Task 4.1's `package` script
+#     has no reason to be: `package:targets` is `electron-builder` alone, with
+#     no `npm run build`, because `--prepackaged` packs the bundle that is
+#     already built -- and re-running the build there would spend the compile
+#     again while this step holds the unlocked keychain and the `.p8` path in
+#     its environment. What the first pack builds is unchanged. The `.dmg` is
+#     then signed (electron-builder leaves `dmg.sign` false), submitted,
+#     stapled and validated the same way, because the disk image is its own
+#     artifact and Gatekeeper assesses it on open. The owner's own `npm run
+#     package` on their Mac (console/README.md, Task 4.1) passes neither
+#     switch: it still notarises and staples through the packer.
+#   - **Every `xcrun stapler` call is retried, bounded -- and nothing else
+#     is.** `xcrun stapler staple` and `xcrun stapler validate` reach Apple's
+#     ticket-delivery service over the network, and the October 2026 release
+#     run failed there with `NSURLErrorDomain Code=-1005 "The network
+#     connection was lost"` against `.../com.apple.gk.ticket-delivery/...` --
+#     a lost connection, not a rejected notarisation: release run 39163351646
+#     was attempted five times -- the **fourth attempt** died in the packer's
+#     own staple (error 68, inside `npm run package`), and the **fifth** in a
+#     `stapler validate` on the bundle here, not on the disk image. The three
+#     earlier attempts never reached Apple: the first failed within about a
+#     second with no step having started (its log records no cause), and the
+#     second and third on setup -- missing `APPLE_API_*` secrets, then a
+#     certificate import with the wrong password.
+#     `retry_apple_network`, defined once in
+#     `console/scripts/notarize-and-staple.sh` and, character for character,
+#     once in the verification step, retries those calls on either side of it
+#     up to five times with a growing pause (15, 30, 60, 90 seconds), printing
+#     each attempt's number and exit code, and returns the failure only after
+#     the fifth -- so a ticket that is genuinely absent still refuses to
+#     publish.
+#     **The other Apple-network calls are deliberately not retried**, because
+#     none of them can be separated from work that must not be repeated:
+#     `xcrun notarytool submit --wait` is the submission itself (a rejection is
+#     final, its result is read from `notarytool`'s exit status and Apple's JSON
+#     answer together and anything but a clean exit with "Accepted" refuses at
+#     once, and re-submitting is not this file's business). So codesign, the
+#     submission and its `--wait` result, the team
+#     checks, the gate and the fail-closed secret check all fail at once,
+#     exactly as before, and the retried validations in the verification step
+#     are what guard the copies of the bundle that actually ship, inside the
+#     .dmg and the .zip.
 #   - The signing, notarising, stapling and verifying are `run:` calls to
 #     xcrun, codesign, security and the macOS runner's own tools, **not
 #     actions**. The actions the file uses -- checkout and setup-node before
@@ -248,17 +298,23 @@ jobs:
         run: |
           set -euo pipefail
           node node_modules/electron/install.js
-          npm run package -- -c.mac.identity=null -c.extraMetadata.version="$VERSION"
+          # Notarisation off here as well, for the same reason as the signed
+          # pack below -- the packer's own staple is inside `npm run package`
+          # and is not this file's to retry -- even though no credential is in
+          # this step's environment for it to activate from.
+          npm run package -- -c.mac.identity=null -c.mac.notarize=false -c.extraMetadata.version="$VERSION"
           rm -rf release
 
       # **The only step that holds a secret**, and everything that needs one
       # happens inside it: the fail-closed check, the temporary keychain, the
-      # App Store Connect key file, `npm run package` (which signs with the
-      # hardened runtime and entitlements.mac.plist, flips the fuses, and
-      # notarises and staples the .app before it builds the .dmg and the
-      # .zip), the team checks, and the disk image's signature, notarisation
-      # and staple. The key material is removed when the step exits, pass or
-      # fail, so no later step runs with it on disk.
+      # App Store Connect key file, two `npm run package` calls with the
+      # packer's notarisation off (they sign with the hardened runtime and
+      # entitlements.mac.plist and flip the fuses; the first builds the .app,
+      # the second the .dmg and the .zip from it), the team checks, and the
+      # notarisation, staple and validation of the .app and of the disk image
+      # through console/scripts/notarize-and-staple.sh. The key material is
+      # removed when the step exits, pass or fail, so no later step runs with
+      # it on disk.
       #
       # - The .p12 and the .p8 are created under `umask 077` (a subshell, so the
       #   packed bundle's own file modes are not affected) -- never created
@@ -359,7 +415,15 @@ jobs:
           export CSC_NAME="$identity"
           export CSC_KEYCHAIN="$KEYCHAIN"
           export APPLE_API_KEY="$KEY"
-          npm run package -- -c.extraMetadata.version="$VERSION"
+          # The bundle only, and with the packer's own notarisation off: `--dir`
+          # builds no .dmg and no .zip, and `-c.mac.notarize=false` keeps
+          # electron-builder from submitting the bundle and stapling it inside
+          # its own process, where a lost connection to Apple's ticket delivery
+          # fails the pack and the staple cannot be retried on its own (the
+          # fourth attempt of the October 2026 release run, error 68). The
+          # submission, staple and validation are this file's, in the script
+          # below.
+          npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"
 
           APP="release/mac-universal/Fugaro Console.app"
           if [ ! -d "$APP" ]; then
@@ -375,12 +439,31 @@ jobs:
             echo "::error::$APP is signed by team '$signed_team', not by APPLE_TEAM_ID's team"
             exit 1
           fi
-          # The packer notarised and stapled the .app before it built the
-          # targets; this is where that stops being an assumption.
-          if ! xcrun stapler validate "$APP"; then
-            echo "::error::$APP carries no stapled ticket: refusing to publish artifacts that would carry it unstapled"
-            exit 1
-          fi
+          # The bundle: notarised once (the submission is never retried, and
+          # anything but a clean `notarytool` exit with an "Accepted" answer
+          # refuses at once), then stapled and
+          # validated -- both retried, 5 attempts with a growing pause, because
+          # both reach Apple's ticket-delivery service over the network and a
+          # lost connection there is not a rejection. The fifth failure of
+          # either is the refusal, and the bundle is not packed into anything
+          # until it carries its ticket. The script owns the retry helper,
+          # character for character the copy the verification step carries; its
+          # own checks (the credential triples, the status, the artifact's
+          # kind) fail at once, and nothing but `xcrun stapler` is retried
+          # anywhere in this file.
+          # `scripts/` is `console/scripts/` -- this step runs in console.
+          scripts/notarize-and-staple.sh app "$APP"
+
+          # The .dmg and the .zip, built from the stapled bundle -- the whole
+          # point of the order, since what ships is the bundle inside them. The
+          # packer's notarisation stays off here too: the bundle is already
+          # notarised and stapled, and the .dmg is this file's own submission,
+          # below. This pack goes through `package:targets` -- Task 4.1's
+          # `package` script without its `npm run build` -- because
+          # `--prepackaged` packs the bundle that is already built, so the
+          # rebuild would only spend the compile again, here, where the
+          # keychain is unlocked and the .p8's path is exported.
+          npm run package:targets -- --prepackaged "$APP" -c.mac.notarize=false -c.extraMetadata.version="$VERSION"
 
           shopt -s nullglob
           dmgs=(release/*.dmg)
@@ -402,12 +485,17 @@ jobs:
           esac
 
           # The disk image: signed (Apple's guidance for a notarised .dmg; no
-          # hardened runtime, which is for executables), submitted and waited
-          # for, then stapled. A rejected submission leaves no ticket, so the
-          # staple fails and so does the job.
+          # hardened runtime, which is for executables), then submitted, stapled
+          # and validated by the same script. The fifth attempt of the October
+          # 2026 run failed at a `stapler validate` on the **bundle** ($APP,
+          # above), before any target existed -- not here: the disk image gets
+          # the same helper because its staple and validation reach the same
+          # service over the same network, not because it failed. A rejected
+          # submission leaves no ticket and refuses at once: the script checks
+          # `notarytool`'s exit status and Apple's own status, so the submission
+          # is never retried.
           codesign --sign "$identity" --keychain "$KEYCHAIN" --timestamp "$DMG"
-          xcrun notarytool submit "$DMG" --key "$KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
-          xcrun stapler staple "$DMG"
+          scripts/notarize-and-staple.sh dmg "$DMG"
 
           echo "dmg=$PWD/$DMG" >> "$GITHUB_OUTPUT"
           echo "zip=$PWD/$ZIP" >> "$GITHUB_OUTPUT"
@@ -441,6 +529,39 @@ jobs:
               exit 1
             fi
           }
+          # The same helper as console/scripts/notarize-and-staple.sh carries,
+          # character for character: the ticket lookups below reach the same
+          # Apple service over the same
+          # network, so a validation that fails transiently is retried (5
+          # attempts, 15/30/60/90 seconds) and every attempt lands in the record
+          # with its number and exit code. It wraps `xcrun stapler validate`
+          # and nothing else -- codesign, spctl, hdiutil and ditto are not
+          # network calls, and a real failure of any of them still stops the
+          # record at once.
+          retry_apple_network() {
+            local attempt=1 status=0
+            while [ "$attempt" -le 5 ]; do
+              if "$@"; then
+                status=0
+              else
+                status=$?
+              fi
+              echo "apple-network attempt $attempt of 5: $* exited $status"
+              if [ "$status" -eq 0 ]; then
+                return 0
+              fi
+              if [ "$attempt" -eq 5 ]; then
+                return "$status"
+              fi
+              case "$attempt" in
+                1) sleep 15 ;;
+                2) sleep 30 ;;
+                3) sleep 60 ;;
+                4) sleep 90 ;;
+              esac
+              attempt=$((attempt + 1))
+            done
+          }
           # The bytes this record is about.
           (cd "$(dirname "$DMG")" && shasum -a 256 "$(basename "$DMG")" "$(basename "$ZIP")") > "$SUMS"
           record cat "$SUMS"
@@ -452,7 +573,7 @@ jobs:
           record codesign --verify --deep --strict --verbose=2 "$IN_DMG"
           record codesign -d --entitlements - "$IN_DMG"
           record spctl --assess --type execute --verbose=4 "$IN_DMG"
-          record xcrun stapler validate "$IN_DMG"
+          record retry_apple_network xcrun stapler validate "$IN_DMG"
           # The .zip, extracted, and the bundle inside it.
           UNZIP="$RUNNER_TEMP/unzipped"
           mkdir -p "$UNZIP"
@@ -460,11 +581,11 @@ jobs:
           IN_ZIP="$UNZIP/Fugaro Console.app"
           record codesign --verify --deep --strict --verbose=2 "$IN_ZIP"
           record spctl --assess --type execute --verbose=4 "$IN_ZIP"
-          record xcrun stapler validate "$IN_ZIP"
+          record retry_apple_network xcrun stapler validate "$IN_ZIP"
           # And the disk image itself, which is what Gatekeeper assesses when
           # the download is opened.
           record codesign --verify --strict --verbose=2 "$DMG"
-          record xcrun stapler validate "$DMG"
+          record retry_apple_network xcrun stapler validate "$DMG"
           record spctl --assess --type open --context context:primary-signature -v "$DMG"
           record hdiutil detach "$MOUNT"
           cat "$RECORD"

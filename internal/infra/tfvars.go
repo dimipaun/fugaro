@@ -68,6 +68,12 @@ type InstallOptions struct {
 	// history job and its sweep Scheduler job. It is set by --firebase and
 	// by a project config that records a Firebase project.
 	BudgetBackend bool
+	// ManagedDeployerScoped opts the installation in to the managed
+	// deployer's scoped role and its conditioned binding (the module's
+	// managed_deployer_scoped). Nothing sets it while internal/cli's
+	// managedDeployerShipped is false (0.8.6): the binding's fmgd- fence is
+	// not an IAM condition GCP accepts yet (deployer.tf's header).
+	ManagedDeployerScoped bool
 }
 
 // Budget is an optional budget on the project, in whole units of currency.
@@ -124,6 +130,11 @@ type InstallationSpec struct {
 	// an installation whose local config names no profile, so the plan of
 	// one that had none is unchanged (infra.ProjectJobs).
 	ProjectJobs map[string]ProjectJob `json:"project_jobs,omitempty"`
+	// ManagedDeployerScoped is the module's managed_deployer_scoped: left out
+	// unless set, so an installation that does not opt in writes the same
+	// tfvars as before the variable existed and plans without the scoped
+	// deployer role and its binding (InstallOptions.ManagedDeployerScoped).
+	ManagedDeployerScoped bool `json:"managed_deployer_scoped,omitempty"`
 }
 
 // InstallationNames are the installation's singleton names.
@@ -216,6 +227,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		return InstallationSpec{}, err
 	}
 	s.ProjectJobs = jobs
+	s.ManagedDeployerScoped = o.ManagedDeployerScoped
 	if o.NoLogIsolation {
 		s.LogIsolation = new(false)
 	}

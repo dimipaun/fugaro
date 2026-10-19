@@ -1,0 +1,254 @@
+---
+/**
+ * website/src/components/RunDetail.astro — the run, step by step (website changes spec of
+ * 2026-10-18, item 4: "HOW IT WORKS page: opens with the SAME diagram (one shared component,
+ * not two copies), then adds the detailed explanation underneath, so it reads as a zoom-in").
+ *
+ * The page opens with `ArchitectureDiagram.astro` — the same component the homepage renders,
+ * its four steps and one short line each — and this is what comes under it: the five steps
+ * README.md's `## How it works` numbers, in that section's own words, and the one line of
+ * `docs/design/v1.md` §6.1 that says where the boundary of a run is. A reader who has read
+ * the four boxes gets the detail of what happens inside them; a reader who stops at the
+ * picture has still been told the run.
+ *
+ * **Why the lines are quotations rather than a page written for the reader.** Global
+ * Constraint 6 and D102: every sentence the site publishes is traceable to a document of
+ * this repository, and a page that summarised the run in its own words would be a second
+ * description of it to keep in step with README.md. So each step's line is a substring of
+ * the step it belongs to, `comparable()` at build time holds it there in the section's order
+ * — a step quoted out of order, or a line that only paraphrases one, stops the build naming
+ * the file — and `website/test/home.mjs` makes the same check against the built page. The
+ * trust-boundary line cites the design document, which is where the sentence is written.
+ *
+ * **The steps are one list.** Each step is a list item with its own heading, so a screen
+ * reader reads five steps in the section's order; nothing here is a picture, and nothing
+ * depends on a font, a colour or an animation to be read.
+ */
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { REPO_ROOT } from '../content.ts'
+
+const HOW_IT_WORKS = 'README.md#How it works'
+const DESIGN = 'docs/design/v1.md'
+
+/**
+ * A string with its markdown markers and its whitespace removed: how a line and the section
+ * it claims to come from are compared, the same reading `ArchitectureDiagram.astro` uses.
+ * Emphasis and code spans are markers rather than text, so a line quoted here is the
+ * section's sentence with `**Start**` read as `Start`.
+ */
+function comparable(document: string): string {
+  return document.replace(/[`*]/g, '').replace(/\s+/g, '')
+}
+
+/** One `## <heading>` section of README.md, up to the next `## `. */
+function readmeSection(heading: string): string {
+  const readme = readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8')
+  const start = readme.indexOf(`\n## ${heading}\n`)
+  if (start === -1) {
+    throw new Error(
+      `website/src/components/RunDetail.astro: README.md carries no "## ${heading}" section, and the page's steps are quoted from it (changes spec 2026-10-18, item 4). Either the section was renamed or the steps moved.`,
+    )
+  }
+  const rest = readme.slice(start + 1)
+  const next = rest.indexOf('\n## ', 1)
+  return next === -1 ? rest : rest.slice(0, next)
+}
+
+const SOURCES: { [name: string]: string } = {
+  [HOW_IT_WORKS]: readmeSection('How it works'),
+  [DESIGN]: readFileSync(path.join(REPO_ROOT, 'docs/design/v1.md'), 'utf8'),
+}
+
+/**
+ * README.md's five numbered steps, each as the step's own bold words and a line of the step.
+ * The names are the section's (`Start`, `Sync`, `Loop`, …) rather than headings written for
+ * the page, and each line is the part of the step that says what happens in it; the whole of
+ * step 4 is a paragraph of `git.pr.checkpoints` instructions that belongs in the
+ * documentation rather than on a page.
+ */
+const STEPS = [
+  {
+    name: 'Start',
+    line: "from the image of the repository's workflow (a named build-and-test setup in its fugaro.yaml)",
+  },
+  {
+    name: 'Sync',
+    line: 'Sync to the exact target commit and restore the dependency caches.',
+  },
+  {
+    name: 'Loop',
+    line: 'Claude Code implements, writes tests, runs the build and tests through a recording wrapper, reviews and fixes',
+  },
+  {
+    name: 'Push and open the pull request',
+    line: 'a draft opens at the first push (marked not verified), and it is marked ready only when the run passes',
+  },
+  {
+    name: 'Write caches back and exit',
+    line: 'The run record and the PR remain; the container does not.',
+  },
+]
+
+/**
+ * The line under the steps: where the boundary of a run is. It is `docs/design/v1.md` §6.1's
+ * opening sentence, and it is the one fact of the picture the steps do not state.
+ */
+const NOTE = 'The trust boundary is the container, not the process.'
+
+// Hold every line to the section it cites, in that section's order: the steps are the
+// section's steps, and `cursor` walks forward through it, so a line quoted out of order —
+// which would put the pull request before the loop — stops the build with the file's name in
+// the message.
+//
+// A step's name and its line are both searched from where the step before it ended, and the
+// cursor moves to the end of the *line*: the section writes `**Sync** to the exact target
+// commit…`, so the line begins inside the name, and a cursor advanced past the name would sit
+// past the start of the line that belongs to it.
+{
+  const section = comparable(SOURCES[HOW_IT_WORKS])
+  let cursor = 0
+  for (const [index, step] of STEPS.entries()) {
+    let end = cursor
+    for (const [what, line] of [
+      ['name', step.name],
+      ['line', step.line],
+    ] as const) {
+      const quoted = comparable(line)
+      const at = section.indexOf(quoted, cursor)
+      if (at === -1) {
+        throw new Error(
+          `website/src/components/RunDetail.astro: step ${index + 1}'s ${what} ${JSON.stringify(line)} is not a line of README.md's "## How it works" at or after the step before it, and the page's steps are that section's own words in its own order (changes spec 2026-10-18, item 4; Global Constraint 6).`,
+        )
+      }
+      end = Math.max(end, at + quoted.length)
+    }
+    cursor = end
+  }
+}
+
+if (!comparable(SOURCES[DESIGN]).includes(comparable(NOTE))) {
+  throw new Error(
+    `website/src/components/RunDetail.astro: the note ${JSON.stringify(NOTE)} is not a line of ${DESIGN}, and the page quotes the design document rather than describing it (Global Constraint 6).`,
+  )
+}
+
+/** The step's own words as a slug, for the attribute `website/test/home.mjs` reads. */
+function slug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+---
+
+<section class="run-detail" aria-labelledby="run-detail-title" data-source="README.md#How it works">
+  <h2 class="run-detail-title" id="run-detail-title">The run, step by step</h2>
+
+  <ol class="run-steps">
+    {
+      STEPS.map((step, index) => (
+        <li class="run-step" data-step={slug(step.name)} data-source="README.md#How it works">
+          <h3 class="run-step-name">
+            <span class="run-step-number" aria-hidden="true">{index + 1}</span>
+            {step.name}
+          </h3>
+          <p class="run-step-line">{step.line}</p>
+        </li>
+      ))
+    }
+  </ol>
+
+  <p class="run-note" data-source="docs/design/v1.md">{NOTE}</p>
+</section>
+
+<style>
+  /* Tokens only (W1.2), and the same accent vocabulary the diagram above uses, so the two
+     read as one page: the steps are quieter than the picture — the picture is what the
+     section is for — and the numbers are outlines rather than fills, which is the whole of
+     the difference.
+
+     **The detail takes the page's column, not the measure.** The review of this branch saw
+     the zoom-in below the picture drawn as a narrow left column: the five steps are an
+     `<ol>`, `base.css` holds a list to `--measure` (68 ch, about 578 px at the body's 17 px),
+     and each line inside it carried the same cap again — so two thirds of the column the
+     picture above fills were empty beside the detail of it. The list declares `max-width:
+     none` for the same reason the flow's does (see `ArchitectureDiagram.astro`), and it lays
+     the five steps out as a grid of the page's own width rather than as one column of prose.
+     `repeat(auto-fit, minmax(18rem, 1fr))` is the same rule the chat's turns use: three
+     columns on a desktop, one on a phone, and no breakpoint of this component's own to keep
+     in step with the layout's.
+
+     **And it starts at the page's own left edge** (review round 3, item 3d). This rule used
+     to carry `var(--space-md)` of inline padding of its own — 24 px on top of the gutter
+     `main` already gives it — so "The run, step by step" and the five steps under it were
+     indented 24 px relative to the `h1` and to the picture between them, which is the defect
+     the review measured. The vertical padding stays: the space above the heading is the
+     breathing room between the picture and the detail of it. */
+  .run-detail {
+    max-width: var(--page-max);
+    margin: 0 auto;
+    padding: var(--space-2xl) 0 var(--space-3xl);
+  }
+
+  .run-detail-title {
+    margin: 0 0 var(--space-md);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-2xl);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
+    color: var(--text);
+  }
+
+  .run-steps {
+    /* See the block comment above: the list is the page's width, and it is a grid of the
+       page's width — an `<ol>` inherits `base.css`'s measure otherwise. */
+    max-width: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+    gap: var(--space-md);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .run-step {
+    display: grid;
+    gap: var(--space-2xs);
+    padding-left: var(--space-sm);
+    border-left: calc(var(--border-width) * 2) solid var(--accent);
+  }
+
+  .run-step-name {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-xs);
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: var(--font-size-base);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  .run-step-number {
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    font-weight: var(--weight-normal);
+    color: var(--text-muted);
+  }
+
+  .run-step-line {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--leading-normal);
+    overflow-wrap: anywhere;
+  }
+
+  .run-note {
+    margin: var(--space-lg) 0 0;
+    max-width: var(--measure);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    line-height: var(--leading-normal);
+  }
+</style>

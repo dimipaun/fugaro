@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -320,8 +321,8 @@ func rulesMarkerPrePolicyText(gen int) string {
 // is this release's own document, whose mailbox the mobile app has no grant for
 // until the owner deploys it (mobile plan P2.3).
 func rulesMarkerOlderText(gen int) string {
-	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4); re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
-		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.PolicyRulesVersion, projectpolicy.RulesVersion)
+	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), and binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no %s/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand; re-run 'fugaro init --firebase' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.PolicyRulesVersion, rules.PathDevices, projectpolicy.RulesVersion)
 }
 
 // readPolicyNode reads the shared node with its ETag, the precondition the

@@ -147,9 +147,39 @@ const PolicyRulesVersion = 1
 // and the owner's deploy records generation 2 — not a reason for anything to
 // read below the policy generation and answer "no policy here".
 //
+// Generation 3 is P6.4 (mobile plan task P6.4, decisions D161, D165, D166,
+// D169, D171): the mailbox's message fields as P6.3's schema defines them (a
+// `mac` required on every message of every kind and on the heartbeat, with
+// `agent`, `kind`, `options`, `reply_to` and the action record beside it), the
+// device allowlist `config/admin/devices/<uid>` that USER now requires (D166),
+// and the two pairing nodes of D165. The generation moves for the device node
+// even where nothing else did: a phone on generation 2 cannot read its own
+// mailbox under a generation-3 document until its account is paired, so an
+// installation that deploys these rules and forgets `fugaro pair` finds every
+// app read refused — and `fugaro doctor` says nothing about it *afterwards*.
+// `policy-rules-skew` compares the deployed *document* with this binary's, so
+// it warns only **before** the deploy, while the marker still records
+// generation 2; the deploy that records generation 3 is what silences it, and
+// from then on the unpaired account is the app's own empty reads to diagnose
+// rather than a skew doctor reports. The warning is where the operator is told
+// to pair first (internal/cli's rulesMarkerOlderText says it in as many words),
+// and it is the deploy that takes it away.
+//
+// What the bump does to an existing installation, plainly. Runs and the
+// project policy are untouched: Read and the publish gate stay on
+// PolicyRulesVersion (1). Under a generation-2 marker this binary's doctor
+// warns policy-rules-skew until the owner deploys. Once generation 3 is
+// deployed: every phone is refused every read and write until its account has
+// a device node, and until `fugaro pair` (P6.6) ships the only way to write one
+// is by hand over IAM; every mailbox writer that does not send a `mac` (no code in this
+// repository writes the mailbox yet, so this reaches a hand-written consumer
+// or script only) is refused; and a 0.8.5 CLI
+// (generation 2) refuses `fugaro init --firebase` against the generation-3
+// marker rather than deploying its older rules over it, and its doctor warns.
+//
 // It is not Version: the policy schema and the rules that guard it move
 // independently.
-const RulesVersion = 2
+const RulesVersion = 3
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own
