@@ -1476,6 +1476,9 @@ func TestALoneSurrogateEscapeReachesTheValidator(t *testing.T) {
 	}{
 		{"in a body", "plain message", `"text":"run 42 finished"`, `"text":"a\uD800b"`, CodeBadCharacter, "text"},
 		{"a low half in a body", "plain message", `"text":"run 42 finished"`, `"text":"\uDE00"`, CodeBadCharacter, "text"},
+		{"a low half at the bottom of its range", "plain message", `"text":"run 42 finished"`, `"text":"\uDC00"`, CodeBadCharacter, "text"},
+		{"a high half at the top of its range", "plain message", `"text":"run 42 finished"`, `"text":"a\uDBFFb"`, CodeBadCharacter, "text"},
+		{"a low half at the top of its range", "plain message", `"text":"run 42 finished"`, `"text":"a\uDFFFb"`, CodeBadCharacter, "text"},
 		{"a high half at the end of a body", "plain message", `"text":"run 42 finished"`, `"text":"ab\uD83D"`, CodeBadCharacter, "text"},
 		{"a lone half spelled in lowercase hex", "plain message", `"text":"run 42 finished"`, `"text":"a\ud800b"`, CodeBadCharacter, "text"},
 		{"a lone half after a pair", "plain message", `"text":"run 42 finished"`, `"text":"\ud83d\ude00\ud800"`, CodeBadCharacter, "text"},
@@ -1640,6 +1643,12 @@ func TestTheUnquoterDecodesWhatItKeeps(t *testing.T) {
 	}{
 		{"a lone high half", `"\uD800"`, "\xed\xa0\x80"},
 		{"a lone low half", `"\udc00"`, "\xed\xb0\x80"},
+		{"a lone high half at the top of its range", `"\uDBFF"`, "\xed\xaf\xbf"},
+		{"a lone low half at the top of its range", `"\uDFFF"`, "\xed\xbf\xbf"},
+		{"the first character above the BMP", `"\uD800\uDC00"`, "\U00010000"},
+		{"the last character, at the top of both ranges", `"\uDBFF\uDFFF"`, "\U0010FFFF"},
+		{"a lowercase hex escape whose first digit is the a of a-f", `"\uabcd"`, "\uabcd"},
+		{"an uppercase hex escape whose first digit is the A of A-F", `"\uABCD"`, "\uABCD"},
 		{"a pair beside a lone half", `"\uD83D\uDE00\uD800"`, "\U0001F600\xed\xa0\x80"},
 		{"a lone half beside a pair", `"\uD800\uD83D\uDE00"`, "\xed\xa0\x80\U0001F600"},
 		{"a high half before an ordinary escape", `"\uD83D\u00e9"`, "\xed\xa0\xbd\xc3\xa9"},
@@ -1674,6 +1683,7 @@ func TestTheUnquoterDecodesWhatItKeeps(t *testing.T) {
 	}{
 		{`no quote at all`, "no opening quote"},
 		{`"a`, "no closing quote"},
+		{`"`, "no closing quote"}, // one quote, and nothing on either side of it
 		{`"a` + "\\", "no closing quote"},
 		{`"a` + "\\" + `"`, "lone backslash"},   // a backslash with only the closing quote after it
 		{`"a` + "\\" + `u00"`, "half-written"},  // half an escape
@@ -1698,6 +1708,71 @@ func TestTheUnquoterDecodesWhatItKeeps(t *testing.T) {
 				t.Errorf("%q failed with %q, wanted it to name %q", tc.literal, err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestTheSurrogateRangeEdgesSurviveTheWire is the decode-level half of the
+// same edges, and it exists because the two classification functions are
+// written twice — hasLoneSurrogateEscape's switch and the unquoter's
+// isHighSurrogate/isLowSurrogate pair — and only the second of them was ever
+// asked about the first and last code unit of each range. Narrow any of those
+// four bounds by one and the pair at that edge stops being a pair: the decoder
+// writes the two halves as WTF-8, and a record the module accepts
+// (`"\uD800\uDC00"` is U+10000) is refused bad-character here.
+//
+// U+10000 and U+10FFFF are the edges: the lowest and the highest code unit
+// pairs a document can spell, which is exactly the DC00 and DFFF that the
+// bounded comparisons guard, and DBFF for the high half of the last one.
+func TestTheSurrogateRangeEdgesSurviveTheWire(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		escaped string
+		want    string
+	}{
+		{"the first character above the BMP", `\uD800\uDC00`, "\U00010000"},
+		{"the last character", `\uDBFF\uDFFF`, "\U0010FFFF"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			document := surrogateDocument(t, "plain message", `"text":"run 42 finished"`, `"text":"`+tc.escaped+`"`)
+			record, err := Decode(document)
+			if err != nil {
+				t.Fatalf("the decoder refused the document itself: %v", err)
+			}
+			if got, _ := record["text"].(string); got != tc.want {
+				t.Fatalf("the pair decoded to %q, wanted %q: it is one character, not two lone halves", got, tc.want)
+			}
+			if _, refusal := ValidateMessage(record); refusal != nil {
+				t.Errorf("the record is refused %s: the module accepts a well-formed pair, whatever code units it is spelled with", refusal)
+			}
+			bytes, err := CanonicalBytes(record, "inbox")
+			if err != nil {
+				t.Fatalf("CanonicalBytes: %v", err)
+			}
+			if !strings.Contains(string(bytes), tc.want) {
+				t.Errorf("the canonical bytes are %s, wanted them to carry %q raw", bytes, tc.want)
+			}
+		})
+	}
+}
+
+// TestTheDepthBoundIsTheBoundItself is the decoder's own off-by-one: maxDepth
+// is the deepest document Decode accepts, and the module's own records are far
+// shallower, so nothing else in the suite walks the edge. Narrow the bound by
+// one (`depth > maxDepth` -> `depth >= maxDepth`) and a document nested exactly
+// maxDepth levels deep is refused by a decoder that used to read it.
+func TestTheDepthBoundIsTheBoundItself(t *testing.T) {
+	document := func(levels int) []byte {
+		return []byte(strings.Repeat(`{"a":`, levels) + "1" + strings.Repeat("}", levels))
+	}
+	if _, err := Decode(document(maxDepth)); err != nil {
+		t.Errorf("a document nested exactly maxDepth (%d) levels deep is refused: %v", maxDepth, err)
+	}
+	_, err := Decode(document(maxDepth + 1))
+	if err == nil {
+		t.Fatalf("a document nested maxDepth+1 levels deep is accepted, and the bound is %d", maxDepth)
+	}
+	if !strings.Contains(err.Error(), "nested deeper than") {
+		t.Errorf("the deeper document failed with %q, wanted the depth refusal", err)
 	}
 }
 
