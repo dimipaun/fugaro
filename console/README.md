@@ -2832,6 +2832,16 @@ notes, https://…"` passes. What is refused is a string that *begins* as a URL 
 That is the whole of the false-positive surface, and it is the direction the tool errs in
 everywhere else.
 
+Both scans read the target **as the URL parser would read it**, and not as the bytes are
+written: ASCII tab and newline are removed wherever they are, and the leading and trailing C0
+controls and spaces are stripped, before the scheme test. So `url(" https://…")` and
+`image-set("\thttps://…" 1x)` are remote loads with the scheme behind a byte the test used to
+require at character 0, and both are refused now. The refusal still quotes the call **as it is
+written**, so the message names the bytes to change. One spelling is not reached and is stated
+rather than solved: a raw LF *inside* a quoted string, which `QUOTED_STRING_RE`'s body cannot
+cross — the section below carries the measurement that settles why the body stays bounded,
+and the `url()` scan, whose quoted body does cross lines, refuses that spelling.
+
 `url(./mark.png)` and `url(data:...)` are admitted — a path on this origin, and a byte
 string rather than a request (`img-src 'self' data:` allows the second). Two asymmetries
 are admitted with them and are stated rather than solved, because neither weakens anything:
@@ -2960,6 +2970,32 @@ stated in `refuseSymlinkedDirectory` rather than left to be discovered: resolvin
 chain would refuse `/var`-style paths the platform ships (`os.tmpdir()` is under `/var` on
 macOS), and `dist/` is gitignored, so this shape needs a tampered working tree rather than a
 reviewed commit.
+
+### The two leftovers #701 left open (2026-10-19)
+
+The review of the follow-up above left two non-structural findings open, on the owner's
+merge-then-follow-up rule. Each was reproduced against the compiled tool before it was
+fixed, and each mutant below was planted in `tools/bundle-renderer/index.ts`, run, and
+reverted; in every run exactly the cases named failed and no other case did.
+
+| Mutation | What fails |
+|---|---|
+| the pre-write `refuseSymlinkedOutput` pass removed from `buildConsole` | `bundle.test.ts`, "refuses a symlinked output before it writes anything" — the refusal still lands inside `bundleRenderer`, with `console.css` already written, and for the document with `console.js` too |
+| the pre-write `moduleClosure` pass removed from `buildConsole` | `bundle.test.ts`, "refuses a module the walk will not bundle before it writes anything" — `require('electron')` is refused one writer later, with `console.css` already written |
+| `isRemoteTarget` put back to the raw `startsWith('//') \|\| REMOTE_SCHEME_RE` test | `bundle.test.ts`, "refuses a url() on another origin…", "refuses a quoted string that names a URL…" and the probe case — `url(" https://…")` and `image-set("\thttps://…" 1x)` are admitted |
+| `URL_STRIPPED_RE`'s replace dropped, the edge strip kept | `bundle.test.ts`, the same two cases, on `url("/\t/x.png")` alone — the "tab and newline are removed *wherever* they are" half of the parser's rule |
+
+**The one byte left open, and the measurement that settles it.** A raw LF *inside* a quoted
+string is still not refused by the quoted-string scan, because `QUOTED_STRING_RE`'s body is
+bounded by the newline. Widening the body to `[\s\S]` was tried, observed and reverted: it
+buys `image-set("\nhttps://…" 1x)` — a `<bad-string-token>` the tokenizer drops before any
+URL is resolved — and pays for it with `image-set('http://cdn.example/x.png' 1x)` and
+`-webkit-image-set('//cdn.example/a"b.png' 2x)`, which both stop being refused the moment an
+*unbalanced* quote precedes them in the same file. Both theme files hold an apostrophe in
+their prose, so those two cases failed on the widened body and passed on the narrow one. The
+`url()` scan, whose quoted body is not bounded by the newline, refuses the LF spelling;
+`bundle.test.ts`'s probe asserts both halves so the asymmetry is a decision rather than an
+accident.
 
 ### What this task does not own
 

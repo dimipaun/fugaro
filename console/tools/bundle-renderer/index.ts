@@ -525,12 +525,49 @@ const CSS_URL_RE = /url\(\s*(?:'([^']*)'|"([^"]*)"|([^)'"\s]*))\s*\)?/gi
  * README's stylesheet section states it (review N2). */
 const REMOTE_SCHEME_RE = /^(?!(?:data|blob):)[a-z][a-z0-9+.-]*:/i
 
+/** URL_STRIPPED_RE matches what the URL parser removes **anywhere** in a
+ * target before it reads a scheme: ASCII tab and newline (tab, LF, CR). */
+const URL_STRIPPED_RE = /[\t\n\r]/g
+
+/** URL_EDGE_SPACE_RE matches the C0 controls and spaces the URL parser strips
+ * at the two ends of a target. */
+const URL_EDGE_SPACE_RE = /^[\u0000-\u0020]+|[\u0000-\u0020]+$/g
+
+/** urlParserTarget is a target as the URL parser would read it: ASCII tab and
+ * newline removed wherever they are, then the leading and trailing C0 controls
+ * and spaces stripped (the WHATWG URL parser's "remove all ASCII tab or
+ * newline" and "strip leading and trailing C0 control or space", in that order).
+ *
+ * **The two scans below test this and not the bytes as written**, because this
+ * is what decides whether the target is a request off this origin. The parser
+ * strips those characters *before* it reads a scheme, so `url(" https://…")` and
+ * `image-set("\thttps://…" 1x)` are remote loads whose scheme is not at
+ * character 0 -- and testing the raw bytes admitted both, which was an
+ * undocumented way round the scan (review M1, left open by #701). A space and a
+ * tab are ordinary characters inside a CSS string, so neither spelling is even
+ * unusual.
+ *
+ * The refusal still quotes the target **as it is written** -- `match[0]` -- so
+ * the message shows the reader the bytes to change. */
+function urlParserTarget(target: string): string {
+  return target.replace(URL_STRIPPED_RE, '').replace(URL_EDGE_SPACE_RE, '')
+}
+
+/** isRemoteTarget reports whether a target, as written, names a URL off this
+ * origin: a scheme that leaves this machine, or the protocol-relative `//`. It
+ * is the one target test both scans use, and it is why the `url()` scan and the
+ * quoted-string scan agree about `data:`, `blob:` and a leading space. */
+function isRemoteTarget(target: string): boolean {
+  const parsed = urlParserTarget(target)
+  return parsed.startsWith('//') || REMOTE_SCHEME_RE.test(parsed)
+}
+
 /** remoteUrlIn is the first remote `url()` of a stylesheet, as it is written,
  * or `null` when every one of them is a relative path on this origin. */
 export function remoteUrlIn(css: string): string | null {
   for (const match of css.matchAll(CSS_URL_RE)) {
     const target = match[1] ?? match[2] ?? match[3] ?? ''
-    if (target.startsWith('//') || REMOTE_SCHEME_RE.test(target)) return match[0].trim()
+    if (isRemoteTarget(target)) return match[0].trim()
   }
   return null
 }
@@ -552,12 +589,32 @@ export function remoteUrlIn(css: string): string | null {
 const BACKSLASH_RE = /\\/
 
 /** QUOTED_STRING_RE matches every quoted string of a stylesheet, in either
- * mark. The body excludes its **own** mark (and the newline, so a match cannot
- * run off the end of a line) and allows the other one, because CSS does: a
- * single quote is an ordinary character inside a double-quoted `<string>`, and
- * `image-set("https://cdn.example/a'b.png" 1x)` is a valid URL that a body
- * excluding both marks could not see -- the exact silent remote load this scan
- * was added for (review M1, second pass). */
+ * mark. The body excludes its **own** mark and allows the other one, because
+ * CSS does: a single quote is an ordinary character inside a double-quoted
+ * `<string>`, and `image-set("https://cdn.example/a'b.png" 1x)` is a valid URL
+ * that a body excluding both marks could not see -- the exact silent remote load
+ * this scan was added for (review M1, second pass).
+ *
+ * **The body is bounded by the newline, and the bound is load-bearing twice
+ * over** (review M1, left open by #701: it is why the one spelling below that
+ * carries a raw LF is `url()`'s and not this scan's). A raw newline is what ends
+ * a CSS `<string>` -- the tokenizer calls the whole thing a `<bad-string-token>`
+ * and the declaration is dropped before any URL is resolved -- and a body that
+ * crossed one would pair an **unbalanced** quote with the next quote of its mark
+ * wherever that is. Both theme files hold an apostrophe in their prose, so a `'`
+ * opening a comment's aside pairs with the `'` of a remote URL further down, and
+ * the scan then reads the prose instead of the URL.
+ *
+ * **That is measured, not argued**: with the body widened to `[\s\S]`,
+ * `image-set('http://cdn.example/x.png' 1x)` and
+ * `-webkit-image-set('//cdn.example/a"b.png' 2x)` planted after `tokens.css` are
+ * both **admitted** -- the mutant is caught by the two cases in `bundle.test.ts`
+ * that plant exactly those. So the widening buys one spelling the CSS tokenizer
+ * drops anyway and pays for it with two that resolve, which is why it was tried,
+ * observed and reverted rather than kept. The `url()` scan, whose quoted body is
+ * not bounded by the newline, refuses the LF spelling; `bundle.test.ts`'s probe
+ * states both halves. Every other byte the URL parser strips -- space, tab, CR,
+ * FF -- is in this body already, and `urlParserTarget` strips all of them. */
 const QUOTED_STRING_RE = /(["'])((?:(?!\1)[^\n])*)\1/g
 
 /**
@@ -580,6 +637,15 @@ const QUOTED_STRING_RE = /(["'])((?:(?!\1)[^\n])*)\1/g
  * of the false-positive surface (review M1, second pass: the prose here named a
  * shape that does not reproduce).
  *
+ * **"The start of the string" means the start as the URL parser reads it**, and
+ * that refinement is the second pass's own (review M1, left open by #701): the
+ * parser removes ASCII tab and newline wherever they are and strips the leading
+ * and trailing C0 controls and spaces *before* it reads a scheme, so
+ * `image-set(" https://…" 1x)` is a remote load with its scheme behind a byte the
+ * old test required at character 0. Both scans now read the target through
+ * `isRemoteTarget`, which is `urlParserTarget`'s answer, and the refusal still
+ * quotes the string as it is written.
+ *
  * It cannot be relaxed by skipping comments, either: a scan that struck out
  * comment syntax would hide an escape behind an opening comment marker written
  * *inside* a string, which is the bypass the backslash rule exists to close.
@@ -587,8 +653,7 @@ const QUOTED_STRING_RE = /(["'])((?:(?!\1)[^\n])*)\1/g
  */
 export function quotedRemoteIn(css: string): string | null {
   for (const match of css.matchAll(QUOTED_STRING_RE)) {
-    const target = match[2] ?? ''
-    if (target.startsWith('//') || REMOTE_SCHEME_RE.test(target)) return match[0]
+    if (isRemoteTarget(match[2] ?? '')) return match[0]
   }
   return null
 }
@@ -781,17 +846,38 @@ export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
  * is a function rather than three lines in the entry point below because the
  * **order** is a claim a test has to be able to make (review M3).
  *
- * The order is: the served root's symlink and foreign-file refusals, then the
- * stylesheet, then the two renderer bundles. They come first because they are the
- * ones that can stop the build, and a build that stops must not have written
- * anything: with the stylesheet first, a foreign file in `dist/bundle/` was a
- * build failure that nonetheless left a fresh `console.css` behind. That was
- * harmless -- a failed build is not packaged -- but "a refusal must not leave
- * half a bundle behind" held one way round only, and the difference between the
- * two orders is a line.
+ * The order is: **every refusal this build can make**, then the stylesheet, then
+ * the two renderer bundles. They come first because they are the ones that can
+ * stop the build, and a build that stops must not have written anything: with
+ * the stylesheet first, a foreign file in `dist/bundle/` was a build failure that
+ * nonetheless left a fresh `console.css` behind. That was harmless -- a failed
+ * build is not packaged -- but "a refusal must not leave half a bundle behind"
+ * held one way round only, and the difference between the two orders is a line.
  *
- * Everything else in the step is unchanged: the stylesheet's own refusals are
- * about the theme *sources* and are already asked before it writes.
+ * **The pre-write phase asks all of them, and not only the two the served root
+ * owns** (review M4, left open by #701). The pair the directory owns
+ * (`refuseSymlinkedDirectory`, `refuseForeignFilesIn`) was here; beside them
+ * are now `refuseSymlinkedOutput` for **every name this build is about to
+ * write** -- the stylesheet, each bundle, and each served document each bundle
+ * copies -- and `moduleClosure` for each entry, whose walk is where a bare
+ * specifier, a computed one and a module the build did not emit are refused. A
+ * symlinked `dist/bundle/console.js`, a symlinked `dist/bundle/index.html` and a
+ * module that required `electron` all used to fail one writer further in, after
+ * `console.css` -- and in the last two cases `console.js` as well -- had already
+ * been written. The writers ask these questions too (`bundleStylesheet` and
+ * `bundleRenderer` each refuse their own output, and `bundleRenderer` re-checks
+ * each destination as it copies), so this pass is that answer asked earlier
+ * rather than a second rule, exactly as `refuseForeignFilesIn`'s first call is.
+ *
+ * It is **not a lock**, and the writers' own checks stay for that reason: a link
+ * planted between this pass and a write is refused by the writer that reaches
+ * it, one step before the bytes land. What the pass buys is that the ordinary
+ * failure -- the tree as it was when the build started -- cannot leave a fresh
+ * artefact behind.
+ *
+ * Everything else in the step is unchanged: the stylesheet's refusals about the
+ * theme *sources* are `themeStylesheetSources`', asked by the first writer
+ * before it writes a byte.
  */
 export function buildConsole(consoleRoot: string): void {
   const bundles = consoleBundles(consoleRoot)
@@ -799,15 +885,23 @@ export function buildConsole(consoleRoot: string): void {
   if (first === undefined) {
     throw new BundleRefusal(`${consoleRoot} has no bundle to write: the console's build writes two`)
   }
-  const owned = new Set<string>()
-  for (const bundle of bundles) {
-    for (const name of ownedInRoot(bundle, documentsOf(bundle.entry))) owned.add(name)
-  }
   const directory = dirname(resolve(first.out))
+  const stylesheet = consoleStylesheet(consoleRoot)
+  const owned = new Set<string>()
+  const outputs: string[] = [resolve(stylesheet.out)]
+  for (const bundle of bundles) {
+    const documents = documentsOf(bundle.entry)
+    for (const name of ownedInRoot(bundle, documents)) owned.add(name)
+    outputs.push(resolve(bundle.out))
+    for (const document of documents) outputs.push(join(directory, basename(document)))
+  }
+
   refuseSymlinkedDirectory(directory)
   refuseForeignFilesIn(directory, owned)
+  for (const output of outputs) refuseSymlinkedOutput(output)
+  for (const bundle of bundles) moduleClosure(bundle.entry)
 
-  bundleStylesheet(consoleStylesheet(consoleRoot))
+  bundleStylesheet(stylesheet)
   for (const bundle of bundles) bundleRenderer(bundle)
 }
 
