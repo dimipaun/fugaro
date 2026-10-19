@@ -431,6 +431,57 @@ func TestManagedFlagNeedsTheDefaultRunsBucket(t *testing.T) {
 	}
 }
 
+// TestManagedFlagNeedsTheDerivedStateBucket: the runs bucket's rule, applied to
+// the other bucket a managed project's objects live in, and the reason a
+// creation refused for --state-bucket cannot be answered with "create it
+// unmanaged and flag it later". An unmanaged creation resolves
+// terraform.state_bucket out of this same config (infra.Installation's firstOf),
+// so flagging that project would be flagging one whose installation state the
+// managed read cannot find — managedAccounted reads gs://fugaro-tfstate-
+// <gcp_project> by that derived name and Inventory.installationCreated
+// recognises the same name — leaving every apply of it on the typed
+// confirmation flagging exists to take away. A project whose state is in
+// another bucket is refused here rather than flagged into that state.
+func TestManagedFlagNeedsTheDerivedStateBucket(t *testing.T) {
+	r := managedFlagRig(t)
+	const other = "fugaro-tfstate-elsewhere"
+	r.appendConfig(t, "terraform: { state_bucket: "+other+" }\n")
+	terminal(t, true)
+	out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+	if err == nil {
+		t.Fatalf("a project whose installation state nothing reads was flagged:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	all := out + err.Error()
+	for _, want := range []string{initStateBucket, other} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the refusal does not name %s: %s", want, all)
+		}
+	}
+	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
+		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+	}
+}
+
+// The control beside it: the derived name written out in the config is the
+// value a creation that passes no flag resolves to anyway, so recording it
+// explicitly is not a reason to refuse — the check is about which bucket the
+// state is in, not about the field being set.
+func TestManagedFlagAcceptsTheDerivedStateBucketRecordedExplicitly(t *testing.T) {
+	r := managedFlagRig(t)
+	r.appendConfig(t, "terraform: { state_bucket: "+initStateBucket+" }\n")
+	terminal(t, true)
+	out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if _, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok {
+		t.Errorf("no %s in gs://%s for a config that records the derived state bucket:\n%s", managed.MarkerObject, initRunsBucket, out)
+	}
+}
+
 // TestManagedFlagReplacesTheCreationFactThatRecordsNoAmount: a project Fugaro
 // created without --managed holds the version-1 creation fact and no amount,
 // and the apply's gate refuses it for exactly that (internal/managed's

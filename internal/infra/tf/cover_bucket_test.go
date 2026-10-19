@@ -85,6 +85,14 @@ func TestCoverBucketConditions(t *testing.T) {
 			cond("t", gcp.TokenBucketCondition(cbBucket, "s")+" || "+gcp.BucketCondition(cbBucket, []string{"runs"}, "s")), "", false, "condition"},
 		{"job account reads another bucket's tokens/", cbJobSA, "roles/storage.objectViewer",
 			cond("t", gcp.TokenBucketCondition("fugaro-runs-other", "s")), "", false, "condition"},
+		// The clause's slug is not tied to the grant's account, and cannot be:
+		// an account ID is the profile/provider/account triple and names no
+		// repository, so a plan cannot read which slug belongs to the account
+		// it binds (bucketCondition's own note). The title and the member are
+		// checked (the rows above); the slug is not. Accepted, deliberately:
+		// this is the one tokens/ case in this table that is not a refusal.
+		{"job account reads another repository's tokens/<slug>/", cbJobSA, "roles/storage.objectViewer",
+			cond(gcp.TokenBucketConditionTitle(cbJobSAID), gcp.TokenBucketCondition(cbBucket, "some-other-repo-0123456789abcdef")), cbJobSAID, true, ""},
 		{"a person reads tokens/<slug>/ under a condition", cbPerson, "roles/storage.objectViewer", tokens, "", false, "condition"},
 		{"job account reads tokens/ with a description", cbJobSA, "roles/storage.objectViewer",
 			map[string]any{"title": "t", "expression": gcp.TokenBucketCondition(cbBucket, "s"), "description": "x"}, "", false, "description"},

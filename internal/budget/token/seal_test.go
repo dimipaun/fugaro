@@ -354,3 +354,61 @@ func TestTakeObjectRefusesAnObjectSealedForAnotherName(t *testing.T) {
 		t.Fatalf("an object sealed for another name = (%q, %v), want ErrUnseal and no token", got, err)
 	}
 }
+
+// TestSealedIsAShapeTestThatSurvivesShortObjects: Sealed reads the object's
+// first byte, and it reads it only on an object long enough to have an
+// envelope at all — a version byte, a nonce and a tag, 29 bytes here. The
+// guard is what keeps the one caller that has not read the object yet
+// (openToken, which asks Sealed about bytes a bucket handed it, empty objects
+// included) from reading past the end of them; the shape is not a proof of
+// anything, and Unseal's tag check is what makes the bytes a token.
+//
+// Mutation (run, restored): drop `len(data) >= minEnvelope` from Sealed — the
+// empty and short rows below panic with an index out of range instead of
+// answering false, and the object-level case does it through TakeObject.
+func TestSealedIsAShapeTestThatSurvivesShortObjects(t *testing.T) {
+	const envelopeLen = 1 + 12 + 16      // version, nonce, tag
+	short := make([]byte, envelopeLen-1) // a version byte and part of a nonce
+	short[0] = token.EnvelopeVersion
+	overVersion := make([]byte, envelopeLen)
+	overVersion[0] = token.EnvelopeVersion + 1 // long enough, and a format we do not know
+	full := make([]byte, envelopeLen)
+	full[0] = token.EnvelopeVersion
+	for _, tc := range []struct {
+		what string
+		data []byte
+		want bool
+	}{
+		{"an empty object", nil, false},
+		{"an empty object that is not nil", []byte{}, false},
+		{"a bare version byte", []byte{token.EnvelopeVersion}, false},
+		{"a version byte and part of a nonce", short, false},
+		{"a plaintext token", []byte("eyJhbGciOiJSUzI1NiJ9.eyJ1aWQiOiJhYmMifQ.sig"), false},
+		{"an envelope-shaped object from another version", overVersion, false},
+		{"an envelope with no plaintext in it", full, true},
+	} {
+		if got := token.Sealed(tc.data); got != tc.want {
+			t.Errorf("Sealed(%s) = %v, want %v", tc.what, got, tc.want)
+		}
+	}
+	// What Seal writes is recognized, and the empty object reaches the refusal
+	// rather than a panic: openToken is the caller the guard is there for.
+	e := newEnv(t)
+	ctx := context.Background()
+	_, b := bucket(t)
+	key, name := sealKey(0xA0), token.ObjectKey("aurora-app", "20261002-120000-ab12")
+	env, err := token.Seal(key, name, []byte(e.mint(t, claims(), t0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !token.Sealed(env) {
+		t.Fatal("Sealed does not recognize an envelope Seal wrote")
+	}
+	if _, err := b.Create(ctx, name, []byte{}, "application/octet-stream"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := token.TakeObject(ctx, b, "aurora-app", "20261002-120000-ab12", nil)
+	if !errors.Is(err, token.ErrNotSealed) || got != "" {
+		t.Fatalf("an empty object with no key = (%q, %v), want ErrNotSealed and no token", got, err)
+	}
+}
