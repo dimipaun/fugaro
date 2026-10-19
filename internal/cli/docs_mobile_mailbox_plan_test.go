@@ -49,10 +49,11 @@ func planCited(doc, path string) bool {
 }
 
 // planSection is the plan's text from heading to the next "## " heading at the
-// same or a higher level. The plan's subsections are "### ", which does not
-// match "## " here, so a subsection runs to the end of its parent section —
-// which is what these assertions want: M12 is 3's last ruling and 4.4 is 4's
-// last subsection.
+// same or a higher level. It is for top-level sections ("## 9. D128"): a
+// subsection heading passed here runs on to the end of its parent, which is
+// what a section-shaped assertion wants and what planSubsection exists to
+// avoid — a slice that reaches past the subsection it names cannot fail when
+// the phrase it looks for has simply moved into a sibling.
 func planSection(t *testing.T, doc, heading string) string {
 	t.Helper()
 	i := strings.Index(doc, heading)
@@ -62,6 +63,24 @@ func planSection(t *testing.T, doc, heading string) string {
 	rest := doc[i:]
 	if j := strings.Index(rest[len(heading):], "\n## "); j >= 0 {
 		return rest[:len(heading)+j]
+	}
+	return rest
+}
+
+// planSubsection is the plan's text from a "### " heading to the next "### " or
+// "## " heading — the subsection and nothing after it. The label a failure
+// message carries has to be the text that was actually searched, or a phrase
+// that has merely moved into a sibling subsection keeps the assertion green:
+// this test's 8.3 assertion was written against planSection, whose slice is all
+// of section 8, and 8.2 contains the same phrase, so deleting it from 8.3 alone
+// proved nothing until the bound moved here.
+func planSubsection(t *testing.T, doc, heading string) string {
+	t.Helper()
+	rest := planSection(t, doc, heading)
+	for _, next := range []string{"\n## ", "\n### "} {
+		if j := strings.Index(rest[len(heading):], next); j >= 0 {
+			rest = rest[:len(heading)+j]
+		}
 	}
 	return rest
 }
@@ -340,18 +359,20 @@ func TestMailboxPlanCitationsExist(t *testing.T) {
 // TestMailboxPlanExitContractIsOneRule: the plan states its exit contract in
 // three places and they must agree. M12 (the ruling) and 4.4 (the command
 // surface) each carry the four clauses and the classification each row rests
-// on; 9 (D128's fence) points at the same rule; T5 (the task that tests it)
-// names both vacuous passes and both refusal kinds. The clauses and the two
-// function names are the pin: a revision that drops "read nothing" from either
-// statement is the contradiction this pin was written for.
+// on; 9 (D128's fence) points at the same rule and carries its four clauses, so
+// that section 13's "9 states the same four-clause exit rule" is true; T5 (the
+// task that tests it) names both vacuous passes and both refusal kinds. The
+// clauses and the two function names are the pin: a revision that drops "read
+// nothing" from either statement is the contradiction this pin was written for.
 //
 // Mutation (verified, run and restored): remove the vacuity statement from the
 // plan (every "read nothing" -> "nothing read") and this test fails naming M12,
-// 4.4 and 9 — the three places that must all say it.
+// 4.4 and 9 — the three places that must all say it; drop clause 4 from 9 alone
+// and it fails naming 9, which it did not before this bound was added.
 func TestMailboxPlanExitContractIsOneRule(t *testing.T) {
 	doc := readDoc(t, mailboxPlan)
-	m12 := planSection(t, doc, "### M12 —")
-	s44 := planSection(t, doc, "### 4.4 Exit codes")
+	m12 := planSubsection(t, doc, "### M12 —")
+	s44 := planSubsection(t, doc, "### 4.4 Exit codes")
 	s9 := planSection(t, doc, "## 9. D128")
 
 	for _, section := range []struct {
@@ -378,10 +399,21 @@ func TestMailboxPlanExitContractIsOneRule(t *testing.T) {
 	if !strings.Contains(s44, "adminDenied") {
 		t.Errorf("%s's 4.4 no longer names adminDenied for a refused write", mailboxPlan)
 	}
-	// D128's fence points at the one rule rather than restating it differently.
-	for _, want := range []string{"M12's predicate", "read nothing at all"} {
+	// D128's fence points at the one rule rather than restating it differently —
+	// and it carries the rule itself, so a section that drifts on one clause is
+	// a failing test. The four clauses are asserted here too: checking only the
+	// pointer and the vacuity clause let 9 drop clause 4 and stay green, which
+	// is the divergence section 13 claims the pin prevents.
+	for _, want := range []string{
+		"M12's predicate",      // the pointer
+		"read nothing at all",  // the vacuous cases
+		"at least one message", // clause 1
+		"performed no action",  // clause 2
+		"every message",        // clause 3
+		"action refusal",       // clause 4
+	} {
 		if !strings.Contains(s9, want) {
-			t.Errorf("%s's D128 section no longer says %q", mailboxPlan, want)
+			t.Errorf("%s's D128 section no longer says %q: it states the same four-clause rule as M12 and 4.4, not only a pointer to it", mailboxPlan, want)
 		}
 	}
 	// T5 tests both vacuous passes and both refusal kinds.
@@ -420,9 +452,9 @@ func TestMailboxPlanExitContractIsOneRule(t *testing.T) {
 // guards" back and it fails on the withdrawn claim.
 func TestMailboxPlanNamesTheMacTriggersAndTheCosts(t *testing.T) {
 	doc := readDoc(t, mailboxPlan)
-	m4 := planSection(t, doc, "### M4 —")
-	s83 := planSection(t, doc, "## 8. The MAC, precisely")
-	t2a := planSection(t, doc, "### Task T2a:")
+	m4 := planSubsection(t, doc, "### M4 —")
+	s83 := planSubsection(t, doc, "### 8.3 ")
+	t2a := planSubsection(t, doc, "### Task T2a:")
 	s7 := planSection(t, doc, "## 7. The loop")
 
 	for _, section := range []struct{ name, text string }{
@@ -544,7 +576,7 @@ func TestMailboxPlanMatchesTheMergedGrants(t *testing.T) {
 
 	// The plan-side half: the read half of M1's CAS has a credential named, and
 	// it is the one the rules leave (no grant admits the consumer to a read).
-	m1 := planSection(t, doc, "### M1 —")
+	m1 := planSubsection(t, doc, "### M1 —")
 	s2 := planSection(t, doc, "## 2. What the merged rules")
 	s6 := planSection(t, doc, "## 6. Where state lives")
 	for _, section := range []struct{ name, text string }{{"M1", m1}, {"2", s2}, {"6", s6}} {
@@ -560,7 +592,7 @@ func TestMailboxPlanMatchesTheMergedGrants(t *testing.T) {
 
 	// M8's sweeper deletes the consumer's own state, never a store user, and
 	// the plan says so in this one place rather than contradicting section 6.
-	m8 := planSection(t, doc, "### M8 —")
+	m8 := planSubsection(t, doc, "### M8 —")
 	if strings.Contains(doc, "its user keys are `m~") {
 		t.Errorf("%s says the mailbox sweeper's user keys are m~ again: that rule is P6.6's and is not approved (section 6, section 16), and P6.13's sweeper deletes stored prompts and nothing more", mailboxPlan)
 	}

@@ -818,10 +818,12 @@ for both directions.**
 The allow-list is a **value in code** (a slice of action kinds, each with the argv shape it may
 spawn), and the refusal is evaluated **before** any spawn (M11). The refusal is **recorded in the
 ledger and logged by code** — the message's own text is never put in an argv element and never
-printed; the ledger holds ids and codes — and its **exit code follows M12 and §4.4**: **0** when the
-pass did other work **or read nothing at all**, **1** only under M12's predicate — at least one
-message read, no action performed, every message read refused, and at least one of those refusals an
-action refusal. Owner decision 3.
+printed; the ledger holds ids and codes — and its **exit code follows M12 and §4.4**: **0** when
+the pass did other work **or read nothing at all**, **1** only under M12's predicate:
+**at least one message** read, **performed no action**, **every message** read refused, and
+**at least one of those refusals an action refusal**. Owner decision 3. The pin checks all four clauses here as well
+as in M12 and §4.4, so a section that drifts on one of them is a failing test rather than a
+paragraph nobody re-reads.
 
 **The amendment is honoured as a seam and not as a behaviour**, because P6.2 is NOT APPROVED: the
 code path exists, is covered by a test that builds a synthetic confirmation record, and **cannot be
@@ -959,8 +961,13 @@ empty heartbeat, both get `ok: true` from `takeLease`, the second write is refus
 minutes ahead is held and 5 minutes and 1 ms ahead is taken over; `--no-heartbeat` takes no lease
 and acts on nothing.
 **Red step.** Drop the `if-match` from the second write and watch `TestTwoConsumersOneLease` fail
-with both writes landing; drop `$mb == auth.uid` from `MAILBOX` and watch the read-refusal test
-fail.
+with both writes landing. For the read half the mutation has to be one the refusal can observe:
+**grant `CONSUMER` the heartbeat read** (change the template's `mailbox/$mb/heartbeat` `.read` from
+`"MAILBOX"` to `"CONSUMER"`) and watch the test take the token it is written to refuse. **Dropping
+`$mb == auth.uid` from `MAILBOX` is not that mutation:** `MAILBOX` expands to
+`userClaim && $mb == auth.uid`, and a `CONSUMER` token carries `mc` and no `mu`, so it fails
+`userClaim` before `$mb` is compared — the refusal holds and the test stays green. That mutation
+belongs to the phone's own fence, where P2.2's cross-account test is the one that goes red.
 **Reviewer tier.** SECURITY-SENSITIVE — this is the fence that makes at-most-once true.
 
 ### Task T4: The ledger, the restart, and the dedupe — SECURITY-SENSITIVE, independent opus review
@@ -1090,7 +1097,7 @@ without regenerating and watch `TestParityCorpusIsCurrent` fail.
 | `docs/design/v1.md` | T5 | one §9.1 row |
 | `shared/` | T1, T3, T8 (test files only) | **no merged module changes.** If a task needs one, it is a finding, not an edit |
 | `internal/localcfg` | T2 | one field, validated |
-| `internal/cli/docs_mobile_mailbox_plan_test.go` | **this plan, not a task** | the pin this document ships with: it **derives its path list from this document at test time** — every backticked `internal/`, `shared/`, `mobile/`, `docs/`, `website/`, `deploy/` and `scripts/` path in the plan, plus its markdown links, must be in the tree, except the handful T1–T8 create, each of which must still be absent — that each symbol the plan names is still in the file it names it in, and that M12, §4.4 and §9 state the same four-clause exit rule. It is the answer to the review that found the rule stated as one clause; it is not T1–T8's and it adds no product code |
+| `internal/cli/docs_mobile_mailbox_plan_test.go` | **this plan, not a task** | the pin this document ships with: it **derives its path list from this document at test time** — every backticked `internal/`, `shared/`, `mobile/`, `docs/`, `website/`, `deploy/` and `scripts/` path in the plan, plus its markdown links, must be in the tree, except the handful T1–T8 create, each of which must still be absent — that each symbol the plan names is still in the file it names it in; that M12, §4.4 and §9 state the same four-clause exit rule, **all four clauses in each of the three places**; that M4's three MAC states stay told apart and that the parked-message cost stays stated; and — by parsing `internal/budget/rules/rules.json.tmpl` rather than trusting this document's memory of it — that §2's grant claims are what the merged rules say. **That list is what the pin checks; it is not a claim that the pin checks everything above.** It is the answer to reviews that found the rule stated as one clause and the exit row attributed to the wrong function; it is not T1–T8's and it adds no product code |
 | `.github/workflows/ci.yml` | **nobody** | P4.3 is owner-made (Global Constraint 8); see §16 |
 
 **Levels** (the mobile plan's): T1 and T2 are level 3 (with P4.1); T2a, T3–T8 follow in one lane,
