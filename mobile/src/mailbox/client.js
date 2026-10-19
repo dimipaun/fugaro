@@ -72,10 +72,21 @@ import { STORE_CODES } from './store.js';
 /**
  * D118's mailbox TTL: how long a message the phone is still trying to deliver
  * stays worth retrying. It is the plan's number (O5, "mailbox TTL 72 h") and
- * the same one P1.1 is built with -- the consumer refuses a delivery older than
- * its window, so a retry past this would be refused at the other end anyway. A
- * message still unanswered at the TTL is dropped and reported (`expired`),
+ * the same one P1.1 is configured with as its longest horizon (a prompt's TTL).
+ * A message still unanswered at the TTL is dropped and reported (`expired`),
  * never retried for ever.
+ *
+ * **It is not the window the consumer accepts these records for, and saying so
+ * was wrong** (the PR #604 review). P1.1's window is per-kind (D173): a prompt
+ * is accepted inside the prompt TTL, a command inside `windowMs` -- the 6-hour
+ * replay window, its own default. Every record this client writes carries no
+ * `kind`, so the consumer reads it as a command, and a retry more than six
+ * hours after the utterance is still made by the phone and refused at the other
+ * end as a `replay`. The phone cannot know better: `windowMs` is the consumer's
+ * setting (P1.1 takes it per state) and the phone is not its reader. So the 72
+ * h here bounds the PHONE's effort and matches the mailbox's retention -- the
+ * facts of it, in the plan's O5 and D118 -- and `client.test.js` holds both
+ * numbers to their own modules rather than asserting one window.
  */
 export const MAILBOX_TTL_MS = 72 * 60 * 60 * 1_000;
 
@@ -229,6 +240,16 @@ function unsignableField(record) {
 export function toPresenceHeartbeat(heartbeat) {
   if (heartbeat === null || typeof heartbeat !== 'object' || Array.isArray(heartbeat)) {
     throw new TypeError('toPresenceHeartbeat: a heartbeat object is required');
+  }
+  // The FIELDS are checked too, and this is the `@throws` above taken
+  // literally: mapping an object without them would hand P1.4 `{ at: undefined,
+  // bootId: undefined }`, which is not a heartbeat and not a refusal either --
+  // it would come back out of `evaluatePresence` as a state the caller cannot
+  // tell from a real one. The TYPES are the schema's (`at` a timestamp, `boot`
+  // an identity string); the VALUES are P1.4's to judge, which is why this
+  // checks the shape and not the range.
+  if (typeof heartbeat.at !== 'number' || typeof heartbeat.boot !== 'string') {
+    throw new TypeError('toPresenceHeartbeat: a heartbeat\'s `at` and `boot` are required');
   }
   return { at: heartbeat.at, bootId: heartbeat.boot };
 }
@@ -447,9 +468,10 @@ export function createMailboxClient(options = {}) {
     const expired = [];
     const outstanding = [];
     for (const [id, entry] of [...outbound]) {
-      // D118's TTL: past it the consumer would refuse the delivery as expired
-      // or replayed, so the phone stops -- and says so, rather than dropping
-      // the utterance silently.
+      // D118's TTL: past it the consumer's own window has certainly closed --
+      // whatever the kind, and for a command (what this client writes) well
+      // before it -- so the phone stops trying, and says so rather than
+      // dropping the utterance silently.
       if (nowMs - entry.record.at > mailboxTtlMs) {
         outbound.delete(id);
         expired.push(Object.freeze({ id, code: EXPIRED }));

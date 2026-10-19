@@ -274,6 +274,36 @@ run "and the client does not lose an outbox message named \`__proto__\` (store.j
   "      own(at, rest[rest.length - 1], copy(value));" \
   "      at[rest[rest.length - 1]] = copy(value);" \
   mobile/src/mailbox/store.js src/mailbox/client.test.js
+# 8. The guards the review's last round found with no test behind them: the two
+#    clocks, the poll's key refusal, the flush's `exists`-as-landed (the send's
+#    has its own above), the read's schema validation, and the mapping's own
+#    `@throws` contract.
+run "flush refuses a clock that is not a time" \
+  "  async function flush() {
+    const nowMs = clock();
+    if (nowMs === null) return refuse(CLIENT_CODES.BAD_CLOCK, 'now');" \
+  "  async function flush() {
+    const nowMs = clock();
+    if (false) return refuse(CLIENT_CODES.BAD_CLOCK, 'now');"
+run "poll refuses a clock that is not a time" \
+  "  async function poll() {
+    const nowMs = clock();
+    if (nowMs === null) return refuse(CLIENT_CODES.BAD_CLOCK, 'now');" \
+  "  async function poll() {
+    const nowMs = clock();
+    if (false) return refuse(CLIENT_CODES.BAD_CLOCK, 'now');"
+run "poll refuses an unusable key before it speaks" \
+  "    if (!verdicts.ok) return keyRefusal(verdicts);" \
+  "    if (false) return keyRefusal(verdicts);"
+run "a re-send the rules deny is landed in flush too" \
+  "      if (again.ok || again.code === STORE_CODES.EXISTS) {" \
+  "      if (again.ok) {"
+run "an outbox record the schema refuses is dropped, not verified" \
+  "    entries.push({ id, record, valid: validateMessage(record) });" \
+  "    entries.push({ id, record, valid: { ok: true } });"
+run "the heartbeat mapping demands the fields it maps" \
+  "  if (typeof heartbeat.at !== 'number' || typeof heartbeat.boot !== 'string') {" \
+  "  if (false) {"
 run "the store is written in one file only (the scan)" \
   "export function createRoot({ React, store, View, Text }) {" \
   "export async function aSecondWritePath(store) { return store.write('mailbox/u/inbox/x', 1); }

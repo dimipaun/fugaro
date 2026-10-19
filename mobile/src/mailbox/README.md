@@ -47,10 +47,16 @@ table, rather than asserting each call's path on its own.
 this). `write-path.test.js` is a scan over the app's source in the style of
 P3.1's `src/boundary.test.js`: no file but `client.js` may call the store's
 `write`, no file but the entry may import a `firebase` module or name a path
-through `.ref(`, each rule has a positive control in real code and a control
-that the allow-list is not vacuous. A second write path added by P3.2 or P3.3
--- the tasks that bring the real adapter -- fails this file rather than
-review.
+through `.ref(`. **What the controls actually are** (this paragraph named them
+wrongly until the review's last round): every rule is proved against a planted
+line in real code and against the same line as prose, and the not-vacuous
+control -- "the allow-list is not empty for a pattern that matches nothing" --
+covers the FIRST rule only, where `client.js` really does call `.write(`.
+The other two rules match nothing in the tree at all today, which is the
+test's own finding and not a claim of coverage: their allow-list names
+`index.js`, the entry that will wire the adapter (P3.2/P3.3), and the test
+asserts that emptiness rather than pretending it is a control. A second write
+path added later fails this file rather than review.
 
 ## What every message carries
 
@@ -170,6 +176,19 @@ arrival as a **duplicate** -- and a re-stamped record would be an `id-conflict`
 instead, which `client.test.js` demonstrates with both. A message still pending
 at the TTL is dropped and reported (`expired`), never retried for ever.
 
+**The phone's 72 h is not the consumer's window** (corrected in the review's
+last round, where this file and `client.js` both claimed the two were the same
+number). `MAILBOX_TTL_MS` is D118's retention TTL and the phone's own bound on
+how long it keeps trying. What the consumer **accepts** is P1.1's per-kind
+window (D173): a prompt inside the prompt TTL (72 h), a command inside
+`windowMs` -- the **6-hour replay window**, P1.1's own default. The records this
+client writes carry no `kind`, so the consumer reads them as commands: a retry
+made ten hours after the utterance is still attempted by the phone and refused
+at the other end as a **replay**. The phone cannot know the consumer's window
+(P1.1 takes it per state, and the phone is not its reader), which is why the
+number here is the mailbox's and not the consumer's -- and why the test asserts
+both numbers against their own modules rather than one window against the other.
+
 **The id source's contract, stated because the client cannot enforce it across
 runs.** Within one run an id that has already been minted is refused
 (`id-conflict`) before anything is signed. Across runs (a restart, a second
@@ -188,10 +207,15 @@ verifies under the pairing's key is spoken whenever it arrives, whatever its
 `at` says -- a correctly signed outbox record stamped a year ago is read out
 (probed, not assumed, in the PR #604 review). The client does not drop it, and
 that is a decision rather than an oversight: `at` is D117's server-anchored
-time and P1.1's ledger is the authority on what is too old to act on (its TTL,
-the same 72 h O5 number as `MAILBOX_TTL_MS`), so a second window here would be a
-second rule the consumer does not share, refusing messages the consumer would
-still act on. **What a replay actually requires is the consumer's identity**:
+time; P1.1's ledger is the authority on what is too old for the consumer to act
+on, and its window is per-kind (D173: `windowMs`, 6 h by default, for a
+command; the prompt TTL for a prompt); and the mailbox's own retention is
+D118's 72 h, which is `MAILBOX_TTL_MS` and this phone's retry bound rather than
+anybody's acceptance window (the number this file and `client.js` both
+mis-stated until the review's last round), so an age rule here would be a
+number this module has no authority for: the phone reads what the consumer
+wrote, and nothing in the mailbox says which window that record's own kind is
+under. **What a replay actually requires is the consumer's identity**:
 P2.1's template lets only `CONSUMER` write `outbox`, and only with
 `!data.exists()`, so a message cannot be planted or re-planted there by anyone
 who can read the phone's mailbox. If the owner wants the age rule on this side
@@ -215,8 +239,12 @@ could not ack could not release a prompt either.
 
 P3.4 (`mobile/src/audio/`, the AudioIn/STT/TTS interfaces and their fakes, PR
 #592) is **not merged**, and this task may not depend on unmerged code. So
-`speaker.js` is a two-method seam of this task's own -- `speak(text)` returning
-`{ ok: true }` or `{ id, code }` -- with `MemorySpeaker` as its double. What
+`speaker.js` is a one-method seam of this task's own -- `speak(text)` returning
+`{ ok: true }`, or `{ ok: false, code, field }` with a code from
+`SPEAK_CODES` (`bad-text`, `speak-failed`) -- with `MemorySpeaker` as its
+double. (The refusal shape was written as `{ id, code }` here until the
+review's last round; that is the shape of the client's own `unspoken` list,
+which names the message the refusal is about, not the port's.) What
 P3.6 needs from it is exactly one thing: **whether the utterance was spoken**,
 because the ack is written only after it was. Voices, queues, barge-in,
 interruption and latency are P3.4's and P3.5's, and none of them is here. When

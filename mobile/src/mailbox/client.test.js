@@ -594,11 +594,19 @@ test('a message that is already there is a landed write, not a failure', async (
   assert.deepEqual(again.failed, []);
   assert.deepEqual(h.valueAt(`${INBOX}/m-1`), first, 'and the first message stands');
   // The same holds for a store that quietly accepts the re-write: the client
-  // does not depend on the denial.
+  // does not depend on the denial. What is asserted is that the re-write really
+  // LANDED there -- the node is written a second time, and what stands
+  // afterwards is the record the client re-sent and not whatever was at the
+  // node. A planted value is what makes the two distinguishable: with the
+  // denial in place there is nothing to overwrite, so only this half can show
+  // the second write was accepted.
   const permissive = await harness({ db: new MemoryMailboxStore({ existsRefuses: false }) });
   await permissive.client.send('run 42 finished');
+  const stamped = permissive.valueAt(`${INBOX}/m-1`);
+  await permissive.db.write(`${INBOX}/m-1`, { ...stamped, text: 'something else' });
   assert.deepEqual((await permissive.client.flush()).written, ['m-1']);
-  assert.deepEqual(permissive.valueAt(`${INBOX}/m-1`), permissive.valueAt(`${INBOX}/m-1`));
+  assert.deepEqual(permissive.valueAt(`${INBOX}/m-1`), stamped, 'the re-send is what stands');
+  assert.equal(permissive.valueAt(`${INBOX}/m-1`).text, 'run 42 finished', 'the planted text is gone');
 });
 
 test('flush sends nothing when the outbox has answered everything', async () => {
@@ -618,8 +626,8 @@ test('a message still pending at D118\'s TTL is dropped and reported, not retrie
   h.store.db.setFailures({ failWrites: true });
   await h.client.send('run 42 finished');
   assert.equal(MAILBOX_TTL_MS, 72 * 60 * 60 * 1_000, 'D118\'s number, in the plan (O5)');
-  // At the boundary it is still worth trying: the consumer refuses strictly
-  // older than its window, so exactly-72h is still inside it.
+  // At the boundary the phone still tries, because the comparison is `>` and
+  // not `>=`: exactly 72 h is still inside the mailbox TTL.
   h.advance(MAILBOX_TTL_MS);
   assert.deepEqual((await h.client.flush()).expired, []);
   // One millisecond past it, the phone stops -- and says so.
@@ -633,6 +641,81 @@ test('a message still pending at D118\'s TTL is dropped and reported, not retrie
   assert.deepEqual((await h.client.flush()).expired, []);
   assert.deepEqual(h.store.writes().map((entry) => entry.path), [`${INBOX}/m-1`, `${INBOX}/m-1`]);
   assert.deepEqual(h.store.writes()[1].value, h.store.writes()[0].value, 'the same record, at the boundary');
+});
+
+test('the phone retries inside D118\'s 72 h, and the consumer accepts a command for 6', async () => {
+  // **The two windows are not the same window, and the difference is in the
+  // code rather than the prose.** `MAILBOX_TTL_MS` is D118's mailbox TTL -- the
+  // owner's O5 number, 72 h -- and it is the RETENTION window the phone's retry
+  // lives inside. What the consumer ACCEPTS is P1.1's per-kind window (D173): a
+  // prompt inside the prompt TTL (also 72 h, which is why this module's TTL
+  // carries `promptTtlMs`), and a command inside `windowMs` -- the 6-hour
+  // replay window, P1.1's default. The records this client writes carry no
+  // `kind`, so the consumer reads them as commands, and a retry between the two
+  // windows is still made by the phone and refused at the other end as a
+  // replay.
+  const h = await harness();
+  h.store.db.setFailures({ failWrites: true });
+  await h.client.send('run 42 finished');
+  const said = h.store.writes()[0].value;
+  h.advance(10 * 60 * 60 * 1_000);
+  const flushed = await h.client.flush();
+  assert.deepEqual(flushed.expired, [], 'inside the mailbox TTL, so still tried');
+  assert.deepEqual(flushed.outstanding, ['m-1'], 'and still unanswered, so still the phone\'s to re-send');
+  assert.deepEqual(flushed.failed, [{ id: 'm-1', code: STORE_CODES.WRITE_FAILED }], 'the write is still attempted');
+  // ... and the consumer, handed it at the same `now`, refuses it -- as a
+  // replay, ten hours after it was said and long before D118's TTL.
+  const opened = initialState({ now: h.now(), promptTtlMs: MAILBOX_TTL_MS });
+  assert.equal(opened.ok, true);
+  assert.equal(opened.state.windowMs, 6 * 60 * 60 * 1_000, 'P1.1\'s command window, its own default');
+  const late = step(opened.state, { type: 'deliver', now: h.now(), message: said, kind: KIND.COMMAND });
+  assert.equal(late.ok, false);
+  assert.equal(late.code, REFUSAL.REPLAY);
+  // The same record, an hour old, is accepted: the refusal above is about the
+  // age and not about the message.
+  const early = initialState({ now: T0 + 60 * 60 * 1_000, promptTtlMs: MAILBOX_TTL_MS });
+  const soon = step(early.state, { type: 'deliver', now: T0 + 60 * 60 * 1_000, message: said, kind: KIND.COMMAND });
+  assert.equal(soon.outcome, OUTCOME.ACCEPTED);
+});
+
+test('a clock that is not a time is refused by flush and by poll, and nothing is done first', async () => {
+  // `send` is not the only method that reads the clock: `flush` decides the
+  // TTL from it, and `poll` flushes and judges presence with it. A bad clock is
+  // a refusal from both -- and neither may half-do its work first, which is
+  // what `reads()` and the write log below are about.
+  for (const value of [0, -1, 1.5, Number.NaN, 'now', undefined]) {
+    const h = await harness();
+    h.store.db.setFailures({ failWrites: true });
+    await h.client.send('run 42 finished');
+    h.setNow(value);
+    assert.deepEqual(await h.client.flush(), refuse(CLIENT_CODES.BAD_CLOCK, 'now'), `flush ${String(value)}`);
+    assert.equal(h.store.writes().length, 1, `flush re-sent nothing: ${String(value)}`);
+    assert.deepEqual(await h.client.poll(), refuse(CLIENT_CODES.BAD_CLOCK, 'now'), `poll ${String(value)}`);
+    assert.equal(h.store.writes().length, 1, `poll re-sent nothing: ${String(value)}`);
+    assert.deepEqual(h.store.reads(), [], `poll read nothing: ${String(value)}`);
+    assert.deepEqual(h.speaker.spoken(), []);
+  }
+});
+
+test('poll without a usable key is refused before it speaks or acks', async () => {
+  // The poll reads the key once, after its two reads and before any speak, so
+  // the two key refusals `send` already has are the two it has: an absent key
+  // is `no-key` (this phone is not paired) and an unreadable one is
+  // `key-unreadable` (the item is there and cannot be used). Neither is a
+  // reason to speak: what cannot be verified is not acted on.
+  const unpaired = await harness({ pair: false });
+  await plantOutbox(unpaired, 'r-1');
+  assert.deepEqual(await unpaired.client.poll(), refuse(CLIENT_CODES.NO_KEY, 'keys'));
+  assert.deepEqual(unpaired.speaker.spoken(), []);
+  assert.deepEqual(unpaired.store.writes(), []);
+
+  const port = new MemorySecureStore();
+  await port.setItem(`fugaro.account.${ACCOUNT.id}.macKey`, 42);
+  const unreadable = await harness({ keys: new SecretStore(port), pair: false });
+  await plantOutbox(unreadable, 'r-1');
+  assert.deepEqual(await unreadable.client.poll(), refuse(CLIENT_CODES.KEY_UNREADABLE, 'keys'));
+  assert.deepEqual(unreadable.speaker.spoken(), []);
+  assert.deepEqual(unreadable.store.writes(), []);
 });
 
 // ---------------------------------------------------------------------------
@@ -868,6 +951,28 @@ test('a message with no tag, and a tag of the wrong shape, are dropped', async (
     'the schema\'s own refusal, verbatim',
   );
   assert.deepEqual(h.store.writes(), [], 'never spoken, never acked');
+
+  // The other half of the title: a tag that is there and is not the schema's
+  // SHAPE -- 64 lowercase hex characters, one tag in one encoding. A record
+  // like that is not a message at all, so it is dropped with the schema's own
+  // code and with the field the schema blames, before its tag is consulted:
+  // the difference between "no tag" and "not a tag" is the schema's, and this
+  // module does not add a second rule for it.
+  for (const mac of ['f', 'F'.repeat(64), 'z'.repeat(64), 'f'.repeat(63), 'f'.repeat(65), 42, null, '']) {
+    const other = await harness();
+    await plantOutbox(other, 'r-1', {}, { tamper: (record) => ({ ...record, mac }) });
+    const shapeReport = await other.client.poll();
+    assert.deepEqual(shapeReport.spoken, [], String(mac));
+    assert.equal(shapeReport.dropped.length, 1, String(mac));
+    assert.equal(shapeReport.dropped[0].id, 'r-1', String(mac));
+    assert.equal(shapeReport.dropped[0].field, 'mac', String(mac));
+    assert.ok(
+      [SCHEMA_REFUSALS.BAD_MAC, SCHEMA_REFUSALS.WRONG_TYPE, SCHEMA_REFUSALS.EMPTY_STRING]
+        .includes(shapeReport.dropped[0].code),
+      `${JSON.stringify(mac)}: the schema's own refusal, not this module's`,
+    );
+    assert.deepEqual(other.store.writes(), [], String(mac));
+  }
 });
 
 test('a tag made for another node, or with another key, does not verify', async () => {
@@ -1057,8 +1162,20 @@ test('the one mapping between the schema\'s heartbeat and P1.4\'s rule is named 
   // owner rules -- so that a signed heartbeat is not read as offline over a
   // field name.
   assert.deepEqual(toPresenceHeartbeat({ at: T0, boot: 'boot-0001' }), { at: T0, bootId: 'boot-0001' });
-  for (const value of [null, 42, 'x', []]) {
-    assert.throws(() => toPresenceHeartbeat(value), TypeError, String(value));
+  // An object that is not a heartbeat is not "mapped with two undefined
+  // fields": the function's contract says it throws for anything that is not an
+  // object with both fields, and `boot` undefined would reach P1.4 as a
+  // heartbeat with no boot id. (Over P1.4's rule the fields are the schema's,
+  // which is where the two types come from.)
+  for (const value of [
+    null, 42, 'x', [],
+    {},
+    { at: T0 },
+    { boot: 'boot-0001' },
+    { at: T0, boot: 42 },
+    { at: 'yesterday', boot: 'boot-0001' },
+  ]) {
+    assert.throws(() => toPresenceHeartbeat(value), TypeError, JSON.stringify(value) ?? String(value));
   }
   // P1.4 refuses the schema's own fields, which is the conflict in one line…
   const validated = { at: T0 - 1_000, boot: 'boot-0001', mac: 'a'.repeat(64) };
