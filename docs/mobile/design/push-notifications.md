@@ -20,7 +20,8 @@ v1, and a decision of its own later". So this document decides nothing on its ow
 so that the owner can answer that later decision against real options rather than from
 scratch, and so that the answer's cost is priced before anything is built.
 
-Every claim about the code below was checked against `origin/main` at **`ae3630c`** (2026-10-19),
+Every claim about the code below was checked against `origin/main` at **`90ba554`** (v0.8.7,
+read 2026-10-19),
 by reading the file and the symbol named. Symbols are cited by name rather than by line number,
 because the lines move; where a claim is a **snapshot of a branch point** that a sibling branch
 is about to change — §2's device node, and #601's `userClaim` conjunct and generation 3 — it is
@@ -105,7 +106,9 @@ answered.
   `mobile/src/skeleton/index.test.js` keeps it so). **The permission exists in a catalogue and
   nowhere else**: `deploy/terraform/testdata/custom-role-permissions.txt` lists
   `firebasecloudmessaging.messages.create` and its siblings among the permissions this
-  repository knows the names of, but that file is a **permission catalogue**, not a
+  repository knows the names of *(that file is on `origin/main` — read at `90ba554` on
+  2026-10-19 — and **not in this branch's tree**, which is based on an earlier `main` where the
+  catalogue did not exist; a reader on this branch will not find it)*, but that file is a **permission catalogue**, not a
   dependency — **no code, no manifest and no Terraform resource uses any of them**, and no
   role in `deploy/terraform/` grants one. On `origin/main` before this document, every occurrence of the phrase "push token" is the **git**
   credential (comments in `internal/runner/provision.go` around `provisionGitToken`, and in
@@ -138,7 +141,7 @@ answered.
 - **No device-token store.** The device node `config/admin/devices/$uid` is a **proposal**,
   not code: it is named in `internal/budget/rules/rules.go`'s `userClaim` doc comment as the
   node **`USER` will require** "(D166, plan P6.4)", and in `functional-spec-reconciliation.md`'s
-  D166 and G14. **As of `origin/main` at `ae3630c` (2026-10-19)**, the generated rules
+  D166 and G14. **As of `origin/main` at `90ba554` (2026-10-19)**, the generated rules
   `internal/budget/rules/rules.json.tmpl` carry
   `"admin": { ".read": false, ".write": false }`, **the `devices` subtree does not exist**, and
   the rules' `USER` macro (`rules.go`'s `userClaim`) **has no device conjunct**;
@@ -189,8 +192,10 @@ answered.
 A push carries **exactly two things**:
 
 - a **coarse category**, drawn from §1's **reconciled set** — D160's three (kill switch, cap
-  reached, consumer offline) plus the prompt category D127's switch widens to, and **not** the
-  finished/failed pair §1's numbered list opens with and then excludes — the
+  reached, consumer offline), **cap-near** (D160 answers "available, off by default", so it is
+  in the set and off unless the owner turns it on — §1, §3.8, Q4(i)), plus the prompt category
+  D127's switch widens to, and **not** the finished/failed pair §1's numbered list opens with
+  and then excludes — the
   closest thing to "status" that is safe on a lock screen; and
 - an **opaque identifier**, a value that means nothing outside the phone's own authenticated
   mailbox.
@@ -381,8 +386,11 @@ There are two deletion paths, and they are not alternatives:
   (D166's deletion, which is what stops the reads) **and** the sibling
   `config/admin/push/$uid`. That is what makes the *data's* lifetime bounded by the pairing
   rather than by a timer (§7, Q10(i)): revoke is the one act, and it takes the token, the
-  platform, the prefs and the quiet-hours zone with it. The pairing command is the only thing
-  that ever wrote the push node (§3.5 (a)) and it is the same admin act that removes it.
+  platform, the prefs and the quiet-hours zone with it. The pairing command is **one of the
+  writers** of the push node — it writes it at pairing (§3.5 (a)) — and it is the same admin
+  act that removes it; the writers table below states the whole set, because "the pairing
+  command is the only writer" was the first draft's claim and it is false: Q3's recommended
+  re-registration principal and §3.8's preferences writer write the push node too.
 - **The sender reaps an orphaned `push/$uid` on its next sweep** — a push node whose
   `devices/$uid` is gone. This is the **net, not the mechanism**: it covers a revoke written by
   a principal that removed only the device node, a re-registration the consumer had in flight
@@ -395,6 +403,28 @@ There are two deletion paths, and they are not alternatives:
   **nothing is sent to it and the rules do not read it** — it is a deletion pending, not a live
   registration. The first draft left this split across §3.4, §3.5 and §6 and never said which
   one owned the deletion, which is the ambiguity this paragraph closes.
+
+**Who writes which node, in one table, so no section has to be read for it.** The design names
+three writers besides pairing — §3.5's re-registration principal (Q3's recommendation (b)), §3.8's
+preferences writer (which is (b) again), and the sender (§3.6) — and they all write the
+**sibling**. The device node has exactly one pair of writers, and they are the same command:
+
+| node | writer | what it writes | what it must never do |
+| --- | --- | --- | --- |
+| `config/admin/devices/$uid` | **`fugaro pair`** (D165/P6.6) | creates the node, with the pairing's own fields | never touches `push/**`, never re-creates a node `pair revoke` deleted |
+| `config/admin/devices/$uid` | **`fugaro pair revoke`** (D166/P6.6) | **deletes** the node — the one revocation act | never writes anything before deleting |
+| `config/admin/push/$uid` (token, platform, updated_at) | **`fugaro pair`** | the registration the pairing session itself has (§3.5 (a)) | never writes `devices/**` |
+| `config/admin/push/$uid` (token, platform, updated_at) | **the registration principal** — §3.5 (b), Q3's recommendation: the principal that applies the app's mailbox re-registration message, holding `roles/firebasedatabase.admin` (the consumer beside the orchestrator where the operator holds the role) | the token and platform from that message | **never creates the node when `devices/$uid` is absent**; never writes a MAC-less or unvalidated token; never writes `devices/**` |
+| `config/admin/push/$uid/prefs` | **the same registration principal** (§3.8: the controls are written the same way, through the mailbox and (b)) | the per-category switches and the quiet-hours zone name and window | never writes a switch the app did not ask for, and never `devices/**` |
+| `config/admin/push/$uid` | **the sender** (§3.6) | **deletes** a stale token entry, and deletes the whole node when it is empty or orphaned | never writes a marker, never writes a token, never **creates** a node (§3.4 "reaping deletes; it never marks") |
+| `config/admin/push/$uid` | **`fugaro pair revoke`** | **deletes** the whole node in the same act as `devices/$uid` | — |
+| **both nodes** | **no client, no run account, no app** | — | any write at all: the rules deny `config/admin` to every client token (§3.4 rule 1, `rules.json.tmpl`) |
+
+**Read off the table, the three sentences every section has to agree with:** *the device node is
+written by `fugaro pair` and deleted by `fugaro pair revoke`, and by nothing else*; *the push node
+is written by pairing, the registration principal and the preferences writer, and deleted by
+revoke and by the sender's reaping*; *no client, run account or app writes either*. §3.5 (a)/(b),
+§3.6, §3.8 and §6 each state their own row of it.
 
 **Reaping deletes; it never marks.** A stale token (`UNREGISTERED`) or an orphaned `push/$uid`
 whose `devices/$uid` is gone is **deleted** — the token child, or the whole push node. The
@@ -418,9 +448,11 @@ same thing now.
   multi-installation change makes the *node* per (device, installation) even though the device
   is one.
 
-**The generation.** Both nodes land in **rules generation 3**. On `origin/main` at `82ba600`,
-`internal/projectpolicy/version.go` carried `RulesVersion = 2` ("Generation 2 is the mailbox
-(mobile plan task P2.1)"); **PR #601 (`fugaro/20261018-151654-3ddb`) is the branch that takes
+**The generation.** Both nodes land in **rules generation 3**. On `origin/main` at `90ba554`
+(read 2026-10-19), `internal/projectpolicy/version.go` carries `RulesVersion = 2` ("Generation 2
+is the mailbox (mobile plan task P2.1)"), and `userClaim` in `internal/budget/rules/rules.go` is
+`(auth != null && auth.token.mu != null && auth.token.mu == auth.uid)` — **no device conjunct
+yet**; **PR #601 (`fugaro/20261018-151654-3ddb`) is the branch that takes
 it to 3** by adding the device conjunct this section quotes, and P6.4 names the file among its
 own. **A push store does not need a generation of its own**: it is a sibling inside
 `config/admin`, whose rules P6.4 already rewrites. *(Cited by symbol and by branch, not by line
@@ -528,7 +560,8 @@ exactly one
   - *What that account may hold, named exactly.* The permission is
     **`firebasecloudmessaging.messages.create`**, granted through a **custom role** on the
     Firebase project — not `roles/firebasecloudmessaging.admin`, which carries topic and
-    subscription management this sender never needs (`deploy/terraform/testdata/custom-role-permissions.txt`
+    subscription management this sender never needs (`deploy/terraform/testdata/custom-role-permissions.txt`,
+    on `origin/main` at `90ba554` — see §2's note on why this branch's tree does not carry it —
     is the permission catalogue the custom roles are read against, and it lists
     `firebasecloudmessaging.messages.create` beside the `topicSubscriptions.*` set the design
     does not want). The **FCM API must be enabled** on the project
@@ -721,9 +754,10 @@ not, and the correction is §5 attacker 2's:** every principal that holds or wou
 permission in this design **also holds `roles/firebasedatabase.admin`** on the Firebase
 project — the history account (`iam.tf`'s `history_database`), admins and budget admins
 (`local.admins`), and project owners and editors — and **database admin bypasses the rules**.
-The rules check only the **`mac` field's format** (`rules.go`'s `MACOK` and `patternHex`:
-"*check the length and the lowercase-hex characters … never the value: verifying a tag needs
-the key, which the database never holds*"), never its value. So:
+The rules check only the **`mac` field's shape**, and the evidence is quoted with its branch and
+date because **the symbols live on a branch, not on `main`** — see §5's "*the rules cannot
+verify a tag*" paragraph for the exact symbols, the quote and what `main` carries instead. What
+matters here is the consequence: the rules can require a well-formed tag and nothing more. So:
 
 - **For mailbox state, the only bound is the app verifying the MAC with the per-pairing key**,
   and §4 rule 11 makes that a requirement: **no mailbox-derived state is shown, and no alert is
@@ -852,14 +886,45 @@ and database admin **bypasses the rules**:
   accepts as the likely shape of the basic roles and does not claim to have checked against
   live IAM)*.
 
-**`rules.go` says the rules cannot verify a tag**: `MaxMacLength`'s comment is "*The rules
-check the length and the lowercase-hex characters (patternHex), never the value: verifying a
-tag needs the key, which the database never holds*", and `MACOK` expands to exactly that
-length-and-shape test. So a compromised sender — **which is the realistic way attacker 2 gets
+**The rules cannot verify a tag — the symbols, the branch and the quote.** Stated precisely,
+because the first draft of this correction cited symbol names that do not exist on `main` and
+that is exactly the kind of citation a later implementer cannot check:
+
+- **On PR #601's branch** (`fugaro/20261018-151654-3ddb`, head `14e5ff4`, read **2026-10-19**),
+  `internal/budget/rules/rules.go` carries `MaxMacLength = 64`, whose comment is: "*MaxMacLength
+  is the length of a message's or a heartbeat's MAC, in hex characters: 32 bytes of
+  HMAC-SHA-256 (§3.5, D169, D171, O7). The rules check the length and the lowercase-hex
+  characters (patternHex), never the value: verifying a tag needs the key, which the database
+  never holds. TestMailboxRulesAgreeWithTheSharedSchema holds the number to the schema's
+  MAC_MAX.*" The same file defines `patternHex`, the regex `/^[0-9a-f]+$/`, and the `MACOK`
+  macro (which the branch's `rules.json.tmpl` applies to every message's and the heartbeat's
+  `mac` child) expands to
+  `(newData.isString() && newData.val().length == 64 && newData.val().matches(/^[0-9a-f]+$/))`,
+  with the comment "*A tag's shape: a string of exactly MAC_MAX characters, every one of them
+  the schema's lowercase hex (HEX_PATTERN). The characters are checked; the value never is, and
+  cannot be … P6.7 is what verifies one.*"
+- **On `origin/main` at the same date** (`90ba554`, v0.8.7): **none of those symbols exists.**
+  `userClaim` is `(auth != null && auth.token.mu != null && auth.token.mu == auth.uid)` — no
+  device conjunct — `RulesVersion` is **2**, and the mailbox rules validate
+  `newData.hasChildren(['id', 'sender', 'text', 'at'])` with `"$other": { ".validate": false }`,
+  so **a message carrying a `mac` is refused there outright**; the `mac` field's rules-side
+  handling arrives with #601. (The schema is ahead of the rules on `main`: `shared/mailbox-schema/index.js`
+  already declares `REQUIRED_FIELDS = ['id', 'sender', 'text', 'at', 'mac']` and `MAC_MAX = 64`,
+  which is the disagreement #601's rules close.)
+- **The schema side, which is the same on both**: `shared/mailbox-schema/index.js`'s `macField`
+  requires exactly 64 lowercase hex characters (`HEX_PATTERN`, refusing with `BAD_MAC`: "*A mac
+  is not 64 lowercase hex characters: a 32-byte HMAC-SHA-256 tag*"), and `verifyMac` in
+  `shared/mailbox-schema/mac.js` is the separate, keyed question — HMAC-SHA-256 over
+  `canonicalBytes` with **D171's per-pairing key**, which "*nothing here reads, stores, derives,
+  logs or defaults*".
+
+**So the B4 conclusion stands, on true evidence rather than on the first draft's invented
+symbols**: the rules can require a well-shaped tag and cannot check its value, and the **only**
+thing that catches a forged one is the **app verifying the tag with the per-pairing key** (§4
+rule 11, P6.3/D169, P6.7). A compromised sender — **which is the realistic way attacker 2 gets
 the credential, and should be named as the capability's holder rather than "an outsider"** —
-can write mailbox content with a well-shaped `mac` that the rules admit, and the **only** thing
-that catches it is the **app verifying the tag with the per-pairing key** (§4 rule 11,
-P6.3/D169). And **the budget families carry no MAC at all** (`config/kill/**`,
+can write mailbox content with a well-shaped `mac` that the rules admit (on #601's generation-3
+rules; on today's `main` the write would be refused for the field's mere presence). And **the budget families carry no MAC at all** (`config/kill/**`,
 `config/caps/**`, `spend/$day/**` are numbers and flags): for the budget category a compromised
 sender can forge **both** the push **and** the in-app state it points to, so **the app's own
 screen is not "the truth" for that category** — the truth there is what the database says, read
@@ -1001,7 +1066,7 @@ and it does not move the writing to a task that may never be scheduled. It is
 **What Check 88 would have to prove** (outline only; P4.2 owns the register text the owner
 runs):
 a real notification arrives on a real device for each category of §1's reconciled set (D160's
-three plus the prompt); **the payload
+three, cap-near, and the prompt); **the payload
 as the provider sees it carries a category and nothing else** (read the FCM/APNs record, not
 the lock screen); the app shows the detail only after the authenticated mailbox fetch; deleting
 the device node stops delivery at once **and a later push write cannot bring it back** (§3.4,

@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -393,5 +394,168 @@ func TestDocsMobilePushSaysWhoDeletesThePushNode(t *testing.T) {
 	// ambiguity this round closed.
 	if strings.Contains(doc, "which is what makes revocation final") {
 		t.Errorf("%s still says the sender's reaping is %q, attributing finality to a later sweep rather than to the revoke act", docPath, "which is what makes revocation final")
+	}
+}
+
+// TestDocsMobilePushMACEvidenceNamesItsBranch: the B4 correction leans on what
+// the rules do with a message's `mac`, and the first draft cited `rules.go`'s
+// `MACOK`, `patternHex` and `MaxMacLength` as if they were in this tree. They
+// are not: on this branch rules.go has none of them, and on main at the time of
+// writing the rules do not mention `mac` at all (the mailbox `$msg` validates
+// ['id','sender','text','at'] with "$other": {".validate": false}). The symbols
+// exist on PR #601's branch. So the design must (a) name that branch and a head
+// commit, (b) carry the real quote, and (c) say plainly that main does not have
+// them — and this test re-checks (c) against the tree rather than trusting it.
+func TestDocsMobilePushMACEvidenceNamesItsBranch(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	doc := readDoc(t, docPath)
+
+	// (c), checked first: the in-tree rules really do not carry these symbols,
+	// so a document that cites them without a branch is citing something that
+	// does not exist where its reader is standing.
+	rules := readDoc(t, "internal/budget/rules/rules.go")
+	for _, symbol := range []string{"MACOK", "MaxMacLength", "patternHex"} {
+		if strings.Contains(rules, symbol) {
+			t.Errorf("internal/budget/rules/rules.go now defines %s: the design's paragraph saying the symbol is on #601's branch and NOT on main is stale and must be re-cited against the tree", symbol)
+		}
+	}
+
+	for _, want := range []string{
+		// (a) the branch and a head, so a reader can find the symbol.
+		"fugaro/20261018-151654-3ddb",
+		"14e5ff4",
+		// (b) the quote that actually exists, with the clause that carries the
+		// conclusion: the characters are checked, the value never is.
+		"never the value: verifying a tag needs the key",
+		// (c) stated, not implied.
+		"none of those symbols exists",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s lacks %q: the MAC evidence must name its branch, quote the real comment and say main does not carry the symbols", docPath, want)
+		}
+	}
+	// The schema side is the other half of the claim and must be cited too,
+	// since it is the same on both: the shape the phone validates and the keyed
+	// question are different functions.
+	for _, want := range []string{
+		"shared/mailbox-schema/index.js",
+		"shared/mailbox-schema/mac.js",
+		"macField",
+		"verifyMac",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s lacks %q: the shape check and the keyed check are different symbols and both must be named", docPath, want)
+		}
+	}
+}
+
+// TestDocsMobilePushHasOneWritersTable: §3.4 said "the pairing command is the
+// only thing that ever wrote the push node", which contradicts Q3's recommended
+// re-registration principal (§3.5 (b)) and §3.8's preferences writer — the very
+// writers the same section describes. The reconciliation is one table naming,
+// per node, who writes it, what it writes and what it may not do, and every
+// section has to agree with it. This guards the table's presence and the
+// withdrawn sentence's absence.
+func TestDocsMobilePushHasOneWritersTable(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	doc := readDoc(t, docPath)
+
+	if strings.Contains(doc, "the only thing that ever wrote the push node") {
+		t.Errorf("%s still says the pairing command %q, which the design's own §3.5 (b) and §3.8 writers contradict", docPath, "the only thing that ever wrote the push node")
+	}
+	for _, want := range []string{
+		"Who writes which node",
+		// The three writers, each named in the table.
+		"the registration principal",
+		"the same registration principal",
+		"the sender",
+		// The prohibition that keeps revocation single-act.
+		"never creates the node when `devices/$uid` is absent",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s lacks %q: the writers table must name every writer and the rule each one obeys", docPath, want)
+		}
+	}
+}
+
+// TestDocsMobilePushCategorySetIncludesCapNear: §3.1 enumerated the reconciled
+// set as "D160's three plus the prompt" and dropped cap-near, which §1, Q4(i)
+// and §3.8 all carry (D160: "available, off by default"). A category present in
+// three sections and absent from the one that defines what a payload carries is
+// the same class of staleness the B2 fix removed.
+func TestDocsMobilePushCategorySetIncludesCapNear(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	doc := readDoc(t, docPath)
+	if !strings.Contains(doc, "consumer offline), **cap-near**") {
+		t.Errorf("%s's §3.1 does not include cap-near in the reconciled category set, though §1, Q4(i) and §3.8 all do", docPath)
+	}
+	if !strings.Contains(doc, "cap-near, and the prompt") {
+		t.Errorf("%s's Check 88 outline does not carry cap-near in the reconciled set", docPath)
+	}
+}
+
+// TestDocsMobilePushBranchOnlyCitationsAreAttributed: this design cites things
+// that are NOT in this branch's tree — PR #601's rules symbols (MACOK and
+// friends), the Terraform permission catalogue, and #632's orchestrator design.
+// A reader standing on this branch cannot stat any of them, so each must say
+// where it lives: a branch name, a PR number, a commit, or `origin/main` with a
+// date. The failure this catches is a citation that reads as if it were in the
+// tree — which is exactly how the first draft's `MACOK`/`patternHex`/
+// `MaxMacLength` read before this round.
+//
+// The attribution has to sit NEAR the citation: this document mentions PR #601
+// and `origin/main` in other paragraphs entirely, so a paragraph-wide check
+// would pass a citation that is not attributed at all (it did, on the first
+// attempt at this guard, which is why the window is here).
+func TestDocsMobilePushBranchOnlyCitationsAreAttributed(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	doc := readDoc(t, docPath)
+
+	// Every basename in the tree, so a bare `rules.go` is not mistaken for an
+	// absent citation. The walk skips the directories that would only slow it
+	// down.
+	basenames := map[string]bool{}
+	_ = filepath.Walk("../../", func(p string, info os.FileInfo, err error) error {
+		if err != nil || info == nil {
+			return nil
+		}
+		if info.IsDir() {
+			switch info.Name() {
+			case ".git", "node_modules", "dist":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		basenames[info.Name()] = true
+		return nil
+	})
+	if len(basenames) == 0 {
+		t.Fatal("the tree walk found no files: this guard cannot tell an absent citation from a present one")
+	}
+
+	const window = 300
+	pathRe := regexp.MustCompile("`([A-Za-z0-9_./-]+\\.(?:go|js|mjs|tmpl|json|tf|md|astro|txt|yaml|yml))`")
+	for _, loc := range pathRe.FindAllStringSubmatchIndex(doc, -1) {
+		cited := doc[loc[2]:loc[3]]
+		if _, err := os.Stat("../../" + cited); err == nil {
+			continue
+		}
+		if basenames[filepath.Base(cited)] {
+			continue
+		}
+		lo, hi := loc[0]-window, loc[1]+window
+		if lo < 0 {
+			lo = 0
+		}
+		if hi > len(doc) {
+			hi = len(doc)
+		}
+		near := doc[lo:hi]
+		if !strings.Contains(near, "origin/main") &&
+			!strings.Contains(near, "fugaro/") &&
+			!strings.Contains(near, "PR #") &&
+			!strings.Contains(near, "sibling design #") {
+			t.Errorf("%s cites %q, which is not in this branch's tree, without naming the branch, PR or commit it lives on within %d characters", docPath, cited, window)
+		}
 	}
 }
