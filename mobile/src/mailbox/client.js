@@ -180,13 +180,19 @@ function signable(value) {
 }
 
 /**
- * Which field of a record has no canonical byte string -- `text` for a sentence
- * holding U+2028, `sender` for an Auth uid holding an unpaired surrogate --
- * or `null` when every field of it can be signed.
+ * Which field of a record has no canonical byte string -- in practice `text`,
+ * for a sentence holding U+2028 or an unpaired surrogate -- or `null` when
+ * every field of it can be signed.
  *
  * The whole record is asked first and the fields are asked only to NAME the
  * culprit: a refusal that could not say which field it was about would send the
  * owner through their whole sentence looking for a character nothing displays.
+ *
+ * `text` is the only field a caller supplies: the id and the account's uid have
+ * already been through `isDatabaseKey` (which refuses the same characters), and
+ * `at` is a checked safe integer. The loop is still over the record rather than
+ * over those three by name, so a field a later version adds is judged with the
+ * rest instead of signing as itself.
  */
 function unsignableField(record) {
   if (signable(record)) return null;
