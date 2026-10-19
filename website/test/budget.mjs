@@ -23,8 +23,15 @@
 // its turns are drawn as alternating bubbles, three of the flow's four cyan card edges became
 // the site's separator, and the footer's link label is the repository's name rather than its
 // URL. Each of those moved bytes, and each was re-derived here in the commit that moved it —
-// the count below is read off `dist/`, which is the build the test measures, rather than
-// carried from the merge.
+// the count below is read off the gates' own build of the site, which is the artifact the
+// derivation case at the end of this file measures (see "the build the README's figures are a
+// derivation OF"), rather than carried from the merge. **That artifact is a copy of the
+// repository in a temp directory rather than the checkout's `dist/`**, and the reason is the
+// 1,515 bytes the site's own build moves with the checkout's git state: the changelog renders
+// each release file's "not yet released" state where `git tag --list` finds no tag
+// (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
+// deployed site's — builds 845,103 bytes where this repository's own clone, which carries the
+// tags, builds 843,588.
 //
 //   - JavaScript per page: 49,724 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
@@ -59,9 +66,12 @@
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,054,485 bytes. Every file in `dist/` on that build summed to 843,588
+//   - Whole site: 1,056,379 bytes. Every file in `dist/` on that build summed to 845,103
 //     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
-//     × 1.25, rounded up. The last fix round re-derived it 54 bytes under the merge's: the
+//     × 1.25, rounded up. **It is the build with no tags** — the one the gates make, and the
+//     one the deployed site is — and the changelog page's own "not yet released" labels are
+//     1,515 bytes of it; a full clone, whose checkout carries the release tags, builds the same
+//     site 1,515 bytes smaller. The last fix round re-derived it 54 bytes under the merge's: the
 //     install section's own top padding came off, because the flow above it carries the gap
 //     between them, and that is a shorter `padding` in the stylesheet — the homepage's own CSS
 //     is inlined in its page, so the page that carries it and the site figure move together.
@@ -91,8 +101,13 @@
 // the owner-run check, not this one: there is no CI on pull requests, and the tests are
 // hermetic (F3, F58).
 //
-// It reads `dist/`, which `npm run check` builds first (`FUGARO_GATES_DIST` points it at a
-// copy, which is how the refusal was mutation-proved). Standard library only; no network.
+// It reads two artifacts, and they are not the same one. **The ceilings** — every case that
+// measures a page or the site against a number — read `dist/`, which `npm run check` builds
+// first (`FUGARO_GATES_DIST` points them at a copy, which is how the refusals were
+// mutation-proved). **The derivation** — the case that holds each README figure to the build
+// it names — reads the gates' own build of the site instead, because `dist/` is the checkout's
+// and the checkout's git state moves it; the section above that case says why in full. Standard
+// library only; no network.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -100,6 +115,7 @@ import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DIST, SITE, builtPages, filesUnder, find, parse, servedFile, walk } from './lib/html.mjs'
+import { buildCopy } from './lib/build.mjs'
 import { DOCUMENT_PAGES } from './lib/exempt.mjs'
 
 // ---- the numbers, from the README ------------------------------------------------------
@@ -519,12 +535,17 @@ test('the README budget lines are read strictly', () => {
 // The refusal this replaced — a stated build more than a tenth above the real one — is a case
 // of this one, which is why the strictness only ever went up.
 //
-// The build named is `dist/` and not whatever directory this run reads its ceilings in: the
-// merge of `main` into the redesign brought a second artifact with it — `console-option.mjs`
-// builds the site with the console's flag flipped and runs the artifact gates over that copy to
-// prove the flip is safe — and that copy is a different build, 2,051 bytes larger at the site
-// figure, so a derivation held to it would be the flag's own bytes rather than the site's. The
-// case below says so where it measures (`DOCUMENTED_BUILD`).
+// **Which build the number names is a build whose bytes are the same in every checkout**, and
+// that is the correction of 2026-10-19 (`website/README.md` states the same figures and the same
+// reason). The merge of `main` into the redesign brought a second artifact with it —
+// `console-option.mjs` builds the site with the console's flag flipped and runs the artifact
+// gates over that copy to prove the flip is safe — and a derivation held to that one would be
+// the flag's own bytes rather than the site's: measured on this build, **536 bytes** at the site
+// figure and nothing at all at the page weight. The checkout's own `dist/` is the other artifact
+// the numbers may not name, because its git state moves it by 1,515 bytes (the changelog's "not
+// yet released" labels, above). What is left is the gates' own build: a copy of the repository
+// with no `.git`, made by `test/lib/build.mjs`'s `buildCopy`, which is what the case below
+// measures (`documentedBuild`).
 const DERIVATIONS = {
   js: /\*\*JavaScript per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the one script[\s\S]*?\(([\d,]+) bytes/,
   page: /\*\*Page weight per page:\*\* ([\d,]+) bytes\. Three times ([\d,]+): the heaviest page[\s\S]*? at ([\d,]+) bytes/,
@@ -554,21 +575,53 @@ export function derivationFailures(readme, measured) {
 }
 
 /**
- * The build the README's figures are a derivation OF: the site's own, `website/dist`, which is
- * the one `npm run check` makes.
+ * The build the README's figures are a derivation OF: **the gates' own build of the site** — a
+ * copy of the repository in a temp directory, built with the site's installed Astro by
+ * `test/lib/build.mjs`'s `buildCopy`, which is the same builder the gates that stage a copy of
+ * the repository already use.
  *
- * It is deliberately not `DIST`. `FUGARO_GATES_DIST` is the mechanism the gates document for
- * reading another artifact, and the one case that uses it — `console-option.mjs`'s released
- * build — is a DIFFERENT build rather than another copy of this one: flipping
- * `features.console_downloads` adds the console option's markup to two pages, so that copy's
- * site figure is 2,051 bytes larger than the one the README documents. Measuring the
- * derivation against it would take the flag's own bytes for the site's, and the site the
- * README describes is the one this checkout builds. So the derivation is read where it is
- * written — over `dist/` — whatever directory the ceilings above are being read in.
+ * It is deliberately not `DIST`, and the difference is the whole of why this is a build of its
+ * own rather than the artifact the run was pointed at. `FUGARO_GATES_DIST` is the mechanism the
+ * gates document for reading another artifact, and the case that uses it — `console-option.mjs`'s
+ * released build — is a DIFFERENT build rather than another copy of this one: flipping
+ * `features.console_downloads` adds the console option's markup to two pages, measured at 536
+ * bytes on that copy's site figure. The derivation is not held to it.
+ *
+ * Nor is it held to `website/dist`, which `npm run check` builds first — and that is the
+ * correction this reading carries (2026-10-19). `dist/` is the site built from the checkout the
+ * gates are running in, and one page of the site depends on that checkout's git state: the
+ * changelog renders each release file's "not yet released" state where `git tag --list` finds no
+ * tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the same commit
+ * builds to two different site figures — 845,103 bytes in a checkout with no tags, which is what
+ * `.github/workflows/website-preview.yml`'s default checkout is, and 843,588 with the tags this
+ * repository's own clone carries, the 1,515-byte changelog page being the whole of the
+ * difference. A README figure derived from either one is a figure the other environment refuses,
+ * which is exactly what happened: `website-preview` could not deploy, because the derivation
+ * named a build the run could not measure.
+ *
+ * A copy of the repository has no `.git` at all, so the build the gates make is the same build
+ * everywhere: the figures below are re-derived from it, and the site's own `dist/` — whichever
+ * of the two shapes it takes — is held to the ceilings above like any other artifact. The
+ * "not yet released" state is what the deployed site shows (nothing deploys from a checkout that
+ * fetches tags), so the figures that follow are the deployed site's rather than the smaller one a
+ * full clone builds.
  */
-const DOCUMENTED_BUILD = path.join(SITE, 'dist')
+let DOCUMENTED_BUILD = null
 
-function measuredNow(dist = DOCUMENTED_BUILD) {
+/** The gates' own build of the site — made once, removed when this process exits. */
+function documentedBuild() {
+  if (DOCUMENTED_BUILD !== null) return DOCUMENTED_BUILD
+  const built = buildCopy({ after: (fn) => process.once('exit', fn) }, () => {}, 'fugaro-budget-doc-')
+  assert.equal(
+    built.status,
+    0,
+    `the build the README's figures are a derivation of — a copy of this repository built with the site's own Astro — failed, so the derivation cannot be measured against the build it names:\n${built.output}`,
+  )
+  DOCUMENTED_BUILD = built.dist
+  return DOCUMENTED_BUILD
+}
+
+function measuredNow(dist = documentedBuild()) {
   const pages = builtPages(dist).map((p) => measurePage(p.html, p.rel, dist))
   return {
     js: statSync(path.join(dist, SCRIPT)).size,
@@ -580,8 +633,8 @@ function measuredNow(dist = DOCUMENTED_BUILD) {
 test("the README's budgets are D192's derivation from a build this one can be measured against", () => {
   const readme = readFileSync(path.join(SITE, 'README.md'), 'utf8')
   assert.ok(
-    existsSync(DOCUMENTED_BUILD),
-    `the site's own build is not at ${DOCUMENTED_BUILD}, so the README's derivation cannot be measured against the build it names: \`npm run check\` builds it before the gates read it, and this case is about that build rather than about the directory this run was pointed at`,
+    existsSync(path.join(SITE, 'dist')),
+    `the site's own build is not at ${path.join(SITE, 'dist')}, so the ceilings above were read against nothing: \`npm run check\` builds it before the gates read it`,
   )
   assert.deepEqual(derivationFailures(readme, measuredNow()), [])
 })
