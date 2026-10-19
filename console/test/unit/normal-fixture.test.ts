@@ -25,7 +25,9 @@ import { describe, expect, it } from 'vitest'
 import { loadFixture } from '../../src/source/fixture'
 import type { JSONDoc } from '../../src/source/source'
 import { normalFixture } from '../../tools/scrub-fixture/index'
-import { QUEUED_NOTE_SHAPE, VOCAB, isKnownVerifySummary, scrubDocument } from '../../tools/scrub-fixture/scrub'
+import {
+  CONNECTION_REASONS, INVENTED_CONNECTION_REASON, QUEUED_NOTE_SHAPE, VOCAB, isKnownVerifySummary, scrubDocument,
+} from '../../tools/scrub-fixture/scrub'
 
 const FIXTURE = 'test/fixtures/normal.ndjson'
 
@@ -182,6 +184,13 @@ const SHAPES: ReadonlyArray<(value: string) => boolean> = [
   /^\d{1,2}$/,
   (value: string) => isKnownVerifySummary(value),
   (value: string) => QUEUED_NOTE_SHAPE.test(value),
+  // A connection's reason: the two sentences internal/watch/state.go writes
+  // itself, plus the one the scrub puts in place of the transport's own error
+  // text (free text, replaced rather than kept). The list is the scrub's own
+  // `CONNECTION_REASONS`, not a copy of it, and the round-trip test below walks
+  // every value of it -- so a sentence added there and not carried here fails
+  // rather than making a recording the scrub accepts uncommittable.
+  new RegExp(`^(${[...CONNECTION_REASONS, INVENTED_CONNECTION_REASON].join('|')})$`),
   /^(redacted@example\.invalid|example reason|example halt reason|example-recipe|example-workflow)$/,
   /^https:\/\/example\.invalid\/example-owner\/example-repo\/pull\/\d+$/,
   /^(github-com-example-owner-example-repo|example-owner\/example-repo)(-\d+)?$/,
@@ -474,6 +483,59 @@ describe('the scrub', () => {
       expect(removed).toContain(real)
     }
     expect(scan(text, removed)).toEqual([])
+  })
+
+  it('commits a recording whose connection carries a reason, kept or invented', () => {
+    // The rule that accepts `connection.reason` is worth nothing if the scan
+    // that gates a commit then refuses what the rule emits: the scrub passes,
+    // and the recording the rule exists for still cannot be committed. Every
+    // branch of internal/watch/state.go goes through the whole tool -- scrub,
+    // redactor, writer -- and the text a commit would carry is scanned.
+    const cases: Array<[string, string]> = [
+      // [what the CLI wrote, what the committed fixture carries]
+      ...CONNECTION_REASONS.map((reason): [string, string] => [reason, reason]),
+      ['dial tcp 10.0.0.7:443: connect: connection refused', INVENTED_CONNECTION_REASON],
+    ]
+    for (const [wrote, committed] of cases) {
+      const doc = raw()
+      at(doc, 'connection')['state'] = 'offline'
+      at(doc, 'connection')['reason'] = wrote
+      const { text, scrubbed } = normalFixture(doc, '0.8.6')
+      const out = at(scrubbed as unknown as Record<string, unknown>, 'connection')
+      expect(out['reason'], wrote).toBe(committed)
+      if (committed !== wrote) expect(text, wrote).not.toContain(wrote)
+      expect(scan(text), wrote).toEqual([])
+    }
+  })
+
+  it('commits every value its vocabularies can copy, so no field it keeps is uncommittable', () => {
+    // The finding above is one instance of a property the whole tool has to
+    // hold: every value the scrub copies out of a CLI vocabulary -- and every
+    // one it invents in place of a real value, which the document carries at
+    // the same time -- must survive the scan that gates a commit. Each value of
+    // each list in VOCAB goes through the whole tool and the text is scanned.
+    const fields: Array<[string, readonly string[], (d: Record<string, unknown>, v: string) => void]> = [
+      ['mode', VOCAB.mode, (d, v) => { d['mode'] = v }],
+      ['connection.state', VOCAB.connectionState, (d, v) => { at(d, 'connection')['state'] = v }],
+      ['runs[].stage', VOCAB.stage, (d, v) => { at(d, 'runs', 0)['stage'] = v }],
+      ['runs[].auth', VOCAB.auth, (d, v) => { at(d, 'runs', 0)['auth'] = v }],
+      ['runs[].health', VOCAB.health, (d, v) => { at(d, 'runs', 0)['health'] = v }],
+      ['runs[].deadline', VOCAB.deadline, (d, v) => { at(d, 'runs', 0)['deadline'] = v }],
+      ['finished[].status', VOCAB.status, (d, v) => { at(d, 'finished', 0)['status'] = v }],
+      ['finished[].outcome', VOCAB.outcome, (d, v) => { at(d, 'finished', 0)['outcome'] = v }],
+    ]
+    for (const [what, values, set] of fields) {
+      for (const value of values) {
+        const label = `${what} = ${value}`
+        const doc = raw()
+        set(doc, value)
+        const { text } = normalFixture(doc, '0.8.6')
+        // ...and the value really is in what would be committed, so the scan
+        // below is reading it and not passing on a document without it.
+        expect(text, label).toContain(JSON.stringify(value))
+        expect(scan(text), label).toEqual([])
+      }
+    }
   })
 
   it('scans 300 scrubs with a fresh drawn clock each, and never trips the digit rule', () => {

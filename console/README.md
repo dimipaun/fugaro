@@ -865,6 +865,18 @@ own error, one-lined and clipped there. Those two sentences are
 `CONNECTION_REASONS`, held against the source by the drift test; anything else
 that is a string is **replaced** with `INVENTED_CONNECTION_REASON`, so the free
 text never reaches the fixture, and anything that is not a string is refused.
+The scan that gates a commit carries all three values in its allow-list, and
+`normal-fixture.test.ts` holds the whole path — scrub, redactor, writer, scan —
+for each of them: accepting a reason the scan then refuses would leave the
+recording the rule exists for uncommittable, which is the shape of the finding.
+That test is one case of a **round-trip property** the file also holds in full:
+every value of every list in `VOCAB`, and every invented value the scrub writes
+in its place, goes through the whole tool and the result is scanned, so a
+vocabulary value the allow-list cannot carry fails there rather than at the
+first real recording. (The verify line is the one value the property does not
+sweep: the scrub keeps it as the writer wrote it, while the scan's matcher pins
+the globs slot to the CLI's own two defaults on purpose, so the two matchers are
+not meant to agree.)
 
 **Not recorded, and stay invented**: `silent-then-lost`, `kill-mid-feed` and
 `repo-at-cap` (they need cloud writes), and the other cases still await a
