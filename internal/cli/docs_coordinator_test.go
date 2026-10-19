@@ -50,6 +50,24 @@ package cli
 //
 // The exception list is the one thing here a mutation cannot prove by itself,
 // so it is checked the other way: the test fails when an entry goes unused.
+//
+// KNOWN BLIND SPOT, found by review: TestDocsCoordinatorCitationsExist checks
+// that a cited PATH resolves, not that the SYMBOL named beside it is declared
+// at the cited line. A sentence reading "`DailyMicros` at
+// `internal/budget/evaluate.go:31`" passed the whole package while DailyMicros
+// is declared in internal/budget/model.go -- evaluate.go:31 is
+// ReasonRepoDailyCap. The claim the reconciliation makes about itself ("every
+// path and symbol was read at that commit") is therefore only as strong as the
+// reading; this test does not back it.
+//
+// A checker for that was prototyped and deliberately not shipped: pairing
+// identifiers with citations needs a notion of scope the prose does not carry
+// (one parenthetical may cite a single file for a list drawn from three, and a
+// paragraph names symbols belonging to other citations in it), and the coarse
+// version reported hundreds of false positives -- every symbol in a paragraph
+// paired with every path in it. Doing it properly means reading the sentences,
+// which is what a reviewer does. Until then this is a partial check, and it is
+// documented as one rather than presented as a complete one.
 
 import (
 	"os"

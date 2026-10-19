@@ -154,7 +154,12 @@ budget database (a Firebase Realtime Database …)"*; client `internal/rtdb/clie
 used: its Go client authenticates as an admin, but a run holds only its own ID token"*).
 It holds `config/caps/*`, `config/policy/*`, `config/kill/*`, `config/admin`,
 `fugaro/{project,mark}`, `runs/<slug>/<run>/*`, `spend/<day>/*`, `agents/*`, `outcomes/*`
-and the mailbox (`internal/budget/model.go:30-86`; `internal/budget/rules/rules.json.tmpl`).
+and the mailbox. No one file lists the whole tree: the path constants for `runs/`, `spend/`
+and `outcomes/` are `internal/budget/model.go:55,57,81`; the four top-level nodes a rollover
+moves are `internal/budget/rollover.go:342`; the policy and admin nodes are described in
+`internal/budget/rules/rules.go:44-51`; the agents registry is read at
+`internal/budget/sweep.go:121`; and the mailbox is a rules macro rather than a package
+constant (`internal/budget/rules/rules.go:375-398`).
 Firestore: `internal/firestore/client.go` package doc — *"a small REST client for Cloud
 Firestore (native mode), built for the spend history"* — and the one collection is
 `spendDaily` (`internal/budget/rollover.go:48 SpendCollection`).
@@ -440,8 +445,10 @@ RTDB rules gate `spend/` and `runs/` on the `RUN` macro
 (`internal/budget/rules/rules.go:396`, `internal/budget/rules/rules.json.tmpl:28-33`), so no non-run identity may
 write the counters.
 The spec says the cap is a **token** cap that *"counts toward the project's existing spend
-caps"*. The repo caps **dollars** (`DailyMicros`, `ReasonGlobalDailyCap` at
-`internal/budget/evaluate.go:31-32`); the only token cap is a per-run policy field (`MaxRunTokens`).
+caps"*. The repo caps **dollars** (`DailyMicros` at `internal/budget/model.go:151,164` — the
+global and per-repo cap fields — and `ReasonGlobalDailyCap` at
+`internal/budget/evaluate.go:32`); the only token cap is a per-run policy field
+(`MaxRunTokens`).
 *Consequence:* "counts toward the project's existing spend caps" needs a new mechanism —
 a new node, a new writer identity, or a synthetic run — and it is not a configuration
 change. → **Q11**.
