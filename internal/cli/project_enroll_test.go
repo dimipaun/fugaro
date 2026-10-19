@@ -673,12 +673,18 @@ func assertBoundedAndInert(t *testing.T, what, out string) {
 // Mutation (verified, run and restored): print r.Name raw at the seen entry's
 // own cell — this test fails on the escape sequence, on the carriage return,
 // on the override, on the zero-width joiner, on the extra line the newline
-// adds and on the line length the over-long name makes. notAdmittedSentence's
-// own copy of a name is put through the same bounded form, but the branch of
-// it that carries a name is reached only by entries projectpolicy.ValidPattern
-// takes (its alphabet, at most maxPatternLen characters), so no name a run
-// writes reaches it and no mutation there turns this test red: that one is the
-// invariant held, not a reachable hole closed.
+// adds and on the line length the over-long name makes.
+//
+// An earlier version of this comment said that the name-carrying branch of
+// notAdmittedSentence was unreachable because projectpolicy.ValidPattern gated
+// it, so no name a run writes could reach the remedy. That was false and the
+// review said so: ValidPattern accepts "*", and a run writes single-segment
+// names (the runs-bucket prefix "runs/*/", a spendDaily slug of "*"), so the
+// remedy told the operator to run `fugaro project repos add *` — enrol every
+// repository. The branch is now gated on enrollableArg, which certifies a
+// repository identifier and nothing else, and the fallback carries no name at
+// all; TestProjectReposLsNeverAdvertisesAPatternAsTheRemedy is that hole's
+// test, with the mutation that reopens it.
 func TestProjectReposLsPrintsSeenNamesBoundedAndInert(t *testing.T) {
 	f := newSeenFixture(t)
 	// An allow-list that admits nothing here: the hostile name is then both
@@ -721,10 +727,11 @@ func TestProjectReposLsPrintsSeenNamesBoundedAndInert(t *testing.T) {
 	if !strings.Contains(seen, safetext.Field(longSeenName)) {
 		t.Errorf("the over-long seen name is not printed in its bounded form: four times the cap came back unbounded")
 	}
-	// The note is printed with the name, and the name in it is the bounded one:
-	// the sentence a name is not a pattern for names the entries the allow-list
-	// would take, never the name itself (notAdmittedSentence), so what this
-	// asserts is that the marked line is there and intact at all.
+	// The note is printed on the entry's own line, and neither copy of the
+	// sentence carries the name: the hostile name is not a repository
+	// identifier, so it gets the fallback (notAdmittedSentence), whose only
+	// command is the fixed "provider/owner/name" template. What this asserts is
+	// that the marked line is there at all.
 	if !strings.Contains(seen, "not admitted") || !strings.Contains(seen, "repos add") {
 		t.Errorf("the seen entry no longer says the allow-list refuses it:\n%s", seen)
 	}
@@ -801,6 +808,174 @@ func assertBoundedJSONName(t *testing.T, what, got string) {
 	for _, r := range got {
 		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || (r >= 0x202a && r <= 0x202e) || r == 0x200b {
 			t.Errorf("%s carries %q, in which the run-written name survives: %U", what, got, r)
+		}
+	}
+}
+
+// TestProjectReposLsNeverAdvertisesAPatternAsTheRemedy: the advisory half of a
+// seen entry is a command an operator is invited to run, and it may only ever
+// name a repository. It was built from any name that was not already an
+// allow-list pattern (projectpolicy.ValidPattern) — and `ValidPattern("*")` is
+// nil, so a run, whose grant lets it write any runs/<slug>/ prefix (the file's
+// own comment says so), could write the prefix `runs/*/` and make this program
+// print
+//
+//   - (seen in the runs bucket; not admitted: … 'fugaro project repos add *')
+//
+// which is the one command that enrolls every repository there is. spendDaily's
+// own slug field reaches the same sentence through the other source. The remedy
+// is now built only from a repository identifier (enrollableArg:
+// provider/owner/name over the repository alphabet, no wildcard, no whitespace,
+// no segment opening with "-"), quoted as one shell word; a name that is not one
+// gets no command at all, whatever its shape.
+//
+// A "*" is the shape to probe with, and the only wildcard these two sources can
+// actually deliver: spendDaily's document ID is `<date>_<slug>`, so a slug with
+// a "/" in it (github/*/*) is refused by the query before this listing sees it
+// (the listing fails rather than printing it), and a bucket prefix is one path
+// segment, which cannot hold a "/" either.
+//
+// Mutations (both verified, run and restored): put the remedy back on
+// `projectpolicy.ValidPattern(r) != nil` — this test fails on the `*` entry,
+// which prints the command it must not print; drop the wildcard rejection from
+// the identifier rule (accept any name of three "/"-segments) — it fails on
+// `github/*/*` offered as one.
+func TestProjectReposLsNeverAdvertisesAPatternAsTheRemedy(t *testing.T) {
+	f := newSeenFixture(t)
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	// The wildcard, written the way a run writes one: a directory named "*"
+	// under runs/ (the bucket lists it as the prefix `runs/*/`), and the same
+	// name as spendDaily's own slug field.
+	putRun(t, f.dir, "*")
+	f.spent(t, budget.DayDate(budget.Day(f.now)), "*", "*")
+
+	out, _, err := execute(t, "project", "repos", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	_, seen, ok := strings.Cut(out, "repositories seen here")
+	if !ok {
+		t.Fatalf("the listing does not print the seen half:\n%s", out)
+	}
+	const wildcard = "*"
+	line := listLine(t, seen, wildcard)
+	if strings.Contains(line, "repos add "+wildcard) {
+		t.Errorf("the listing tells the operator to run a command built from the run-written name %q:\n%s", wildcard, line)
+	}
+	if !strings.Contains(line, "not admitted") || !strings.Contains(line, "not a repository name") {
+		t.Errorf("the entry for %q does not say the allow-list refuses it, nor that it is not an enrollable name:\n%s", wildcard, line)
+	}
+	// The positive half: a name this machine's config resolves to a repository
+	// still gets the remedy, and it is the repository's canonical name.
+	const other = "bitbucket/acme/other"
+	putRun(t, f.dir, slugOf(t, "bitbucket", "acme/other"))
+	out, _, err = execute(t, "project", "repos", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	_, seen, _ = strings.Cut(out, "repositories seen here")
+	if line := listLine(t, seen, other); !strings.Contains(line, "'fugaro project repos add "+other+"'") {
+		t.Errorf("a repository this machine's config names no longer gets the remedy that enrolls it: %s", line)
+	}
+}
+
+// TestProjectShowNeverAdvertisesAPatternAsTheRemedy: `project show`'s running
+// list is the run registry's keys, which a run writes, and its not-admitted
+// note goes through the same sentence as `repos ls` — so it had the same hole
+// (budget.Key does not escape "*", and a registry key of `*` printed
+//
+//   - (not admitted: … 'fugaro project repos add *')
+//
+// ). The remedy is built from a repository identifier or not at all, in both
+// listings, because they share one sentence.
+//
+// Mutation (verified, run and restored): put the remedy back on
+// `projectpolicy.ValidPattern(r) != nil` — this test fails on the `*` entry.
+func TestProjectShowNeverAdvertisesAPatternAsTheRemedy(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	f.db.Set(budget.PathAgent("*", "20261015-120000-aaaa"), map[string]any{"run_id": "20261015-120000-aaaa"})
+
+	out, _, err := execute(t, "project", "show")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	const wildcard = "*"
+	line := listLine(t, out, wildcard)
+	if strings.Contains(line, "repos add "+wildcard) {
+		t.Errorf("project show tells the operator to run a command built from the run-written registry key %q:\n%s", wildcard, line)
+	}
+	if !strings.Contains(line, "not admitted") || !strings.Contains(line, "not a repository name") {
+		t.Errorf("the running entry for %q does not say the allow-list refuses it, nor that it is not an enrollable name:\n%s", wildcard, line)
+	}
+	js, _, err := execute(t, "project", "show", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, js)
+	}
+	var doc struct {
+		RunningNotEnrolled []string `json:"running_not_enrolled"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
+	}
+	if len(doc.RunningNotEnrolled) != 1 || doc.RunningNotEnrolled[0] != wildcard {
+		t.Errorf("running_not_enrolled = %v, want [%s]: the value itself is the run's, and only the printed advisory is held to repositories", doc.RunningNotEnrolled, wildcard)
+	}
+}
+
+// TestEnrollableArgHoldsTheRemedyToARepository: the one function that decides
+// whether a listing may print a `fugaro project repos add` command for a name,
+// and which name it prints. It is the guard behind the two tests above, so it
+// is pinned directly as well as through them: a widening of its rule that the
+// listings' shapes happen not to reach (a wildcard in a nested name, say, which
+// spendDaily's document ID refuses and a bucket prefix cannot hold) still turns
+// this test red.
+//
+// Mutations (each verified, run and restored): accept any name of three or more
+// "/"-segments (drop the alphabet check) — red on `github/*/*`, `github/acme/app
+// b`, `github/acme/app;id` and the uppercase provider; drop the "-"/"."/".."
+// segment rule — red on `-x/y/z`, `github/acme/-app` and `github/acme/..`.
+func TestEnrollableArgHoldsTheRemedyToARepository(t *testing.T) {
+	for _, ok := range []string{
+		"github/acme/app",
+		"bitbucket/acme/group/app", // a repository path may nest
+		"github/Acme/App",          // the repository alphabet admits A-Z; the provider kind does not
+	} {
+		got, is := enrollableArg(ok)
+		if !is {
+			t.Errorf("enrollableArg(%q) refused a repository identifier", ok)
+			continue
+		}
+		if got != ok {
+			t.Errorf("enrollableArg(%q) = %q, want the name itself (the alphabet is inside shellword's safe set, so it prints bare)", ok, got)
+		}
+	}
+	for _, bad := range []string{
+		"",                    // nothing
+		"*",                   // the allow-list's own entry: admits every repository
+		"github/*/*",          // a pattern a run wrote
+		"acme/app",            // two segments: `repos add` resolves its provider through a config these listings do not have
+		"github/acme",         // no repository name
+		"GitHub/acme/app",     // not a provider kind (task.ValidProvider is lower-case)
+		"-x/y/z",              // a shell word opening with a dash reads as an option
+		"github/acme/-app",    // the same, one segment in
+		"github/acme/..",      // a directory, not a repository
+		"github/../app",       // the same
+		"github//app",         // an empty segment
+		"github/acme/app b",   // whitespace
+		"github/acme/app\n",   // a control: the name a run writes is not a shell word
+		"github/acme/app;id",  // shell metacharacters
+		"github/acme/app`id`", // and backticks
+		"../acme/app",         // a path out of the tree
+	} {
+		if got, is := enrollableArg(bad); is {
+			t.Errorf("enrollableArg(%q) = %q, true; want no command at all", bad, got)
 		}
 	}
 }

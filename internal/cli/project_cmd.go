@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/shellword"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -1975,16 +1976,90 @@ func notAdmittedNote(r string) string {
 // ls`'s seen list names the sources first). It is one sentence for one state,
 // so the two listings cannot word the same refusal differently.
 func notAdmittedSentence(r string) string {
-	if projectpolicy.ValidPattern(r) != nil {
-		return "not admitted: its next run is refused until the allow-list admits it — " + slugIsAHash + ", so " + slugNameIt
+	// The remedy is a command an operator is invited to run, so it is built
+	// only from a repository identifier — never from a pattern, and never from
+	// a name a run wrote that is not one. `ValidPattern` is the wrong test for
+	// that: it is the allow-list's own test, and it accepts "*" (the entry that
+	// admits every repository) and every wildcard pattern besides, so a run
+	// that writes the bucket prefix `runs/*/` or a spendDaily slug of
+	// `github/*/*` made this program print
+	// 'fugaro project repos add *' — the widest enrollment there is, advised by
+	// the program itself out of data the run chose. A name that is not an
+	// identifier gets no command at all, whatever its shape.
+	if arg, ok := enrollableArg(r); ok {
+		return "not admitted: its next run is refused until 'fugaro project repos add " + arg + "'"
 	}
-	// The remedy carries the name, and the name is one a run wrote (the run
-	// registry's key, the runs bucket's runs/<slug>/ prefix, spendDaily's
-	// slug): safetext.Field is the bounded printable form every one of these
-	// listings prints such a value through, so the remedy cannot be the one
-	// place a name rewrites the line. The question above — is this a pattern
-	// the allow-list would take — is asked of the name itself.
-	return "not admitted: its next run is refused until 'fugaro project repos add " + safetext.Field(r) + "'"
+	reason := notARepoName
+	if looksLikeASlug(r) {
+		reason = slugIsAHash
+	}
+	return "not admitted: its next run is refused until the allow-list admits it — " + reason + ", so " + slugNameIt
+}
+
+// enrollableArg is name as the one argument `fugaro project repos add` takes
+// for it, when name is a repository identifier and nothing else: a
+// provider/owner/name path (a repository may nest, so any depth above two) over
+// the repository alphabet [A-Za-z0-9._-], whose first segment is a provider
+// kind (task.ValidProvider, what projectpolicy.Canonical and task.Slug take),
+// with no empty, "." or ".." segment and no segment opening with "-" (a shell
+// word that opens with a dash reads as an option). A "*" — the wildcard of a
+// pattern, and the one character that makes the name admit more than itself —
+// is not in the alphabet, and neither is a space, so a pattern and a name a run
+// padded are both refused. The value comes back quoted as one shell word
+// (shellword.Quote: unchanged when it is already safe, single-quoted
+// otherwise), because what is printed is meant to be pasted into a shell.
+//
+// The bare owner/name form `repos add` also takes is deliberately not offered:
+// it resolves its provider through this machine's config (canonicalRepoArg),
+// and these listings reach this sentence exactly for the names the config does
+// not know. The canonical form is the one that stands on its own.
+func enrollableArg(name string) (string, bool) {
+	segs := strings.Split(name, "/")
+	if len(segs) < 3 || !task.ValidProvider(segs[0]) {
+		return "", false
+	}
+	for _, seg := range segs {
+		if !repoIdentSegment(seg) {
+			return "", false
+		}
+	}
+	return shellword.Quote(name), true
+}
+
+// repoIdentSegment reports whether seg is one segment of a repository
+// identifier: non-empty, over [A-Za-z0-9._-], not "." or ".." (which name
+// directories, not repositories) and not opening with "-".
+func repoIdentSegment(seg string) bool {
+	if seg == "" || seg == "." || seg == ".." || seg[0] == '-' {
+		return false
+	}
+	for i := 0; i < len(seg); i++ {
+		switch c := seg[i]; {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// looksLikeASlug reports whether s is over the slug's own alphabet — lower-case
+// letters, digits and "-", no separator. That is the shape task.Slug mints and
+// runstore lists (its slugRE), and the shape of a name that cannot be turned
+// back into a repository: what the listing has to say about one is that it is a
+// slug, not a command.
+func looksLikeASlug(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // slugIsAHash and slugNameIt are the two halves of what a name that is a slug
@@ -1995,6 +2070,13 @@ func notAdmittedSentence(r string) string {
 const (
 	slugIsAHash = "this is a slug, a hash of the repository's name, so its provider is not recorded"
 	slugNameIt  = "name it: 'fugaro project repos add provider/owner/name'"
+	// notARepoName is the other reason a name gets no command: it is not a
+	// repository identifier at all — a pattern a run wrote (github/*/*), the
+	// allow-list's own "*", or a name with something else in it a repository
+	// cannot hold. Saying "this is a slug" of one of those would be false
+	// (nobody hashed it), and saying nothing would leave a reader wondering
+	// why the neighbouring entries are given a remedy and this one is not.
+	notARepoName = "this is not a repository name (a repository is provider/owner/name, with no wildcard)"
 )
 
 func sourceSuffix(src string) string {
