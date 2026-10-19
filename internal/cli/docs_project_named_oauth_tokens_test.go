@@ -181,6 +181,32 @@ func releasedFugaroVersion(t *testing.T) string {
 	return manifest.Version
 }
 
+// TestDocsProjectNamedOAuthTokensStatusNamesTheReleasedCLI: the design doc's
+// status line says which release does not read the feature, and it is the same
+// claim the operator guide and gcp-setup.md make in the same words -- the
+// released CLI is the version the tree carries, not the one it carried when
+// the page was written. The line is derived rather than pinned, for the reason
+// releasedFugaroVersion gives: a bump must fail here rather than leave the
+// page describing a release that is no longer the latest one. (It had drifted:
+// the line named 0.8.6 while the tree was at 0.8.7.)
+func TestDocsProjectNamedOAuthTokensStatusNamesTheReleasedCLI(t *testing.T) {
+	doc := readDoc(t, "docs/design/project-named-oauth-tokens.md")
+	var status string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "Status:") {
+			status = line
+			break
+		}
+	}
+	if status == "" {
+		t.Fatal("docs/design/project-named-oauth-tokens.md carries no Status line")
+	}
+	released := releasedFugaroVersion(t)
+	if !strings.Contains(status, "the released CLI is "+released+")") {
+		t.Errorf("the design doc's status line does not name the released CLI %s: %s", released, status)
+	}
+}
+
 // TestDocsProjectClaudeAccountsOperatorGuide: the operator guide says what an
 // operator has to be told, in the one place the rest of this repository can
 // point at. Every item below is a fact of tasks 1 to 3 rather than a
