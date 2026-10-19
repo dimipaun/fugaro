@@ -1719,33 +1719,43 @@ test('the client never relies on the SDK\'s offline queue: nothing is ever issue
   assert.equal(h.valueAt(`${INBOX}/handed-over`), null);
 });
 
-test('the gate refusal has two shapes, and only `send` carries a sentence', async () => {
+test('a sentence comes from the gate alone, and every other refusal is bare', async () => {
   // README's bullet tells the screens (P6.9's text screen, P6.12's voice screen)
-  // which refusal they may render: `send` answers with a sentence and whether it
-  // was spoken, `flush` and `poll` answer with the code alone. The claim was
-  // wrong in this file's README until the PR review of P6.10, and a claim about
-  // what a screen renders that only lives in prose drifts again -- so the two
-  // shapes are asserted here, and the `message` key's absence is the assertion.
+  // which refusal they may render. The claim was wrong twice: first it said
+  // `flush` and `poll` carry a sentence too, then it said every refused `send`
+  // does -- and the second is the worse one, because a screen following it
+  // renders `undefined` on exactly the refusals it meets most (`bad-text`,
+  // `too-long`, the redactor's, the key's, the store's). So all three shapes are
+  // asserted here, and the `message` key's ABSENCE is the assertion.
   const h = await harness();
   h.connection.setOnline(false);
 
-  const spoken = await h.client.send('cancel the docs refactor');
-  assert.equal(spoken.message, OFFLINE_SPEECH[GATE_CODES.NO_CONNECTION]);
-  assert.equal(typeof spoken.told, 'boolean', '`send` says whether it was heard');
+  const gated = await h.client.send('cancel the docs refactor');
+  assert.equal(gated.message, OFFLINE_SPEECH[GATE_CODES.NO_CONNECTION]);
+  assert.equal(typeof gated.told, 'boolean', 'a gated `send` says whether it was heard');
 
-  for (const [what, refused] of [
+  // Still no connection: these two are the gate's refusals, and the gate has no
+  // sentence for a read or a re-send.
+  const whileOffline = [
     ['flush', await h.client.flush()],
     ['poll', await h.client.poll()],
-  ]) {
-    assert.deepEqual(
-      refused,
-      { ok: false, code: GATE_CODES.NO_CONNECTION, field: 'connection' },
-      `a refused ${what} is the bare refusal`,
-    );
+  ];
+
+  // The connection comes back, so this one is a refusal the gate did NOT make --
+  // an ordinary failure of an ordinary send, and the shape the screens meet most.
+  h.connection.setOnline(true);
+  const tooLong = await h.client.send('x'.repeat(4097));
+
+  for (const [what, refused] of [...whileOffline, ['a `send` the gate did not refuse', tooLong]]) {
+    assert.equal(refused.ok, false, `a refused ${what} is a refusal`);
     assert.deepEqual(
       Object.keys(refused).sort(),
       ['code', 'field', 'ok'],
-      `nothing to render and nothing to speak on a refused ${what}`,
+      `nothing to render and nothing to speak on ${what}: no \`message\`, no \`told\``,
     );
+    assert.equal(refused.message, undefined, `no sentence on ${what}`);
   }
+  // And it is still refused for its own reason: the bare shape is not one code.
+  assert.equal(tooLong.code, CLIENT_CODES.TOO_LONG, 'and it is the refusal it says it is');
+  assert.equal(whileOffline[0][1].code, GATE_CODES.NO_CONNECTION);
 });

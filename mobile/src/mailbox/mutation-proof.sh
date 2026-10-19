@@ -337,7 +337,7 @@ run "the store is written in one file only (the scan)" \
 export function createRoot({ React, store, View, Text }) {" \
   mobile/src/app/root.js src/mailbox/write-path.test.js
 
-# 10. The offline gate (P6.10; D167, G21). Thirteen guards in client.js, four in
+# 10. The offline gate (P6.10; D167, G21). Fourteen guards in client.js, four in
 #     gate.js and one in the store's SDK model -- and the store's is proved
 #     twice, once against its own suite and once against the client's, because
 #     "the SDK queue would have noticed" is the control the client's claim rests
@@ -385,6 +385,9 @@ run "poll does nothing at all with no connection" \
     if (!online.ok) return refuse(online.code, online.field);" \
   "    const online = evaluateGate({ online: connection.isOnline() });
     if (false) return refuse(online.code, online.field);"
+run "a send refusal the gate did not make carries no sentence either" \
+  "    if (text.length > TEXT_MAX) return refuse(CLIENT_CODES.TOO_LONG, 'text');" \
+  "    if (text.length > TEXT_MAX) return Object.freeze({ ok: false, code: CLIENT_CODES.TOO_LONG, field: 'text', message: 'that is too long.', told: false });"
 run "a refused flush carries no sentence to render or to speak" \
   "    if (!verdict.ok) return refuse(verdict.code, verdict.field);" \
   "    if (!verdict.ok) return Object.freeze({ ok: false, code: verdict.code, field: verdict.field, message: offlineSpeech(verdict.code), told: false });"

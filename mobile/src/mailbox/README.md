@@ -238,21 +238,29 @@ client.pending();  // [] -- nothing was queued
 
 * **Nothing is written, and the owner is told.** `send`, `flush` and `poll` ask
   the connection gate **before** any read, write, key read or speak, so nothing
-  reaches the SDK and nothing reaches its queue. **The owner is told by `send`
-  only, and that is the shape a screen may rely on**: a refused `send` answers
-  `{ ok: false, code, field, message, told }` -- the sentence from
-  `OFFLINE_SPEECH`, one table, so this module and the screens that render it
-  cannot end up saying two different things about one reason -- plus whether it
-  was spoken. A refused `flush` or `poll` answers the bare
+  reaches the SDK and nothing reaches its queue. **A `message` is present
+  exactly when the GATE refused and nowhere else, and that is the shape a screen
+  may rely on.** A gated `send` -- and only that -- answers
+  `{ ok: false, code: <a `GATE_CODES` code>, field, message, told }`: the
+  sentence from `OFFLINE_SPEECH`, one table, so this module and the screens that
+  render it cannot end up saying two different things about one reason -- plus
+  whether it was spoken. A refused `flush` or `poll` answers the bare
   `{ ok: false, code, field }` (`refuse` in `client.js`), with **no `message`
   and no `told`**: there is nothing honest to say and nothing to speak. A poll
   is a read and may run with no screen in front of it, so a sentence spoken
   from it would talk to the owner because a refresh failed; a flush reports by
   the pending records it could not deliver, and `OFFLINE_SPEECH`'s sentences
   ("I have not sent **that**") have no referent for a re-send of a record the
-  owner already spoke. A screen that switches on a refusal must therefore read
-  `code` for `flush`/`poll` and `message` only for `send` -- a screen that
-  renders `refusal.message` for a refused flush renders nothing, which is the
+  owner already spoke. **And the bare shape is not the flush/poll shape alone**:
+  every `send` refusal that the gate did not make is bare too -- `bad-text`,
+  `too-long`, the redactor's `leaked`, `bad-clock`, `bad-id`, `id-conflict`,
+  `unsignable`, `no-key`/`key-unreadable`, the schema's and the store's all come
+  from `refuse` with no sentence attached, because those are failures this
+  module has no decided sentence for and inventing one here would be this
+  directory speaking for a screen. So the rule a screen must follow is: render
+  `refusal.message` **only for a `GATE_CODES` code**, and switch on `refusal.code`
+  for everything else -- a screen that renders `refusal.message` for a refused
+  flush, or for a refused too-long utterance, renders nothing, which is the
   bug this paragraph exists to prevent.
 * **`send` asks the presence gate too**, over the **last poll's heartbeat,
   re-judged at the moment the owner speaks** -- not the verdict the poll
@@ -402,7 +410,7 @@ cost of the false refusal is a phone that cannot speak.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 53 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 54 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
@@ -438,7 +446,7 @@ than a claim.
 | the queue is bypassed (`serial` calls the pass directly) | `two polls in flight together speak the message once, not twice` |
 | the pre-key `unsignable` check drops | `a text nobody can sign is refused as unsignable, and never as key-unreadable` |
 | the schema validation before the write drops | `a control character is refused with the schema's reason, and nothing is written` |
-| a `raw` write function is added to the client object | `the client object is exactly its six names, and nothing else is on it` |
+| a `raw` write function is added to the client object | `the client object is exactly its seven names, and nothing else is on it` |
 | `sameTag` compares only the first eight hex characters (in `mac.js`) | `a tag that differs only past the eighth character is refused too` |
 | a read's node is assigned instead of defined (in `store.js`) | `a node named `__proto__` is an own key of the read, and pollutes nothing` -- and, run against `client.test.js`, `a message in a node named `__proto__` is read, spoken and acked like any other` |
 | an intermediate container is assigned instead of defined (in `store.js`) | the same test (the pollution half of it) |
@@ -464,7 +472,8 @@ than a claim.
 | an action whose write failed is not kept for a retry | `an action whose write did not land is dropped, not retried` |
 | `flush` writes nothing with no connection | `flush writes nothing while the connection is down, and keeps what it has` |
 | `poll` does nothing at all with no connection | `an offline poll does nothing at all, and hears nothing` |
-| a refused `flush` carries no sentence to render or to speak | `the gate refusal has two shapes, and only send carries a sentence` |
+| a send refusal the gate did not make carries no sentence either | `a sentence comes from the gate alone, and every other refusal is bare` |
+| a refused `flush` carries no sentence to render or to speak | the same test |
 | a refused `poll` carries no sentence to render or to speak | the same test |
 | a connection that is not `true` is offline (in `gate.js`) | `no connection refuses whatever the consumer looks like` |
 | a live consumer must be a VERIFIED one (in `gate.js`) | `a presence that is not evidence of a live consumer refuses` |
