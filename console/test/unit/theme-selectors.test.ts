@@ -10,22 +10,35 @@
 // against a class a screen declares.
 //
 // **The list is read out of the design document, not written out here.** A
-// second copy of §2's tables in this file would be a list that drifts from the
-// one a reader checks, and the licence rule would then be enforced against the
-// copy rather than against the design. So the document is read from the
-// repository root (`docs/design/console-styling.md`), its §2 is taken whole, and
-// its **table rows** are where the hooks come from -- the tables are what the
-// design's own sentence points at, and the prose around them is prose. Each
-// backticked token in a row is read as a hook: `div.console-rail-head` names the
-// class `console-rail-head`, `data-installation="chosen"` names the attribute
+// second copy of §2 in this file would be a list that drifts from the one a
+// reader checks, and the licence rule would then be enforced against the copy
+// rather than against the design. So the document is read from the repository
+// root (`docs/design/console-styling.md`), its §2 is taken whole, and every
+// backticked token in it is read: `div.console-rail-head` names the class
+// `console-rail-head`, `data-installation="chosen"` names the attribute
 // `data-installation`, and a token that is neither (`console/src/renderer/
 // entry.ts`, `renderVersionSkew`) names no hook and is skipped.
+//
+// **§2 whole, and not its tables alone -- Task 6.4 is why.** Task 6.3's scan
+// read §2's table rows, which is where every hook of the four screens and of the
+// chrome is listed; §2.7 and §2.8, the degraded screen and the unavailable and
+// refusal screens, have **no tables at all** and name their classes in their
+// prose, and §2.4's `data-*` list is a prose line under its table rather than a
+// row of it. A scan narrowed back to the tables would therefore refuse the very
+// rules Task 6.4 writes -- `section.degraded`, `div.unavailable-body`,
+// `[data-panel]` -- and would do it by claiming the design does not name hooks
+// it names two paragraphs further down. The reading is widened, not loosened:
+// `HOOK` keeps only tokens shaped like a hook, so a prose word (`class`, `title`,
+// `putReading`) is not a licence to select `.class` or `.title`, and
+// `NOT_A_LICENCE` keeps out the two `data-*` attributes the design names
+// **in order to refuse them** ("A hook that is emitted and not listed here is
+// not a licence to write a rule against it").
 //
 // **What is scanned is the selectors, not the file's text.** Comments are
 // stripped first, so a hook named in this suite's own prose -- or in the
 // stylesheet's long header -- is not a selector, and only what a rule selects
 // is checked. Classes come from `.name` and attribute selectors from `[name`,
-// which between them are every way a rule in `base.css` names an element.
+// which between them are every way a rule in these stylesheets names an element.
 //
 // **`screens.css` joins this scan in Task 6.4**, which is the task that writes
 // it: the plan gives that task "a case that every selector in `screens.css`
@@ -56,8 +69,10 @@ const INVENTORY_HEADING = '## 2. Screen inventory'
 const NEXT_SECTION = '## 3.'
 
 /** SCANNED is the stylesheets whose selectors are checked, and the task that
- * adds each. Task 6.4 appends `screens.css` here. */
-const SCANNED: readonly string[] = Object.freeze(['base.css'])
+ * adds each: Task 6.3 wrote `base.css` and Task 6.4 appends `screens.css` here,
+ * in the same commit that creates it -- a stylesheet the bundler serves and this
+ * scan does not read is a stylesheet whose selectors nothing checks. */
+const SCANNED: readonly string[] = Object.freeze(['base.css', 'screens.css'])
 
 /** RAIL_HOOKS is the rail's twelve classes, which §2.1 names and §4.1 draws as
  * thirteen elements. They are listed here because the count is the claim: the
@@ -78,9 +93,57 @@ const RAIL_HOOKS: readonly string[] = Object.freeze([
 ])
 
 /** ELEMENT_PREFIX is the element names the design's tables qualify a class with
- * (`div.console-rail-head`). Stripping one is what turns a token into the class
- * a rule would select; a token with any other prefix is not a hook. */
-const ELEMENT_PREFIX = /^(?:a|aside|button|code|div|dl|figure|form|h1|h2|h3|input|label|li|nav|ol|p|pre|section|span|table|tbody|td|th|tr|ul)\./
+ * (`div.console-rail-head`, `header.degraded-header`). Stripping one is what
+ * turns a token into the class a rule would select; a token with any other
+ * prefix is not a hook. */
+const ELEMENT_PREFIX = /^(?:a|aside|button|code|div|dl|figure|form|h1|h2|h3|header|input|label|li|nav|ol|p|pre|section|span|table|tbody|td|th|tr|ul)\./
+
+/** HOOK is what a token has to look like to be a hook rather than a word of
+ * prose. A class hook carries one of the prefixes §2's tables and prose are
+ * built from -- a screen's own (`live-`), the chrome's (`console-`), the
+ * installation line's (`installation-`) or a screen root spelled bare -- and an
+ * attribute hook is a `data-*` or an `aria-*`. Everything else the section
+ * mentions (`class`, `title`, `role`, `putReading`, `UNAVAILABLE_MARK`,
+ * `path:line`) names no hook a stylesheet could select. */
+const HOOK = /^(?:(?:live|spend|projects|run|degraded|console|unavailable|installation)(?:-[a-z0-9-]+)?|(?:data|aria)-[a-z0-9-]+)$/
+
+/** CLASS_HOOK is the class half of `HOOK`, and `SUFFIX` is the shorthand §2.7
+ * and §2.8 write their hook sets with: the degraded screen's section is two
+ * paragraphs of prose rather than a table, and it names its run row
+ * "(`degraded-run-id`, `-repo`, `-status`, ... `-total`, `data-run`, ...)" and
+ * its feed age as "`degraded-since` + `-word`/`-at`/`-age`".
+ *
+ * A `-suffix` is a hook of the name it abbreviates, and reading §2 literally
+ * without them would refuse to license `degraded-run-repo` while §2 names it two
+ * characters further left -- the same defect the `HOOK`/table split avoids.
+ *
+ * **§2.7 abbreviates two ways in one paragraph, so both are read.** The run row
+ * is `degraded-run-id`, `-repo`, `-status`, ... — the suffix **replaces** the
+ * last segment (`degraded-run-repo`) — while the feed age is `degraded-since` +
+ * `-word`/`-at`/`-age`, where it is **appended** (`degraded-since-word`). Which
+ * one a suffix is cannot be decided from the suffix, so the scan licenses where
+ * the design points and expands both readings; the extra names (`degraded-word`,
+ * `degraded-run-id-repo`) are hooks §2 does not intend and no screen emits, and a
+ * licence that names one hook too many is harmless where one that names a hook
+ * too few refuses a rule the design asked for. And the expansion is only where
+ * it can be read at all: a suffix takes the class hook it **immediately**
+ * follows, and any token that is neither is skipped -- so the `-num` of §2.10's
+ * prose, which follows a `cell(...)` signature rather than a hook, licenses
+ * nothing. */
+const CLASS_HOOK = /^(?:live|spend|projects|run|degraded|console|unavailable|installation)-[a-z0-9-]+$/
+
+/** SUFFIX is one `-suffix`, or a run of them joined by `/` as §2.7's
+ * `-word`/`-at`/`-age` is written. */
+const SUFFIX = /^-[a-z0-9-]+(?:\/-[a-z0-9-]+)*$/
+
+/** NOT_A_LICENCE is the two attributes §2 names **in order to refuse them**.
+ * §2's licence paragraph is explicit -- "`data-hidden` (every view the mode
+ * withholds) and `data-skew` (the compatibility handshake), both stamped by
+ * `console/src/shared/version.ts` ... they are emitted, no rule needs them, and a
+ * rule that suddenly wants one adds it to this table first" -- so reading §2
+ * whole must not quietly license them. They are subtracted here by name, which
+ * is what keeps §2's sentence true of the scan. */
+const NOT_A_LICENCE: readonly string[] = Object.freeze(['data-hidden', 'data-skew'])
 
 /** readDesign reads the design document, failing by name rather than with an
  * ENOENT from somewhere further along. */
@@ -104,8 +167,9 @@ function readTheme(name: string): string {
   }
 }
 
-/** inventoryHooks is the hooks §2's tables name: every backticked token of every
- * table row, reduced to the class or the attribute it is, in name order. */
+/** inventoryHooks is the hooks §2 names: every backticked token of the whole
+ * section -- its tables and its prose, because §2.7 and §2.8 have no tables --
+ * reduced to the class or the attribute it is, in name order. */
 function inventoryHooks(): readonly string[] {
   const design = readDesign()
   const start = design.indexOf(INVENTORY_HEADING)
@@ -113,18 +177,34 @@ function inventoryHooks(): readonly string[] {
   if (start === -1 || end === -1) {
     throw new Error(`the design has no ${INVENTORY_HEADING} section: the scan would be vacuous`)
   }
-  const tables = design
-    .slice(start, end)
-    .split('\n')
-    .filter((line) => line.trimStart().startsWith('|'))
-    .join('\n')
+  const section = design.slice(start, end)
   const hooks = new Set<string>()
-  for (const [, token] of tables.matchAll(/`([^`\n]+)`/g)) {
+  /** previous is the class hook the last token was, and the only thing a
+   * following `-suffix` can be an abbreviation of. */
+  let previous = ''
+  for (const [, token] of section.matchAll(/`([^`\n]+)`/g)) {
     // `data-installation="chosen"` and `aria-current="true|false"` name the
     // attribute; the value it carries is a state, not a hook.
     const bare = (token ?? '').replace(/="[^"]*"$/, '')
     const qualified = ELEMENT_PREFIX.test(bare) ? bare.replace(ELEMENT_PREFIX, '') : bare
-    if (/^[a-z][a-z0-9-]*$/.test(qualified)) hooks.add(qualified)
+    if (CLASS_HOOK.test(qualified)) {
+      previous = qualified
+      if (!NOT_A_LICENCE.includes(qualified)) hooks.add(qualified)
+      continue
+    }
+    if (SUFFIX.test(qualified) && previous !== '') {
+      // Both readings §2 uses: the suffix replaces the hook's last segment, and
+      // the suffix is appended to the hook whole.
+      const replaced = previous.slice(0, previous.lastIndexOf('-') + 1)
+      for (const suffix of qualified.split('/')) {
+        for (const expanded of [replaced + suffix.slice(1), previous + suffix]) {
+          if (HOOK.test(expanded) && !NOT_A_LICENCE.includes(expanded)) hooks.add(expanded)
+        }
+      }
+      continue
+    }
+    previous = ''
+    if (HOOK.test(qualified) && !NOT_A_LICENCE.includes(qualified)) hooks.add(qualified)
   }
   return [...hooks].sort()
 }
@@ -153,6 +233,36 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
     // adds it to the table **first** (design §2's licence rule).
     expect(hooks).toContain('data-collapsed')
     expect(hooks).toContain('data-state')
+  })
+
+  it('reads §2 whole, so the screens whose hooks are prose are licensed and the two refused hooks are not', () => {
+    // The case above is the count and the chrome's; this one is the reading
+    // Task 6.4 widened, and each of the four hooks below is one a rule in
+    // `screens.css` selects. Two of them are **prose-only**: §2.7 and §2.8 have
+    // no tables, so a scan narrowed back to the tables would refuse
+    // `section.degraded` and `div.unavailable-body` while §2 names both, and
+    // §2.10 names `degraded-num` -- the hook Task 6.4 adds to the degraded
+    // screen's `numberCell` -- in the sentence that hands it to this task.
+    // `data-panel` is the fourth shape: §2.5's `data-*` list is a prose line
+    // under its table rather than a row of it.
+    const hooks = inventoryHooks()
+    for (const hook of ['degraded', 'unavailable-body', 'degraded-num', 'data-panel', 'data-kind']) {
+      expect(hooks, `§2 does not name ${hook}, and a rule selects it`).toContain(hook)
+    }
+    // And the widening is not a loosening: the two attributes §2 names in order
+    // to refuse them are still refused, because a rule that wants one adds it to
+    // §2 first (design §2's licence paragraph).
+    expect(hooks, 'the scan licensed the two hooks §2 refuses by name').not.toContain('data-hidden')
+    expect(hooks).not.toContain('data-skew')
+
+    // The `-suffix` shorthand is expanded, and only where it can be read: the
+    // degraded screen's run row and feed age are hooks §2 names in shorthand,
+    // and §2.10's prose `-num` -- the one suffix in the section that follows a
+    // signature rather than a hook -- licenses nothing.
+    for (const hook of ['degraded-since-word', 'degraded-since-at', 'degraded-since-age', 'degraded-run-repo', 'degraded-run-created']) {
+      expect(hooks, `§2 names ${hook} in shorthand and the expansion missed it`).toContain(hook)
+    }
+    expect(hooks, 'the scan expanded a suffix that follows no hook').not.toContain('data-segments-num')
   })
 
   it('selects no class §2 does not name, in every stylesheet this task writes', () => {
