@@ -3,6 +3,7 @@ package rules
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"math/rand"
 	"os"
 	"regexp"
@@ -17,6 +18,10 @@ import (
 )
 
 const goldenPath = "testdata/rules.golden.json"
+
+// parentChain collapses a run of newData.parent() calls to one, so two rules
+// that differ only in how deep the location they guard sits compare equal.
+var parentChain = regexp.MustCompile(`(?:\.parent\(\)){2,}`)
 
 // TestRulesGolden pins the generated rules. Regenerate on purpose with
 // UPDATE_GOLDEN=1 go test ./internal/budget/rules and review the diff: it is
@@ -572,6 +577,12 @@ func TestRunTokenWritesSurviveThePolicyEdit(t *testing.T) {
 		"spend/$day/repos/" + slugForPath + "/byModel/$model/out",
 		"spend/$day/repos/" + slugForPath + "/byModel/$model/cr",
 		"spend/$day/repos/" + slugForPath + "/byModel/$model/cw",
+		// the by-tier split of real spend (C1.3 rule 3, D140): tier B and
+		// tier C under each of the four $spent locations above
+		"runs/" + slugForPath + "/$run/byTier/$tier/spent",
+		"spend/$day/global/byTier/$tier/spent",
+		"spend/$day/repos/" + slugForPath + "/byTier/$tier/spent",
+		"spend/$day/runs/" + slugForPath + "/$run/byTier/$tier/spent",
 		// spend/<day>/runs/<slug>/<run>/ (the run's share of the day)
 		"spend/$day/runs/" + slugForPath + "/$run/reserved",
 		"spend/$day/runs/" + slugForPath + "/$run/released",
@@ -1366,5 +1377,372 @@ func TestConfirmTargetsCarryOneShape(t *testing.T) {
 			wantFrag(t, paths, p, c.frag)
 			t.Logf("/%s: the %s arm carries %s", p, c.verb, c.frag)
 		}
+	}
+}
+
+// ---- C1.3: the credentials rules -------------------------------------------
+//
+// The rules task of the credentials-service plan (`docs/credentials-service/
+// implementation-plan.md`, task C1.3) adds three things to the template and two
+// constants to `marker.go`. What is pinned here is the half the emulator
+// cannot state: the shape of the generated document, that every location the
+// rules carried before the change still carries byte-for-byte the same rule,
+// and that the credentials generation is a marker of its own rather than a
+// `RulesVersion` bump.
+//
+// The emulator half — what a run token may and may not do under the new nodes —
+// is `creds_emulator_test.go` (build tag firebase).
+
+// credsRoot is /creds, the cascade's shared state (D136, O1). The service's own
+// account is its only writer; the node is explicit in the template rather than
+// left to the root's default deny, so the deployed document says so where a
+// reader looks for it.
+const credsRoot = "creds"
+
+// credsProbes are the locations under /creds a reader of the plan would ask
+// about: the marks, the leases, the per-run stickiness and the round-robin
+// counter C1.9 keeps there.
+func credsProbes() []string {
+	return []string{
+		credsRoot,
+		credsRoot + "/marks",
+		credsRoot + "/marks/a1",
+		credsRoot + "/leases/r1",
+		credsRoot + "/current/r1",
+		credsRoot + "/roundrobin",
+	}
+}
+
+// TestCredsIsDeniedByAnExplicitNode: the template carries an explicit /creds
+// whose .read and .write are the booleans false, and nothing under it carries a
+// grant. The root's default deny already refuses every client (which is what
+// C0.6 pinned), so this changes no behaviour — it makes the denial visible in
+// the generated document, where an edit that opened /creds would have to touch
+// it.
+//
+// Hand mutation this fails on: dropping the node (the location is then absent,
+// not denied by name), or turning either attribute into an expression.
+func TestCredsIsDeniedByAnExplicitNode(t *testing.T) {
+	paths := generatedPaths(t)
+	attrs, ok := paths[credsRoot]
+	if !ok {
+		t.Fatalf("the template does not generate /%s: the cascade's state must be denied by name, not only by the root", credsRoot)
+	}
+	for _, a := range []string{".read", ".write"} {
+		v, ok := attrs[a]
+		if !ok {
+			t.Errorf("/%s carries no %s: an inherited deny is not the same document as an explicit one", credsRoot, a)
+			continue
+		}
+		if v != false {
+			t.Errorf("/%s %s = %#v, want false: no client token may reach the cascade's state (O1)", credsRoot, a, v)
+		}
+	}
+	// Nothing under it grants anything either: a child grant would re-open the
+	// family the explicit node closes.
+	for _, p := range credsProbes() {
+		if p == credsRoot {
+			continue
+		}
+		if a, ok := paths[p]; ok {
+			if v, has := a[".read"]; has && v != false {
+				t.Errorf("/%s .read = %#v, want no grant under /%s", p, v, credsRoot)
+			}
+			if v, has := a[".write"]; has && v != false {
+				t.Errorf("/%s .write = %#v, want no grant under /%s", p, v, credsRoot)
+			}
+		}
+	}
+}
+
+// TestAgentEntryCarriesTheCredentialNameAndWaitingUntil: the run's registry
+// entry gains two validated children (C1.3 rule 2). `/agents/$slug/$run` is a
+// closed allowlist (`$other` refuses everything else), so a cascade run's write
+// of the credential it is using, or of the instant it expects to resume at,
+// would be refused until they are named here.
+//
+// Both are validation-only, like every other field of the entry: the parent's
+// `.write: RUN` is the grant, and the child carries the shape. `credential` is
+// the credential's *name* and never a value — the rules can only bound it, and
+// what makes it a name is that the service answers with one — and
+// `waiting_until` is an instant, so it is held to the timestamp bound and not
+// to the amount bound.
+//
+// Hand mutation this fails on: dropping either child (or its $other guard's
+// exception), or widening `waiting_until` to AMOUNT, whose $10M bound would
+// refuse a clock reading after the year 2286 while accepting a negative one.
+func TestAgentEntryCarriesTheCredentialNameAndWaitingUntil(t *testing.T) {
+	paths := generatedPaths(t)
+	entry := "agents/" + slugForPath + "/$run"
+	for _, c := range []struct{ field, want string }{
+		{"credential", "newData.isString() && newData.val().length <= 200"},
+		{"waiting_until", "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0"},
+	} {
+		p := entry + "/" + c.field
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s: a cascade run cannot record its %s", p, c.field)
+			continue
+		}
+		if _, has := attrs[".write"]; has {
+			t.Errorf("/%s carries a .write of its own: the entry's fields are validated under the parent's RUN grant", p)
+		}
+		v, _ := attrs[".validate"].(string)
+		if !strings.Contains(v, c.want) {
+			t.Errorf("/%s .validate = %q, want it to carry %q", p, v, c.want)
+		}
+		if !strings.Contains(v, "auth.token.rb != null") {
+			t.Errorf("/%s .validate = %q, want RBOK: every field of the entry ties to the launcher's rb claim", p, v)
+		}
+	}
+	// The entry is still a closed allowlist: an unnamed child is refused.
+	if vv, ok := paths[entry+"/$other"]; !ok {
+		t.Errorf("/%s/$other is gone: the entry must refuse a field the schema does not name", entry)
+	} else if vv[".validate"] != false {
+		t.Errorf("/%s/$other .validate = %v, want false", entry, vv[".validate"])
+	}
+}
+
+// byTierPairs are the locations that gain a by-tier split of real spend, each
+// paired with the `spent` leaf whose rule it repeats (C1.3 rule 3). Tier A
+// stays on the existing `notional` nodes; only B and C are real money, and only
+// they are split out.
+func byTierPairs() []struct{ leaf, spent string } {
+	return []struct{ leaf, spent string }{
+		{"runs/" + slugForPath + "/$run/byTier/$tier/spent", "runs/" + slugForPath + "/$run/spent"},
+		{"spend/$day/global/byTier/$tier/spent", "spend/$day/global/spent"},
+		{"spend/$day/repos/" + slugForPath + "/byTier/$tier/spent", "spend/$day/repos/" + slugForPath + "/spent"},
+		{"spend/$day/runs/" + slugForPath + "/$run/byTier/$tier/spent", "spend/$day/runs/" + slugForPath + "/$run/spent"},
+	}
+}
+
+// TestByTierCountersAreValidatedLikeSpent: each by-tier leaf carries exactly the
+// .write and the .validate of the `spent` leaf beside it, and the `$tier`
+// wildcard admits only `b` and `c`. "Validated like today's spent" is the whole
+// requirement (C1.3): a by-tier counter is the same quantity, split by which
+// credential paid for it, so it must be as monotonic, as bounded per write and
+// as tied to the run's own ledger as the total is — and a tier that is not b or
+// c must not be a third place to write money, which is what keeps tier A
+// (notional, never real) out of this family.
+//
+// Hand mutation this fails on: giving a by-tier leaf a .validate of its own
+// (weaker or stronger), dropping the `$tier` test so an arbitrary tier key
+// becomes writable, or dropping `newData.exists()` from its write so a delete
+// (which validation never checks) could lower the counter.
+func TestByTierCountersAreValidatedLikeSpent(t *testing.T) {
+	paths := generatedPaths(t)
+	for _, p := range byTierPairs() {
+		spent, ok := paths[p.spent]
+		if !ok {
+			t.Fatalf("the template no longer generates /%s", p.spent)
+		}
+		attrs, ok := paths[p.leaf]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p.leaf)
+			continue
+		}
+		for _, a := range []string{".write", ".validate"} {
+			got, _ := attrs[a].(string)
+			want, _ := spent[a].(string)
+			if want == "" {
+				t.Fatalf("/%s carries no %s to mirror", p.spent, a)
+			}
+			if got == "" {
+				t.Errorf("/%s carries no %s", p.leaf, a)
+				continue
+			}
+			// The leaf sits one location deeper than the total it repeats, so
+			// the new-data chain reaches the same node through one more
+			// parent(). Everything else -- every bound, every conjunct, every
+			// absolute path -- is identical, which is what "validated like
+			// today's spent" means.
+			if parentChain.ReplaceAllString(got, ".parent()") != parentChain.ReplaceAllString(want, ".parent()") {
+				t.Errorf("/%s %s = %q, want the rule of /%s at one more parent(): %q", p.leaf, a, got, p.spent, want)
+			}
+		}
+		tier := strings.TrimSuffix(p.leaf, "/spent")
+		if v, _ := paths[tier][".validate"].(string); v != "$tier == 'b' || $tier == 'c'" {
+			t.Errorf("/%s .validate = %q, want the tier key test", tier, v)
+		}
+		if _, has := paths[tier][".write"]; has {
+			t.Errorf("/%s carries a .write above its leaf: a whole-tier write must be denied", tier)
+		}
+	}
+}
+
+// TestRulesPreexistingPathsUnchanged: every location the generation-3 document
+// carried (testdata/rules.generation3.json, a frozen copy of the golden as main
+// had it) still carries byte-for-byte the same rule. The new document may only
+// add; a rule that moved under a path that already existed is a change to what
+// every installation's runs may do, and it must be seen and named rather than
+// arrive as part of "we added the credentials children".
+//
+// Hand mutation this fails on: editing any existing rule (a loosened bound, a
+// dropped conjunct) while adding the new nodes.
+func TestRulesPreexistingPathsUnchanged(t *testing.T) {
+	raw, err := os.ReadFile("testdata/rules.generation3.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	before, after := map[string]map[string]any{}, generatedPaths(t)
+	walk(doc["rules"], nil, func(path []string, attrs map[string]any) {
+		if len(path) == 0 {
+			return
+		}
+		segs := make([]string, len(path))
+		for i, s := range path {
+			if s == "$slug" { // generatedPaths spells the model slug as slugForPath
+				s = slugForPath
+			}
+			segs[i] = s
+		}
+		before[strings.Join(segs, "/")] = attrs
+	})
+	for p, want := range before {
+		got, ok := after[p]
+		if !ok {
+			t.Errorf("/%s is gone: this change may only add to the rules", p)
+			continue
+		}
+		if !maps.Equal(want, got) {
+			t.Errorf("/%s changed:\n  was %v\n  now %v", p, want, got)
+		}
+	}
+	// And the addition is the one this task makes: the new paths are exactly
+	// the credentials family. Anything else that appears here is a rules change
+	// nobody asked for.
+	for p := range after {
+		if _, ok := before[p]; ok {
+			continue
+		}
+		if !isNewCredsPath(p) {
+			t.Errorf("/%s is new and is not one of this task's additions", p)
+		}
+	}
+}
+
+// isNewCredsPath reports whether p is one of the three things C1.3 adds: the
+// credentials node, a by-tier counter (or the node above one), or the registry
+// entry's two new children. Anything else that appears in the document is a
+// rules change nobody asked for.
+func isNewCredsPath(p string) bool {
+	if p == credsRoot || strings.HasPrefix(p, credsRoot+"/") {
+		return true
+	}
+	for _, pair := range byTierPairs() {
+		tier := strings.TrimSuffix(pair.leaf, "/spent") // .../byTier/$tier
+		if p == pair.leaf || p == tier || p == strings.TrimSuffix(tier, "/$tier") {
+			return true
+		}
+	}
+	entry := "agents/" + slugForPath + "/$run/"
+	return p == entry+"credential" || p == entry+"waiting_until"
+}
+
+// TestRulesVersionUnchanged: this task does not move the rules generation. The
+// deployed document changes, but the generations an installation compares are
+// left where they are, and the credentials children get a marker of their own
+// instead (C1.3's "no RulesVersion bump", marker.go):
+//
+//   - projectpolicy.RulesVersion is the generation of the whole document, read
+//     by the deploy's downgrade refusal, the runner's policy gate and doctor's
+//     policy-rules-skew. Moving it would tell every installation whose owner has
+//     not redeployed yet that its rules are older than the binary's, for a
+//     change that adds optional children of nodes runs already write.
+//   - projectpolicy.PolicyRulesVersion gates the policy nodes, which this change
+//     does not touch. It stays 1.
+//   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
+//     which a cascade launch, the init stage and doctor read (C1.19-C1.21).
+//
+// The numbers are asserted rather than referenced so that a bump has to come
+// here and say so.
+//
+// Hand mutation this fails on: bumping any of the three (or lowering
+// CredsRulesVersion), which is what a reviewer must see argued for.
+func TestRulesVersionUnchanged(t *testing.T) {
+	if projectpolicy.RulesVersion != 3 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 3: this change does not move the document generation", projectpolicy.RulesVersion)
+	}
+	if projectpolicy.PolicyRulesVersion != 1 {
+		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)
+	}
+	if CredsRulesVersion != 1 {
+		t.Errorf("CredsRulesVersion = %d, want 1: the first generation that carries the credentials children", CredsRulesVersion)
+	}
+	if PathCredsRulesMarker() != "config/limits/credsRules" {
+		t.Errorf("PathCredsRulesMarker() = %q, want config/limits/credsRules", PathCredsRulesMarker())
+	}
+	if PathCredsRulesMarker() == projectpolicy.PathRulesMarker() {
+		t.Errorf("the credentials marker is the rules marker: %q", PathCredsRulesMarker())
+	}
+}
+
+// TestCredsRulesMarkerIsRunReadable: a `cascade` launch reads the credentials
+// marker with the run's own token (C1.19), so the location has to be granted to
+// TOKEN. It inherits that from `config/limits`'s own `.read`, which is what
+// makes the marker cheap to read and impossible to write from a run: no
+// location under /config carries a write a client could satisfy.
+//
+// Hand mutation this fails on: adding a `.write` under config/limits (the
+// marker becomes forgeable by any run of the project), or removing the
+// config/limits read grant.
+func TestCredsRulesMarkerIsRunReadable(t *testing.T) {
+	paths := generatedPaths(t)
+	parent, ok := paths["config/limits"]
+	if !ok {
+		t.Fatal("the template does not generate /config/limits")
+	}
+	if v, _ := parent[".read"].(string); !strings.Contains(v, "auth.token.fp != null") {
+		t.Errorf("/config/limits .read = %v, want the TOKEN grant the marker inherits", parent[".read"])
+	}
+	for _, p := range []string{PathCredsRulesMarker(), projectpolicy.PathRulesMarker()} {
+		if !strings.HasPrefix(p, "config/limits/") {
+			t.Errorf("%s is not under /config/limits: it does not inherit the run-token read", p)
+		}
+	}
+}
+
+// TestRunCannotWriteCredsRulesMarker and TestRunCannotWritePolicyRulesMarker
+// pin, without the emulator, that no location under /config grants any client a
+// write — so neither marker can be forged by a run token. `policyRules` had no
+// such pin; this adds it beside the new one.
+//
+// The markers are the whole reason a run can be refused before it starts: a
+// token that could write `credsRules` could make a `cascade` launch pass a gate
+// the installation has not met. The emulator proves the refusal with a real
+// token (creds_emulator_test.go); this proves the absence of a grant, which is
+// what makes it true everywhere at once.
+//
+// Hand mutation this fails on: granting /config/limits or /config a write (a
+// TOKEN write is the shape an "init writes it as its own account" mistake takes
+// — the deploy writes it over IAM, which bypasses the rules).
+func TestRunCannotWriteCredsRulesMarker(t *testing.T) {
+	assertNoConfigWrites(t, PathCredsRulesMarker())
+}
+
+func TestRunCannotWritePolicyRulesMarker(t *testing.T) {
+	assertNoConfigWrites(t, projectpolicy.PathRulesMarker())
+}
+
+func assertNoConfigWrites(t *testing.T, marker string) {
+	t.Helper()
+	walk(rulesTree(t), nil, func(p []string, attrs map[string]any) {
+		if len(p) == 0 || p[0] != "config" {
+			return
+		}
+		if w, has := attrs[".write"]; has && w != false {
+			t.Errorf("/%s: .write = %v under /config, where the markers are written over IAM only", strings.Join(p, "/"), w)
+		}
+	})
+	// The marker is data under a location the template carries (config/limits):
+	// the run's token reaches it through that node's own read grant, and there
+	// is no node of its own to grant anything on.
+	parent := marker[:strings.LastIndexByte(marker, '/')]
+	if _, ok := generatedPaths(t)[parent]; !ok {
+		t.Errorf("%s has no parent location (%s) in the generated rules", marker, parent)
 	}
 }

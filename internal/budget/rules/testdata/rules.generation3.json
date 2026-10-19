@@ -1,0 +1,508 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "fugaro": {
+      "project": {
+        ".read": false,
+        ".write": false
+      },
+      "mark": {
+        ".read": false,
+        ".write": false
+      }
+    },
+    "config": {
+      "caps": {
+        "global": {
+          ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) || (auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())"
+        },
+        "defaults": {
+          ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) || (auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())"
+        },
+        "repos": {
+          "$slug": {
+            ".read": "((auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug) || (auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())"
+          }
+        }
+      },
+      "policy": {
+        "shared": {
+          ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now)",
+          ".write": false
+        },
+        "repos": {
+          "$slug": {
+            ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug",
+            ".write": false
+          }
+        }
+      },
+      "limits": {
+        ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now)"
+      },
+      "mode": {
+        ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now)"
+      },
+      "kill": {
+        "global": {
+          ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) || (auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())"
+        },
+        "repos": {
+          "$slug": {
+            ".read": "((auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug) || (auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())"
+          }
+        }
+      },
+      "admin": {
+        ".read": false,
+        ".write": false,
+        "devices": {
+          "$uid": {
+            ".read": false,
+            ".write": false
+          }
+        }
+      }
+    },
+    "pairing": {
+      "$uid": {
+        "request": {
+          ".read": false,
+          ".write": "((auth != null && auth.token.pu != null && auth.token.pu == auth.uid && auth.uid.beginsWith('p~')) && $uid == auth.uid) && newData.exists() && !data.exists()",
+          ".validate": "newData.hasChildren(['key', 'at'])",
+          "key": {
+            ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 4096 && newData.val().matches(/^[A-Za-z0-9+\\/=_-]+$/))"
+          },
+          "at": {
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0)"
+          },
+          "$other": {
+            ".validate": false
+          }
+        },
+        "delivery": {
+          ".read": "((auth != null && auth.token.pu != null && auth.token.pu == auth.uid && auth.uid.beginsWith('p~')) && $uid == auth.uid)",
+          ".write": false
+        }
+      }
+    },
+    "runs": {
+      "$slug": {
+        "$run": {
+          ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run)",
+          "reserved": {
+            ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run) && newData.exists()",
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && (newData.val() == (data.exists() ? data.val() : 0) || (newData.val() - (data.exists() ? data.val() : 0) <= root.child('config/limits/maxReserveMicros').val() && (root.child('config/kill/global/on').val() != true && root.child('config/kill/repos').child($slug).child('on').val() != true) && newData.val() - (data.exists() ? data.val() : 0) == ((newData.parent().parent().parent().parent().child('spend').child(('' + ((now - now % 86400000) / 86400000))).child('runs').child($slug).child($run).child('reserved').exists() ? newData.parent().parent().parent().parent().child('spend').child(('' + ((now - now % 86400000) / 86400000))).child('runs').child($slug).child($run).child('reserved').val() : 0) - (root.child('spend').child(('' + ((now - now % 86400000) / 86400000))).child('runs').child($slug).child($run).child('reserved').exists() ? root.child('spend').child(('' + ((now - now % 86400000) / 86400000))).child('runs').child($slug).child($run).child('reserved').val() : 0)) && (!(root.child('config/mode').val() == 'enforce') || (root.child('config/caps/repos').child($slug).child('perRunMicros').exists() || root.child('config/caps/defaults/repoPerRunMicros').exists() ? (root.child('config/caps/repos').child($slug).child('perRunMicros').exists() ? ((newData.val() - (newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('released').exists() ? newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('released').val() : 0)) <= root.child('config/caps/repos').child($slug).child('perRunMicros').val()) : ((newData.val() - (newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('released').exists() ? newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('released').val() : 0)) <= root.child('config/caps/defaults/repoPerRunMicros').val())) && (root.child('config/caps/global/perRunMicros').exists() ? ((newData.val() - (newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('released').exists() ? newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('released').val() : 0)) <= root.child('config/caps/global/perRunMicros').val()) : true) : (root.child('config/caps/global/perRunMicros').exists() ? ((newData.val() - (newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('released').exists() ? newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('released').val() : 0)) <= root.child('config/caps/global/perRunMicros').val()) : false)))))"
+          },
+          "released": {
+            ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run) && newData.exists()",
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() + (newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('spent').exists() ? newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('spent').val() : 0) <= (newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('reserved').exists() ? newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('reserved').val() : 0) && (newData.val() == (data.exists() ? data.val() : 0) || newData.val() - (data.exists() ? data.val() : 0) == ((newData.parent().parent().parent().parent().child('spend').child(('' + ((now - now % 86400000) / 86400000))).child('runs').child($slug).child($run).child('released').exists() ? newData.parent().parent().parent().parent().child('spend').child(('' + ((now - now % 86400000) / 86400000))).child('runs').child($slug).child($run).child('released').val() : 0) - (root.child('spend').child(('' + ((now - now % 86400000) / 86400000))).child('runs').child($slug).child($run).child('released').exists() ? root.child('spend').child(('' + ((now - now % 86400000) / 86400000))).child('runs').child($slug).child($run).child('released').val() : 0)) + ((newData.parent().parent().parent().parent().child('spend').child(('' + ((now - now % 86400000) / 86400000 - 1))).child('runs').child($slug).child($run).child('released').exists() ? newData.parent().parent().parent().parent().child('spend').child(('' + ((now - now % 86400000) / 86400000 - 1))).child('runs').child($slug).child($run).child('released').val() : 0) - (root.child('spend').child(('' + ((now - now % 86400000) / 86400000 - 1))).child('runs').child($slug).child($run).child('released').exists() ? root.child('spend').child(('' + ((now - now % 86400000) / 86400000 - 1))).child('runs').child($slug).child($run).child('released').val() : 0)))"
+          },
+          "spent": {
+            ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run) && newData.exists()",
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() + (newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('released').exists() ? newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('released').val() : 0) <= (newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('reserved').exists() ? newData.parent().parent().parent().parent().child('runs').child($slug).child($run).child('reserved').val() : 0)"
+          },
+          "notional": {
+            ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run) && newData.exists()",
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= root.child('config/limits/maxReserveMicros').val()"
+          },
+          "overrun": {
+            ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run) && newData.exists()",
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= root.child('config/limits/maxReserveMicros').val()"
+          },
+          "tokens": {
+            ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run) && newData.exists()",
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= 1000000000"
+          },
+          "exp": {
+            ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run) && newData.exists() && !data.exists()",
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0)"
+          }
+        }
+      }
+    },
+    "spend": {
+      "$day": {
+        "global": {
+          ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) || (auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())",
+          "counted": {
+            ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && ((newData.parent().parent().parent().parent().child('spend').child($day).child('global').child('counted').exists() ? newData.parent().parent().parent().parent().child('spend').child($day).child('global').child('counted').val() : 0) - (root.child('spend').child($day).child('global').child('counted').exists() ? root.child('spend').child($day).child('global').child('counted').val() : 0)) == (((newData.parent().parent().parent().parent().child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('reserved').exists() ? newData.parent().parent().parent().parent().child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('reserved').val() : 0) - (root.child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('reserved').exists() ? root.child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('reserved').val() : 0)) - ((newData.parent().parent().parent().parent().child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('released').exists() ? newData.parent().parent().parent().parent().child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('released').val() : 0) - (root.child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('released').exists() ? root.child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('released').val() : 0))) && (newData.val() <= (data.exists() ? data.val() : 0) || !(root.child('config/mode').val() == 'enforce') || newData.val() <= root.child('config/caps/global/dailyMicros').val())"
+          },
+          "spent": {
+            ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= root.child('config/limits/maxReserveMicros').val()"
+          },
+          "notional": {
+            ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= root.child('config/limits/maxReserveMicros').val()"
+          },
+          "calls": {
+            ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= 10000"
+          }
+        },
+        "repos": {
+          "$slug": {
+            ".read": "((auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug) || (auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())",
+            "counted": {
+              ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+              ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && ((newData.parent().parent().parent().parent().parent().child('spend').child($day).child('repos').child($slug).child('counted').exists() ? newData.parent().parent().parent().parent().parent().child('spend').child($day).child('repos').child($slug).child('counted').val() : 0) - (root.child('spend').child($day).child('repos').child($slug).child('counted').exists() ? root.child('spend').child($day).child('repos').child($slug).child('counted').val() : 0)) == (((newData.parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('reserved').exists() ? newData.parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('reserved').val() : 0) - (root.child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('reserved').exists() ? root.child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('reserved').val() : 0)) - ((newData.parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('released').exists() ? newData.parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('released').val() : 0) - (root.child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('released').exists() ? root.child('spend').child($day).child('runs').child(auth.token.fs).child(auth.token.fr).child('released').val() : 0))) && (newData.val() <= (data.exists() ? data.val() : 0) || !(root.child('config/mode').val() == 'enforce') || newData.val() <= (root.child('config/caps/repos').child($slug).child('dailyMicros').exists() ? root.child('config/caps/repos').child($slug).child('dailyMicros').val() : root.child('config/caps/defaults/repoDailyMicros').val()))"
+            },
+            "spent": {
+              ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+              ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= root.child('config/limits/maxReserveMicros').val()"
+            },
+            "notional": {
+              ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+              ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= root.child('config/limits/maxReserveMicros').val()"
+            },
+            "calls": {
+              ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+              ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= 10000"
+            },
+            "byModel": {
+              "$model": {
+                ".validate": "$model.length <= 100",
+                "micros": {
+                  ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+                  ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= root.child('config/limits/maxReserveMicros').val()"
+                },
+                "in": {
+                  ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+                  ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= 1000000000"
+                },
+                "out": {
+                  ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+                  ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= 1000000000"
+                },
+                "cr": {
+                  ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+                  ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= 1000000000"
+                },
+                "cw": {
+                  ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+                  ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= 1000000000"
+                }
+              }
+            }
+          }
+        },
+        "runs": {
+          "$slug": {
+            "$run": {
+              ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run) || (auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())",
+              "reserved": {
+                ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run) && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+                ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && (newData.val() == (data.exists() ? data.val() : 0) || ($day == ('' + ((now - now % 86400000) / 86400000)) && newData.val() - (data.exists() ? data.val() : 0) == ((newData.parent().parent().parent().parent().parent().parent().child('runs').child($slug).child($run).child('reserved').exists() ? newData.parent().parent().parent().parent().parent().parent().child('runs').child($slug).child($run).child('reserved').val() : 0) - (root.child('runs').child($slug).child($run).child('reserved').exists() ? root.child('runs').child($slug).child($run).child('reserved').val() : 0)))) && (((newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('repos').child($slug).child('counted').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('repos').child($slug).child('counted').val() : 0) - (root.child('spend').child($day).child('repos').child($slug).child('counted').exists() ? root.child('spend').child($day).child('repos').child($slug).child('counted').val() : 0)) == (((newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('reserved').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('reserved').val() : 0) - (root.child('spend').child($day).child('runs').child($slug).child($run).child('reserved').exists() ? root.child('spend').child($day).child('runs').child($slug).child($run).child('reserved').val() : 0)) - ((newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('released').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('released').val() : 0) - (root.child('spend').child($day).child('runs').child($slug).child($run).child('released').exists() ? root.child('spend').child($day).child('runs').child($slug).child($run).child('released').val() : 0))) && ((newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('global').child('counted').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('global').child('counted').val() : 0) - (root.child('spend').child($day).child('global').child('counted').exists() ? root.child('spend').child($day).child('global').child('counted').val() : 0)) == (((newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('reserved').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('reserved').val() : 0) - (root.child('spend').child($day).child('runs').child($slug).child($run).child('reserved').exists() ? root.child('spend').child($day).child('runs').child($slug).child($run).child('reserved').val() : 0)) - ((newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('released').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('released').val() : 0) - (root.child('spend').child($day).child('runs').child($slug).child($run).child('released').exists() ? root.child('spend').child($day).child('runs').child($slug).child($run).child('released').val() : 0))))"
+              },
+              "released": {
+                ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run) && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+                ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() + (newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('spent').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('spent').val() : 0) <= (newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('reserved').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('reserved').val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= ((newData.parent().parent().parent().parent().parent().parent().child('runs').child($slug).child($run).child('released').exists() ? newData.parent().parent().parent().parent().parent().parent().child('runs').child($slug).child($run).child('released').val() : 0) - (root.child('runs').child($slug).child($run).child('released').exists() ? root.child('runs').child($slug).child($run).child('released').val() : 0)) && (((newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('repos').child($slug).child('counted').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('repos').child($slug).child('counted').val() : 0) - (root.child('spend').child($day).child('repos').child($slug).child('counted').exists() ? root.child('spend').child($day).child('repos').child($slug).child('counted').val() : 0)) == (((newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('reserved').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('reserved').val() : 0) - (root.child('spend').child($day).child('runs').child($slug).child($run).child('reserved').exists() ? root.child('spend').child($day).child('runs').child($slug).child($run).child('reserved').val() : 0)) - ((newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('released').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('released').val() : 0) - (root.child('spend').child($day).child('runs').child($slug).child($run).child('released').exists() ? root.child('spend').child($day).child('runs').child($slug).child($run).child('released').val() : 0))) && ((newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('global').child('counted').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('global').child('counted').val() : 0) - (root.child('spend').child($day).child('global').child('counted').exists() ? root.child('spend').child($day).child('global').child('counted').val() : 0)) == (((newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('reserved').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('reserved').val() : 0) - (root.child('spend').child($day).child('runs').child($slug).child($run).child('reserved').exists() ? root.child('spend').child($day).child('runs').child($slug).child($run).child('reserved').val() : 0)) - ((newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('released').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('released').val() : 0) - (root.child('spend').child($day).child('runs').child($slug).child($run).child('released').exists() ? root.child('spend').child($day).child('runs').child($slug).child($run).child('released').val() : 0))))"
+              },
+              "spent": {
+                ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run) && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+                ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() + (newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('released').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('released').val() : 0) <= (newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('reserved').exists() ? newData.parent().parent().parent().parent().parent().parent().child('spend').child($day).child('runs').child($slug).child($run).child('reserved').val() : 0)"
+              }
+            }
+          }
+        }
+      }
+    },
+    "agents": {
+      "$slug": {
+        "$run": {
+          ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run)",
+          ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run)",
+          ".validate": "newData.hasChildren(['repo', 'requestedBy'])",
+          "repo": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "workflow": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "title": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "stage": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "verify": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "coder": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "reviewer": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "recipe": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "auth": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "prUrl": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "action": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "tokens": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000000000 && newData.val() % 1 == 0 && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "halted": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "round": {
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "startedAt": {
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "stageStartedAt": {
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "stageDeadline": {
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "updatedAt": {
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "spent": {
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "requestedBy": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "outcomes": {
+      "$day": {
+        "$slug": {
+          "$run": {
+            ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run) && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && !data.exists()",
+            ".validate": "newData.hasChildren(['status', 'requestedBy'])",
+            "status": {
+              ".validate": "newData.isString() && (newData.val() == 'succeeded' || newData.val() == 'failed' || newData.val() == 'halted' || newData.val() == 'cancelled' || newData.val() == 'infra_error' || newData.val() == 'none') && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+            },
+            "requestedBy": {
+              ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        }
+      }
+    },
+    "mailbox": {
+      "$mb": {
+        "inbox": {
+          "$msg": {
+            ".write": "((auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists()) && $mb == auth.uid) && newData.exists() && !data.exists()",
+            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac']) && $msg.length <= 100 && (((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'answer' ? newData.child('reply_to').exists() : true) && ((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'action' ? newData.child('action').exists() : true))",
+            "id": {
+              ".validate": "newData.isString() && newData.val().length <= 100 && newData.val() == $msg"
+            },
+            "sender": {
+              ".validate": "(newData.isString() && newData.val().length <= 200) && newData.val() == $mb"
+            },
+            "text": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 4096"
+            },
+            "at": {
+              ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0)"
+            },
+            "mac": {
+              ".validate": "(newData.isString() && newData.val().length == 64 && newData.val().matches(/^[0-9a-f]+$/))"
+            },
+            "agent": {
+              ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9._:-]+$/))"
+            },
+            "kind": {
+              ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action')"
+            },
+            "options": {
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'prompt' && newData.hasChildren()",
+              "$i": {
+                ".validate": "$i.matches(/^(0|1|2|3|4|5|6|7)$/) && newData.isString() && newData.val().length > 0 && newData.val().length <= 200"
+              }
+            },
+            "reply_to": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100 && ((newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'answer' || (newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action')"
+            },
+            "action": {
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
+              "id": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
+              },
+              "verb": {
+                ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')"
+              },
+              "target": {
+                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : ((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()))))",
+                "run": {
+                  ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 200 && newData.val().matches(/^[A-Za-z0-9_:][A-Za-z0-9._:-]*$/))"
+                },
+                "repo": {
+                  ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 200 && newData.val().matches(/^[A-Za-z0-9_][A-Za-z0-9._-]*\\/[A-Za-z0-9_][A-Za-z0-9._-]*$/))"
+                },
+                "pr": {
+                  ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() % 1 == 0 && newData.val() <= 9007199254740991"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "head_sha": {
+                ".validate": "(newData.isString() && newData.val().length > 0) && (newData.parent().child('verb').val() == 'merge' && newData.isString() && (newData.val().length == 40 || newData.val().length == 64) && newData.val().matches(/^[0-9a-f]+$/))"
+              },
+              "confirmation": {
+                ".validate": "newData.hasChildren(['id', 'at'])",
+                "id": {
+                  ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
+                },
+                "at": {
+                  ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0)"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "$other": {
+                ".validate": false
+              }
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "outbox": {
+          ".read": "((auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists()) && $mb == auth.uid)",
+          "$msg": {
+            ".write": "(auth != null && auth.token.mc != null && auth.token.mc == $mb) && newData.exists() && !data.exists()",
+            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac']) && $msg.length <= 100 && (((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'answer' ? newData.child('reply_to').exists() : true) && ((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'action' ? newData.child('action').exists() : true))",
+            "id": {
+              ".validate": "newData.isString() && newData.val().length <= 100 && newData.val() == $msg"
+            },
+            "sender": {
+              ".validate": "(newData.isString() && newData.val().length <= 200) && newData.val() == $mb"
+            },
+            "text": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 4096"
+            },
+            "at": {
+              ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0)"
+            },
+            "mac": {
+              ".validate": "(newData.isString() && newData.val().length == 64 && newData.val().matches(/^[0-9a-f]+$/))"
+            },
+            "agent": {
+              ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9._:-]+$/))"
+            },
+            "kind": {
+              ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action')"
+            },
+            "options": {
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'prompt' && newData.hasChildren()",
+              "$i": {
+                ".validate": "$i.matches(/^(0|1|2|3|4|5|6|7)$/) && newData.isString() && newData.val().length > 0 && newData.val().length <= 200"
+              }
+            },
+            "reply_to": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100 && ((newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'answer' || (newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action')"
+            },
+            "action": {
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
+              "id": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
+              },
+              "verb": {
+                ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')"
+              },
+              "target": {
+                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : ((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()))))",
+                "run": {
+                  ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 200 && newData.val().matches(/^[A-Za-z0-9_:][A-Za-z0-9._:-]*$/))"
+                },
+                "repo": {
+                  ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 200 && newData.val().matches(/^[A-Za-z0-9_][A-Za-z0-9._-]*\\/[A-Za-z0-9_][A-Za-z0-9._-]*$/))"
+                },
+                "pr": {
+                  ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() % 1 == 0 && newData.val() <= 9007199254740991"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "head_sha": {
+                ".validate": "(newData.isString() && newData.val().length > 0) && (newData.parent().child('verb').val() == 'merge' && newData.isString() && (newData.val().length == 40 || newData.val().length == 64) && newData.val().matches(/^[0-9a-f]+$/))"
+              },
+              "confirmation": {
+                ".validate": "newData.hasChildren(['id', 'at'])",
+                "id": {
+                  ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
+                },
+                "at": {
+                  ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0)"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "$other": {
+                ".validate": false
+              }
+            },
+            "acked": {
+              ".write": "((auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists()) && $mb == auth.uid) && newData.exists() && !data.exists()",
+              ".validate": "newData.isBoolean() && newData.val() == true && data.parent().exists()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "heartbeat": {
+          ".read": "((auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists()) && $mb == auth.uid)",
+          ".write": "(auth != null && auth.token.mc != null && auth.token.mc == $mb) && newData.exists()",
+          ".validate": "newData.hasChildren(['at', 'boot', 'mac'])",
+          "at": {
+            ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0)"
+          },
+          "boot": {
+            ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9._:-]+$/))"
+          },
+          "mac": {
+            ".validate": "(newData.isString() && newData.val().length == 64 && newData.val().matches(/^[0-9a-f]+$/))"
+          },
+          "agents": {
+            ".validate": "newData.hasChildren()",
+            "$i": {
+              ".validate": "$i.matches(/^(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31)$/) && newData.hasChildren(['id', 'name'])",
+              "id": {
+                ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9._:-]+$/))"
+              },
+              "name": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 64"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    }
+  }
+}
