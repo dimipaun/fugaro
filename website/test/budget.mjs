@@ -35,8 +35,8 @@
 // 1,515 bytes the site's own build moves with the checkout's git state: the changelog renders
 // each release file's "not yet released" state where `git tag --list` finds no tag
 // (`src/lib/changelog.mjs`), so a shallow checkout — `website-preview.yml`'s, and so the
-// deployed site's — builds 930,074 bytes where this repository's own clone, which carries the
-// tags, builds 928,559.
+// deployed site's — builds 930,068 bytes where this repository's own clone, which carries the
+// tags, builds 928,553.
 //
 //   - JavaScript per page: 49,860 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
@@ -71,7 +71,7 @@
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,162,593 bytes. Every file in `dist/` on that build summed to 930,074
+//   - Whole site: 1,162,585 bytes. Every file in `dist/` on that build summed to 930,068
 //     bytes (23 files: eleven pages, the script, the brand icons, the manifest and the two
 //     `fugaro watch` assets); × 1.25, rounded up. **It is the build with no tags** — the one
 //     the gates make, and the one the deployed site is — and the changelog page's own "not yet
@@ -119,8 +119,8 @@
 //   - **The security page was cut to three things** (the owner's brief of 2026-10-19), and the
 //     site figure of this build comes from it: the page rendered `SECURITY.md` byte for byte and
 //     now carries a seven-bullet summary, the document's own reporting section and a link to the
-//     policy. `dist/security/index.html` is 17,643 bytes where it was 65,490, which is
-//     **47,847 bytes off the site figure**, 977,921 → 930,074. The page weight and the script did
+//     policy. `dist/security/index.html` is 17,637 bytes where it was 65,490, which is
+//     **47,853 bytes off the site figure**, 977,921 → 930,068. The page weight and the script did
 //     not move: the page is not the docs hub, and it changes no file every page loads.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
@@ -575,7 +575,7 @@ test('the README budget lines are read strictly', () => {
 // site was in before the console's release, which the checkout no longer builds — and runs the
 // artifact gates over that copy, so the flag's two states are both held to the ceilings. A
 // derivation held to that copy would be the flag's own bytes rather than the site's: measured on
-// this build, **1,572 bytes smaller** at the site figure — 928,502 against the 930,074 below — the
+// this build, **1,572 bytes smaller** at the site figure — 928,496 against the 930,068 below — the
 // console option's markup on the three pages that render it (the console page's downloads
 // 1,100, Getting Started's option 386 and the homepage's call to action 86), and
 // nothing at all at the page weight. The direction is the flag's own: turning
@@ -634,8 +634,8 @@ export function derivationFailures(readme, measured) {
  * gates are running in, and one page of the site depends on that checkout's git state: the
  * changelog renders each release file's "not yet released" state where `git tag --list` finds no
  * tag (`src/lib/changelog.mjs`), which is every entry in a shallow checkout. So the same commit
- * builds to two different site figures — 930,074 bytes in a checkout with no tags, which is what
- * `.github/workflows/website-preview.yml`'s default checkout is, and 928,559 with the tags this
+ * builds to two different site figures — 930,068 bytes in a checkout with no tags, which is what
+ * `.github/workflows/website-preview.yml`'s default checkout is, and 928,553 with the tags this
  * repository's own clone carries, the 1,515-byte changelog page being the whole of the
  * difference. A README figure derived from either one is a figure the other environment refuses,
  * which is exactly what happened: `website-preview` could not deploy, because the derivation

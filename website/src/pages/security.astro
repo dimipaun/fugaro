@@ -196,13 +196,14 @@ const sourceHref = new URL(`blob/main/${securityDocument.source}`, `${site.facts
           set a credit limit on every key you give Fugaro.
         </li>
         {/* docs/design/desktop-console.md §3.4 and D2, D14: read-only by an exact-argv
-            allow-list, which is the whole fence; docs/mobile/README.md and the mobile plan's
-            P2.1: the four families the user claim may read, and the mailbox it may write. */}
+            allow-list, which is the whole fence; docs/mobile/reconciliation.md §4 (b1) and
+            docs/mobile/README.md (D112's answer, the plan's P2.1): the four families the user
+            claim may read, and the mailbox that is the phone's database surface. */}
         <li>
           <strong>Console and phone.</strong> The desktop console runs a fixed list of
           read-only <code>fugaro</code> commands and has no write path. The phone reads the
-          caps, spend and kill switches under a per-installation read grant, and writes only
-          its own mailbox.
+          caps, spend and kill switches under a user-claim read grant, and writes only its own
+          mailbox.
         </li>
         {/* SECURITY.md, "The assumption". */}
         <li>
