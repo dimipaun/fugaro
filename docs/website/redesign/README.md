@@ -288,8 +288,9 @@ here goes stale the way the byte budgets did before D192.
   is a quiet line inside a turn rather than a command block, because the reader did not type
   it. Item 5's screenshot is a separate task: this pull request leaves
   `[data-slot="watch-screenshot"]` right after the chat and commits **no image**, and
-  `website/test/home.mjs` holds that slot to being empty and the homepage to its one picture
-  (the wordmark). **The watch bar is a command block like every other one on the site, and the
+  `website/test/home.mjs` held that slot to being empty and the homepage to its one picture
+  (the wordmark) — **the state this file describes of that round**; the image landed in the
+  slot later, with the case rewritten to hold it there (the section on the screenshot below). **The watch bar is a command block like every other one on the site, and the
   control sits beside the command rather than above it** — which the third fix round made the
   rule for the whole site rather than this block's exception: `base.css` lays every
   `[data-copy]` block out as one reversed row (`flex-direction: row-reverse`, the command
@@ -355,9 +356,11 @@ here goes stale the way the byte budgets did before D192.
   - **the empty slot takes no page** (item 3b). `[data-slot="watch-screenshot"]` with no rule
     of its own was a box of blank page between the conversation and the command bar, which is
     the ~140 px the review measured. `.chat-shot:empty { display: none }` takes it out until
-    PR #622's image lands, and `chatSlotFailures` refuses a slot rule that gives it height,
-    padding, a border or a background, and requires the rule that will size the image
-    (`.chat-shot > img`) so that adding the image stays one line of markup.
+    PR #622's image lands — and it is kept now that the image is in the slot, because it is the
+    rule that keeps a placeholder from coming back — and `chatSlotFailures` refuses a slot rule
+    that gives it height, padding, a border or a background, and holds the rule that sizes the
+    image (`.chat-shot > img`) to scaling it: a width that is a percentage of the column and a
+    height that follows the file's ratio.
   - **How It Works has one left edge, and room under its title** (item 3d). The detail section
     carried `var(--space-md)` of inline padding of its own on top of `main`'s gutter, so "The
     run, step by step" and the five steps were 24 px right of the `h1` and of the flow between
@@ -496,7 +499,8 @@ here goes stale the way the byte budgets did before D192.
   rather than one, and the gap is why: a padding that doubled a gap *below* some width would be
   invisible to a check taken at the desktop width, so `homeRhythmFailures` reads the page at
   1280, 768 and 375, and a case plants a phone-only double padding and proves the check refuses
-  it at 375 and nowhere else. The watch slot is `display: none` until PR #622's image lands, and nothing
+  it at 375 and nowhere else. The watch slot is `display: none` while it is empty (the image has since
+  landed in it, with the same rule kept under it), and nothing
   overflows horizontally, the
   reader's bubble is 288 px at the right of the card
   and the agent's 463–557 px at the left. Below 35 rem the bubbles fill the column — the
@@ -533,5 +537,13 @@ existed is the picture the owner took. The markup declares the capture's logical
 sits under the whole conversation and nothing above the fold waits on it, and the `alt` is the gist of
 `fugaro-watch.txt` — the transcription ships as the text a reader gets when the picture does not.
 `website/test/home.mjs` holds all four (in the slot, a non-empty `alt`, the declared dimensions, and no
-external URL); whether the rendered page matches the owner's design is the owner's check (70a-70c, D190),
-as no gate here can see an image.
+external URL), and `website/test/base-styles.mjs`'s `chatSlotFailures` holds the sizing that makes it
+scale — a width that is a percentage of the column it sits in and a height that follows the file's own
+ratio, refused if either becomes a pixel count (the two planted cases). The rendered page was measured in
+a headless Chromium over the built site at 1280, 768 and 375: `scrollWidth` is the viewport's width at all
+three (no horizontal scroll, the picture being the page's own and nothing else overflowing), and the
+screenshot lays out at 750 x 228, 722 x 220 and 329 x 101 px — the column's width and the capture's ratio
+at each. Whether the rendered page matches the owner's design is the owner's check (70a-70c, D190), as no
+gate here can see an image: at 375 px the picture is a quarter of the width of the screen it captures, so
+its small print is not readable at that width and the transcription beside it is what a reader reads
+instead.
