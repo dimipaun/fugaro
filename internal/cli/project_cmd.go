@@ -112,19 +112,25 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"config/policy/repos children are removed too, shared node or not: a delete\n" +
 			"that failed on the shared node leaves them behind, and this is what clears\n" +
 			"them.\n\n" +
-			"Each repository some account's allow_data_to admits also gets a child under\n" +
+			"Each repository an account a profile names admits also gets a child under\n" +
 			"config/policy/repos/$slug, holding the NAMES of its admitted accounts and\n" +
-			"nothing else. The children are narrowed before the shared node and widened\n" +
-			"after it, so a publish that stops between the two writes leaves the\n" +
-			"installation tighter than the config asked, never looser. When the node this\n" +
-			"publish writes carries a member an older Fugaro refuses whole — a credentials\n" +
+			"nothing else: the accounts published are the ones some profile names,\n" +
+			"qualified by that profile's provider, so an account this config defines but\n" +
+			"no profile names admits nothing a run could read. The children are narrowed before the shared node and widened\n" +
+			"after it, so a publish that stops between the two writes leaves the installation tighter than the config asked, never looser.\n" +
+			"When the node this publish writes carries a member an older Fugaro refuses\n" +
+			"whole — a credentials\n" +
 			"block, or routing.claude.via: cascade — the diff warns: older launchers (and,\n" +
 			"for the cascade, older runner images) stop until they are upgraded.\n\n" +
-			"routing.claude is written where the operator writes it: this config. A publish\n" +
-			"refuses to drop an active route the config does not account for, and refuses\n" +
-			"a config that writes a routing block naming no Claude switch in the same\n" +
-			"state; --remove-routing is how the operator says the block goes away on\n" +
-			"purpose.",
+			"routing.claude is written where the operator writes it: this config. A\n" +
+			"publish refuses to drop an active route the config does not account for, and\n" +
+			"refuses to turn the credentials cascade off — a node carrying\n" +
+			"routing.claude.via: cascade with a config that names no Claude switch is\n" +
+			"refused with its own sentence, because the cascade is not a route: it decides\n" +
+			"which credential carries a Claude call, never where the call goes, and it is\n" +
+			"what hands a run the project's other credentials. A config that writes a\n" +
+			"routing block naming no Claude switch in the same state is refused too.\n" +
+			"--remove-routing is how the operator says the block goes away on purpose.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runProjectPolicyPublish(cmd, &o) },
 	}
@@ -1537,16 +1543,22 @@ func credentialsText(c *projectpolicy.Credentials) string {
 // The line names the requirement and not a version number: this binary has no
 // version to name (the release that carries the cascade decides that), and a
 // number written here would be a second place to keep in step with it.
+// skewWarning is the lines that tell the operator what publishing these
+// members costs, printed as part of the diff — so they are claims about the
+// node as it now is, and they are worded that way: the warning is read after
+// the write, and "before this publish" would be advice about a moment that has
+// already passed. What is still ahead is the next launch, which is what an
+// older reader refuses, so each line ends there.
 func skewWarning(p *projectpolicy.Policy) []string {
 	if p == nil {
 		return nil
 	}
 	var out []string
 	if p.Credentials != nil {
-		out = append(out, "  warning: this node carries a credentials member, which a Fugaro older than the one publishing it does not know: an older CLI refuses every launch and every publish of this project until it is upgraded — upgrade the CLI (and, for a project whose runs read the node, anything else that reads it) before this publish")
+		out = append(out, "  warning: this node now carries a credentials member, which a Fugaro older than the one publishing it does not know: an older CLI refuses every launch and every publish of this project until it is upgraded — upgrade the CLI (and, for a project whose runs read the node, anything else that reads it) before the next launch")
 	}
 	if p.Routing != nil && p.Routing.Claude != nil && p.Routing.Claude.ViaValue() == projectpolicy.RouteCascade {
-		out = append(out, "  warning: this node carries routing.claude.via: cascade, which a Fugaro older than the one publishing it refuses whole: an older CLI refuses every launch and every publish of this project, and an older runner halts every run it launches with that routing error — upgrade the CLI and the runner image before this publish")
+		out = append(out, "  warning: this node now carries routing.claude.via: cascade, which a Fugaro older than the one publishing it refuses whole: an older CLI refuses every launch and every publish of this project, and an older runner halts every run it launches with that routing error — upgrade the CLI and the runner image before the next launch")
 	}
 	return out
 }

@@ -532,15 +532,23 @@ func TestDocsReleaseChecklistNamesEveryPolicyVersion(t *testing.T) {
 //
 // Mutation (verified, run and restored): delete the admissions sentence from the
 // row — this fails naming the order; delete the warning sentence — it fails
-// naming the warning.
+// naming the warning; restore "an account's `allow_data_to` admits" in place of
+// "an account **a profile names** admits" — it fails naming the accounts that
+// are published (security review m-4: the row claimed every account's
+// allow_data_to publishes a child, and the code publishes the accounts some
+// profile names, which is narrower); delete the cascade-refusal clause — it
+// fails naming it (security review M-1's behaviour is described here too).
 func TestDocsProjectLayerSaysTheAdmissionsAndTheSkewWarning(t *testing.T) {
 	doc := readDoc(t, "docs/project-layer.md")
 	for _, want := range []string{
 		"`config/policy/repos/$slug` holding the **names** of its admitted accounts",
+		"each repository an account **a profile names** admits gets a child",
+		"an account the config defines but no profile names admits nothing a run reads",
 		"is written **before** the shared node while the widening half follows it",
 		"leaves the installation tighter than the config asked and never looser",
 		"The diff also **warns** when the node it wrote carries a member an older",
 		"`routing.claude.via: cascade`, which stops those **and**",
+		"refuses to **turn the credentials cascade off**",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/project-layer.md's publish row lacks %q: the row is where an operator reads what a publish writes and what it costs", want)
@@ -551,9 +559,12 @@ func TestDocsProjectLayerSaysTheAdmissionsAndTheSkewWarning(t *testing.T) {
 	help := newProjectPolicyPublishCmd().Long
 	for _, want := range []string{
 		"holding the NAMES of its admitted accounts",
+		"an account a profile names admits",
+		"an account this config defines but",
 		"narrowed before the shared node and widened",
 		"tighter than the config asked, never looser",
 		"the diff warns: older launchers",
+		"refuses to turn the credentials cascade off",
 	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("the publish command's help lacks %q: the help is what an operator reads before a publish", want)

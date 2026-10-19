@@ -414,6 +414,12 @@ func TestPolicyPublishRefusesToNarrowANodeItCannotRead(t *testing.T) {
 // Mutation (verified, run and restored): drop the skewWarning loop in
 // printPolicyDiff — the two cases fail; and print the lines unconditionally —
 // the third case fails.
+//
+// The lines are worded about the *next launch*, not "before this publish"
+// (security review m-5): they are printed after the write, so advice about the
+// publish itself is advice about a moment that has already passed. The
+// "before the next launch" assertion in each of the two cases pins the wording
+// (mutation: put "before this publish" back — both fail).
 func TestPolicyPublishWarnsBeforeTheMembersOlderReadersRefuse(t *testing.T) {
 	// The operator's own config writes the cascade switch (D150, O3), so this
 	// is the route by which a cascade reaches the node in this release.
@@ -422,7 +428,7 @@ func TestPolicyPublishWarnsBeforeTheMembersOlderReadersRefuse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v\n%s", err, out)
 	}
-	for _, want := range []string{"warning", "routing.claude.via: cascade", "upgrade the CLI", "runner image"} {
+	for _, want := range []string{"warning", "routing.claude.via: cascade", "upgrade the CLI", "runner image", "before the next launch"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the publish of a cascade switch does not warn with %q:\n%s", want, out)
 		}
@@ -440,7 +446,7 @@ func TestPolicyPublishWarnsBeforeTheMembersOlderReadersRefuse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v\n%s", err, out)
 	}
-	for _, want := range []string{"warning", "credentials member", "upgrade the CLI"} {
+	for _, want := range []string{"warning", "credentials member", "upgrade the CLI", "before the next launch"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the publish of a credentials member does not warn with %q:\n%s", want, out)
 		}
