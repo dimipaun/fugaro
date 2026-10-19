@@ -219,6 +219,19 @@ func providerOf(canonical string) string {
 	return head
 }
 
+// providerRequired is the refusal a profile that names no provider gets, in
+// the one place the sentence lives. validProfiles below is where the rule is
+// stated, but DeriveAccounts reaches an empty provider first on the publish
+// path it shares with `fugaro init` (internal/cli/project_cmd.go derives the
+// accounts block before the document is judged), so a profile naming
+// claude_accounts without a provider would otherwise be refused for the wrong
+// thing — the account's slug "is not a repository" — and the operator would
+// read a sentence about a repository instead of the field they left out. Both
+// callers say this one sentence.
+func providerRequired(at string) error {
+	return fmt.Errorf("%s.provider: a profile must name the provider it serves; there is no default (a Bitbucket profile never shares a project-wide credential)", at)
+}
+
 // validProfiles checks the profiles block of a node, entry by entry: the
 // default profile must be defined, every name a profile name, every profile
 // pin one provider (required, finding 4), its cpu/memory/timeout be a shape
@@ -237,19 +250,6 @@ func providerOf(canonical string) string {
 // its own exact allow_repos, every account covers every repository that list
 // admits, and no Anthropic API key is mounted beside them (design
 // project-named-oauth-tokens §4.1, D3 and D4).
-// providerRequired is the refusal a profile that names no provider gets, in
-// the one place the sentence lives. validProfiles is where the rule is stated,
-// but DeriveAccounts reaches an empty provider first on the publish path it
-// shares with `fugaro init` (internal/cli/project_cmd.go derives the accounts
-// block before the document is judged), so a profile naming claude_accounts
-// without a provider would otherwise be refused for the wrong thing — the
-// account's slug "is not a repository" — and the operator would read a
-// sentence about a repository instead of the field they left out. Both callers
-// say this one sentence.
-func providerRequired(at string) error {
-	return fmt.Errorf("%s.provider: a profile must name the provider it serves; there is no default (a Bitbucket profile never shares a project-wide credential)", at)
-}
-
 func validProfiles(profiles map[string]Profile, accounts map[string]Account) error {
 	if len(profiles) == 0 {
 		// A block that carries nothing defines nothing — not even the profile
