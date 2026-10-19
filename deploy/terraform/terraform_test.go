@@ -1152,7 +1152,7 @@ var (
 	// scanned the same way.
 	// The compute module's two roles and its build-submitter reference are on
 	// the allowlist knowingly: each is created by that module with a pinned
-	// permission list (TestComputeReaperRoleIsExactlySix and
+	// permission list (TestComputeReaperRoleIsExactlyFive and
 	// TestComputePreloadBuilderRoleAreExactlyTheBuild), and the
 	// build-submitter id is the installation's own role.
 	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|var\.build_submitter_role|google_project_iam_custom_role\.(launcher|build_submitter|token_minter|job_runner|reaper|preload_builder)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
@@ -1443,7 +1443,7 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 			}
 			// The compute module's two roles are the one knowing exception to
 			// the compute ban, and each is pinned to its exact permission
-			// list by TestComputeReaperRoleIsExactlySix and
+			// list by TestComputeReaperRoleIsExactlyFive and
 			// TestComputePreloadBuilderRoleAreExactlyTheBuild: the reaper ends
 			// Batch jobs and VMs and creates nothing, and the builder boots,
 			// reads, stops, images and deletes one VM. Neither reaches the
@@ -1519,16 +1519,24 @@ func permissionsOf(t *testing.T, path string, blk block) []string {
 	return perms
 }
 
-// The reaper's role is the SIX permissions the reaper's code uses, and
-// nothing else: list, get, cancel and delete a job, and list and delete an
-// instance. It carries no create permission of any kind, and the two built-in
-// roles Google's own pages name for the same calls -- batch.jobsEditor (which
-// also carries batch.jobs.create) and compute.instanceAdmin.v1 (which carries
-// the whole instance lifecycle, setMetadata included) -- are granted nowhere
-// in the tree.
-func TestComputeReaperRoleIsExactlySix(t *testing.T) {
+// The reaper's role is the FIVE permissions the reaper's code uses, and
+// nothing else: list, get and delete a job, and list and delete an instance.
+// It carries no create permission of any kind, and the two built-in roles
+// Google's own pages name for the same calls -- batch.jobsEditor (which also
+// carries batch.jobs.create) and compute.instanceAdmin.v1 (which carries the
+// whole instance lifecycle, setMetadata included) -- are granted nowhere in
+// the tree.
+//
+// It named six until 0.9.5, the sixth being batch.jobs.cancel. That is not a
+// permission Google defines -- the Batch API has jobs.create, jobs.delete,
+// jobs.get and jobs.list, which is what TestCustomRolePermissionsAreAllowed-
+// ByGoogle's snapshot says -- so the role could not be created at all and
+// --provision-batch was refused for it. It must not come back: the reaper's
+// package has no cancel action to emit either
+// (internal/backend/batch/reap.go), because a permission nothing uses is a
+// permission someone re-adds.
+func TestComputeReaperRoleIsExactlyFive(t *testing.T) {
 	want := []string{
-		"batch.jobs.cancel",
 		"batch.jobs.delete",
 		"batch.jobs.get",
 		"batch.jobs.list",
@@ -1556,7 +1564,7 @@ func TestComputeReaperRoleIsExactlySix(t *testing.T) {
 			grants++
 			if blk.name != "google_project_iam_member.reaper" ||
 				firstAttr(blk.body, "role") != "google_project_iam_custom_role.reaper.name" {
-				t.Errorf("%s: %s grants the reaper something other than its own six-permission role", path, blk.name)
+				t.Errorf("%s: %s grants the reaper something other than its own five-permission role", path, blk.name)
 			}
 		}
 	})
@@ -3097,16 +3105,14 @@ func loadPermissionSnapshot(t *testing.T) map[string]bool {
 // must be one Google allows in a custom role.
 func TestCustomRolePermissionsAreAllowedByGoogle(t *testing.T) {
 	// Known-invalid entries not fixed by this change, keyed "file|permission".
-	// The compute module is not part of the installation root's apply: it is
-	// applied only by fugaro init --provision-batch, which refuses before any
-	// cloud call while internal/cli's batchProvisionShipped is false (0.8.6;
-	// the reaper is redesigned for 0.9.0). Which permission its reaper needs
-	// to cancel a Batch job is that design call (Google lists
-	// batch.jobs.create/delete/get/list only). Remove the entry when the
-	// module is fixed: the test fails while it is stale.
-	knownInvalid := map[string]string{
-		"gcp/modules/compute/iam.tf|batch.jobs.cancel": "reaper role, compute module: --provision-batch refuses until 0.9.0 (batchProvisionShipped)",
-	}
+	// It is empty, and 0.9.5 is what emptied it: the compute module's reaper
+	// role named batch.jobs.cancel, which Google does not define (it lists
+	// batch.jobs.create/delete/get/list only), so the role could not be
+	// created and --provision-batch refused before any cloud call. The role
+	// is five permissions now and the reaper's queue deadline deletes. A new
+	// entry belongs here only with a reason and a task that removes it: the
+	// test fails while an entry is stale.
+	knownInvalid := map[string]string{}
 	usedKnown := map[string]bool{}
 	allowed := loadPermissionSnapshot(t)
 	if len(allowed) < 100 {
