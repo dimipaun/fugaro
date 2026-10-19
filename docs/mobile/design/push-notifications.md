@@ -590,7 +590,7 @@ app-data clear, and occasionally otherwise, and FCM reports a stale token back a
   Nothing in D165's flow — QR, typed code, delivery — ever sees the phone's registration token,
   so `fugaro pair` has nothing to write as a registration and **does not write the push node**
   (§3.4's table). *(Making the request node admit a bounded `token` field would be a rules
-  change — generation 4 — and the design does not ask for it: it would buy shape (a)'s
+  change — a later generation, not this one — and the design does not ask for it: it would buy shape (a)'s
   one-shot registration, which is stale for exactly the case that matters, at the price of a
   change to the one node whose "carries no secret" property D165's one-shotness rests on. The
   other reading, "the phone writes the token itself after pairing", is (c) below, and is
