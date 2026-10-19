@@ -9,61 +9,48 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 )
 
-// TestPlanRepoRefusesCloneWorkflow (0.7.0 safety fix round 2, review
-// finding: a plain `fugaro run --repo X --workflow W` launched from outside
-// the checkout, or from a stale checkout whose local fugaro.yaml no longer
-// says clone, decides clone only from the checkout, never reaching
-// checkCloneImageSince's launch-time refusal at all, so it would launch
-// against whatever job is actually deployed). Making it impossible for a
-// checkout: clone workflow's job to exist in the first place, while
-// cloneShipped is false, closes that gap: planRepo refuses before any
-// cloud call (DiscoverRepo, Readiness, Plan and Apply are never reached —
-// c, t and wd are nil here and would panic if touched), with the same
-// guidance checkCloneImageSince gives.
+// TestPlanRepoAcceptsCloneWorkflow: cloneShipped is true since 0.9.0, so
+// planRepo deploys a checkout: clone workflow's job the way it deploys any
+// other one. That is the whole assertion, and it is the flip's
+// enabled-state pin: while cloneShipped was false, planRepo refused at its
+// top — before DiscoverRepo, Readiness, Plan and Apply, and so before any
+// cloud call — which is what the nil c, t and wd below prove is no longer
+// reached. They are nil on purpose: planRepo panics on the way into
+// infra.DiscoverRepo with a nil *infra.Clients, and that panic is the
+// evidence that nothing refused first. A repository with a baked sibling is
+// covered too: the gate never named one, and now there is no gate.
 //
-// Mutation (run, restore): delete the `if !r.o.planOnly { if err :=
-// refuseClonesNotShipped(...); err != nil { return nil, err } }` block at
-// the top of planRepo — this test then fails with a nil pointer
-// dereference (infra.DiscoverRepo(ctx, nil, spec) is reached and panics on
-// the nil *infra.Clients), proving the refusal used to be what stopped
-// execution before any cloud call.
-func TestPlanRepoRefusesCloneWorkflow(t *testing.T) {
-	r := &initRun{o: &initOptions{}, w: io.Discard}
-	spec := infra.RepoSpec{Name: "acme/app", Workflows: map[string]infra.WorkflowSpec{
-		"app": {Name: "app", Checkout: config.CheckoutClone},
-	}}
-	_, _, err := r.planRepo(t.Context(), nil, nil, nil, spec, nil, infra.RepoRootOptions{}, true)
-	if err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want a refusal", err)
-	}
-	for _, want := range []string{
-		"fugaro init --repo refuses to deploy acme/app workflow app",
-		"checkout: clone's own runner side is not released yet",
-		"generic-tool plan Task 17",
-		"checkout: baked",
-		"fugaro 0.7.5",
+// Mutation (run, restore): set cloneShipped back to false in recipes_skew.go
+// — planRepo returns refuseClonesNotShipped's error instead of panicking, so
+// recover() comes back nil and the test fails. Deleting the gate outright
+// instead would fail it the other way, with the panic.
+func TestPlanRepoAcceptsCloneWorkflow(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		workflows map[string]infra.WorkflowSpec
+	}{
+		{"clone only", map[string]infra.WorkflowSpec{
+			"app": {Name: "app", Checkout: config.CheckoutClone},
+		}},
+		{"clone and a baked sibling", map[string]infra.WorkflowSpec{
+			"app": {Name: "app", Checkout: config.CheckoutClone},
+			"api": {Name: "api"},
+		}},
 	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("%v lacks %q", err, want)
-		}
-	}
-}
-
-// TestPlanRepoRefusalNamesOnlyTheCloneWorkflow: a repository with one
-// checkout: clone workflow and one baked sibling gets a refusal that names
-// only the clone workflow — the baked one is not blamed for anything.
-func TestPlanRepoRefusalNamesOnlyTheCloneWorkflow(t *testing.T) {
-	r := &initRun{o: &initOptions{}, w: io.Discard}
-	spec := infra.RepoSpec{Name: "acme/app", Workflows: map[string]infra.WorkflowSpec{
-		"app": {Name: "app", Checkout: config.CheckoutClone},
-		"api": {Name: "api"},
-	}}
-	_, _, err := r.planRepo(t.Context(), nil, nil, nil, spec, nil, infra.RepoRootOptions{}, true)
-	if err == nil || !strings.Contains(err.Error(), "workflow app") {
-		t.Fatalf("err = %v, want a refusal naming app", err)
-	}
-	if strings.Contains(err.Error(), "api") {
-		t.Errorf("refusal names the baked workflow too: %v", err)
+		t.Run(tc.name, func(t *testing.T) {
+			r := &initRun{o: &initOptions{}, w: io.Discard}
+			spec := infra.RepoSpec{Name: "acme/app", Workflows: tc.workflows}
+			defer func() {
+				rec := recover()
+				if rec == nil {
+					t.Fatal("want a panic reaching infra.DiscoverRepo with a nil *infra.Clients: something refused a checkout: clone workflow before the cloud call, which a shipped gate must not")
+				}
+				if err, ok := rec.(error); ok && strings.Contains(err.Error(), "checkout: clone's own runner side is not released yet") {
+					t.Fatalf("the disabled state's refusal is back: %v", err)
+				}
+			}()
+			_, _, _ = r.planRepo(t.Context(), nil, nil, nil, spec, nil, infra.RepoRootOptions{}, true)
+		})
 	}
 }
 
@@ -71,6 +58,9 @@ func TestPlanRepoRefusalNamesOnlyTheCloneWorkflow(t *testing.T) {
 // gate's own checks (DiscoverRepo and onward — nil c/t/wd here means
 // reaching them panics, which this test relies on to prove the refusal
 // was skipped, not that the rest of planRepo also works with nil clients).
+// The skip matters only while cloneShipped is false; it is kept because it
+// is what the flip-back depends on for a dry run, and because a plan-only
+// refusal would be a behavior change nobody asked for.
 func TestPlanRepoPlanOnlySkipsTheCloneRefusal(t *testing.T) {
 	r := &initRun{o: &initOptions{planOnly: true}, w: io.Discard}
 	spec := infra.RepoSpec{Name: "acme/app", Workflows: map[string]infra.WorkflowSpec{

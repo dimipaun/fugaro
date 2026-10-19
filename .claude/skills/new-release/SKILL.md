@@ -19,7 +19,7 @@ Procedure for one Fugaro release. Detail lives in `docs/release.md` (read it fir
 ## 1. Preflight
 
 - `git switch main && git fetch --prune --tags`; `git status --porcelain` must be empty and `main` must equal `origin/main`. Untracked files count and make `scripts/release.sh` refuse (an untracked `.claude/` did once): list them in `.git/info/exclude`, never commit someone else's files.
-- Main's checks (`test`, `terraform`, `rules`) green: `gh run list --branch main --limit 5`. The script waits for running ones.
+- Main's checks (`test`, `terraform`, `rules` and both console check runs, `console (ubuntu-latest)` and `console (macos-latest)`) green: `gh run list --branch main --limit 5`. The script waits for running ones. The console check runs exist on `main` only once `console` is merged into `main` and a push has run them; before that the gate refuses every tag, so do not release until they have run on main.
 - The version is the next semver after `git tag --list 'v*' --sort=-v:refname | head -1`. New features mean a minor bump (0.y.0), fixes only a patch; ask the user if unclear. Strict `X.Y.Z`, no `v`.
 - `gcpProjectFieldSince` in `internal/cli/init_fugaroyaml.go` must equal the first release containing the `gcp_project:` field (today `"0.4.0"`). If this release is that one, or the value is wrong, fix it in a PR and merge it BEFORE continuing.
 - Other checklist items of `docs/release.md` ("Before you tag"): `internal/pricing` `checkedAt`, tag protection and immutable releases (owner setting, only mention if unset).
@@ -27,7 +27,7 @@ Procedure for one Fugaro release. Detail lives in `docs/release.md` (read it fir
 ## 2. Highlights (required from 0.4.0)
 
 - Collect the changes: `git log vPREV..main --oneline` and `gh pr list --state merged --search "merged:>=<date of vPREV>" --limit 100`. Read the PRs, not just titles.
-- Write `docs/releases/vX.Y.Z.md` per `docs/releases/README.md`: 3 to 6 user-facing bullets, one sentence each, no commit-title echo, nothing internal-only (CI, tests, refactors). Add `### For operators` with ordered steps when a rollout order matters (shared config: upgrade CLIs and CI pins, rebuild images, then merge `gcp_project:`; `fugaro init --publish-config` is run by the user in their own terminal).
+- Write `docs/releases/vX.Y.Z.md` per `docs/releases/README.md`: 3 to 6 user-facing bullets, one sentence each, no commit-title echo, nothing internal-only (CI, tests, refactors). Add `### For operators` with ordered steps when a rollout order matters (shared config: upgrade CLIs and CI pins, rebuild images, then merge `gcp_project:`; `fugaro init --publish-config` is run by the user in their own terminal). Add `### Known limits` with what this release does not do, does not stop or leaves to a later one: a release ships with its known limits in its notes, so the section is written unless the release genuinely has none. Both sections are `###` and either may stand without the other; the website's changelog page renders them.
 - Branch, commit, push, open a PR; after the user's go-ahead, merge it (squash) once its checks pass; then `git switch main && git pull --ff-only`.
 
 ## 3. Dry run

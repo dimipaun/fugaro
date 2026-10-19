@@ -11,14 +11,19 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	// Aliased: this package's own tests already declare a local helper named
+	// config (managed_apply_test.go), so the import cannot take that name.
+	fugaroconfig "github.com/dimipaun/fugaro/internal/config"
 )
 
 // installationFixture is the installation root's golden tfvars (the one
 // scripts/gen-golden-plans.sh plans): the local config's profiles, and
 // nothing of any repository — the installation root never sees one.
 type installationFixture struct {
-	RunsBucket  string                       `json:"runs_bucket"`
-	ProjectJobs map[string]projectJobFixture `json:"project_jobs"`
+	RunsBucket     string                       `json:"runs_bucket"`
+	Project        string                       `json:"project"`
+	ProjectSecrets map[string]string            `json:"project_secrets"`
+	ProjectJobs    map[string]projectJobFixture `json:"project_jobs"`
 }
 
 // projectJobFixture is one project_jobs entry, as the fixture writes it.
@@ -38,11 +43,28 @@ type projectJobFixture struct {
 		Title      string `json:"title"`
 		Expression string `json:"expression"`
 	} `json:"token_condition"`
+	Env map[string]string `json:"env"`
+	// SecretEnv is the profile's mounts, by variable name, plus the account's
+	// token on the job that serves it: the logical secret name, which
+	// project_secrets resolves to the container Terraform deploys.
+	SecretEnv map[string]string `json:"secret_env"`
 }
 
 func installationGoldenFixture(t *testing.T) installationFixture {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "testdata", "installation-budget-job.tfvars.json"))
+	return readInstallationFixture(t, "installation-budget-job.tfvars.json")
+}
+
+// accountsGoldenFixture is the account axis's tfvars (the fixture
+// TestFirebaseTfvarsGolden writes with projectAccountJobSpec).
+func accountsGoldenFixture(t *testing.T) installationFixture {
+	t.Helper()
+	return readInstallationFixture(t, "installation-accounts.tfvars.json")
+}
+
+func readInstallationFixture(t *testing.T, name string) installationFixture {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "testdata", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,6 +171,276 @@ func TestGoldenInstallationHasOneProjectJobPerTriple(t *testing.T) {
 	}
 	if len(projectSAs) != len(f.ProjectJobs) {
 		t.Errorf("the plan creates %d project accounts for %d jobs: %v", len(projectSAs), len(f.ProjectJobs), slices.Sorted(maps.Keys(projectSAs)))
+	}
+}
+
+// jobEnvOf is a Cloud Run job resource's container environment by variable
+// name, and its secret references by variable name: the two halves the golden
+// plan writes (modules/project/job.tf's two dynamic env blocks).
+func jobEnvOf(t *testing.T, job ResourceChange) (plain, secret map[string]string) {
+	t.Helper()
+	plain, secret = map[string]string{}, map[string]string{}
+	tpl := objects(job.Change.After["template"])
+	if len(tpl) != 1 {
+		t.Fatalf("%s has %d templates, want one", job.Address, len(tpl))
+	}
+	for _, task := range objects(tpl[0]["template"]) {
+		for _, c := range objects(task["containers"]) {
+			for _, e := range objects(c["env"]) {
+				name := str(e["name"])
+				if name == "" {
+					t.Errorf("%s sets an environment variable with no name: %v", job.Address, e)
+					continue
+				}
+				if refs := objects(e["value_source"]); len(refs) == 1 {
+					for _, r := range objects(refs[0]["secret_key_ref"]) {
+						secret[name] = str(r["secret"])
+						if v := str(e["value"]); v != "" {
+							t.Errorf("%s sets %s both plainly (%q) and from a secret", job.Address, name, v)
+						}
+					}
+					continue
+				}
+				plain[name] = str(e["value"])
+			}
+		}
+	}
+	return plain, secret
+}
+
+// jobSecretVersion is the version the job's mount of that variable resolves,
+// and "" when the job mounts it as anything else.
+func jobSecretVersion(job ResourceChange, name string) string {
+	tpl := objects(job.Change.After["template"])
+	if len(tpl) != 1 {
+		return ""
+	}
+	for _, task := range objects(tpl[0]["template"]) {
+		for _, c := range objects(task["containers"]) {
+			for _, e := range objects(c["env"]) {
+				if str(e["name"]) != name {
+					continue
+				}
+				for _, ref := range objects(e["value_source"]) {
+					for _, r := range objects(ref["secret_key_ref"]) {
+						return str(r["version"])
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// The owner's ruling of 2026-10-17 (plan task 3.5 step 4): a shared job on the
+// github provider carries the GitHub App's ID in its environment — the ID is
+// not a secret, and the runner's github provider refuses to build without it
+// (internal/gitprov/providers), so a job that mounts the key and not the ID
+// fails every run it starts. The key stays a Secret Manager secret, and it is
+// mounted as one: no env value in the plan is key material.
+//
+// The fixture's own env is what internal/infra writes (ProjectJob.Env), and
+// the plan is what Terraform makes of it, so both sides are checked: a value
+// the Go code sets but the module drops would pass a fixture-only assertion.
+func TestProjectJobCarriesTheGitHubAppID(t *testing.T) {
+	f := installationGoldenFixture(t)
+	if len(f.ProjectJobs) == 0 {
+		t.Fatalf("the installation golden declares no project job: regenerate it as TestGoldenInstallationHasOneProjectJobPerTriple says")
+	}
+	p := goldenPlan(t, "installation")
+	seen := 0
+	for name, j := range f.ProjectJobs {
+		if j.Provider != "github" {
+			continue
+		}
+		seen++
+		id, ok := j.Env["FUGARO_GITHUB_APP_ID"]
+		if !ok || !appIDShape.MatchString(id) {
+			t.Errorf("the fixture's job %s carries FUGARO_GITHUB_APP_ID=%q, want the App's ID (1 to 20 digits): the runner's github provider refuses to start without it", name, id)
+		}
+		mod := `module.project["` + name + `"]`
+		plain, secret := jobEnvOf(t, resource(t, p, mod+".google_cloud_run_v2_job.this"))
+		if got := plain["FUGARO_GITHUB_APP_ID"]; got != id {
+			t.Errorf("%s deploys FUGARO_GITHUB_APP_ID=%q, want the fixture's %q", mod, got, id)
+		}
+		// The key is mounted from the project-wide container the installation
+		// module names (fugaro-project-<fugaro project>-github-app-key-<hash>),
+		// by reference — the ID is resolved at plan time and is not this
+		// test's to spell.
+		if got := secret["FUGARO_GITHUB_APP_PRIVATE_KEY"]; !strings.Contains(got, "github-app-key") {
+			t.Errorf("%s mounts the App key from %q, want a github-app-key secret container", mod, got)
+		}
+		// No value anywhere in the job is key material: the key is a secret
+		// reference and nothing else (design §12a item 7 — a key in a job's
+		// plain environment is a key Cloud Run hands to the console and to
+		// every reader of a job description).
+		for k, v := range plain {
+			if keyMaterial(v) {
+				t.Errorf("%s sets %s to what looks like key material: the App's private key is a Secret Manager secret, never an environment value", mod, k)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatalf("the installation golden has no github project job, so this pins nothing: %v", f.ProjectJobs)
+	}
+}
+
+// appIDShape is the GitHub App ID's shape (internal/infra's appIDRE and
+// internal/gitprov's own check): 1 to 20 digits.
+var appIDShape = regexp.MustCompile(`^[0-9]{1,20}$`)
+
+// keyMaterial reports whether s looks like a private key rather than an ID, a
+// URL or a path: the markers a PEM or a raw base64 body carries.
+func keyMaterial(s string) bool {
+	return strings.Contains(s, "PRIVATE KEY") || strings.Contains(s, "BEGIN RSA") ||
+		strings.Contains(s, "BEGIN EC") || strings.Contains(s, "BEGIN OPENSSH") ||
+		strings.Contains(s, "MIIE")
+}
+
+// The account axis's real plan (plan task 2; design §8, D5, D9): a
+// profile serving a named Claude account deploys a job of its own, and the one
+// token that job can read is its own account's — mounted as a secret reference
+// on that job, and granted to that job's service account alone.
+//
+// Three properties, and this is the only test that reads them off a real plan
+// of the real modules rather than a hand-written fixture:
+//
+//   - the mount: the account job's CLAUDE_CODE_OAUTH_TOKEN resolves to the
+//     container the account's own name derives, and the no-account job's to
+//     the project's default one (D5: the default account rides the job the
+//     profile already had), so a run in either job presents its own account
+//     and never the other's;
+//   - the grant follows the mount: each job's service account holds
+//     secretAccessor on exactly the containers its own secret_env names, and
+//     on no other. That is the one-token-one-job-account property — a token
+//     readable by two jobs is an account two jobs share — and it is the half
+//     the tftest cannot show, because this is the plan of the whole module;
+//   - and every change is a create: the rollout adds the account's job and
+//     replaces nothing of what the installation already runs (D9), which is
+//     why no existing installation's plan moves (the other goldens are
+//     byte-identical, which the generator's empty diff shows).
+func TestGoldenAccountJobMountsOnlyItsOwnToken(t *testing.T) {
+	f := accountsGoldenFixture(t)
+	if len(f.ProjectSecrets) == 0 {
+		t.Fatalf("the accounts fixture carries no project_secrets: regenerate it with go test ./internal/infra -run TestFirebaseTfvarsGolden -update")
+	}
+	// The fixture is the account axis: the no-account job the default account
+	// rides and the named account's own, and nothing else.
+	byAccount := map[string]string{}
+	for name, j := range f.ProjectJobs {
+		if prev, dup := byAccount[j.Account]; dup {
+			t.Fatalf("the fixture has two jobs for the account %q: %s and %s", j.Account, prev, name)
+		}
+		byAccount[j.Account] = name
+	}
+	defaultJob, accountJob := byAccount[""], byAccount["acme-personal"]
+	if len(f.ProjectJobs) != 2 || defaultJob == "" || accountJob == "" {
+		t.Fatalf("the accounts fixture's jobs are %v, want the no-account job and the acme-personal one", f.ProjectJobs)
+	}
+
+	p := goldenPlan(t, "installation-accounts")
+	// The container each account's token is deployed as, named by the one
+	// function that derives a secret name from an account: the mount is only
+	// as good as the secret behind it, so a container the fixture does not
+	// carry is a job that cannot start.
+	container := map[string]string{} // account -> the token container its job mounts
+	for _, account := range []string{"", "acme-personal"} {
+		logical := fugaroconfig.ClaudeAccountSecret(account)
+		want, ok := f.ProjectSecrets[logical]
+		if !ok {
+			t.Fatalf("project_secrets has no %q, so the account %q's token is not deployed: %v", logical, account, f.ProjectSecrets)
+		}
+		container[account] = want
+	}
+	for _, c := range []struct{ account, job string }{
+		{"", defaultJob},
+		{"acme-personal", accountJob},
+	} {
+		mod := `module.project["` + c.job + `"]`
+		j := f.ProjectJobs[c.job]
+		logical, want := fugaroconfig.ClaudeAccountSecret(c.account), container[c.account]
+		varName := fugaroconfig.ReservedSecrets[fugaroconfig.ClaudeOAuthToken]
+
+		// The mount, from the plan: the variable the runner reads, resolving
+		// to that container at latest. The fixture's own secret_env is checked
+		// too, because a value the Go code writes and the module drops would
+		// pass a plan-only assertion.
+		if got := j.SecretEnv[varName]; got != logical {
+			t.Errorf("the fixture's job %s mounts %s from %q, want its account %q's own %q",
+				c.job, varName, got, c.account, logical)
+		}
+		job := resource(t, p, mod+".google_cloud_run_v2_job.this")
+		_, secret := jobEnvOf(t, job)
+		if got := secret[varName]; got != want {
+			t.Errorf("%s mounts %s from %q, want the account %q's own container %q",
+				mod, varName, got, c.account, want)
+		}
+		// At latest, so a rotation of the account's token reaches the job
+		// without a plan: a pinned version would keep serving the token the
+		// account has replaced.
+		if got := jobSecretVersion(job, varName); got != "latest" {
+			t.Errorf("%s mounts %s at version %q, want latest", mod, varName, got)
+		}
+		// And never another account's: the two containers are the two
+		// accounts, and a job mounting the wrong one is a run presenting
+		// somebody else's account.
+		for _, other := range []string{"", "acme-personal"} {
+			if other == c.account {
+				continue
+			}
+			if got := secret[varName]; got == container[other] {
+				t.Errorf("%s mounts %s from %q, which is the account %q's token", mod, varName, got, other)
+			}
+		}
+
+		// The grant: the module's secret grants are exactly the containers
+		// this job mounts, each on the account's own member.
+		wantMember := "serviceAccount:" + j.ServiceAccount.AccountID + "@" + f.Project + ".iam.gserviceaccount.com"
+		wantGrants := map[string]bool{}
+		for _, l := range j.SecretEnv {
+			id, ok := f.ProjectSecrets[l]
+			if !ok {
+				t.Fatalf("the fixture's job %s mounts %q, which project_secrets does not name: %v", c.job, l, f.ProjectSecrets)
+			}
+			wantGrants[id] = true
+		}
+		gotGrants := map[string]string{}
+		for _, rc := range p.ResourceChanges {
+			if rc.Type != "google_secret_manager_secret_iam_member" || !strings.HasPrefix(rc.Address, mod+".") {
+				continue
+			}
+			if !slices.Equal(rc.Change.Actions, []string{"create"}) {
+				t.Errorf("%s: actions %v, want create", rc.Address, rc.Change.Actions)
+			}
+			if got := str(rc.Change.After["role"]); got != "roles/secretmanager.secretAccessor" {
+				t.Errorf("%s grants %q, want read-only secretAccessor", rc.Address, got)
+			}
+			if got := str(rc.Change.After["member"]); got != wantMember {
+				t.Errorf("%s grants to %q, want the job's own account %q", rc.Address, got, wantMember)
+			}
+			gotGrants[str(rc.Change.After["secret_id"])] = str(rc.Change.After["member"])
+		}
+		if got, want := slices.Sorted(maps.Keys(gotGrants)), slices.Sorted(maps.Keys(wantGrants)); !slices.Equal(got, want) {
+			t.Errorf("%s's secret grants are on %v, want exactly the containers its own mounts name, %v", mod, got, want)
+		}
+	}
+
+	// One token, one job, one account: the two jobs read different containers,
+	// so neither can present the other's account, and each account's container
+	// appears in exactly one module's grants.
+	if container[""] == container["acme-personal"] {
+		t.Errorf("both jobs mount the same token container %q: two accounts, one credential", container[""])
+	}
+	for _, c := range []struct{ account, job string }{{"", defaultJob}, {"acme-personal", accountJob}} {
+		mod := `module.project["` + c.job + `"]`
+		for _, rc := range p.ResourceChanges {
+			if rc.Type != "google_secret_manager_secret_iam_member" || strings.HasPrefix(rc.Address, mod+".") {
+				continue
+			}
+			if str(rc.Change.After["secret_id"]) == container[c.account] {
+				t.Errorf("%s grants a member on the account %q's token %q: one token belongs to one job", rc.Address, c.account, container[c.account])
+			}
+		}
 	}
 }
 

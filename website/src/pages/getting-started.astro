@@ -1,6 +1,7 @@
 ---
 /**
- * website/src/pages/getting-started.astro — getting started (website plan, Task W1.5).
+ * website/src/pages/getting-started.astro — getting started (website plan, Task W1.5;
+ * website redesign, part P4).
  *
  * Every sentence a reader acts on here is **rendered, not written**: the commands come
  * from `website/data/install.yaml` (W0.1), whose Go test pins each one to the file its
@@ -21,15 +22,24 @@
  *     from the commands that check it (finding 19).
  *   - **Windows is untested, and stated as untested** (D94, finding 20): the platform list
  *     renders the status `install.yaml` carries, and the Windows entry's own note — this
- *     repository builds no Windows binary, and the Linux archive may work through WSL but
- *     nobody has verified it — is a note rather than a platform a reader is offered. The
- *     page carries no support promise the release build does not make.
+ *     repository builds no Windows binary — is a note rather than a platform a reader is
+ *     offered. The page carries no support promise the release build does not make.
+ *
+ * **What the redesign took out (P4).** The page used to open with a paragraph about where
+ * its commands come from — `install.yaml`, the Go test, the three files that test holds it
+ * to — and every path carried "Commands as printed in <file>" and "Platforms: …" beside
+ * its commands. A reader who wants to install Fugaro needs none of that: the page now
+ * opens with the install paths themselves, each note says what the path is for, and the
+ * `README.md` in the source line at the top of each block is the whole of the citation
+ * (D186: a page must not explain why its own text exists). The facts are unchanged and
+ * still rendered from `install.yaml`; only the words around them went.
  *
  * Nothing here fetches: the page is built from the files in this repository, and the only
  * link it prints is the Releases page `install.yaml` names (Global Constraints 4 and 8).
  */
 import Base from '../layouts/Base.astro'
 import { loadSite } from '../content.ts'
+import { copyControlHTML } from '../lib/copy-control.mjs'
 
 // The whole generated layer, read and validated through the base layout's own call: a
 // missing install.yaml stops the build rather than rendering an empty install block
@@ -50,36 +60,26 @@ const platformNames = new Map(install.platforms.map((platform) => [platform.goos
 const platforms = install.platforms
 
 const nameOf = (id: string): string => platformNames.get(id) ?? id
+
+// The platforms a path is offered on, in the reader-facing names above: one line per path,
+// short enough to sit beside the citation rather than under it.
+const platformsOf = (ids: string[]): string => ids.map(nameOf).join(', ')
 ---
 
 <Base title="Getting started">
   <h1>Getting started</h1>
 
-  {/* The paragraph is one line on purpose: a line break between a word and an inline
-      element is whitespace a template drops, and "which<code>README.md</code>" is the kind
-      of defect a build cannot see. */}
-  <p>Every command on this page is rendered from <code>website/data/install.yaml</code>, which <code>internal/cli/docs_website_install_test.go</code> holds to <code>README.md</code>, <code>docs/release.md</code> and <code>.goreleaser.yaml</code>: the commands are the ones this repository prints, the platform list is the one its requirements and its release build describe, and the archive's name is the release configuration's own template. Nothing here is typed into this page.</p>
-
-  <section id="platforms">
-    <h2>Platforms</h2>
-    <p>The operating systems this repository builds for, and the one it does not:</p>
-    <ul>
-      {platforms.map((platform) => (
-        <li data-platform={platform.id} data-status={platform.status}>
-          <strong>{platform.name}</strong> — {platform.status}
-          {platform.note !== '' && <p class="note">{platform.note}</p>}
-        </li>
-      ))}
-    </ul>
-  </section>
+  <p>Install Fugaro on macOS or Linux: Homebrew, a release archive, cosign, Go, or the plugin.</p>
 
   <section id="install">
     <h2>Install</h2>
-    <p>
-      Each path below is one the repository offers, with the commands its own source prints.
-      Pick the one that suits the machine you are on; the plugin path is a step of the install
-      and not an extra, since the commands that drive a run come with it.
-    </p>
+
+    {/* The section opens with the paths themselves (P5): the first thing under the heading is
+        the first install path's own commands, and a reader who came for the command they run
+        meets it on the first screen rather than under a sentence about the page. The one
+        sentence the section carries — that the plugin is a step of the install and not an
+        extra — moves with the order and closes the section, after the paths it is about.
+        Its words are P4's and are unchanged: ordering is this part's, copy is not. */}
 
     {install.paths.map((installPath) => (
       <article data-path={installPath.id}>
@@ -89,19 +89,15 @@ const nameOf = (id: string): string => platformNames.get(id) ?? id
 
         {/* The line and the blocks below it are one fact: a path with no commands of its
             own — the release archive, whose facts are a page and a name template rather
-            than a command line — renders neither, because "commands as printed in
-            README.md" over an empty list tells a reader to read something that is not
-            there. install.yaml is allowed to carry a path with no commands, so the page
-            has to render that shape as well as the other one. */}
+            than a command line — renders neither, because "from README.md" over an empty
+            list tells a reader to read something that is not there. install.yaml is
+            allowed to carry a path with no commands, so the page has to render that shape
+            as well as the other one. */}
         {installPath.commands.length > 0 && (
           <p class="source">
-            Commands as printed in <code>{installPath.source}</code>{installPath.devOnly && ' — development only'}.
+            From <code>{installPath.source}</code>{installPath.devOnly && ' — development only'} · {platformsOf(installPath.platforms)}
           </p>
         )}
-
-        <p class="platforms">
-          Platforms: {installPath.platforms.map((id) => nameOf(id)).join(', ')}
-        </p>
 
         {installPath.releasePage !== '' && (
           <p class="release">
@@ -110,10 +106,27 @@ const nameOf = (id: string): string => platformNames.get(id) ?? id
         )}
 
         {installPath.commands.map((command) => (
-          <pre><code>{command}</code></pre>
+          <div class="command-block" data-copy>
+            <Fragment set:html={copyControlHTML('Copy the install command')} />
+            <pre><code>{command}</code></pre>
+          </div>
         ))}
       </article>
     ))}
+
+    <p>The plugin is a step of the install, not an extra: the commands that drive a run come with it.</p>
+  </section>
+
+  <section id="platforms">
+    <h2>Platforms</h2>
+    <ul>
+      {platforms.map((platform) => (
+        <li data-platform={platform.id} data-status={platform.status}>
+          <strong>{platform.name}</strong> — {platform.status}
+          {platform.note !== '' && <p class="note">{platform.note}</p>}
+        </li>
+      ))}
+    </ul>
   </section>
 
   <style>
@@ -141,8 +154,7 @@ const nameOf = (id: string): string => platformNames.get(id) ?? id
     }
 
     .note,
-    .source,
-    .platforms {
+    .source {
       color: var(--text-muted);
     }
   </style>

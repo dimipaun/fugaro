@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The gate every publishing workflow runs first (release.yml and images.yml):
-# the tag is a strict vX.Y.Z, its commit is reachable from origin/main, and the
-# GitHub Actions checks test, terraform and rules all succeeded on that commit.
+# the tag is a strict vX.Y.Z, its commit is reachable from origin/main, and
+# every GitHub Actions check in `names` below succeeded on that commit.
 # Needs: a full-history checkout, GH_TOKEN (checks: read), GITHUB_SHA,
 # GITHUB_REPOSITORY. Usage: scripts/release-gate.sh vX.Y.Z
 # Optional: GATE_WAIT_SECONDS=N (default 0: no waiting, as in the workflows)
@@ -25,7 +25,31 @@ fi
 wait_seconds=${GATE_WAIT_SECONDS:-0}
 poll_seconds=${GATE_POLL_SECONDS:-30}
 deadline=$(($(date +%s) + wait_seconds))
-names="test terraform rules"
+# names is the required-check set: what must be success on the tag's commit
+# and, in the identical_tree_checks fallback, on the pull request head whose
+# tree matches. An array, not a whitespace-split string, because two of the
+# names carry a space: the console job in .github/workflows/console-tests.yml
+# is a matrix over operating systems, and GitHub names each matrix leg's check
+# run "<job> (<values>)". The bare `console` is a check run on no commit, so
+# requiring it would make the gate look for a check it can never find -- and a
+# missing check is not a success -- refusing every tag in this repository, the
+# CLI-only releases included. Both legs are required, and check_state's own
+# rule (every completed run of the name must be successful) is what makes the
+# two platforms one requirement rather than two.
+# The console legs exist as check runs on `main` only once the `console`
+# branch (which brings console-tests.yml with this list) is merged into `main`
+# and a push has run that workflow: do not run this gate on a commit before it.
+#
+# The five `#   ` lines below are this list in prose, and
+# TestReleaseGateRequiresTheConsoleCheck reads both and asserts they name the
+# same set: keep them in step, one name per line, with no prose between the
+# last of them and the assignment (that adjacency is what the test reads).
+#   test
+#   terraform
+#   rules
+#   console (ubuntu-latest)
+#   console (macos-latest)
+names=("test" "terraform" "rules" "console (ubuntu-latest)" "console (macos-latest)")
 
 # check_state SHA NAME prints missing | cancelled | failed | pending | success
 # for the GitHub Actions runs named NAME on SHA. Only the GitHub Actions app
@@ -60,9 +84,10 @@ lookup_failed() {
 #     of that moment (pull_request jobs check out the merge ref), not on the
 #     head alone; that is accepted because the tree equals the merged result
 #     that became the target;
-#   - test, terraform and rules are all success on it, with the same strictness
-#     as on the target (a failed, cancelled, still running or missing run, or
-#     a check from another app, is never accepted).
+#   - every check in `names` (the same set the target is held to, the console
+#     matrix legs included) is success on it, with the same strictness as on
+#     the target (a failed, cancelled, still running or missing run, or a
+#     check from another app, is never accepted).
 # The commits/SHA/pulls listing needs no token on a public repository, so the
 # tag workflows may use this too (same rules); on a private repository without
 # pull-requests: read it fails, is noted, and the old behaviour remains. Only
@@ -82,7 +107,7 @@ identical_tree_checks() {
     head_tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$head_sha" --jq .tree.sha 2>/dev/null) || { lookup_failed "git commit $head_sha"; continue; }
     [ "$head_tree" = "$target_tree" ] || continue
     ok=1
-    for name in $names; do
+    for name in "${names[@]}"; do
       if ! st=$(check_state "$head_sha" "$name" 2>/dev/null); then
         lookup_failed "check-runs of $head_sha"
         ok=""
@@ -99,13 +124,18 @@ identical_tree_checks() {
 }
 
 while :; do
-  pending=""
-  for name in $names; do
+  # The first missing/running check is remembered as two variables rather than
+  # one "$name $state" string: a name may carry a space (the console matrix
+  # legs), so "${pending% *}" and "${pending#* }" would split it in the wrong
+  # place and print a name the workflow never reports.
+  pending_name=""
+  pending_state=""
+  for name in "${names[@]}"; do
     state=$(check_state "$GITHUB_SHA" "$name")
     case "$state" in
       success) ;;
       missing | pending | cancelled)
-        [ -n "$pending" ] || pending="$name $state"
+        [ -n "$pending_name" ] || { pending_name="$name"; pending_state="$state"; }
         ;;
       *)
         echo "::error::required check '$name' is $state on $GITHUB_SHA" >&2
@@ -113,18 +143,18 @@ while :; do
         ;;
     esac
   done
-  [ -n "$pending" ] || break
+  [ -n "$pending_name" ] || break
   # No conclusive failure on the target, only missing or running checks: a
   # release bump merged by squash has the tree its (green) pull request had.
   if identical_tree_checks; then
-    echo "using the checks of $used (identical tree): test, terraform and rules succeeded on the head of the pull request merged as $GITHUB_SHA"
+    echo "using the checks of $used (identical tree): ${names[*]} succeeded on the head of the pull request merged as $GITHUB_SHA"
     break
   fi
   if [ "$(date +%s)" -ge "$deadline" ]; then
-    echo "::error::required check '${pending% *}' is ${pending#* } on $GITHUB_SHA (if CI is still running, re-run this job when it is green)" >&2
+    echo "::error::required check '$pending_name' is $pending_state on $GITHUB_SHA (if CI is still running, re-run this job when it is green)" >&2
     exit 1
   fi
-  echo "still waiting: check '${pending% *}' is ${pending#* } on $GITHUB_SHA"
+  echo "still waiting: check '$pending_name' is $pending_state on $GITHUB_SHA"
   sleep "$poll_seconds"
 done
 echo "gate passed for $tag at $GITHUB_SHA"

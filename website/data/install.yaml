@@ -21,9 +21,11 @@ build:
 # The reader-facing platform list, and the whole of what the site says about
 # the operating systems a reader might be on (reconciliation D94). macOS and
 # Linux are supported. Windows is untested: this repository builds no Windows
-# binary, and the Linux archive may work through WSL, but nobody has verified
-# it. The list is rendered as written -- the Windows entry is a note and never
-# a platform a reader is offered.
+# binary, which is the whole of the Windows entry's note -- the redesign (P4)
+# cut the WSL sentence that used to follow it, because a guess about an
+# unverified route is not a fact this file can carry. The list is rendered as
+# written -- the Windows entry is a note and never a platform a reader is
+# offered.
 platforms:
   - id: macos
     name: macOS
@@ -38,8 +40,7 @@ platforms:
     goos: windows
     status: untested
     note: >-
-      Windows is untested: this repository builds no Windows binary. The Linux
-      archive may work through WSL, but nobody has verified it.
+      Windows is untested: this repository builds no Windows binary.
 
 paths:
   - id: homebrew
@@ -60,20 +61,15 @@ paths:
     name_template: "fugaro_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     extension: tar.gz
     note: >-
-      Download an archive from the Releases page (darwin and linux, amd64 and
-      arm64) and verify it with cosign. The site links the Releases page and
-      never builds a download URL: the archive's URL carries a version the
-      site does not know.
+      Download an archive for macOS or Linux (amd64 or arm64) and verify it
+      with cosign.
 
   - id: cosign
     name: Verify a release with cosign
     source: docs/release.md
     platforms: [darwin, linux]
     note: >-
-      The verification block docs/release.md prints, verbatim: download the
-      checksums, their signature bundle and the archive, verify the signature
-      that the release workflow attached to the tag, then check the archive
-      against the checksums -- one checksum line per platform.
+      Check the archive against the release's checksums and signature bundle.
     commands:
       - |-
         V=X.Y.Z
@@ -95,8 +91,8 @@ paths:
     platforms: [darwin, linux]
     dev_only: true
     note: >-
-      For development only: it builds a dev version with no release images and
-      no plugin pin.
+      For development only: a dev version with no release images and no plugin
+      pin.
     commands:
       - |-
         go install github.com/dimipaun/fugaro/cmd/fugaro@latest
@@ -106,12 +102,10 @@ paths:
     source: README.md
     platforms: [darwin, linux]
     note: >-
-      The plugin route README.md's "## Getting started" prints: fugaro init
-      wires the Fugaro plugin into the checkout's .claude/settings.json,
-      /fugaro:setup writes fugaro.yaml, a teammate who opens the folder and
-      trusts it gets the plugin installed, and fugaro upgrade --local repairs
-      it when the skills are not listed. The marketplace commands a person
-      runs inside Claude Code are not here: README.md does not print them.
+      fugaro init wires the plugin into the checkout's .claude/settings.json
+      and /fugaro:setup writes fugaro.yaml; a teammate who opens the folder
+      and trusts it gets the plugin too, and fugaro upgrade --local repairs it
+      when the skills are not listed.
     commands:
       - |-
         fugaro init

@@ -3,13 +3,19 @@ package cli
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/watch"
 )
 
 // The launcher's half of the project-centric job model (design §4.1, plan
@@ -28,9 +34,9 @@ import (
 // — and never from the local config's profiles: a launcher that resolved the
 // profile from anywhere else could launch a job the runner would then refuse
 // to place, halting every run of it. The profile's own provider and the Claude
-// account its mounts name are part of that name (plan task 3.2), and
-// config.ClaudeAccountOfSecrets is the one function both sides compute the
-// account with.
+// account it serves are part of that name (plan task 3.2), and
+// config.ProjectJobAccounts is the one function the deployer, the runner and
+// this launcher compute the account with.
 
 // launchProjectJob is the shared project job a launch runs on, and the two
 // things about it a launch needs.
@@ -86,30 +92,26 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 		// jobs exactly as it did.
 		return nil, nil
 	}
-	// A profile whose provider is Bitbucket has no shared job at all, and its
-	// selection cannot be honoured anywhere: internal/infra's ProjectJobs
-	// refuses to deploy one (a Bitbucket credential cannot be scoped to one
-	// project's repositories — the owner's ruling of 2026-10-15, D5 as
-	// amended), while projectpolicy accepts the profile and the publisher
-	// copies the local config's profiles as they are spelled. Computing the
-	// job's name from it anyway would launch the run at a job nothing
-	// deployed, and the 404 that comes back blames `fugaro init` for a
-	// refusal it made on purpose. Refused here instead — before the claim,
-	// before the token and before any Cloud Run call — because the
-	// per-repository fallback below would silently drop the profile the
-	// workflow selected, and the provider comparison that would take it is
-	// exactly what a Bitbucket repository does not fail.
-	if err := checkProjectJobProvider(profile, pr.Provider); err != nil {
-		return nil, err
-	}
 	// A project job serves exactly its profile's provider: the provider is an
 	// axis of the job's name, and the runner binds the run's slug — computed
 	// with the repository's own provider — against the job it runs on. A
-	// repository on another provider (design §4.5, D5 as amended, and
-	// internal/infra's ProjectJobs) stays on its per-repository job, decided
+	// repository on another provider stays on its per-repository job, decided
 	// here before any claim is taken or budget token minted.
+	//
+	// And a profile of a provider no shared job serves is no job at all, so a
+	// repository that selects one — its provider agrees with the profile's, and
+	// the runner is content because the policy defines the profile — stays on
+	// its per-repository job too. In phase 3 that is every Bitbucket profile:
+	// internal/infra's ProjectJobs skips one (a Bitbucket credential cannot be
+	// scoped to one project's repositories, the owner's ruling of 2026-10-15,
+	// so no shared job holds one), and infra.SharedJobProvider is the one place
+	// both sides read that fact. Without it this launch computed the name of a
+	// job no installation has, spent the claim and the budget token, and had
+	// Cloud Run answer 404 — the backend's missing job — for a repository that
+	// is supposed to keep the job it has always had (design §4.5, D5 as
+	// amended; docs/project-layer.md).
 	provider := e.repoProvider(spec.Repo, co)
-	if provider != pr.Provider {
+	if provider != pr.Provider || !infra.SharedJobProvider(pr.Provider) {
 		return nil, nil
 	}
 	// The repository must be admitted to the profile, not only to the
@@ -123,8 +125,15 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 	if err := profileAdmissionRefusal(p, profile, provider, spec.Repo); err != nil {
 		return nil, err
 	}
-	account, _ := config.ClaudeAccountOfSecrets(pr.Secrets)
-	if err := checkProjectJobAccount(profile, spec.OAuthToken, account); err != nil {
+	// The account axis of the job this launch targets: the profile's own job
+	// set decides whether the run's selection is one the profile serves, and
+	// the selected account is the job's (design §4.4). One function computes
+	// the set on all three sides — the deployer that built the jobs, the
+	// runner that matches CLOUD_RUN_JOB against their names, and this launcher
+	// (config.ProjectJobAccounts) — so a launch can only ever target a job the
+	// other two know.
+	account, err := projectJobAccountFor(profile, pr, spec.OAuthToken)
+	if err != nil {
 		return nil, err
 	}
 	// And a run whose own credential is an OAuth account cannot run here at
@@ -146,6 +155,66 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 	}, nil
 }
 
+// projectJobIndex places a run's Cloud Run job, for the readers that show it
+// (plan task 3.5 step 2: watch's JSON gains profile, provider and account
+// beside the job).
+//
+// The name a run's launch.json records is the only thing about the job anyone
+// wrote down, and it spells none of the three out. So the triple is *computed*
+// — every (profile, provider, account) the project's published policy defines,
+// with gcp.ProjectJobName, matched against the name — and never parsed out of
+// it (R2-5: derive truncates the readable part, profile names hold hyphens, an
+// api-key job's account segment is empty, and "fugaro-p-" is also the legacy
+// stem of an owner named "p", so a shape test would misread a per-repository
+// job as a project job).
+//
+// The document it is computed from is the *published policy*, which is the one
+// internal/runner matches CLOUD_RUN_JOB against (runner.ProjectJobOfPolicy is
+// that same function, so a reader and the runner cannot disagree), and not the
+// local config's profiles: a launcher's shared config drops them, and the jobs
+// were deployed from the policy in any case.
+//
+// The read is made once, when watch starts, and it never fails the command: a
+// project that has published no policy, or whose policy node cannot be read,
+// still gets its runs — each with the job its own launch.json records and
+// without the triple, which is what the JSON's absent fields say.
+type projectJobIndex struct {
+	p   *projectpolicy.Policy // the published policy; nil when there is none
+	err error                 // the read's error, kept for ref's own rule below
+}
+
+// newProjectJobIndex reads the published policy from the client watch already
+// holds. A read of the node is not a new credential and not a new connection:
+// the same database, the same read the launcher and the runner make.
+func newProjectJobIndex(ctx context.Context, db *rtdb.Client) *projectJobIndex {
+	p, found, err := projectpolicy.Read(ctx, db)
+	if err != nil {
+		return &projectJobIndex{err: err}
+	}
+	if !found {
+		return &projectJobIndex{}
+	}
+	return &projectJobIndex{p: p}
+}
+
+// ref is job as a watch row's job: the name, and the triple it was computed
+// from when the published policy defines it. A job the policy does not define
+// — a per-repository job, one of another installation, one a policy no longer
+// describes — keeps its name and nothing else, rather than a triple guessed
+// from its shape.
+func (i *projectJobIndex) ref(job string) watch.JobRef {
+	ref := watch.JobRef{Job: job}
+	if i == nil || i.err != nil || i.p == nil {
+		return ref
+	}
+	profile, provider, account, ok := runner.ProjectJobOfPolicy(i.p, job)
+	if !ok {
+		return ref
+	}
+	ref.Profile, ref.Provider, ref.Account = profile, provider, account
+	return ref
+}
+
 // repoProvider is repo's git provider kind as repoSlug resolves it: the local
 // config's entry first, then the checkout's fugaro.yaml (repoSlug has already
 // refused the two disagreeing by the time a launch gets here).
@@ -156,80 +225,72 @@ func (e *cloudEnv) repoProvider(repo string, co *config.Config) string {
 	return co.Git.Provider
 }
 
-// checkProjectJobProvider refuses a launch whose workflow selects a profile
-// whose provider is Bitbucket: such a profile is one `fugaro init` never
-// deploys, so a launch on it can only reach a job that does not exist.
+// projectJobAccountFor is the account axis of the job a launch on profile pr
+// targets: the run's own selection as the profile's job set spells it — a
+// named account is that account, and the default account and no selection at
+// all are both the empty account, which is the profile's no-account job
+// (projectJobAccount) — or a refusal when the profile serves no job for the
+// selection (checkProjectJobAccount).
 //
-// The rule is the deployer's (internal/infra's ProjectJobs: "a shared job never
-// serves bitbucket in phase 3"), and it is not the launcher's to restate: what
-// this checks is the one provider whose selection can never be honoured
-// anywhere, which the deployer's refusal and the profile's own provider axis
-// together make a fact about the document. A profile of any *other* provider
-// the repository disagrees with is kept on the repository's per-repository job
-// by the comparison beside this call; Bitbucket is the case that comparison
-// cannot catch, because a Bitbucket repository selecting a Bitbucket profile
-// has no mismatch to see.
-//
-// The alternative — falling back to the per-repository job — would run the
-// workflow while dropping the profile it selected, on the jobs the profile's
-// cpu, memory, timeout and secrets were meant to replace: the failure the
-// publisher's default-profile check refuses for a selection nobody defined
-// (internal/cli's buildProjectPolicy). The launch stops, before the claim and
-// before the token, as the account and OAuth refusals beside it do.
-func checkProjectJobProvider(profile, provider string) error {
-	if provider != gitprov.KindBitbucket {
-		return nil
+// The set it picks from is config.ProjectJobAccounts, the one function the
+// deployer built the deployed jobs with and the runner recomputes the names it
+// matches against with: a launch can therefore only ever target a job those
+// two know, which is what keeps a run from being started on a name nothing
+// deployed (a 404 that would blame `fugaro init` for a job it was never asked
+// for) or on a job the runner would refuse to place.
+func projectJobAccountFor(profile string, pr projectpolicy.Profile, selected string) (string, error) {
+	account := projectJobAccount(selected)
+	if slices.Contains(config.ProjectJobAccounts(pr.JobProfile), account) {
+		return account, nil
 	}
-	return userErr("the workflow selects the job profile %q, whose provider is bitbucket, and no shared project job can serve it: a Bitbucket credential cannot be scoped to one project's repositories (the owner's ruling of 2026-10-15, design §4.1, D5 as amended), so `fugaro init` refuses to deploy such a profile and Bitbucket repositories stay on their per-repository jobs. Make the profile a github one, or select no profile in this workflow",
-		profile)
+	return "", checkProjectJobAccount(profile, pr, selected)
 }
 
 // checkProjectJobAccount refuses a launch whose run selects a Claude account
-// the selected profile's job does not run as (plan task 3.4 step 1).
+// the selected profile serves no job for (plan task 3.4 step 1, design §4.4
+// row 5).
 //
 // On a per-repository job the account is part of the job's own name
 // (gcp.JobName with gcp.WorkflowVariant(workflow, token)), so a run that
 // selects an account is launched on the job that mounts that account's token.
 // A project job's account is fixed where the job is deployed: it is the
-// account segment of gcp.ProjectJobName, computed from the profile's secrets
-// (internal/infra's projectJobSecrets), and the container reads that account's
-// token, whatever the run's own task.json says. So a run that selects another
-// account would run — and be recorded, and be shown by `runs ls` — as an
-// account its own fugaro.yaml did not choose, and the credential the job holds
-// is not the one this launch's allow_data_to check was made for (that check
-// validates the selected name, agent.oauth_token or --token). The launch stops
-// instead, as the rest of this release's selections do: a repository that must
-// run as another account belongs on a profile that mounts it.
+// account segment of gcp.ProjectJobName, one job per (profile, provider,
+// account) (internal/infra's ProjectJobs), and that job's container holds that
+// account's token and no other, whatever the run's own task.json says. So a
+// run that selects an account the profile serves no job for would either run —
+// and be recorded, and be shown by `runs ls` — as an account its own
+// fugaro.yaml did not choose, or land on a job that holds no token at all; and
+// the credential the job holds is not the one this launch's allow_data_to
+// check was made for (that check validates the selected name,
+// agent.oauth_token or --token). The launch stops instead, as the rest of this
+// release's selections do: a repository that must run as another account
+// belongs on a profile that serves it.
 //
-// The two selections are compared the way the model spells them elsewhere: the
-// default account (config.DefaultClaudeAccount) and a profile that mounts no
-// Claude token at all are both the empty account — gcp.WorkflowVariant joins no
-// account segment for either, and the account axis of a job's name is empty for
-// both — so a run that selects nothing is not refused on an api-key or Vertex
-// installation for a token no job of it mounts.
-func checkProjectJobAccount(profile, selected, mounted string) error {
-	selected, mounted = projectJobAccount(selected), projectJobAccount(mounted)
-	if selected == mounted {
-		return nil
-	}
-	what := "mounts no Claude token, so its job runs as no account at all"
-	if mounted != "" {
-		what = fmt.Sprintf("mounts the Claude account %q, so its job runs as that account", mounted)
-	}
+// The selection is compared the way the model spells it everywhere: the
+// default account (config.DefaultClaudeAccount) and a profile that serves no
+// Claude account are both the empty account — the account axis of a job's name
+// is empty for both (config.ProjectJobAccounts) — so a run that selects
+// nothing is not refused on an api-key or Vertex installation for a token no
+// job of it mounts.
+func checkProjectJobAccount(profile string, pr projectpolicy.Profile, selected string) error {
 	chose := "the default Claude account"
 	if selected != "" {
 		chose = fmt.Sprintf("the Claude account %q", selected)
 	}
-	return userErr("this run selects %s, and the job profile %q %s: a project job's Claude account is fixed where the job is deployed — it is the account segment of the job's own name, computed from the profile's secrets — and its container reads that account's token, so a run on it cannot run as another account, and the credential the job holds is not the one this launch's allow_data_to check was made for. The launch stops rather than running this repository's work as an account its own fugaro.yaml did not choose: name the profile's account in the repository's fugaro.yaml (agent.oauth_token), or run the repository on a profile that mounts the account it selects",
-		chose, profile, what)
+	serves := "serves no Claude account"
+	if n := len(pr.ClaudeAccounts); n > 0 {
+		serves = fmt.Sprintf("serves the Claude accounts %s", strings.Join(pr.ClaudeAccounts, ", "))
+	}
+	return userErr("this run selects %s, and the job profile %q %s: a project job's Claude account is fixed where the job is deployed — one job per (profile, provider, account), the account segment of the job's own name, and its container holds that account's token and no other — so a launch cannot run this repository's work as an account the profile serves no job for, and the credential the job holds is not the one this launch's allow_data_to check was made for. The launch stops rather than running this repository's work as an account its own fugaro.yaml did not choose: name an account the profile serves in the repository's fugaro.yaml (agent.oauth_token), or run the repository on a profile that serves the account it selects",
+		chose, profile, serves)
 }
 
 // projectJobAccount is a Claude account name as a job's account axis spells it:
 // the default account and no account at all are both "". They are one selection
 // everywhere the axis is computed — gcp.WorkflowVariant joins no segment for
-// either, and internal/infra's projectJobSecrets reports "" for a profile that
-// mounts no Claude token — so a comparison of two accounts is a comparison of
-// what each names beyond the default.
+// either, and config.ProjectJobAccounts spells the default account as the empty
+// one because it rides the profile's no-account job — so a comparison of two
+// accounts is a comparison of what each names beyond the default.
 func projectJobAccount(name string) string {
 	if name == config.DefaultClaudeAccount {
 		return ""

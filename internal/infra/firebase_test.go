@@ -67,13 +67,28 @@ func TestFirebaseTfvarsGolden(t *testing.T) {
 	// plan its script makes hold project jobs (plan task 3.2 step 5): one
 	// job and one job service account per (profile, provider, account), and
 	// no repository ever reaches this root.
-	for name, deploy := range map[string]bool{"installation-budget.tfvars.json": false, "installation-budget-job.tfvars.json": true} {
-		spec := installationSpecWith(t, projectProfilesLCBlock)
+	//
+	// The third is the account axis's (plan task 2): one profile serving a
+	// named Claude account beside the default one, so the fixture and its
+	// golden plan hold an account job whose token is a secret mount. It is a
+	// fixture of its own, and not a case of the second, so that the two plans
+	// every existing installation is deploying stay byte for byte what they
+	// were: this change adds jobs and replaces none (D9).
+	for _, c := range []struct {
+		name   string
+		deploy bool
+		spec   func(*testing.T) InstallationSpec
+	}{
+		{"installation-budget.tfvars.json", false, projectJobSpec},
+		{"installation-budget-job.tfvars.json", true, projectJobSpec},
+		{"installation-accounts.tfvars.json", true, projectAccountJobSpec},
+	} {
+		spec := c.spec(t)
 		h, err := History(parseLC(t, m4LocalConfig+m5Additions))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if deploy {
+		if c.deploy {
 			h.DeployJob, h.FirebaseProject, h.RTDBURL = true, "aurora-fp", "https://aurora-fp-default-rtdb.firebaseio.com"
 		}
 		spec.EnableBudget, spec.History = true, &h
@@ -81,7 +96,7 @@ func TestFirebaseTfvarsGolden(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		checkGolden(t, name, data)
+		checkGolden(t, c.name, data)
 	}
 }
 

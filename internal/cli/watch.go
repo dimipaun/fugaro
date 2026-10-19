@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"io"
+	"maps"
 	"os"
 	"slices"
 	"time"
@@ -65,6 +66,14 @@ type WatchDeps struct {
 	// doesn't set it either: its own ls-based listing already shows
 	// pending, launching and finished runs).
 	Queued func() ([]watch.QueuedRun, []watch.FinishedRun, string)
+	// Facts is the Cloud Run job each run is in — and the (profile,
+	// provider, account) that job's name was computed from, when the
+	// project's published policy defines it (plan task 3.5 step 2) — and who
+	// started each run, read fresh on every frame like Queued, and nil in
+	// degraded mode, which reads no bucket and so has no launch.json to take
+	// either from. A run it does not name keeps the empty fields the JSON
+	// omits.
+	Facts func() watch.Facts
 	// Filter bounds which finished rows the interactive and plain views
 	// show (design generic-tool §10.3); --json stays unfiltered.
 	Filter watch.Filter
@@ -239,16 +248,24 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 		// there is one; nothing here ever holds a credential of its own.
 		PRState: watch.NewPRState(watch.PRStateOptions{Disabled: o.noPRState})}
 
+	// The published policy, read once: it is what turns the job name a run's
+	// launch.json records into the (profile, provider, account) the job was
+	// deployed from. It is read here, where the database is already open and
+	// the credentials are already found, and a project that has published no
+	// policy — or whose node cannot be read — still gets its runs, each with
+	// the job and without the triple.
+	index := newProjectJobIndex(ctx, db)
 	if o.once {
-		rows, finished, note := fetchQueuedOnce(ctx, lc, o.repo)
+		rows, finished, facts, note := fetchQueuedOnce(ctx, lc, o.repo, index)
 		d.Queued = func() ([]watch.QueuedRun, []watch.FinishedRun, string) { return rows, finished, note }
+		d.Facts = func() watch.Facts { return facts }
 		return watchOnce(ctx, d, o)
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	qsrc := startQueuedSource(ctx, lc, o.repo)
+	qsrc := startQueuedSource(ctx, lc, o.repo, index)
 	defer qsrc.Wait() // never return while its goroutine might still be running
 	defer cancel()    // runs before Wait (LIFO): cancellation always precedes the wait
-	d.Queued = qsrc.Get
+	d.Queued, d.Facts = qsrc.Get, qsrc.Facts
 	sup := watch.Start(ctx, db, watch.Options{Poll: o.poll, Interval: o.interval})
 	d.Sup = sup
 	if !o.json && !o.plain && stdinIsTerminal(d.In) && watchStdoutTTY(d.Out) {
@@ -360,6 +377,9 @@ func watchOnce(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 		v = watch.MergeQueued(v, d.Config, rows, note, now)
 		v = watch.MergeFinished(v, d.Config, finished, now)
 	}
+	if d.Facts != nil {
+		v = watch.MergeFacts(v, d.Facts())
+	}
 	return d.emit(o, v, false)
 }
 
@@ -381,6 +401,7 @@ func watchStream(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 	var lastQueued []watch.QueuedRun
 	var lastFinished []watch.FinishedRun
 	var lastQueuedNote string
+	var lastFacts watch.Facts
 	var lastPR uint64
 	dirty := false
 	for {
@@ -413,6 +434,16 @@ func watchStream(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 			}
 			v = watch.MergeQueued(v, d.Config, rows, note, u.Now)
 			v = watch.MergeFinished(v, d.Config, finished, u.Now)
+		}
+		if d.Facts != nil {
+			// A run that started between two scans gains its job and its
+			// launcher a scan later, with no change to any row: the map is
+			// part of what a frame says, so it is part of what makes one.
+			facts := d.Facts()
+			if !maps.Equal(facts, lastFacts) {
+				dirty, lastFacts = true, facts
+			}
+			v = watch.MergeFacts(v, facts)
 		}
 		if !last.IsZero() && v.Conn.Kind != lastConn {
 			dirty = true

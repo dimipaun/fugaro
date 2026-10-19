@@ -54,9 +54,9 @@ type projectJob struct {
 }
 
 // projectJobOf is the fixture's own project job: the default profile, serving
-// github, running as no Claude account — the profile mounts no token, so its
-// job's account segment is empty (config.ClaudeAccountOfSecrets) — on the
-// fixture's repository.
+// github, running as no Claude account — the profile lists none, so the axis
+// config.ProjectJobAccounts computes for it is the empty account alone — on
+// the fixture's repository.
 func projectJobOf() projectJob {
 	return projectJob{profile: projectpolicy.DefaultProfileName, provider: "github", slugRepo: "acme/app"}
 }
@@ -142,7 +142,7 @@ func projectPolicyFor(project, profile string) string {
 	if profile != "" {
 		own = `,"allow_repos":` + profile
 	}
-	return `{"version":2,"allow_repos":` + project + `,"profiles":{"standard":{"provider":"github"` +
+	return `{"version":3,"allow_repos":` + project + `,"profiles":{"standard":{"provider":"github"` +
 		own + `,` + profileShape + `}}}`
 }
 
@@ -154,7 +154,7 @@ func projectPolicyFor(project, profile string) string {
 // one (projectpolicy's CloneURLs) — so the fixture publishes what a real
 // publish publishes.
 func projectPolicyCloning(project, url string) string {
-	return `{"version":2,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
+	return `{"version":3,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
 		`"profiles":{"standard":{"provider":"github",` + profileShape + `}}}`
 }
 

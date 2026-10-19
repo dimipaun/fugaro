@@ -117,22 +117,63 @@ func classified(err error) error {
 // guards exactly this directory at the repository root.
 const WorkflowDir = ".github/workflows/"
 
-// The check is the net diff since the merge base, which has two blind
-// spots, both left to GitHub's own refusal: a follow-up that rebases
-// commits from before its start can attribute a person's workflow commit
-// to the run, and a workflow file added and removed within the run passes.
+// workflowRoot is WorkflowDir as a path, for the pathspec and the filter
+// that name it: no trailing slash, so a change *at* the directory — a
+// symlink or a submodule (a gitlink) standing where it was, which takes
+// the directory and everything under it out of the tree — is reported too.
+// A trailing-slash pathspec leaves a symlink out (git resolves it as a
+// directory only in the revision it is asked about), and the name filter
+// below, which wants the slash, would drop the path anyway.
+const workflowRoot = ".github/workflows"
+
+// The check reads every commit of the range, not the net diff at its ends,
+// so a workflow file an early commit changed and a later one put back still
+// counts. A merge counts for what its own tree changes against every one of
+// its parents (git log -c): a clean merge of the base branch changes nothing
+// the base did not, and a change made only in a merge — an evil merge, a
+// conflict resolution — is the run's.
 //
+// The checkout's refs and configuration are the agent's, so nothing it can
+// set decides what is read: every commit of the range is walked whatever
+// the paths (--full-history: by default git log drops the side of a merge
+// that leaves the paths as one parent had them, so a commit behind a
+// `merge -s ours` would go unread), a root commit is diffed against the
+// empty tree whatever log.showRoot says, a submodule standing at the
+// directory is reported whatever diff.ignoreSubmodules says, refs/replace/
+// cannot stand a harmless commit in for the one that is pushed, and the
+// directory is matched without regard to case (a case variant is refused
+// rather than argued about: no real repository needs one).
 // WorkflowFiles lists, sorted, the files under .github/workflows/ that the
-// commits since changed: since...HEAD, the changes on HEAD's side of their
-// merge base. since is origin/<base> for a first run and the commit a
-// follow-up started from, so a workflow edit a person made earlier on the
-// branch is not this run's. It is what GitHub refuses to take from an App
-// without the `workflows` permission.
+// commits since changed. since is the commit the run was cut from — the
+// task's ref as bootstrap read it for a first run, the commit a follow-up
+// started from — so a workflow edit a person made earlier on the branch, or
+// a workflow file the branch already carried, is not this run's. It is what
+// GitHub refuses to take from an App without the `workflows` permission.
 func (r *Repo) WorkflowFiles(ctx context.Context, since string) ([]string, error) {
-	return r.workflowFilesIn(ctx, since, "HEAD")
+	return r.workflowFiles(ctx, since, "HEAD", "")
 }
 
-// WorkflowFilesIn is WorkflowFiles for the commits since...until, until
+// WorkflowFilesExcept is WorkflowFiles under one more bound: the commits
+// except — the base branch — does not have either. Each bound alone is
+// wrong in a way the other fixes.
+//
+// The commit the run was cut from is the only one that says what the run
+// did: the base branch is another branch whenever the run started from one
+// (--ref console with base_branch main), and measured against main a run
+// cut from console looks like it added every workflow file console already
+// carried, so its push was refused for files it never touched.
+//
+// The base branch is the only one that leaves out its own commits: a base
+// the agent rebased or merged into the branch carries them, and against the
+// commit the run was cut from alone they look like the run's. except is a
+// ref the agent's own git could repoint, so it can only ever make the list
+// shorter; when it cannot be read the list falls back to the since side
+// alone, which reports more rather than nothing.
+func (r *Repo) WorkflowFilesExcept(ctx context.Context, since, except string) ([]string, error) {
+	return r.workflowFiles(ctx, since, "HEAD", except)
+}
+
+// WorkflowFilesIn is WorkflowFiles for the commits since..until, until
 // being any commit rather than HEAD: a checkpoint checks the exact commit
 // it pushes. until must be a full commit SHA and since a full SHA or a
 // plain ref name (see checkRange), so neither can be read as an option or
@@ -141,21 +182,63 @@ func (r *Repo) WorkflowFilesIn(ctx context.Context, since, until string) ([]stri
 	if err := checkRange(since, until); err != nil {
 		return nil, err
 	}
-	return r.workflowFilesIn(ctx, since, until)
+	return r.workflowFiles(ctx, since, until, "")
 }
 
-func (r *Repo) workflowFilesIn(ctx context.Context, since, until string) ([]string, error) {
-	out, err := r.gitRaw(ctx, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--end-of-options", since+"..."+until, "--", WorkflowDir)
-	if err != nil {
+// WorkflowFilesInExcept is WorkflowFilesExcept over since..until, until
+// being any commit rather than HEAD: a checkpoint checks the exact commit
+// it pushes, which the agent may have moved HEAD away from since (see
+// WorkflowFilesIn).
+func (r *Repo) WorkflowFilesInExcept(ctx context.Context, since, except, until string) ([]string, error) {
+	if err := checkRange(since, until); err != nil {
 		return nil, err
 	}
+	if err := checkRange(except, until); err != nil {
+		return nil, err
+	}
+	return r.workflowFiles(ctx, since, until, except)
+}
+
+// workflowFiles lists, sorted and without duplicates, the files under
+// .github/workflows/ (in any case) changed by the commits of since..until
+// that except — when it names a revision — does not have, a merge for what
+// it changes against all of its parents.
+func (r *Repo) workflowFiles(ctx context.Context, since, until, except string) ([]string, error) {
+	revs := []string{"--no-replace-objects", "log", "--format=", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv",
+		"-c", "--full-history", "--root", "--ignore-submodules=none", "--end-of-options", since + ".." + until}
+	if except != "" {
+		revs = append(revs, "^"+except)
+	}
+	revs = append(revs, "--", ":(icase)"+workflowRoot)
+	out, err := r.gitRaw(ctx, revs...)
+	if err != nil {
+		if except == "" {
+			return nil, err
+		}
+		// The base branch could not be read: report what the run's own base
+		// alone says rather than nothing (the guard fails closed either way,
+		// but this is also what the guard did before it knew about the base
+		// branch's own commits).
+		return r.workflowFiles(ctx, since, until, "")
+	}
+	seen := make(map[string]bool)
 	var files []string
 	for _, f := range strings.Split(string(out), "\x00") {
-		if strings.HasPrefix(f, WorkflowDir) {
+		if !strings.EqualFold(f, workflowRoot) && !hasPrefixFold(f, WorkflowDir) {
+			continue
+		}
+		if !seen[f] {
+			seen[f] = true
 			files = append(files, f)
 		}
 	}
-	return files, nil // git lists paths in sorted order
+	slices.Sort(files) // a commit's own files come sorted, the commits do not
+	return files, nil
+}
+
+// hasPrefixFold is strings.HasPrefix without regard to ASCII case.
+func hasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
 }
 
 // MaxBundleBytes caps the bundle of a run's work that is saved.

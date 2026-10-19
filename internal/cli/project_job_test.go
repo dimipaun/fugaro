@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -44,9 +47,9 @@ type projectJobFixture struct {
 
 // projectJobPolicy is the policy the fixture publishes: the standard profile
 // serving github, and every repository of the fixture's owner admitted to it.
-// The profile mounts no secret, so its job runs as no Claude account and the
-// job's account segment is empty (config.ClaudeAccountOfSecrets).
-const projectJobPolicy = `{"version":2,"allow_repos":["github/acme/*"],` +
+// The profile lists no Claude account, so its job runs as no account and the
+// job's account segment is empty (config.ProjectJobAccounts).
+const projectJobPolicy = `{"version":3,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
 
 // projectJobTimeout is the profile's task timeout: what a project job's
@@ -510,6 +513,59 @@ func TestLaunchRefusesAnAccountTheProfileDoesNotMount(t *testing.T) {
 	}
 }
 
+// TestLauncherAccountDerivationSharedFunction: the launcher's account axis is
+// the profile's own job set, config.ProjectJobAccounts — the function
+// internal/infra built the deployed jobs with and internal/runner recomputes
+// the names it matches CLOUD_RUN_JOB against — spelled the way a launch
+// selects from it. A launch can therefore only ever target a job those two
+// know: not a name nothing deployed, and not one the runner would refuse to
+// place.
+//
+// Mutation (run, restore): derive the account from the profile's secrets
+// (config.ClaudeAccountOfSecrets, the pre-task reading) — a profile serving
+// accounts by its claude_accounts field then refuses every account it serves,
+// and a launch naming one never reaches the job the deployer built.
+func TestLauncherAccountDerivationSharedFunction(t *testing.T) {
+	serving := projectpolicy.Profile{JobProfile: config.JobProfile{
+		Provider:       "github",
+		ClaudeAccounts: []string{"acme-personal", config.DefaultClaudeAccount},
+	}}
+	plain := projectpolicy.Profile{JobProfile: config.JobProfile{Provider: "github"}}
+	for _, tc := range []struct {
+		why      string
+		profile  projectpolicy.Profile
+		selected string
+		want     string
+	}{
+		{"no selection is the profile's no-account job", serving, "", ""},
+		{"the default account is the profile's no-account job", serving, config.DefaultClaudeAccount, ""},
+		{"a named account the profile serves is a job of its own", serving, "acme-personal", "acme-personal"},
+		{"a profile serving nothing still has its no-account job", plain, "", ""},
+		{"and the default account is that same job", plain, config.DefaultClaudeAccount, ""},
+	} {
+		got, err := projectJobAccountFor("standard", tc.profile, tc.selected)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.why, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: projectJobAccountFor(%q) = %q, want %q", tc.why, tc.selected, got, tc.want)
+		}
+		if !slices.Contains(config.ProjectJobAccounts(tc.profile.JobProfile), got) {
+			t.Errorf("%s: the launcher targets the account %q, which the profile's job set %v does not hold — the job it names is one nothing deployed",
+				tc.why, got, config.ProjectJobAccounts(tc.profile.JobProfile))
+		}
+	}
+	// An account the profile serves no job for is refused, naming the account
+	// and the profile. The launch's own gate, end to end, is
+	// TestLaunchRefusesAnAccountTheProfileDoesNotMount.
+	if _, err := projectJobAccountFor("standard", serving, "acme-work"); err == nil || !strings.Contains(err.Error(), "acme-work") || !strings.Contains(err.Error(), "standard") {
+		t.Errorf("a launch selecting acme-work on a profile serving acme-personal: %v", err)
+	}
+	if _, err := projectJobAccountFor("standard", plain, "acme-personal"); err == nil || !strings.Contains(err.Error(), "acme-personal") {
+		t.Errorf("a launch selecting an account on a profile serving none: %v", err)
+	}
+}
+
 // projectJobReservedTokenPolicy is the node an owner can write by hand (the
 // node is theirs), with the standard profile mounting the reserved
 // claude-oauth-token. The account segment of the job that profile names is the
@@ -519,7 +575,7 @@ func TestLaunchRefusesAnAccountTheProfileDoesNotMount(t *testing.T) {
 // the claim, minted the budget token and reached Cloud Run on a job that does
 // not exist, and every run of the profile halted with cannotPlaceJob, which
 // blames a stale module version instead of the profile.
-const projectJobReservedTokenPolicy = `{"version":2,"allow_repos":["github/acme/*"],` +
+const projectJobReservedTokenPolicy = `{"version":3,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"secrets":["claude-oauth-token"]}}}`
 
@@ -645,56 +701,6 @@ func TestLaunchKeepsAnotherProvidersRepositoryOnItsOwnJob(t *testing.T) {
 	}
 }
 
-// TestLaunchRefusesABitbucketProfile: a profile whose provider is bitbucket
-// passes projectpolicy and is published copy by copy from the local config,
-// but `fugaro init` refuses to deploy one (a Bitbucket credential cannot be
-// scoped to one project's repositories -- the owner's ruling of 2026-10-15,
-// design §4.1, D5 as amended, internal/infra's ProjectJobs). The launcher used
-// to compute the shared job's name from such a profile all the same: a
-// Bitbucket repository selecting it matches the profile's provider, so the
-// comparison beside this check sees no mismatch, and the launch went to a
-// Cloud Run job nothing deployed -- after the claim and the budget token --
-// where the 404's message blames `fugaro init` for a refusal it made on
-// purpose. The launch is refused here instead, naming the profile and the real
-// reason, and the per-repository fallback is not an option: it would run the
-// workflow while silently dropping the profile it selected.
-//
-// Mutation (run, restore): drop the checkProjectJobProvider call in
-// launchProjectJobFor -- the launch makes a jobs.run call for the profile's
-// undeployed job.
-func TestLaunchRefusesABitbucketProfile(t *testing.T) {
-	f := newProjectJobFixture(t)
-	const bbRepo = "acme/bb"
-	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
-	// The policy carries both profiles, as a publish from a local config that
-	// declares a bitbucket one leaves it, and admits the repository.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":2,"allow_repos":["github/acme/*","bitbucket/acme/*"],`+
-		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},`+
-		`"bb":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`)
-
-	testutil.IsolateGit(t)
-	dir := t.TempDir()
-	testutil.Git(t, dir, "init", "-q")
-	testutil.Git(t, dir, "remote", "add", "origin", "git@bitbucket.org:acme/bb.git")
-	yaml := strings.Replace(projectJobRepoYAML, "provider: github", "provider: bitbucket", 1)
-	yaml = strings.Replace(yaml, "    checkout: clone\n", "    checkout: clone\n    job_profile: bb\n", 1)
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
-	t.Chdir(dir)
-
-	_, _, err := execute(t, "run", "--repo", bbRepo, "--run-id", "20261017-100000-bbbb", "Add a feature")
-	if err == nil {
-		t.Fatal("a launch on a bitbucket profile was accepted")
-	}
-	for _, want := range []string{"profile \"bb\"", "bitbucket", "per-repository jobs"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not say %q: %v", want, err)
-		}
-	}
-	if calls := f.run.RunRequests(); len(calls) != 0 {
-		t.Errorf("the launch reached Cloud Run anyway: %+v", calls)
-	}
-}
-
 // TestLaunchRefusesARepositoryTheProfileDoesNotAdmit: the admission a shared
 // project job adds to the project's allow-list (design §4.1, plan task 3.3
 // step 4). The two lists are asked separately and the profile's is the
@@ -716,7 +722,7 @@ func TestLaunchRefusesARepositoryTheProfileDoesNotAdmit(t *testing.T) {
 	f := newProjectJobFixture(t)
 	// The project admits both of the fixture's repositories; the profile
 	// admits one of them.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":2,"allow_repos":["github/acme/*"],`+
+	publishPolicy(t, f.launchBudgetFixture, `{"version":3,"allow_repos":["github/acme/*"],`+
 		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",`+
 		`"allow_repos":["github/acme/other"]}}}`)
 	projectJobCheckout(t)
@@ -756,5 +762,74 @@ func TestLaunchRefusesARepositoryTheProfileDoesNotAdmit(t *testing.T) {
 	}
 	if calls := f.run.RunRequests(); len(calls) != 1 || calls[0].Job != f.job {
 		t.Fatalf("the admitted repository's launch made %d jobs.run calls (%+v), want one on the shared job %s", len(calls), calls, f.job)
+	}
+}
+
+// TestLaunchKeepsABitbucketProfileOnThePerRepositoryJob is the stack review's
+// other half of the same finding: the comparison above is on the repository's
+// provider against the profile's, so a Bitbucket repository whose workflow
+// selects a *Bitbucket* profile agreed with it and the launch went onto
+// gcp.ProjectJobName(profile, "bitbucket", "") — a job `fugaro init` deploys
+// for no profile (internal/infra's ProjectJobs skips a provider no shared job
+// serves; the owner's ruling of 2026-10-15, D5 as amended). Cloud Run answers
+// that jobs.run with a 404, which the backend wraps as a missing job, after
+// the claim and the budget token were spent: the launch failed on a job that
+// was never deployed, and the comment beside the comparison promised the
+// opposite — that such a repository "stays on its per-repository job".
+//
+// The provider is therefore asked of the *profile*, not only compared: a
+// profile of a provider no shared job serves is one no launch runs on, and a
+// repository selecting it keeps the job it has always had — exactly as a
+// repository selecting no profile the policy defines does. The runner needs
+// nothing: on a per-repository job the selected profile is only checked to be
+// defined in the policy (internal/runner's checkJobProfile), and a Bitbucket
+// profile is defined — which is why the policy layer admits one
+// (projectpolicy's validProfiles, and TestProfileAdmitsOnlyItsOwnProvider).
+//
+// Mutation (run, restore): make the comparison the whole rule again — drop
+// the infra.SharedJobProvider(pr.Provider) half of the guard — and the launch
+// is made on the Bitbucket profile's job, which no installation has.
+func TestLaunchKeepsABitbucketProfileOnThePerRepositoryJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	const bbRepo = "acme/bb"
+	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
+	bbSlug, err := task.Slug("bitbucket", bbRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perRepo := gcp.JobName(bbSlug, "web")
+	f.run.AddJob(perRepo, "4", "8Gi")
+	// A policy a project with repositories on both providers publishes: the
+	// github standard profile, and the Bitbucket one a Bitbucket workflow
+	// selects. The project admits the Bitbucket repository, and the Bitbucket
+	// profile admits it too — nothing below is about an admission.
+	publishPolicy(t, f.launchBudgetFixture, `{"version":3,"allow_repos":["github/acme/*","bitbucket/acme/*"],`+
+		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},`+
+		`"standard-bitbucket":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`)
+	// The job a buggy launcher would compute, added to the fake so the failure
+	// is the assertion below and not an unknown-job error: no installation
+	// deploys it (ProjectJobs skips the profile), and a launch must not make it
+	// a real one.
+	never := gcp.ProjectJobName("standard-bitbucket", "bitbucket", "")
+	f.run.AddProjectJob(never, "standard-bitbucket", "bitbucket", "", "2", "4Gi")
+
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@bitbucket.org:acme/bb.git")
+	yaml := strings.Replace(projectJobRepoYAML, "provider: github", "provider: bitbucket", 1)
+	yaml = strings.Replace(yaml, "  web:\n", "  web:\n    job_profile: standard-bitbucket\n", 1)
+	if !strings.Contains(yaml, "job_profile: standard-bitbucket") {
+		t.Fatal("the fixture has no web: workflow to put a job_profile under")
+	}
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
+	t.Chdir(dir)
+
+	if _, _, err := execute(t, "run", "--repo", bbRepo, "--run-id", "20261017-090000-aaaa", "Add a feature"); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != perRepo {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s, never the Bitbucket profile's %s, which no installation deploys", len(calls), calls, perRepo, never)
 	}
 }

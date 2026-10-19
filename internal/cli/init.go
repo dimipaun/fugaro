@@ -106,9 +106,9 @@ type initOptions struct {
 	// so a later run and a restore can read what was chosen
 	// (internal/infra/managed, MarkerVersionBudget). It goes with
 	// --create-project and nothing else — a project that already exists is
-	// not flaggable as managed in this release (D58; Task 6.1, unscheduled) —
-	// and it removes no confirmation: a managed creation is a creation with
-	// more guards, not fewer.
+	// made managed by the owner's own command instead, `fugaro managed flag`
+	// (D58; Task 6.1), never by init — and it removes no confirmation: a
+	// managed creation is a creation with more guards, not fewer.
 	managed bool
 
 	// name is the project's name, for a project config fugaro init
@@ -418,7 +418,7 @@ secrets stage is behind the same gate.`,
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). An ID that exists and you can read is adopted; one held by someone else is refused. Billing is not linked unless --link-billing is also given; without it init prints the one gcloud command that links it")
 	f.StringVar(&o.displayName, "display-name", "", "with --create-project: the project's display name (default: its ID)")
 	f.StringVar(&o.parent, "parent", "", "with --create-project: organizations/<number> or folders/<number> to create the project under (default: no parent; an organization is never guessed)")
-	f.BoolVar(&o.managed, "managed", false, "with --create-project: create a Fugaro-managed project. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is not yet possible in this release (never by init)")
+	f.BoolVar(&o.managed, "managed", false, "with --create-project: create a Fugaro-managed project. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, and never init's")
 	f.StringVar(&o.linkBilling, "link-billing", "", "with --create-project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, after you type the account's ID at a terminal. This may incur charges on that account; never with --yes. It never changes a project's existing billing link")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan (never takes --yes: it creates nothing on a flag's word)")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
@@ -750,7 +750,7 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		// never finished. An empty Created alone cannot tell them apart.
 		if r.o.managed {
 			if r.projectExisted {
-				r.warn(fmt.Sprintf("--managed was not applied: project %s already existed, so this run created nothing and no creation fact was written; it is not managed", r.gcpProject))
+				r.warn(fmt.Sprintf("--managed was not applied: project %s already existed, so this run created nothing and no creation fact was written; it is not managed, and the owner flags it with `fugaro managed flag %s --budget N --budget-currency CCC` at their own terminal if they want it to be", r.gcpProject, r.gcpProject))
 			} else {
 				r.warn(fmt.Sprintf("--managed was not applied: this run created no project (it stopped before creating one, or the creation did not finish), so no creation fact was written and %s is not managed", r.gcpProject))
 			}
@@ -2802,14 +2802,16 @@ func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, 
 // plan, whose notes are shown.
 //
 // Before any of that (review finding, 0.7.0 safety fix round 2): a
-// checkout: clone workflow's job must never come to exist while
-// cloneShipped is false (no fugaro release can run one yet), so this
-// refuses outright, before any cloud call, rather than letting Terraform
-// create a job checkCloneImageSince would only catch later, at launch, and
-// only if the launch still decides clone from this same checkout (run.go's
-// checkoutConfig does not, once the job is already deployed). --plan-only
-// skips the refusal so the plan can still be shown; --print-vars never
-// reaches planRepo at all.
+// checkout: clone workflow's job must never come to exist while the gate
+// is shut, because then no fugaro release could run one — so this refused
+// outright, before any cloud call, rather than letting Terraform create a
+// job checkCloneImageSince would only catch later, at launch, and only if
+// the launch still decides clone from this same checkout (run.go's
+// checkoutConfig does not, once the job is already deployed). cloneShipped
+// has been true since 0.9.0 shipped the flip, so the call below is a no-op
+// on every spec today; it and its reason stay for the flip-back the
+// constant's comment describes. --plan-only skipped the refusal so the
+// plan could still be shown; --print-vars never reaches planRepo at all.
 func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, lc *localcfg.Config, opts infra.RepoRootOptions, first bool) (infra.RepoSpec, []infra.Missing, error) {
 	if !r.o.planOnly {
 		if err := refuseClonesNotShipped(spec.Name, "fugaro init --repo", "deploy", cloneWorkflowNames(spec.Workflows)); err != nil {

@@ -1,10 +1,15 @@
 # Pending workflow changes
 
-**Nothing is pending.** (`ci.yml` was copied in on 2026-10-17, #504, and its staged copy removed in #508; `images.yml` was copied in earlier.) A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+**Two files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508), and `images.yml` was copied in and its staged copy removed in `6b57ba9` (`## images.yml` below is the record of that change, not a pending request). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
-- **`images.yml`** — the signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`. It was staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Copy it in before the release's version-bump merge commit is created** (the timing is load-bearing: see `## images.yml` below), then `git rm` the pending file, as the procedure below describes.
+- **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
+- **`images.yml` — applied, not pending.** The signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`, was staged here by a Fugaro run that cannot push a `.github/workflows/**` change, then copied into `.github/workflows/images.yml` and `git rm`'d from here in `6b57ba9`. `## images.yml` below is the record of that change and of the timing it had to meet, not something still to copy.
 
-The most recent copy that *was* applied (`images.yml` for the 0.7.0 hard cut, commit `838e0b0`) is the reason the file below has no legacy per-kind `base` job; that section's older text was replaced by this one when the file became pending again.
+**`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, it runs unconditionally on every pull request and every push to `main`, and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
+
+**`console-release.yml`** — the desktop console's signing, notarisation and stapling pipeline, staged by Task 4.2 of the same plan and applied by the owner as Task 4.5, together with the protected GitHub environment its secrets live in. **It is a separate file from the tests workflow on purpose, and the split is a security boundary rather than tidiness**: this job reads the Apple signing certificate and the App Store Connect key, and a branch of this repository can open a pull request, so a job holding that material must never sit in a file that runs on every pull request. Its staged copy is kept after the copy-in too: see `## console-release.yml` below.
+
+The two `images.yml` copies that *were* applied — the 0.7.0 hard cut (`838e0b0`, which is why the file below has no legacy per-kind `base` job) and the signing change (`6b57ba9`) — are why that file is not pending today. Each time it was staged again, that section's older text was replaced by the newer one.
 
 Fugaro refuses to push a commit that touches `.github/workflows/**`
 (GitHub rejects the push). When a Fugaro run needs to change a workflow
@@ -14,14 +19,36 @@ the same name, for a human to copy in by hand after reviewing it.
 **Copying a file in:**
 
 ```sh
-cp docs/pending-workflows/images.yml .github/workflows/images.yml
-git add .github/workflows/images.yml
-git rm docs/pending-workflows/images.yml
+cp docs/pending-workflows/website-preview.yml .github/workflows/website-preview.yml
+cp docs/pending-workflows/website-promote.yml .github/workflows/website-promote.yml
+git add .github/workflows/website-preview.yml .github/workflows/website-promote.yml
+git rm docs/pending-workflows/website-preview.yml docs/pending-workflows/website-promote.yml
 git commit -m "..."
 ```
 
-The `git rm` is not cleanup, it's load-bearing: the static Go tests that pin
-these workflows' shape (`images/base_workflow_test.go`'s `readWorkflow`,
+There is nothing else to copy in: the `images.yml` commands that used to follow this block were run in `6b57ba9`, and its staged file is gone.
+
+**The website pair's own copy-in steps, in order.** (1) Do the one-time setup
+in `docs/website/preview-promote.md` first — the workflows refuse to run
+without the three repository variables, and the promote job needs the
+`website-live` environment to exist before GitHub can hold it for approval.
+(2) Copy both files in with the two commands above, in **one** commit: they
+are a pair (a preview that cannot be promoted is not the feature), and the
+`git rm` is load-bearing for the same reason it was for `images.yml` — while a
+staged copy exists, `internal/cli/docs_website_deploy_test.go` reads *it*, so
+leaving one in place would freeze those checks on a file nobody deploys from.
+(3) Start `website-preview` by hand for a ref and a channel, open the URL it
+prints in the run summary, and only then start `website-promote`.
+
+**The `git rm` is for `images.yml` and the website pair, and it is not the rule for every file here.**
+`console-tests.yml` and `console-release.yml` below are copied in **without** removing the staged copy,
+because their tests assert the two files are byte-identical while both exist — see
+those sections for the command and the reason.
+
+The `git rm` is not cleanup, it's load-bearing, and `images.yml` is where that
+has already been paid: its staged copy is gone (`6b57ba9`), so the static Go
+tests that pin that workflow's shape (`images/base_workflow_test.go`'s
+`readWorkflow`,
 used by `TestImagesWorkflowPublishesAMultiArchBase`,
 `TestOnlyPublishJobsHoldPackagesWrite`,
 `TestVerifyPublicRunsEvenWhenPublishBaseIsSkipped`,
@@ -30,9 +57,9 @@ used by `TestImagesWorkflowPublishesAMultiArchBase`,
 `TestSigningProblemsFindEveryMutation` — the two that pin the base image's
 signing chain — plus
 `images/verify_public_test.go`'s `TestImagesWorkflowPublishesAndVerifiesEveryImage`)
-read the pending file
-**while it exists** and only fall back to the real
-`.github/workflows/images.yml` once it is gone. If the pending file were
+read the real `.github/workflows/images.yml` on its own today, as they read the
+pending file
+**while it existed** and only fell back to the real file once it was gone. If the pending file were
 left in place after the copy, those tests would keep reading its frozen
 content forever and would never notice a later edit — including an
 accidental deletion — to the real file's `fugaro-base`/`publish-base`
@@ -47,18 +74,363 @@ copy exists it is what the root loop is checked against, and once it is gone
 the real `ci.yml` must name every root under `deploy/terraform/gcp/roots/`
 on its own, so a copy that dropped `compute` (or a later deletion of it)
 fails that test rather than leaving the root untested.
+`internal/cli/docs_website_deploy_test.go`, the checker for the two website
+files below, is written the same way: it reads a staged copy **while it
+exists**, falls back to the real `.github/workflows/website-*.yml` once it is
+gone, and fails if both copies exist at once.
 
-## `images.yml`
+## `console-tests.yml`
 
-Replaces `.github/workflows/images.yml` with the same file plus Task 1 of
-`docs/plans/2026-10-13-retire-image-mirror.md`: `publish-base` now also
-publishes a nightly-immune `<version>-pinned` tag and **signs the pushed
+The desktop console's own tests in CI, staged by Task 1.4 of
+`docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5.
+One job named exactly `console`, on `macos-latest` and on `ubuntu-latest` with
+the end-to-end pass under `xvfb-run`: `actions/setup-node` with the version read
+from `console/package.json`'s `engines.node`, `npm ci --ignore-scripts
+--no-audit --no-fund`, `npm run test:unit` and `npm run test:e2e` (which builds
+the app first and passes on a tree with no spec). **It holds no secret at all**,
+and its triggers are `pull_request` and `push` to `main` **with no `paths:`
+filter and no job-level `if:`** — and that is a correctness requirement rather
+than taste. **Task 4.6 (#600) added the job's two matrix legs to
+`scripts/release-gate.sh`'s `names` array** — `console (ubuntu-latest)` and
+`console (macos-latest)`, the names GitHub gives each leg's check run — so the
+gate requires both on a tag's commit and, in its `identical_tree_checks`
+fallback, the same names on the pull request head whose tree matches. **A check a filter
+skipped is not a success**, so a `console` job filtered to `console/**` would
+then refuse **every** release tag in this repository, including the releases that
+never touch the console (plan Task 4.6, design section 9.4). The signing,
+notarising and stapling job and the Apple material it reads are Task 4.2's
+**separate** `console-release.yml`, precisely so that this file — which runs on
+every pull request from any branch — never sits next to them.
+
+The owner applies it with one command, from the repository root:
+
+```sh
+cp docs/pending-workflows/console-tests.yml .github/workflows/console-tests.yml
+git add .github/workflows/console-tests.yml
+git commit -m "console: run the console's tests in CI (plan Task 1.5)"
+```
+
+**Unlike `images.yml`, the staged copy is not deleted after the copy-in.** While
+both files exist, `TestConsoleTestsWorkflowIsStagedAndPinned` (in
+`internal/cli/docs_desktop_console_test.go`) reads the staged file and asserts
+the one under `.github/workflows/` is **byte-identical** to it: absence would say
+only that nobody wrote a file, while identity says the file that exists is the
+reviewed one, and the staged copy is what makes that assertable before *and*
+after the copy-in. Deleting it would remove the check, so this file's procedure
+has no `git rm` in it.
+
+After the copy-in, `console/README.md` gains a line naming the applying commit
+(plan Task 1.5), which is the only way a later reader can tell which console
+commits had CI and which did not: **Tasks 1.0 to 1.4 merged with no console CI
+at all**, and that gap is a fact about this repository's history rather than
+something the plan claims away.
+
+## `console-release.yml`
+
+The desktop console's signing, notarisation and stapling pipeline, staged by
+Task 4.2 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner
+as Task 4.5. Triggered by a **`push` of a strict `vX.Y.Z` tag and nothing
+else** — never a pull request, never a `pull_request_target`, never a
+`workflow_run`, never a `workflow_dispatch`. **Two jobs, and the write token is
+never in the job that runs the packer:** `release`, on the pinned `macos-15`
+runner (never `macos-latest`: the runner image is the signing toolchain), holds
+the protected environment, the Apple secrets and `contents: read` +
+`checks: read` only; `publish`, on `ubuntu-24.04`, holds `contents: write` and
+nothing else — no environment, no Apple secret, no checkout, no packer.
+`GH_TOKEN` is in two steps' `env:`: the gate's (read-only) and the publish
+step's. The `release` job, in order:
+
+1. checks the tagged commit is reachable from `origin/main`, refuses any tag
+   that is not a strict `vX.Y.Z` (its X.Y.Z becomes the app's version), then
+   runs `scripts/release-gate.sh`, exactly as `release.yml` and `images.yml` do;
+2. with **no secret placed in any step's environment or on disk** (the runner
+   process receives the environment's secrets at job start; what the file
+   controls is where they are exposed): setup-node (no `cache:`: a restored
+   cache is written by other runs), `npm ci --ignore-scripts
+   --no-audit --no-fund` from the lockfile (the packer is the pinned
+   `electron-builder` devDependency), Electron's own download
+   (`node node_modules/electron/install.js`) and an unsigned warm-up
+   `npm run package` whose output is deleted (stamped with the tag's version
+   like the signed one), so the two Electron archives and
+   the packer's DMG and zip toolsets are downloaded here and not later;
+3. **one step holds all six secrets** and does everything that needs them:
+   the fail-closed check, a temporary keychain, the `.p8` key file (both
+   created under `umask 077`), the certificate's team checked against
+   `APPLE_TEAM_ID` before anything is signed, `npm run package` (Task 4.1's
+   script: `--mac --universal --publish never`, the hardened runtime,
+   `console/entitlements.mac.plist`, `-c.extraMetadata.version=X.Y.Z` from the
+   tag; electron-builder notarises and staples the
+   `.app` **before** it builds the `.dmg` and the `.zip`), the signature's
+   TeamIdentifier and the bundle's staple checked, then the `.dmg` signed with
+   `codesign --timestamp`, submitted with `xcrun notarytool submit --wait` and
+   stapled; its exit trap removes the key material;
+4. verifies what ships — the SHA-256 of the `.dmg` and the `.zip`, the bundle
+   inside the mounted `.dmg` and the extracted `.zip` (`codesign --verify
+   --deep --strict`, `spctl --assess --type execute`, `xcrun stapler
+   validate`), and the disk image itself (`spctl --assess --type open`) — into
+   `console-verification.txt`, and uploads the `.dmg`, the `.zip`, the record
+   and `console-sha256sums.txt` as the workflow artifact
+   `console-release-assets` (upload-artifact at the pin `release.yml` and
+   `images.yml` use).
+
+The `publish` job (`needs: release`) downloads that artifact (download-artifact
+at the pin `images.yml` uses), re-checks every asset with `sha256sum --strict
+--check` and that the `.dmg` and `.zip` are named for the tag's version, and
+publishes the console's **own release, `console-vX.Y.Z`**, never touching the
+CLI's.
+
+**The version is the tag's.** `console/package.json` says `0.0.0` and nothing
+in it is a release version, so both packs are stamped with
+`-c.extraMetadata.version=X.Y.Z` (through `env:`, never an inlined `${{ }}`):
+the `.dmg` and `.zip` file names carry the real version (`Fugaro
+Console-X.Y.Z-universal.dmg`), the app's version is it, the job refuses
+artifacts not named for it, and the update feed of plan Tasks 4.3/4.4 depends
+on it.
+
+**Its own release, never the CLI's (the owner's ruling of 2026-10-17,
+"Separate console release").** GoReleaser publishes the CLI's `vX.Y.Z` release
+from the same tag push, and with immutable releases on (`docs/release.md`,
+"Before you tag") nothing can be added to a release once it is published. So
+the `publish` job creates `console-vX.Y.Z` — X.Y.Z from the CLI tag that triggered it,
+the same commit and the same gate (D11) — as a **draft**, uploads the `.dmg`,
+the `.zip`, `console-verification.txt` and `console-sha256sums.txt` to it, and
+publishes it (`gh release edit --draft=false`) in the same step, with
+`--latest=false` so the CLI's release stays the repository's latest. A re-run
+never clobbers: an existing `console-vX.Y.Z` release (published, or a draft
+left by an earlier attempt, which the owner deletes before re-running) or tag
+stops the job with a message. The tag ruleset must let the workflow create
+`console-v*` tags. The console's Homebrew cask, when it exists, points at this
+release (a later task).
+
+**The real control is the environment's reviewer and a tag ruleset, not the
+file's own gate.** A tag push runs this file as the tagged commit holds it, so a
+tag on a branch whose copy of the workflow or of `scripts/release-gate.sh` was
+edited runs the edited copy. The `console-release` environment's required
+reviewer and a ruleset restricting who may create `v*` tags are what stop that;
+**the approver confirms the tag's commit is on `main` before approving the
+deployment**. The in-job ancestry check catches a mistake, not an attacker.
+
+**It reads its secrets through a job-level `environment: console-release`** —
+the protected GitHub environment the owner creates in the same step: required
+reviewers = the owner, deployment branches restricted to tags. A staging file
+cannot create an environment, so the copy-in and the environment have to be done
+together. The environment holds exactly these six, and the workflow names them
+and nothing else:
+
+| Secret | What it is |
+|---|---|
+| `APPLE_CERTIFICATE` | base64 of the Developer ID Application `.p12`, one line (the G2 Sub-CA certificate) |
+| `APPLE_CERTIFICATE_PASSWORD` | that `.p12`'s password |
+| `APPLE_TEAM_ID` | the team identifier (`ZM8Y2LC7JL`); the workflow checks the certificate names it before packing, and the signature after |
+| `APPLE_API_KEY` | the App Store Connect API key's `.p8` contents |
+| `APPLE_API_KEY_ID` | the key's id |
+| `APPLE_API_ISSUER` | the issuer uuid |
+
+**The notarisation credential is the App Store Connect API key, not an
+app-specific password.** D4 settles that signing is required and that the
+pipeline is tag-only behind the gate and a protected environment, but it does not
+choose between the API key and an app-specific password; the decision recorded
+here is the API key, so `APPLE_ID` and `APPLE_APP_PASSWORD` are deliberately
+absent, and a row naming either of them is a defect.
+
+**It fails closed.** The signing step's first act is to refuse to continue
+unless all six are non-empty, naming the missing one, so an absent secret stops
+the job rather than silently skipping the signing — an unsigned console
+published under a signed release's name is the worst outcome this file can
+produce. No step carries an `if:` except the cleanup's `always()`, nothing
+carries `continue-on-error`, and `|| true` is the cleanup's alone. No value of
+any secret appears in the file: each is referenced as `${{ secrets.NAME }}` in
+the `env:` of **exactly one step**, bound to a variable of the same name — never
+a workflow- or job-level `env:` — which is what
+`TestDocsConsoleReleaseWorkflowIsStagedAndPinned` parses. The certificate goes
+into a keychain the step creates (a random password from `openssl rand`,
+`security create-keychain`, `security import -T /usr/bin/codesign` — and not
+`-T /usr/bin/security`, which would let any later command export the key —
+and `security set-key-partition-list -S apple-tool:,apple:`); the notarisation
+key file is handed on as a *path* (`APPLE_API_KEY` is a file to
+electron-builder, `--key` is a file to notarytool), never as a value; the
+step's exit trap removes both, and an `if: always()` step at the end is the
+backstop.
+
+The owner applies it with one command, from the repository root:
+
+```sh
+cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml
+git add .github/workflows/console-release.yml
+git commit -m "console: sign and notarise the console on a version tag (plan Task 4.5)"
+```
+
+and, in Settings, Environments, creates `console-release` with the owner as a
+required reviewer and its deployment branches restricted to tags. **Both are
+required before the first tag that ships the console**: a tag push runs the
+workflow exactly as the tagged commit holds it, and the workflow is only as safe
+as the environment its secrets live in.
+
+**Unlike `images.yml`, the staged copy is not deleted after the copy-in.**
+`TestDocsConsoleReleaseWorkflowIsStagedAndPinned` reads the staged file and asserts
+the one under `.github/workflows/` is byte-identical to it, so a hand-edited or
+hand-written workflow there is a red test rather than something nobody reads.
+
+### Not verified
+
+This file has never run, and no signing step under it has ever run either: no
+certificate, no App Store Connect key, no notary submission and no Mac were
+available or permitted in the run that wrote it, and no agent run in this
+repository builds, signs, notarises or verifies a bundle. What *is* verified is
+its text,
+through `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` and
+`TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger`, `TestDocsConsoleReleasePublishRefusesToClobber` and
+`TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions` (both run the staged scripts under bash with a faked `gh`) in
+`internal/cli/docs_desktop_console_test.go` (both picked up by the
+`-run 'Docs|Lint'` filter): the trigger surface, the ancestry check and the
+gate first, every install and download before the one step that holds the
+secrets, the secret names and their bindings, the fail-closed check, no `if:`,
+`continue-on-error`, stray `|| true`, inlined `${{ }}` or shell tracing, no
+line that prints the key material, the keychain and its trust list, the team
+checks, the packed bundle's staple, the disk image's signature, notarisation
+and staple, the verification and its checksums, the separate `console-vX.Y.Z`
+release and its re-run refusals, the two-job split and each job's token,
+the version stamp on both packs, the four action pins, the permissions, and
+byte-identity with the copy under `.github/workflows/` once it exists.
+
+Accepted residuals: the keychain password (`security create-keychain -p`,
+`unlock-keychain -p`, `set-key-partition-list -k`) and the `.p12` password
+(`security import -P`) are on `security`'s argv, which has no stdin form for
+them, so another process of the same user can read them in the process list
+for the moments those commands run; the `unset` before packing keeps the
+certificate, its password and the key's contents out of the packer's
+environment but not out of the signing shell's own starting environment, which
+the same user can read (`ps -E`) while the step runs. The runner is a
+single-tenant, single-job VM.
+
+Unverified offline and left to Check 59a: that electron-builder accepts
+`CSC_NAME` as a certificate's SHA-1 together with `CSC_KEYCHAIN`; that
+`codesign` signs with only `apple-tool:,apple:` in the partition list; that the
+unsigned warm-up pack leaves everything the signed pack needs in the cache; and
+that `-c.extraMetadata.version` reaches the bundle's version and the
+artifact names as described; and that the signed, stapled DMG passes
+`spctl --assess --type open --context context:primary-signature`.
+
+Two things a reader must not take from those tests: the pinned SHAs are read
+against upstream by the person copying the file in (see "Before you copy" below —
+Dependabot does not watch this directory), and the first real run is Check 59a's
+and 59b's (plan Task 4.3), which are owner-run on a Mac.
+
+## `website-preview.yml` and `website-promote.yml`
+
+Two **new** workflows, both `workflow_dispatch`-only, staged by the run that
+wrote the website's deploy path (website plan Task W2.1, D91, D109, F14). They
+replace nothing: `.github/workflows/` holds `ci.yml`, `images.yml` and
+`release.yml` today, and neither staged file touches the release train.
+
+- **`website-preview.yml`** builds a chosen ref (`ref`, default `main`) and
+  runs the site's own gate (`npm run check` in `website/`: the Astro build plus
+  every `website/test/*.mjs`) in a `build` job that holds **no** `id-token`
+  scope, then a separate `deploy` job takes the build as an artifact, refuses a
+  `firebase.json` with a lifecycle hook or a `public` dir other than
+  `website/dist`, authenticates, and deploys the result to a **preview channel**
+  of the website's own Firebase project with `firebase hosting:channel:deploy
+  --expires 7d --json`. It writes the channel, the URL, the ref and the commit
+  into the job summary, because the URL is the run's whole output. The live
+  channel is never touched. **A preview is public**: anyone with the URL can
+  read it.
+- **`website-promote.yml`** copies an existing preview channel's current
+  version onto the live channel with `firebase hosting:clone` — the bytes the
+  owner already looked at, rebuilt nowhere — and it is the owner's alone, twice
+  over: the job carries `environment: website-live` (whose only required
+  reviewer is the owner, so GitHub holds the job for approval) and its `if:`
+  refuses any actor but the owner, so a dispatch by anyone else never even
+  queues an approval request. A second step checks the actor again, so a later
+  edit that lost the `if:` still stops rather than asking for approval.
+
+**Neither file holds a credential, and neither reads a secret.** Authentication
+to Google is Workload Identity Federation (`google-github-actions/auth`, pinned
+by SHA): the run's own OIDC token is exchanged for a short-lived access token
+for a deployer service account that holds only Firebase Hosting roles on the
+site's project. No service account key, no key file, no `FIREBASE_TOKEN`, no
+`secrets.` reference at all — the three values both files read
+(`FIREBASE_PROJECT_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`,
+`GCP_DEPLOYER_SERVICE_ACCOUNT`) are repository **variables**, which are
+identifiers rather than credentials. **No Firebase project id is committed by
+either file**: the project is named on the firebase CLI's command line from the
+variable, exactly as `scripts/deploy-website.sh` names it from its own
+`--project` argument, and there is no `.firebaserc`.
+
+**The channel-name pattern is the script's, character for character.**
+`^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$`, the pattern
+`scripts/deploy-website.sh` validates `--channel` against, is written into each
+workflow's validation step and read back out of both files by
+`internal/cli/docs_website_deploy_test.go`, which fails if the two ever drift.
+
+`internal/cli/docs_website_deploy_test.go` is the static check these two files
+have: it parses each staged YAML (the fields GitHub executes, not strings in
+comments) and requires `workflow_dispatch` to be the **only** trigger, no
+`pull_request_target` anywhere, every `uses:` pinned to a full commit SHA with
+its version comment, an explicit least-privilege `permissions:` block on the
+workflow and on every job, `id-token: write` only on the job that
+authenticates (never on the preview's `build` job, which also may not share a
+job with the auth step), no `${{ }}` expression inside any `run:` script, the
+environment and the owner guard on the promote
+job, the channel pattern above, the preview URL written to
+`$GITHUB_STEP_SUMMARY`, and **no key-file credential** — no `credentials_json`,
+no token flag, and no `secrets.` reference — in any of them. A companion test
+feeds that checker a planted weakening per rule and requires each to be
+reported, so no check can rot unnoticed. A second test holds
+`docs/website/preview-promote.md`'s WIF provider condition to this repository
+(name and id), `refs/heads/main` and `workflow_dispatch`, and refuses a key.
+
+**The owner's one-time setup is `docs/website/preview-promote.md`**, and it is
+the owner's alone: the WIF pool and provider, the deployer service account and
+its roles, the `website-live` environment and the three repository variables.
+No agent creates any of it and no agent runs any of its commands. Until it is
+done, both workflows stop at their first validation step with a message naming
+the missing variable.
+
+### Not verified
+
+Neither file has ever run in GitHub Actions. No deploy, no `firebase` command
+and no Google API call of any kind were made by the run that staged them: what
+is verified is their YAML shape, through the Go test named above, and that
+`actionlint` (if present) parses them.
+
+Two things the run that staged them *did* check, short of running anything:
+the two global CLI options both workflows rely on (`-P, --project` and
+`-j, --json`) exist in the pinned firebase-tools v15.19.0, and the shapes read
+back out of that version's own source — `hosting:channel:deploy --json` prints
+`{"status": "success", "result": …}` with `result` keyed by the site id and
+carrying `url` (the summary step's `to_entries[0].value.url`), and
+`hosting:clone` refuses a source channel the project has not got, and one with
+no version on it, with its own message. What remains unexercised is everything
+that needs a live project: that firebase-tools authenticates from the
+credential file google-github-actions/auth writes (a WIF `external_account`,
+not a key) — and that `roles/firebasehosting.admin` alone is enough for a
+deploy, which is the narrowest predefined Firebase Hosting role (the role list
+has exactly two: `firebasehosting.admin` and `firebasehosting.viewer`); a
+permission error naming another API points at the two add-on roles
+`docs/website/preview-promote.md` lists. The copy-in is the owner's, and the
+first real run is what settles those.
+
+## `images.yml` — applied in `6b57ba9`; what follows is the record
+
+**Not pending: this change landed.** It was copied into
+`.github/workflows/images.yml` and the staged file removed in `6b57ba9`
+("Update workflow rules", #385), so what this section describes is what the
+repository runs today, and the Go tests named below read the real file on its
+own. The section is kept as the record of *what* that change was and *why* —
+its tense corrected only where the change has since landed, and left as written
+where it describes the file's shape, which has not changed. A future change to
+`images.yml` would replace it with a new one, the way it replaced the sections
+before it.
+
+It replaced `.github/workflows/images.yml` with the same file plus Task 1 of
+`docs/plans/2026-10-13-retire-image-mirror.md`: `publish-base` also began to
+publish a nightly-immune `<version>-pinned` tag and to **sign the pushed
 base image by its OCI digest with cosign (keyless)**. The committed file
-already carries the real `fugaro-base`/`publish-base` jobs (commit
+already carried the real `fugaro-base`/`publish-base` jobs (commit
 `356f7b1`) and the 0.7.0 cut that deleted the legacy per-kind `base` job
-(commit `838e0b0`), so this diff is small and touches `publish-base` alone.
+(commit `838e0b0`), so that diff was small and touched `publish-base` alone.
 Everything else in the file — the triggers, `version`, `history`,
-`fugaro-base`, `publish`, `verify-public`, `docker-tests` — is carried over
+`fugaro-base`, `publish`, `verify-public`, `docker-tests` — was carried over
 verbatim, comments included. Diff summary against the committed file:
 
 - **`publish-base`'s `permissions` gain `id-token: write`,** alongside the
@@ -154,15 +526,16 @@ produce some problem, so no check can rot unnoticed — and
 `TestImagesWorkflowPublishesAMultiArchBase`,
 `TestImagesWorkflowBuildsTheBaseAndHistory` and
 `images/verify_public_test.go`'s
-`TestImagesWorkflowPublishesAndVerifiesEveryImage` keep passing unmodified
-against this file (`readImagesWorkflow` reads this pending copy first).
+`TestImagesWorkflowPublishesAndVerifiesEveryImage` kept passing unmodified
+against this file (`readImagesWorkflow` read the pending copy first; it reads
+the real `.github/workflows/images.yml` now that the copy has landed).
 
-### Why this is pending here, and the timing that matters
+### Why it was staged here, and the timing it had to meet
 
 Fugaro cannot push a change under `.github/workflows/` from an agent run
-(GitHub rejects it), so this diff is staged here for a human to copy in by
-hand. **The copy must land on `main` before that release's version-bump
-PR's merge commit is created and tagged**, and this is the whole of the
+(GitHub rejects it), so this diff was staged here for a human to copy in by
+hand. **The copy had to land on `main` before that release's version-bump
+PR's merge commit was created and tagged**, and this is the whole of the
 authority for that requirement (design `docs/design/retire-image-mirror.md`
 §5, §8; plan Task 1's rollout precondition): GitHub Actions runs a tag
 push's workflow *exactly as that file exists in the tagged commit*, and
@@ -172,9 +545,12 @@ Once the copy is in, that release's own tag push runs the updated
 very same push — there is no earlier, separate tag push to wait for, and a
 signed image from some *other* release could never help, because the
 copy-time resolve (`basepin.Resolve`) only ever reads the **installed CLI's
-own version's** tag. The release process cannot enforce this by itself.
+own version's** tag. The release process cannot enforce this by itself. The
+same constraint applies to any future change to `images.yml`, staged here
+again: it must be copied in before that release's version-bump merge commit
+is tagged.
 
-The owner steps, exactly:
+The steps the copy used, exactly (run in `6b57ba9`):
 
 ```sh
 # 1. Review this file, then copy it in BEFORE the version-bump merge commit
@@ -222,17 +598,19 @@ the release-day bytes or a re-signed equivalent — never an unsigned digest.
 The nightly never touches it: that is the property the tag exists for, and
 what Check 39e verifies.
 
-### Not verified
+### Not verified *at the time it was staged*
 
-This file has never run in GitHub Actions, and neither has cosign under it:
-no Docker daemon, no network access and no live action of any kind were
-available or permitted in this run. Nothing about a real `publish-base` run
+This is the staged run's own note, kept as part of the record. The file has
+since been copied in, so the signing chain it describes is CI's to show on a
+tag push from now on — but **none of it was exercised by the run that wrote
+it**: in that run there was no Docker daemon, no network access and no live
+action of any kind
+available or permitted. Nothing about a real `publish-base` run
 (the `-pinned` tag actually appearing in ghcr.io, the signature being
 attached, an anonymous `docker pull` of `-pinned`, or the nightly genuinely
-leaving it alone) was exercised. What is verified is the YAML shape through
-the Go tests named above, read from this pending copy; the real workflow run
-is CI's, once this file is copied into `.github/workflows/images.yml`
-(removing it from here) and a tag push or a PR touching `images/**` runs it.
+leaving it alone) was exercised. What that run verified is the YAML shape
+through the Go tests named above, read from the pending copy then; the real
+workflow run is CI's, and that copy has since landed.
 
 Two honest limits of this diff, both deliberate:
 
@@ -253,4 +631,4 @@ Copied in on 2026-10-17 (#504): `.github/workflows/ci.yml`'s `terraform` job now
 
 ## Before you copy: check the action pins
 
-Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so the pins in `images.yml` here can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` here to be a full commit SHA; once the pending file is gone it also requires the real file's pins to agree with the other workflows. Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/images.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.
+Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so a staged file's pins can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` **here** to be a full commit SHA; once a staged file is copied in and gone from here, the same test also requires its pins to agree with the other workflows' — `images.yml` is that test's subject, so that comparison is live for it. Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/*.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.

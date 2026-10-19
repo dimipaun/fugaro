@@ -17,6 +17,6 @@ func newConfigCmd() *cobra.Command {
 			return err
 		},
 	})
-	cmd.AddCommand(newConfigShowCmd(), newConfigLayerCmd(), newConfigInitCmd(), newConfigPublishCmd())
+	cmd.AddCommand(newConfigShowCmd(), newConfigListCmd(), newConfigLayerCmd(), newConfigInitCmd(), newConfigPublishCmd())
 	return cmd
 }

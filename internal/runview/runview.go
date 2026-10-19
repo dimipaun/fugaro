@@ -6,10 +6,12 @@
 package runview
 
 import (
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -70,6 +72,14 @@ type Row struct {
 	// Recipe is the run's recipe: the record's, else the task's; "" when
 	// neither names one (a default run launched before 0.5.0, or not started).
 	Recipe string `json:"recipe,omitempty"`
+	// Title is the run's job title, from the ONE place the text comes from
+	// (task.Spec.TitleLine): the title its launcher stored (fugaro run
+	// --title), else the task prompt's first line. "" only when there is no
+	// readable task, or the task has neither. runs ls renders no title
+	// column (fugaro watch is where a run is listed by title), but its
+	// --json rows carry it for the console and every other reader, so no
+	// reader derives the title from the task itself any more.
+	Title string `json:"title,omitempty"`
 	// ProjectLayer is the project layer the run's task carried, and
 	// ConfigSHA256 its resolved config's sum (docs/design/layered-config.md
 	// §8); both absent before 0.6.0 and for a run that has not started.
@@ -83,11 +93,29 @@ type Row struct {
 	Halt        *runstore.Halt `json:"halt,omitempty"`
 	Batch       string         `json:"batch,omitempty"`
 	RequestedBy string         `json:"requested_by,omitempty"`
-	PRURL       string         `json:"pr_url,omitempty"`
-	Execution   string         `json:"execution,omitempty"`
-	LogURL      string         `json:"log_url,omitempty"`
-	Created     time.Time      `json:"created"`
-	Cost        runstore.Cost  `json:"cost"`
+	// LaunchedBy is who started the run, as the run's own launch.json
+	// recorded it at launch (runstore.Launch.LaunchedBy, written from the
+	// launching task's RequestedBy): a person's address, or the identity an
+	// automated launch runs as (a service account, a CI runner). It is the
+	// launch record's own account of itself and nothing else — absent for a
+	// run whose launch.json has none (never launched, or launched by a
+	// writer that recorded no identity), and never filled in from the task,
+	// the record or the account the run used.
+	//
+	// UNTRUSTED display text, and the one field of this row that is
+	// sanitised here rather than by the renderer: a launcher writes it, so
+	// it can carry escapes, newlines, bidi overrides or 10 KB of text, and
+	// both documents this row appears in — runs ls --json and the console
+	// that reads it — are rendered as they are. safetext.Field drops what
+	// could rewrite a line and caps what is left. It is read for display
+	// only: nothing authorises or admits anything by it (the guard test in
+	// this package fails if any other code reads the field).
+	LaunchedBy string        `json:"launched_by,omitempty"`
+	PRURL      string        `json:"pr_url,omitempty"`
+	Execution  string        `json:"execution,omitempty"`
+	LogURL     string        `json:"log_url,omitempty"`
+	Created    time.Time     `json:"created"`
+	Cost       runstore.Cost `json:"cost"`
 	// ImageAgeS is how old the run's image was when the run started
 	// (started_at minus built_at), in seconds; absent when either is unknown.
 	ImageAgeS *int64 `json:"image_age_s,omitempty"`
@@ -101,6 +129,12 @@ type Row struct {
 	// follow-up's, known before it starts).
 	Branch  string `json:"branch,omitempty"`
 	Outcome string `json:"outcome,omitempty"`
+	// ChangedFiles is the run's own record of the paths it changed (console
+	// v2 design D27, F17): paths only, bounded, and with the truncation
+	// recorded rather than hidden. nil when the run recorded none — a run
+	// that died before finalize, or a record from before the field existed —
+	// so a reader never sees an empty set where the answer is unknown.
+	ChangedFiles *runstore.ChangedFiles `json:"changed_files,omitempty"`
 	// ArtifactCount and ArtifactBytes are what the run's record says it
 	// delivered: how many artifacts, and their recorded total size (design
 	// artifact-runs.md §9). Both are the record's own account, never a
@@ -164,6 +198,25 @@ func Pushed(t *task.Spec, r *runstore.Record) (head string, ok bool) {
 	return "", false
 }
 
+// LauncherShort is a launcher identity as a text column shows it: for an
+// address, the part before its @ (dana@example.com → dana, which is what
+// tells two colleagues' runs apart); for anything else — a service account
+// name, a CI identity, whatever an automated launch recorded — the whole
+// value, since it has no local part to shorten to. An address with nothing
+// before its @ shortens to "", which the caller renders as its own empty
+// cell marker.
+//
+// It shortens what is already there; it does not make a value safe. The
+// launcher is untrusted text, so callers pass a sanitised value (Row's own
+// LaunchedBy is one) and sanitise the result again for the cell they write
+// it into, as every other bucket-derived column does.
+func LauncherShort(by string) string {
+	if name, _, ok := strings.Cut(by, "@"); ok {
+		return name
+	}
+	return by
+}
+
 // PriceBook is the compute price table one execution is priced with (a
 // local override, else the backend's list price), for the execution's own
 // region and machine type. The execution is passed rather than a region
@@ -196,11 +249,13 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 	row.Created, _ = runstore.RunTime(in.RunID)
 	if t := in.Task; t != nil {
 		row.Repo, row.Workflow, row.Batch, row.RequestedBy = t.Repo, t.Workflow, t.Batch, t.RequestedBy
+		row.Title = t.TitleLine()
 	} else {
 		row.Reason = "task.json unreadable"
 	}
 	if in.Launch != nil {
 		row.Execution, row.LogURL = in.Launch.Execution, in.Launch.LogURL
+		row.LaunchedBy = safetext.Field(in.Launch.LaunchedBy)
 	}
 	r, e := in.Record, in.Exec
 	followUpFields(&row, in.Task, r)
@@ -227,6 +282,9 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 	}
 	if r != nil {
 		row.ProjectLayer, row.ConfigSHA256 = r.ProjectLayer, r.ConfigSHA256
+		// Bounded again on read: the record is job-writable, so the row
+		// never carries more than the bound or a cut set dressed as whole.
+		row.ChangedFiles = r.ChangedFiles.Bounded()
 		row.Stage = r.Stage
 		if r.Reason != "" {
 			row.Reason = r.Reason
