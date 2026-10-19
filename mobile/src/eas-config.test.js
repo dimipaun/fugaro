@@ -28,8 +28,16 @@
 //     and the package name come from EAS environment variables at build time
 //     (`app.config.js`), so `eas.json` names neither variable and carries no
 //     reverse-DNS string: a value committed here would be a value every copy
-//     of the app built from this tree ships, which is exactly what D125's
-//     "they differ per installation" rules out.
+//     of the app built from this tree ships, and the identity is the owner's
+//     (D125's release path, which Check 89 is owner-run; `app-config.test.js`
+//     holds the same fence on `app.json`).
+//   * **each profile names the EAS environment it builds with.** A profile
+//     that does not is resolved against EAS's default environment, and the
+//     variable the profile needs may not be there: `development`'s dev-client
+//     build reads the `development` environment, and the variables have to
+//     exist in whatever environment a profile resolves to. The `env` fence
+//     below is about **values**, not about this name -- `eas.json` may say
+//     which environment holds them, and may not hold them.
 //
 // The credential walk carries a positive control (a planted path it must flag),
 // so a green run means the walk can fail rather than meaning it found nothing.
@@ -148,8 +156,12 @@ test('the submit profile lands on the internal track, which is C8', () => {
   for (const forbidden of ['ascAppId', 'ascApiKeyId', 'ascApiKeyIssuerId']) {
     assert.equal(RAW.includes(forbidden), false, forbidden);
   }
-  assert.equal(RAW.includes('production'), false, 'no public track is named anywhere');
-  assert.equal(RAW.includes('beta'), false, 'and no staged track either');
+  // No submit entry names a public track. (`production` is the name of the
+  // *environment* the `internal` profile builds with, which is a different
+  // thing from a track: the fence is over `submit`, where a track would live.)
+  for (const [path, value] of stringsIn(EAS.submit)) {
+    assert.equal(['production', 'beta', 'alpha'].includes(value), false, `${path} names the ${value} track`);
+  }
 });
 
 test('no credential path, no credential-shaped name and no credential-shaped value', () => {
@@ -161,14 +173,28 @@ test('no credential path, no credential-shaped name and no credential-shaped val
   }
 });
 
+test('every profile says which EAS environment it builds with', () => {
+  // The variables have to exist in the environment a profile resolves to, and
+  // EAS has a default when a profile names none -- so each profile names its
+  // own, and the README sets the two variables in all three. Mutation: drop
+  // `build.development.environment` and a dev-client build resolves an
+  // environment whose variables the README does not create.
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(EAS.build).map(([name, profile]) => [name, profile.environment])),
+    { development: 'development', preview: 'preview', internal: 'production' },
+  );
+});
+
 test('no identity is committed here: the variables are EAS environment variables', () => {
   // Mutation: paste the identifier into an `env` block and both halves go red.
   for (const variable of Object.values(ID_VARIABLES)) {
     assert.equal(RAW.includes(variable), false, `${variable} belongs to the EAS project's environment variables`);
   }
   assert.equal('env' in EAS, false, 'and no top-level env block names one');
+  // The fence is over *values*: `environment` above names where the values
+  // live, which is the opposite of writing one down.
   for (const [name, profile] of Object.entries(EAS.build)) {
-    assert.equal('env' in profile, false, `build.${name} sets no environment of its own`);
+    assert.equal('env' in profile, false, `build.${name} sets no environment value of its own`);
   }
   for (const [path, value] of stringsIn(EAS)) {
     assert.equal(isIdentifier(value, 'ios') && value.includes('.'), false, `${path} is ${value}`);

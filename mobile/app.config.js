@@ -3,10 +3,13 @@
 // `app.json` is the app's **static** config, and it is the file a reviewer
 // reads: P3.1's `src/app-config.test.js` asserts that it carries no credential,
 // no installation and **no release identity** -- no `ios.bundleIdentifier`, no
-// `android.package`, no reverse-DNS string at all. That is D125's ruling: the
-// identities are the owner's, they differ per installation and per store, and a
-// copy of the app somebody else builds must not ship with them baked into a
-// committed file.
+// `android.package`, no reverse-DNS string at all. That fence is P3.1's own
+// boundary test, and behind it stands D125: the app is its own artifact with
+// its own release path and cadence, whose store credentials and store identity
+// are the owner's, so a copy of the app somebody else builds must not ship with
+// an identity baked into a committed file. (D125 says the app is its own
+// artifact; the "no identity in `app.json`" assertion is `app-config.test.js`'s
+// to make, and it does.)
 //
 // A build still needs them: a store submission without a bundle identifier and
 // a package name cannot exist, and the Android package **can never change**
@@ -22,17 +25,33 @@
 //
 // **Neither value is committed.** Not in `app.json`, not in `eas.json` (see
 // `src/eas-config.test.js`), not in this file. The owner sets them with
-// `eas env:create` in the EAS project's `production` and `preview`
-// environments; `README.md` has the commands and says which account runs them.
+// `eas env:set` in the EAS project's `development`, `preview` and `production`
+// environments -- one per build profile, see `eas.json` -- and exports them in
+// the shell for the local `eas build`/`eas submit` runs; `README.md` has the
+// commands and says which account runs them.
 //
-// **What this file refuses, and what it leaves alone.** Under a real build --
-// `EAS_BUILD` is set on EAS's build servers, or the owner asks for the same
-// check locally with `FUGARO_REQUIRE_IDS=1` -- a missing or malformed variable
-// is a thrown error naming the variable and the fix, so a build cannot quietly
-// produce an artifact with no identity or with a typo'd one. With neither set
-// (a developer's `expo start`, and `npm test`) the config is returned **without**
-// the identities: nothing here needs a store account to run the tests, and a
-// local start does not need the identity either.
+// **Three states, not two.**
+//
+//   * **A build.** `EAS_BUILD` is set on EAS's build servers, or the owner asks
+//     for the same check locally with `FUGARO_REQUIRE_IDS=1`: a missing or
+//     malformed variable is a thrown error naming the variable and the fix, so
+//     a build cannot quietly produce an artifact with no identity or with a
+//     typo'd one.
+//   * **A local dev/lint run** (`expo start`, `npm test`) with the variables
+//     unset: the config is returned **without** the identities, and nothing is
+//     required -- nothing here needs a store account to run the tests.
+//   * **A local `eas build`/`eas submit`.** `EAS_BUILD` is set on the build
+//     *worker*, not by `eas-cli`, and `eas-cli` resolves this file locally
+//     before it uploads anything -- it needs `ios.bundleIdentifier` and
+//     `android.package` to configure credentials and to submit, so a config
+//     that dropped them whenever `EAS_BUILD` was unset would make the
+//     documented `eas build --profile internal` fail before a build ever
+//     started. So in the dev/lint state a variable that **is** set is validated
+//     and used (a value that is set must be one -- a typo is refused here too),
+//     and the owner exports the two variables in the shell for those commands.
+//
+// The **requirement** is what the switches add; the identity itself is read
+// wherever it is present.
 //
 // **No secret is read, and no value is printed.** The only environment this
 // file looks at is the two variables above plus the two switches named below;
@@ -57,26 +76,45 @@ export const ID_VARIABLES = Object.freeze({
 });
 
 /**
- * The reverse-DNS shapes the two identities must have.
+ * The reverse-DNS shapes the two identities must have -- **each store's own
+ * rule, not one rule with an Android exception**. Both are at least two
+ * dot-separated segments of lower-case letters, digits and one separator:
  *
- * Shared body: at least two dot-separated segments, each of lower-case letters,
- * digits, hyphens and underscores. **The Android package is stricter than the
- * iOS one**: no segment may start with a digit (Play's rule: a package such as
- * `com.example.1app` is one the Play Console refuses), while a bundle
- * identifier may.
+ *   * **iOS**: Apple allows alphanumerics, hyphens and periods -- and **no
+ *     underscore**, in any segment. A segment may start with a digit.
+ *   * **Android**: the package is a Java package name. Every segment must
+ *     start with a **letter** (Play refuses `com.example.1app`), and **no
+ *     hyphen** is allowed anywhere (it is not a Java identifier character);
+ *     an underscore is.
+ *
+ * These two fences are the whole point of the file for the Android package:
+ * it **can never change** once the app exists on Play, so a value the store
+ * would reject has to be refused here, where the fix is still free.
  */
-const SEGMENT = '[a-z0-9][a-z0-9_-]*';
-const ANDROID_SEGMENT = '[a-z][a-z0-9_-]*';
+const IOS_SEGMENT = '[a-z0-9][a-z0-9-]*';
+const ANDROID_SEGMENT = '[a-z][a-z0-9_]*';
 
 export const ID_PATTERNS = Object.freeze({
-  ios: new RegExp(`^${SEGMENT}(?:\\.${SEGMENT})+$`),
+  ios: new RegExp(`^${IOS_SEGMENT}(?:\\.${IOS_SEGMENT})+$`),
   android: new RegExp(`^${ANDROID_SEGMENT}(?:\\.${ANDROID_SEGMENT})+$`),
 });
 
 /** The field of `expo` each identity is written to, and the words the messages use. */
 const FIELDS = Object.freeze({
-  ios: { field: 'bundleIdentifier', what: 'iOS bundle identifier' },
-  android: { field: 'package', what: 'Android package name' },
+  ios: {
+    field: 'bundleIdentifier',
+    what: 'iOS bundle identifier',
+    shape:
+      'lower-case letters, digits and hyphens in at least two dot-separated segments ' +
+      '(Apple allows no underscore)',
+  },
+  android: {
+    field: 'package',
+    what: 'Android package name',
+    shape:
+      'lower-case letters, digits and underscores in at least two dot-separated segments, ' +
+      'each starting with a letter (Play allows no hyphen, and no segment may start with a digit)',
+  },
 });
 
 /**
@@ -84,7 +122,9 @@ const FIELDS = Object.freeze({
  * by EAS's build servers), or an explicit local ask (`FUGARO_REQUIRE_IDS=1`,
  * the owner's own switch, so a developer can check the same thing without an
  * account). Anything else -- `FUGARO_REQUIRE_IDS=0`, an empty `EAS_BUILD`, no
- * variables at all -- is a dev/lint run and gets a config without them.
+ * variables at all -- is a dev/lint run: the identities are **optional** there,
+ * not forbidden, because `eas-cli` resolves this file locally that way (see
+ * `optionalSection`).
  */
 export function requiresIdentifiers(env = process.env) {
   return Boolean(env.EAS_BUILD) || env.FUGARO_REQUIRE_IDS === '1';
@@ -101,7 +141,7 @@ function missing(variable, what) {
   return new Error(
     `${variable} is not set, and a build cannot be made without the ${what}. Set it in the ` +
       `EAS project's environment variables (` +
-      `eas env:create --name ${variable} --value <value> --environment production --environment preview` +
+      `eas env:set --name ${variable} --value <value> --environment development --environment preview --environment production` +
       `), or export it in the shell for a local run, and re-run the build. FUGARO_REQUIRE_IDS=1 ` +
       `asks for this check outside an EAS build.`,
   );
@@ -113,23 +153,21 @@ function missing(variable, what) {
  * a build log, and the one thing a mistyped variable might hold is something
  * that must not be printed.
  */
-function malformed(variable, what) {
+function malformed(platform, variable) {
   return new Error(
-    `${variable} is not a reverse-DNS identifier, so it cannot be the ${what}. It must be ` +
-      `lower-case letters, digits, hyphens and underscores in at least two dot-separated ` +
-      `segments, and no segment of the Android package may start with a digit. Fix the value ` +
-      `in the EAS project's environment variables (eas env:update --name ${variable} ...) and ` +
-      `re-run the build. The value is not repeated here.`,
+    `${variable} is not a reverse-DNS identifier, so it cannot be the ${FIELDS[platform].what}. ` +
+      `It must be ${FIELDS[platform].shape}. Fix the value in the EAS project's environment ` +
+      `variables (eas env:set --name ${variable} --value <value> --environment <the one the ` +
+      `profile reads>) and re-run the build. The value is not repeated here.`,
   );
 }
 
-/** Read, validate and return one identity; throws on absent or malformed. */
+/** Read and validate one identity; throws on absent or malformed. */
 function read(platform, env) {
   const variable = ID_VARIABLES[platform];
-  const { what } = FIELDS[platform];
   const value = env[variable];
-  if (value === undefined || value === '') throw missing(variable, what);
-  if (!isIdentifier(value, platform)) throw malformed(variable, what);
+  if (value === undefined || value === '') throw missing(variable, FIELDS[platform].what);
+  if (!isIdentifier(value, platform)) throw malformed(platform, variable);
   return value;
 }
 
@@ -138,6 +176,23 @@ function without(section, field) {
   const rest = { ...(section ?? {}) };
   delete rest[field];
   return rest;
+}
+
+/**
+ * One section of the config in the dev/lint state: the static identity, if a
+ * caller put one there, is dropped (this file is the single site for them), and
+ * the variable is used **if it is set** -- validated like any other value, so a
+ * typo is refused here as well. An unset variable adds nothing and requires
+ * nothing, which is what keeps `expo start` and `npm test` runnable without a
+ * store account.
+ */
+function optionalSection(platform, section, env) {
+  const { field } = FIELDS[platform];
+  const rest = without(section, field);
+  const value = env[ID_VARIABLES[platform]];
+  if (value === undefined || value === '') return rest;
+  if (!isIdentifier(value, platform)) throw malformed(platform, ID_VARIABLES[platform]);
+  return { ...rest, [field]: value };
 }
 
 /**
@@ -159,14 +214,18 @@ export function resolveConfig(config, env = process.env) {
   }
 
   if (!requiresIdentifiers(env)) {
-    // Local mode. The identities are removed rather than passed through, so
-    // app.json cannot become a second site for them by accident: this file is
-    // the one place they come from, and a value sitting in the static config
-    // is a value this file drops.
+    // Dev/lint mode -- which is also the mode `eas-cli` resolves this file in,
+    // locally, before it uploads a build: EAS sets `EAS_BUILD` on the build
+    // worker, not in the CLI's own process, and the CLI needs
+    // `ios.bundleIdentifier`/`android.package` to configure credentials and to
+    // submit. So the identities are **not** required here, but a variable that
+    // is set is read and validated rather than dropped; a static identity in
+    // `app.json` is still removed, so this file stays the one place they come
+    // from.
     return {
       ...config,
-      ios: without(config.ios, FIELDS.ios.field),
-      android: without(config.android, FIELDS.android.field),
+      ios: optionalSection('ios', config.ios, env),
+      android: optionalSection('android', config.android, env),
     };
   }
 

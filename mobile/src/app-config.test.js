@@ -164,4 +164,13 @@ test('the identities are resolved through app.config.js, in both modes', () => {
   assert.deepEqual(resolveConfig(CONFIG.expo, {}), CONFIG.expo);
   assert.equal('bundleIdentifier' in CONFIG.expo.ios, false, 'and the static file never grew one');
   assert.equal('package' in CONFIG.expo.android, false);
+  // ... a value that is set is used without being required: this is the state
+  // `eas-cli` resolves the file in when it runs locally (`EAS_BUILD` is set by
+  // the build worker, not by the CLI, and the CLI needs the identity to
+  // configure credentials and to submit), so the switch decides whether the
+  // identities are **required**, not whether they are read.
+  assert.deepEqual(
+    resolveConfig(CONFIG.expo, { [ID_VARIABLES.ios]: 'dev.fugaro.app', [ID_VARIABLES.android]: 'dev.fugaro.app' }),
+    resolved,
+  );
 });

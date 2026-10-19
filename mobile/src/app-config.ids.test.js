@@ -2,26 +2,39 @@
 //
 // `mobile/app.config.js` is the one place the app's two release identities come
 // from -- the iOS bundle identifier and the Android package name are read from
-// EAS environment variables at build time, because P3.1's boundary test and
-// D125 forbid committing them to `app.json`. That makes this file the second
-// half of that fence, and it is written about the two failure modes a config
-// file has:
+// EAS environment variables at build time, because P3.1's boundary test
+// (`src/app-config.test.js`) asserts that `app.json` carries no release
+// identity: the app is its own artifact with its own release path (D125), and
+// the identity is the owner's. That makes this file the second half of that
+// fence, and it is written about the two failure modes a config file has:
 //
 //   * **a build that shipped without an identity, or with a typo'd one.** A
 //     missing or malformed variable under `EAS_BUILD` (or an explicit
 //     `FUGARO_REQUIRE_IDS=1`) is a thrown error naming the variable and the
-//     fix -- never a config that resolves quietly. The Android package is the
-//     one that cannot be corrected later: it is fixed the moment the app
-//     exists on Play, so a digit-starting segment is refused rather than sent.
+//     fix -- never a config that resolves quietly. Each store's own rule is
+//     the fence: the Android package is a Java package name (a letter starts
+//     every segment, no hyphen), the iOS identifier is Apple's (no
+//     underscore). The Android package is the one that cannot be corrected
+//     later -- it is fixed the moment the app exists on Play -- so a value the
+//     Play Console would refuse is refused here, while the fix is still free.
 //   * **a value that leaked.** The messages describe the shape a value must
 //     have and **never repeat the value**, and no environment value other than
 //     the two identities reaches the resolved config -- the one thing a
 //     mistyped variable might hold is something that must not be printed into
 //     a build log or baked into an artifact.
 //
-// And the counter-case, which is what keeps the tests runnable at all: with
-// neither switch set -- a developer's `expo start`, and `npm test` itself --
-// the config comes back **without** the identities and nothing is required.
+// And the two cases that keep the file usable:
+//
+//   * **a value that is set is used.** `eas-cli` resolves this file **locally**
+//     before it uploads a build, and `EAS_BUILD` is set by the build *worker*,
+//     not by the CLI -- so the CLI's own resolution runs in the dev/lint state,
+//     and it needs `ios.bundleIdentifier`/`android.package` to configure
+//     credentials and to submit. A variable that is set is therefore read and
+//     validated in every state; the switches add the *requirement*, not the
+//     read.
+//   * **nothing is required without a switch** -- a developer's `expo start`,
+//     and `npm test` itself -- so the config resolves without a store account,
+//     and a static identity planted in `app.json` is still dropped.
 //
 // Every refusal below is mutation-proven the same way the tree's other guards
 // are: the property is stated as a table, the mutation that breaks it is named
@@ -93,34 +106,58 @@ test('the two variables are the ones this task named, and a rename is deliberate
   });
 });
 
-test('the pattern accepts a reverse-DNS name and refuses everything else', () => {
-  // The accepted shapes, including the digit-starting segment an iOS bundle
-  // identifier may have.
-  for (const good of [IOS, 'a.b', 'x1.y2', 'dev.fugaro-app.io', 'dev.fugaro_app.io', 'dev.1app']) {
-    assert.equal(isIdentifier(good, 'ios'), true, good);
-  }
-  // ... and the refused ones. Mutation: drop the `+` quantifier or the segment
-  // class and 'dev.fugaro' or 'Dev.Fugaro.App' starts passing.
-  for (const bad of [
+test('each pattern accepts and refuses its own store’s shapes, and not the other’s', () => {
+  // Every shape neither store accepts: one segment, an empty segment, upper
+  // case, a space, a newline an env var picked up on the way in, a stray path
+  // character, a port. Mutation: drop the `+` quantifier or the segment class
+  // and 'dev.fugaro' or 'Dev.Fugaro.App' starts passing.
+  const refusedByBoth = [
     'devfugaro', // one segment: not a reverse-DNS name
     'dev..app', // an empty segment
     '.dev.app',
     'dev.app.',
     'Dev.Fugaro.App', // upper case
     'dev fugaro.app',
-    'dev.fugaro.app\n', // a newline an env var picked up on the way in
+    'dev.fugaro.app\n',
     'dev/fugaro.app',
     '',
     'dev.fugaro.app:443',
-  ]) {
+  ];
+  for (const bad of refusedByBoth) {
     assert.equal(isIdentifier(bad, 'ios'), false, JSON.stringify(bad));
+    assert.equal(isIdentifier(bad, 'android'), false, JSON.stringify(bad));
   }
-  // The Android package is stricter by exactly one rule: Play refuses a segment
-  // that starts with a digit, and this package can never be changed later.
-  assert.equal(isIdentifier('dev.1app', 'android'), false, 'Play refuses a digit-starting segment');
-  assert.equal(isIdentifier('1dev.fugaro', 'android'), false, '... in the first segment as well as the last');
-  assert.equal(isIdentifier('dev.fugaro.app', 'android'), true);
+
+  // iOS: Apple allows alphanumerics, hyphens and periods, and **no
+  // underscore**; a segment may start with a digit.
+  for (const good of [IOS, 'a.b', 'x1.y2', 'dev.fugaro-app.io', 'dev.1app']) {
+    assert.equal(isIdentifier(good, 'ios'), true, good);
+  }
+  for (const bad of ['dev.fugaro_app.io', 'dev._fugaro.io']) {
+    assert.equal(isIdentifier(bad, 'ios'), false, `${JSON.stringify(bad)}: Apple allows no underscore`);
+  }
+
+  // Android: the package is a Java package name -- a letter starts every
+  // segment, an underscore is a Java identifier character, and a hyphen is
+  // not. A digit-starting segment is what Play refuses, and this package can
+  // never be changed once the app exists on Play, so it is refused here.
+  for (const good of [ANDROID, 'a.b', 'x1.y2', 'dev.fugaro_app.io']) {
+    assert.equal(isIdentifier(good, 'android'), true, good);
+  }
+  for (const bad of [
+    'dev.1app', // Play refuses a digit-starting segment ...
+    '1dev.fugaro', // ... in the first segment as well as the last
+    'dev._fugaro.io', // a segment has to start with a letter
+    'dev.fugaro-app.io', // a hyphen is not a Java identifier character
+  ]) {
+    assert.equal(isIdentifier(bad, 'android'), false, JSON.stringify(bad));
+  }
+
+  // The two fences are different rules, not one rule with an exception: each
+  // value below is the other platform's shape.
   assert.equal(ID_PATTERNS.android.source !== ID_PATTERNS.ios.source, true);
+  assert.equal(isIdentifier('dev.fugaro-app.io', 'android'), false);
+  assert.equal(isIdentifier('dev.fugaro_app.io', 'ios'), false);
   assert.equal(isIdentifier(IOS, 'windows'), false, 'an unknown platform is not an identity');
   assert.equal(isIdentifier(7, 'ios'), false, 'a non-string is not an identity');
 });
@@ -150,21 +187,37 @@ for (const [platform, variable] of Object.entries(ID_VARIABLES)) {
     // variable only in the command it suggests (or names neither) is red here.
     assert.equal(message.startsWith(variable), true, `the message begins by naming ${variable}: ${message}`);
     assert.equal(message.includes(other), false, 'and not the other one');
-    assert.match(message, /eas env:create/, 'and says where to set it');
+    // The current EAS CLI command: `eas env:create` and `eas env:update` are
+    // hidden and print a deprecation warning, and a message that sends the
+    // owner to a command their CLI tells them not to use is a message that
+    // wastes the stop it just made. Mutation: name the old command here.
+    assert.match(message, /eas env:set/, 'and says where to set it, with the command the CLI has');
+    assert.equal(/eas env:(create|update)\b/.test(message), false, 'and not the deprecated one');
   });
 
   test(`a build refuses a malformed ${variable}, and the message never repeats the value`, () => {
     // Each of these is a value somebody could paste: a display name, a
-    // one-segment name, and a secret-looking string. Mutation: echo the value
-    // into the message and the last assertion goes red -- which is the point,
-    // because a build log is the last place a mistyped variable should print.
-    for (const bad of ['Fugaro', 'devfugaro', 'not a package name', 'sk-notAKeyButItLooksLikeOne123456']) {
+    // one-segment name, a name in the *other* store's shape, and a
+    // secret-looking string. Mutation: echo the value into the message and the
+    // last assertion goes red -- which is the point, because a build log is the
+    // last place a mistyped variable should print.
+    // The value the OTHER store accepts and this one does not: an underscore
+    // for iOS, a hyphen for Android.
+    const otherShape = platform === 'ios' ? 'dev.fugaro_app.io' : 'dev.fugaro-app.io';
+    for (const bad of ['Fugaro', 'devfugaro', 'not a package name', otherShape, 'sk-notAKeyButItLooksLikeOne123456']) {
       const env = build({ [variable]: bad });
       const message = refusal(() => resolveConfig(EXPO, env));
       assert.match(message, new RegExp(variable), 'the message names the variable');
       assert.match(message, /reverse-DNS/, 'and the shape the value must have');
       assert.equal(message.includes(bad), false, `the message repeats ${JSON.stringify(bad)}`);
+      assert.match(message, /eas env:set/, 'and names the command that fixes it');
     }
+    // The shape sentence is this platform's rule, not the shared half of it:
+    // an owner told "no hyphen" while fixing an iOS identifier is looking for
+    // a rule their store does not have. Mutation: one SHAPE for both and one
+    // of these two lines goes red.
+    const wrongRule = platform === 'ios' ? /no hyphen/ : /no underscore/;
+    assert.equal(wrongRule.test(refusal(() => resolveConfig(EXPO, build({ [variable]: 'Fugaro' })))), false);
   });
 }
 
@@ -181,14 +234,14 @@ test('a build with both variables resolves them onto the static config, and chan
   assert.equal('package' in EXPO.android, false);
 });
 
-test('a dev/lint run gets the config without the identities, whatever the environment holds', () => {
-  // The counter-case: `expo start` and `npm test` have neither switch set, and
-  // they must keep working without a store account.
+test('a dev/lint run requires nothing, and gets the config unchanged with nothing set', () => {
+  // `expo start` and `npm test` have neither switch set, and they must keep
+  // working without a store account: with the variables unset the config is the
+  // static one, field for field. Mutation: require them in local mode (or add
+  // an empty identity) and this line goes red.
   assert.deepEqual(resolveConfig(EXPO, {}), EXPO);
-  // ... including when the variables are set but garbage: nothing is required,
-  // so nothing is validated and nothing is added. Mutation: validate in local
-  // mode too, and this throws.
-  assert.deepEqual(resolveConfig(EXPO, { [ID_VARIABLES.ios]: 'Fugaro', [ID_VARIABLES.android]: 'x' }), EXPO);
+  assert.deepEqual(resolveConfig(EXPO, { FUGARO_REQUIRE_IDS: '0' }), EXPO);
+  assert.deepEqual(resolveConfig(EXPO, { EAS_BUILD: '' }), EXPO);
   // ... and a value that got into the static config by hand is REMOVED here
   // rather than passed through, so `app.json` cannot quietly become a second
   // site for the identities. Mutation: return `config` as-is and this fails.
@@ -197,6 +250,30 @@ test('a dev/lint run gets the config without the identities, whatever the enviro
   assert.equal('bundleIdentifier' in resolved.ios, false);
   assert.equal('package' in resolved.android, false);
   assert.equal(planted.ios.bundleIdentifier, 'com.example.app', 'the static object is not mutated either');
+});
+
+test('a local eas-cli run gets the identities from the variables, and a typo is still refused', () => {
+  // This is the state `eas-cli` resolves the file in: `EAS_BUILD` is set by the
+  // build *worker*, not by the CLI, and the CLI needs the two identifiers
+  // locally to configure credentials and to submit. A file that dropped them
+  // whenever `EAS_BUILD` was unset made `eas build --profile internal` fail
+  // before a build was ever uploaded. Mutation: return the sections without
+  // reading the variables in this state and the first two lines fail.
+  const local = resolveConfig(EXPO, { [ID_VARIABLES.ios]: IOS, [ID_VARIABLES.android]: ANDROID });
+  assert.equal(local.ios.bundleIdentifier, IOS);
+  assert.equal(local.android.package, ANDROID);
+  assert.deepEqual(withoutIdentities(local), EXPO, 'and nothing else moves');
+  // A value that IS set has to be one in this state too -- a mistyped export
+  // must not be baked into a dev build either. Mutation: skip validation when
+  // the switches are unset and this throws nothing.
+  assert.match(refusal(() => resolveConfig(EXPO, { [ID_VARIABLES.ios]: 'dev.fugaro_app.io' })), /FUGARO_IOS_BUNDLE_ID/);
+  // ... and one variable set does not drag the other one in.
+  const onlyIos = resolveConfig(EXPO, { [ID_VARIABLES.ios]: IOS });
+  assert.equal(onlyIos.ios.bundleIdentifier, IOS);
+  assert.equal('package' in onlyIos.android, false);
+  // The static identity is dropped here as well: the variable is the site.
+  const planted = { ...EXPO, ios: { ...EXPO.ios, bundleIdentifier: 'com.example.app' } };
+  assert.equal(resolveConfig(planted, { [ID_VARIABLES.ios]: IOS }).ios.bundleIdentifier, IOS);
 });
 
 test('no environment value but the two identities reaches the config', () => {
@@ -227,12 +304,16 @@ test('app.config.js names exactly the two identity variables, as literals', () =
   assert.match(code(SOURCE), /requiresIdentifiers/);
 });
 
-test('the resolved config carries the identities only when the run asks for them', () => {
-  // The whole file in one line: same env, same base, one switch apart.
+test('the switches add the requirement, and only the requirement', () => {
+  // The whole file in three lines: the same variables, the switch apart. With
+  // the variables unset the switch is the difference between a refusal and a
+  // config without an identity -- and with them set, both states resolve the
+  // same identities, which is what the local eas-cli phase depends on.
   const asked = resolveConfig(EXPO, { EAS_BUILD: 'true', ...build() });
-  const notAsked = resolveConfig(EXPO, { [ID_VARIABLES.ios]: IOS, [ID_VARIABLES.android]: ANDROID });
-  assert.equal('bundleIdentifier' in asked.ios, true);
-  assert.equal('bundleIdentifier' in notAsked.ios, false);
+  const local = resolveConfig(EXPO, { [ID_VARIABLES.ios]: IOS, [ID_VARIABLES.android]: ANDROID });
+  assert.deepEqual(asked, local);
+  assert.deepEqual(resolveConfig(EXPO, {}), EXPO, 'no switch, no variables: nothing is required');
+  assert.match(refusal(() => resolveConfig(EXPO, { EAS_BUILD: 'true' })), /FUGARO_IOS_BUNDLE_ID/);
 });
 
 test("Expo's entry reads process.env, and refuses a call with no static config", () => {
