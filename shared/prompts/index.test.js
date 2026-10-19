@@ -94,6 +94,34 @@ function answerMessage(over = {}) {
   };
 }
 
+/** D169's action record, as P6.3 validates it: a verb, a resolved target, an
+ * action id, and the confirmation it was read back under. */
+function actionRecord(at) {
+  return {
+    id: 'act-1',
+    verb: 'cancel',
+    target: { run: 'run-1' },
+    confirmation: { id: 'cf-1', at },
+  };
+}
+
+/** The phone's confirmation of a destructive prompt: kind `action`, per §3.5. */
+function actionMessage(over = {}) {
+  return {
+    id: 'c1',
+    sender: 'phone',
+    // `text` is required on every P6.3 message, an action record included: the
+    // record is what runs, and this is what was said.
+    text: 'confirm',
+    at: T0,
+    mac: MAC,
+    kind: 'action',
+    reply_to: 'p1',
+    action: actionRecord(T0),
+    ...over,
+  };
+}
+
 /** A queue for one installation, with the TTL pinned so the arithmetic is readable. */
 function makeQueue(over = {}) {
   const built = initialQueue({ now: T0, account: 'acct-a', ...over });
@@ -594,6 +622,28 @@ test('a stored prompt is re-checked against the `at` bound on every read', () =>
   assert.equal(expire(queue, { now: T0 + MINUTE }).ok, true);
 });
 
+test('enqueue will not write a prompt the read path would refuse', () => {
+  // The read path refuses a prompt past the module's own ceiling, so the WRITE
+  // path must not be able to produce one: `open` accepts `now` up to `TIME_MAX`
+  // and the future tolerance reaches past it, so a prompt at `TIME_MAX + 1`
+  // used to be written into a queue that every later read then refused -- the
+  // bricking the `now-jumped` refusal exists to prevent, reached one call over.
+  const queue = makeQueue({ now: TIME_MAX });
+  const past = enqueue(queue, { now: TIME_MAX, prompt: promptMessage({ at: TIME_MAX + 1 }) });
+  assert.equal(past.ok, false);
+  assert.equal(past.code, REFUSAL.FUTURE_TIMESTAMP);
+  assert.equal(past.field, 'prompt.at');
+
+  // The last prompt the writer will take is the last one the reader accepts,
+  // and the queue it leaves behind is readable.
+  const ceiling = enqueue(queue, { now: TIME_MAX, prompt: promptMessage({ at: TIME_MAX }) });
+  assert.equal(ceiling.ok, true, JSON.stringify(ceiling));
+  assert.equal(ceiling.queue.prompts.length, 1);
+  assert.equal(expire(ceiling.queue, { now: TIME_MAX }).ok, true);
+  assert.equal(pending(ceiling.queue, { now: TIME_MAX }).ok, true);
+  assert.equal(answer(ceiling.queue, { now: TIME_MAX, answer: answerMessage({ at: TIME_MAX }) }).ok, true);
+});
+
 // ---------------------------------------------------------------------------
 // Answers: the TTL, except a destructive prompt's confirmation (D173)
 // ---------------------------------------------------------------------------
@@ -640,10 +690,11 @@ test('an answer is accepted within the prompt\'s TTL, not P1.1\'s command window
 test('an answer to a destructive prompt is a confirmation and takes the command window', () => {
   const queue = enqueueOne(makeQueue(), {}, { destructive: true }).queue;
   const written = T0 + HOUR;
+  const confirmed = actionMessage({ at: written, action: actionRecord(written) });
 
   // Confirmed five hours after the user tapped it: inside the command window,
   // and judged as a command -- the kind P1.1 applies the six-hour window to.
-  const inside = answer(queue, { now: written + 5 * HOUR, answer: answerMessage({ at: written }) });
+  const inside = answer(queue, { now: written + 5 * HOUR, answer: confirmed });
   assert.equal(inside.ok, true, JSON.stringify(inside));
   assert.equal(inside.kind, MAILBOX_KIND.COMMAND);
   assert.equal(inside.windowMs, 6 * HOUR);
@@ -651,24 +702,92 @@ test('an answer to a destructive prompt is a confirmation and takes the command 
 
   // Exactly at the window: still a confirmation, which is the same inclusive
   // boundary P1.1's `now - at > window` draws.
-  assert.equal(
-    answer(queue, { now: written + 6 * HOUR, answer: answerMessage({ at: written }) }).ok,
-    true,
-  );
+  assert.equal(answer(queue, { now: written + 6 * HOUR, answer: confirmed }).ok, true);
 
   // One millisecond past it, while the PROMPT is still alive by days: refused.
-  // The answer's own age is what decides once the answer is a confirmation.
-  const refused = answer(queue, { now: written + 6 * HOUR + 1, answer: answerMessage({ at: written }) });
+  // The CONFIRMATION's own time is what decides once the answer is a
+  // confirmation -- §3.5 checks the command window from the confirmation time,
+  // not from the message's `at`, which is only the envelope's clock.
+  const refused = answer(queue, { now: written + 6 * HOUR + 1, answer: confirmed });
   assert.equal(refused.ok, false);
   assert.equal(refused.code, REFUSAL.REPLAY);
-  assert.equal(refused.field, 'answer.at');
-  // The prompt is untouched by the refusal: still pending, and still answerable
-  // by a fresh confirmation.
-  const again = answer(queue, {
-    now: written + 6 * HOUR + 1,
-    answer: answerMessage({ at: written + 6 * HOUR }),
-  });
-  assert.equal(again.ok, true, 'a fresh confirmation is still accepted');
+  assert.equal(refused.field, 'answer.action.confirmation.at');
+
+  // Both halves of that, told apart: the same record with a fresh `at` and the
+  // old confirmation is still a replay, and one whose `at` is old but whose
+  // confirmation is fresh is accepted.
+  const restamped = actionMessage({ at: written + 6 * HOUR + 1, action: actionRecord(written) });
+  assert.equal(answer(queue, { now: written + 6 * HOUR + 1, answer: restamped }).code, REFUSAL.REPLAY);
+  const fresh = actionMessage({ at: written, action: actionRecord(written + 6 * HOUR) });
+  assert.equal(
+    answer(queue, { now: written + 6 * HOUR + 1, answer: fresh }).ok,
+    true,
+    'a fresh confirmation is still accepted',
+  );
+});
+
+test('a plain answer to a destructive prompt is refused: only a confirmation answers it', () => {
+  // §3.5, from D169's widening after review round 2: an answer to a destructive
+  // prompt is accepted ONLY as a MAC-verified action record carrying a
+  // confirmation -- never as a plain `answer`, which the consumer must refuse.
+  // The MAC is P6.7's to verify; the SHAPE is this module's, and accepting a
+  // plain `answer` here would leave P6.7 a command it has to refuse.
+  const queue = enqueueOne(makeQueue(), {}, { destructive: true }).queue;
+  const plain = answer(queue, { now: T0, answer: answerMessage() });
+  assert.equal(plain.ok, false);
+  assert.equal(plain.code, REFUSAL.NOT_A_CONFIRMATION);
+  assert.equal(plain.field, 'answer.kind');
+  assert.ok(Object.isFrozen(plain));
+  assert.equal(queue.prompts.length, 1, 'nothing left the queue on the refusal');
+
+  // And the converse: an action record answering a prompt whose effect is not
+  // destructive is not the shape that prompt waits for either.
+  const quiet = enqueueOne(makeQueue()).queue;
+  const wrong = answer(quiet, { now: T0, answer: actionMessage() });
+  assert.equal(wrong.ok, false);
+  assert.equal(wrong.code, REFUSAL.NOT_AN_ANSWER);
+  assert.equal(wrong.field, 'answer.kind');
+
+  // A `message` is neither shape, and an action record with no `reply_to`
+  // names no prompt this queue holds.
+  const message = { id: 'm1', sender: 'phone', text: 'ok', at: T0, mac: MAC, kind: 'message' };
+  assert.equal(answer(quiet, { now: T0, answer: message }).code, REFUSAL.NOT_AN_ANSWER);
+  const unwired = actionMessage();
+  delete unwired.reply_to;
+  assert.equal(answer(queue, { now: T0, answer: unwired }).code, REFUSAL.UNKNOWN_PROMPT);
+});
+
+test('an action record is checked as an action record, not merely accepted by kind', () => {
+  const queue = enqueueOne(makeQueue(), {}, { destructive: true }).queue;
+
+  // The schema's own rules apply to the record. The fault it names is a
+  // SUB-path (`action.verb`, `action.extra`), and a sub-path is not one of the
+  // fields this module's message vocabulary names -- so the refusal reports the
+  // answer as a whole, exactly as it does for an unknown key at the top level.
+  // The CODE is still the schema's: the caller branches on the reason.
+  const unknownVerb = actionMessage({ action: { ...actionRecord(T0), verb: 'mergee' } });
+  const refused = answer(queue, { now: T0, answer: unknownVerb });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'unknown-verb');
+  assert.equal(refused.field, 'answer');
+  const unknownKey = actionMessage({ action: { ...actionRecord(T0), extra: 1 } });
+  assert.equal(answer(queue, { now: T0, answer: unknownKey }).code, 'unknown-field');
+
+  // A confirmation time is a timestamp like any other, and this module's own
+  // bounds apply to it: `at: 0` would be a confirmation measured from an unset
+  // counter, and a future one is a clock this module will not read.
+  assert.equal(
+    answer(queue, { now: T0, answer: actionMessage({ action: actionRecord(0) }) }).code,
+    REFUSAL.ZERO_TIMESTAMP,
+  );
+  assert.equal(
+    answer(queue, { now: T0, answer: actionMessage({ action: actionRecord(-0) }) }).code,
+    REFUSAL.NEGATIVE_ZERO,
+  );
+  assert.equal(
+    answer(queue, { now: T0, answer: actionMessage({ action: actionRecord(T0 + 30 * DAY) }) }).code,
+    REFUSAL.FUTURE_TIMESTAMP,
+  );
 });
 
 test("the window an answer is judged by is P1.1's own kind mapping", () => {
@@ -716,7 +835,7 @@ test("an answer older than its window is refused with P1.1's code for that windo
   const confirmation = enqueueOne(makeQueue(), {}, { destructive: true }).queue;
   const old = answer(confirmation, {
     now: T0 + 7 * HOUR,
-    answer: answerMessage({ at: T0 }),
+    answer: actionMessage({ at: T0, action: actionRecord(T0) }),
   });
   assert.equal(old.ok, false);
   assert.equal(old.code, REFUSAL.REPLAY);

@@ -278,6 +278,11 @@ export const REFUSAL = Object.freeze({
   // The delivery.
   NOT_A_PROMPT: 'not-a-prompt',
   NOT_AN_ANSWER: 'not-an-answer',
+  // §3.5's shape rule, the destructive half of the same question: an answer to
+  // a destructive prompt is accepted ONLY as an action record carrying a
+  // confirmation, never as a plain `answer` -- which is what the consumer must
+  // refuse -- and a confirmation answers only a destructive prompt.
+  NOT_A_CONFIRMATION: 'not-a-confirmation',
   INVALID_DESTRUCTIVE: 'invalid-destructive',
   INVALID_SAFE: 'invalid-safe',
   SAFE_NOT_AN_OPTION: 'safe-not-an-option',
@@ -356,6 +361,29 @@ function isIntegerInRange(value, min, max) {
 /** A refusal: no queue, a code the caller can branch on, and the field at fault. */
 function refuse(code, field) {
   return Object.freeze({ ok: false, code, field });
+}
+
+/**
+ * checkStamp judges one epoch-millisecond reading against every bound this
+ * module puts on a time, most specific fault first: `-0` and an unset counter
+ * are their own codes (P6.3's schema accepts both), then the module's own
+ * ceiling, then P1.1's future tolerance. Returns a refusal, or `null` when the
+ * reading is one this module will carry.
+ *
+ * The ceiling is not decoration. `now` may be `TIME_MAX` and the tolerance
+ * reaches past it, so a write path holding only the tolerance could store a
+ * timestamp the READ path refuses -- and then every later call on that queue
+ * would come back `invalid-entry`: a queue bricked one call over, which is the
+ * failure the `now-jumped` refusal exists to prevent on the clock's side. The
+ * writer and the reader are held to the same bound because they are the same
+ * bound, spelled once.
+ */
+function checkStamp(value, now, toleranceMs, where) {
+  if (Object.is(value, -0)) return refuse(REFUSAL.NEGATIVE_ZERO, where);
+  if (value < 1) return refuse(REFUSAL.ZERO_TIMESTAMP, where);
+  if (value > TIME_MAX) return refuse(REFUSAL.FUTURE_TIMESTAMP, where);
+  if (value - now > toleranceMs) return refuse(REFUSAL.FUTURE_TIMESTAMP, where);
+  return null;
 }
 
 /**
@@ -898,15 +926,14 @@ function enqueueUnguarded(queue, event) {
   const prompt = validated.message;
   if (prompt.kind !== KIND_OF_PROMPT) return refuse(REFUSAL.NOT_A_PROMPT, 'prompt.kind');
 
-  if (Object.is(prompt.at, -0)) return refuse(REFUSAL.NEGATIVE_ZERO, 'prompt.at');
-  // `at: 0` is schema-valid and is not a time this module will carry: the TTL
-  // would be measured from an unset counter, so the prompt would be "expired"
-  // from the moment it was written. P1.1 refuses the same value for the same
-  // reason.
-  if (prompt.at < 1) return refuse(REFUSAL.ZERO_TIMESTAMP, 'prompt.at');
-  if (prompt.at - values.now > current.futureToleranceMs) {
-    return refuse(REFUSAL.FUTURE_TIMESTAMP, 'prompt.at');
-  }
+  // Every bound this module puts on a time, the ceiling among them: `at: 0` is
+  // schema-valid and is not a time this module will carry (the TTL would be
+  // measured from an unset counter, so the prompt would be "expired" from the
+  // moment it was written -- P1.1 refuses the same value for the same reason),
+  // and a prompt past `TIME_MAX` is one `readEntry` refuses, so writing it
+  // would leave a queue no later call can read.
+  const stamp = checkStamp(prompt.at, values.now, current.futureToleranceMs, 'prompt.at');
+  if (stamp !== null) return stamp;
 
   const destructive = values.destructive === undefined ? false : values.destructive;
   if (typeof destructive !== 'boolean') return refuse(REFUSAL.INVALID_DESTRUCTIVE, 'destructive');
@@ -1034,25 +1061,30 @@ function expireUnguarded(queue, event = {}) {
  *
  *     answer(queue, { now, answer })
  *
- * `answer` is a validated P6.3 message of kind `answer` naming the prompt in
- * `reply_to` -- and, for a destructive prompt, it is a confirmation's shape
- * (D169's action record is P6.7's to re-validate; what is decided here is the
- * WINDOW, D173):
+ * `answer` is a validated P6.3 message naming the prompt in `reply_to`: of kind
+ * `answer` for a prompt whose effect is not destructive, and of kind `action`
+ * -- D169's action record, carrying the confirmation -- for one whose effect
+ * is. §3.5's rule is applied here as a SHAPE rule, both ways round: a plain
+ * `answer` to a destructive prompt is refused `not-a-confirmation` (the shape
+ * the consumer must refuse), and a confirmation answers only a destructive
+ * prompt. The MAC over the record is P6.7's to verify; what is decided here is
+ * the shape and the WINDOW (D173):
  *
  *   non-destructive prompt   accepted while the PROMPT is alive -- the prompt's
  *                            TTL from the prompt's own `at`, so a consumer
  *                            offline longer than six hours still accepts it;
  *   destructive prompt       accepted only inside the COMMAND window from the
- *                            ANSWER's own `at` -- a confirmation must be fresh,
- *                            which is P1.1's window for the kind this module
- *                            passes (`acceptanceKind`).
+ *                            CONFIRMATION's own time -- §3.5 checks that window
+ *                            from the confirmation time -- and a confirmation
+ *                            must be fresh, which is P1.1's window for the kind
+ *                            this module passes (`acceptanceKind`).
  *
  * A prompt that is already dead is refused `expired` with its expiry attached:
  * the caller must deliver the safe answer, not the answer the user gave late.
- * An answer whose own `at` is older than the window its kind is judged by is
- * refused with the code P1.1 uses for that window -- `expired` for a queued
- * prompt's answer, `replay` for a confirmation -- and carries no expiry, because
- * nothing has died.
+ * An answer older than the window its kind is judged by -- its own `at` for a
+ * queued prompt, the confirmation's time for a confirmation -- is refused with
+ * the code P1.1 uses for that window (`expired` for a queued prompt's answer,
+ * `replay` for a confirmation) and carries no expiry, because nothing has died.
  *
  * @returns `{ ok: true, outcome: 'answered', queue, ... }` or a refusal
  */
@@ -1073,21 +1105,53 @@ function answerUnguarded(queue, event = {}) {
     );
   }
   const reply = validated.message;
-  if (reply.kind !== 'answer') return refuse(REFUSAL.NOT_AN_ANSWER, 'answer.kind');
-  // `reply_to` is required by the schema on an `answer`, so it is present; the
-  // check here is the schema's guarantee restated as this module's assumption,
-  // and it is not dead code: `validateMessage` is P6.3's, and this module would
-  // rather refuse than read `undefined` into a lookup.
+  // D169's action record is the confirmation shape (§3.5), and it is what a
+  // destructive prompt's answer IS -- not a second way to answer a quiet one.
+  const isConfirmation = reply.kind === 'action';
+  if (reply.kind !== 'answer' && !isConfirmation) {
+    return refuse(REFUSAL.NOT_AN_ANSWER, 'answer.kind');
+  }
+  // The schema requires `reply_to` on an `answer` and merely permits it on an
+  // `action` (`KIND_OPTIONAL`), so on the confirmation shape this is what makes
+  // the record name a prompt at all -- and either way the lookup below would
+  // read `undefined` without it. Restating P6.3's guarantee is not dead code:
+  // `validateMessage` is another module's, and this one would rather refuse
+  // than read a non-string into a lookup.
   if (typeof reply.reply_to !== 'string') return refuse(REFUSAL.UNKNOWN_PROMPT, 'answer.reply_to');
 
   const index = current.prompts.findIndex((entry) => entry.prompt.id === reply.reply_to);
   if (index === -1) return refuse(REFUSAL.UNKNOWN_PROMPT, 'answer.reply_to');
   const entry = current.prompts[index];
 
-  if (Object.is(reply.at, -0)) return refuse(REFUSAL.NEGATIVE_ZERO, 'answer.at');
-  if (reply.at < 1) return refuse(REFUSAL.ZERO_TIMESTAMP, 'answer.at');
-  if (reply.at - values.now > current.futureToleranceMs) {
-    return refuse(REFUSAL.FUTURE_TIMESTAMP, 'answer.at');
+  // §3.5's shape rule, both ways round: an answer to a destructive prompt is
+  // accepted only as an action record carrying a confirmation, never as a plain
+  // `answer` (which the consumer must refuse), and a confirmation answers only
+  // a prompt whose effect is destructive.
+  if (entry.destructive !== isConfirmation) {
+    return refuse(
+      isConfirmation ? REFUSAL.NOT_AN_ANSWER : REFUSAL.NOT_A_CONFIRMATION,
+      'answer.kind',
+    );
+  }
+
+  // The envelope's own clock, held to the same bounds as any other time here.
+  const envelope = checkStamp(reply.at, values.now, current.futureToleranceMs, 'answer.at');
+  if (envelope !== null) return envelope;
+  // And, for a confirmation, the time the command window is measured from:
+  // §3.5's check is "6 hours from the confirmation time", not from the
+  // envelope's `at`. P6.3's schema validated it as a timestamp, and this
+  // module's own bounds -- `-0`, an unset counter, the ceiling, the tolerance
+  // -- are applied here as they are to every other reading.
+  let at = reply.at;
+  if (isConfirmation) {
+    at = reply.action.confirmation.at;
+    const confirmed = checkStamp(
+      at,
+      values.now,
+      current.futureToleranceMs,
+      'answer.action.confirmation.at',
+    );
+    if (confirmed !== null) return confirmed;
   }
 
   if (expiredBy(entry.prompt.at, values.now, current.promptTtlMs)) {
@@ -1106,16 +1170,18 @@ function answerUnguarded(queue, event = {}) {
 
   const kind = acceptanceKind(entry.destructive);
   const windowMs = windowFor(current, kind);
-  if (values.now - reply.at > windowMs) {
-    // The answer's own age is past the window its kind is judged by, and the
+  if (values.now - at > windowMs) {
+    // The answer's age -- the confirmation's for a confirmation, the message's
+    // own `at` otherwise -- is past the window its kind is judged by, and the
     // code is the one P1.1 answers for that kind: `expired` for a delivery
     // handed to the prompt window, `replay` for a command. P6.7 passes this
     // very kind to P1.1's `deliver`, so a code chosen differently here would
     // have this module and the mailbox tell the caller two different stories
     // about one delivery. Two ways to reach it, one per kind:
     //
-    //   a confirmation (a destructive prompt's answer) older than the command
-    //   window -- the prompt itself may still be alive by days;
+    //   a confirmation (a destructive prompt's answer) whose confirmation time
+    //   is older than the command window -- the prompt itself may still be
+    //   alive by days;
     //   an answer older than the TTL while its prompt is alive, which is only
     //   possible for an `at` written before the prompt was (a phone's clock is
     //   not this module's problem, but an answer to the prompt's own `at` or
@@ -1125,7 +1191,10 @@ function answerUnguarded(queue, event = {}) {
     // owed. The dead-prompt refusal above returns the same `expired` code with
     // `field: 'prompt.at'` AND its expiry; the `field`, and that field's
     // presence, are what tell the two apart.
-    return refuse(kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY, 'answer.at');
+    return refuse(
+      kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY,
+      isConfirmation ? 'answer.action.confirmation.at' : 'answer.at',
+    );
   }
 
   const prompts = current.prompts.filter((_, position) => position !== index);

@@ -242,8 +242,8 @@ run "a confirmation takes the command window, not the prompt's TTL" \
 
 # The confirmation's freshness is its OWN age, not the prompt's: the prompt may
 # be days old and the tap a minute ago.
-run "a confirmation is judged on the answer's own at" \
-  "  if (values.now - reply.at > windowMs) {" \
+run "a prompt's answer is judged on its own at, not the prompt's" \
+  "  if (values.now - at > windowMs) {" \
   "  if (values.now - entry.prompt.at > windowMs) {"
 
 # An answer to a prompt that has already expired is refused, and the expiry is
@@ -287,26 +287,83 @@ run "only a prompt is queued" \
   "  if (false) return refuse(REFUSAL.NOT_A_PROMPT, 'prompt.kind');"
 
 run "only an answer settles a prompt" \
-  "  if (reply.kind !== 'answer') return refuse(REFUSAL.NOT_AN_ANSWER, 'answer.kind');" \
-  "  if (false) return refuse(REFUSAL.NOT_AN_ANSWER, 'answer.kind');"
+  "  if (reply.kind !== 'answer' && !isConfirmation) {
+    return refuse(REFUSAL.NOT_AN_ANSWER, 'answer.kind');
+  }" \
+  "  if (false) {
+    return refuse(REFUSAL.NOT_AN_ANSWER, 'answer.kind');
+  }"
+
+# §3.5's shape rule, both ways round: an answer to a destructive prompt is
+# accepted only as an action record carrying a confirmation -- never as a plain
+# `answer`, which the consumer must refuse -- and a confirmation answers only a
+# prompt whose effect is destructive.
+run "a destructive prompt is answered only by a confirmation" \
+  "  if (entry.destructive !== isConfirmation) {
+    return refuse(
+      isConfirmation ? REFUSAL.NOT_AN_ANSWER : REFUSAL.NOT_A_CONFIRMATION,
+      'answer.kind',
+    );
+  }" \
+  "  if (false) {
+    return refuse(
+      isConfirmation ? REFUSAL.NOT_AN_ANSWER : REFUSAL.NOT_A_CONFIRMATION,
+      'answer.kind',
+    );
+  }"
+
+# The two ways to be the wrong shape are two different refusals: a caller told
+# "send a confirmation" and a caller told "this prompt is not waiting for one"
+# are being told different things, and one code would blur them.
+run "the two shape refusals keep their own codes" \
+  "      isConfirmation ? REFUSAL.NOT_AN_ANSWER : REFUSAL.NOT_A_CONFIRMATION," \
+  "      isConfirmation ? REFUSAL.NOT_A_CONFIRMATION : REFUSAL.NOT_AN_ANSWER,"
+
+# Kind `action` is D169's record, and reading it as anything else makes the
+# confirmation shape unrepresentable -- which is the fault this replaced.
+run "an action record is read as a confirmation, not as a plain answer" \
+  "  const isConfirmation = reply.kind === 'action';" \
+  "  const isConfirmation = false;"
+
+# The command window is measured from the CONFIRMATION's time (§3.5: six hours
+# from the confirmation time), not from the envelope's `at` -- and the
+# confirmation's time is a reading like any other, so this module's bounds
+# apply to it.
+run "a confirmation is judged from the confirmation's own time" \
+  "    at = reply.action.confirmation.at;" \
+  "    at = reply.at;"
+
+run "a confirmation's time is checked, not trusted because the schema took it" \
+  "    if (confirmed !== null) return confirmed;" \
+  "    if (false) return confirmed;"
+
 
 # The clock's bounds: a zero timestamp is an unset counter, and a far-future one
 # would otherwise read as "inside the window".
 run "a zero timestamp is refused, not carried" \
-  "  if (prompt.at < 1) return refuse(REFUSAL.ZERO_TIMESTAMP, 'prompt.at');" \
-  "  if (false) return refuse(REFUSAL.ZERO_TIMESTAMP, 'prompt.at');"
+  "  if (value < 1) return refuse(REFUSAL.ZERO_TIMESTAMP, where);" \
+  "  if (false) return refuse(REFUSAL.ZERO_TIMESTAMP, where);"
 
 run "a negated zero is refused, not carried as a time" \
-  "  if (Object.is(prompt.at, -0)) return refuse(REFUSAL.NEGATIVE_ZERO, 'prompt.at');" \
-  "  if (false) return refuse(REFUSAL.NEGATIVE_ZERO, 'prompt.at');"
+  "  if (Object.is(value, -0)) return refuse(REFUSAL.NEGATIVE_ZERO, where);" \
+  "  if (false) return refuse(REFUSAL.NEGATIVE_ZERO, where);"
 
-run "a negated zero on an answer is refused too" \
-  "  if (Object.is(reply.at, -0)) return refuse(REFUSAL.NEGATIVE_ZERO, 'answer.at');" \
-  "  if (false) return refuse(REFUSAL.NEGATIVE_ZERO, 'answer.at');"
+# The write path and the read path are held to the same ceiling, spelled once:
+# `now` may be TIME_MAX and the tolerance reaches past it, so a prompt written
+# beyond the ceiling would land in a queue every later read refuses -- the
+# bricking the clock's own bound exists to prevent, one call over.
+run "a timestamp past the module's ceiling is refused on the way in" \
+  "  if (value > TIME_MAX) return refuse(REFUSAL.FUTURE_TIMESTAMP, where);" \
+  "  if (false) return refuse(REFUSAL.FUTURE_TIMESTAMP, where);"
 
-run "a prompt from the future beyond the tolerance is refused" \
-  "  if (prompt.at - values.now > current.futureToleranceMs) {" \
-  "  if (false) {"
+run "a timestamp from the future beyond the tolerance is refused" \
+  "  if (value - now > toleranceMs) return refuse(REFUSAL.FUTURE_TIMESTAMP, where);" \
+  "  if (false) return refuse(REFUSAL.FUTURE_TIMESTAMP, where);"
+
+# ... and the answer's own envelope is still one of the readings it checks.
+run "an answer's own \`at\` is checked, not assumed" \
+  "  const envelope = checkStamp(reply.at, values.now, current.futureToleranceMs, 'answer.at');" \
+  "  const envelope = null;"
 
 run "a clock that went backwards is refused" \
   "  if (read.values.now < current.queue.now) return refuse(REFUSAL.NOW_WENT_BACKWARDS, 'now');" \
@@ -534,8 +591,14 @@ run "an accessor property has its own code, not the unknown-field one" \
 # delivery, `replay` for a command. One code for both would have the app and the
 # mailbox report one delivery two different ways.
 run "an over-age answer takes its kind's code, not always replay" \
-  "    return refuse(kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY, 'answer.at');" \
-  "    return refuse(REFUSAL.REPLAY, 'answer.at');"
+  "    return refuse(
+      kind === KIND.PROMPT ? REFUSAL.EXPIRED : REFUSAL.REPLAY,
+      isConfirmation ? 'answer.action.confirmation.at' : 'answer.at',
+    );" \
+  "    return refuse(
+      REFUSAL.REPLAY,
+      isConfirmation ? 'answer.action.confirmation.at' : 'answer.at',
+    );"
 
 # Answering settles the prompt and drops its entry, so what is outstanding is
 # what is held and nothing else. Keeping the answered entry would leave a
