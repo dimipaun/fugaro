@@ -23,10 +23,24 @@ package cli
 //
 // A fourth test is not about the Go module at all but is this task's other
 // half, and it is the mechanical form of Global Constraint 9 -- the site never
-// links an unsigned or unreleased artifact: while website/data/site.yaml's
-// features.console_downloads is false, no file under website/ may carry this
-// repository's release-asset URL. W3.1 flips that flag when the console ships,
-// and extends this test in the same commit (§7's L9 file row names this file).
+// links an unsigned or unreleased artifact: no file under website/ may carry
+// this repository's release-asset URL, and the reason the rule holds changed
+// with the console's release rather than the rule. While
+// website/data/site.yaml's features.console_downloads is false, the console is
+// unreleased and a versioned asset URL would 404 or point at an unsigned
+// artifact; W3.1 flipped that flag when `console-v0.8.7` was published, and
+// every URL the site offers is now composed at build time from
+// website/content/downloads.json's release facts, so a URL written in a source
+// file is a second source that drifts (the owner's changes spec of 2026-10-18,
+// item 6; §7's L9 file row names this file). The test reads the flag and says
+// which of the two it is refusing in.
+//
+// W3.1's second half is the release facts themselves, and it is the test after
+// that one: while the console's downloads are on, the data file's release
+// block has to be complete and offline-checkable -- the tag prefix the console
+// workflow composes the release tag from, a strict version, one published name
+// per asset (the name carrying the version), the SHA-256 the release recorded
+// for each of them, and the CLI release note the console is published from.
 //
 // And a fifth pins the facts file itself to the repository it describes,
 // because a site that copies a fact is a site that drifts from it (Global
@@ -76,7 +90,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -95,6 +111,21 @@ const (
 	// to assert it is where the site's pages expect it, which is what keeps
 	// the file walk from passing on an empty directory.
 	websiteInstallFactsPath = "website/data/install.yaml"
+	// websiteDownloadsPath is the console's own facts (W1.6): what the console
+	// is, the sentence the unreleased state renders, the properties its
+	// decisions fix, and -- since W3.1 -- the release every download URL is
+	// derived from and the SHA-256 the release recorded for each asset. The
+	// site's build reads it through src/lib/console-downloads.mjs, which
+	// refuses a shape this test would not expect; what is checked here is the
+	// release the file describes.
+	websiteDownloadsPath = "website/content/downloads.json"
+	// websiteConsoleReleaseWorkflowPath is the workflow that builds, signs, notarises
+	// and publishes the console as its own `console-vX.Y.Z` release (D11). It
+	// is read, rather than quoted, because the tag prefix the site's download
+	// URLs are built from is composed there (`CONSOLE_TAG=console-v$VERSION`
+	// from the CLI's own vX.Y.Z tag), and a prefix written down in two places
+	// is the copy that drifts.
+	websiteConsoleReleaseWorkflowPath = ".github/workflows/console-release.yml"
 	// websiteDownloadSuffix is the shape the site may not carry while the
 	// console's downloads are off: the release-asset path of THIS repository,
 	// appended to site.yaml's own repository with its scheme stripped. The
@@ -159,9 +190,11 @@ type websiteFactsAnalytics struct {
 // websiteFactsFeatures are the features the site renders only when they exist
 // (findings 23-25 and 57, D95 and D107).
 type websiteFactsFeatures struct {
-	// ConsoleDownloads is false until the console ships: its section renders
-	// as a placeholder with no link and no button, and a test refuses to emit
-	// a download URL while the flag is false (Global Constraint 9).
+	// ConsoleDownloads is true since the console's first release shipped
+	// (`console-v0.8.7`, 2026-10-19): its section renders the release's own
+	// downloads, and the pair of facts -- this flag and the data file's
+	// `available` -- is what the console-link rule and the release-facts check
+	// read (Global Constraint 9, D95, W3.1).
 	ConsoleDownloads bool `yaml:"console_downloads"`
 	// Video is false until the owner produces the explainer video: the hero
 	// carries no player, no iframe, no poster and no play button.
@@ -193,6 +226,108 @@ func readWebsiteFacts(t *testing.T) (websiteFactsFile, string) {
 	}
 	return f, string(data)
 }
+
+// websiteDownloadsFile is website/content/downloads.json, decoded the way the
+// site's own reader decodes it: the fields a check below reads, and nothing
+// else. The site's reader is stricter than this struct (it refuses an unknown
+// key, a missing one and a malformed value, and it is what the build runs), so
+// what is here is the release the URLs are derived from rather than a second
+// validation of the file's shape.
+type websiteDownloadsFile struct {
+	// Available is the console's own flag: the section renders the downloads
+	// from it, and it has to agree with site.yaml's features.console_downloads
+	// (W1.6 step 2).
+	Available bool `json:"available"`
+	Release   struct {
+		// TagPrefix is what the release's tag is composed from: `console-v`,
+		// the prefix the console's own workflow publishes under (D11).
+		TagPrefix string `json:"tag_prefix"`
+		// Version is the CLI version the console was built from, and the
+		// version in every published asset name.
+		Version string `json:"version"`
+	} `json:"release"`
+	Downloads []struct {
+		// ID names the entry within the file (`macos-dmg`).
+		ID string `json:"id"`
+		// Platform is the label's first half (`macOS`), and the reason the
+		// site claims no platform the release does not carry.
+		Platform string `json:"platform"`
+		// File is the release's PUBLISHED name, with `{version}` where the
+		// version goes -- the URL's last segment, not a URL.
+		File string `json:"file"`
+		// SHA256 is the checksum the release recorded for those bytes.
+		SHA256 string `json:"sha256"`
+	} `json:"downloads"`
+}
+
+// readWebsiteDownloads reads website/content/downloads.json, the console's own
+// facts, and fails with the path named rather than with a decoder's offset.
+func readWebsiteDownloads(t *testing.T) websiteDownloadsFile {
+	t.Helper()
+	data, err := os.ReadFile("../../" + websiteDownloadsPath)
+	if err != nil {
+		t.Fatalf("open %s: %v", websiteDownloadsPath, err)
+	}
+	var f websiteDownloadsFile
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatalf("%s: %v", websiteDownloadsPath, err)
+	}
+	return f
+}
+
+// consoleReleaseTagPrefix is the tag prefix the console's release is published
+// under, read out of the workflow that publishes it: the line that composes
+// the console's own tag from the CLI's (`CONSOLE_TAG="console-v$VERSION"`),
+// with the version's own `$VERSION` reference cut off. It fails rather than
+// returning a default, because a prefix this check cannot find is a prefix the
+// site's URLs are not held to at all.
+func consoleReleaseTagPrefix(t *testing.T) string {
+	t.Helper()
+	const marker = `CONSOLE_TAG="`
+	for _, line := range strings.Split(readDoc(t, websiteConsoleReleaseWorkflowPath), "\n") {
+		i := strings.Index(line, marker)
+		if i < 0 {
+			continue
+		}
+		rest := line[i+len(marker):]
+		j := strings.Index(rest, "$VERSION")
+		if j <= 0 {
+			continue
+		}
+		return rest[:j]
+	}
+	t.Fatalf("%s carries no %s...$VERSION line, so the prefix the console's release tag is composed from cannot be read: the site's download URLs are built from that tag, and this check would otherwise hold them to nothing", websiteConsoleReleaseWorkflowPath, marker)
+	return ""
+}
+
+// strictVersion reports whether a version is a strict X.Y.Z, the only shape the
+// console's workflow publishes from and the shape the published asset names
+// carry.
+func strictVersion(v string) bool {
+	return strictVersionPattern.MatchString(v)
+}
+
+// strictVersionPattern is a version as the console's workflow writes one: three
+// dot-separated numbers and nothing else (`.github/workflows/console-release.yml`
+// refuses any tag that is not a strict vX.Y.Z). It is also what a published
+// asset name must not carry beside its `{version}` placeholder.
+var strictVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// versionToken is any X.Y.Z-shaped run of characters, which is what a published
+// asset name carries where the release's version goes.
+var versionToken = regexp.MustCompile(`[0-9]+\.[0-9]+\.[0-9]+`)
+
+// sha256Hex reports whether a value is a SHA-256 as the release's own sums file
+// writes it: 64 lowercase hexadecimal characters. A well-formed value is not
+// evidence the checksum is the published bytes' -- only the release's
+// console-sha256sums.txt is -- but a value that is not this shape is a
+// checksum no reader can check anything against.
+func isSHA256Hex(v string) bool {
+	return sha256HexPattern.MatchString(v)
+}
+
+// sha256HexPattern is a SHA-256 as the release's own sums file writes one.
+var sha256HexPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // websiteWalk returns every file under the module root's website/ directory,
 // relative to the root, slash-separated and sorted, and it is the one walk the
@@ -582,17 +717,28 @@ func TestNoGoFileEmbedsFromWebsite(t *testing.T) {
 }
 
 // TestWebsiteLinksNoConsoleWhileTheFlagIsOff is Global Constraint 9 made
-// mechanical: the site never links an unsigned or unreleased artifact. The
-// console is designed and not shipped (finding 23), so its section renders as
-// a placeholder -- and while website/data/site.yaml's features.console_downloads
-// is false, this repository's release-asset URL anywhere under website/ is a
-// link to an asset that does not exist.
+// mechanical: the site never links an unsigned or unreleased artifact, and it
+// never keeps a second copy of a link it derives. The console is designed,
+// shipped (`console-v0.8.7`) and released through a flag, so the scan below
+// holds in BOTH states of that flag and the failure it prints says which state
+// it is refusing in:
+//
+//   - while website/data/site.yaml's features.console_downloads is false, this
+//     repository's release-asset URL anywhere under website/ is a link to an
+//     asset that does not exist -- the console is not released, and a link
+//     here would either 404 or point at an unsigned artifact (finding 25, D95,
+//     Global Constraint 9);
+//   - while the flag is true, the site does offer those URLs, and every one of
+//     them is composed at build time by `src/lib/console-downloads.mjs` from
+//     website/content/downloads.json's release facts and site.yaml's
+//     repository, so a URL WRITTEN in a file under website/ is a second source
+//     of a fact the build already derives -- the copy that drifts first, and
+//     the one a version bump would leave behind (the owner's changes spec of
+//     2026-10-18, item 6; Global Constraint 6).
 //
 // The flag is the site's own, so this is a scan of the site rather than of the
 // Go tree, and it is deliberately blunt: every file under website/, whatever
-// its name, is read. W3.1 flips the flag when the console's first release
-// ships, and it extends this test in the same commit -- so a true flag fails
-// here, loudly, rather than turning the scan below into a silent pass.
+// its name, is read.
 //
 // The URL to look for is built from the facts file's own `repository`, so the
 // rule follows the repository the site links to, and the field's pin (in
@@ -601,10 +747,6 @@ func TestWebsiteLinksNoConsoleWhileTheFlagIsOff(t *testing.T) {
 	root := consoleBoundaryRoot(t)
 	facts, _ := readWebsiteFacts(t)
 
-	if facts.Features.ConsoleDownloads {
-		t.Fatalf("%s: features.console_downloads is true and this test has not been extended: the flag is flipped by W3.1 when the console ships, in the same commit that extends this test to check every release-asset URL under %s/ against a release asset of a tag that exists (W1.6 step 2, W3.1, Global Constraint 9)", websiteFactsPath, websiteDirName)
-	}
-
 	// The URL the site may not carry, built from the facts file's own
 	// repository rather than typed here, so the rule follows the repository the
 	// site links to (and the pin in TestWebsiteFactsMatchTheRepository keeps
@@ -612,6 +754,16 @@ func TestWebsiteLinksNoConsoleWhileTheFlagIsOff(t *testing.T) {
 	download := websiteDownloadNeedle(t, facts.Repository)
 
 	for _, rel := range websiteBoundaryFiles(t, root) {
+		// The build output is stepped over, for the reason the canonical-host
+		// scan steps over it: a page under website/dist/ carries these URLs
+		// because the build RENDERED them from website/content/downloads.json
+		// and site.yaml, which is what deriving a URL means -- and nothing
+		// there is committed or edited by hand (website/.gitignore). The rule
+		// above is about the files a person writes, and every one of those is
+		// read.
+		if rel == websiteBuildDir || strings.HasPrefix(rel, websiteBuildDir+"/") {
+			continue
+		}
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			t.Fatal(err)
@@ -620,8 +772,102 @@ func TestWebsiteLinksNoConsoleWhileTheFlagIsOff(t *testing.T) {
 			if !strings.Contains(line, download) {
 				continue
 			}
+			if facts.Features.ConsoleDownloads {
+				t.Errorf("%s:%d carries the console download URL %q while features.console_downloads is true: the console's downloads are on, and every URL the site offers for them is composed at build time from website/content/downloads.json's release facts and %s's repository by src/lib/console-downloads.mjs. A URL written here is a second source of that fact -- the copy a version bump leaves behind, pointing at the previous release's asset (the owner's changes spec of 2026-10-18, item 6; Global Constraint 6)\n%s", rel, i+1, download, websiteFactsPath, line)
+				continue
+			}
 			t.Errorf("%s:%d carries the console download URL %q while features.console_downloads is false: the console is not released, the site links the Releases page and never a versioned asset URL, and a link here would either 404 or point at an unsigned artifact (finding 25, D95, Global Constraint 9)\n%s", rel, i+1, download, line)
 		}
+	}
+}
+
+// TestWebsiteConsoleReleaseFactsAreComplete is W3.1's other half: the console's
+// downloads are on, and the facts they are rendered and derived from are
+// complete, offline-checkable, and about the release that exists.
+//
+// The pair is one fact. site.yaml's features.console_downloads is what the
+// repository-wide rule above reads; website/content/downloads.json's
+// `available` is what the console page's section renders from. A build that
+// rendered one state while the other said the opposite is the drift the
+// placeholder existed to prevent, and the site's own build refuses it
+// (`src/lib/console-downloads.mjs`) -- so the two are checked to agree here as
+// well, where a Go run that never builds the site can see it.
+//
+// Everything else below is the release the URLs are derived from, and every
+// check is one an offline run can make:
+//
+//   - the tag prefix is the console workflow's own, read out of
+//     .github/workflows/console-release.yml rather than typed here, because
+//     that file is what composes the release tag (`CONSOLE_TAG=console-v$VERSION`
+//     from the CLI's vX.Y.Z tag) and a second spelling of it here would be the
+//     copy that drifts (D11, Global Constraint 6);
+//   - the version is a strict X.Y.Z, which is what the workflow refuses to
+//     publish anything but;
+//   - the CLI's own release note for that version exists, docs/releases/vX.Y.Z.md
+//     -- the console is published from the CLI's vX.Y.Z tag (D11), so a
+//     version with no release note is a console the site would offer a download
+//     for and no release behind it. That file is also the offline record of the
+//     tag, which is what a check can hold without a network or a git fetch;
+//   - every asset's published name carries the version, because a name for
+//     another version is a URL that 404s (the name is what the URL's last
+//     segment is built from), and no two assets carry the same SHA-256, because
+//     two different bytes with one checksum is a checksum that says nothing
+//     about the file a reader has.
+//
+// What it cannot check offline, and says so rather than implying otherwise: that
+// a well-formed SHA-256 is the checksum of the PUBLISHED bytes. That is a fact
+// about bytes the release holds, and the release's own console-sha256sums.txt is
+// its source; the owner's check is against it, and the data file's values were
+// read from it when this release was turned on.
+func TestWebsiteConsoleReleaseFactsAreComplete(t *testing.T) {
+	facts, _ := readWebsiteFacts(t)
+	downloads := readWebsiteDownloads(t)
+
+	if downloads.Available != facts.Features.ConsoleDownloads {
+		t.Errorf("%s: available = %t and %s's features.console_downloads = %t: the two are one fact -- the flag is what the repository-wide console-link rule reads and `available` is what the console page renders from -- and the site's own build refuses them disagreeing (W1.6 step 2, W3.1, D95)", websiteDownloadsPath, downloads.Available, websiteFactsPath, facts.Features.ConsoleDownloads)
+	}
+
+	wantPrefix := consoleReleaseTagPrefix(t)
+	if downloads.Release.TagPrefix != wantPrefix {
+		t.Errorf("%s: release.tag_prefix = %q, want %q, the prefix .github/workflows/console-release.yml composes the console's release tag from (CONSOLE_TAG=console-v$VERSION, from the CLI's own vX.Y.Z tag): every download URL the site builds is `<repository>/releases/download/<prefix><version>/<name>`, so a prefix that is not the workflow's names a tag no run creates (D11)", websiteDownloadsPath, downloads.Release.TagPrefix, wantPrefix)
+	}
+	if !strictVersion(downloads.Release.Version) {
+		t.Errorf("%s: release.version = %q, want a strict X.Y.Z: the workflow refuses to publish a console from any other tag, and the version is what the published asset names carry", websiteDownloadsPath, downloads.Release.Version)
+	}
+
+	if len(downloads.Downloads) == 0 {
+		t.Fatalf("%s: the downloads list is empty: the console's downloads are %t, and a site that offers a release with no asset in it offers nothing (W1.6, W3.1)", websiteDownloadsPath, downloads.Available)
+	}
+	seen := map[string]string{}
+	for i, d := range downloads.Downloads {
+		if !strings.Contains(d.File, "{version}") {
+			t.Errorf("%s: downloads[%d].file = %q, want the release's published name with {version} where the version goes: the name is the URL's last segment, and one for another version is a download that 404s", websiteDownloadsPath, i, d.File)
+		}
+		// The name is a template, so the version reaches it by substitution
+		// rather than literally -- and the check that matters is that the name
+		// carries NO OTHER version: a name with a version written into it
+		// beside the placeholder is a name for the release that version was,
+		// which is the URL a version bump leaves behind (D11).
+		if other := versionToken.FindString(strings.ReplaceAll(d.File, "{version}", "")); other != "" {
+			t.Errorf("%s: downloads[%d].file = %q carries the version %q as well as {version}: the placeholder is where the release's own version goes, so a version written into the name is a name for another release -- the download a version bump leaves pointing at the previous asset (D11)", websiteDownloadsPath, i, d.File, other)
+		}
+		if !isSHA256Hex(d.SHA256) {
+			t.Errorf("%s: downloads[%d].sha256 = %q, want 64 lowercase hex characters: the value is printed beside the link for a reader to check their download against, and anything else is not a SHA-256 (D183, W3.1)", websiteDownloadsPath, i, d.SHA256)
+		}
+		if first, dup := seen[d.SHA256]; dup {
+			t.Errorf("%s: downloads[%d] and downloads[%s] carry the same sha256 %q: two different bytes cannot share one checksum, so at least one of the two is not the file the release published (W3.1)", websiteDownloadsPath, i, first, d.SHA256)
+		}
+		seen[d.SHA256] = strconv.Itoa(i)
+	}
+
+	// The CLI release the console is published from: its note is in the tree,
+	// and it names the console's own release. This is the offline half of "the
+	// tag exists" -- a git tag cannot be checked without a fetch, and a shallow
+	// CI checkout has none (D11, W3.1).
+	note := "docs/releases/v" + downloads.Release.Version + ".md"
+	body := readDoc(t, note)
+	if !strings.Contains(body, downloads.Release.TagPrefix+downloads.Release.Version) {
+		t.Errorf("%s does not name %q: the console is published from the CLI's own v%s tag (D11), so the release note for that version is where the console's release is recorded, and the site offers a download for it (W3.1)", note, downloads.Release.TagPrefix+downloads.Release.Version, downloads.Release.Version)
 	}
 }
 
@@ -700,9 +946,11 @@ func TestWebsiteDownloadNeedleSeesEverySpelling(t *testing.T) {
 //   - analytics: the flag and the measurement id agree with each other -- on
 //     with a property, or off without one -- so W3.2 sets both when it turns
 //     the measurement on (D93) and does not have to edit this file at all;
-//   - features: the console's downloads and the video are both off. W3.1
-//     flips the first with the console's first release, and W2.4 the second
-//     when the video exists, each in the commit that relaxes its own check;
+//   - features: the console's downloads agree with the data file that renders
+//     them, and the video is off. W3.1 flipped the first when the console's
+//     first release was published (2026-10-19), and relaxed its own pin in the
+//     same commit; W2.4 flips the second when the video exists, in the commit
+//     that relaxes its check;
 //   - allowed_hosts: bare lowercase hosts, no scheme, no port and no path,
 //     carrying the two hosts the site's links need and the canonical host.
 func TestWebsiteFactsMatchTheRepository(t *testing.T) {
@@ -758,8 +1006,20 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 		t.Errorf("%s: analytics is %+v, and its two values must agree: analytics that report nowhere and a property id nothing reports to are both broken states, and W3.2 sets both together when it turns the measurement on behind W1.12's consent gate (D93, plan Task W3.2)", websiteFactsPath, facts.Analytics)
 	}
 
-	if facts.Features.ConsoleDownloads {
-		t.Errorf("%s: features.console_downloads is true: the console is designed and not shipped, so its section may not render as something a reader can follow. W3.1 flips this flag with the console's first release, in the same commit that extends TestWebsiteLinksNoConsoleWhileTheFlagIsOff (D95, finding 23, plan Task W3.1)", websiteFactsPath)
+	// The console's downloads were pinned OFF here until W3.1, which flipped
+	// the flag with the console's first release (`console-v0.8.7`, published
+	// 2026-10-19). The pin that replaces it is not "the flag is on": it is
+	// that the flag and the data file agree, which is the invariant worth
+	// holding and the one the site's own build refuses to break (W1.6 step 2).
+	// What the flag being ON then means -- a complete release block, the
+	// workflow's own tag prefix, a version with a release note, one published
+	// name per asset and a SHA-256 for each -- is
+	// TestWebsiteConsoleReleaseFactsAreComplete, which runs in both states of
+	// the flag because the data file carries the release's names from the day
+	// they are known.
+	if facts.Features.ConsoleDownloads != readWebsiteDownloads(t).Available {
+		available := readWebsiteDownloads(t).Available
+		t.Errorf("%s: features.console_downloads = %t and %s's available = %t, and the two are one fact: the flag is what TestWebsiteLinksNoConsoleWhileTheFlagIsOff reads over the whole of %s/, and `available` is what the console page's section renders from, so the site's build refuses them disagreeing (W1.6 step 2, W3.1, D95)", websiteFactsPath, facts.Features.ConsoleDownloads, websiteDownloadsPath, available, websiteDirName)
 	}
 	if facts.Features.Video {
 		t.Errorf("%s: features.video is true: the explainer video does not exist, so the hero may not render a player, an iframe, a poster or a play button. W2.4 sets this flag when the video exists, in the same commit that relaxes this check (D107, finding 57, plan Task W2.4 step 1)", websiteFactsPath)
