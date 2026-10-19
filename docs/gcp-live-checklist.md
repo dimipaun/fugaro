@@ -4574,3 +4574,212 @@ read; and the Restore's state, with any `p~` leftovers named. **Never the token,
 private key or the code itself.** **No step here is run by an agent and nothing here touches
 `belong`.** Until this check runs, the pairing flow's live behaviour is **UNVERIFIED** — the
 fakes are not a camera — and row 100 above stays **NOT RUN**.
+
+## Check 101: revocation — the device node's deletion denies the next read, and the Auth user's token timing (installation `fugaro`, project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Task P6.11** of the mobile plan
+([mobile/implementation-plan.md](mobile/implementation-plan.md), Phase 6, approved on
+2026-10-18), from **D166** (the allowlist is `config/admin/devices/$uid`; deleting the node
+revokes **immediately**, and the node's deletion — not the Auth user's — is the revocation), the
+reconciliation's **U2** (whether a deleted Auth user's ID token stays valid until its `exp`) and
+P6.6's **carried-over** paragraph (the deployed rules put **no time limit** on a pairing session:
+the `p~` uid may write its request once and read its delivery for as long as its Auth user
+exists, and the node outlives the five-minute token).
+
+**Method.** The same installation and the same phone as Check 100. **Check 100's setup + guard
+block is re-run at the start of every step below, with `N=chk101`** — that one line is the only
+change, and the three hard stops are the same three. **Never `belong`**: nothing here names,
+reads or revokes a `belong` device, and the one place one can appear is `fugaro pair ls`, which
+this check reads for its own device only. **No agent runs any step of this check — every command
+is yours.** What changes is one pairing and its revocation, and the Restore has nothing left to
+revoke: step 3 is the revocation.
+
+1. **Pair the device this check will revoke.** Check 100's steps 2 and 3, with `101` in the
+   messages. **FACT:** the device uid's `m~` prefix, the device node's path, and the app holding
+   the account.
+
+2. **A read and a write that work, before the revoke.** This is the baseline the next step is
+   measured against, and without it a denial proves nothing. **FACT:** the phone reads its own
+   mailbox (its outbox and the heartbeat) **and** writes one message into its own inbox — D113's
+   first write, which is the only write this step needs — with both succeeding.
+
+3. **Revoke, and the next read.** Record the wall clock (`date -u +%Y-%m-%dT%H:%M:%SZ`), run
+   `fugaro pair revoke "$N"`, then have the phone read again **at once**. **FACT:** the denial's
+   exact code and message; the **seconds between the revoke and the denial**; and the same for
+   the next **write** (the phone's own inbox message, which is denied too). The pass is
+   **immediate**: D166 says deleting the node revokes, and a window in which the device still
+   reads is the failure this check exists to catch.
+
+4. **Why it was denied: the node, and not the token.** **FACT:** the phone's cached ID token,
+   decoded locally, is **still unexpired** at the moment of step 3's denial — record its `exp` as
+   a wall-clock time and the seconds left on it, **never the token itself**; and the revoke
+   deleted the Auth user, whose ID token stays valid until `exp` (**U2**). So this check's answer
+   to U2 is the pair of facts and not a claim: the token outlives the user, **and** what denies a
+   revoked device is the **node**, which is why the revocation is immediate anyway. **FACT:** the
+   seconds between the revoke and that `exp`.
+
+5. **What the phone does when the token finally expires.** **FACT:** the refresh fails, the app's
+   own state says so (its wording), nothing is written, and the wall clock. A device that was
+   revoked and whose token has run out must be in a state the user can see, not a silent one.
+
+6. **A pairing session's own timing.** Mint a pairing token (`fugaro pair` with a name this check
+   then abandons), sign in with it, write the request node, and **do not complete the pairing**.
+   **FACT:** after the token's `exp` has passed, that the `p~` Auth user and its `pairing/<uid>`
+   nodes **still exist** — the deployed rules put no time limit on them, which is P6.6's
+   carried-over paragraph read live — so the session is one-shot **by construction** (one
+   request, one delivery) and **not by time**; and then **FACT:** what removed them, if anything
+   did: P6.6 deletes both once a delivery has been read, and an abandoned session's leftovers are
+   **the sweep's** job rather than the rules'. If neither has removed them, that is the finding,
+   and it is pasted back rather than cleaned up by hand.
+
+7. **The sweeper's `m~` rule.** **FACT:** after step 3's revoke, that the history sweep removes
+   an `m~` Auth user whose device node is gone (P6.6's extension of `internal/budget/sweep.go`,
+   whose `r~` rule is why the prefixes are distinguishable at all) — with the sweep's run, the
+   wall clock, and the user's disappearance. An `m~` user whose node **exists** must survive the
+   sweep, and the check says which of the two it watched.
+
+8. **The honest limit: the revoked key.** P6.7 refuses a message signed with a revoked pairing's
+   MAC key, and **this check cannot produce one live**: the revoke removes the laptop's keychain
+   item for that key and the revoked device cannot write at all, so a live fixture would have to
+   be captured before the revoke and re-sent after it — and re-sending a captured message would
+   test the replay ledger, not the key. That half stays P6.7's, over the simulator.
+   **FACT:** that no live fixture was built, and why. What this check records instead is the same
+   door closed one step earlier: the revoked device cannot write.
+
+9. **Restore.** Step 3 was the revocation, so there is nothing to revoke. The only thing to
+   clean up is step 6's abandoned session, and only if the sweep has not: **FACT:** either way,
+   recorded.
+
+**Passes when:** the device's read **and** write are denied on the next attempt after
+`fugaro pair revoke`, with the delay measured in seconds and the cached ID token still
+unexpired, so the node and not the token is what denies it; the token's own expiry is recorded
+as a wall-clock time; the phone's state after the refresh fails is visible; an abandoned pairing
+session's leftovers are recorded rather than assumed gone, and what removes them (or does not)
+is named; and the sweep takes an `m~` user whose node is gone while leaving one whose node
+exists.
+
+**Fails when:** the device still reads or writes after the revoke — the window D166 says must
+not exist; the denial is credited to the token without the token's `exp` being read, which is
+the claim U2 exists to stop; a `p~` session's leftovers are silently deleted by hand instead of
+recorded; the sweep deletes an `m~` user whose device node **exists** (that is a paired device
+losing its credentials with no revocation); or `fugaro pair revoke` deletes the Auth user
+**before** the device node, which is the order P6.6's test pins and the one that leaves a live
+user with no node. What failing looks like: the `USER` macro's
+`root.child('config/admin/devices/' + auth.uid).exists()` conjunct missing from the deployed
+rules, so a deleted node changes nothing; a cached read result served from the phone's own
+store, which is why step 2 records a working read first and step 3's is read fresh.
+
+**Paste back:** the device's two working operations before the revoke; the denial's exact text
+and the seconds between the revoke and it; the token's `exp` as a wall-clock time and the
+seconds it outlived the user, with **never** the token; the phone's state after the refresh
+failed; the abandoned session's leftovers and what removed them; the sweep's two outcomes; and
+the statement that no live revoked-key fixture was built. **No step here is run by an agent,
+nothing here touches `belong`, and no token, key or private key is pasted back.** Until this
+check runs, revocation's live behaviour is **UNVERIFIED**, and row 101 above stays **NOT RUN**.
+
+## Check 102: the wake word's recognition rate on the oldest supported device (installation `fugaro`, project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Task P6.11** of the mobile plan
+([mobile/implementation-plan.md](mobile/implementation-plan.md), Phase 6, approved on
+2026-10-18), from **D164** (a **closed** alias set and a closed command grammar; an unmatched
+"Fugaro …" is answered "I didn't catch that" and is **never forwarded** to the agent), **D123**
+(local engines only) and the reconciliation's **G5**, which records the gap this check measures:
+**"the wake word is predictable and never misroutes" is not true of a transcript.** A missed
+wake word sends an app command to the agent **as text**; a false one intercepts the agent's
+speech. Neither direction is a defect of the code — both are rates, and a rate is a measurement.
+
+**Method.** On-device STT only, on your own phone in your own voice: **no audio leaves the
+device** (Global Constraint 12), and this check uploads nothing, sends nothing and costs nothing.
+The alias set is **read out of the tree** rather than remembered, because the router's list is
+data and a check that types it from memory measures a set the app may not have. The script is
+written down **before** the first utterance, and it is not changed afterwards: a rate computed
+over a script chosen as it went is not a rate. **Never `belong`**: the phone pairs with
+installation `fugaro` (project `fugaro-dev`) for this check, and no step below speaks to, or
+reads anything from, a `belong` device. **No agent runs any step of this check — every command
+and every utterance is yours.**
+
+```bash
+# === Check 102: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step (1, 2, 3, 4, 5). It is idempotent, and nothing below the hard stops runs
+# unless they pass. ===
+P=fugaro-dev                 # HARD-CODED, and never read from gcloud
+D='oldest supported'         # the device you support longest: model and OS recorded in step 1, never inferred
+[ "$P" = fugaro-dev ] && [ -n "$D" ] \
+  || { echo "Check 102 stopped: re-run the whole setup block (P=$P must be fugaro-dev; D=$D must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 102 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout)" >&2; exit 1; }
+# The alias set is DATA and it is read out of the router itself, not remembered:
+# a list typed here measures a set the app may not be running.
+C=shared/command/index.js
+[ -f "$C" ] || { echo "Check 102 stopped: $C is not here — run this from the repository root" >&2; exit 1; }
+ALIASES=$(grep -o "WAKE_ALIASES = Object.freeze(\[[^]]*\])" "$C" | grep -o "'[a-z]*'" | tr -d "'" | tr '\n' ' ')
+[ -n "$ALIASES" ] || { echo "Check 102 stopped: WAKE_ALIASES could not be read out of $C — read it by hand and record what the file says, rather than what this block expected" >&2; exit 1; }
+echo "Check 102: the alias set as the tree writes it: $ALIASES"
+# The phrase the confirmation machine accepts is the other closed list, and the
+# same rule applies: it is read, not remembered.
+grep -n "CONFIRMATION_PHRASES = Object.freeze" "$C"
+:
+```
+
+1. **The device, and the ground the check stands on.** **FACT:** the phone's model and OS and
+   **why it is the oldest you support**; the app's build id; the OS's on-device speech engine and
+   its version; the alias set as the guard block printed it; and whether the app is listening in
+   the foreground or the background (check 86's subject) — recorded as it is, not as it should
+   be.
+
+2. **The script, fixed before the first utterance.** **FACT:** the script, verbatim — **N = 30**
+   utterances, each of the form `<alias>, <command>`, covering the five commands of the spec's
+   §3.4 (list agents, what's pending, switch project, switch agent, kick off) plus `confirm` and
+   `cancel that`, with at least three per alias in the set — and the **two conditions** it is
+   spoken in: a quiet room, and a normal room with something playing. The same script in both.
+   Nothing is added to the script after the first utterance, and a repeated utterance is
+   recorded as a repeat rather than dropped.
+
+3. **The three rates.** For each of the 60 utterances: **FACT:** whether the alias was heard at
+   all; what the router did with it (an app command, "I didn't catch that", or agent text); and,
+   for every miss, **the transcript the engine produced**. Then the three rates over the script,
+   per condition: **heard**, **routed as an app command**, and **false accepts**.
+
+4. **The fail-closed direction, live.** Speak a `<alias> …` utterance that matches **no** command
+   (an invented command, and a project name that is not in the configured lists). **FACT:** the
+   app's answer is "I didn't catch that", and the evidence that the agent received **nothing** is
+   the orchestrator's own transcript — read it, rather than trusting the screen that said so.
+   This is the half a pure test cannot decide: `shared/command`'s test proves the router
+   forwards nothing, and this step proves the thing that is actually running is that router.
+
+5. **The false-accept direction, and its cost.** **FACT:** what happened when the check spoke
+   sentences **not** addressed to the app whose first word is near an alias — the set is closed
+   and `figaro` is in it, so a sentence beginning "Figaro" **is** intercepted, which is D164's
+   choice and this step records what it costs — and whether any of the agent's own speech was
+   taken as a wake word, which is the direction that interrupts the agent. **FACT:** both, and
+   the count of each.
+
+6. **What the numbers are for.** The rate, the device and the two conditions are the output.
+   **FACT:** that the script and the rates are the ones check 85's bake-off must carry into its
+   own vocabulary — D123's measurement, whose scope the owner amended on 2026-10-19 to run the
+   same fixed prompts through the local engine **and** through each admitted remote provider —
+   and the owner's own threshold if one was set before the run. This check does **not** invent a
+   threshold: it records the rate, and a rate with no threshold is a fact, not a pass.
+
+**Passes when:** the three rates are recorded, on the oldest supported device, in both
+conditions, over a script that was fixed before the first utterance, with the alias set read out
+of `shared/command` rather than remembered; the fail-closed direction holds **live** (an
+unmatched `<alias> …` reaches the agent as nothing); and the false-accept rate is recorded
+rather than assumed to be zero.
+
+**Fails when:** the alias set in the record differs from the one in the tree; a missed wake word's
+utterance reached the agent as text and the check did not record it (that direction is the
+measurement, not an embarrassment); an unmatched `<alias> …` was **forwarded** to the agent,
+which is D164 answered backwards; a bare `confirm` or `yes` was accepted as the phrase (the
+confirmation list is closed and `yes` is not in it); or the rates are pasted back without the
+device, the engine version or the two conditions, which makes them unreproducible. What failing
+looks like: `shared/command`'s `WAKE_ALIASES` changed and a record that still carries the old set —
+which is why the guard block greps the file; a project or agent name matched against something
+other than the configured lists, which D164 refuses.
+
+**Paste back:** the device, its OS, the engine and its version, and the app's build; the alias set
+as the tree writes it; the script, verbatim; the three rates per condition, with the misses'
+transcripts; the two fail-closed facts, with the orchestrator's transcript as their evidence; and
+the owner's threshold if one was set. **No step here is run by an agent, nothing here touches
+`belong`, and no audio leaves the device.** Until this check runs, the wake word's rate is
+**UNVERIFIED** — the reconciliation's U1 says so plainly — and row 102 above stays **NOT RUN**.
