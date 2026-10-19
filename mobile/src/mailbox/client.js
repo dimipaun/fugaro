@@ -95,6 +95,13 @@ export const CLIENT_CODES = Object.freeze({
   NO_KEY: 'no-key',
   /** The key is there and could not be read: nothing is written or spoken. */
   KEY_UNREADABLE: 'key-unreadable',
+  /**
+   * The record cannot be signed at all: a field of it has no single canonical
+   * byte string, so the two ends would compute two different tags for it. A
+   * distinct answer from `key-unreadable`, because the key is not the problem
+   * and the fix is not a re-pairing.
+   */
+  UNSIGNABLE: 'unsignable',
   /** An outbox record's `sender` is not this mailbox's uid (P2.1's template). */
   WRONG_SENDER: 'wrong-sender',
   /** An outbox message's or the heartbeat's tag did not verify. */
@@ -122,6 +129,14 @@ export const PRESENCE_REASON = Object.freeze({
 
 /** The expired retry's code, in the report's `expired` list. */
 export const EXPIRED = 'expired';
+
+/**
+ * The direction inside every tag this client makes: the node it writes to
+ * (P6.3's `DIRECTIONS`, and D113's one message path). It is named once here
+ * because the pre-signing check below asks `canonicalBytes` with the same
+ * direction the tag is made for.
+ */
+const WRITE_DIRECTION = 'inbox';
 
 function refuse(code, field) {
   return Object.freeze({ ok: false, code, field });
