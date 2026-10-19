@@ -13,8 +13,9 @@
 //   - the value set is exactly the design's section 3.2 table, name by name and literal
 //     by literal, so a value that drifted from the design fails here by name rather than
 //     being reviewed as a slightly different blue;
-//   - the vocabulary (`theme/tokens.css`) is complete and carries no colour at all, so a
-//     step added to one layer and not the other fails by name.
+//   - the vocabulary (`theme/tokens.css`) is exactly the design's section 3.1 table and
+//     carries no colour at all, so a step added to one layer and not the other fails by
+//     name in either direction.
 //
 // **The one deliberate departure from section 6.3, said here rather than left to be
 // found.** The design's vocabulary case compares the dark set's token names against the
@@ -414,6 +415,16 @@ describe("the console's theme tokens", () => {
     for (const name of VOCABULARY) {
       expect(tokens.has(name.replace(/^--/, '')), `${TOKENS_FILE} does not declare ${name}`).toBe(true)
     }
+    // And the other direction, which is the half the file header promises and which the
+    // loop above cannot see: every name `tokens.css` declares is in the design's section
+    // 3.1 table. One direction alone is "the design's steps are all present", and a step
+    // added to `tokens.css` on its own -- a spacing step nothing in the design names, a
+    // colour spelled as a fourth thing, a typo's twin -- passed every case here. It is
+    // the same exact-set assertion the palette has, on the layer that had none.
+    expect(
+      [...tokens.keys()].sort(),
+      `${TOKENS_FILE} declares names the design's section 3.1 vocabulary does not`,
+    ).toEqual(VOCABULARY.map((name) => name.replace(/^--/, '')).sort())
     // The two layers are disjoint, and that is the whole of "one source of truth per fact":
     // a colour belongs in the palette, where every pair above can read it, and a step
     // belongs in the vocabulary. A name in both would be a second place a colour is set.

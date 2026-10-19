@@ -2741,8 +2741,10 @@ the file, and two different reasons put them elsewhere:
 
 - the **"vocabulary complete and identical in both sets"** case is *replaced*: under the
   owner's dark-only ruling there is one value set, so it would compare a set with itself.
-  What catches what it was written for is here instead — every vocabulary token is declared
-  by name, no colour is spelled in `tokens.css`, and no step is spelled in `palette.css`;
+  What catches what it was written for is here instead — the vocabulary is declared
+  **exactly** (every token of the design's section 3.1 table is present, and no name
+  outside it), no colour is spelled in `tokens.css`, and no step is spelled in
+  `palette.css`;
 - the **`--border`-is-decorative scan** of `base.css` and `screens.css` is Task 6.4's: both
   files are created later, by Tasks 6.3 and 6.4, so the case lands in the task that writes
   what it reads;
