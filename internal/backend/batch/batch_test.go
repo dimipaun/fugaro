@@ -2141,6 +2141,13 @@ func equalJSON(a, b any) bool {
 //   - format kv.Value into the refusal's text — the value assertion fails;
 //   - drop the entry's name from the refusal, or the sentence naming the
 //     budget-on path's backend — the "names" assertions fail.
+//
+// One mutation is deliberately not asserted here: widen the refusal to the
+// *name* FUGARO_BUDGET_TOKEN, so the entry would be refused as a plain variable
+// too. The test above is what catches it — TestLaunchCarriesTheSpecEnv launches
+// with exactly `Env: []string{"FUGARO_BUDGET_TOKEN=1"}` and asserts the
+// variable lands in the task's own map — so this file needs no second launch
+// for it.
 func TestLaunchRefusesASecretEnv(t *testing.T) {
 	ctx := context.Background()
 	b, bf, _, _ := newTestBackend(t, nil)
@@ -2176,34 +2183,5 @@ func TestLaunchRefusesASecretEnv(t *testing.T) {
 	}
 	if n := len(bf.Creates()); n != 0 {
 		t.Fatalf("a refused launch created %d job(s)", n)
-	}
-}
-
-// TestLaunchAcceptsTheSameLaunchWithoutASecretEnv is the other half of the
-// same answer: the refusal is about the seal key and nothing else, so the
-// launch it refuses is accepted the moment the entry is a plain one. Without
-// it, a backend that refused every launch carrying FUGARO_BUDGET_TOKEN would
-// pass TestLaunchRefusesASecretEnv and break every budget-*off* run on Batch.
-//
-// Mutation (run, restored): refuse any entry whose name is FUGARO_BUDGET_TOKEN
-// in jobDefinition — this test fails while the one above still passes.
-func TestLaunchAcceptsTheSameLaunchWithoutASecretEnv(t *testing.T) {
-	ctx := context.Background()
-	b, bf, _, _ := newTestBackend(t, nil)
-	s := spec()
-	// The pre-seal marker value ("1"), as a plain variable: this is exactly
-	// the launch TestLaunchRefusesASecretEnv uses, with the entry moved out
-	// of SecretEnv and into Env.
-	s.Env = []string{"FUGARO_BUDGET_TOKEN=1"}
-	if _, err := b.Launch(ctx, s); err != nil {
-		t.Fatalf("Launch with the entry as a plain variable = %v, want it accepted", err)
-	}
-	creates := bf.Creates()
-	if len(creates) != 1 {
-		t.Fatalf("the launch created %d job(s), want 1", len(creates))
-	}
-	vars := object(t, creates[0].Job, "taskGroups", "0", "taskSpec", "environment", "variables")
-	if vars["FUGARO_BUDGET_TOKEN"] != "1" {
-		t.Errorf("the task's variables = %v, want the plain entry in them", vars)
 	}
 }

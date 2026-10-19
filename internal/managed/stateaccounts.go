@@ -142,7 +142,9 @@ type stateDocument struct {
 //
 // A type that is neither is absent from the map, which is the third answer and
 // the fallback: this build does not know how GCP files it, so its resources
-// stay unaccounted for.
+// stay unaccounted for. A type whose resources are known to need no accounting
+// is in stateAssetTypesUndecided below rather than here, so that "undecided"
+// stays the word for a type nobody has read yet.
 var stateAssetTypes = map[string]string{
 	"google_storage_bucket":                  "storage.googleapis.com/Bucket",
 	"google_storage_bucket_object":           "storage.googleapis.com/Object",
@@ -164,15 +166,14 @@ var stateAssetTypes = map[string]string{
 	"google_firebase_database_instance":      "firebasedatabase.googleapis.com/Instance",
 	"google_firestore_database":              "firestore.googleapis.com/Database",
 	// The compute module the Batch backend's own root applies
-	// (deploy/terraform/gcp/modules/compute/network.tf:58,75,84, each with
-	// project = var.project): the NAT, its router and the deny-all ingress
-	// rule on the run-class accounts. The root writes its state into the
-	// installation's own bucket, which managedAccounted reads with no prefix,
-	// so a project that ran --provision-batch holds all three. Their names are
-	// the provider's ids and come from the state like every other entry's.
+	// (deploy/terraform/gcp/modules/compute/network.tf:58,75, each with
+	// project = var.project): its router and the deny-all ingress rule on the
+	// run-class accounts. The root writes its state into the installation's
+	// own bucket, which managedAccounted reads with no prefix, so a project
+	// that ran --provision-batch holds both. Their names are the provider's
+	// ids and come from the state like every other entry's.
 	"google_compute_firewall":                        "compute.googleapis.com/Firewall",
 	"google_compute_router":                          "compute.googleapis.com/Router",
-	"google_compute_router_nat":                      "compute.googleapis.com/RouterNat",
 	"google_project_iam_member":                      "",
 	"google_project_iam_binding":                     "",
 	"google_project_iam_policy":                      "",
@@ -190,6 +191,39 @@ var stateAssetTypes = map[string]string{
 	"google_logging_log_view_iam_member":             "",
 	"google_logging_project_exclusion":               "",
 	"google_billing_budget":                          "",
+}
+
+// stateAssetTypesUndecided names the Terraform types the tree's modules declare
+// that this table deliberately does not decide, each with the reason it needs
+// no entry. It exists so that "absent from stateAssetTypes" keeps one meaning:
+// before it, a type nobody had read and a type read and found not to be an
+// asset looked the same, and the walk in stateaccounts_test.go — which requires
+// every google_ type a module declares to be one of the two maps — is what
+// keeps the two apart, failing by name for a type in neither.
+//
+// One entry:
+//
+//   - google_compute_router_nat (deploy/terraform/gcp/modules/compute/network.tf:84).
+//     A Cloud Router's NAT is not a Cloud Asset Inventory asset of its own: the
+//     listing files the router (compute.googleapis.com/Router, in the table
+//     above, matched by the state's google_compute_router id), and a NAT is
+//     read back through it. The table used to claim
+//     "compute.googleapis.com/RouterNat" for this type, which was a guess: no
+//     listing in this tree carries that type, the provider's id for a NAT is
+//     projects/<p>/regions/<r>/routers/<router>/<name> while CAI's router path
+//     stops at the router, and a live read to settle which path the NAT would
+//     have had is an owner-run step this branch does not take. So the entry is
+//     dropped rather than kept unverified, and the shape of the guess is
+//     recorded here for whoever reads a listing: if the NAT does turn out to be
+//     its own asset, this is the entry to add back and it will need its own
+//     name, not the router's.
+//
+// The consequence of the omission is nil for the accounting: AccountsOfState
+// skips a type the table does not decide, so a NAT resource neither accounts
+// for a listed asset nor leaves one unaccounted, and the router's own entry is
+// what clears the asset the NAT lives behind.
+var stateAssetTypesUndecided = map[string]string{
+	"google_compute_router_nat": "a Cloud Router's NAT is not a Cloud Asset Inventory asset of its own — the listing files the router, whose entry in stateAssetTypes accounts for it",
 }
 
 // stateAssetName is a state resource's name in the terms the whole-project

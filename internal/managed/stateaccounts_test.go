@@ -139,7 +139,10 @@ func TestStateAssetTypesAreEitherAnAssetTypeOrDeliberatelyNot(t *testing.T) {
 }
 
 // The table's completeness, held against the modules rather than trusted: every
-// resource type the tree's Terraform declares is a key of stateAssetTypes.
+// resource type the tree's Terraform declares is decided — a key of
+// stateAssetTypes (it is an asset of a project, or a resource GCP keeps inside
+// the thing it grants on) or an entry of stateAssetTypesUndecided (it needs no
+// accounting, with the reason recorded there).
 //
 // Why this is the direction that matters: the other one (a type in the table
 // that no module declares) costs nothing, because no state holds it. A type
@@ -147,11 +150,17 @@ func TestStateAssetTypesAreEitherAnAssetTypeOrDeliberatelyNot(t *testing.T) {
 // AccountsOfState skips it silently (its `if !ok … continue`), so every
 // resource of that type stays Foreign and Inventory.Check's answer for such a
 // project can never clear: `foreign` never empties, and Fallback is true for
-// as long as the project exists. The compute module's three types
-// (google_compute_firewall, google_compute_router, google_compute_router_nat,
+// as long as the project exists. The compute module's types
+// (google_compute_firewall, google_compute_router,
 // deploy/terraform/gcp/modules/compute/network.tf) were exactly that, and the
 // compute root the Batch backend's stage applies writes its state into the
 // installation's own bucket, which managedAccounted reads with no prefix.
+//
+// The two maps are required to be disjoint, because an entry in both would be
+// two answers to one question, and the walk attributes each type to exactly
+// one of them. The second map is what keeps "undecided" meaning one thing: a
+// type nobody has read is in neither map and fails here by name, while a type
+// read and found not to be an asset is recorded with its reason.
 //
 // The walk is the modules' own text, as tf/cover_test.go's
 // TestAllowedTypesCoverTheModules walks it for init's allowlist: a resource
@@ -174,14 +183,33 @@ func TestStateAssetTypesCoverTheModules(t *testing.T) {
 			if !strings.HasPrefix(typ, "google_") {
 				continue // the table translates google provider types only
 			}
-			if _, ok := stateAssetTypes[typ]; !ok {
-				t.Errorf("%s declares %s, which stateAssetTypes does not decide: its resources would stay foreign and this project's fallback would never clear", path, typ)
+			_, decided := stateAssetTypes[typ]
+			_, undecided := stateAssetTypesUndecided[typ]
+			if decided && undecided {
+				t.Errorf("%s declares %s, which stateAssetTypes and stateAssetTypesUndecided both decide: the two answers for one type cannot be told apart, and this walk would no longer say which is meant", path, typ)
+				continue
+			}
+			if !decided && !undecided {
+				t.Errorf("%s declares %s, which stateAssetTypes does not decide: its resources would stay foreign and this project's fallback would never clear; decide it there, or record why it needs no accounting in stateAssetTypesUndecided", path, typ)
 			}
 		}
 		return nil
 	})
 	if err != nil || n < 10 {
 		t.Fatalf("read %d module files: %v", n, err)
+	}
+	// The one undecided type is the compute module's NAT, and it is the only
+	// one: a reason added loosely would otherwise never be read again.
+	if len(stateAssetTypesUndecided) != 1 {
+		t.Errorf("stateAssetTypesUndecided has %d entries, want 1 (google_compute_router_nat): each entry is a type somebody read and decided needs no accounting, so a new one is a decision to state here as well", len(stateAssetTypesUndecided))
+	}
+	for typ, why := range stateAssetTypesUndecided {
+		if typ != "google_compute_router_nat" {
+			t.Errorf("stateAssetTypesUndecided carries %s, which this test does not expect: name why it needs no accounting beside this assertion", typ)
+		}
+		if !strings.Contains(why, "no accounting") && !strings.Contains(why, "not a Cloud Asset Inventory asset") {
+			t.Errorf("stateAssetTypesUndecided[%s] = %q, which does not say why the type needs no accounting", typ, why)
+		}
 	}
 }
 
