@@ -159,7 +159,7 @@ added or removed without this sentence moving fails there:
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
   2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
   version rather than from a tag, so the two checkout shapes above are one build now — the same
-  commit builds to **974,846 bytes in a checkout with no tags** and to **974,846 bytes with the
+  commit builds to **974,047 bytes in a checkout with no tags** and to **974,047 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
   place to forget, and this pair was once copied in two, which is how a clone figure came to sit
@@ -460,6 +460,18 @@ added or removed without this sentence moving fails there:
     The clone figure moved by the same bytes. The shape is held by `test/caps-figures.mjs`
     (above), whose reading run against the old component names all six of the defects it was
     written for.
+  - **The console page was cut to its essentials** (the owner's feedback of 2026-10-19: "way
+    too much text, nobody cares"), and moved the site figure alone, 974,846 → **974,047**, by
+    **799 bytes off** one page. What a reader gets now is one sentence on what the console is,
+    the three properties with one line each, and the downloads: the page's facts come from
+    `content/downloads.json` and the four sentences there are shorter, and the page's own
+    markup is unchanged — the shorter sentences are the whole of the move. The numbers did not
+    move, and that is the check worth keeping: the two macOS artifacts, their published names,
+    their SHA-256 values and the tag they are derived from are the same values, and the page
+    still says in the data file's own words that Windows and Linux builds do not exist yet.
+    The page's words went 239 → **133** against the ceiling the budget states, which is the
+    room "Adding a console screenshot" below counts. The page weight and the script did not
+    move: the heaviest page is the docs hub, and the console page is not it.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -486,7 +498,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,556 bytes. Three times 350,852: the heaviest page, the
     docs hub, at 280,681 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,655,674 bytes. Three times 1,218,558 (every file in `dist/`, 974,846
+  - **Whole site:** 3,652,677 bytes. Three times 1,217,559 (every file in `dist/`, 974,047
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which every checkout
     now builds alike, tags or no tags (above).
 
@@ -1047,14 +1059,15 @@ Adding the first one is two edits:
 - **The console page's weight:** that page is a fraction of the page ceiling above, so it has
   room for the pictures it renders, and it is not the page the ceiling is derived from (the
   docs hub is).
-- **The page's words, and this is the tight one.** The console page stands at **239 of the 250
-  words** D188 allows it, and a row's words all count: the caption is text under the picture,
-  and the `alt` is counted too, because it is the text a reader gets when the picture does not
+- **The page's words.** The console page stands at **133 of the 949 words** the ceiling above
+  allows it, and a row's words all count: the caption is text under the picture, and the `alt`
+  is counted too, because it is the text a reader gets when the picture does not
   arrive (`test/budget.mjs`'s `visibleText` reads an `img`'s `alt`). The slider's own heading
-  takes one more. So **ten words across all the rows' `alt` and `caption` together** is the
-  whole of the room there is, and the first screenshot that needs more than that needs the page
-  ceiling raised in the same commit that adds it — D188's own rule: the number moves where the
-  need is, and a build that needs more fails until it moves.
+  takes one more. The page stood at 239 words against D188's 250 until the owner's cut of
+  2026-10-19 took its prose to the essentials, and the room that cut bought is the room the
+  screenshots land in: a page that needs more than the ceiling needs it raised in the same
+  commit that adds it — D188's own rule: the number moves where the need is, and a build that
+  needs more fails until it moves.
 
 The slider's own bytes do **not** move when a screenshot is added: the component's stylesheet is
 inlined into the console page whether or not the slider renders, which is the 1,115 bytes the
