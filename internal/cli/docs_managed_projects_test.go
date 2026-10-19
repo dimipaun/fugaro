@@ -1932,3 +1932,139 @@ func TestChecklistHasCheck68RowAloneExampleIsolatesTheRow(t *testing.T) {
 		t.Error("Check 68's step 5 still says the grant and the API enable stay in every run, and both are rows of the table it measures")
 	}
 }
+
+// TestChecklistHasCheck68ConditionReadIsACommand is a review finding: step 2's
+// FACT bullet made the scoped binding's `condition.expression` a thing to check
+// "clause by clause", and the Paste-back line and the Passes-when criterion both
+// demand it — but the only project-policy read in the step printed
+// `table(bindings.role)`, which drops the condition, and the `--format=json` read
+// the bullet named in prose was inside no fenced block. A criterion the operator
+// has no command for is not a criterion, and the condition IS the fence this
+// whole check exists to evidence.
+func TestChecklistHasCheck68ConditionReadIsACommand(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+	step := check68Step(t, section, "**(2) The two roles, permission by permission, read live**")
+
+	var cmds []string
+	for _, b := range bashBlocks(step) {
+		cmds = append(cmds, logicalCommands(b)...)
+	}
+	// The json read is a command in the block, not a phrase in the prose around it.
+	jsonRead := ""
+	for _, c := range cmds {
+		if strings.Contains(c, "gcloud projects get-iam-policy") && strings.Contains(c, "--format=json") {
+			jsonRead = c
+		}
+	}
+	if jsonRead == "" {
+		t.Fatal("Check 68's step 2 has no `gcloud projects get-iam-policy ... --format=json` command, so the condition its own bullet, Paste-back line and Passes-when criterion require cannot be read")
+	}
+	if !strings.Contains(jsonRead, `"${M:?}"`) {
+		t.Errorf("Check 68's step 2 policy read does not name the managed project:\n  %s", jsonRead)
+	}
+	// And the condition is extracted from it, in the step, by name.
+	extracted := false
+	for _, c := range cmds {
+		if strings.Contains(c, "condition.expression") && strings.Contains(c, "chk68-project-policy.json") {
+			extracted = true
+		}
+	}
+	if !extracted {
+		t.Error("Check 68's step 2 never reads `condition.expression` out of the json it now fetches, so the condition is still fetched and not printed")
+	}
+	// The count the Passes-when criterion asks for ("bound exactly once") is a
+	// command too: a role bound twice grants the whole role.
+	if !strings.Contains(step, "exactly 1") {
+		t.Error("Check 68's step 2 does not count the scoped role's bindings, so \"bound exactly once\" has no command behind it")
+	}
+	// What the step now writes is scratch, and the Restore has to count it gone.
+	for _, want := range []string{"chk68-project-policy.json", "chk68-scoped-condition.txt"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 68's Restore does not remove %s, which step 2 now writes", want)
+		}
+	}
+}
+
+// TestChecklistHasCheck67bRefusalQuoteMatchesTheBinary is a review finding: the
+// refusal the step tells the operator to expect was quoted with the word
+// "project" missing and with `${M:?}` standing where the binary prints the
+// project ID, so an operator matching the quoted text against stderr would find
+// nothing. The real message is built in managedProviderProject as
+// "provider_config." + key + " (lands resources in " + "project " + proj +
+// ", which is not this run's)".
+func TestChecklistHasCheck67bRefusalQuoteMatchesTheBinary(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 67b:")
+
+	const real = "lands resources in project"
+	if n := strings.Count(section, real); n < 2 {
+		t.Errorf("Check 67b quotes the gate's project refusal %d time(s) with the binary's own wording: both the diagnostic and the Fails-when criterion must read %q", n, real)
+	}
+	// The broken quote, in either half: "lands resources in ${M:?}" or
+	// "lands resources in `", i.e. the preposition followed by anything but
+	// "project".
+	for _, bad := range []string{"lands resources in ${M:?}", "lands resources in fugaro-chk67, which"} {
+		if strings.Contains(section, bad) {
+			t.Errorf("Check 67b still quotes the refusal as %q, which is not what the binary prints", bad)
+		}
+	}
+	// And the placeholder is not what renders: the message carries the ID.
+	if !strings.Contains(section, "lands resources in project fugaro-chk67") {
+		t.Error("Check 67b does not show the refusal with the project ID the binary actually prints")
+	}
+}
+
+// TestChecklistHasCheck67aNamesAllFourEmbeddedRoots is a review finding: the
+// premise enumerated "the three embedded roots
+// (deploy/terraform/gcp/roots/{installation,firebase,repo})" and drew its
+// conclusion from that count. There are four — `compute` is embedded by the same
+// //go:embed all:gcp and its plan carries project-level grants too — so a reader
+// auditing the argument found a root the argument did not mention.
+func TestChecklistHasCheck67aNamesAllFourEmbeddedRoots(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 67a:")
+
+	if !strings.Contains(section, "**four** embedded roots") {
+		t.Error("Check 67a's premise still counts the embedded roots as three, and the count is what its conclusion rests on")
+	}
+	for _, root := range []string{"installation", "firebase", "repo", "compute"} {
+		if !strings.Contains(section, "roots/{installation,firebase,repo,compute}") {
+			t.Errorf("Check 67a's premise does not name every embedded root (deploy/terraform/gcp/roots/%s is missing from the enumeration)", root)
+			break
+		}
+	}
+	if strings.Contains(section, "the three embedded roots") {
+		t.Error("Check 67a still says \"the three embedded roots\", so the enumeration and the count disagree")
+	}
+}
+
+// TestChecklistHasCheck68Step5FixtureAccountIsNotARow is a review finding: the
+// sa.tf heredoc comment called the fixture account "the row 68 step 4 already
+// measured as creatable". Step 4 is the transitive-reach block, every command of
+// which must fail and none of which creates an account; sa.tf is a fixture kept
+// in every run, not one of the table's rows, so "the row" resolves to nothing.
+func TestChecklistHasCheck68Step5FixtureAccountIsNotARow(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 68:")
+	step := check68Step(t, section, "**(5) What the two roles are known to LACK, measured per type**")
+
+	flat := strings.NewReplacer("\n# ", " ", "\n", " ", "# ", "").Replace(step)
+	if strings.Contains(flat, "the row 68 step 4 already measured as creatable") {
+		t.Error("Check 68's step 5 still attributes the fixture account to step 4, which creates no service account and must refuse every command")
+	}
+	// The attribution it now carries is the one the tree supports.
+	if !strings.Contains(flat, "google_service_account.fmgd_root") {
+		t.Error("Check 68's step 5 does not say which apply proved the fixture account is creatable")
+	}
+	if !strings.Contains(flat, "67a step 3") {
+		t.Error("Check 68's step 5 does not name 67a step 3, the apply that created google_service_account.fmgd_root")
+	}
+	if !strings.Contains(flat, "not one of the table's rows") {
+		t.Error("Check 68's step 5 does not say the account is a fixture kept in every run rather than a row of the table it measures")
+	}
+}
