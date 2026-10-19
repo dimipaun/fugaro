@@ -753,7 +753,8 @@ var initFlagCases = map[string]string{
 	"display-name": "value", "expect-digest": "value", "gcp-project": "value", "github-app-id": "value",
 	"image-source": "value", "launcher": "value", "name": "value", "no-log-isolation": "value",
 	"operator": "value", "parent": "value", "project": "value", "region": "value",
-	"registry-cleanup": "value", "runs-bucket": "value", "scheduler-region": "value", "state-bucket": "value",
+	"registry-cleanup": "value", "runs-bucket": "value", "scheduler-region": "value",
+	"state-bucket": "value; under --managed the value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",
 }
 
 // Every flag `fugaro init` declares has an entry above, and every entry is a
