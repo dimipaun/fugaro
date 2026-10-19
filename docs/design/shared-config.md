@@ -22,7 +22,7 @@ A separate object, `fugaro/config.yaml`, in the runs bucket, written by `fugaro 
 
 Rejected: extending the marker `fugaro/project.json` (Terraform-written, three fields, 4 KiB read cap, and the budget values come from a different Terraform root, so one file would couple two roots); keeping it in the Firebase database (not every launcher can read it, and its mark logic is delicate).
 
-Trust level: operators (and, before 0.7.0, launchers) hold `roles/storage.objectAdmin` on the runs bucket (`modules/installation/iam.tf`); since 0.7.0, once an operator applies it, a launcher's grant is `objectViewer` plus `objectUser` on `runs/` only ([bucket-iam.md](bucket-iam.md)), so launchers can still read the file with no new grant, but only an operator can overwrite the marker or the shared file. The shared file is exactly as trustworthy as the marker, which is read the way `checkCloudName` reads it. The validation in §5 is defence in depth, not a new boundary.
+Trust level: operators (and, before 0.7.0, launchers) hold `roles/storage.objectAdmin` on the runs bucket (`modules/installation/iam.tf`); since 0.7.0, once an operator applies it, a launcher's grant is `objectViewer` plus `objectUser` under the launcher condition — `runs/` and, since 0.9.0, `tokens/`, where a launch writes the sealed budget token ([bucket-iam.md](bucket-iam.md)), so launchers can still read the file with no new grant, but only an operator can overwrite the marker or the shared file. The shared file is exactly as trustworthy as the marker, which is read the way `checkCloudName` reads it. The validation in §5 is defence in depth, not a new boundary.
 
 ## 4. The published file
 

@@ -27,12 +27,15 @@
 //      sentence of the document its turn cites. The hero offers one command to
 //      copy besides the install paths, `fugaro watch`, and the old `fugaro run` example is
 //      asserted gone; the slot for the screenshot a separate task adds is asserted to be
-//      marked and empty, and the page to carry no picture but its wordmark.
+//      marked, and **the owner's real capture is asserted to be in it** (owner spec of
+//      2026-10-18, item 5; PR #622) — the slot's own hook, a non-empty `alt`, the capture's
+//      declared dimensions and a same-origin path, so the page carries the wordmark and the
+//      working terminal and nothing else.
 //   4. **The flow carries the changes spec's four steps, in order**, one short line each,
 //      from one component on both pages: the names, and the caption of each step, are read
-//      out of the spec's own item 4 and of the section of README.md the step cites, in that
-//      section's order — all four captions are lines of the README, so a source alone would
-//      let them be shuffled among the steps. `ArchitectureDiagram.astro` supersedes D185's
+//      out of the spec's own item 4 and of the section of a document of this repository the
+//      step cites, in that section's order — three of the four captions are lines of the
+//      README, so a source alone would let them be shuffled among the steps. `ArchitectureDiagram.astro` supersedes D185's
 //      step names; the detail D185's two annotations held (the caches, the trust boundary) is
 //      under `RunDetail.astro` on How It Works, whose five steps and note are held to
 //      README.md's `## How it works` and to `docs/design/v1.md` the same way, and whose
@@ -175,14 +178,26 @@ function promiseLines() {
   return under.map((line) => line.trim().replace(/^\*\*(.+)\*\*$/, '$1').trim())
 }
 
-/** One `## <heading>` section of README.md, up to the next `## `. */
-function readmeSection(heading) {
-  const readme = repoFile('README.md')
-  const start = readme.indexOf(`\n## ${heading}\n`)
-  assert.notEqual(start, -1, `README.md carries no "## ${heading}" section, and this check holds a caption to it`)
-  const rest = readme.slice(start + 1)
+/**
+ * One `## <heading>` section of a document of this repository, up to the next `## ` — the
+ * same reader `ArchitectureDiagram.astro` uses at build time, so the check and the build
+ * resolve a section the same way. A heading's code span is a marker rather than part of its
+ * name, which is why the search reads the headings with their backticks off: the section the
+ * pull request's caption cites is `## Checkpoint pushes (\`git.pr.checkpoints\`)` and the key
+ * in it is part of the name.
+ */
+function section(document, heading) {
+  const text = repoFile(document)
+  const at = [...text.matchAll(/^## (.+)$/gm)].find((match) => match[1].replace(/`/g, '') === heading)
+  assert.ok(at, `${document} carries no "## ${heading}" section, and this check holds a caption to it`)
+  const rest = text.slice(at.index)
   const next = rest.indexOf('\n## ', 1)
   return next === -1 ? rest : rest.slice(0, next)
+}
+
+/** One `## <heading>` section of README.md, up to the next `## `. */
+function readmeSection(heading) {
+  return section('README.md', heading)
 }
 
 /**
@@ -262,17 +277,23 @@ function item4() {
 }
 
 /**
- * The sections a caption may be quoted from, by the name a step cites. A section rather
- * than the whole file: all four captions are lines of README.md, so held to the file alone
- * they could be shuffled among the steps and each would still be a quotation. Inside one
- * section the captions must also come in the order the section writes them, which is what
- * keeps the two steps that share `## How it works` from swapping.
+ * The sections a caption may be quoted from, by the name a step cites. A section rather than
+ * the whole file: three of the four captions are lines of README.md, so held to the file
+ * alone they could be shuffled among the steps and each would still be a quotation. Inside
+ * one section the captions must also come in the order the section writes them, which is what
+ * keeps two steps quoting the same section from swapping.
+ *
+ * The fourth cites `docs/git-providers.md`'s section on checkpoint pushes (the owner's
+ * feedback of 2026-10-19): the pull request's caption is about when the pull request opens,
+ * which is that document's fact rather than the README's, whose own line about the push is a
+ * sentence about the branch.
  */
 function captionSources() {
   return {
     'README.md#Getting started': readmeSection('Getting started'),
     'README.md#Why Fugaro': readmeSection('Why Fugaro'),
     'README.md#How it works': readmeSection('How it works'),
+    'docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)': section('docs/git-providers.md', 'Checkpoint pushes (git.pr.checkpoints)'),
     'docs/design/v1.md': repoFile('docs/design/v1.md'),
   }
 }
@@ -321,10 +342,10 @@ function capitalize(name) {
  *
  * The ruling's part is the four names in order. The captions are held to the *section* each
  * step cites, in that section's order — `reached` is a cursor per section that only moves
- * forward, so of the two steps quoting `## How it works`, the job's line comes first in the
- * README and has to come first on the page. Held to their files alone the four captions are
- * all lines of the README and can be shuffled among the steps with every one of them still a
- * quotation, while the page then says Fugaro is where the pull request opens.
+ * forward, so two steps quoting one section can only quote it in the order it writes them.
+ * Held to their files alone the captions are lines of the repository and can be shuffled
+ * among the steps with every one of them still a quotation, while the page then says Fugaro
+ * is where the pull request opens.
  */
 function flowFailures(html, ruling, sources) {
   const out = []
@@ -344,7 +365,7 @@ function flowFailures(html, ruling, sources) {
     const where = `the ${JSON.stringify(step.name)} step`
     if (!step.caption) out.push(`${where} carries no caption, and every step has one short line saying what happens there (changes spec 2026-10-18, item 4)`)
     if (!(step.source in sources)) {
-      out.push(`${where} attributes its caption to ${JSON.stringify(step.source)}, and a caption is held to a section of README.md (changes spec 2026-10-18, item 4)`)
+      out.push(`${where} attributes its caption to ${JSON.stringify(step.source)}, and a caption is held to a section of a document this repository carries (changes spec 2026-10-18, item 4)`)
     } else {
       const line = normalize(step.caption)
       const from = reached.get(step.source) ?? 0
@@ -413,8 +434,26 @@ function fixtureSteps() {
     { name: 'your agent', source: 'README.md#Getting started', caption: "the plugin's working skill launches, watches and diagnoses runs" },
     { name: 'fugaro', source: 'README.md#Why Fugaro', caption: 'it uses your Google Cloud project and your model credentials' },
     { name: 'ephemeral cloud job', source: 'README.md#How it works', caption: 'one execution per task, then gone' },
-    { name: 'pull request', source: 'README.md#How it works', caption: 'each commit is pushed within about a minute while the agent works' },
+    {
+      name: 'pull request',
+      source: 'docs/git-providers.md#Checkpoint pushes (git.pr.checkpoints)',
+      caption: 'the first checkpoint opens the draft PR, marked not verified',
+    },
   ]
+}
+
+/**
+ * Two steps quoting one section, for the ordering case: each step of the flow cites a section
+ * of its own since the pull request's caption moved to `docs/git-providers.md` (the owner's
+ * feedback of 2026-10-19), and the rule that a section's lines come in the section's order is
+ * what has to keep holding. The lines are README.md's `## How it works` own — the job's line
+ * from its diagram, and step 4's clause about the draft — in the order the section writes
+ * them, so the pair is a real pair of that section's lines and not a shape invented here.
+ */
+function sharedSectionSteps() {
+  const steps = fixtureSteps()
+  steps[3] = { ...steps[3], source: 'README.md#How it works', caption: 'a draft opens at the first push (marked not verified)' }
+  return steps
 }
 
 /** The section the detail quotes, by the name each of its steps cites. */
@@ -467,14 +506,16 @@ function runDetailOf(html) {
     out.note = inside(section, 'run-note')
     for (const el of walk(section)) {
       if (el.name !== 'li' || !classes(el).includes('run-step')) continue
-      // The heading carries the step's number as decoration beside its name, and the name is
-      // what the section writes: the number is dropped here for the same reason the component
-      // hides it from a screen reader.
-      const heading = inside(el, 'run-step-name')
+      // The heading is the step's name and nothing else. The number is a sibling of it — a
+      // column of the step's own grid, the rail the line is drawn down — and the section's name
+      // is what the heading has to carry. This used to strip a leading `3 ` back off the
+      // heading, because the old markup put the number inside it; the strip is gone with that
+      // markup, so a heading that swallowed its number again reads as the heading it is rather
+      // than as the step's name, and is refused below.
       out.steps.push({
         name: el.attrs.get('data-step') ?? '',
         source: el.attrs.get('data-source') ?? '',
-        heading: heading.replace(/^\d+\s*/, ''),
+        heading: inside(el, 'run-step-name'),
         line: inside(el, 'run-step-line'),
       })
     }
@@ -573,12 +614,16 @@ function fixtureDetailSteps() {
   return howItWorksSteps().map((step) => ({ name: step.name, line: lines[step.name] }))
 }
 
-/** A page carrying nothing but a detail section, for the refusals above. */
+/**
+ * A page carrying nothing but a detail section, for the refusals above. The markup is the one
+ * `RunDetail.astro` renders: the number a sibling of the heading and the heading's own line in
+ * the column beside it, so the fixture the refusals are proved on is the page they are about.
+ */
 function runDetailPage(steps, note) {
   const body = steps
     .map(
       (step, index) =>
-        `<li class="run-step" data-step="${slug(step.heading ?? step.name)}" data-source="${HOW_IT_WORKS_SOURCE}"><h3 class="run-step-name"><span class="run-step-number" aria-hidden="true">${index + 1}</span>${step.heading ?? step.name}</h3><p class="run-step-line">${step.line}</p></li>`,
+        `<li class="run-step" data-step="${slug(step.heading ?? step.name)}" data-source="${HOW_IT_WORKS_SOURCE}"><span class="run-step-number" aria-hidden="true">${index + 1}</span><div class="run-step-body"><h3 class="run-step-name">${step.heading ?? step.name}</h3><p class="run-step-line">${step.line}</p></div></li>`,
     )
     .join('')
   return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1><section class="run-detail" aria-labelledby="run-detail-title"><h2 class="run-detail-title" id="run-detail-title">The run, step by step</h2><ol class="run-steps">${body}</ol><p class="run-note">${note}</p></section></main></body></html>`
@@ -605,6 +650,239 @@ test("the hero's subline is README.md's subline, byte for byte", () => {
   assert.ok(
     normalize(repoFile('README.md')).includes(normalize(lead)),
     `the hero's lead sentence ${JSON.stringify(lead)} is not a sentence of README.md: every sentence on the site is traceable to a document (D102, W1.4 step 1)`,
+  )
+})
+
+/**
+ * README.md's `## Why Fugaro` reasons, as the section writes them: each `**N. Name.**`
+ * paragraph, as its name and the paragraph the reason is argued in. The paragraph comes back
+ * with the name because a benefit's line is held to **its own reason** and not to the
+ * section: the four are one section, so a line held to the section alone could be moved from
+ * the reason above it to the one below and still be a quotation.
+ */
+function readmeReasons() {
+  const out = []
+  for (const block of readmeSection('Why Fugaro').split(/\n{2,}/)) {
+    const match = /^\*\*\d+\.\s*(.+?)\.\*\*/.exec(block.trim())
+    if (match) out.push({ name: match[1], paragraph: block })
+  }
+  return out
+}
+
+/** The document the benefits section is quoted from, as the page and the component cite it. */
+const BENEFITS_SOURCE = 'README.md#Why Fugaro'
+
+/** A built page's benefits, as the elements it renders: the section's title and its items. */
+function benefitsOf(html) {
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
+  const doc = parse(html)
+  const sections = findAll(doc, (el) => el.name === 'section' && classes(el).includes('home-benefits'))
+  const out = { sections: sections.length, title: '', source: '', items: [] }
+  for (const section of sections) {
+    const inside = (root, selector) => {
+      const node = [...walk(root)].find((child) => classes(child).includes(selector))
+      return node ? decode(readableText(node)).replace(/\s+/g, ' ').trim() : ''
+    }
+    out.title = inside(section, 'benefits-title')
+    out.source = section.attrs.get('data-source') ?? ''
+    for (const item of walk(section)) {
+      if (item.name !== 'li' || !classes(item).includes('benefit')) continue
+      out.items.push({ name: inside(item, 'benefit-name'), line: inside(item, 'benefit-line') })
+    }
+  }
+  return out
+}
+
+/**
+ * Every failure of the benefits' rule, as the lines a reader of this file sees:
+ *
+ *   - **the page renders the README's reasons, all of them and in the README's order** — one
+ *     benefit per reason, named with the README's own name for it (the number off, which is
+ *     the README's device for counting and not part of the name). A reason the page drops is a
+ *     claim the README makes that the page does not, and the owner's feedback of 2026-10-19
+ *     asks for the section the README has rather than a selection from it;
+ *   - **every line is a sentence of the reason its own name names.** Held to the section alone
+ *     the four lines could be shuffled among the four reasons and each would still be a
+ *     quotation, while the page sold the reader the sentence about safety under the name about
+ *     models. Held to the reason's own paragraph, a line that moved stops the build (Global
+ *     Constraint 6, D102).
+ *
+ * Written as a function over a benefits section and the README's reasons so a fixture can
+ * prove it refuses.
+ */
+export function benefitFailures(benefits, reasons) {
+  const out = []
+  if (benefits.sections !== 1) {
+    return [`the page renders ${benefits.sections} benefits sections, and it renders one: the section is the README's four reasons and not a figure (the owner's feedback of 2026-10-19)`]
+  }
+  if (benefits.title !== 'Benefits') {
+    out.push(
+      `the benefits section is headed ${JSON.stringify(benefits.title)}, and the section a reader looks for is headed "Benefits": the heading is the site's own label for the block, the way "Install" is the install block's (the owner's feedback of 2026-10-19)`,
+    )
+  }
+  if (benefits.source !== BENEFITS_SOURCE) {
+    out.push(
+      `the benefits section cites ${JSON.stringify(benefits.source)}, and its names and lines are README.md's "## Why Fugaro" (Global Constraint 6)`,
+    )
+  }
+  if (benefits.items.length !== reasons.length) {
+    out.push(
+      `the page renders ${benefits.items.length} benefit(s) and README.md's "## Why Fugaro" argues ${reasons.length}: the section is the README's reasons, and one dropped is a claim the README makes that the page does not (the owner's feedback of 2026-10-19)`,
+    )
+  }
+
+  for (const [index, item] of benefits.items.entries()) {
+    const reason = reasons[index]
+    const where = `benefit ${index + 1} of the benefits`
+    if (reason === undefined) {
+      out.push(`${where}, ${JSON.stringify(item.name)}, has no reason to be: README.md's section argues ${reasons.length} and the page renders more (the owner's feedback of 2026-10-19)`)
+      continue
+    }
+    if (item.name !== reason.name) {
+      out.push(
+        `${where} is named ${JSON.stringify(item.name)}, and README.md names reason ${index + 1} ${JSON.stringify(reason.name)}: the page renders the README's reasons in the README's order, with the numbers off (the owner's feedback of 2026-10-19; Global Constraint 6)`,
+      )
+    }
+    if (!normalize(reason.paragraph).includes(normalize(item.line))) {
+      out.push(
+        `${where} carries the line ${JSON.stringify(item.line)}, which is not in README.md's reason ${index + 1}: every line of the benefits is a sentence of the reason its name names rather than one written for the page (the owner's feedback of 2026-10-19; Global Constraint 6)`,
+      )
+    }
+  }
+  return out
+}
+
+/** A page carrying nothing but a benefits section, for the refusals above. */
+function benefitsPage(items, { title = 'Benefits', source = BENEFITS_SOURCE, sections = 1 } = {}) {
+  const body = items
+    .map((item) => `<li class="benefit"><h3 class="benefit-name">${item.name}</h3><p class="benefit-line">${item.line}</p></li>`)
+    .join('')
+  const section = `<section class="home-benefits" aria-labelledby="benefits-title" data-source="${source}"><h2 class="benefits-title" id="benefits-title">${title}</h2><ul class="benefit-list">${body}</ul></section>`
+  return `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>t</h1>${section.repeat(sections)}</main></body></html>`
+}
+
+test('the benefits are README.md\'s four reasons, each with a line of its own reason', () => {
+  // The owner's feedback of 2026-10-19: "we need a section with Benefits or somesuch as we
+  // have in the README, no?" So the section is the README's, read off the built page and held
+  // to the repository here: four reasons, the README's names for them in the README's order,
+  // and for each one a sentence out of the paragraph that reason is argued in. A section whose
+  // whole job is to persuade is the one place on a site where a sentence of the page's own
+  // would go unnoticed, which is why every line is read back against the document it came from
+  // rather than trusted to the component's own guard (Global Constraint 6, D102).
+  const reasons = readmeReasons()
+  assert.ok(reasons.length > 0, 'README.md\'s "## Why Fugaro" carries no reason this check can read, so the benefits were held to nothing')
+  assert.deepEqual(
+    benefitFailures(benefitsOf(builtPage('')), reasons),
+    [],
+    'the homepage\'s benefits are not the README\'s reasons',
+  )
+})
+
+test('the benefits refusals fire on a paraphrase, a shuffled line and a dropped reason', (t) => {
+  // Three defects, each planted alone beside the section that keeps the rule, so the gate is a
+  // gate rather than a description of today's markup: a line rewritten for the page, a line
+  // that moved from the reason above it to the one below, and a reason the page leaves out.
+  const reasons = readmeReasons()
+  const good = reasons.map((reason) => ({ name: reason.name, line: firstSentence(reason.paragraph) }))
+  assert.deepEqual(benefitFailures(benefitsOf(benefitsPage(good)), reasons), [], 'the fixture section is not the README\'s own, so the three refusals below prove nothing')
+
+  const paraphrased = good.map((item, index) => (index === 0 ? { ...item, line: 'Nothing runs on your laptop at all.' } : item))
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(paraphrased)), reasons).join('\n'),
+    /is not in README\.md's reason 1/,
+    'a benefit line written for the page is not refused',
+  )
+
+  const shuffled = good.map((item, index) => (index === 0 ? { ...item, line: good[1].line } : item))
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(shuffled)), reasons).join('\n'),
+    /is not in README\.md's reason 1/,
+    'a line moved from the reason above it to the one below is not refused',
+  )
+
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(good.slice(0, -1))), reasons).join('\n'),
+    /renders 3 benefit\(s\) and README\.md's "## Why Fugaro" argues 4/,
+    'a dropped reason is not refused',
+  )
+
+  const renamed = good.map((item, index) => (index === 0 ? { ...item, name: 'Safe' } : item))
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(renamed)), reasons).join('\n'),
+    /is named "Safe", and README\.md names reason 1/,
+    'a benefit renamed by the page is not refused',
+  )
+
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(good, { title: 'Why Fugaro' })), reasons).join('\n'),
+    /is headed "Why Fugaro"/,
+    'a section that lost its heading is not refused',
+  )
+
+  assert.match(
+    benefitFailures(benefitsOf(benefitsPage(good, { source: 'README.md' })), reasons).join('\n'),
+    /cites "README\.md", and its names and lines are README\.md's "## Why Fugaro"/,
+    'a section that cites the whole README instead of the section is not refused',
+  )
+})
+
+/** The first sentence of a paragraph, for the fixture above: markdown markers taken out. */
+function firstSentence(paragraph) {
+  const text = paragraph.replace(/^\*\*[^*]+\*\*\s*/, '').trim()
+  const end = text.indexOf('. ')
+  return end === -1 ? text : text.slice(0, end + 1)
+}
+
+/**
+ * The hero's prompt line, as the two facts about it this file reads: what it says, with the
+ * prompt mark the page hides from a screen reader taken out (a reader reads the request, not
+ * the mark in front of it), and the document its `data-source` cites. `null` when the hero
+ * renders none, which is the failure the case below reports rather than an error here.
+ */
+function heroPrompt(page) {
+  const hero = findAll(parse(page), (el) => el.name === 'section' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero'))[0]
+  assert.ok(hero, "the homepage has no hero section, and the prompt line is the hero's own (the owner's feedback of 2026-10-19)")
+  const prompt = [...walk(hero)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-prompt'))
+  return prompt === undefined
+    ? null
+    : { text: decode(readableText(prompt)).replace(/\s+/g, ' ').trim(), source: prompt.attrs.get('data-source') ?? '' }
+}
+
+test("the hero's prompt line is the request, and the chat's first turn is the same sentence", () => {
+  // The owner's feedback of 2026-10-19: the home page has to say, in as few words as
+  // possible, that a reader drives Fugaro through the coding agent they already have, and the
+  // fewest words are the request — "Maybe just the `> Fan out these three bug fixes.`". Two
+  // facts are read off the built page, and the second is what makes the line a quotation
+  // rather than copy: it is a line of the document its `data-source` cites (Global Constraint
+  // 6, D102 — a page renders a fact and never restates one), and it is the same sentence the
+  // chat's first turn speaks, which is the one place the page shows what happens to it. The
+  // two renderings read one string (`src/lib/agent-request.mjs`), and this case is what holds
+  // the artifact to that: a hero that typed its own version of the request would show the
+  // reader asking for one thing and the agent answering about another.
+  const page = builtPage('')
+  const prompt = heroPrompt(page)
+  assert.ok(prompt, "the hero renders no prompt line, and the owner's feedback of 2026-10-19 puts the request under the headline as what the page is about")
+  assert.ok(prompt.text, "the hero's prompt line is empty: the page's whole statement about how a reader drives Fugaro is that line (the owner's feedback of 2026-10-19)")
+  assert.ok(
+    prompt.source,
+    "the hero's prompt line cites no document, and every line on the site says which document it is quoted from (Global Constraint 6)",
+  )
+  assert.ok(
+    normalize(repoFile(prompt.source)).includes(normalize(prompt.text)),
+    `the hero's prompt line ${JSON.stringify(prompt.text)} is not a line of ${prompt.source}: the line is the repository's own example of a request, not a sentence written for the page (changes spec 2026-10-18, item 3; Global Constraint 6)`,
+  )
+
+  const turns = chat(page)
+  assert.ok(turns.length > 0, 'the homepage renders no chat, and the hero\'s prompt line is the chat\'s own first turn (changes spec 2026-10-18, item 3)')
+  assert.equal(
+    prompt.text,
+    turns[0].line,
+    `the hero's prompt line reads ${JSON.stringify(prompt.text)} and the chat's first turn reads ${JSON.stringify(turns[0].line)}: they are one sentence, so the reader is not shown one request under the headline and a different one in the conversation (the owner's feedback of 2026-10-19)`,
+  )
+  assert.equal(
+    prompt.source,
+    turns[0].source,
+    `the hero's prompt line cites ${JSON.stringify(prompt.source)} and the chat's first turn cites ${JSON.stringify(turns[0].source)}: one sentence is quoted from one document, and two citations would be two places to keep in step`,
   )
 })
 
@@ -715,6 +993,46 @@ test('the hero renders a player only when site.yaml says the video exists', () =
       `the hero renders ${what} while site.yaml's features.video is false: the slot is empty until the video exists, and an empty player is the first thing a reader clicks (D107, W1.4 step 1)`,
     )
   }
+})
+
+test('the hero offers the console from its call to action only while the flag is on', () => {
+  // Item 6 of the owner's brief of 2026-10-19 asks that the console be findable from the home
+  // page's call to action, and `site.yaml`'s `features.console_downloads` is what decides
+  // whether it is offered at all. (The changes spec of 2026-10-18 has an item 6 too, and it is
+  // Getting Started's console option rather than this — `console-option.mjs` holds that one.)
+  // This is the flag-off half over the build `npm run check` makes, and it applies only while
+  // the checkout's flag is false. The checkout now ships the flag TRUE (the console's
+  // `console-v0.8.7` release), so this case steps aside and `console-option.mjs` holds both
+  // halves: the flag-on row off this build and the flag-off row off an unreleased copy.
+  const flag = /^\s*console_downloads:\s*(true|false)\s*$/m.exec(repoFile('website/data/site.yaml'))
+  assert.ok(
+    flag,
+    'website/data/site.yaml carries no features.console_downloads, and the hero offers the console from that flag (item 6)',
+  )
+  if (flag[1] === 'true') return
+
+  const hero = findAll(parse(builtPage('')), (el) => el.name === 'section' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero'))[0]
+  assert.ok(hero, 'the homepage has no hero section, and the promise and its call to action are the hero (P5)')
+
+  const actions = [...walk(hero)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-actions'))
+  assert.ok(actions, 'the hero carries no action row, and the call to action is what a reader does next (W1.4)')
+
+  // The row is the two links and nothing else: no console link, no console sentence, no
+  // placeholder where the link would go. A reader of an unreleased console has nothing to
+  // click, and the hero must not offer a page that has nothing to download on it either —
+  // "findable" is item 6's word for the released state.
+  assert.deepEqual(
+    [...walk(actions)].filter((el) => el.name === 'a').map((el) => [textOf(el).trim(), el.attrs.get('href')]),
+    [
+      ['Get started', '/getting-started/'],
+      ['How it works', '/how-it-works/'],
+    ],
+    'the hero\'s call to action is not exactly the two links it carries while features.console_downloads is false: the console\'s link arrives with the flag, and until then the row says nothing about the console (the owner\'s brief of 2026-10-19, item 6)',
+  )
+  assert.ok(
+    !/console/i.test(textOf(actions)),
+    'the hero\'s call to action mentions the console while features.console_downloads is false, and the unreleased state is structural: nothing about the console renders before its release (item 6)',
+  )
 })
 
 // ---- the chat (changes spec of 2026-10-18, item 3) ---------------------------------------
@@ -1066,21 +1384,19 @@ test('the watch snippet is the command the reader keeps, and it copies itself', 
   )
 })
 
-test('the slot for the watch screenshot is marked, empty, and adds no image', () => {
-  // Item 3 asks for a clearly marked slot right after the chat, and for the image itself to
-  // be a separate task's: so the slot is here, it is empty, and this page adds no picture of
-  // a screen the run does not have (Global Constraint 9, D107's rule for the hero's video).
+test('the watch screenshot is in the slot the changes spec marks, named, sized and served from here', () => {
+  // Item 3 asks for a clearly marked slot right after the chat; the owner's spec of
+  // 2026-10-18 item 5 and PR #622 supply the picture, and it is the owner's real capture of
+  // `fugaro watch` running on their own installation, published as it was taken (D190 waived
+  // by the owner for this one image, `docs/website/redesign/README.md`). So the slot holds the
+  // image now, and what this case is about is that it holds THE image and holds it so it can
+  // be read: a picture no reader can identify, or one that shifts the block under it when the
+  // file lands, or one fetched from somebody else's host, are the three ways this goes wrong.
   const page = parse(builtPage(''))
   const slot = findAll(page, (el) => el.attrs.get('data-slot') === 'watch-screenshot')[0]
   assert.ok(slot, 'the homepage carries no [data-slot="watch-screenshot"], and item 3 asks for a clearly marked slot for the `fugaro watch` screenshot (changes spec 2026-10-18, item 3)')
-  assert.deepEqual(
-    [...walk(slot)].map((el) => el.name),
-    [],
-    'the slot for the watch screenshot carries elements of its own: it is the place a later task puts the image, and until then it holds nothing (changes spec 2026-10-18, item 3)',
-  )
-  assert.equal(textOf(slot).trim(), '', `the slot carries the text ${JSON.stringify(textOf(slot).trim())}, and a slot is not a caption (changes spec 2026-10-18, item 3)`)
   for (const attribute of ['src', 'srcset', 'href', 'style', 'aria-label', 'role']) {
-    assert.ok(!slot.attrs.has(attribute), `the slot carries ${attribute}, and the hook a task and this check read is \`data-slot\` alone (changes spec 2026-10-18, item 3)`)
+    assert.ok(!slot.attrs.has(attribute), `the slot carries ${attribute}, and the hook this check reads is \`data-slot\` alone (changes spec 2026-10-18, item 3)`)
   }
 
   // "right after the chat": the slot opens the block under the conversation, directly beneath
@@ -1103,19 +1419,89 @@ test('the slot for the watch screenshot is marked, empty, and adds no image', ()
     assert.notEqual(
       parent,
       figure,
-      "the watch screenshot's slot is inside the chat's figure, and the caption under the conversation is the figure's last child: a slot after it is markup the HTML content model rejects, and the slot belongs to the `fugaro watch` block the screenshot is of (changes spec 2026-10-18, item 3a)",
+      "the watch screenshot is inside the chat's figure, and the caption under the conversation is the figure's last child: an image after it is markup the HTML content model rejects, and the picture belongs to the `fugaro watch` block it is of (changes spec 2026-10-18, item 3a)",
     )
   }
 
-  // And no image came with it: the wordmark is the homepage's only picture, so a screenshot
-  // committed by mistake — the one thing this run must not add — is this failure.
+  // **The picture is IN the slot**, exactly one of it: the slot is where item 3 put the
+  // screenshot, and an image beside the slot is a picture this page renders outside the place
+  // the page says it renders it.
+  const images = [...walk(slot)].filter((el) => el.name === 'img')
+  assert.equal(
+    images.length,
+    1,
+    `the watch screenshot's slot holds ${images.length} <img> element(s), and it is the one place the homepage shows the \`fugaro watch\` screen (owner spec 2026-10-18, item 5)`,
+  )
+  const image = images[0]
+
+  // **The path is this site's own**: a root-relative path under `/images/`, which is the file
+  // PR #622 committed, and not a URL — of any scheme, or a protocol-relative `//host/path`.
+  // This is the origins gate's rule read from the page side: the picture a reader is shown is
+  // served from the site that shows it (Global Constraint 9, D93).
+  const src = image.attrs.get('src') ?? ''
+  assert.equal(
+    src,
+    '/images/fugaro-watch.png',
+    `the homepage's watch screenshot is ${JSON.stringify(src)}, and the asset PR #622 committed and this site serves is /images/fugaro-watch.png (owner spec 2026-10-18, item 5)`,
+  )
+  assert.ok(
+    !/^[a-z][a-z0-9+.-]*:/i.test(src) && !src.startsWith('//') && !image.attrs.has('srcset'),
+    `the watch screenshot is loaded as ${JSON.stringify(src)}${image.attrs.has('srcset') ? ' with a srcset' : ''}, and a page that fetches its own picture does not name another host for it: no scheme, no protocol-relative URL, no candidate list this check cannot follow (Global Constraint 9; \`test/origins.mjs\`)`,
+  )
+
+  // **The alt says what the picture shows**, because the picture is a terminal full of the
+  // owner's own run titles and spend: a reader who cannot see it is owed an account of the
+  // screen, and the transcription ships beside the image (`public/images/fugaro-watch.txt`) as
+  // the text that account is taken from. The a11y gate refuses a missing `alt`; what this
+  // refuses is an empty one — `alt=""` marks a reader's only account of a page's one
+  // photograph as decoration — and a stub too short to be one. The floor is a floor and not the
+  // wording: what the reader is told is the owner's, the same way the picture is.
+  const alt = (image.attrs.get('alt') ?? '').trim()
+  assert.ok(
+    alt.length >= 40,
+    `the watch screenshot's alt is ${JSON.stringify(alt)}, and the picture is the owner's real \`fugaro watch\` screen: a reader who cannot see it is owed what the screen shows, from the transcription that ships beside the image (owner spec 2026-10-18, item 5; \`public/images/fugaro-watch.txt\`)`,
+  )
+
+  // **And the dimensions are the capture's own**, so the browser reserves the box before the
+  // file arrives and the command bar under it does not jump — which is the whole reason the
+  // attributes are there. They are held to the capture `docs/website/redesign/README.md`
+  // records rather than to themselves: a declared box of the wrong SHAPE — `1459 x 440`, one
+  // pixel off the height, or the two numbers swapped — reserves the wrong box and scales the
+  // picture into it, and that is this failure. The file the page names is the one the record
+  // is about.
+  const record = /`website\/public\/images\/fugaro-watch\.png` \((\d+) x (\d+) px, a 2x retina capture, so (\d+) x (\d+) logical\)/.exec(
+    repoFile('docs/website/redesign/README.md'),
+  )
+  assert.ok(record, 'docs/website/redesign/README.md no longer records the capture\'s pixel size and its logical size, so the declared dimensions cannot be held to the file they are about (owner spec 2026-10-18, item 5)')
+  const [, captureW, captureH, logicalW, logicalH] = record.map(Number)
+  const width = Number(image.attrs.get('width'))
+  const height = Number(image.attrs.get('height'))
+  assert.ok(
+    Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0,
+    `the watch screenshot declares ${JSON.stringify(image.attrs.get('width'))} x ${JSON.stringify(image.attrs.get('height'))}, and a pair of positive integers is what reserves the picture's box before the file arrives (owner spec 2026-10-18, item 5)`,
+  )
+  assert.equal(
+    width / height,
+    captureW / captureH,
+    `the watch screenshot declares ${width} x ${height} and the capture is ${captureW} x ${captureH} (${logicalW} x ${logicalH} logical): the declared box has to be the file's own shape, or the browser reserves the wrong space and scales the picture into it (owner spec 2026-10-18, item 5)`,
+  )
+  assert.deepEqual(
+    [width, height],
+    [logicalW, logicalH],
+    `the watch screenshot declares ${width} x ${height} and the capture is ${logicalW} x ${logicalH} at its logical size: a 2x capture is declared at the size it occupies on the page, which is what stops the box it reserves being twice the height of the one the CSS lays it out in (owner spec 2026-10-18, item 5)`,
+  )
+
+  // **The page's pictures are these two and no others**: the wordmark in the header and the
+  // owner's screenshot. A homepage that grew a third `<img>` — an illustration, an icon, a
+  // picture of a screen the run does not have — is what this last assertion is for (Global
+  // Constraint 9; D107's rule for the hero's video).
   const pictures = [...walk(page)]
     .filter((el) => ['img', 'picture', 'video', 'source'].includes(el.name))
     .map((el) => el.attrs.get('src') ?? el.attrs.get('srcset') ?? '')
   assert.deepEqual(
     pictures,
-    ['/logo.png'],
-    `the homepage renders the pictures ${JSON.stringify(pictures)}, and this run adds none: the wordmark is the page's only image, and the screenshot is a separate task's (changes spec 2026-10-18, item 3)`,
+    ['/logo.png', '/images/fugaro-watch.png'],
+    `the homepage renders the pictures ${JSON.stringify(pictures)}, and it renders two: the wordmark beside the site's name, and the owner's \`fugaro watch\` screenshot (owner spec 2026-10-18, item 5)`,
   )
 })
 
@@ -1214,16 +1600,18 @@ test('the flow refusals fire on the defect each one names', () => {
 
   const elsewhere = fixtureSteps().map((step, i) => (i === 0 ? { ...step, source: 'website/content/cli-reference.md' } : step))
   assert.ok(
-    failing(elsewhere).some((line) => /held to a section of README\.md/.test(line)),
-    'a caption attributed to a document the flow may not quote passes the check: every caption comes from a section of the README',
+    failing(elsewhere).some((line) => /held to a section of a document this repository carries/.test(line)),
+    'a caption attributed to a document the flow may not quote passes the check: every caption comes from a section this check reads',
   )
 
-  // Both captions of the two steps that share a section are lines of that section, so a check
-  // that held each one to its section and no further would let them swap among the steps: the
-  // page would then say the run opens a pull request that is done, then gone.
-  const swapped = fixtureSteps().map((step, i) =>
-    i === 2 ? { ...step, caption: fixtureSteps()[3].caption } : i === 3 ? { ...step, caption: fixtureSteps()[2].caption } : step,
-  )
+  // Two steps of one section, each quoting a line of it: a check that held each caption to
+  // its section and no further would let them swap, and the page would then say the run opens
+  // a pull request that is done, then gone. The shipped flow cites four sections, so the pair
+  // is built here out of README.md's own `## How it works` lines — the job's and step 4's —
+  // and the rule is what has to keep holding for the day two steps share a section again.
+  const pair = sharedSectionSteps()
+  const swapped = pair.map((step, i) => (i === 2 ? { ...step, caption: pair[3].caption } : i === 3 ? { ...step, caption: pair[2].caption } : step))
+  assert.deepEqual(failing(pair), [], 'the two steps quoting one section do not pass the check their own case is about')
   assert.ok(
     failing(swapped).some((line) => /at or after the step before it/.test(line)),
     'the job step\'s caption and the pull request step\'s swapped pass the check: each is still a line of README.md\'s "## How it works", and the order is what keeps each on the step it describes',
@@ -1289,8 +1677,11 @@ test('the flow moves on scroll only for a reader who allows motion', () => {
 test("every caption in the flow is a line of the section its step cites, in that section's order", () => {
   // The same rule `flowFailures` applies, said here one page at a time and with the page's
   // name in the message, because this is the acceptance a reader can check: the four steps say
-  // what the repository says, in the order the repository says it. Two of the four quote
-  // README.md's `## How it works`, and the cursor is what keeps them in it.
+  // what the repository says, in the order the repository says it. Three of the four quote a
+  // section of README.md, and the pull request's caption quotes `docs/git-providers.md`'s
+  // checkpoint pushes, which is the document that says when the pull request opens; a
+  // section's own order is the cursor below, and it is what a second step quoting the same
+  // section obeys.
   const ruling = item4()
   const sources = captionSources()
 
@@ -1314,7 +1705,7 @@ test("every caption in the flow is a line of the section its step cites, in that
       const section = sources[step.source] ?? ''
       assert.ok(
         step.source in sources,
-        `the ${where} page's ${JSON.stringify(step.name)} step attributes its caption to ${JSON.stringify(step.source)}, and a caption is held to a section of README.md (changes spec 2026-10-18, item 4)`,
+        `the ${where} page's ${JSON.stringify(step.name)} step attributes its caption to ${JSON.stringify(step.source)}, and a caption is held to a section of a document this repository carries (changes spec 2026-10-18, item 4)`,
       )
       const line = normalize(step.caption)
       const from = reached.get(step.source) ?? 0
@@ -1382,6 +1773,15 @@ test('the detail refusals fire on the defect each one names', () => {
   assert.ok(
     failing(elsewhere).some((line) => /is not a line of README\.md's "## How it works"/.test(line)),
     'a heading the section does not write passes the check: a step named for the page is not a step of the section',
+  )
+
+  // The number sits beside the heading rather than in it. The old markup carried it inside the
+  // heading and `runDetailOf` stripped it back off, so a reader saw "3 Loop" and this file saw
+  // "Loop"; the fixture below is that markup, and it is refused rather than stripped.
+  const numbered = steps.map((step, i) => (i === 2 ? { ...step, heading: `${i + 1}${step.name}` } : step))
+  assert.ok(
+    failing(numbered).some((line) => /is headed .*and README\.md names step 3/.test(line)),
+    'a step whose heading carries its own number passes the check: the number is decoration beside the heading, and a heading that swallowed it is not the name the section gives the step',
   )
 
   const invented = 'The container is the trust boundary.'

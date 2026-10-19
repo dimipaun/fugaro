@@ -4,14 +4,15 @@
  * Task W1.6).
  *
  * This is the section the spec asks for as *"per-OS download links (placeholder until the
- * console ships)"*, and the console has not been **released**: `console/` holds the
- * application, its packaging and the workflow that signs, notarises and staples its macOS
- * artifacts, and that workflow creates the release as a draft the owner publishes — while
- * `site.yaml`'s `features.console_downloads` is false, this site may not link any of it
- * (finding 23, finding 25, D95, Global Constraint 9). So the section ships as a placeholder
- * whose links a test refuses to emit — the one outcome here with a real consequence for a
- * reader, because a download link to an unsigned or unpublished artifact either 404s or points
- * at something nobody has published.
+ * console ships)"*, and the console has **shipped**: `console/` holds the application, its
+ * packaging and the workflow that signs, notarises and staples its macOS artifacts, that
+ * workflow created the `console-v0.8.7` release, and `site.yaml`'s
+ * `features.console_downloads` is true — so the section renders the release's own downloads
+ * (W3.1, 2026-10-19). The placeholder it used to render is still here, and it is what the
+ * unreleased branch below is: while `available` is false the section renders one sentence and
+ * nothing a reader can follow, which is the state a copy of the repository is built into and
+ * a test holds (`website/test/console.mjs`), rather than the state this checkout ships
+ * (finding 23, finding 25, D95, Global Constraint 9).
  *
  * **The rule is structural, not editorial.** The two states are one `if`: the link list is
  * rendered from `downloads.json`'s `downloads` array and *only* when `available` is true,
@@ -20,11 +21,12 @@
  * promise about its copy — and the module that reads the data file refuses, in the build, a
  * flag that disagrees with `site.yaml`'s (W1.6 steps 1 and 2).
  *
- * **The URLs are derived, not stored.** Each entry carries the *published name* of the
- * release's asset, and `src/lib/console-downloads.mjs` composes the URL from it, from the
- * release's tag and from `site.yaml`'s repository — so no file under `website/` carries a
- * download URL at all, and a version bump moves every button (the owner's changes spec of
- * 2026-10-18, item 6; Global Constraint 9).
+ * **The URLs are derived, not stored.** Each entry carries the name the release *serves* its
+ * asset under — the release's own files spell `Fugaro Console-X.Y.Z-universal.dmg` and GitHub
+ * serves `Fugaro.Console-X.Y.Z-universal.dmg` — and `src/lib/console-downloads.mjs` composes
+ * the URL from it, from the release's tag and from `site.yaml`'s repository. So no file under
+ * `website/` carries a download URL at all, and a version bump moves every button (the owner's
+ * changes spec of 2026-10-18, item 6; Global Constraint 9).
  *
  * The facts come in as props rather than being read here, because the module owns the one
  * reader for them: `website/src/pages/console.astro` loads and validates
@@ -32,19 +34,38 @@
  * below is typed into the markup: the note is the data file's own sentence, and each
  * label is the platform and the asset's own extension — the site invents no distribution
  * (D4, D11).
+ *
+ * **What a reader gets now that the console has shipped.** The release's own sentence
+ * about the console (macOS only, one universal disk image and one archive, signed and
+ * Apple-notarised, the CLI first because the CLI is the data plane), one link per published
+ * asset with the SHA-256 the release recorded for its bytes beside it, and the command that
+ * prints the checksum of the file a reader downloaded — in a command block, so a reader copies
+ * it rather than selecting it by hand (D183, P6). All of it comes from the data file: the
+ * checksum is the one fact here that is not derived, because it is a fact about bytes and no
+ * build can compute it.
  */
+import { copyControlHTML } from '../lib/copy-control.mjs'
+
 interface DownloadFacts {
   /** What a reader sees on the link: the platform and the asset's extension (`macOS .dmg`). */
   label: string
   /** Where a reader downloads it from. Only ever rendered while `available` is true. */
   url: string
+  /** The SHA-256 of the published bytes, printed beside the link to check a download with. */
+  sha256: string
 }
 
 interface Props {
-  /** `downloads.json`'s `available`: the console's own artifact exists (W3.1 flips it). */
+  /** `downloads.json`'s `available`: the console's own artifact exists (W3.1 flipped it). */
   available: boolean
   /** The data file's `not_released` sentence, rendered while `available` is false. */
   note: string
+  /**
+   * The data file's `released` block: what the console is once it has shipped (macOS only,
+   * signed and notarised, the CLI first) and the command that verifies a download. Rendered
+   * while `available` is true, and rendered from the data file rather than written here.
+   */
+  released: { text: string; verify: string }
   /**
    * The data file's `downloads` entries: the release's published names, which the data file
    * carries from the day they are known and not only once the console ships. They are rendered
@@ -54,7 +75,7 @@ interface Props {
   downloads: DownloadFacts[]
 }
 
-const { available, note, downloads } = Astro.props
+const { available, note, released, downloads } = Astro.props
 
 // A label rather than a fact: the section's own heading, which is the navigation's word
 // for this page and not a claim about the product (the layout's nav carries the same one).
@@ -66,15 +87,36 @@ const HEADING = 'Downloads'
 
   {
     available ? (
-      <ul class="downloads">
-        {downloads.map((download) => (
-          <li>
-            <a href={download.url} rel="noopener">
-              {download.label}
-            </a>
-          </li>
-        ))}
-      </ul>
+      <>
+        {/* What the console is now that it has shipped: the platform, the signing and
+            notarisation, and the CLI-first rule — the data file's own sentence, rendered
+            rather than written here. */}
+        <p class="downloads-released">{released.text}</p>
+
+        <ul class="downloads">
+          {downloads.map((download) => (
+            <li>
+              <a href={download.url} rel="noopener">
+                {download.label}
+              </a>{' '}
+              {/* The published bytes' own checksum, beside the link it belongs to: a
+                  reader who has the file can see whether what arrived is what the
+                  release published, without trusting the transfer. The space above is a
+                  fact and not a style: the two elements are inline, so a whitespace-only
+                  text node between them is what Astro's compression drops — and the row
+                  would read "macOS .dmga434f3…" (website/test/spacing.mjs holds it). */}
+              <code class="download-sha256">{download.sha256}</code>
+            </li>
+          ))}
+        </ul>
+
+        {/* The command that checks a download, in the site's own command block so a
+            reader copies it rather than selecting it by hand (D183, P6). */}
+        <div class="command-block" data-copy>
+          <Fragment set:html={copyControlHTML('Copy the checksum verification command')} />
+          <pre><code>{released.verify}</code></pre>
+        </div>
+      </>
     ) : (
       <div class="downloads-unreleased">
         {/* One paragraph, and nothing else: while the console is unreleased this branch

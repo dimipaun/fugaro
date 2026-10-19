@@ -1,7 +1,8 @@
 # Pending workflow changes
 
-**Two files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508), and `images.yml` was copied in and its staged copy removed in `6b57ba9` (`## images.yml` below is the record of that change, not a pending request). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+**One file is pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task P4.3; see `## shared-tests.yml` below). **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508), and `images.yml` was copied in and its staged copy removed in `6b57ba9` (`## images.yml` below is the record of that change, not a pending request). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
+- **`shared-tests.yml`** — the whole CI job for `shared/`'s tests, mobile plan Task **P4.3**: a `main`-filtered push and pull request under `shared/**`, `contents: read`, `npm ci` and `npm test` on Node 22 and Node 26, and every `shared/*/mutation-proof.sh` in the package, every action pinned by full commit SHA. `shared/` is outside the Go module, so no job in `ci.yml` runs it. Staged by a Fugaro run that cannot push a `.github/workflows/**` change; see `## shared-tests.yml` below, which also records what the job will report on `main` today.
 - **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
 - **`images.yml` — applied, not pending.** The signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`, was staged here by a Fugaro run that cannot push a `.github/workflows/**` change, then copied into `.github/workflows/images.yml` and `git rm`'d from here in `6b57ba9`. `## images.yml` below is the record of that change and of the timing it had to meet, not something still to copy.
 
@@ -78,6 +79,104 @@ fails that test rather than leaving the root untested.
 files below, is written the same way: it reads a staged copy **while it
 exists**, falls back to the real `.github/workflows/website-*.yml` once it is
 gone, and fails if both copies exist at once.
+
+## `shared-tests.yml`
+
+**Status: `shared-tests.yml` is staged and pending.** The copy has not been made — there is no `.github/workflows/shared-tests.yml` — and this document's opening line says the same. `internal/cli/docs_shared_tests_workflow_test.go`'s **`TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays`** reads this line, the opening line and the tree together and fails if any two of them disagree, in either direction: while the staged copy exists this line must read `staged and pending`, and once the owner has copied the file in and removed the staged copy it must read `applied, not pending`. Naming that test is checked as well, so the name cannot drift out of the document that depends on it.
+
+**A new file**, so nothing is replaced: it stages `.github/workflows/shared-tests.yml` entire, the CI job for `shared/`'s tests (mobile plan Task **P4.3**). The plan describes that job as a change to `ci.yml`, and it is a file of its own here because the brief for this run asked for the job "as a whole new workflow file"; the job's content is the plan's either way.
+
+**Why `shared/` needs a job of its own.** `shared/` (P0.1-P1.5) is a second artifact outside the Go module, like `console/` and `website/`: `go build ./...`, `go vet ./...`, `gofmt -l .` and every job in `ci.yml` take no notice of it, so until this file exists the package's tests run **only where someone runs them**. That is the gap `docs/mobile/implementation-plan.md` records as open item 4 and `shared/README.md` states under "Two honest gaps". The package has no dependencies at all, so `npm ci` here is the check that the committed `package-lock.json` is installable rather than a download.
+
+What the job is, in one line: on a push or pull request to `main` that touches `shared/**` or this workflow's own path, run `npm ci` then `npm test` in `shared/` on **Node 22 and Node 26**, then run **every `shared/*/mutation-proof.sh` the package carries** — the step globs for them rather than listing them, so a module that adds one is covered without an edit to the job; `contents: read`, one cancelling run per ref, every action pinned by full commit SHA, no secret anywhere. The scripts in the tree today, and the check that keeps this list true, are in the section below.
+
+**The owner's steps, exactly:**
+
+```sh
+# 1. Review this file, then copy it in.
+cp docs/pending-workflows/shared-tests.yml .github/workflows/shared-tests.yml
+git add .github/workflows/shared-tests.yml
+# 2. The git rm is load-bearing, not cleanup: while this file exists,
+#    internal/cli/docs_shared_tests_workflow_test.go reads IT, so leaving it
+#    in place would freeze those assertions on its bytes and hide a later edit
+#    or deletion of the real file's job.
+git rm docs/pending-workflows/shared-tests.yml
+# 3. Say so where the site says what this directory holds -- the last section
+#    of website/README.md says "... docs/pending-workflows/ now holds one
+#    pending workflow, docs/pending-workflows/shared-tests.yml -- the shared
+#    package's test job (mobile plan Task P4.3), which is not this site's: the
+#    website's two manual workflows ...". With the staged copy gone, the
+#    directory holds none and that sentence is false; website/test/readme.mjs
+#    holds it to the directory in both directions, so BOTH the count and the
+#    file name have to go: "docs/pending-workflows/ now holds no pending
+#    workflow: the website's two manual workflows ...". (A name the README
+#    keeps while the directory no longer holds it fails the check even with
+#    the word corrected -- and the check scans the WHOLE document, so the last
+#    backticked `docs/pending-workflows/shared-tests.yml` anywhere on the page
+#    has to go, not only the one in that sentence.)
+$EDITOR website/README.md
+git add website/README.md
+# 4. Update THIS document, which says what is still pending and would
+#    otherwise go on describing a staged copy that is gone -- the same thing
+#    `images.yml`'s bullet had to do when it was applied:
+#      - the opening line: "One file is pending: `shared-tests.yml`" stops
+#        being true of this directory;
+#      - the `## shared-tests.yml` section: its Status line becomes
+#        "**Status: `shared-tests.yml` is applied, not pending.**", with the
+#        commit that applied it, and the bullet above the section stops saying
+#        it was staged for the owner to copy.
+#    TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays fails while the
+#    tree and those two lines say different things, in either direction, so
+#    copying the file in without this step leaves `main`'s Go tests red.
+$EDITOR docs/pending-workflows/README.md
+git add docs/pending-workflows/README.md
+git commit -m "shared: run the shared package's tests"
+```
+
+**Steps 3 and 4 are not decoration, and they are the two steps someone copying `images.yml` before did not have to take for `images.yml` itself** (`images.yml`'s own bullet in this document was edited when it was applied; that is step 4, and it is the step nobody wrote down until now). `website/test/readme.mjs`'s **last** test — the file's closing `test(...)`, "the README claims about docs/pending-workflows/, firebase.json and the deploy script are literally true" — is what compares the page with `docs/pending-workflows/`, and it does so over the **whole** document rather than over that one sentence: it collapses every run of whitespace in `website/README.md` to a single space and then collects **every backticked `docs/pending-workflows/<name>.yml` the document prints anywhere**, which must be exactly the `*.yml` files the directory holds apart from the console's two kept-by-design copies (in both directions — a staged file nobody named, and a name with nothing staged, both fail), while its count word (`no`/`one`/`two`/`three`) must be that number; the console's two are excluded from that set and held instead to being byte-identical, each to the file of the same name under `.github/workflows/`. **So every backticked `docs/pending-workflows/<name>.yml` anywhere on the page is a claim that the file is pending, and the sentences that carry the claim are not the only place it can appear**: writing the path for an applied workflow in some other paragraph — the console's two, say, which the page names bare today — fails the check even when this sentence is right, so a cross-reference to a copied-in file has to be written without it. Copying this file in and `git rm`-ing it without step 3 leaves the sentence naming a file that is no longer there, and the site's own `npm run check` goes red on `main`. The test reads the count as a word and compares it as a number, so the sentence is the only thing to update — but it is the sentence, name and count together, that has to match.
+
+**Step 4 is the same idea one level up: this document is itself a claim about the tree, and it goes stale the moment the copy lands.** The `images.yml` bullet above shows what "applied" looks like in it (`**`images.yml` — applied, not pending.**`, with the commit that did it), and `TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays` is what makes the difference load-bearing rather than a matter of tidiness: it reads this section's `**Status: `shared-tests.yml` is …**` line, the document's opening line and the state of `docs/pending-workflows/shared-tests.yml`, and fails if they disagree — `staged and pending` while the staged file is gone, or `applied, not pending` while it is still there, are both red. It also fails if this document stops naming that test, so the name cannot drift away from the paragraph that points at it.
+
+There is no timing constraint, unlike `images.yml` below: the job is not part of any release path, nothing else reads it, and steps 3 and 4 can land in the same commit as the copy.
+
+**Before copying: check the pins.** Dependabot does not watch this directory, so the two pins here can lag `main`'s. The file uses the SHAs `main` had on 2026-10-18 — `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1, `ci.yml`'s pin) and `actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1` (v7.1.0, `ci.yml`'s pin) — both verified against their tags with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` when the file was staged. Compare them with `grep -h 'uses:' docs/pending-workflows/shared-tests.yml .github/workflows/*.yml | sort -u` and keep the newer SHA. Once the staged copy is gone, `internal/cli/docs_shared_tests_workflow_test.go`'s `TestSharedTestsWorkflowPinsAgreeWithTheOtherWorkflows` enforces that agreement itself; while it is pending, that test skips and says so.
+
+### What this job will report on `main` today
+
+**This section states no test count, and that is deliberate.** An earlier version of it said the suite was 289 tests and that four mutation proofs would run; both were true when the job was staged and both were wrong by the time anyone read them again (the suite is past 470, and the package carries a proof for every module that declares one). A number in a document is a claim with no test under it, so what follows is **the shape of what the two legs report**, which does not move as the package grows, and a measurement that says when it was taken and how to retake it. The one list that *is* kept here — which scripts the proof step runs — is held to the tree by `TestSharedTestsWorkflowReadmeNamesEveryProofScript` rather than by hand.
+
+**The Node 22 leg will be red, and not because of this job.** One test fails on that line: `shared/url/index.test.js`'s hostile-string sweep expects `https://xn--github-9d0c.com/a` to be refused as `punycode-host`, and Node 22's host parser refuses the string itself, so the module answers `not-a-url` before its own host rule is reached. Node 26 parses it and the case passes. The difference is the runner's line, not the package's:
+
+```console
+$ node -e 'try { console.log("ok", new URL("https://xn--github-9d0c.com/a").hostname) } catch (e) { console.log("throws:", e.message) }'
+# node 22.23.3:  throws: Invalid URL
+# node 26.12.0:  ok xn--github-9d0c.com
+```
+
+That failure is **pre-existing and already recorded** — `shared/mailbox/README.md` and `shared/mailbox-sim/README.md` both name it, and it is the stated reason their mutation proofs run their own module's suite rather than the package's. It has a second consequence, one step later in the job: the proofs of `shared/confirm/`, `shared/lease/` and `shared/mailbox-schema/` run the **whole package's** `npm test` as their positive control, so on Node 22 they refuse (exit 2, "the suite does not pass on the pristine …") rather than reporting mutations they never ran. The other four — `shared/command/`, `shared/mailbox/`, `shared/mailbox-sim/` and `shared/prompts/` — run their own module's tests instead, so they are unaffected by it.
+
+**What the proof step runs**, which is the package's own list and not this document's: one script per module that declares one, run by a glob over `shared/*/mutation-proof.sh`. In the tree today that is `shared/command/mutation-proof.sh`, `shared/confirm/mutation-proof.sh`, `shared/lease/mutation-proof.sh`, `shared/mailbox/mutation-proof.sh`, `shared/mailbox-schema/mutation-proof.sh`, `shared/mailbox-sim/mutation-proof.sh` and `shared/prompts/mutation-proof.sh`. Each script breaks one guard in its module and requires the module's tests to catch it, prints its own `N guards: N killed, N survived` line, and exits non-zero unless every mutation it applies is caught, so the step fails on a survivor rather than on a summary nobody reads. `TestSharedTestsWorkflowReadmeNamesEveryProofScript` globs that pattern in the tree and requires this paragraph to name exactly the modules that carry one, in both directions: a module that adds a proof script fails this document until it is named here, and a name here whose script is gone fails too. Because the step globs rather than listing, the **job** never needs an edit for either case — only this list does.
+
+**What the two legs actually report, step by step:** a leg stops at its first failing step and GitHub skips the rest, so on Node 22 the job reports **one red step — "the shared package's tests"** — and its **mutation-proofs step is skipped, not red**: the proofs are never reached on that line, because `npm test` fails before them. On Node 26 both steps run and the leg is green. Everything below is the shape of that; the counts are the measurement dated under it:
+
+| | Node 22.23.3 | Node 26.12.0 |
+|---|---|---|
+| `npm test` (the step that decides the leg) | **1 test fails**, the punycode case above | every test passes |
+| the proofs that run their own module's suite (`command`, `mailbox`, `mailbox-sim`, `prompts`) | pass; every mutation caught | pass; every mutation caught |
+| the proofs that run the package's `npm test` as their positive control (`confirm`, `lease`, `mailbox-schema`) | **refuse**, exit 2 | pass; every mutation caught |
+| what the job shows | one red step at the test step; the proofs step skipped | green throughout |
+
+Measured on **2026-10-19**, in this container, on the two lines the job pins (Node 22.23.3 and 26.12.0, installed through `mise`), running exactly what the job runs: `cd shared && npm ci --ignore-scripts --no-audit --no-fund`, then `npm test`, then `bash shared/<module>/mutation-proof.sh` for each of the seven. The suite reported **476 tests: 475 pass and 1 fail on Node 22, 476 pass and 0 fail on Node 26**; the seven proofs reported **448 guards, 448 killed, 0 survived, 0 not applied on Node 26**, and on Node 22 the four module-suite proofs reported 29 + 109 + 45 + 93 guards killed — `command`, `mailbox`, `mailbox-sim` and `prompts`, in the order of the table above — with none surviving, while the three package-suite proofs refused. Those two figures are a record of that run, not a standing claim about the tree — re-run the commands rather than trusting them, and note that nothing goes stale in the *job* when they change, only in this sentence.
+
+**Nothing in the workflow hides this**, and it must not be edited to: skipping the failing file, softening the step or dropping the Node 22 leg would delete the evidence rather than the defect. The fix belongs to P0.3's module (`shared/url/`, and the expectation in `index.test.js`), which is a different task with its own review tier; the owner's two live options are to fix `shared/url` first, or to copy the job in with its Node 22 leg red — which is the honest state, and the point of running both lines.
+
+One further honest note: `shared/package.json`'s `engines` is `>=22 <23`, so the Node 26 leg makes npm print an `EBADENGINE` **warning** on `npm ci` (npm 11.20.0) and nothing else — the install and the suite both succeed. Widening `engines` would be a change to P0.1's manifest, not to this file, and is not made here.
+
+### Not verified
+
+**This file has never run in GitHub Actions.** No workflow was dispatched and no job was executed; what is verified is the YAML's shape, through `internal/cli/docs_shared_tests_workflow_test.go` (the triggers, the permissions, the pins and their version comments, both Node lines, the path filter, the two runner commands, the proof step, the absence of a secret and of the dangerous trigger events and permission grants), and the two `run:` steps by hand, in this container, on both Node lines — the same commands, from `shared/`, with Node 22.23.3 and 26.12.0 installed through `mise`, which is what produced the measurement dated above.
+
+What that cannot show: that GitHub's own event filtering and matrix behave as the YAML says, that `actions/setup-node` resolves `"22"` and `"26"` to the lines used here, or that the job's runtime, caching and permissions behave in a hosted runner. Those are CI's to show, once the file is copied in.
 
 ## `console-tests.yml`
 
@@ -737,4 +836,4 @@ Copied in on 2026-10-17 (#504): `.github/workflows/ci.yml`'s `terraform` job now
 
 ## Before you copy: check the action pins
 
-Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so a staged file's pins can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` **here** to be a full commit SHA; once a staged file is copied in and gone from here, the same test also requires its pins to agree with the other workflows' — `images.yml` is that test's subject, so that comparison is live for it. Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/*.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.
+Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so a staged file's pins can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` **here** to be a full commit SHA; once a staged file is copied in and gone from here, the same test also requires its pins to agree with the other workflows' — `images.yml` is that test's subject, so that comparison is live for it. `TestSharedTestsWorkflowIsStagedAndPinned` requires the same of the pending `shared-tests.yml` (full SHAs, each with its `# vX.Y.Z` beside it). Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/*.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.

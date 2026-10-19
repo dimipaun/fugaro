@@ -735,18 +735,22 @@ func TestRefreshBuildsDeclineStopsSubsequentBuilds(t *testing.T) {
 	}
 }
 
-// TestRefreshRefusesCloneJobMove (design generic-tool.md §2; 0.7.0 safety
-// fix round 2, review finding: while cloneShipped is false no fugaro
-// release can run a checkout: clone workflow's job, so refresh must not
-// move one onto base_images.base either — the same gate planRepo applies
-// before deploying one). No confirmation is even offered, no job is
-// patched, and no Cloud Build is submitted for it.
+// TestRefreshMovesCloneJob (design generic-tool.md §2; the enabled state of
+// the 0.7.0 safety fix round 2's gate). A checkout: clone workflow has no
+// derived image to rebuild: its job's container image moves to the local
+// config's base_images.base in place, through the Cloud Run Admin API,
+// after its own confirmation, and no Cloud Build is ever submitted for it.
+// The job has to be a clone job for that to be the right move at all —
+// infra.PlanWorkflowJob refuses one whose container does not carry
+// FUGARO_CHECKOUT=clone, since moving such a job's image would leave it
+// expecting a baked checkout — so the test deploys it the way `fugaro init
+// --repo` does, env included.
 //
-// Mutation (run, restore): drop the `if err := refuseClonesNotShipped(...);
-// err != nil { return err }` call at the top of refreshCloneJobs — this
-// test then fails: it gets no error, r.run.Patches() is 1 (the job's image
-// was moved after all) and the output has "updated app's job".
-func TestRefreshRefusesCloneJobMove(t *testing.T) {
+// Mutation (run, restore): set cloneShipped back to false in recipes_skew.go
+// — refreshCloneJobs then refuses before any cloud call and this test fails:
+// no confirmation is offered, 0 patches, no "updated app's job", and the
+// error carries the not-released-yet wording instead.
+func TestRefreshMovesCloneJob(t *testing.T) {
 	r := newInitRig(t)
 	e := rigEngine(t, r, &initOptions{})
 	fb := useFakeBuilder(t)
@@ -754,48 +758,54 @@ func TestRefreshRefusesCloneJobMove(t *testing.T) {
 	oldRef, newRef := managedRef("base", "0.4.0"), managedRef("base", "0.5.1")
 	jobName := gcp.JobName(slug, "app")
 	r.run.SetJob(jobName, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: "app"}, oldRef)
+	r.run.SetJobEnv(jobName, map[string]string{infra.CheckoutEnv: config.CheckoutClone})
 	lc, err := localcfg.Load(r.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lc.BaseImages = map[string]string{config.BaseKind: newRef}
-	cfg, problems := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"))
+	cfg, problems := config.Parse([]byte(cloneOnlyYAML))
 	if cfg == nil {
 		t.Fatal(problems)
 	}
 	p := &refreshPlan{workflows: []string{"app"}}
 	tg := &refreshTarget{lc: lc, cfg: cfg, spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label,
 		Workflows: map[string]infra.WorkflowSpec{"app": {Job: jobName}}}}
-	out := atTerminal(t, e, "")
-	err = e.r.refreshBuilds(t.Context(), p, tg)
-	if err == nil || !strings.Contains(err.Error(), "fugaro image refresh refuses to move acme/app workflow app") {
+	// Declined: nothing written.
+	out := atTerminal(t, e, "nope\n")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err == nil || len(r.run.Patches()) != 0 {
+		t.Fatalf("declined: %v, %d patches\n%s", err, len(r.run.Patches()), out.String())
+	}
+	out = atTerminal(t, e, initProjectName+"\n")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	for _, want := range []string{"checkout: clone's own runner side is not released yet", "generic-tool plan Task 17", "checkout: baked", "fugaro 0.7.5"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("%v lacks %q", err, want)
+	for _, want := range []string{"app: image " + oldRef + " -> " + newRef, "⚠ CONFIRM", "updates the checkout: clone workflow app's job", "updated app's job"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
 		}
 	}
-	if strings.Contains(out.String(), "⚠ CONFIRM") {
-		t.Errorf("a confirmation was offered for a refused clone job move:\n%s", out.String())
-	}
-	if len(r.run.Patches()) != 0 {
-		t.Fatalf("%d patches, want 0 (refused)", len(r.run.Patches()))
+	if len(r.run.Patches()) != 1 {
+		t.Fatalf("%d patches, want 1 (the clone job's image moved)", len(r.run.Patches()))
 	}
 	if len(fb.specs) != 0 {
 		t.Fatalf("a Cloud Build was submitted for a checkout: clone workflow: %+v", fb.specs)
 	}
+	// The move is idempotent: a second run finds the job already at the base.
+	out = atTerminal(t, e, "")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil || len(r.run.Patches()) != 1 || !strings.Contains(out.String(), "No changes: the job already runs from") {
+		t.Fatalf("rerun: %v, %d patches\n%s", err, len(r.run.Patches()), out.String())
+	}
 }
 
-// TestRefreshRefusesEveryCloneVariantJobMove is
-// TestRefreshRefusesCloneJobMove with a named Claude account, so one
-// checkout: clone workflow has a job per account (gcp.WorkflowVariant):
-// the refusal fires before refreshCloneJobs ever walks the per-account job
-// list, so neither job is patched, not just the one refreshCloneJobs
-// would otherwise reach first.
+// TestRefreshMovesEveryCloneVariantJob is TestRefreshMovesCloneJob with a
+// named Claude account, so one checkout: clone workflow has a job per
+// account (gcp.WorkflowVariant): both are clone jobs and both are moved.
 //
-// Mutation (run, restore): same as TestRefreshRefusesCloneJobMove.
-func TestRefreshRefusesEveryCloneVariantJobMove(t *testing.T) {
+// Mutation (run, restore): same as TestRefreshMovesCloneJob, plus dropping
+// either job from the tg.spec.Workflows map — the loop over the spec's job
+// keys is what finds the per-account jobs, so one dropped is one not moved.
+func TestRefreshMovesEveryCloneVariantJob(t *testing.T) {
 	r := newInitRig(t)
 	e := rigEngine(t, r, &initOptions{yes: true})
 	fb := useFakeBuilder(t)
@@ -807,13 +817,15 @@ func TestRefreshRefusesEveryCloneVariantJobMove(t *testing.T) {
 	}
 	defJob, varJob := gcp.JobName(slug, "app"), gcp.JobName(slug, variant)
 	r.run.SetJob(defJob, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: "app"}, oldRef)
+	r.run.SetJobEnv(defJob, map[string]string{infra.CheckoutEnv: config.CheckoutClone})
 	r.run.SetJob(varJob, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: variant}, oldRef)
+	r.run.SetJobEnv(varJob, map[string]string{infra.CheckoutEnv: config.CheckoutClone})
 	lc, err := localcfg.Load(r.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lc.BaseImages = map[string]string{config.BaseKind: newRef}
-	cfg, problems := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"))
+	cfg, problems := config.Parse([]byte(cloneOnlyYAML))
 	if cfg == nil {
 		t.Fatal(problems)
 	}
@@ -821,17 +833,20 @@ func TestRefreshRefusesEveryCloneVariantJobMove(t *testing.T) {
 	tg := &refreshTarget{lc: lc, cfg: cfg, spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label,
 		Workflows: map[string]infra.WorkflowSpec{"app": {Name: "app", Job: defJob}, variant: {Name: "app", Job: varJob}}}}
 	out := atTerminal(t, e, "")
-	err = e.r.refreshBuilds(t.Context(), p, tg)
-	if err == nil || !strings.Contains(err.Error(), "fugaro image refresh refuses to move acme/app workflow app") {
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if len(r.run.Patches()) != 0 {
-		t.Fatalf("%d patches, want 0 (refused, every variant)\n%s", len(r.run.Patches()), out.String())
+	if len(r.run.Patches()) != 2 {
+		t.Fatalf("%d patches, want 2 (both of the clone workflow's jobs)\n%s", len(r.run.Patches()), out.String())
 	}
 	if len(fb.specs) != 0 {
 		t.Fatalf("a Cloud Build was submitted for a checkout: clone workflow: %+v", fb.specs)
 	}
 }
+
+// cloneOnlyYAML is acme/app with one checkout: clone workflow (app).
+const cloneOnlyYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+	"  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"
 
 // mixedCloneYAML is acme/app with one checkout: clone workflow (app) and
 // one baked workflow (api, on the base kind).
@@ -839,25 +854,23 @@ const mixedCloneYAML = "version: 1\nproject: aurora\ngit: { provider: github }\n
 	"  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n" +
 	"  api: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 
-// TestRefreshRefusedCloneJobDoesNotBlockBakedRebuilds (review finding 3,
-// LOW, updated for the 0.7.0 safety fix round 2: the clone side now fails
-// at refuseClonesNotShipped's refusal, before any confirmation is even
-// offered, rather than at a declined one; the property under test —
-// moving a clone workflow's job image and rebuilding a baked workflow's
-// are independent per-workflow actions, bundled into step 4 only because
-// neither touches Terraform — is unchanged, and is also the "a baked
-// sibling workflow in the same repository still deploys" guarantee the
-// review asked this round's gate to keep): the refused clone move must not
-// stop the baked rebuild offers for the rest of the repository, and the
-// refusal must name only the clone workflow (app), not the baked one
-// (api).
+// TestRefreshCloneMoveDoesNotBlockBakedRebuilds (review finding 3, LOW; the
+// property survives the cloneShipped flip unchanged — it was written against
+// the clone side refusing, and the two sides are independent either way):
+// moving a clone workflow's job image and rebuilding a baked workflow's are
+// independent per-workflow actions, bundled into step 4 only because neither
+// touches Terraform. A mixed repository gets both, in one run, in that
+// order: app the clone job moved (no Cloud Build), api the baked image
+// rebuilt (one Cloud Build).
 //
 // Mutation (run, restore): revert refreshBuilds to `if err :=
 // r.refreshCloneJobs(ctx, p, t); err != nil { return err }` (dropping the
 // cloneErr capture) — this test then fails: the baked workflow's rebuild is
-// never even offered (0 Cloud Builds submitted), because the clone
-// refusal's error returns before the baked loop is ever reached.
-func TestRefreshRefusedCloneJobDoesNotBlockBakedRebuilds(t *testing.T) {
+// never even offered (0 Cloud Builds submitted), because the clone side's
+// error returns before the baked loop is ever reached. (Flip cloneShipped
+// back to false and it fails the same way, which is why the property is
+// worth pinning in both directions.)
+func TestRefreshCloneMoveDoesNotBlockBakedRebuilds(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newAnchorModeRig(t, mixedCloneYAML, true)
 	fb := useFakeBuilder(t)
@@ -878,25 +891,25 @@ func TestRefreshRefusedCloneJobDoesNotBlockBakedRebuilds(t *testing.T) {
 	}
 	jobName := gcp.JobName(slug, "app")
 	r.run.SetJob(jobName, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: "app"}, managedRef("base", "0.4.0"))
+	r.run.SetJobEnv(jobName, map[string]string{infra.CheckoutEnv: config.CheckoutClone})
 	tg := &refreshTarget{lc: lc, cfg: cfg, spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label, RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
 		Workflows: map[string]infra.WorkflowSpec{"app": {Job: jobName}, "api": {}}}}
 	p := &refreshPlan{workflows: []string{"api", "app"}}
 	putWorkflowRecordFrom("api", "0.4.0", managedRef("base", "0.4.0"))
-	// The clone side refuses with no prompt at all; only the baked rebuild
-	// asks anything.
-	out := atTerminal(t, e, initProjectName+"\n")
-	err = e.r.refreshBuilds(t.Context(), p, tg)
-	if err == nil || !strings.Contains(err.Error(), "fugaro image refresh refuses to move acme/app workflow app") {
+	// Both sides ask: the clone move for the project's name, the baked
+	// rebuild for it too.
+	out := atTerminal(t, e, initProjectName+"\n"+initProjectName+"\n")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if strings.Contains(err.Error(), "api") {
-		t.Errorf("refusal names the baked workflow too: %v", err)
-	}
 	if len(fb.specs) != 1 || fb.specs[0].Workflow != "api" {
-		t.Fatalf("the baked rebuild was not offered despite the clone refusal: %+v", fb.specs)
+		t.Fatalf("the baked rebuild was not offered: %+v", fb.specs)
 	}
-	if len(r.run.Patches()) != 0 {
-		t.Fatalf("the refused clone job was patched anyway: %d patches", len(r.run.Patches()))
+	if len(r.run.Patches()) != 1 {
+		t.Fatalf("%d patches, want 1 (the clone job's image moved)\n%s", len(r.run.Patches()), out.String())
+	}
+	if !strings.Contains(out.String(), "updated app's job") || !strings.Contains(out.String(), "built acme/app/api") {
+		t.Errorf("output does not report both halves:\n%s", out.String())
 	}
 }
 
