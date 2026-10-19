@@ -288,6 +288,61 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 			return bad("repos."+name+".base_branch", "%q is set; it is never published: the base branch comes from the checkout's reviewed fugaro.yaml", c.Repos[name].BaseBranch)
 		}
 	}
+	// Every value of the published batch block that names a cloud resource is
+	// held to the anchor's project, for the reason the fields above are. The
+	// block is published because it is the installation's own facts, not one
+	// machine's (localcfg.Config.Shared), and that is exactly why a writer with
+	// objectAdmin on the runs bucket — anyone who can write this file — must
+	// not be able to point another machine's Batch runs at resources of their
+	// choosing: an image they built, which would run as the installation's own
+	// service account, VMs placed on their network, a job running as their
+	// account, or a job reading a secret out of their project. The values are
+	// the ones the compute root the Batch stage applies creates in the
+	// installation's project (design compute-backend.md §4.4, plan
+	// 2026-10-19-compute-backend.md Task 8 step 2).
+	//
+	// What this refuses beyond a foreign image, account and secret: a network
+	// or a subnetwork in another project, although
+	// internal/backend/batch's checkNetwork notes that a shared VPC's network
+	// may live elsewhere. The anchor is a name, a GCP project and a bucket, so
+	// a host project is not something a reader can establish for itself, and
+	// this file is the channel a stranger can write. The compute module creates
+	// the network in the installation's own project, so nothing this tree
+	// builds is refused; a shared-VPC installation needs a decision about which
+	// host project its readers may trust before it can publish one.
+	if b := c.Batch; b != nil {
+		if m := batchImageProjectRE.FindStringSubmatch(b.Image); m == nil || m[1] != a.GCPProject {
+			return bad("batch.image", "%q is not an image of this project's Artifact Registry, <region>-docker.pkg.dev/%s/<repository>/<image>[:tag][@sha256:<digest>]: a Batch run's job image is this installation's own build, and an image from anywhere else would run as the run's service account", b.Image, a.GCPProject)
+		}
+		for _, f := range []struct{ field, value, want string }{
+			{"batch.network", b.Network, "projects/" + a.GCPProject + "/global/networks/<name>"},
+			{"batch.subnetwork", b.Subnetwork, "projects/" + a.GCPProject + "/regions/<region>/subnetworks/<name>"},
+		} {
+			// Empty is left to the backend, which refuses a launch with no
+			// network at all (checkNetwork): there is no resource named here
+			// for a writer to move.
+			if f.value == "" {
+				continue
+			}
+			if m := batchResourceProjectRE.FindStringSubmatch(f.value); m != nil && m[1] == a.GCPProject {
+				continue
+			}
+			return bad(f.field, "%q is not this project's resource, %s", f.value, f.want)
+		}
+		if b.ServiceAccount != "" && !strings.HasSuffix(b.ServiceAccount, "@"+a.GCPProject+".iam.gserviceaccount.com") {
+			return bad("batch.service_account", "%q is not this project's service account, <name>@%s.iam.gserviceaccount.com", b.ServiceAccount, a.GCPProject)
+		}
+		for i, name := range slices.Sorted(maps.Keys(b.Secrets)) {
+			if m := batchSecretProjectRE.FindStringSubmatch(b.Secrets[name]); m != nil && m[1] == a.GCPProject {
+				continue
+			}
+			// Named by its position and not by its key or its value, the way
+			// localcfg's own batch.secrets refusal names an entry: the value
+			// slot is where a secret's value is written by mistake, and a
+			// refusal is not the place to print it.
+			return bad("batch.secrets", "entry %d of %d is not a Secret Manager secret of this project, projects/%s/secrets/<name>", i+1, len(b.Secrets), a.GCPProject)
+		}
+	}
 	if b := c.Budget; b != nil && (b.RTDBURL != "" || b.FirebaseProject != "" || b.TokenSigner != "") {
 		// The database and signer must be the anchor's own project's: an
 		// internally consistent triple of another project would pass the
@@ -346,6 +401,21 @@ func dropLegacyBaseImages(data []byte) ([]byte, []string, error) {
 	out, err := yaml.Marshal(&doc)
 	return out, dropped, err
 }
+
+// batchResourceProjectRE pulls the project out of a full resource name,
+// projects/<project>/..., and batchImageProjectRE pulls it out of an Artifact
+// Registry image reference, <region>-docker.pkg.dev/<project>/...: the two
+// shapes ParseShared holds the published batch block's network, subnetwork and
+// image to. Both are applied after localcfg.Parse, which has already refused a
+// value that is not one of these spellings — so the only question left here is
+// whose project it names.
+var (
+	batchResourceProjectRE = regexp.MustCompile(`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/`)
+	batchImageProjectRE    = regexp.MustCompile(`^[a-z][a-z0-9-]*-docker\.pkg\.dev/([a-z][a-z0-9-]{4,28}[a-z0-9])/`)
+	// batchSecretProjectRE is the same for a Secret Manager secret's resource
+	// name, projects/<project>/secrets/<name>.
+	batchSecretProjectRE = regexp.MustCompile(`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/secrets/`)
+)
 
 // baseImageRE matches what this installation's base_images may name under
 // host, in either shape: the copy an earlier release made,
