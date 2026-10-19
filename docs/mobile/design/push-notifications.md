@@ -159,7 +159,12 @@ answered.
   so until it lands the only way to write one is by hand over IAM (the same sentence
   `version.go` carries). There is therefore nowhere a **push** token is stored, and no grant
   that would admit one — an allowlist keyed by uid is not a token store, and this design keeps
-  its own data in a **sibling** node precisely so that stays true (§3.4). *(The earlier
+  its own data in a **sibling** node precisely so that stays true (§3.4). **There is also no
+  path that could carry one yet**: the pairing session's one client write admits only the
+  phone's public key and its timestamp (`rules.json.tmpl` generation 3), and the mailbox's
+  message node names its fields and refuses every other one — so the design asks for one
+  bounded field and records it as a prerequisite rather than assuming it (§3.5 (b), the plan's
+  P5.2). *(The earlier
   revision of this bullet recorded the pre-#601 state — `RulesVersion = 2`, no device conjunct,
   no `devices` subtree — as a branch point; #601 has merged and the bullet is now the tree.)*
 
