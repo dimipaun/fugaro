@@ -4081,10 +4081,10 @@ rendered row, and since the owner's brief of 2026-10-18 (item 1) it is also wher
 own acceptance line runs: **"hovering a top-level item on desktop opens its submenu
 immediately"** is a gesture on a real pointer, and `website/test/nav-hover.mjs` — which runs
 the shipped script in a stub DOM, with no browser — says so and points here for it. **As of
-main's commit `73a0c109`** — the commit this branch merged — the header and the drawer this
-check measures are the ones main builds there, and the **phone menu is being changed in another
-PR**: read the section against that commit, so a menu that has moved on since is a later
-reading of this check rather than a failure of it.
+main's commit `3a233d57`** — the commit this branch merged (`c27064c0`'s second parent) — the
+header and the drawer this check measures are the ones main builds there, and the **phone menu
+is being changed in another PR**: read the section against that commit, so a menu that has
+moved on since is a later reading of this check rather than a failure of it.
 
 **The touch side of step 6 is part of the acceptance, not an aside.** The script is bound
 only where `matchMedia` reports
@@ -4314,7 +4314,8 @@ neither of them can see a viewport, which is exactly D187's question. The fold i
 screen, and this repository's gates are deliberately browser-free, so D187 answered it with the
 ceiling **plus this one owner-run check** rather than with the repository's first browser-driven
 test: the first screen is measured here, by you, and by nothing else. **As of main's commit
-`73a0c109`** — the commit this branch merged — the page it describes is the site main builds
+`3a233d57`** — the commit this branch merged (`c27064c0`'s second parent, and the commit that
+brought the redesigned home page, #623, into it) — the page it describes is the site main builds
 there, so a page that has changed since is a later reading of this check rather than a failure
 of it, and a step that no longer matches the page is this section's to correct.
 
@@ -4541,9 +4542,10 @@ ceiling is not a first screen and an ordering is not a position — and the row 
 RF13). It is the half of P6 no hermetic test can take: `website/test/copy.mjs` holds the
 markup — every block carries its control, the button is `hidden` in the markup, the status
 line is a polite live region — and a real clipboard is what a browser has and `node --test`
-does not. **As of main's commit `73a0c109`** — the commit this branch merged: the blocks this
-check lists are the ones main builds there, and a page that has gained or lost a command block
-since is a later reading of this check rather than a failure of it.
+does not. **As of main's commit `3a233d57`** — the commit this branch merged (`c27064c0`'s
+second parent): the blocks this check lists are the ones main builds there, and a page that has
+gained or lost a command block since is a later reading of this check rather than a failure of
+it.
 
 **Method.** One browser, one built site, a real clipboard. Serve the artifact locally or read
 the deployed site, both read-only. The controls are the ones the tree's own markup writes, so

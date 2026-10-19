@@ -54,6 +54,10 @@ import (
 const (
 	checklist70bRow     = "| 70b |"
 	checklist70bHeading = "## Check 70b:"
+	// The redesign's other two checks, whose "as of" note is the same reading of the same
+	// page and is pinned with 70b's by TestWebsiteChecklist70NotesNameTheMergedMainCommit.
+	checklist70aHeading = "## Check 70a:"
+	checklist70cHeading = "## Check 70c:"
 )
 
 // TestWebsiteChecklistHasCheck70bRow pins the summary table's half: one row, in the
@@ -522,6 +526,51 @@ func TestWebsiteChecklistCheck70bMethodReadsExist(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("%s's Method never reads %s: the step that rests on it is reading the section's memory of the file instead of the file", checklist70bHeading, want)
+		}
+	}
+}
+
+// TestWebsiteChecklist70NotesNameTheMergedMainCommit pins the "as of" note the website
+// redesign's three checks carry. The note is what tells an owner which page a section was
+// read against, and all three had it wrong: each named `73a0c109`, a main commit from
+// before #623 — at which `website/src/components/HomeInstall.astro` does not exist and the
+// home page is the hero and the diagram alone — so the page the sections describe (the
+// install blocks `HomeInstall.astro`'s, the chat's `fugaro watch` block as the first `pre`
+// in `main`) is not the page that commit builds. What they must name is the commit this
+// branch merged: the merge `c27064c0`'s second parent, `git rev-parse c27064c0^2`, which
+// is `3a233d57`.
+//
+// What is pinned is the shape rather than the history, because the history is not there to
+// read: these tests run against whatever clone they are given (CI checks out with
+// `fetch-depth: 2`), so no assertion here can open the commit a sha names. The three
+// sections must each carry the note, must name one and the same commit, and must say which
+// commit that is ("the commit this branch merged") rather than leaving a sha to stand
+// alone — which is the reading a future edit has to repeat from `git rev-parse`. A wrong
+// commit named consistently in all three is the one thing this pin cannot refuse, and it
+// is why the paragraph above states how the right one is found.
+func TestWebsiteChecklist70NotesNameTheMergedMainCommit(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	// `flat` strips the note's backticks along with the emphasis, so the sha is read bare.
+	note := regexp.MustCompile("As of main's commit ([0-9a-f]{7,40})")
+	type asOf struct{ heading, sha string }
+	var notes []asOf
+	for _, h := range []string{checklist70aHeading, checklist70bHeading, checklist70cHeading} {
+		section := flat(docSection(t, path, doc, h))
+		m := note.FindStringSubmatch(section)
+		if m == nil {
+			t.Errorf("%s carries no \"As of main's commit `…`\" note: the section describes a page, and the note is what says which commit's page it is", h)
+			continue
+		}
+		if !strings.Contains(section, "the commit this branch merged") {
+			t.Errorf("%s names %s as the commit it was read against and does not say it is the commit this branch merged: a sha on its own does not say whose page the section describes", h, m[1])
+		}
+		notes = append(notes, asOf{h, m[1]})
+	}
+	for i := 1; i < len(notes); i++ {
+		if notes[i].sha != notes[0].sha {
+			t.Errorf("%s names commit %s and %s names %s: the three notes are one reading of one page, so they name one commit", notes[0].heading, notes[0].sha, notes[i].heading, notes[i].sha)
 		}
 	}
 }

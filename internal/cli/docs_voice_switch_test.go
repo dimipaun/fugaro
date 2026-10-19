@@ -453,6 +453,32 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	}
 }
 
+// TestVoiceDocRegisterNoteCounts70bAsWritten pins the other document that keeps the
+// register's bookkeeping: docs/design/voice.md §5.3 says which of the website redesign's
+// checks are written, and it said "69c and 70b are not in the register" — true when it was
+// counted, and false on a branch that writes the `| 70b |` row and the `## Check 70b:`
+// section. §13 of the mobile design records the same fact for 70a–70c (its own row says
+// all three are written), so this is the same recount in the document that was missed.
+// The row and the section themselves are pinned by
+// TestWebsiteChecklistHasCheck70bRow and TestWebsiteChecklistHasCheck70bSection; what is
+// pinned here is that this document's sentence agrees with them.
+func TestVoiceDocRegisterNoteCounts70bAsWritten(t *testing.T) {
+	const voicePath = "docs/design/voice.md"
+	voice := flat(readDoc(t, voicePath))
+
+	if strings.Contains(voice, "69c and 70b are not in the register") {
+		t.Errorf("%s §5.3 says 70b is not in the register, and docs/gcp-live-checklist.md carries a `## Check 70b:` section and a `| 70b |` row: recount the sentence the way §13 of docs/mobile/design/voice-evaluation-switch.md was recounted", voicePath)
+	}
+	for _, want := range []string{
+		"69c is not in the register",
+		"70b is written since that count",
+	} {
+		if !strings.Contains(voice, want) {
+			t.Errorf("%s §5.3's register note no longer carries %q: the note has to say which of the website redesign's three checks is written and which is not, or the reader takes the count above it for the register as it stands", voicePath, want)
+		}
+	}
+}
+
 // flat reduces markdown emphasis and line wrapping so a quotation can be
 // compared with the file it is attributed to: the sources wrap their sentences
 // across lines and emphasise words inside the quoted span, neither of which
