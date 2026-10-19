@@ -313,8 +313,12 @@ func profilesAsPolicy(profiles map[string]config.JobProfile) map[string]projectp
 	return out
 }
 
-// projectJobEnv is a project job's plain environment: the installation's
-// identity and the budget backend's address and web key, and nothing else.
+// projectJobEnv is the installation's half of a project job's plain
+// environment: its identity and the budget backend's address and web key, and
+// nothing else. ProjectJobs adds the two values that follow from the profile
+// and the job — the GitHub App's ID (non-secret, owner ruling of 2026-10-17)
+// and runner.SecretEnvsVar, the list of variables that job's secrets are
+// mounted as.
 //
 // It is deliberately *not* budgetEnv, which sets per-repository values too
 // (the token ceiling, the model allow-list, the price overrides and the

@@ -60,8 +60,8 @@ func TestDoctorReportsLauncherReach(t *testing.T) {
 	if !found {
 		t.Fatal("doctor reports no launcher reach")
 	}
-	if !c.OK || c.Severity != "info" {
-		t.Fatalf("check = %+v, want an info line that does not fail doctor", c)
+	if c.OK || c.Severity != "info" {
+		t.Fatalf("check = %+v, want an un-ok info line that does not fail doctor", c)
 	}
 	// Three launcher grants: two members on the per-repository job, one on
 	// the project job.
@@ -104,6 +104,106 @@ func TestDoctorLauncherReachCountsOnlyStartableRoles(t *testing.T) {
 	}
 	if strings.Contains(c.Problem, "fugaro-acme-app-read") {
 		t.Errorf("Problem calls a read-only grant a job a launcher can start: %s", c.Problem)
+	}
+}
+
+// The line a person reads: the launcher reach is an *info* line and it is
+// printed. A check that is OK with a Problem is one printDoctorChecks skips
+// (`if c.OK { continue }`), so the surface the owner checks after a migration
+// existed only in --json — the human output said nothing about the jobs a
+// launcher can start, or said "everything checked is ok" over a project whose
+// launcher grants nothing called it.
+//
+// Mutation (run, restore): put OK: true back on the check
+// (doctorLauncherReach) — doctor prints no launcher-jobs line, and
+// "everything checked is ok" comes back.
+func TestDoctorPrintsTheLauncherReach(t *testing.T) {
+	r := newDoctorRig(t)
+	r.withLaunchers(t)
+	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+	r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
+		Members: []string{"user:a@example.com"}})
+
+	out, errOut, err := execute(t, "doctor", "--dir", t.TempDir())
+	if err != nil {
+		t.Fatalf("%v\n%s", err, errOut)
+	}
+	line := "launcher-jobs: launcher grants on Cloud Run jobs: 1 grant(s) over 1 job(s), and a launcher can start 1 of them: fugaro-acme-app-web"
+	if !strings.Contains(out, line) {
+		t.Errorf("doctor did not print the launcher reach:\n%s", out)
+	}
+	// And it is not a failure: severity "info" is what keeps an un-ok check out
+	// of the exit code (checksFail), so printing it costs the caller nothing.
+	if ExitCode(err) != ExitOK {
+		t.Errorf("an info line failed doctor: exit %d (%v)", ExitCode(err), err)
+	}
+}
+
+// The installation grants the job runner role to launchers AND operators
+// (internal/infra's launchersWithOperators: operators get everything launchers
+// get, and they run, watch and cancel runs too), so a job whose only grant
+// names an operator is a job Fugaro can start. Counting the launcher list
+// alone read it as no grant at all.
+//
+// The operator below (user:o@example.com) is on the operator list and on no
+// launcher list, which is the whole point: a member both lists name proves
+// nothing about which list the check compared against (dbLaunchers holds just
+// that pair, so this test writes its own config).
+//
+// Mutation (run, restore): compare against lc.Terraform.Launchers again
+// (doctorLauncherReach) — the operator-only job is reported as no grant, and
+// "0 grant(s)" stands beside a job the operator can start.
+func TestDoctorLauncherReachCountsOperators(t *testing.T) {
+	r := newDoctorRig(t)
+	if err := os.WriteFile(r.cfgPath, []byte(r.cfg+"terraform: { launchers: [\"user:a@example.com\"], operators: [\"user:o@example.com\"] }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+	r.run.SetJobPolicy("fugaro-acme-app-web", gcpfake.Binding{Role: jobRunnerRole("proj-1234"),
+		Members: []string{"user:o@example.com"}})
+
+	c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "launcher-jobs")
+	if !found {
+		t.Fatal("doctor reports no launcher reach")
+	}
+	if !strings.Contains(c.Problem, "1 grant") {
+		t.Errorf("an operator's grant on a job is not counted: %s", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "can start 1 of them: fugaro-acme-app-web") {
+		t.Errorf("a job only an operator is granted is not reported as one Fugaro can start: %s", c.Problem)
+	}
+}
+
+// The default arm's message has to be true in the case it fires: a launcher IS
+// named on these jobs' policies, on a role that cannot start one (a read-only
+// grant — counted, and never a job a launcher can start). "No launcher is
+// granted on any job" would be false about the lines printed beside it, and
+// the reader's next move — an operator checking the grant — starts from a
+// premise the same output contradicts.
+//
+// Mutation (run, restore): drop the `case grants > 0` arm — the default's "no
+// launcher is granted on any job" comes back over two grants.
+func TestDoctorLauncherReachSaysWhenAGrantCannotStart(t *testing.T) {
+	r := newDoctorRig(t)
+	r.withLaunchers(t)
+	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
+	r.run.AddJob("fugaro-acme-app-read", "2", "2Gi")
+	for _, n := range []string{"fugaro-acme-app-web", "fugaro-acme-app-read"} {
+		r.run.SetJobPolicy(n, gcpfake.Binding{Role: "roles/run.viewer", Members: []string{"user:a@example.com"}})
+	}
+
+	c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "launcher-jobs")
+	if !found {
+		t.Fatal("doctor reports no launcher reach")
+	}
+	if !strings.Contains(c.Problem, "can start 0 of them") || !strings.Contains(c.Problem, "2 grant") {
+		t.Fatalf("the read-only grants are not reported as grants: %s", c.Problem)
+	}
+	if strings.Contains(c.Problem, "no launcher is granted") {
+		t.Errorf("claims no launcher is granted over %s", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "roles that cannot start a job") {
+		t.Errorf("does not say why the grants start nothing: %s", c.Problem)
 	}
 }
 
@@ -239,7 +339,7 @@ func TestDoctorLauncherReachAsAPlainLauncher(t *testing.T) {
 		t.Errorf("a refused policy read warned: %+v", c)
 	}
 	c, found := doctorCheckByID(checks, "launcher-jobs")
-	if !found || !c.OK || c.Severity != "info" {
+	if !found || c.OK || c.Severity != "info" {
 		t.Fatalf("check = %+v (found %v), want an info line", c, found)
 	}
 	if strings.Contains(c.Problem, "cannot start") {

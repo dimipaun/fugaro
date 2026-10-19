@@ -411,13 +411,15 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		lc := &localcfg.Config{
 			Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5",
 			RunsBucket: initRunsBucket, Bucket: "gs://" + initRunsBucket,
-			RegistryHost: "us-east5-docker.pkg.dev/" + initProject, LogView: initLogView,
+			Registry: "gcr.io/" + initProject, RegistryHost: "us-east5-docker.pkg.dev/" + initProject, LogView: initLogView,
 			Build:       localcfg.Build{ServiceAccount: "fugaro-build@" + initProject + ".iam.gserviceaccount.com", MachineType: "E2_HIGHCPU_8"},
 			Terraform:   localcfg.Terraform{StateBucket: initStateBucket, Launchers: []string{"user:test@example.com"}, Operators: []string{"user:test@example.com"}},
 			Budget:      &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
 			MaxParallel: 4,
 		}
-		next, left, err := restoreConfig(lc, restoreNewProj)
+		// The two arguments are the same config here; the region subtest below
+		// is the one where they differ.
+		next, left, err := restoreConfig(lc, lc, restoreNewProj)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -429,6 +431,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		}
 		for _, f := range []struct{ what, got string }{
 			{"bucket_url", next.Bucket},
+			{"registry", next.Registry},
 			{"registry_host", next.RegistryHost},
 			{"log_view", next.LogView},
 			{"build.service_account", next.Build.ServiceAccount},
@@ -457,6 +460,29 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		}
 	})
 
+	// The invocation's flags address the old project; they are not the
+	// installation's own settings. --region is applied to the selection
+	// (selectProject's announce → localcfg.Config.Override), and a moved config
+	// written from that copy would make a per-invocation override the
+	// installation's region on disk — and, because the creating path derives the
+	// new project's resources from the moved config, the new project's region
+	// too. The region that moves is the one the file writes.
+	t.Run("the invocation's --region does not become the installation's", func(t *testing.T) {
+		onDisk := &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5"}
+		selected := *onDisk
+		selected.Region = "us-central1" // what --region leaves behind
+		next, _, err := restoreConfig(&selected, onDisk, restoreNewProj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if next.Region != "us-east5" {
+			t.Errorf("the moved config's region is %q, want us-east5 (the file's): --region overrides the project config's for this invocation, and the restore is not a way to change the installation's region", next.Region)
+		}
+		if selected.Region != "us-central1" {
+			t.Errorf("the caller's selection now names %q: the move is a new value, not an edit in place", selected.Region)
+		}
+	})
+
 	t.Run("what the restore cannot place in the new project is refused by name", func(t *testing.T) {
 		for _, tc := range []struct {
 			what string
@@ -466,7 +492,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 			{"a state bucket of its own", &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, Terraform: localcfg.Terraform{StateBucket: "my-own-state"}}, "state_bucket"},
 			{"a runs bucket that is not the default", &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, RunsBucket: "somewhere-else"}, "runs_bucket"},
 		} {
-			_, _, err := restoreConfig(tc.lc, restoreNewProj)
+			_, _, err := restoreConfig(tc.lc, tc.lc, restoreNewProj)
 			if err == nil {
 				t.Errorf("%s was accepted", tc.what)
 				continue
@@ -504,7 +530,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 				"history": "us-east5-docker.pkg.dev/" + initProject + "/fugaro-ghcr/acme/fugaro-history:0.7.5@sha256:" + strings.Repeat("a", 64),
 			},
 		}
-		next, left, err := restoreConfig(lc, restoreNewProj)
+		next, left, err := restoreConfig(lc, lc, restoreNewProj)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -524,7 +550,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		// An entry of the operator's own — another registry entirely — names no
 		// project of this installation's and is kept as it is.
 		lc.BaseImages["base"] = "ghcr.io/acme/my-base:1"
-		next, left, err = restoreConfig(lc, restoreNewProj)
+		next, left, err = restoreConfig(lc, lc, restoreNewProj)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -549,7 +575,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 				"base":    "us-east5-docker.pkg.dev/" + initProject + "/fugaro-base/fugaro-base:0.7.5",
 				"history": "us-east5-docker.pkg.dev/other/fugaro-base/fugaro-history:0.7.5",
 			}}
-		next, left, err = restoreConfig(derived, restoreNewProj)
+		next, left, err = restoreConfig(derived, derived, restoreNewProj)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -561,6 +587,35 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 		}
 		if joined := strings.Join(left, "\n"); !strings.Contains(joined, "base") || strings.Contains(joined, "history") {
 			t.Errorf("the kinds named as stranded are %v, want base alone", left)
+		}
+	})
+
+	// The stranded base images are judged on the file's config, not on the
+	// selection --region changed. With no registry_host recorded, the host is
+	// derived from the region (<region>-docker.pkg.dev/<gcp_project>), and the
+	// old installation's images are in the file's region: judging them on the
+	// selection's region would derive another host, find nothing under it, and
+	// carry the lost project's references into the moved config.
+	//
+	// Mutation (verified, run and restored): pass lc instead of onDisk to
+	// restoreBaseImages in restoreConfig — the old registry's entry is kept and
+	// nothing is named as stranded, and this subtest fails.
+	t.Run("the base images are judged in the file's region when --region is given", func(t *testing.T) {
+		onDisk := &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5",
+			BaseImages: map[string]string{
+				"base": "us-east5-docker.pkg.dev/" + initProject + "/fugaro-base/fugaro-base:0.7.5",
+			}}
+		selected := *onDisk
+		selected.Region = "us-central1" // what --region leaves behind
+		next, left, err := restoreConfig(&selected, onDisk, restoreNewProj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(next.BaseImages) != 0 {
+			t.Errorf("base_images = %v, want none: the entry is under the lost project's registry in the file's region (us-east5), whatever --region said", next.BaseImages)
+		}
+		if joined := strings.Join(left, "\n"); !strings.Contains(joined, "kinds: base") {
+			t.Errorf("the stranded base kind is not named: %v", left)
 		}
 	})
 
@@ -577,7 +632,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 				RTDBURL:         "https://" + initProject + "-default-rtdb.firebaseio.com",
 				FirebaseProject: initProject, FirebaseAPIKey: fixtureToken("apikey"), TokenSigner: "fugaro-token-signer@" + initProject + ".iam.gserviceaccount.com"},
 		}
-		next, left, err := restoreConfig(lc, restoreNewProj)
+		next, left, err := restoreConfig(lc, lc, restoreNewProj)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1062,11 +1117,18 @@ func TestRestoreApplyCloudDropsTheOldProjectID(t *testing.T) {
 // confirm — and nothing is written when one of them fires.
 func TestRestorePlansTheConfigBeforeItAsks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "aurora.yaml")
-	const doc = "version: 1\nname: " + initProjectName + "\ngcp_project: " + initProject + "\nruns_bucket: somewhere-else\n"
+	const doc = "version: 1\nname: " + initProjectName + "\ngcp_project: " + initProject + "\nregion: us-east5\nruns_bucket: somewhere-else\n"
 	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	lc := &localcfg.Config{Version: 1, Name: initProjectName, GCPProject: initProject, RunsBucket: "somewhere-else"}
+	// The selection is the file, parsed: planConfig parses rr.old with the same
+	// function selectProject's own load uses (localcfg.Load is Parse plus the
+	// read), so a fixture that writes one document and hand-builds the other
+	// tests a state no invocation reaches.
+	lc, err := localcfg.Parse([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
 	rr := &restoreRun{lc: lc, newID: restoreNewProj, path: path, old: mustRead(t, path)}
 	if err := rr.planConfig(); err == nil {
 		t.Fatal("a config whose runs bucket cannot move was planned")

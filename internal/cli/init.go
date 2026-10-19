@@ -858,8 +858,10 @@ func (e *initEngine) markCreated(ctx context.Context) {
 
 	// D77's state bucket, the other half of what a managed project needs
 	// before an apply can run under the deployer: the state of the
-	// agent-authored root lives in a bucket of its own, and the deployer is
-	// bound on that bucket alone (internal/managed/statebucket.go). It
+	// agent-authored root lives in a bucket of its own, and the deployer's
+	// read and write are bound there and the operators' read beside them
+	// (internal/managed/statebucket.go: OperatorStateRole, without which the
+	// apply's inventory read is denied for every operator). It
 	// belongs here for the same reason the marker does: it is setup on the
 	// operator's own credentials, in the managed creation and nowhere else.
 	// The region is the installation's, so the managed state sits where the
@@ -879,11 +881,16 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	if marked {
 		what = "was created and marked as Fugaro-managed"
 	}
-	if err := managedmode.EnsureManagedStateBucket(ctx, managedmode.InfraStore{Clients: e.c}, r.res.Created, e.spec.Region); err != nil {
+	if err := managedmode.EnsureManagedStateBucket(ctx, managedmode.InfraStore{Clients: e.c}, r.res.Created, e.spec.Region, e.spec.Operators); err != nil {
 		r.warn(fmt.Sprintf("project %s %s, but its managed state bucket was not set up (%v): a managed apply has nowhere to keep its state until an owner-run command sets it up", r.res.Created, what, err))
 		return
 	}
-	fmt.Fprintf(r.w, "set up the managed state bucket gs://%s and bound the deployer to it (%s)\n", managedmode.ManagedStateBucketName(r.res.Created), managedmode.DeployerStateRole)
+	// The operators are named in the sentence as well as bound: the read the
+	// binding exists for is theirs (the whole-project inventory, Task 4.5),
+	// and a run that bound them silently would leave the operator who later
+	// sees the fallback with nothing to trace it to.
+	fmt.Fprintf(r.w, "set up the managed state bucket gs://%s and bound the deployer (%s) and the operators (%s) to it\n",
+		managedmode.ManagedStateBucketName(r.res.Created), managedmode.DeployerStateRole, managedmode.OperatorStateRole)
 }
 
 // checkEnv refuses an environment that would point Terraform or the

@@ -417,16 +417,133 @@ func projectJobCheckout(t *testing.T) string {
 }
 
 // projectJobCheckoutYAML is projectJobCheckout with the repository's own
-// fugaro.yaml spelled by the caller.
+// fugaro.yaml spelled by the caller, committed on main and published as
+// origin/main — the ref a launch's spec.Ref names, and the one the launch
+// reads agent.auth from (projectJobAgentAuth): a checkout with no commit has
+// no ref for a launch to be judged on, which is not the state these tests are
+// about.
 func projectJobCheckoutYAML(t *testing.T, yaml string) string {
+	t.Helper()
+	return projectJobCheckoutYAMLAt(t, yaml, yaml)
+}
+
+// projectJobCheckoutYAMLAt is projectJobCheckoutYAML with the working tree's
+// fugaro.yaml (working) spelled apart from the one committed on main and
+// published as origin/main (committed), so a test can put the two documents at
+// odds — the state a launcher whose working tree has moved ahead of the ref
+// the run clones is in, and the one the launch has to resolve from.
+func projectJobCheckoutYAMLAt(t *testing.T, working, committed string) string {
 	t.Helper()
 	testutil.IsolateGit(t)
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": committed})
+	testutil.Git(t, dir, "add", "fugaro.yaml")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the repository's fugaro.yaml")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": working})
 	t.Chdir(dir)
 	return dir
+}
+
+// projectJobRefRepoYAML is the anchored checkout (projectJobAnchoredRepoYAML)
+// with an agent block of its own: the document a launch resolves agent.auth
+// from when the working tree and the ref disagree, spelled by the auth it
+// carries.
+func projectJobRefRepoYAML(auth string) string {
+	return strings.Replace(projectJobAnchoredRepoYAML, "git:\n", "agent: { auth: "+auth+" }\ngit:\n", 1)
+}
+
+// TestSharedJobLaunchJudgesTheRefNotTheWorkingTree is the finding that the
+// launcher's own resolution is not the run's: the run resolves agent.auth from
+// the fugaro.yaml at the ref it checks out (spec.Ref, over the layer the task
+// carries), so the working tree is a document the run never reads. Here the
+// working tree says api-key while origin/main — the ref this launch names —
+// says oauth, the state a checkout left on another branch, or one carrying an
+// uncommitted edit, is in, and the launch must be refused exactly as if the
+// working tree said oauth too.
+//
+// Mutation (run, restore): read the working tree again
+// (readCheckoutFugaroYAML(filepath.Join(root, "fugaro.yaml"))) — this launch is
+// judged api-key and taken onto the shared job, whose profile holds no OAuth
+// token: the run halts inside Cloud Run, past the claim and the budget token,
+// which is the failure the account gate exists to refuse.
+func TestSharedJobLaunchJudgesTheRefNotTheWorkingTree(t *testing.T) {
+	f := newProjectJobFixture(t)
+	isolateCache(t)
+	projectJobCheckoutYAMLAt(t, projectJobRefRepoYAML("api-key"), projectJobRefRepoYAML("oauth"))
+
+	claimed := false
+	launchHooks.beforeClaim = func() { claimed = true }
+	t.Cleanup(func() { launchHooks.beforeClaim = nil })
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261019-090000-aaaa", "Add a feature")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "lists no Claude account") || !strings.Contains(err.Error(), "standard") {
+		t.Fatalf("a launch whose ref says oauth and whose working tree says api-key: %v, want the account gate's refusal", err)
+	}
+	if claimed {
+		t.Error("the refusal came after the launch claim")
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+}
+
+// The other direction, which is what makes the first one a statement about the
+// ref rather than about refusing more: the ref's copy says api-key while the
+// working tree says oauth, so this is a run the account gate allows and it must
+// launch — on the shared job — over the file the run will actually read.
+//
+// Mutation (run, restore): read the working tree again — this launch is
+// refused by the account gate although the run it starts is an api-key one, which
+// is a false refusal on a document the run never reads.
+func TestSharedJobLaunchLaunchesOnTheRefsApiKey(t *testing.T) {
+	f := newProjectJobFixture(t)
+	isolateCache(t)
+	projectJobCheckoutYAMLAt(t, projectJobRefRepoYAML("oauth"), projectJobRefRepoYAML("api-key"))
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261019-090001-bbbb", "Add a feature"); err != nil {
+		t.Fatalf("a launch whose ref says api-key and whose working tree says oauth: %v, want it launched", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != f.job {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the shared job %s", len(calls), calls, f.job)
+	}
+}
+
+// And a checkout that does not hold the ref at all cannot show the document
+// the run resolves: the launch is refused, naming the ref, rather than judged
+// on another ref or on the working tree. Nothing is fetched to make the read —
+// a fetch is a network write into a repository this command does not own.
+//
+// Mutation (run, restore): fall back to the working tree when no ref resolves
+// (readCheckoutFugaroYAML) — the launch is taken onto the shared job, judged
+// on a document whose ref the run may not even have.
+func TestSharedJobLaunchRefusesACheckoutWithoutTheRef(t *testing.T) {
+	f := newProjectJobFixture(t)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": projectJobRefRepoYAML("api-key")})
+	t.Chdir(dir)
+
+	claimed := false
+	launchHooks.beforeClaim = func() { claimed = true }
+	t.Cleanup(func() { launchHooks.beforeClaim = nil })
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261019-090002-cccc", "Add a feature")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cannot tell which Claude credential") || !strings.Contains(err.Error(), "main") {
+		t.Fatalf("a launch from a checkout that holds no main ref: %v, want a refusal naming the ref", err)
+	}
+	if claimed {
+		t.Error("the refusal came after the launch claim")
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
 }
 
 // projectJobAccountConfig is the fixture's local config addition: the two named
@@ -1063,6 +1180,9 @@ func TestLaunchRefusesARepositoryTheProfileDoesNotAdmit(t *testing.T) {
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": projectJobRepoYAML})
+	testutil.Git(t, dir, "add", "fugaro.yaml")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the repository's fugaro.yaml")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
 	t.Chdir(dir)
 	if _, _, err := execute(t, "run", "--repo", otherRepo, "--run-id", "20261017-110001-dddd", "Add a feature"); err != nil {
 		t.Fatalf("launch of the repository the profile admits: %v", err)

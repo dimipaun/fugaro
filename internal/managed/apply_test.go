@@ -1023,6 +1023,36 @@ func TestTerraformEnvRefusesTheImpersonationVariable(t *testing.T) {
 	}
 }
 
+// The same assertion, reached through the environment terraform is actually
+// given. The variables providerSettings names by hand are dropped by tf.Env's
+// allowlist before this check ever sees them, so the check's live input is the
+// other half of its rule: a *_CUSTOM_ENDPOINT, which an XDG_-prefixed name
+// passes through (tf.Env passes every XDG_ variable) — that is how a provider
+// endpoint set in the operator's profile reaches terraform and sends the
+// deployer's bearer token to another host.
+//
+// Mutation: delete the providerSettingIn check in TerraformEnv (apply.go) —
+// this test fails and no other one does: the assertions beside it call
+// providerSettingIn directly, so they stay green with the caller's check gone.
+func TestTerraformEnvRefusesAProviderSettingThatPassedTheAllowlist(t *testing.T) {
+	dir := t.TempDir()
+	_, err := TerraformEnv([]string{"PATH=/bin", "XDG_CUSTOM_ENDPOINT=https://proxy.example.invalid"}, dir, filepath.Join(dir, "cache"))
+	if err == nil {
+		t.Fatal("XDG_CUSTOM_ENDPOINT reached terraform's environment")
+	}
+	if !errors.Is(err, ErrProviderSetting) {
+		t.Errorf("the refusal %v is not the provider-setting one", err)
+	}
+	if !strings.Contains(err.Error(), "XDG_CUSTOM_ENDPOINT") {
+		t.Errorf("the refusal %v does not name the variable", err)
+	}
+	// A variable that only looks like one is not refused: the check names the
+	// suffix and the settings, not every XDG_ variable tf.Env passes through.
+	if _, err := TerraformEnv([]string{"PATH=/bin", "XDG_CACHE_HOME=" + dir}, dir, filepath.Join(dir, "cache")); err != nil {
+		t.Errorf("an XDG variable that is not a provider setting was refused: %v", err)
+	}
+}
+
 // Task 3.2: the refusals a person reads. A managed project's guard refusal
 // names what to do and who can do it — the owner's own list and the owner-run
 // command that writes it — and it names no flag at all: a flag name in a

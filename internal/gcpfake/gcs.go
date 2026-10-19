@@ -75,6 +75,11 @@ type GCS struct {
 	// a content GET) answer 503, as a flaky network or an overloaded
 	// backend would.
 	failGets int
+	// failStores makes the next object creates store the object and *then*
+	// answer an error: the write landed but the caller was not told so
+	// (FailObjectStoresAfterWrite), which is the one failure a caller that
+	// removes what a failed create may have left cannot see any other way.
+	failStores int
 	// failObject maps an object ("<bucket>/<name>") to the first read of it
 	// that answers 403 (FailObjectGetsAfter); reads is how many reads of
 	// each object the fake has served, successful or failed.
@@ -177,6 +182,22 @@ func (g *GCS) FailObjectGets(n int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.failGets = n
+}
+
+// FailObjectStoresAfterWrite makes the next n object creates store the object
+// and then answer 403, storing it: a create whose write landed but whose
+// response the caller never got as a success (a gateway error, a connection
+// dropped on the response), so the object is there and the caller must treat
+// the create as failed. 403 and not a 5xx: the storage client retries a 5xx on
+// its own — and a conditional insert (ifGenerationMatch=0) is idempotent, so
+// the retry would meet the object this only-just wrote and answer
+// FAILED_PRECONDITION, hiding the state this knob exists to model. Unlike
+// DenyWrites, deletes are unaffected, which is what lets a test observe a
+// caller that removes what such a create left behind.
+func (g *GCS) FailObjectStoresAfterWrite(n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.failStores = n
 }
 
 // FailListings makes every object listing of bucket answer 403
@@ -701,6 +722,11 @@ func (g *GCS) store(w http.ResponseWriter, bucket, name, ct string, cond *int64,
 	g.gen++
 	o := &object{data: append([]byte(nil), data...), gen: g.gen, metagen: 1, ct: ct, updated: time.Now().UTC()}
 	objs[name] = o
+	if g.failStores > 0 {
+		g.failStores--
+		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "the object was stored but this response was not a success")
+		return
+	}
 	writeJSON(w, http.StatusOK, meta(bucket, name, o))
 }
 

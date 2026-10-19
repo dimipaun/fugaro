@@ -726,11 +726,17 @@ func restoreOldReadable(ctx context.Context, c *infra.Clients, gcpProject string
 // What moves, and why each is not a guess:
 //
 //   - gcp_project and runs_bucket: named after the project, so both follow it.
-//   - bucket_url, registry_host, log_view, build.service_account and
-//     terraform.state_bucket are cleared rather than derived here. The
-//     creating apply writes every one of them from the new installation's own
-//     outputs (init's writeConfig), and a value naming the old project would
-//     be planned before it does.
+//   - bucket_url, registry_host, log_view, build.service_account,
+//     terraform.state_bucket and the legacy registry are cleared rather than
+//     derived here. The creating apply writes every one of them from the new
+//     installation's own outputs (init's writeConfig), and a value naming the
+//     old project would be planned before it does. registry is the legacy
+//     shared image registry (localcfg.Config.Registry), which the per-
+//     repository jobs' own spec still turns into every workflow's LegacyImage
+//     (spec.go's `if lc.Registry != ""`): kept across a restore it would name a
+//     registry inside the project that was lost, which is the class this
+//     function's own list clears — the images a job starting from it would look
+//     for are not there, and the create plans a job that cannot start.
 //   - The budget backend's four project-naming fields (rtdb_url,
 //     firebase_project, firebase_api_key, token_signer) go the same way, and
 //     the operator's own settings in that block — the mode, the caps, the
@@ -757,7 +763,13 @@ func restoreOldReadable(ctx context.Context, c *infra.Clients, gcpProject string
 // buckets that exist somewhere specific, and a restore that silently pointed
 // them at the new project would be guessing about where the operator's data
 // is.
-func restoreConfig(lc *localcfg.Config, newID string) (*localcfg.Config, []string, error) {
+//
+// lc is the run's selection — the config the flags selected and addressed the
+// cloud with — and onDisk is the same config as its own file writes it, which
+// is where every value that is not this move's to change comes from: the
+// region above all, which --region overrides for the invocation and must not
+// become the installation's on disk (planConfig).
+func restoreConfig(lc, onDisk *localcfg.Config, newID string) (*localcfg.Config, []string, error) {
 	if got, want := lc.RunsBucketName(), "fugaro-runs-"+lc.GCPProject; got != "" && got != want {
 		return nil, nil, userErr("the project config names runs_bucket %s, and an installation whose runs bucket is not the default %s for %s cannot be moved by a restore: the marker, the delete list and the shared config are all read from the default name, so point the config at %s or move runs_bucket yourself", got, want, lc.GCPProject, want)
 	}
@@ -765,27 +777,28 @@ func restoreConfig(lc *localcfg.Config, newID string) (*localcfg.Config, []strin
 		return nil, nil, userErr("the project config names terraform.state_bucket %s, which is a bucket of its own rather than %s's default: a restore cannot know where that bucket's successor should be. Remove terraform.state_bucket from the config (fugaro init derives fugaro-tfstate-%s) or move it yourself", s, lc.GCPProject, newID)
 	}
 	var strandedBases []string
-	next := *lc
+	next := *onDisk
 	next.GCPProject = newID
 	next.RunsBucket = "fugaro-runs-" + newID
 	next.Bucket = ""
+	next.Registry = ""
 	next.RegistryHost = ""
 	next.LogView = ""
-	next.Build = lc.Build
+	next.Build = onDisk.Build
 	next.Build.ServiceAccount = ""
-	next.Terraform = lc.Terraform
+	next.Terraform = onDisk.Terraform
 	next.Terraform.StateBucket = ""
-	next.BaseImages, strandedBases = restoreBaseImages(lc)
+	next.BaseImages, strandedBases = restoreBaseImages(onDisk)
 
 	var left []string
 	if len(strandedBases) > 0 {
-		left = append(left, fmt.Sprintf("the base images of %s's registry (kinds: %s) did not come across: each reference named the registry of the project that was lost, and the creating run pins this release's base images again (fugaro init --base, or --base-image KIND=IMAGE to point a kind at an image of your own)", lc.GCPProject, strings.Join(strandedBases, ", ")))
+		left = append(left, fmt.Sprintf("the base images of %s's registry (kinds: %s) did not come across: each reference named the registry of the project that was lost, and the creating run pins this release's base images again (fugaro init --base, or --base-image KIND=IMAGE to point a kind at an image of your own)", onDisk.GCPProject, strings.Join(strandedBases, ", ")))
 	}
-	if b := lc.Budget; b != nil {
+	if b := onDisk.Budget; b != nil {
 		nb := *b
 		if nb.RTDBURL != "" || nb.FirebaseProject != "" || nb.FirebaseAPIKey != "" || nb.TokenSigner != "" {
 			nb.RTDBURL, nb.FirebaseProject, nb.FirebaseAPIKey, nb.TokenSigner = "", "", "", ""
-			left = append(left, fmt.Sprintf("the budget backend of %s — its Realtime Database, its Firestore database, its restricted web API key and its token signer — did not come across: where the new one lives is your decision, so build it again with fugaro init --firebase (the mode, the caps and the token ceiling in the config are kept as they were), or leave it off if you want none", lc.GCPProject))
+			left = append(left, fmt.Sprintf("the budget backend of %s — its Realtime Database, its Firestore database, its restricted web API key and its token signer — did not come across: where the new one lives is your decision, so build it again with fugaro init --firebase (the mode, the caps and the token ceiling in the config are kept as they were), or leave it off if you want none", onDisk.GCPProject))
 		}
 		next.Budget = &nb
 	}
@@ -901,7 +914,21 @@ func (rr *restoreRun) confirm(cmd *cobra.Command) error {
 // typed confirmation: restoreConfig's refusals are refusals a typed name does
 // not help with, and the operator reads them before typing rather than after.
 func (rr *restoreRun) planConfig() error {
-	next, left, err := restoreConfig(rr.lc, rr.newID)
+	// The config as its own file writes it, beside the selection's copy: the
+	// selection has this invocation's --gcp-project and --region applied to it
+	// (selectProject → announce → localcfg.Config.Override), and the moved
+	// config is written from that copy — so a --region given to address the old
+	// project would become the installation's own region on disk, and the new
+	// project's resource region with it (createArgs passes the moved config to
+	// the creating path, which derives the region from it), without the
+	// operator having asked for either. The flag's help says what it is: "GCP
+	// region (overrides the project config's)". --gcp-project needs no such
+	// treatment: Override refuses one that is not the config's own.
+	onDisk, err := localcfg.Parse(rr.old)
+	if err != nil {
+		return userErr("the project config %s: %v", rr.path, err)
+	}
+	next, left, err := restoreConfig(rr.lc, onDisk, rr.newID)
 	if err != nil {
 		return err
 	}
