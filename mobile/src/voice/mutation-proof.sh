@@ -132,9 +132,17 @@ suite() { # suite-pattern (module-relative to mobile/)
   # `not ok 3 - the name` under TAP, `✖ the name` under the spec reporter.
   # (`paste -d'; '` would alternate `;` and ` `, which reads as a missing
   # separator, so the join is spelled out.)
+  #
+  # The spec reporter (node 23+) also prints a **summary header**, `✖ failing
+  # tests:`, above the failures it lists in full -- and it is not a test, so
+  # reading it as one put a name in the table that no suite has. It is the one
+  # `✖` line with no timing beside it and with the reporter's own wording, so
+  # it is dropped by name; a test that were really called that would have to be
+  # named something else, which is a cheaper price than a table that lies.
   LAST_FAILS=$(printf '%s\n' "$out" \
     | sed -En -e 's/^not ok [0-9]+ - (.*)$/\1/p' -e 's/^[[:space:]]*✖ (.*)$/\1/p' \
     | sed -E 's/ \([0-9.]+m?s\)$//' \
+    | sed -E '/^failing tests:$/d' \
     | awk '!seen[$0]++ {printf "%s%s", (n++ ? "; " : ""), $0}')
   LAST_OUT=$out
   LAST_TESTS=${tests:-0}

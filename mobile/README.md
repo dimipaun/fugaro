@@ -830,7 +830,18 @@ they are held to.
 Each was planted, the suite went red on the named tests, and the bug was
 removed. **The whole table is reproduced by `src/voice/mutation-proof.sh`**,
 which prints one line per mutation with the tests that went red beside it, so
-the table can be checked rather than trusted. That script runs this module's own
+the table can be checked rather than trusted. **Two things keep that claim
+honest, and a review found both wanting.** The names are read out of the
+runner's own output, and node 23+'s spec reporter prints a `✖ failing tests:`
+**summary header** above the failures it lists in full -- which the filter read
+as a test name, so every line of the run carried one name no suite has; it is
+dropped by name now, and the two reporters (TAP's `not ok N - name` and the spec
+reporter's `✖ name`) yield the same list. And the table itself had gone stale:
+two rows named two of the three tests their mutation really reddens, because the
+third test was added to the suite after those rows were written. The whole table
+was regenerated from the script's output, and all 42 rows now agree with it
+name for name -- which is the comparison a reader can repeat, so it is worth
+repeating after any change to this suite. That script runs this module's own
 suite (`node --test 'src/voice/*.test.js'`, from `mobile/`) and not the app's
 whole one, because the mutations are all here and a failure in a neighbouring
 module would be indistinguishable from a killed guard; it **finds a working
@@ -872,8 +883,8 @@ the two apart -- so it is written down here rather than claimed as a kill.
 | `the turn's final is a boundary` | `with the switch on, an update waits for the user's turn to close, and is spoken after it` |
 | `the turn's final is a message the app accepts` | `with the switch on, an update waits for the user's turn to close, and is spoken after it` and `a transcript that arrives while offline is refused too, and nothing is written` |
 | `the OS's refusal of the microphone is recorded` | `D122: a refused microphone is shown, and the screen keeps working without it` |
-| `the app refuses to accept a message while offline` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` and `a transcript that arrives while offline is refused too, and nothing is written` |
-| `the refusal is shown, not only returned` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` and `a transcript that arrives while offline is refused too, and nothing is written` |
+| `the app refuses to accept a message while offline` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` and `the refusal a screen shows is the last one, and the message that is accepted clears it` and `a transcript that arrives while offline is refused too, and nothing is written` |
+| `the refusal is shown, not only returned` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` and `the refusal a screen shows is the last one, and the message that is accepted clears it` and `a transcript that arrives while offline is refused too, and nothing is written` |
 | `only offline refuses: stale is still an orchestrator` | `stale is not offline: a heartbeat three intervals old still accepts a message` |
 | `the message is judged before the presence is` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` |
 | `an empty message is refused as an empty message` | `the plan, sentence two: the offline state shows from P1.4, and the app refuses to accept a message` |
