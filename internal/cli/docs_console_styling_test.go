@@ -294,8 +294,11 @@ func TestDocsConsoleStylingPlanTasksAreUnapproved(t *testing.T) {
 // The arithmetic is written out rather than shared, because it is four lines
 // and the point is that the test and the document agree on the formula. It is
 // deliberately not the console's own token test (§6.3): that one is TypeScript
-// under `console/`, and TestConsoleIsOutsideTheGoModule's one-entry allow-list
-// is what keeps a Go file out of there at all.
+// on the other side of TestConsoleIsOutsideTheGoModule's one-entry allow-list,
+// which is what keeps a Go file from reaching in there at all — the same
+// boundary that makes this file cite the console's files as text and never stat
+// them. A path under that directory written into a comment here is enough to
+// fail that test, which is how this paragraph came to be rewritten.
 
 // mdRGB parses a six-digit sRGB hex literal into its three channel values.
 func mdRGB(t *testing.T, hex string) [3]float64 {
