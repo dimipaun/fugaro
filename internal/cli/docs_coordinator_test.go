@@ -113,7 +113,7 @@ package cli
 // edited this comment, not a constant, and they have gone stale every time the
 // document has grown: the census figures were recorded as 196/163 when the
 // document was smaller, then as 214/180 three commits later, and the same
-// mutation now reports 217/186. The live readings are the assertion's own
+// mutation now reports 217/182. The live readings are the assertion's own
 // message and the two log lines -- "N citations checked, against a census of M
 // path-looking tokens" and "N relative citations resolved against their
 // paragraph's anchor". Anyone re-running a mutation should read the numbers
