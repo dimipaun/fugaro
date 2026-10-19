@@ -25,9 +25,14 @@ import (
 // the provider's ("projects/<p>/locations/<l>/jobs/<name>", a bare bucket
 // name, "<bucket>/<object>"). Both are read off the resources this
 // installation's own modules create — the installation root, the Firebase
-// root, a repository root and the agent-authored root — because those are the
-// states a managed project holds and D59's premise is that such a project
-// holds only what Fugaro made (the owner's ruling of 2026-10-18).
+// root, a repository root, the compute root the --provision-batch stage
+// applies and the agent-authored root — because those are the states a
+// managed project holds and D59's premise is that such a project holds only
+// what Fugaro made (the owner's ruling of 2026-10-18). The compute root is
+// listed here although no flag reaches it in this release: its three resources
+// are in the table (they are the last three before the empty ones), and a root
+// whose types are absent would leave a project that ran it foreign for good
+// (Inventory.foreign never empties, so Check's fallback never clears).
 //
 // The table is CLOSED, and the direction of everything it does not name is the
 // fallback, never a clean project: a Terraform type this build cannot place in
@@ -139,25 +144,59 @@ type stateDocument struct {
 // the fallback: this build does not know how GCP files it, so its resources
 // stay unaccounted for.
 var stateAssetTypes = map[string]string{
-	"google_storage_bucket":                          "storage.googleapis.com/Bucket",
-	"google_storage_bucket_object":                   "storage.googleapis.com/Object",
-	"google_service_account":                         "iam.googleapis.com/ServiceAccount",
-	"google_project_iam_custom_role":                 "iam.googleapis.com/Role",
-	"google_cloud_run_v2_job":                        "run.googleapis.com/Job",
-	"google_cloud_run_v2_service":                    "run.googleapis.com/Service",
-	"google_cloud_scheduler_job":                     "cloudscheduler.googleapis.com/Job",
-	"google_secret_manager_secret":                   "secretmanager.googleapis.com/Secret",
-	"google_artifact_registry_repository":            "artifactregistry.googleapis.com/Repository",
-	"google_apikeys_key":                             "apikeys.googleapis.com/Key",
-	"google_monitoring_alert_policy":                 "monitoring.googleapis.com/AlertPolicy",
-	"google_monitoring_notification_channel":         "monitoring.googleapis.com/NotificationChannel",
-	"google_logging_project_sink":                    "logging.googleapis.com/LogSink",
-	"google_logging_project_bucket_config":           "logging.googleapis.com/LogBucket",
-	"google_logging_log_view":                        "logging.googleapis.com/LogView",
-	"google_project_service":                         "serviceusage.googleapis.com/Service",
-	"google_firebase_project":                        "firebase.googleapis.com/FirebaseProject",
-	"google_firebase_database_instance":              "firebasedatabase.googleapis.com/Instance",
-	"google_firestore_database":                      "firestore.googleapis.com/Database",
+	"google_storage_bucket":                  "storage.googleapis.com/Bucket",
+	"google_storage_bucket_object":           "storage.googleapis.com/Object",
+	"google_service_account":                 "iam.googleapis.com/ServiceAccount",
+	"google_project_iam_custom_role":         "iam.googleapis.com/Role",
+	"google_cloud_run_v2_job":                "run.googleapis.com/Job",
+	"google_cloud_run_v2_service":            "run.googleapis.com/Service",
+	"google_cloud_scheduler_job":             "cloudscheduler.googleapis.com/Job",
+	"google_secret_manager_secret":           "secretmanager.googleapis.com/Secret",
+	"google_artifact_registry_repository":    "artifactregistry.googleapis.com/Repository",
+	"google_apikeys_key":                     "apikeys.googleapis.com/Key",
+	"google_monitoring_alert_policy":         "monitoring.googleapis.com/AlertPolicy",
+	"google_monitoring_notification_channel": "monitoring.googleapis.com/NotificationChannel",
+	"google_logging_project_sink":            "logging.googleapis.com/LogSink",
+	"google_logging_project_bucket_config":   "logging.googleapis.com/LogBucket",
+	"google_logging_log_view":                "logging.googleapis.com/LogView",
+	"google_project_service":                 "serviceusage.googleapis.com/Service",
+	"google_firebase_project":                "firebase.googleapis.com/FirebaseProject",
+	"google_firebase_database_instance":      "firebasedatabase.googleapis.com/Instance",
+	"google_firestore_database":              "firestore.googleapis.com/Database",
+	// The compute module the Batch backend's own root applies
+	// (deploy/terraform/gcp/modules/compute/network.tf:58,75,84, each with
+	// project = var.project): the deny-all ingress rule on the run-class
+	// accounts, the router, and the NAT on that router. The root writes its
+	// state into the installation's own bucket, which managedAccounted reads
+	// with no prefix, so a project that ran --provision-batch holds all three.
+	//
+	// Two of the three are assets of the project, and the name each is
+	// accounted for by is the id the provider writes, which is the path the
+	// listing files it under: google_compute_firewall's id is
+	// "projects/<p>/global/firewalls/<name>" and google_compute_router's is
+	// "projects/<p>/regions/<r>/routers/<name>", and Inventory.accounted
+	// matches both by the "projects/" prefix and the whole path. (The module's
+	// own names are fugaro-run-deny-ingress, fugaro-router and fugaro-nat, but
+	// the accounting never derives a name from a label: the id is what the
+	// provider wrote when it created the resource and what it reads the
+	// resource back by.)
+	//
+	// The NAT is the table's SECOND answer and not its first, which is the
+	// decision this entry records: GCP keeps a NAT inside the router it
+	// belongs to — the Compute API has no NAT resource of its own, a router's
+	// NATs being a field of the router that is patched — and Cloud Asset
+	// Inventory's Compute asset types carry Router and no NAT beside it, so a
+	// listing holds no NAT for a state entry to account for. That is the same
+	// rule that puts the IAM members at the foot of this table. NOT a live
+	// observation: no listing of a real project was read for it, and no test,
+	// document or recorded read in this tree carries a NAT asset type. If such
+	// a type does exist, this empty entry leaves the NAT foreign — the
+	// fallback direction — where a type invented here is no better unless the
+	// guess is right, and being right is exactly what the live read that was
+	// not made would have decided.
+	"google_compute_firewall":                        "compute.googleapis.com/Firewall",
+	"google_compute_router":                          "compute.googleapis.com/Router",
+	"google_compute_router_nat":                      "",
 	"google_project_iam_member":                      "",
 	"google_project_iam_binding":                     "",
 	"google_project_iam_policy":                      "",

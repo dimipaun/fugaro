@@ -44,10 +44,10 @@ const doctorMaxJobPages = 200
 // role's own permissions are a fact of the installation module, not of any
 // job, so this check reports grants and does not judge them: it is an info
 // line — not a failure under --strict, and still printed, which is what makes
-// the surface readable at all (the check carries a Problem and is not OK for
-// exactly that reason: printDoctorChecks prints the checks that are not OK,
-// so a line a person must be able to read cannot be an OK one). Only a read
-// that fails is a warning.
+// the surface readable at all (the check carries a Problem and is not OK:
+// printDoctorChecks prints every check that is not OK, and an OK one only when
+// it carries a Severity, so an un-ok check is the shape that prints either
+// way). Only a read that fails is a warning.
 //
 // Read-only, and metadata only: job names and their IAM policies, never an
 // execution, an override or an env var. A test configuration (no_auth with
@@ -209,10 +209,11 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 		problem += fmt.Sprintf(" (%d of the location's %d job(s) are not in that count: %s)",
 			left, len(jobs), strings.Join(which, " and "))
 	}
-	// Not OK, and Severity "info": printDoctorChecks prints the checks that are
-	// not OK, and an "info" one never fails doctor, with or without --strict
-	// (checksFail). An OK check carrying this Problem is a line nobody ever
-	// reads, which is the one thing this check cannot be.
+	// Not OK, and Severity "info": printDoctorChecks prints every check that is
+	// not OK (and an OK one only when it carries a Severity), and an "info" one
+	// never fails doctor, with or without --strict (checksFail). Being un-ok is
+	// what makes the print independent of the printer's OK rule as well: a line
+	// the owner must be able to read is the shape that prints either way.
 	out := []doctorCheck{{ID: "launcher-jobs", Severity: "info", Problem: problem,
 		Fix: "the launcher role's permissions are unchanged by the project-centric model (run.jobs.run, run.jobs.runWithOverrides and the secret metadata list): what changes is how many jobs they attach to, so a grant count that falls while runs still work is a migration doing what it says, and a job a launcher is not granted on is a job fugaro run cannot start. Project-level run roles bypass the jobs' own policies and are not counted here"}}
 	if len(public) > 0 {
