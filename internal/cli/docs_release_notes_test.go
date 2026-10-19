@@ -422,14 +422,13 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 
 // TestReleaseNotesV090ManagedWordingMatchesTheGates is the other half of the
 // managed paragraph: the notes name four commands as refusing, and with the
-// shipped gates closed the CLI refuses exactly those, while `fugaro managed
-// flag` — which the notes say runs — is not refused by the gate at all. An
+// shipped gates closed the CLI refuses exactly those, `fugaro managed flag` included. An
 // earlier draft of these notes offered `managed flag`, a `--managed` creation
 // and a `managed apply` as things a user can do; this is the test that would
 // have caught it, and the one a gate moved back onto the flag command fails.
 //
-// Mutation (verified, each planted and reverted): call
-// refuseManagedNotShipped() from managedFlag; drop `fugaro managed apply` from
+// Mutation (verified, each planted and reverted): drop the
+// refuseManagedNotShipped() call from managedFlag; drop `fugaro managed apply` from
 // the refusals the notes name; and drop `fugaro restore` from them.
 func TestReleaseNotesV090ManagedWordingMatchesTheGates(t *testing.T) {
 	closeShippedGates(t)
@@ -445,6 +444,7 @@ func TestReleaseNotesV090ManagedWordingMatchesTheGates(t *testing.T) {
 	}{
 		{"`fugaro init --create-project --managed`", []string{"init", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"}},
 		{"`fugaro init --managed`", []string{"init", "--managed"}},
+		{"`fugaro managed flag`", []string{"managed", "flag", "fugaro-newproj-1234", "--budget", "50", "--budget-currency", "USD"}},
 		{"`fugaro managed apply`", []string{"managed", "apply", "infra"}},
 		{"`fugaro restore`", []string{"restore", "fugaro-newproj-1234", "infra"}},
 	} {
@@ -455,21 +455,6 @@ func TestReleaseNotesV090ManagedWordingMatchesTheGates(t *testing.T) {
 		if !strings.Contains(notes, c.notes) {
 			t.Errorf("%s does not name %s among the commands that refuse while managedDeployerShipped is false", releaseNotesV090, c.notes)
 		}
-	}
-
-	// And `fugaro managed flag` is the one managed command the notes say runs:
-	// it is not refused by the gate. It stops later — this is a scratch
-	// directory with no project config — but never with the shipped gate's
-	// message, which is the difference the notes draw.
-	out, err := runGated(t, "managed", "flag", "fugaro-newproj-1234", "--budget", "50", "--budget-currency", "USD")
-	if err != nil && strings.Contains(err.Error(), managedDisabled) {
-		t.Errorf("fugaro managed flag is refused by the shipped gate (%v), and %s says it runs:\n%s", err, releaseNotesV090, out)
-	}
-	if strings.Contains(out, managedDisabled) {
-		t.Errorf("fugaro managed flag printed the shipped gate's refusal, and %s says it runs:\n%s", releaseNotesV090, out)
-	}
-	if !strings.Contains(notes, "`fugaro managed flag` itself does run") {
-		t.Errorf("%s does not say what `fugaro managed flag` does while managedDeployerShipped is false: it runs, and writes marks only the refused apply reads", releaseNotesV090)
 	}
 }
 

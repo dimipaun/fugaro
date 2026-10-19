@@ -175,6 +175,13 @@ is overwritten blind.`,
 // any of them.
 func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, currency string) error {
 	ctx := cmd.Context()
+	// Managed projects are off in this release (managedDeployerShipped), and
+	// flagging one is how a project becomes managed: refused before anything
+	// is read, written or opened, with the refusal the other managed entry
+	// points give.
+	if err := refuseManagedNotShipped(); err != nil {
+		return err
+	}
 	// A credential leak first, before anything opens the cloud: GODEBUG is
 	// read before main runs and cannot be unset in time (refuseHTTP2Debug).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
