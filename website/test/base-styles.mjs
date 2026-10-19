@@ -8,6 +8,14 @@
 // page marked). The colour side — no literal in base.css, every pair it paints checked for
 // all three palettes — is in `a11y.mjs`, beside the contrast arithmetic it reuses.
 //
+// **The third subject is the flow's own layout** (changes spec of 2026-10-18, item 4):
+// `ArchitectureDiagram.astro`'s four cards are a quarter of the row each, and the row was
+// laid out from 48 rem, where a card's content box is 100 px wide and the words its own step
+// names are made of do not fit in that. A diagram that cannot print its own labels is the
+// picture failing at the one thing it is for, so the arithmetic is here, beside the other
+// layout rules: a card's content box at the breakpoint and at the page's maximum width,
+// against the width of the longest word the flow's names are built from.
+//
 // The pages are read from `dist/`, which `npm run check` builds before it runs this file.
 // No browser, no network: the checks are over the HTML and CSS a browser would receive.
 
@@ -234,6 +242,285 @@ test('the layout imports the stylesheets statically, tokens first', () => {
   const base = layout.indexOf("import '../styles/base.css'")
   assert.ok(tokens >= 0 && base >= 0, 'Base.astro does not import tokens.css and base.css')
   assert.ok(tokens < base, 'Base.astro imports base.css before tokens.css')
+})
+
+// ---- the flow can print its own step names (changes spec item 4) -------------------------
+
+/**
+ * Every rule of a stylesheet, as `{ query, selector, decls }`, in document order, with the
+ * `@media`/`@supports` prelude a rule sits inside — so a rule can be held to where it applies
+ * rather than to being present somewhere in the file. The stylesheets here nest at most two
+ * blocks deep and carry no braces in a value, which is what keeps this a walk rather than a
+ * parser (`mediaBlocks` above does the same job for the one file that needs only `@media`).
+ */
+function allRules(css) {
+  const out = []
+  const blocks = []
+  let buffer = ''
+  for (let i = 0; i < css.length; i++) {
+    const ch = css[i]
+    if (ch === '{') {
+      const prelude = buffer.trim()
+      buffer = ''
+      if (prelude.startsWith('@')) {
+        blocks.push(prelude)
+        continue
+      }
+      const close = css.indexOf('}', i)
+      out.push({ query: blocks.join(' '), selector: prelude, decls: css.slice(i + 1, close) })
+      i = close
+      continue
+    }
+    if (ch === '}') {
+      blocks.pop()
+      buffer = ''
+      continue
+    }
+    buffer += ch
+  }
+  return out
+}
+
+/** A rule's declarations as `{ property: value }`, the last one winning, as a browser reads them. */
+function declarations(rule) {
+  const out = {}
+  for (const part of rule.decls.split(';')) {
+    const at = part.indexOf(':')
+    if (at > 0) out[part.slice(0, at).trim()] = part.slice(at + 1).trim()
+  }
+  return out
+}
+
+/** A CSS length as pixels: a token, a `rem`/`px` length, or `calc(var(--x) * n)`. */
+function toPx(value, tokens) {
+  if (value === undefined) return NaN
+  const variable = /^var\(--([a-z0-9-]+)\)$/.exec(value)
+  if (variable) return tokens.get(variable[1]) ?? NaN
+  const calc = /^calc\(\s*var\(--([a-z0-9-]+)\)\s*\*\s*([\d.]+)\s*\)$/.exec(value)
+  if (calc) return (tokens.get(calc[1]) ?? NaN) * Number(calc[2])
+  const rem = /^([\d.]+)rem$/.exec(value)
+  if (rem) return Number(rem[1]) * 16
+  const px = /^([\d.]+)px$/.exec(value)
+  return px ? Number(px[1]) : NaN
+}
+
+/** The tokens a stylesheet declares, as `name -> px`. */
+function lengthTokens(css) {
+  const out = new Map()
+  for (const m of css.matchAll(/--([a-z0-9-]+):\s*([\d.]+)(rem|px)\b/g)) out.set(m[1], Number(m[2]) * (m[3] === 'rem' ? 16 : 1))
+  return out
+}
+
+/**
+ * An upper bound on how wide a run of text is, in ems, for the stack the site sets —
+ * `--font-sans`, which is the reader's system UI sans. The table names the characters whose
+ * advance is not the default, and every value is generous rather than measured: the arithmetic
+ * below is used to say a name **fits**, and an upper bound that says it fits holds in any
+ * browser, while a measurement taken from one machine's font is a claim about that machine
+ * (which is also why no browser is needed to check this).
+ */
+const ADVANCE = new Map([
+  ['i', 0.32], ['j', 0.34], ['l', 0.32], ['f', 0.4], ['r', 0.45], ['t', 0.45],
+  ['m', 0.95], ['w', 0.85], ['M', 0.95], ['W', 1], [' ', 0.35],
+])
+const DEFAULT_ADVANCE = 0.68
+
+/** The width of a run of text at `fontSize` px, as the upper bound above. */
+export function textWidth(text, fontSize) {
+  let ems = 0
+  for (const ch of text) ems += ADVANCE.get(ch) ?? DEFAULT_ADVANCE
+  return ems * fontSize
+}
+
+/** The longest word of a name: what a card has to hold when the name wraps. */
+function longestWord(names) {
+  return names
+    .flatMap((name) => name.split(/\s+/))
+    .sort((a, b) => b.length - a.length)
+    .at(0) ?? ''
+}
+
+/**
+ * Every way the flow's four-across row fails to render the step names it prints, for one
+ * built page's stylesheet and the names that page carries. Two things are checked, and each
+ * is the defect rather than a preference:
+ *
+ *   - **the name may wrap.** A step name held on one line is a name that overflows its card
+ *     the moment the card is narrower than the name, and the cards are a quarter of the row;
+ *   - **a card is wide enough for the longest word its names are made of.** With the name free
+ *     to wrap, the limit is the longest single word ("Ephemeral", in the spec's item 4's own
+ *     step names) at the size the name is set: the flow's own breakpoint has to be a width at
+ *     which the row has that much room, and inside a card the number may not take it away.
+ *
+ * The width a card gets is the arithmetic the layout does: `main` is the page's column
+ * (`--page-max` wide, centred, with its gutter), the classes between `main` and the figure
+ * (`wrappers`, read off the page) add the gutters a page puts above the flow, the row is four
+ * cards with an arrow between each pair, and a card's content box is what its padding and
+ * border leave. Every one of those numbers is read from the stylesheet rather than typed here,
+ * so the check follows a token that moves. Where a shortcut could make the page's own gutter
+ * smaller — the homepage's `main:has(> .hero)` drops `main`'s padding, and `.home-flow` puts it
+ * back — the arithmetic takes the padding the rules declare and ignores the shortcut, so the
+ * width it works from is a floor rather than the page's own.
+ */
+export function flowLayoutFailures(css, names, wrappers = []) {
+  const out = []
+  const rules = allRules(css)
+  const tokens = lengthTokens(css)
+  const declsOf = (klass, where = () => true) => rules.filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector) && where(r)).map(declarations)
+
+  // The block that lays the flow out as a row of four: without it there is no row to check,
+  // and the picture the spec asks for is missing rather than too narrow.
+  const row = rules.find((r) => /\.flow-steps(?![\w-])/.test(r.selector) && /flex-direction:row/.test(r.decls) && r.query)
+  if (!row) {
+    out.push("the flow has no four-across row: item 4's picture is the four steps travelling left to right, and no rule lays them out as a row")
+    return out
+  }
+  const breakpoint = /width\s*>=\s*([\d.]+)rem/.exec(row.query)
+  if (!breakpoint) {
+    out.push(`the flow's four-across row is not inside a min-width breakpoint (${JSON.stringify(row.query)}): the width a card gets cannot be read, and a row that starts at no width is a row that starts at every width`)
+    return out
+  }
+  const at = Number(breakpoint[1]) * 16
+
+  // The name may wrap, at every width: one rule holding it on a line is the whole defect.
+  for (const rule of rules) {
+    if (!new RegExp('\\.step-name(?![\\w-])').test(rule.selector)) continue
+    if ((declarations(rule)['white-space'] ?? '').startsWith('nowrap')) {
+      out.push(`the step name is held on one line (${rule.query ? `inside ${rule.query}: ` : ''}white-space: nowrap), so a name wider than the card it sits in runs out of the card rather than wrapping`)
+    }
+  }
+  if (names.length === 0) return out
+
+  const nameSize = toPx(declsOf('step-name').map((d) => d['font-size']).filter(Boolean).pop(), tokens)
+  const number = toPx(declsOf('step-number').map((d) => d['width']).filter(Boolean).pop(), tokens)
+  const headGap = toPx(declsOf('step-head').map((d) => d['gap']).filter(Boolean).pop(), tokens)
+  const cardPad = toPx(declsOf('step-card').map((d) => d['padding']).filter(Boolean).pop()?.split(/\s+/)[0], tokens)
+  const border = toPx(declsOf('step-card').map((d) => d['border']).filter(Boolean).pop()?.split(/\s+/)[0], tokens)
+  const arrow = toPx(rules.filter((r) => /\.step-arrow(?![\w-])/.test(r.selector)).map(declarations).map((d) => d['width']).filter(Boolean).pop(), tokens)
+  const gap = toPx(declarations(row)['gap'], tokens)
+
+  /** The horizontal padding a rule declares: the second value of a `padding` shorthand. */
+  const paddingInline = (rule) => toPx((declarations(rule)['padding'] ?? '').split(/\s+/)[1], tokens)
+
+  /** True when a rule is in force at a viewport width: no `@media`, or a min-width at or below it. */
+  const appliesAt = (width) => (rule) => {
+    if (!rule.query) return true
+    const min = /width\s*>=\s*([\d.]+)rem/.exec(rule.query)
+    return min !== null && Number(min[1]) * 16 <= width
+  }
+
+  /**
+   * `main`'s gutter at a width: the last of its rules that applies there — the base rule and
+   * every breakpoint at or below the width. `main:has(…)`'s `padding: 0` is left out on
+   * purpose (see above): the wrappers below carry the gutter that shortcut takes away.
+   */
+  const mainPad = (width) =>
+    rules
+      .filter((r) => /(^|[,\s])main(?![\w-])/.test(r.selector) && !r.selector.includes(':has(') && appliesAt(width)(r))
+      .map(paddingInline)
+      .filter((value) => !Number.isNaN(value))
+      .pop() ?? 0
+
+  /** The gutter each wrapper class between `main` and the figure adds. */
+  const wrapperPad = wrappers.reduce((sum, klass) => {
+    const value = rules
+      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector))
+      .map(paddingInline)
+      .filter((px) => !Number.isNaN(px))
+      .pop()
+    return sum + (value ?? 0)
+  }, 0)
+
+  // The card's content box at a viewport: the page's column, less the gutters, shared between
+  // four cards, three arrows and three gaps, less the card's own padding and border.
+  const contentBox = (width) =>
+    (Math.min(width, tokens.get('page-max')) - 2 * mainPad(width) - 2 * wrapperPad - 3 * gap - 3 * arrow) / 4 - 2 * cardPad - 2 * border
+
+  // The head is a row (the number beside the name) until a rule turns it into a column, which
+  // is how the name's own box is read: the number is `flex: none`, so a row takes its width and
+  // its gap out of the name at every card width.
+  const headIsColumn = (width) =>
+    rules
+      .filter((r) => /\.step-head(?![\w-])/.test(r.selector) && appliesAt(width)(r))
+      .map((r) => declarations(r)['flex-direction'] ?? '')
+      .filter(Boolean)
+      .pop() === 'column'
+
+  for (const width of [at, 80 * 16]) {
+    const content = contentBox(width)
+    const nameBox = headIsColumn(width) ? content : content - number - headGap
+    const needs = textWidth(longestWord(names), nameSize)
+    if (nameBox < needs) {
+      out.push(
+        `at ${width / 16} rem the flow's four-across row gives a step name ${Math.round(nameBox)} px and the longest word of the names it prints (${JSON.stringify(longestWord(names))}, at ${nameSize} px) needs ${Math.round(needs)} px: the row cannot render its own step names (changes spec 2026-10-18, item 4)`,
+      )
+    }
+  }
+  return out
+}
+
+/** The step names one built page prints, in the flow's order. */
+function stepNames(html) {
+  return [...walk(parse(html))]
+    .filter((el) => el.name === 'h2' && (el.attrs.get('class') ?? '').split(/\s+/).includes('step-name'))
+    .map((el) => textOf(el).replace(/\s+/g, ' ').trim())
+}
+
+/** The classes between `main` and the flow's figure on one built page: the gutters it sits in. */
+function flowWrappers(html) {
+  const figure = [...walk(parse(html))].find((el) => el.name === 'figure' && (el.attrs.get('class') ?? '').split(/\s+/).includes('flow'))
+  const out = []
+  for (let node = figure?.parent; node && node.name !== 'main'; node = node.parent) {
+    out.push(...(node.attrs?.get('class') ?? '').split(/\s+/).filter(Boolean))
+  }
+  return out
+}
+
+test('the four-across flow has room for the step names it prints', () => {
+  const failures = []
+  let checked = 0
+  for (const { rel, html } of builtPages()) {
+    const names = stepNames(html)
+    if (names.length === 0) continue
+    checked += 1
+    failures.push(...flowLayoutFailures(pageCss(html), names, flowWrappers(html)).map((line) => `${rel}: ${line}`))
+  }
+  assert.ok(checked > 0, 'no built page carries the flow, and item 4 puts it on the homepage and on How It Works')
+  assert.deepEqual(failures, [], `the flow cannot render its own step names:\n  ${failures.join('\n  ')}`)
+})
+
+test('every flow-layout refusal fires on the defect it names', () => {
+  const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
+  const names = stepNames(home)
+  const wrappers = flowWrappers(home)
+  assert.ok(names.length === 4, `the homepage prints ${names.length} step names, and the flow is the spec's four steps`)
+  const cases = [
+    // The defect as it shipped: the name on one line, in a card a quarter of the row wide.
+    [
+      'a step name held on one line',
+      plant('color:var(--text);overflow-wrap:anywhere;margin:0}', 'color:var(--text);white-space:nowrap;overflow-wrap:anywhere;margin:0}'),
+      /held on one line/,
+    ],
+    // And the layout that made it overflow: four cards from the width the chrome switches at,
+    // where a card's content box is 100 px.
+    [
+      'the four-across row starting before a card can hold a name',
+      TODAY().replace(/(width>=64rem)\)\{\.flow-steps/, '(width>=48rem){.flow-steps'),
+      /cannot render its own step names/,
+    ],
+    // The number is `flex: none` beside the name: at the breakpoint it takes the room the
+    // longest word needs.
+    [
+      'a step number that takes the name’s width',
+      plant('flex-direction:column;align-items:flex-start}', 'align-items:flex-start}'),
+      /cannot render its own step names/,
+    ],
+  ]
+  for (const [what, css, expected] of cases) {
+    const failures = flowLayoutFailures(css, names, wrappers)
+    assert.ok(failures.some((f) => expected.test(f)), `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`)
+  }
+  assert.deepEqual(flowLayoutFailures(TODAY(), names, wrappers), [], 'the flow-layout rule fails on the built stylesheet, so the cases above are not proving what they name')
 })
 
 // ---- the menu (P3, D182) ---------------------------------------------------------------

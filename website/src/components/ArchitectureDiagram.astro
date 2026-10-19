@@ -32,10 +32,27 @@
  * headings and captions, which is the whole content, and each step's arrow is an SVG marked
  * `aria-hidden`, because a picture of four boxes and three arrows is not a thing a screen
  * reader should have to describe when the four boxes are right there as text. Nothing about
- * the flow depends on the arrows having been drawn. The four cards are one row from 48 rem
- * up — the same breakpoint the layout's own chrome switches at — and a column below it, so
- * a phone reads the run top to bottom; the arrows turn with the layout and the step's own
- * heading stays one row at 390 px.
+ * the flow depends on the arrows having been drawn. The four cards are one row from 64 rem
+ * up, and a column below it, so a phone reads the run top to bottom; the arrows turn with
+ * the layout and the step's own heading stays one row at 390 px.
+ *
+ * **Why 64 rem, and not the chrome's 48 rem.** Four cards share the row, so a card is a
+ * quarter of the column less the arrows between them, and at 48 rem that leaves a card's
+ * content box about 100 px — narrower than the word `Ephemeral` in the spec's own third step
+ * name, at the size a step name is set. The row is where the reader gets four boxes and their
+ * arrows travelling left to right, so it is worth having earlier rather than later; it is not
+ * worth having a picture that cannot print its own labels. From 64 rem the box measures
+ * about 164 px, the longest word fits and a longer name wraps inside its card.
+ * `website/test/base-styles.mjs` does that arithmetic over the built stylesheet, at the
+ * breakpoint and at the page's maximum width, so the two numbers move together: a name that
+ * grows past what a card holds, or a row that starts earlier, fails there naming the card's
+ * width.
+ *
+ * **The name may wrap, and the number does not take its room.** A step name is a heading and
+ * not a label, so it wraps rather than running out of its card — `white-space: nowrap` here
+ * was the bug the arithmetic above was written for — and inside the row the number sits
+ * *above* the name instead of beside it, because the number is `flex: none` and 40 px out of
+ * a 164 px box is the difference between a name that fits and one that breaks mid-word.
  *
  * **The animation.** The steps fade in as the reader scrolls to them, using a scroll-driven
  * animation (`animation-timeline: view()`), which costs no JavaScript at all. It is inside a
@@ -209,9 +226,10 @@ const STEPS = [
     background: var(--surface);
   }
 
-  /* The step's heading row: the number and the name on one line, at every width. The name
-     does not wrap, because a wrapped name is a second row, and the number is a fixed box
-     beside it. */
+  /* The step's heading row: the number and the name on one line, which is what the column
+     of steps has room for at every width it is a column at. The number is a fixed box beside
+     the name; the row that shares the width four ways turns this into a column instead (see
+     the 64rem block below). */
   .step-head {
     display: flex;
     align-items: center;
@@ -234,14 +252,20 @@ const STEPS = [
     font-weight: var(--weight-semibold);
   }
 
+  /* The name wraps, at every width: it is a heading, and a heading that cannot fit its card
+     is a heading that runs out of it. The wrap is what makes the card's width the only thing
+     that matters — `website/test/base-styles.mjs` sizes the card against the longest word of
+     the names the flow prints, because a word is what wrapping cannot break. */
   .step-name {
     margin: 0;
     font-family: var(--font-sans);
     font-size: var(--font-size-lg);
     font-weight: var(--weight-semibold);
     letter-spacing: var(--tracking-tight);
-    white-space: nowrap;
     color: var(--text);
+    /* A name longer than its card — a future step the spec words in one long word — breaks
+       rather than running out of the card, the same guard the caption below carries. */
+    overflow-wrap: anywhere;
   }
 
   .step-caption {
@@ -270,15 +294,29 @@ const STEPS = [
     stroke-linejoin: round;
   }
 
-  /* The row: four cards side by side, which is the run travelling left to right, from the
-     same breakpoint the layout's own header switches at. The steps share the width and the
-     arrows sit between the cards, turned to point along the row — the drawing's own box
-     turns with them, so the arrow lands inside the gap rather than across a card. */
-  @media (min-width: 48rem) {
+  /* The row: four cards side by side, which is the run travelling left to right. The steps
+     share the width and the arrows sit between the cards, turned to point along the row — the
+     drawing's own box turns with them, so the arrow lands inside the gap rather than across a
+     card.
+
+     64 rem rather than the chrome's 48 rem: a card here is a quarter of the column less the
+     arrows, and below about 51 rem that box is narrower than the longest word of the spec's
+     own step names. `website/test/base-styles.mjs` computes both numbers and fails if the row
+     starts before a card can hold a name.
+
+     The head turns into a column as well: the number is `flex: none`, and beside the name it
+     takes 40 px of the box the name has to fit in. Above the name it costs a row and nothing
+     horizontal, which is what keeps the four names reading as names rather than as fragments. */
+  @media (min-width: 64rem) {
     .flow-steps {
       flex-direction: row;
       align-items: stretch;
       gap: var(--space-2xs);
+    }
+
+    .step-head {
+      flex-direction: column;
+      align-items: flex-start;
     }
 
     .flow-step {
