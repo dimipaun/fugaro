@@ -38,15 +38,19 @@ var check67aGuard = []string{
 	"ACCOUNT_ID=                  # the SANDBOX installation's billing account ID, no BILLING_ prefix: the throwaway project is created under it",
 	"AMOUNT=                      # the monthly amount for the throwaway managed project, a number: fugaro init --managed has no default for it",
 	"TERRAFORM_ADDRESS=           # ONE resource address out of a real plan, in terraform's own form: the single address fugaro allow-delete is given in step 7",
+	"SANDBOX=$(git rev-parse --show-toplevel)   # the sandbox checkout this block is being re-run IN: the only directory where the three stops below hold, and the directory every step returns to",
 	"",
 	"# ${VAR:?} everywhere: an empty variable is a hard error, never an empty",
 	"# argument that gcloud would resolve from its ambient configuration (a default",
 	"# gcloud project is not this check's). No apostrophe inside a ${VAR:?...}",
 	"# message: bash reads the message as a word expecting a closing quote and the",
 	"# whole block then fails to parse. TERRAFORM_ADDRESS is the one value here no",
-	"# step can choose for you: it comes out of a plan the owner reads.",
-	"[ \"$P\" = fugaro-dev ] && [ -n \"$L\" ] && [ -n \"$R\" ] && [ -n \"$F\" ] && [ -n \"$M\" ] && [ -n \"$B\" ] && [ -n \"$ACCOUNT_ID\" ] && [ -n \"$AMOUNT\" ] && [ -n \"$TERRAFORM_ADDRESS\" ] \\",
-	"  || { echo \"Check 67a stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R F=$F M=$M B=$B ACCOUNT_ID=$ACCOUNT_ID AMOUNT=$AMOUNT TERRAFORM_ADDRESS=$TERRAFORM_ADDRESS must not be empty)\" >&2; exit 1; }",
+	"# step can choose for you: it comes out of a plan the owner reads. SANDBOX is",
+	"# read, not typed: it is the checkout the block is being re-run in, so a step",
+	"# that has cd-ed away returns to it with `cd \"${SANDBOX:?}\"` and never with",
+	"# `cd -` (which would land in the clone).",
+	"[ \"$P\" = fugaro-dev ] && [ -n \"$L\" ] && [ -n \"$R\" ] && [ -n \"$F\" ] && [ -n \"$M\" ] && [ -n \"$B\" ] && [ -n \"$ACCOUNT_ID\" ] && [ -n \"$AMOUNT\" ] && [ -n \"$TERRAFORM_ADDRESS\" ] && [ -n \"$SANDBOX\" ] \\",
+	"  || { echo \"Check 67a stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R F=$F M=$M B=$B ACCOUNT_ID=$ACCOUNT_ID AMOUNT=$AMOUNT TERRAFORM_ADDRESS=$TERRAFORM_ADDRESS SANDBOX=$SANDBOX must not be empty)\" >&2; exit 1; }",
 	"fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \\",
 	"  || { echo \"Check 67a stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)\" >&2; exit 1; }",
 	"git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\\.git)?$' \\",
@@ -67,15 +71,18 @@ var check67bGuard = []string{
 	"ACCOUNT_ID=                  # the SANDBOX installation's billing account ID, no BILLING_ prefix: the new project is created under it",
 	"AMOUNT=                      # the monthly amount for the new managed project, a number",
 	"TERRAFORM_ADDRESS=           # ONE resource address out of a real plan, in terraform's own form: the single address fugaro allow-delete is given in step 4",
+	"SANDBOX=$(git rev-parse --show-toplevel)   # the sandbox checkout this block is being re-run IN: the only directory where the three stops below hold, and the directory step 5 returns to",
 	"",
 	"# ${VAR:?} everywhere: an empty variable is a hard error, never an empty",
 	"# argument that gcloud would resolve from its ambient configuration. No",
 	"# apostrophe inside a ${VAR:?...} message (bash reads it as an unclosed quote).",
 	"# TERRAFORM_ADDRESS comes out of a plan you read, exactly as in 67a, and E is",
 	"# refused unless it names a project of its own: a restore pointed at the",
-	"# sandbox project is the one creating command this check never runs.",
-	"[ \"$P\" = fugaro-dev ] && [ -n \"$L\" ] && [ -n \"$R\" ] && [ -n \"$F\" ] && [ -n \"$M\" ] && [ -n \"$N\" ] && [ -n \"$E\" ] && [ \"$E\" != \"$P\" ] && [ \"$E\" != \"$M\" ] && [ \"$E\" != \"$N\" ] && [ -n \"$ACCOUNT_ID\" ] && [ -n \"$AMOUNT\" ] && [ -n \"$TERRAFORM_ADDRESS\" ] \\",
-	"  || { echo \"Check 67b stopped: re-run the whole setup block (P=$P must be fugaro-dev; E=$E must differ from P, M and N, and L=$L R=$R F=$F M=$M N=$N ACCOUNT_ID=$ACCOUNT_ID AMOUNT=$AMOUNT TERRAFORM_ADDRESS=$TERRAFORM_ADDRESS must not be empty)\" >&2; exit 1; }",
+	"# sandbox project is the one creating command this check never runs. SANDBOX is",
+	"# read rather than typed, so a step that has cd-ed away returns with",
+	"# `cd \"${SANDBOX:?}\"` and never with `cd -` (which would land in the clone).",
+	"[ \"$P\" = fugaro-dev ] && [ -n \"$L\" ] && [ -n \"$R\" ] && [ -n \"$F\" ] && [ -n \"$M\" ] && [ -n \"$N\" ] && [ -n \"$E\" ] && [ \"$E\" != \"$P\" ] && [ \"$E\" != \"$M\" ] && [ \"$E\" != \"$N\" ] && [ -n \"$ACCOUNT_ID\" ] && [ -n \"$AMOUNT\" ] && [ -n \"$TERRAFORM_ADDRESS\" ] && [ -n \"$SANDBOX\" ] \\",
+	"  || { echo \"Check 67b stopped: re-run the whole setup block (P=$P must be fugaro-dev; E=$E must differ from P, M and N, and L=$L R=$R F=$F M=$M N=$N ACCOUNT_ID=$ACCOUNT_ID AMOUNT=$AMOUNT TERRAFORM_ADDRESS=$TERRAFORM_ADDRESS SANDBOX=$SANDBOX must not be empty)\" >&2; exit 1; }",
 	"fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \\",
 	"  || { echo \"Check 67b stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)\" >&2; exit 1; }",
 	"git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\\.git)?$' \\",
@@ -93,12 +100,15 @@ var check68Guard = []string{
 	"R=edgeappinc/fugarosandbox   # the sandbox repository, owner/name: the only repository this check touches",
 	"D=fugaro-deployer@$M.iam.gserviceaccount.com   # the account D75 defines (tf.DeployerAccountID, fugaro-deployer)",
 	"B=fugaro-runs-$M             # the managed project's runs bucket: where the marker and the delete list are, and what the deployer must NOT reach",
+	"SANDBOX=$(git rev-parse --show-toplevel)   # the sandbox checkout this block is being re-run IN: the only directory where the three stops below hold, and the directory step 6 returns to",
 	"",
 	"# ${VAR:?} everywhere: an empty variable is a hard error, never an empty",
 	"# argument that gcloud would resolve from its ambient configuration. No",
 	"# apostrophe inside a ${VAR:?...} message (bash reads it as an unclosed quote).",
-	"[ \"$P\" = fugaro-dev ] && [ -n \"$L\" ] && [ -n \"$R\" ] && [ -n \"$F\" ] && [ -n \"$M\" ] && [ -n \"$D\" ] && [ -n \"$B\" ] \\",
-	"  || { echo \"Check 68 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R F=$F M=$M D=$D B=$B must not be empty)\" >&2; exit 1; }",
+	"# SANDBOX is read rather than typed, so a step that has cd-ed away returns with",
+	"# `cd \"${SANDBOX:?}\"` and never with `cd -` (which would land in the clone).",
+	"[ \"$P\" = fugaro-dev ] && [ -n \"$L\" ] && [ -n \"$R\" ] && [ -n \"$F\" ] && [ -n \"$M\" ] && [ -n \"$D\" ] && [ -n \"$B\" ] && [ -n \"$SANDBOX\" ] \\",
+	"  || { echo \"Check 68 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R F=$F M=$M D=$D B=$B SANDBOX=$SANDBOX must not be empty)\" >&2; exit 1; }",
 	"fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \\",
 	"  || { echo \"Check 68 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)\" >&2; exit 1; }",
 	"git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\\.git)?$' \\",
@@ -401,7 +411,8 @@ func TestChecklistHasCheck67a(t *testing.T) {
 	//     address by a stop that never looked at it.
 	for _, want := range []string{
 		"--billing-account ${ACCOUNT_ID:?} --budget ${AMOUNT:?} --budget-currency USD --link-billing ${ACCOUNT_ID:?}",
-		`sed -i -e 's/^project: .*/project: '"${F:?}"'/' -e 's/^gcp_project: .*/gcp_project: '"${M:?}"'/' fugaro.yaml`,
+		`sed -e 's/^project: .*/project: '"${F:?}"'/' -e 's/^gcp_project: .*/gcp_project: '"${M:?}"'/' fugaro.yaml > fugaro.yaml.new`,
+		"NOT `sed -i`: BSD/macOS sed reads -e as -i's backup extension",
 		`cp /tmp/chk67-marker.orig.json /tmp/chk67-marker-bad.json`,
 		`gcloud storage cp /tmp/chk67-marker.orig.json "gs://${B:?}/fugaro/managed.json" --project="${M:?}"`,
 		"ONLY if Check 68 and Check 67b are not going to run",
@@ -438,8 +449,8 @@ func TestChecklistHasCheck67a(t *testing.T) {
 		"rm -rf /tmp/chk67-managed /tmp/chk67-marker.json",
 		`fugaro managed apply /tmp/chk67-managed/managed-root --project fugaro   # expect: refused, "the project is not managed"`,
 		"git checkout -- managed-root",
-		"JOB_SA=",
 		`--impersonate-service-account="$JOB_SA"`,
+		`gcloud storage cp /tmp/chk67-runs-policy.json "gs://${B:?}/`,
 		"the run's job credential failed to write both objects",
 		"repo/workflow",
 	} {
@@ -553,10 +564,39 @@ func TestChecklistHasCheck67a(t *testing.T) {
 	// fugaro.yaml names the managed installation.
 	for _, want := range []string{
 		"cd /tmp/chk67-managed                                        # the managed checkout: the guard block above was re-run in the sandbox checkout",
-		"cd -                                                                   # back in the sandbox checkout",
+		`cd "${SANDBOX:?}"                                                       # back in the sandbox checkout`,
+		// The return to the sandbox checkout is the guard block's own variable,
+		// not `$OLDPWD`: the block was just re-run IN the sandbox checkout, so
+		// `cd -` lands in whatever directory the previous step left the shell in
+		// (`/tmp/chk67-managed`, unset in a fresh shell) — where the second stop
+		// is refused, and where step 5 would put ./chk67-scratch-root as well,
+		// replacing the gate's own refusal with the checkout rule's.
+		`SANDBOX=$(git rev-parse --show-toplevel)`,
+		"`cd -` would land in the clone",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 67a's step does not name the directory it runs from (%q)", want)
+		}
+	}
+	for _, bad := range []string{"\ncd - ", "\ncd -\n", "\ncd -\t"} {
+		if strings.Contains(section, bad) {
+			t.Errorf("Check 67a returns to the sandbox checkout with %q, which lands in the clone", strings.TrimSpace(bad))
+		}
+	}
+	// The Restore reverses the one thing this check can leave on the SANDBOX
+	// installation — step 8's optional probe (iii) — before its counts, and
+	// counts that reversal as one of its `0` lines. 68's Restore counts the
+	// equivalent; a leftover grant here would be a change to the installation
+	// the check is not allowed to make.
+	for _, want := range []string{
+		"JOB_SA=                      # the job account's email, from that read",
+		`gcloud iam service-accounts remove-iam-policy-binding "$JOB_SA"`,
+		`gcloud iam service-accounts get-iam-policy "$JOB_SA" --project="${P:?}"`,
+		"the token-creator grant step 8's optional probe (iii) may have added to the job account",
+		"if [ -n \"$JOB_SA\" ]; then",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 67a's Restore does not reverse probe (iii) (%q)", want)
 		}
 	}
 
@@ -689,9 +729,19 @@ func TestChecklistHasCheck67b(t *testing.T) {
 		"both are re-run in the sandbox checkout",
 		"cd /tmp/chk67-managed    # the managed checkout",
 		"cd /tmp/chk67-managed    # the managed checkout, again",
+		// The return to the sandbox checkout is the guard block's own variable:
+		// `cd -` would land in the clone the previous step left the shell in.
+		`SANDBOX=$(git rev-parse --show-toplevel)`,
+		`cd "${SANDBOX:?}"`,
+		"never `cd -`, which would land in the clone just as it would in 67a",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 67b does not say %q, so a step runs where its own guard cannot", want)
+		}
+	}
+	for _, bad := range []string{"\ncd - ", "\ncd -\n"} {
+		if strings.Contains(section, bad) {
+			t.Errorf("Check 67b returns to the sandbox checkout with %q, which lands in the clone", strings.TrimSpace(bad))
 		}
 	}
 	// Step 4's delete plan: the same absent-then-written sequence 67a's step 7
@@ -922,7 +972,7 @@ func TestChecklistHasCheck68(t *testing.T) {
 	// block's stops hold in the sandbox checkout, not in the clone.
 	for _, want := range []string{
 		"cd /tmp/chk67-managed     # 67a's clone again",
-		"cd -                                                                                                 # back in the sandbox checkout",
+		`cd "${SANDBOX:?}"                                                                                     # back in the sandbox checkout`,
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check 68's step does not name the directory it runs from (%q)", want)
@@ -1159,6 +1209,24 @@ func TestManagedChecklistSectionsArePinned(t *testing.T) {
 		t.Errorf("the managed-projects rows are not between checks 58 and 69a in order: 58=%d 67a=%d 67b=%d 68=%d 69a=%d", p58, p67a, p67b, p68, p69a)
 	}
 
+	// And the SECTIONS sit where the table says they do: the three of them
+	// between Check 58's heading and Check 69a's. The order test above only
+	// walks the four headings among themselves, so three sections appended
+	// after Check 70c — where they were, with the table still promising them
+	// between 58 and 69a — satisfied it, and the placement a reader follows was
+	// pinned by nothing.
+	i58 := strings.Index(doc, "## Check 58")
+	i67a := strings.Index(doc, "## Check 67a:")
+	i67b := strings.Index(doc, "## Check 67b:")
+	i68 := strings.Index(doc, "## Check 68:")
+	i69a := strings.Index(doc, "## Check 69a:")
+	if i58 < 0 || i67a < 0 || i67b < 0 || i68 < 0 || i69a < 0 {
+		t.Fatalf("the checklist is missing one of the headings this placement is asserted over (58=%d 67a=%d 67b=%d 68=%d 69a=%d)", i58, i67a, i67b, i68, i69a)
+	}
+	if !(i58 < i67a && i67a < i67b && i67b < i68 && i68 < i69a) {
+		t.Errorf("the three managed sections do not sit between Check 58 and Check 69a, which is where the summary table puts them: 58=%d 67a=%d 67b=%d 68=%d 69a=%d", i58, i67a, i67b, i68, i69a)
+	}
+
 	// `belong`, EdgeWeb and EdgeServer are the installations and repositories
 	// these checks must never name as anything but forbidden. They are not
 	// named at all here: the guard proves the boundary structurally instead
@@ -1168,6 +1236,39 @@ func TestManagedChecklistSectionsArePinned(t *testing.T) {
 		for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
 			if strings.Contains(managedCheckSection(t, path, doc, h), bad) {
 				t.Errorf("%s names %q", h, bad)
+			}
+		}
+	}
+
+	// The line citations, in a document that cites exactly: `managed_apply.go`'s
+	// `applied …` print is 289 (not 288), `restoreGCPProjectLine` is declared at
+	// restore.go:1015 with its refusal at 1042 (not 1040), and the operator's
+	// grant is `google_service_account_iam_member.operator` at workflow/sa.tf:12
+	// with its `role` line at 16. A citation one line out sends a reader to the
+	// blank line above the thing.
+	for _, want := range []string{
+		"internal/cli/managed_apply.go:289",
+		"internal/cli/restore.go:1015",
+		"deploy/terraform/gcp/modules/workflow/sa.tf:12",
+	} {
+		found := false
+		for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
+			if strings.Contains(managedCheckSection(t, path, doc, h), want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no managed section carries the corrected citation %q", want)
+		}
+	}
+	for _, bad := range []string{
+		"internal/cli/managed_apply.go:288",
+		"internal/cli/restore.go:1040",
+		"deploy/terraform/gcp/modules/workflow/sa.tf:13",
+	} {
+		for _, h := range []string{"## Check 67a:", "## Check 67b:", "## Check 68:"} {
+			if strings.Contains(managedCheckSection(t, path, doc, h), bad) {
+				t.Errorf("%s cites %q, which is a line off", h, bad)
 			}
 		}
 	}
