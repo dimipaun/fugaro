@@ -418,30 +418,51 @@ does not add a charge.
   **Recommendation: a queue deadline**, checked in the same place the reaper
   and `fugaro watch` already look — a job that has not reached `SCHEDULED` or
   `RUNNING` within N minutes (a plan value; the natural default is the
-  launcher's own task timeout) is cancelled with `jobs.cancel`, and the run
+  launcher's own task timeout) is **deleted** (`jobs.delete`, amended by
+  Task 9 — see the paragraph after this one), and the run
   record shows a `queue-timeout` outcome naming the wait, the quota-derived
   reason in the job's status message, and what to raise. Without it, "Fugaro's
   timeouts bind long before Google's" is false for the one state a user is
   most likely to be staring at.
+
+  **Amended by Task 9: the deadline deletes, not cancels**, and what changed
+  the design is a permission rather than a preference. This bullet first said
+  `jobs.cancel`, and the reaper was built that way — but `batch.jobs.cancel`
+  is not a permission Google defines (it is in no permission list and no
+  predefined role; §3.7), so the reaper's custom role naming it was a role the
+  API **refuses to create**, and the provisioning stage could not apply at all
+  until Task 9 removed it. **`Cancel` stays `jobs.cancel`** for `fugaro
+  cancel` and the state table above: the backend acts with the installer's own
+  credential, which carries the editor role that call needs (§3.7), and
+  `backendtest`'s cancel case requires the record to survive. The queue
+  deadline is the one caller that cannot act that way, because it runs as the
+  reaper's deliberately narrow account — and it is also the one caller that
+  **may** delete rather than cancel, because a job that never left `QUEUED`
+  never ran a task: there is no `launch.json`, no `result.json`, no VM and no
+  history for the delete to destroy. What the deadline must never do is delete
+  a job that *did* leave `QUEUED`; the built rules below are how it tells the
+  two apart.
   **Built** (Task 5): the deadline lives in the reaper
-  (`internal/backend/batch/reap.go`), it runs `jobs.cancel` and never
-  `jobs.delete`, it defaults to the longest configured task timeout — or
+  (`internal/backend/batch/reap.go`); it **deletes** a job that has never left
+  `QUEUED` (`jobs.delete` — the only verb its account holds for a job, the
+  `jobs.cancel` it first ran having been removed by Task 9 — and it re-reads
+  the job and requires it still to be `QUEUED` before the call). It defaults
+  to the longest configured task timeout — or
   `backend.MaxRunTime`, a run's own `--total-timeout` ceiling, whichever is
   longer — plus `backend.TaskTimeoutSlack` (this bullet's "launcher's own task
   timeout", bounded by the override the launcher accepts: a run may ask for
   longer than every configured workflow, so a deadline built from the
-  configured longest alone would cancel a run that is inside its own budget),
+  configured longest alone would act on a run that is inside its own budget),
   and its job-state table treats only `QUEUED` as a queue wait — a job that
   has reached `SCHEDULED` or `RUNNING` has a VM and is Batch's, not the
   deadline's. The `queue-timeout` outcome in the run record is the caller's
   (Task 8's plumbing), not the reaper's: the reaper's report names the job
-  and the wait. A cancelled job keeps its VMs out of the instance pass as well:
-  the cancel moves it to `CANCELLATION_IN_PROGRESS`, and Batch tears its VMs
-  down from there, so deleting them in the same pass would race that — a pass
-  that reads the job while it is still `CANCELLATION_IN_PROGRESS` treats it as
-  unfinished and leaves its VMs alone, and once the cancellation has finished
-  (`CANCELLED`) the next pass reads the job as finished and reaps a VM that did
-  leak.
+  and the wait. A job this deadline deletes keeps its VMs out of the instance
+  pass as well: Batch tears a deleted job's VMs down itself, so deleting one in
+  the same pass would race that teardown — the same ordering rule §3.4 states
+  for a live job's VMs, at the other end of a job's life, leaves the VM behind
+  a job this pass deleted to the pass after, which reaps it if it really
+  outlived its job.
 - **A plain instance** cancels by `instances.delete`; the timeout is ours to
   enforce (a watchdog or the startup script's `timeout`), which is another
   small piece of machinery Batch already has.
@@ -787,7 +808,7 @@ itself.
 | **C5** | Spot | **Off by default**, opt-in per profile | Spot by default: up to 91% cheaper, but a preemption kills the stage mid-flight, the notice is **0 s by default** (120 s only if the job asks, and the shutdown after it is best effort, up to 30 s), so checkpointing has no room at all. |
 | **C6** | Service account | **One per run class (profile, account), reused from the project-centric model**; never the default Compute Engine SA | Default Compute Engine SA: project-wide and over-broad. |
 | **C7** | Egress | **No external IP; Cloud NAT** | Ephemeral external IP + deny-all ingress: simpler, cheaper per run, but "no inbound" then rests on a firewall list. |
-| **C8** | Timeouts and cancel | **`jobs.cancel` for cancel** (the job ends `CANCELLED` and its record survives), **`maxRunDuration` for the running timeout**, and **a queue deadline** for a job stuck in `QUEUED` behind the CPU quota | `jobs.delete` as cancel: destructive, erases the history `ls`/`diagnose`/`watch` read, and fails the conformance suite's cancel case. Fugaro's own watchdog (needed only on plain instances). |
+| **C8** | Timeouts and cancel | **`jobs.cancel` for cancel** (the job ends `CANCELLED` and its record survives), **`maxRunDuration` for the running timeout**, and **a queue deadline** for a job stuck in `QUEUED` behind the CPU quota — **a delete** of a job that never left `QUEUED` (Task 9: `batch.jobs.cancel` is not a permission Google defines, so the reaper's role could not name it; §1.4) | `jobs.delete` as cancel: destructive, erases the history `ls`/`diagnose`/`watch` read, and fails the conformance suite's cancel case. Fugaro's own watchdog (needed only on plain instances). |
 | **C9** | Logs | **`logsPolicy.destination=CLOUD_LOGGING`**, and extend the installation's sink/exclusion to `batch.googleapis.com/Job` | Leave logs in `_Default`: `fugaro logs` finds nothing and every viewer reads them. |
 | **C10** | Secrets | **The job's `secretVariables`**: names in the job definition, values resolved by the VM as the job's service account | A runner-side Secret Manager fetch as the primary path: more code for the same result, kept only as a fallback for a name known only at run time. Baking values in: rejected — anyone with `batch.jobs.get` could read them. |
 | **C11** | `fugaro init` weight | **One installation-level Batch stage; no per-repository resource** | Per-repository VM setup: rejected — reintroduces exactly the weight project-centric removes. |
@@ -920,7 +941,28 @@ builds `__PRELOAD_IMG__` on, reads `stat -c %g /var/run/docker.sock` there, and
 writes the number into the installation's configuration
 (`Options.Docker.SocketGID`, §8.1 Task 7) — and **re-reads it on every rebuild
 of that image**, because the socket's gid belongs to the image's COS build and
-moves when it does. A recorded gid that no longer matches the image is a mount
+moves when it does.
+
+**Built** (Task 9), and as far as the tree goes: the builder VM's startup script
+reads the gid off its own socket and prints it on the serial port beside the
+marker, `preload.sh` refuses a value that is not a positive integer and writes
+it as a label on **every generation it creates** (`socket-gid`, the name
+declared once and handed to the step as a build substitution, `preload.tf`), so
+a rebuild re-reads it rather than inheriting it, and a generation built before
+the label existed is replaced whatever its age rather than kept. The module and
+the root publish the label's name beside the image family and
+`infra.ComputeOutputs` decodes it. **What is not built, and why**: the VALUE
+never reaches Go. The image is built out of band by the Cloud Build step, so no
+resource holds it and terraform's refresh covers none of it — a `data` source
+reading the family would fail the very apply this module exists to complete,
+because the family has no image until the scheduled build has run once. Reading
+the label back takes a Compute client `internal/infra.Clients` does not carry
+(`init_compute.go`'s `Verify` says the same of the preload image), and the
+configuration field it would be written into is §8.1 task 8's, which is not in
+this tree. So the read-back is Check 57b's and `doctor`'s, and
+`Options.Docker.SocketGID` stays unset until then — which is the state Task 7's
+refusal already covers (a Docker run with no recorded gid is refused before the
+create). A recorded gid that no longer matches the image is a mount
 the container comes up unable to open, which is 57b-1's FACT to catch; 57a-6's
 own reading (412, on the image it used) is a measurement of that image and never
 a default this code may carry.
@@ -1003,7 +1045,7 @@ idempotent, the same reason Cloud Run's job sets `max_retries = 0`.
 
 Two things the mapping adds that Cloud Run needed nothing for: **the job name
 is not an execution name** (§2.5), and a job that never gets resources stays
-`QUEUED` until the queue deadline cancels it (§1.4) — `StatePending` with a
+`QUEUED` until the queue deadline deletes it (§1.4) — `StatePending` with a
 reason, not a hang.
 
 ### 2.4 Naming, labels and adoption
@@ -1381,7 +1423,7 @@ the teardown is assumed rather than read:
 - **A hung job:** Batch itself fails a job that runs longer than 14 days
   (cloud.google.com/batch/quotas, checked 2026-10-15), but Fugaro's own
   `maxRunDuration` binds first and is far shorter.
-- **A job stuck in `QUEUED`:** the queue deadline of §1.4 cancels it, so it
+- **A job stuck in `QUEUED`:** the queue deadline of §1.4 deletes it, so it
   does not sit against `max_parallel` for two days.
 - **The residual, and the reaper.** A stuck `DELETION_IN_PROGRESS`, an orphaned
   VM after a Batch-side fault, or (on the plain-instance alternative) a
@@ -1427,9 +1469,12 @@ the teardown is assumed rather than read:
   in this section's bullets above), so the reaper only ever sees the residual.
   The built decisions, each narrower than
   this section's prose: the job pass runs before the instance pass; a job
-  `QUEUED` past the queue deadline is **cancelled** (`jobs.cancel` — never
-  `jobs.delete`, because the record is what `ls`, `diagnose`, `watch` and the
-  sweeper read) and a job still `SCHEDULED`/`RUNNING`, or already in
+  `QUEUED` past the queue deadline is **deleted** (`jobs.delete`) — Task 9's
+  amendment of §1.4, because `batch.jobs.cancel` is not a permission Google
+  defines and the role that named it could not be created, and because a job
+  that never left `QUEUED` has no history a delete destroys: no task ever ran,
+  so there is no `launch.json`, no `result.json` and no VM — and a job still
+  `SCHEDULED`/`RUNNING`, or already in
   `DELETION_IN_PROGRESS`, that has been in that state longer than the **run
   budget** is **deleted** (the delete *is* its VMs' teardown). Stuckness is
   measured from the **time the job has spent in the state it reports**, never
@@ -1500,8 +1545,9 @@ the teardown is assumed rather than read:
   state, an unreadable create time, two label fields that disagree about the
   run — is still in the region and may still be `RUNNING`, so its VMs are not
   the reaper's either, and a refusal never hands the VM it just declined to
-  explain to the instance pass. A cancelled queue-deadline job owns its VMs
-  too (Batch tears them down from `CANCELLATION_IN_PROGRESS`), as does a job
+  explain to the instance pass. A job the queue deadline deleted owns its VMs
+  for that pass too (Batch tears a deleted job's VMs down itself; the Built
+  note above and §1.4), as does a job
   whose deletion someone else already started; only a job this pass positively
   classified as **finished**, and a run no job in the listing mentions at all,
   frees its run. `CANCELLATION_IN_PROGRESS` counts as not finished, whatever
@@ -1509,7 +1555,9 @@ the teardown is assumed rather than read:
   Batch is still tearing that run's VMs down for as long as the state lasts, so
   it never frees its run, and the reaper never deletes it either — deleting a
   cancelled job erases the record `ls`, `diagnose` and `watch` read, which is
-  why §1.4 and C8 make `jobs.cancel` the cancel — so a cancellation that has
+  why `Cancel` is `jobs.cancel` (§1.4 and C8; the reaper's *own* queue-deadline
+  delete is of a job that never ran, and is the exception Task 9 made) — so a
+  cancellation that has
   not finished within the run budget is **reported**, not acted on. A stuck
   `DELETION_IN_PROGRESS` is the one such state that *is* deleted again, because
   its record is going anyway and the second delete is how the deletion
@@ -1521,11 +1569,11 @@ the teardown is assumed rather than read:
   not know (including `STATE_UNSPECIFIED`), a job or VM whose time cannot be
   read, and a `SCHEDULED` or `DELETION_IN_PROGRESS` job whose latest status
   event may date its queue wait rather than the state it reports. It is
-  idempotent — a delete of something already gone is not an error, and neither
-  is a **cancel** of something already gone (a 404 there is the job someone
-  else's delete removed between the listing and the call, not a failure that
-  ends the pass) — and `DryRun` lists what a pass would delete and touches
-  nothing, cancel included.
+  idempotent — a delete of something already gone is not an error (a 404 there
+  is the job someone else's delete removed between the listing and the call,
+  not a failure that ends the pass; and the queue deadline treats a job that
+  vanishes before its own delete the same way) — and `DryRun` lists what a pass
+  would delete and touches nothing.
 
   The age floor is an **instance's** floor — it bounds no job, a job's
   deadlines being its queue deadline and its time in state. All three derived
@@ -3964,7 +4012,13 @@ senior reviewer before merge, not just the normal one.
    global resources: an image create without it IS created and the call still
    fails, and the sweep's delete fails the same way into its `|| true`) — and
    it holds no instance or image admin role and nothing that could create a
-   job or a second VM. `setMetadata` is the one permission there wider than
+   job or a second VM. **Task 9 added no permission to it**: the socket gid is
+   read by the builder VM's own startup script and written as a label by the
+   create that was already there, and its name travels as a build substitution
+   (`preload.tf`). The reaper's role, in the same module, lost one — see §3.7
+   and the Build note above: `batch.jobs.cancel` is not a permission Google
+   defines, so the role was uncreatable and the stage's apply could not
+   complete until Task 9. `setMetadata` is the one permission there wider than
    the build's use of it (it is also how SSH keys reach a VM) and it is
    deliberate and bounded rather than dropped: a builder VM with no startup
    script pulls nothing, so the build has no version of itself without it, and
@@ -4117,7 +4171,7 @@ reasoning lives; this table is the checklist.
 | C5 | Spot | Off by default, opt-in per profile | Spot by default (up to 91% cheaper, kills a stage mid-flight) |
 | C6 | Service account | One per run class — the (`profile`, `account`) job account, never the default Compute Engine SA | The default SA (project-wide blast radius, and Google's own docs call it Editor and "not recommended for production"); a per-repository account is **C21**'s question, not this one |
 | C7 | Egress | No external IP; Cloud NAT | An ephemeral IP + deny-all ingress (simpler, cheaper per run, "no inbound" rests on a firewall list) |
-| C8 | Timeouts and cancel | Batch `maxRunDuration` + **`jobs.cancel`** (not `jobs.delete`, which erases the record a cancel must still be readable from), plus a queue deadline for a job stuck in `QUEUED`; tolerate a cancel that races a finished job | Fugaro's own watchdog (needed only on plain instances); `jobs.delete` as the cancel (cheapest, and it fails the conformance suite's cancel case — §1.4) |
+| C8 | Timeouts and cancel | Batch `maxRunDuration` + **`jobs.cancel`** (not `jobs.delete`, which erases the record a cancel must still be readable from), plus a queue deadline for a job stuck in `QUEUED`, which is a **delete** of a job that never ran (Task 9 — the reaper's account cannot hold `batch.jobs.cancel`, which Google does not define); tolerate a cancel that races a finished job | Fugaro's own watchdog (needed only on plain instances); `jobs.delete` as the cancel (cheapest, and it fails the conformance suite's cancel case — §1.4) |
 | C9 | Logs | `logsPolicy.destination=CLOUD_LOGGING`, and extend the installation's sink/exclusion to `batch.googleapis.com/Job` | Leave logs in `_Default` (`fugaro logs` finds nothing, every viewer reads them) |
 | C10 | Secrets | **`Environment.secretVariables`** — names in the job, values resolved by the VM as the job's service account | Bake values into the job definition (anyone with `batch.jobs.get` reads them); a runner-side fetch is a fallback only for a secret name known only at run time (§1.6) |
 | C11 | `fugaro init` weight | One installation-level Batch stage, no per-repository resource | Per-repository VM setup (reintroduces the weight project-centric removes) |
