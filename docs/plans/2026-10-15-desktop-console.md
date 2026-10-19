@@ -1203,7 +1203,11 @@ leading, weights, `--row-height`, the focus-ring width and offset, the motion du
 light and dark, each written once, derived from the same logo hue as the website's
 [`palette-logo.css`](../../website/src/styles/palette-logo.css), whose existing values are
 reused verbatim so the console and the site are one product; the design's §3.2 and §3.3 are
-the literal tables).
+the literal tables). **One of those two tables is the set that ships and the other is a
+record, and the owner's ruling of 2026-10-19 is what sets them apart**: the owner took §8's
+**Q1 option (b)**, so `palette.css` holds the **dark set alone** — §3.3's light table is
+kept as the record of a set no task owns, and the token test fails by name on the four
+spellings that would let a light theme back in.
 
 **Files.** the two above, new; `console/README.md` (a note on the theme directory, the way
 its `build.files` list is already kept true); `console/test/unit/theme-tokens.test.ts`,

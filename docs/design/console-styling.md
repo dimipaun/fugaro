@@ -549,7 +549,7 @@ a value set for a fixed vocabulary rather than a second copy of it" — the cons
 | File | Holds | Contains no |
 |---|---|---|
 | `console/src/renderer/theme/tokens.css` | the **vocabulary**: spacing steps, radii, type sizes, leading, weights, motion durations, the focus-ring width and offset | colour |
-| `console/src/renderer/theme/palette.css` | the **value set**: every colour token, light and dark, each written once | sizes, spacing, motion |
+| `console/src/renderer/theme/palette.css` | the **value set**: every colour token, each written once — **as shipped, the dark set alone** (the owner's Q1 ruling of 2026-10-19; §3.3 is the record of the light set, which no task owns) | sizes, spacing, motion |
 | `console/src/renderer/theme/base.css` | reset, document, chrome, layout, responsive, focus, forced-colors | colour literals — it reads the tokens |
 | `console/src/renderer/theme/screens.css` | the per-screen rules, in the order §2 lists the screens | colour literals |
 
