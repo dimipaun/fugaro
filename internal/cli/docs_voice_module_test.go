@@ -1008,8 +1008,8 @@ func TestDocsVoiceModuleReconciliationQuotesAreVerbatim(t *testing.T) {
 // TestDocsVoiceModuleReconciliationPinsItsBaseline: the document's baseline is
 // one commit, and it says which of its citations that commit does not carry.
 // A review found the framing claiming "every path exists there" while finding
-// #17 names console/scripts/notarize-and-staple.sh, which #626 added after
-// 82ba600d -- so the exception is named in section 0 and again in #17, and the
+// #17 names the console build's notarize-and-staple.sh script, which #626 added
+// after 82ba600d -- so the exception is named in section 0 and again in #17, and the
 // README's baseline row says it too. The same paragraph's claim about the
 // mobile plan's phases was wrong in the other direction: Phase 3 is the app,
 // and its merged part is under mobile/src/ (P3.1: the skeleton and the account
@@ -1018,10 +1018,17 @@ func TestDocsVoiceModuleReconciliationPinsItsBaseline(t *testing.T) {
 	const path = "docs/voice-module/reconciliation.md"
 	recon := readDoc(t, path)
 	for _, want := range []string{
-		"the **one exception** is `console/scripts/notarize-and-staple.sh`",
+		"the **one exception** is",
+		"notarize-and-staple.sh",
 		"**#626 added after the baseline**",
 		"**Phase 3 is the app and lives under `mobile/src/`, not `shared/`**",
-		"**P3.1** (the skeleton and the account store)",
+		"no Phase 3 task writes anything under `shared/`",
+		"**P3.1** (the skeleton and the account store, `mobile/src/skeleton` and `mobile/src/accounts`)",
+		// Which Phase 3 parts are merged, and which are not, with the commits
+		// that merged the two that landed after the baseline.
+		"**P3.2** (the feed reader, PR #590, merged as `ebe6914`)",
+		"**P3.6** (the mailbox client, PR #604, merged as `3d02625`)",
+		"**P3.3** (`mobile/src/jobs/`)",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q", path, want)
@@ -1058,6 +1065,13 @@ func TestDocsVoiceModuleReconciliationPinsItsBaseline(t *testing.T) {
 	for _, dir := range []string{"shared/feed", "shared/mailbox-client"} {
 		if _, err := os.Stat("../../" + dir); err == nil {
 			t.Errorf("%s: %s exists, so Phase 3 is under shared/ after all and the correction is wrong", path, dir)
+		}
+	}
+	// And the three Phase 3 tasks the document says are not merged have no
+	// directory: the claim is about this tree, so it is checked against it.
+	for _, dir := range []string{"mobile/src/jobs", "mobile/src/audio", "mobile/src/voice"} {
+		if _, err := os.Stat("../../" + dir); err == nil {
+			t.Errorf("%s: %s exists, so that Phase 3 task is merged and the document's list of what is not is stale", path, dir)
 		}
 	}
 }
@@ -1262,7 +1276,14 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 	}
 }
 
-// Mutation (verified, run and restored): 51 entries, numbered (1)–(51).
+// Mutation (verified, run and restored): 52 entries, numbered (1)–(52).
+// (52) Three edits to §0's Phase 3 sentence each fail
+// TestDocsVoiceModuleReconciliationPinsItsBaseline: replacing "no Phase 3 task
+// writes anything under `shared/`" with "Phase 3 is partly under `shared/`";
+// dropping the merge commits from the P3.2 and P3.6 clauses; and replacing the
+// list of what is not merged with "nothing else in Phase 3 is merged". The
+// merged Phase 3 work is under `mobile/src/`, and which of P3.1–P3.6 is merged
+// is a fact about the tree, so all three halves are pinned.
 // (38) Writing "a loopback, in-runner proxy that swaps a short-lived token for
 // the real key" back into #29 fails
 // TestDocsVoiceModuleReconciliationQuotesAreVerbatim twice: once as the banned
@@ -1297,8 +1318,8 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 // (49) Deleting the baseline paragraph's exception clause fails that test with
 // `lacks "the **one exception** is ..."`, and restores "every path exists
 // there", which it bans.
-// (50) Changing #17's "after the baseline commit" to "before it" fails it:
-// console/scripts/notarize-and-staple.sh postdates 82ba600d.
+// (50) Changing #17's "after the baseline commit" to "before it" fails it: the
+// console build's notarize script postdates 82ba600d.
 // (51) Dropping the README's baseline-row exception ("was added by #626 after
 // this commit") fails it: the table is what a reader checks freshness against.
 // (34) Writing "kept Q1–Q3" back into §1's sentence about the design's first
