@@ -24,7 +24,7 @@ import { ResourceRegistry } from '../accounts/resources.js';
 import { FIXTURE_SLUG, FIXTURE_UID, recordedNodes, recordedPaths } from './fixtures/nodes.js';
 import { MICROS_PER_USD, UNREADABLE_KILL } from './nodes.js';
 import { FeedReader, MAX_PATHS, READER_CODES, isPermissionError } from './reader.js';
-import { dayDate, dayKey } from './paths.js';
+import { dayDate, dayKey, isGranted } from './paths.js';
 import { BURN_WARMUP_MS } from './recompute.js';
 import { STALE_AFTER_MS } from './view.js';
 
@@ -52,6 +52,14 @@ class FakePort {
   stopped = [];
   polling = false;
   failSubscribe = false;
+  /** A `valueFor(path)` a fresh listener is answered with **at the moment it is
+   * attached**, or `null` for the port that only answers when told to. A
+   * Realtime Database listener delivers the node's current value as soon as it
+   * is attached, and the reader's ordering depends on it -- so a fake that only
+   * ever delivers on `put` cannot fail a reader that got that ordering wrong.
+   * `put` cannot express it: the point is that the delivery happens **inside**
+   * `subscribe`, before the caller's next statement. */
+  attachDelivers = null;
   /** The instant the reader's injected clock reads. A delivery moves it to the
    * instant the delivery happened at, which is what a real port would do by
    * delivering at the moment it delivers. */
@@ -62,6 +70,7 @@ class FakePort {
     if (this.failSubscribe) return null;
     const handle = () => this.stopped.push(path);
     this.listeners.set(path, { onValue, onError });
+    if (this.attachDelivers !== null) onValue(this.attachDelivers(path), this.nowMs);
     return handle;
   }
 
@@ -355,6 +364,105 @@ test('a changed day is a break, and the new day is re-subscribed', () => {
   const same = feed.refresh(tomorrow + 2_000);
   assert.equal(same.dayChanged, false);
   assert.equal(port.requests.length, before + 2);
+});
+
+test('the rollover breaks the series at the rollover, not at the next delivery', () => {
+  // §10.13 rule 4 and §10.7. Moving to the new day and leaving the screen alone
+  // would show **yesterday's document under today's date**: `snapshot()` reports
+  // the reader's own day, so the date would be new and the figures old, and the
+  // view would still call them a measurement because the old day's counter had
+  // arrived. A test that only looked after the new day's counter had been
+  // delivered could not see it -- the delivery assembles, and the assembly
+  // repairs the screen on its way past.
+  const { reader: feed, port } = reader();
+  feed.start(T0);
+  port.flush(healthy);
+  const yesterday = feed.snapshot({ nowMs: T0 });
+  assert.equal(yesterday.broken, false);
+  assert.ok(yesterday.drawable.total.counted.value > 0, 'the old day had counted something');
+
+  const tomorrow = T0 + 86_400_000;
+  assert.equal(feed.refresh(tomorrow).ok, true);
+  // Nothing has been delivered for the new day, and the screen must say so
+  // already: the old day's figures are not today's, and the zero an absent
+  // counter adds up to is not drawable either.
+  const broke = feed.snapshot({ nowMs: tomorrow });
+  assert.equal(broke.document.day, dayDate(dayKey(tomorrow)), 'the document is about the day the reader moved to');
+  assert.equal(broke.broken, true);
+  assert.equal(broke.drawable, null);
+  assert.equal(broke.dayChanged, true, 'the break is on screen from the rollover');
+});
+
+test('the rollover subscribes the new day before a listener can answer', () => {
+  // A Realtime Database listener delivers the node's current value the moment
+  // it is attached -- `start()` sets `#day` and `#paths` before its subscribe
+  // loop for exactly that reason. The rollover subscribes new paths too, so it
+  // must do the same: an assembly that runs against the day just left reads the
+  // counters deleted a moment ago and produces a document with yesterday's date
+  // and a zero.
+  const { reader: feed, port } = reader();
+  feed.start(T0);
+  port.flush(healthy);
+  const tomorrow = T0 + 86_400_000;
+  const nextDay = dayKey(tomorrow);
+  port.attachDelivers = (path) => (path.startsWith(`spend/${nextDay}/`) ? { counted: 100_000, spent: 100_000 } : healthy(path));
+  assert.equal(feed.refresh(tomorrow).ok, true);
+
+  const after = feed.snapshot({ nowMs: tomorrow });
+  assert.equal(after.document.day, dayDate(nextDay), 'the document is about the day the reader moved to');
+  assert.equal(after.broken, false, 'the new day answered as the listener attached');
+  assert.equal(after.drawable.total.counted.value, 0.1);
+});
+
+test('a refusal on a path that never delivered does not outlive its day', () => {
+  // `#broken` records a path in `#refused`/`#errored` **without** ever putting
+  // it in `#nodes`: the read failed, so nothing was read. The rollover forgets
+  // the day's spend paths, and it has to forget all of them -- a refused path is
+  // not re-subscribed for the new day (its name carries the day), so one stale
+  // entry is one that no delivery can ever clear, and `#connection` would report
+  // the feed `refused` for the rest of the session after a single permission
+  // error on a single repository.
+  const { reader: feed, port } = reader();
+  feed.start(T0);
+  port.listeners.get(`spend/${DAY}/repos/${SLUG}`).onError({ code: 'PERMISSION_DENIED' });
+  port.listeners.get(`spend/${DAY}/global`).onError({ code: 'UNAVAILABLE' });
+  assert.equal(feed.snapshot({ nowMs: T0 }).document.connection.state, 'refused');
+
+  const tomorrow = T0 + 86_400_000;
+  assert.equal(feed.refresh(tomorrow).ok, true);
+  const after = feed.snapshot({ nowMs: tomorrow }).document.connection;
+  assert.notEqual(after.state, 'refused', 'the refused path went with the day it belonged to');
+  // ... and so did the failed one: the state is the plan's own "nothing has
+  // answered yet", not the failure the old day's path carried.
+  assert.equal(after.state, 'offline');
+  assert.equal(after.reason, 'connecting');
+});
+
+test('ingest takes a value only for a path in the plan, not merely a granted one', () => {
+  // The gate judges the **grant**; the plan is what this reader actually asked
+  // for. `spend/<another day>/global` and `spend/<day>/runs/<slug>/<run>` are
+  // both granted shapes -- `request` says yes to each -- and neither is in the
+  // plan: no listener was attached to them, so a value for one of them is not an
+  // answer to anything this reader asked. Stored, it would be counted as a
+  // delivery and recorded in `#lastEvent`, the map `#connection` reads to decide
+  // whether the plan has answered at all.
+  const { reader: feed } = reader();
+  feed.start(T0);
+  const otherDay = DAY + 1;
+  for (const path of [`spend/${otherDay}/global`, `spend/${DAY}/runs/${SLUG}/run-1`]) {
+    assert.equal(isGranted(path), true, `${path} is a granted shape`);
+    const refused = feed.ingest(path, { counted: 999 * MICROS_PER_USD, spent: 999 * MICROS_PER_USD }, T0);
+    assert.equal(refused.ok, false, path);
+    assert.equal(refused.code, READER_CODES.NOT_GRANTED, path);
+    assert.equal(refused.document, undefined, 'nothing was assembled from a path nobody asked for');
+  }
+  // The plan's own answer record is unmoved: no delivery happened, so the feed
+  // is still waiting for the paths it did ask for, and the day's counter is the
+  // zero an absent node is.
+  const after = feed.snapshot({ nowMs: T0 });
+  assert.equal(after.document.connection.state, 'offline');
+  assert.equal(after.document.connection.reason, 'connecting');
+  assert.equal(after.document.total.counted.value, 0);
 });
 
 test('the connection is the worst of the granted paths, and never says the feed died', () => {

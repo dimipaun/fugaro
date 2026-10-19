@@ -213,6 +213,33 @@ test('a kill switch is a fact, and an absent one is not a killed project', () =>
   assert.deepEqual(bare.document.total.kill, { on: true, by: null, at: null, reason: null });
 });
 
+test('a kill switch\'s strings are cleaned the way the CLI cleans them', () => {
+  // The kill node is a database node, and the CLI treats everything the
+  // database holds as text that must be made printable: `State.kill` passes
+  // `by` and `reason` through `clean() = clip(safetext.Strip(...))`. This
+  // module's `text()` only bounds the length, so without the strip a
+  // right-to-left override, a zero-width character or a terminal escape in a
+  // reason would reach the screen intact -- and `kill.by` and `kill.reason` are
+  // drawn.
+  const unsafe = 'cap‮evil​\u001b[31m\u0007';
+  const judged = validateDocument(
+    wire({ total: { ...wire().total, kill: { by: 'operator', at: '2025-11-09T11:00:00Z', reason: unsafe } } }),
+  );
+  assert.equal(judged.ok, true);
+  // `safetext.Strip` **drops** what it rejects (it does not mark it), so what is
+  // left is the printable run.
+  assert.equal(judged.document.total.kill.reason, 'capevil[31m');
+  assert.equal(/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(judged.document.total.kill.reason), false);
+  // A field that is nothing but unsafe characters is a field that is not there,
+  // never an empty string on a screen.
+  const blank = validateDocument(wire({ total: { ...wire().total, kill: { by: '‮​', reason: '\u0000' } } }));
+  assert.deepEqual(blank.document.total.kill, { on: true, by: null, at: null, reason: null });
+  // The instant is a database string on this path too, and it is cleaned with
+  // them; `at` is never the field a switch's on-ness depends on.
+  const stamped = validateDocument(wire({ total: { ...wire().total, kill: { at: '2025-11-09T11:00:00Z​' } } }));
+  assert.equal(stamped.document.total.kill.at, '2025-11-09T11:00:00Z');
+});
+
 test('the runs bucket is not the phone\'s, and an empty array is not a run title', () => {
   for (const key of ['runs', 'finished', 'ready']) {
     assert.equal(validateDocument(wire({ [key]: [] })).ok, true, `${key}: [] is "no rows"`);
