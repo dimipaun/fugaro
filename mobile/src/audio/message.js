@@ -32,13 +32,15 @@
 // caller that hands `kind` to `messageDraft` is handing it a field a draft
 // does not have, and hears so.
 //
-// **What a draft is not.** It is not signed and not written. P6.3's `mac` and
-// P3.6's write are both later tasks, and P1.3's redactor is applied where the
-// message is written (D118: text is redacted *before it is written*, and the
-// writer is the one that writes). A draft is a value on its way to a screen or
-// to the client; if it were the thing that reached the database, the redaction
-// rule would be enforced here instead -- and it is not, deliberately, because a
-// module that redacts is a module whose caller can believe it need not.
+// **What a draft is not.** It is not signed and not written: both belong to
+// other modules -- the `mac` to the protocol (P6.3), the signing and the write
+// to the client (P3.6, merged, and not wired to this pipeline yet) -- and P1.3's
+// redactor is applied where the message is written (D118: text is redacted
+// *before it is written*, and the writer is the one that writes). A draft is a
+// value on its way to a screen or to the client; if it were the thing that
+// reached the database, the redaction rule would be enforced here instead -- and
+// it is not, deliberately, because a module that redacts is a module whose
+// caller can believe it need not.
 //
 // **A transcript the schema refuses is not a message.** The case that matters
 // is the common one: the microphone heard a cough, and the engine's final

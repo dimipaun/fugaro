@@ -20,9 +20,14 @@
 // deliberately absent from the tree, because a tree is the one thing that ends
 // up in a screenshot, a crash report and a debug overlay.
 //
-// **What comes later, and where.** P3.4 builds the audio fakes and P3.5 the
-// voice screen on this root; P3.2's reader and P3.3's list fill the body. None
-// of them may widen what is rendered here without saying so in this file.
+// **What comes later, and where.** The body is where the screens hang: **P3.2**
+// (the feed reader, `src/feed/`) and **P3.4** (the audio interfaces,
+// `src/audio/`) are merged and are in the tree beside this root; **P3.3** (the
+// job list) and **P3.5** (the voice screen) are the Phase 3 tasks still to come,
+// and they are what will fill the body. This sentence said P3.4 was later until
+// a review read it against the tree -- the same drift `mobile/README.md`'s
+// status line and `src/mailbox/`'s header were corrected for in this branch.
+// None of them may widen what is rendered here without saying so in this file.
 
 /** The element type names the shell uses, in one place so a test can name
  * them too. They are the react-native primitives the entry passes in. */

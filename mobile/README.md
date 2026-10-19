@@ -590,21 +590,31 @@ which is what lets these files' headers explain the rules they are held to.
 Each was planted, the run went red on the named test, and the bug was removed.
 The tests are run with `node --test "src/**/*.test.js"` — the app's whole
 suite, all passing — and the first three sentences of `pipeline.test.js` are the
-plan's own verification. Some rows say how many tests went red; those counts are
-what the suite reports at this revision, and a task that adds a test to
-`src/audio/` should re-measure them rather than trust them, because a count is
-the kind of claim that goes stale the moment the suite grows.
+plan's own verification.
+
+**The column names the tests that went red; it does not count them.** The cells
+used to carry counts, and re-measuring every row at this revision (apply, run,
+revert) found rows that no longer reproduced: `FakeStt.end()`'s count was not
+the one the suite reports, the sibling-import row said test files "fail to load"
+when the suite loads and the rules report those same tests as failures, and the
+planted `Permissions.query` row named a single test when the undefined
+identifier takes most of the audio suite down before the scan is even reached.
+A count is a claim about a suite that grows — it is wrong the moment a test is
+added, and a cascade makes it meaningless even sooner, because one broken
+handler reports a failure in every test that opens a turn. So the rows that used
+to explain a cascade with a number explain it in words, and a row that needs a
+number to be interesting has a test too weak to be worth the number.
 
 | Mutation | Went red |
 | --- | --- |
-| `endTurn` closes the turn instead of flushing it | eight tests, the plan's sentence one among them |
-| the `barge-in` signal is not wired to the speech handler | twenty tests, the plan's sentence three among them |
+| `endTurn` closes the turn instead of flushing it | the plan's sentence one first, then the tests that take a `final` |
+| the `barge-in` signal is not wired to the speech handler | the plan's sentence three and `the barge-in is a speech-start too` first, then the pipeline's suite with them |
 | speech no longer cancels the playback it interrupts | the plan's sentence three, `the barge-in is a speech-start too` |
 | a partial is composed into a message | `a partial is shown and is never sent` |
 | **`onFinal` keys on the state alone, not the turn id** | `a superseded turn's late final is not this turn's message` |
 | **`onPartial` keys on the state alone, not the turn id** | `a partial from a turn this pipeline is not in is not shown` |
 | `onPartial` stops checking whether the turn is open | `a partial from a turn this pipeline is not in is not shown` |
-| **`begin()` reuses turn id 1 for every turn** | four tests, including `every event names the turn it belongs to` |
+| **`begin()` reuses turn id 1 for every turn** | `every event names the turn it belongs to` and `an abandoned turn's revision is emitted for that turn, not the open one` |
 | **`outOfStep` stops being validated at construction** | `an engine that has lost the turn says so` |
 | **`beginTurn` stops reporting the engine's refusal** | `an engine that says it is already listening is reported` |
 | **`endTurn` stops reporting the engine's refusal** | `an engine that refuses the end of speech is reported` |
@@ -615,18 +625,18 @@ the kind of claim that goes stale the moment the suite grows.
 | an empty transcript is repaired (`\|\| ' '`) instead of refused | `a transcript the schema refuses is refused here too` |
 | the `unavailable` event loses the OS code | `D122: the OS refusing the microphone…` |
 | every message reuses one id | `each message is its own id, sender and clock` |
-| `FakeStt.end()` closes the turn (the engine's final has nowhere to land) | nine tests, including `the end of speech flushes the turn` |
+| `FakeStt.end()` closes the turn (the engine's final has nowhere to land) | `the end of speech flushes the turn; the final is what ends it` and `one turn at a time: begin, end, and the refusals between them` |
 | `FakeStt.partial` is allowed out of a flushed turn | `the end of speech flushes the turn` |
-| an interrupted utterance settles as finished | three tests, including the plan's sentence three |
-| a second utterance is queued instead of refused | `one utterance at a time` and the pipeline's refusal test |
-| the two OS denials collapse into one code | both D122 tests |
+| an interrupted utterance settles as finished | the plan's sentence three, `the barge-in is a speech-start too: a simple capture path interrupts by speaking` and `stop() abandons the turn and interrupts an utterance in flight` |
+| a second utterance is queued instead of refused | `one utterance at a time: a second is refused, not queued, and the first is untouched` and `a refused utterance is refused, not reported as an outcome`, and then the tests that follow them in both files — an utterance that never settles takes its file down with it |
+| the two OS denials collapse into one code | `D122: the OS refusing the microphone and refusing background audio are different codes` and `D122: the OS refusing the microphone is a value, and an \`unavailable\` event` |
 | an event carries `samples: []` | `an event carries the event, and never anything heard`, and the no-samples rule |
 | a draft accepts a field the protocol does not have | `a field this draft does not have is refused with the protocol's own code` |
 | `refuse()` stops freezing its verdict | `a refusal is a frozen value with a code` |
 | the door grows one more export | `the door exports exactly this` |
-| a **sibling** production file imports `@react-native-voice/voice` | three test files fail to load (module resolution) — the suite goes red before the rule can report it; the nested-file mutation above is the one that proves the rule itself |
+| a **sibling** production file imports `@react-native-voice/voice` | the tests the nested file takes down — `the module is exactly these files, at every depth`, the scan's non-empty control, and the import rule — reported as failures, not as a file that will not load: the suite runs and the rules name the file |
 | `Date.now()` planted in `pipeline.js` | `no clock` |
-| **a `Permissions.query` call planted in `audio-in.js`** | `no device API` — the token the rule table did not name until this round |
+| **a `Permissions.query` call planted in `audio-in.js`** | `no device API` — the token the rule table did not name until this round — and, before the scan is reached, every test that constructs `FakeAudioIn`, which dies on the planted identifier itself (`start and stop are idempotent, and say what changed` is the first) |
 | **a `Uint8Array` buffer planted in `stt.js`** | `no samples, in any encoding` — the other token the row had dropped |
 | **the README's device-API row drops `Permissions`** | `the README's rule table and the scan are the same list` |
 | **the README's samples row drops `Uint8Array`** | the same |
