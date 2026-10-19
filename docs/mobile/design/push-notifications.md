@@ -32,7 +32,7 @@ D126), [functional-spec-reconciliation.md](../functional-spec-reconciliation.md)
 D166, D169 — the pairing, the device node and the MAC), [implementation-plan.md](../implementation-plan.md)
 (P4.1 the consumer, P5.1 the orchestrator, phase 6), [voice.md](../../design/voice.md) (D49,
 D50 and the F38 residual), [desktop-console-v2.md](../../design/desktop-console-v2.md) (D33 —
-the same question asked of the desktop console and answered "no FCM"), [m9-budget-and-dashboard.md](../../design/m9-budget-and-dashboard.md)
+the same question asked of the desktop console, which rejected "a push service (FCM)"), [m9-budget-and-dashboard.md](../../design/m9-budget-and-dashboard.md)
 §6.2 and §6.4 (the mailbox tree and its rules), [budget-token-channel.md](../../design/budget-token-channel.md)
 (a token the phone also holds, and the audience rule it states), [project-centric.md](../../design/project-centric.md),
 [managed-projects.md](../../design/managed-projects.md) (D55–D78, the gate an always-on
@@ -1074,10 +1074,16 @@ spent in v1.
 ## 8. The checks it would need
 
 **Check 88 — allocated in advance, and this design chooses no number.** The mobile plan's check
-block is **80–89**, "allocated to this work on 2026-10-16, in advance", taken as allocated and
-**never reused and never renumbered** (the plan's "Check numbers this plan takes (80–89)"
-states the rule), and its check table already assigns **88** to "Push delivery — only if D121
-says yes", task **P5.2**. So this design **proposes nothing and renumbers nothing**: it reads
+block is **80–89** — the plan's own words, "**The owner allocated 80–89 to this work on
+2026-10-16**, in advance" — taken as allocated and **never reused and never renumbered** (the
+plan's "Check numbers this plan takes (80–89)" states the rule), and its check table already
+assigns **88** to **Push delivery — only on the owner's later yes to push (P5.2)** (D121 was
+answered "no push in v1" on 2026-10-17), task **P5.2**. *(That row is quoted as this design's own
+pull request leaves it: the earlier text, "Push delivery — **only if D121 says yes**", read as a
+question still open when D121 had been answered, and the row was rewritten in the same change that
+added this document. A quotation of a plan row that the same pull request rewrites is exactly the
+kind of citation this document's other quotes are checked against.)* So this design **proposes
+nothing and renumbers nothing**: it reads
 the number the plan holds. `docs/gcp-live-checklist.md` carries **no `## Check 88` section and
 no `| 88 |` row** on `main` today, because the check has not been written yet — not because
 the number is unclaimed.
@@ -1356,7 +1362,8 @@ really compose the lock-screen text?**
     cannot show text by itself, is throttled and is not delivered after a force-quit, and a
     **visible** app-composed alert needs an NSE (`mutable-content`) — which has to authenticate,
     which means sharing `idToken`/`macKey` through a **keychain access group**, which **touches
-    D111** ("exactly two secure-storage items per account"). **Q6 now asks the owner for that.**
+    D111** ("Exactly two items, per account, both in platform secure storage (Keychain / Keystore)
+    … and nothing else"). **Q6 now asks the owner for that.**
     Where the platform allows is "Android freely; iOS only with an NSE and a D111 amendment".
 - *(ii) Category plus a random opaque id*, mapped server-side to the detail: useful only if the
   app ever needs to know *which* thing changed before it can read (it does not), and it adds a

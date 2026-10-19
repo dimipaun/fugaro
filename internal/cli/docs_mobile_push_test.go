@@ -478,6 +478,67 @@ func TestDocsMobilePushHasOneWritersTable(t *testing.T) {
 	}
 }
 
+// TestDocsMobilePushQuotesThePlanAsItStandsAfterThisPR: §8 quoted the plan's
+// check-table row 88 as "Push delivery — only if D121 says yes" — the text the
+// SAME pull request rewrites in docs/mobile/implementation-plan.md, so by the
+// time the branch merges the design quotes a row that no longer exists and
+// reads as if D121 were still open. A quotation of a sibling document has to be
+// checked against that document, not against a remembered copy of it, so this
+// test reads the plan's own row and holds every plan phrase §8 quotes to it.
+func TestDocsMobilePushQuotesThePlanAsItStandsAfterThisPR(t *testing.T) {
+	const docPath = "docs/mobile/design/push-notifications.md"
+	const planPath = "docs/mobile/implementation-plan.md"
+	doc := readDoc(t, docPath)
+	plan := readDoc(t, planPath)
+
+	// Markdown emphasis, wrapping and a quote's own sentence case are the
+	// document's, not the quote's: a quoted sentence may carry any of them.
+	// Everything else must match.
+	norm := func(s string) string {
+		return strings.ToLower(strings.Join(strings.Fields(strings.ReplaceAll(s, "**", "")), " "))
+	}
+
+	// The plan's row 88, as the plan has it in this tree.
+	row := ""
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.HasPrefix(line, "| **88** |") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s has no `| **88** |` check-table row for %s to quote", planPath, docPath)
+	}
+	if strings.Contains(row, "only if D121 says yes") {
+		t.Errorf("%s's row 88 is back to %q, which reads as a question still open though D121 was answered on 2026-10-17", planPath, "only if D121 says yes")
+	}
+
+	// §8 must assign 88 to that row's text, whatever it is.
+	m := regexp.MustCompile(`assigns \*\*88\*\* to \*\*([^*]+)\*\*`).FindStringSubmatch(doc)
+	if m == nil {
+		t.Fatalf("%s's §8 no longer says which text it assigns Check 88 to", docPath)
+	}
+	if quoted := norm(m[1]); !strings.Contains(norm(row), quoted) {
+		t.Errorf("%s's §8 assigns 88 to %q, which is not in %s's row 88 (%q): a quote of a row this pull request rewrites must be the row as it now stands", docPath, m[1], planPath, strings.TrimSpace(row))
+	}
+
+	// Every other plan phrase §8 quotes, held to the plan itself.
+	for _, q := range []string{
+		"The owner allocated 80–89 to this work on 2026-10-16",
+		"Check numbers this plan takes (80–89)",
+		"checks 80 and 83–88 by P4.2",
+		"Checks 80–89, written into the register",
+		"a check is never run before its text is in the register",
+	} {
+		if !strings.Contains(norm(doc), norm(q)) {
+			t.Errorf("%s no longer quotes %q, which §8's allocation argument rests on", docPath, q)
+		}
+		if !strings.Contains(norm(plan), norm(q)) {
+			t.Errorf("%s quotes %q, which %s does not say", docPath, q, planPath)
+		}
+	}
+}
+
 // TestDocsMobilePushLedgerHasOneHome: the dedupe/cap ledger was stated three
 // incompatible ways — §3.6 said "under config/admin ... or in Firestore under
 // its roles/datastore.user", while §7 and Q10(i) pinned it to the push node
