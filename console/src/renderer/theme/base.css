@@ -2,11 +2,11 @@
  * CHROME (desktop-console plan Task 6.3; design section 4, and sections 3.7-3.9
  * for the values it reads).
  *
- * This is the third layer of the one stylesheet the three documents link, and the
- * first one that paints anything: `tokens.css` is the vocabulary, `palette.css`
- * the value set, and this file is the reset, the window's two-column grid and the
- * rules for the chrome — the installation rail, the installation line, the view
- * nav and the panel. The screens' own rules are `screens.css` (Task 6.4).
+ * This is the first layer of the one stylesheet the three documents link that
+ * paints anything: `tokens.css` is the vocabulary, `palette.css` the value set,
+ * and this file is the reset, the window's two-column grid and the rules for the
+ * chrome — the installation rail, the installation line, the view nav and the
+ * panel. The screens' own rules are `screens.css` (Task 6.4).
  *
  * **It is wired, and Task 6.2 is what wired the layer it joins.**
  * `tools/bundle-renderer/index.ts` names this file in `THEME_STYLESHEETS` — in the
