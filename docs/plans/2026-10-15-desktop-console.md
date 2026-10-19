@@ -32,7 +32,7 @@
 | **3. When things are missing** | the no-Firebase and CLI-absent modes, the stale/gap rendering, the version-skew handshake (Task 3.2) **and its wiring at startup (Task 3.3)**; **the renderer entry — the preload, the handlers and the installation picker (Task 3.4, approved by the owner 2026-10-18; 3.4a implemented)** | nothing required (3.4's header and picker goldens are optional and owner-run) | phase 2 |
 | **4. macOS packaging** | the builder config and entitlements; the staged signing/notarisation workflow (a file of its own, tag-only); the update feed; **Checks 59a and 59b** | **all of it**: the certificate, the API key, the first signed build, the update round trip (Check 59); the protected GitHub environment the signing secrets live in; and Task 4.5's copy-in of the staged **signing** workflow | phase 3 |
 | **5. Later, unscheduled** | Windows and Linux packaging; the v1.1 write actions | each, when the owner decides | phase 4 |
-| **6. The console's style — APPROVED by the owner on 2026-10-19** | the token layer, the stylesheet's wiring into the served bundle, the layout and the screens' rules, the window background and the keyboard (*Task 6.5 as the ruling left it; the theme switch it was named for is removed — Q1, dark only*), and the golden frames re-recorded (`docs/design/console-styling.md` is the design) | **the eight golden baselines re-recorded** (Task 6.6), after the stylesheet lands | phase 3 (Task 3.4a's bundler and served root); **approved by the owner on 2026-10-19** — **Q1 is answered: dark only, no light theme ships**, and Q2 to Q6 stand as the design's §8 writes them (*as first written, "its six questions are answered"*) |
+| **6. The console's style — APPROVED by the owner on 2026-10-19** | the token layer, the stylesheet's wiring into the served bundle, the layout and the screens' rules, the window background and the keyboard (*Task 6.5 as the ruling left it; the theme switch it was named for is removed — Q1, dark only*), and the golden frames re-recorded (`docs/design/console-styling.md` is the design) | **the eight golden baselines re-recorded** (Task 6.6), after the stylesheet lands | phase 3 (Task 3.4a's bundler and served root); **approved by the owner on 2026-10-19** — **Q1 is answered: dark only, no light theme ships**, and Q2 to Q6 stand as the design's §8 writes them (*as first written, "**not approved** — see its six open questions"*) |
 
 **Nothing in this table depends on a later row.** Phase 5 is deliberately empty of work: it lists the two things a reader will otherwise wonder about, and each is gated on a decision this plan does not presume.
 
@@ -1478,8 +1478,11 @@ WAI-ARIA tablist behaviour it lacks — `role`,
 of 2026-10-19 removed this scope**: it is kept as the record of what the task was written
 to do, and the ruled scope is the paragraph above.
 
-**Files.** `console/src/renderer/entry.ts`, `console/src/renderer/installations.ts`,
-`console/src/main/window.ts`, `console/test/unit/{entry-wiring,window,theme-tokens}.test.ts`.
+**Files.** `console/src/renderer/entry.ts`, `console/src/main/window.ts`,
+`console/test/unit/{entry-wiring,theme-tokens}.test.ts`. *As designed:* the same list with
+`console/src/renderer/installations.ts` (the picker's script, which the ruling leaves alone)
+and `console/test/unit/window.test.ts` — the two files the ruling drops, and the design's
+§7.5 keeps the same pair as the same record.
 
 **The CSP and `ElementLike` are untouched**, and this is checked rather than asserted: a
 `matchMedia` read is not a DOM write and not a network call, `data-theme` is a `data-*`

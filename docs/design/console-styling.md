@@ -620,7 +620,7 @@ should be able to check rather than assume:
   "attention" means the same thing on both sides of the product.
 - **One reuses a value under a different name**: the website's `--accent-on-dark` `#6FD8F5`
   is the console's `--accent-ink`. "on-dark" is the site's name and the console calls the
-  tone by what it is — the accent as text; *as first written, "the console has two grounds,
+  tone by what it is — the accent as text; *as first written, "The console has two grounds,
   so 'on-dark' would name the wrong one of them", which was the light set's reason (the
   owner's Q1 ruling of 2026-10-19 leaves the one ground below, and the rename stands on the
   name alone).*
@@ -1537,18 +1537,21 @@ in `base.css` and the rows' and badges' is in `screens.css`.
    six task headings are there, that the four `theme/*.css` files are in the plan's tree,
    and that the phase names all six of the [§8](#8-open-for-the-owner) questions. **It also
    carries the two-set pin**: it reads both this document and the plan for the phrases that
-   assume two value sets — `light and dark`, `both value sets`, `matchMedia`, `themeChoice`,
-   `two --ground`, `two literals`, `prefers-color-scheme`, `light-dark(`, `light dark`,
-   `two grounds`, `two schemes`, `in each set`, `the light set`, `color-scheme: light` and
-   the `data-theme='light'` block — and fails on one whose **own paragraph** is not marked
-   with the ruling (`Q1`, the date, "as first written", "as designed", "the record of",
-   "deferred", "would have", "did not take"), so the plan's claim that every such place is
-   marked is a claim a run checks rather than a claim a reader trusts. The mark is
+   assume two value sets — `light and dark`, `light dark`, `light-dark(`,
+   `prefers-color-scheme`, `color-scheme: light`, `both value sets`, `two value sets`,
+   `two grounds`, `two --ground`, `two literals`, `two schemes`, `two sets`, `both sets`,
+   `in each set`, `the light set`, `matchMedia`, `themeChoice`, `data-theme='light'` and
+   `data-theme="light"` — and fails on one whose **own paragraph** is not marked with the
+   ruling (`2026-10-19`, `Q1`, "as first written", "as designed", "as the two-set", "the
+   record of", "record of option", "deferred", "would have", "did not take", "the ruling",
+   "as shipped", "removed", "supersedes" and "kept"), so the plan's claim that every such
+   place is marked is a claim a run checks rather than a claim a reader trusts. The mark is
    paragraph-local on purpose: an exemption that ran from a marked paragraph to the end of
    its section was one a sentence could hide behind, since every paragraph of §3.6, §4.1 and
-   §8 sits under a ruling sentence somewhere above it. Whitespace is collapsed before the
-   match, so a phrase a rewrap splits across two lines is the same phrase to the test as it
-   is to a reader;
+   §8 sits under a ruling sentence somewhere above it. The paragraph is lower-cased and its
+   whitespace is collapsed before the match, so a phrase a rewrap splits across two lines,
+   or one whose capitalisation a sentence changes (`matchMedia` for `matchmedia`), is the
+   same phrase to the test as it is to a reader;
 
 **Items 5 to 9 — five of the eleven — read §3.4's numbers rather than its prose**, which is the
 half the review of the first revision asked for. They recompute WCAG 2.1's relative luminance
@@ -1604,7 +1607,7 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    And it counts itself: §6.5's own opening line says how many tests this file holds, and the
    case fails when that word and the file's `TestDocsConsoleStyling*` declarations disagree —
    the defect this revision found in the other direction, when the tenth test landed and the
-   line stayed at nine. Each of its cases is mutation-proven, and the seven mutations are
+   line stayed at nine. Each of its cases is mutation-proven, and the eight mutations are
    named in [§7.7](#77-the-red-steps). It reads the plan as text for the same boundary reason
    the rest of this file does.
 11. a **counts test** over this section and §7.7, which is what keeps the numbers above from
@@ -1784,9 +1787,11 @@ window background and the keyboard**.
 - **Files:** `console/src/renderer/entry.ts` (the nav's tablist behaviour and its
   roving `tabindex`, §4.3), `console/src/main/window.ts` (the one background literal,
   §4.1), and `console/test/unit/{entry-wiring,theme-tokens}.test.ts` (the roving-tabindex
-  case and the window-background case) — the same four files the plan's Task 6.5 names,
-  less the picker's script, which the ruling leaves alone. *As designed:* the same list
-  with `console/src/renderer/installations.ts` and `console/test/unit/window.test.ts`.
+  case and the window-background case) — the same four files the plan's Task 6.5 names
+  under its own **Files**, which is the list a pin compares with this one file for file.
+  *As designed:* the same list with `console/src/renderer/installations.ts` (the picker's
+  script, which the ruling leaves alone) and `console/test/unit/window.test.ts` — the same
+  pair the plan's Task 6.5 keeps as the same record.
 - **Tests, mutation-proven:** the window's background literal drifts from `--ground`
   (`#0A0E16` edited to `#121A26`) → the token test fails by name — **one literal, one
   direction, which is the ruled scope**; a roving-tabindex regression → the entry wiring
@@ -1857,7 +1862,12 @@ window-background case put back into Task 6.1's `**Tests**`; a later task named 
 while the plan's Task 6.5 keeps it, which is the two documents' lists disagreeing about the
 task that still owns the nav's keyboard behaviour. The two-set pin beside them is proved the
 same way, twice: an unmarked two-set sentence planted in a section that states the ruling
-somewhere above it, and a phrase a rewrap splits across two lines.
+somewhere above it, and a phrase a rewrap splits across two lines. **The sentence in §6.5
+that describes that pin is proved as well** — a phrase dropped from its enumeration of them
+fails the case that reads the sentence against the pin's own list, which is how a reader is
+kept from writing a weaker scan than the one that ships — and so is the plan's list beside
+§7.5's, file for file: a file moved from one document's ruled list to the other's fails by
+name.
 
 ---
 

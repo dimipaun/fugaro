@@ -909,6 +909,27 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 			t.Errorf("%s: the paragraph %q assumes two value sets (%s) and says nothing about the owner's Q1 ruling of 2026-10-19; one value set ships, so the paragraph itself has to carry the ruling or say that it is the record of the mechanism the ruling removed, and the phase paragraph claims every such place does", doc.path, truncate(strings.Join(strings.Fields(para), " "), 120), strings.Join(found, ", "))
 		}
 	}
+
+	// The design's §6.5 item 4 describes this pin, and an implementer reads that
+	// sentence rather than this file — so the sentence's own enumeration of the
+	// phrases and the marks is checked against the slices above, in the direction
+	// that matters: a sentence naming fewer of them than the scan reads is a
+	// sentence from which a weaker scan is written. The round that added this
+	// check found exactly that — the sentence listed fifteen phrases and eight
+	// marks while the pin read nineteen and fifteen, and nothing failed.
+	const designPath = "docs/design/console-styling.md"
+	item4 := mdItem(t, designPath, design, "### 6.5 The docs test", "\n---\n\n## 7. ", 4)
+	flatItem4 := strings.ToLower(mdFlat(item4))
+	for _, phrase := range twoSetPhrases {
+		if !strings.Contains(flatItem4, phrase) {
+			t.Errorf("%s: §6.5 item 4 does not name the phrase %q, which the two-set pin reads; a reader who writes the scan from that sentence writes a weaker one than the one that shipped", designPath, phrase)
+		}
+	}
+	for _, marker := range twoSetMarkers {
+		if !strings.Contains(flatItem4, marker) {
+			t.Errorf("%s: §6.5 item 4 does not name the mark %q, which the two-set pin accepts; a reader who writes the scan from that sentence rejects marked paragraphs the pin passes", designPath, marker)
+		}
+	}
 }
 
 // mdPRRowRE matches a PR groups row for phase 6 — the phase's rows are the J
@@ -1000,6 +1021,30 @@ func mdNextNonBlank(lines []string, i int) int {
 // words, and a rewrap would fail a test about the meaning.
 func mdFlat(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// mdFileLists splits a task's **Files** clause into the list the ruling keeps
+// and the list the clause keeps as the record of the scope it was written from,
+// which both documents open with "*As designed:*". Only backticked spans that
+// look like paths are returned — they carry a slash — so the prose's mention of
+// an attribute or a literal (`tabindex`, `#0A0E16`) is not mistaken for a file.
+// A clause with no record returns the whole list as the ruled one, which is what
+// a comparison against the other document then has to answer for.
+func mdFileLists(clause string) (ruled, record []string) {
+	cut := strings.Index(clause, "*As designed:*")
+	if cut < 0 {
+		cut = len(clause)
+	}
+	paths := func(s string) []string {
+		var out []string
+		for _, m := range mdCodeSpanRE.FindAllStringSubmatch(s, -1) {
+			if strings.Contains(m[1], "/") {
+				out = append(out, m[1])
+			}
+		}
+		return out
+	}
+	return paths(clause[:cut]), paths(clause[cut:])
 }
 
 // mdForwardRefRE matches a named task and the number it carries.
@@ -1203,24 +1248,23 @@ func TestDocsConsoleStylingPhaseOrdering(t *testing.T) {
 	// switch and skips the keyboard.
 	if designFiles, ok := mdClause(t, designPath, designTasks[4], "Files"); !ok {
 		t.Errorf("%s: §7.5 has no **Files** clause; every task in this phase states what it touches", designPath)
-	} else {
-		// The needles are the file and the test module, spelled without the
-		// directory prefix: a Go file of this module may not name a path inside
-		// that directory at all (Task 0.3 a3, docs_console_boundary_test.go),
-		// and a pin is not the place to argue for widening that allow-list.
-		for _, want := range []string{"src/renderer/entry.ts", "entry-wiring"} {
-			if !strings.Contains(designFiles, want) {
-				t.Errorf("%s: §7.5's **Files** does not name %s, and the plan's Task 6.5 does; the ruled scope keeps the nav's tablist behaviour (§4.3, in `entry.ts`) and the roving-tabindex case, so the two lists have to agree on them", designPath, want)
-			}
-		}
-	}
-	if planFiles, ok := mdClause(t, planPath, planTasks[4], "Files"); !ok {
+	} else if planFiles, ok := mdClause(t, planPath, planTasks[4], "Files"); !ok {
 		t.Errorf("%s: Task 6.5 has no **Files** clause; every task in this phase states what it touches", planPath)
 	} else {
-		for _, want := range []string{"entry.ts", "entry-wiring"} {
-			if !strings.Contains(planFiles, want) {
-				t.Errorf("%s: Task 6.5's **Files** does not name %s, and this pin compares the two documents' lists: the ruled scope still owns the nav's keyboard behaviour, and a plan that drops the file drops the case with it", planPath, want)
-			}
+		// The comparison is file for file, not a spot check: the design's clause
+		// says it is the plan's list, and the round that added this pin found the
+		// two lists disagreeing about *which* files the ruling keeps — the design
+		// dropped `entry.ts` (and with it the keyboard the ruled scope still owns)
+		// while the plan dropped the picker's script and the window unit test but
+		// kept the entry. Two names agreeing is what a spot check shows; the third
+		// file is where a list can still be wrong.
+		designRuled, designRecord := mdFileLists(designFiles)
+		planRuled, planRecord := mdFileLists(planFiles)
+		if got, want := strings.Join(planRuled, ", "), strings.Join(designRuled, ", "); got != want {
+			t.Errorf("%s: Task 6.5's **Files** names %s, and §7.5 names %s; §7.5's clause says it is the plan's list, so the two agree file for file — the ruled scope keeps the nav's tablist behaviour (§4.3, in the entry) and the roving-tabindex case, and drops the picker's script and the window unit test", planPath, got, want)
+		}
+		if got, want := strings.Join(planRecord, ", "), strings.Join(designRecord, ", "); got != want {
+			t.Errorf("%s: Task 6.5's **Files** keeps %s as the record of the two-set scope, and §7.5 keeps %s; the record is what tells a reader which files left the list and why, so both documents keep the same one", planPath, got, want)
 		}
 	}
 	for _, stale := range []struct{ doc, path, claim string }{
@@ -1453,6 +1497,30 @@ func TestDocsConsoleStylingCountsMatch(t *testing.T) {
 		}
 	}
 
+	// And §6.5's tenth item counts those same mutations by pointing at §7.7, so
+	// the two numbers have to be one number. The round that added the Files pin
+	// bumped §7.7 to eight and left §6.5 saying seven; nothing failed, because
+	// every check above counts a sentence against the list beside it and this
+	// sentence's list is in the other section. A count is the same arithmetic
+	// wherever it is written, including when it is written one indirection out.
+	item10 := mdItem(t, path, doc, "### 6.5 The docs test", "\n---\n\n## 7. ", 10)
+	pointed := regexp.MustCompile(`the (\w+) mutations are named`).FindStringSubmatch(mdFlat(item10))
+	carried := regexp.MustCompile(`carries (\w+) of its own`).FindStringSubmatch(mdBetween(t, path, doc, "And the ordering test (§6.5's tenth)", "\n---\n"))
+	if pointed == nil {
+		t.Errorf("%s: §6.5's tenth item no longer says how many mutations it is proved by and where they are named; the sentence a reader follows to §7.7 is what this check reads", path)
+	} else if carried == nil {
+		t.Errorf("%s: §7.7 no longer states the ordering test's mutation count, so §6.5's %q cannot be checked against it", path, pointed[0])
+	} else {
+		here, okHere := mdWordValue(pointed[1])
+		there, okThere := mdWordValue(carried[1])
+		switch {
+		case !okHere || !okThere:
+			t.Errorf("%s: the two counts of the ordering test's mutations are %q and %q, one of which is not a word this test knows", path, pointed[1], carried[1])
+		case here != there:
+			t.Errorf("%s: §6.5's tenth item says the %s mutations are named in §7.7 and §7.7 carries %s of its own; the two sentences count the same list, so a revision that bumps one has to bump the other", path, pointed[1], carried[1])
+		}
+	}
+
 	// §5.3 and §5.6 name the places the bundle case counts the list it gains an
 	// entry in. There are two counts and they are arithmetic — the packaged-files
 	// list is the two preload paths plus `SERVED_FILES`, so its literal is the
@@ -1524,6 +1592,24 @@ func mdBetween(t *testing.T, path, doc, start, end string) string {
 		t.Fatalf("%s: %q does not end before %q, so this test cannot tell where the section stops", path, start, end)
 	}
 	return rest[:len(start)+j]
+}
+
+// mdItem returns the text of one numbered item of a section's ordered list, from
+// its own number to the next item's, so a case reads the item it names rather
+// than the whole list around it.
+func mdItem(t *testing.T, path, doc, sectionStart, sectionEnd string, n int) string {
+	t.Helper()
+	section := mdBetween(t, path, doc, sectionStart, sectionEnd)
+	start := regexp.MustCompile(`(?m)^` + strconv.Itoa(n) + `\. `).FindStringIndex(section)
+	if start == nil {
+		t.Fatalf("%s: the section starting %q has no item %d; this test reads that item", path, sectionStart, n)
+	}
+	rest := section[start[1]:]
+	next := regexp.MustCompile(`(?m)^` + strconv.Itoa(n+1) + `\. `).FindStringIndex(rest)
+	if next == nil {
+		t.Fatalf("%s: item %d of the section starting %q does not end before an item %d, so this test cannot tell where it stops", path, n, sectionStart, n+1)
+	}
+	return section[start[0] : start[1]+next[0]]
 }
 
 // taskIndex maps a task's name to its position among phase 6's six tasks, so a
