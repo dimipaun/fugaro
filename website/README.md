@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **1,020,942 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **1,021,991 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **1,019,427 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **1,020,476 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. Only the no-tags
@@ -255,11 +255,11 @@ added or removed without this sentence moving fails there:
     script and the stylesheet both, 267,095 → **266,926**: the docs hub inlines the stylesheet
     (−278) and fetches the script (+109). Nothing else in the artifact moved in that round —
     the console's link was behind a flag that build had off.
-  - **The console's release turned the flag on** (W3.1), and moved the site figure alone,
-    976,349 → **977,921**, by the **1,572 bytes** the list above names: the console page's
-    downloads section, Getting Started's console option and the hero's link to the console.
-    The page weight and the script did not move: the heaviest page is the docs hub, which
-    renders none of the three.
+  - **The console's release turned the flag on** (W3.1), and moved the site figure alone: the
+    console page's downloads section, Getting Started's console option and the hero's link to
+    the console. The page weight and the script did not move: the heaviest page is the docs hub,
+    which renders none of the three. The bytes are the ones the three figures below are derived
+    from, and `test/budget.mjs` measures them; the rule is what this list carries.
 
   - **Getting Started's three bands** (the owner's feedback of 2026-10-19) moved the site
     figure alone, 977,921 → **979,575**, by the **1,654 bytes** the rework costs: the install
@@ -289,6 +289,19 @@ added or removed without this sentence moving fails there:
     page is not the heaviest page, and the slider ships no script at all. The clone figure
     moved by the same bytes.
 
+  - **The run under the picture became one vertical timeline** (the owner's feedback of
+    2026-10-19), and moved the site figure alone, 1,020,942 → **1,021,991**, by **1,049
+    bytes**. The five steps were a `repeat(auto-fit, minmax(18rem, 1fr))` grid of cards — three beside two on a desktop,
+    two-by-two on a tablet — and the owner read the section and said it "does not look good".
+    They are now one column at every width, each step a numbered marker on a rail joined by a
+    one-pixel line, with the step's name and its line beside it: the page that renders them
+    grows by the rail, the connector, the rule that stops it at the last step and the markup
+    that places them, and the other ten pages, which render no run, are unmoved. The page weight
+    and the script did not move either: the heaviest page is still the docs hub. The shape is
+    held by `test/base-styles.mjs`'s `runTimelineFailures`, which reads the layout in force at
+    360, 768 and 1280, the connector's own extent and width, and every width or `nowrap` in the
+    section against the phone's content box. The clone figure moved by the same bytes.
+
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -315,7 +328,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,052,265 bytes. Three times 350,755: the heaviest page, the
     docs hub, at 280,604 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,828,534 bytes. Three times 1,276,178 (every file in `dist/`, 1,020,942
+  - **Whole site:** 3,832,467 bytes. Three times 1,277,489 (every file in `dist/`, 1,021,991
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 

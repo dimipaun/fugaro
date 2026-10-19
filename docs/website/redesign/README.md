@@ -224,7 +224,7 @@ here goes stale the way the byte budgets did before D192.
   rotation the check cannot read is refused rather than assumed.
 - **The byte budgets are re-derived over the merged build (D192).** Every item here changes
   what the artifact weighs — the terminal's transcript goes, the chat comes, `site.js` loses
-  117 bytes, the flow's stylesheet changes — and then `main` came back into the branch, with
+  bytes, the flow's stylesheet changes — and then `main` came back into the branch, with
   the menu's hover-open and the six corrections that day and the next made to it, which moved
   the same script again. So the figures were derived once, over the build the merge produces,
   which is the only account of them that is true of the site that ships. **The three figures
@@ -238,39 +238,34 @@ here goes stale the way the byte budgets did before D192.
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
   card edges became the site's separator and the footer's link label is the repository's name
-  rather than its URL — and the round after *that* re-derived the site figure once more, 54
-  bytes lower: the install section's own top padding came off, because the flow above it
+  rather than its URL — and the round after *that* re-derived the site figure once more, again
+  lower: the install section's own top padding came off, because the flow above it
   already carries the gap between the two blocks (the fifth round below). The page weight did
   not move with it — the heaviest page is the docs hub, and that page renders neither the flow
   nor the install section — and the JavaScript is untouched. And the round that followed the
-  fifth moved both figures the other way, 440 bytes onto the site and 44 onto the page weight,
-  by moving the two declarations that make a command wrap onto `base.css`'s
-  `.command-block > pre`, which every page inlines: the copy control shares the command's row
-  now, so the rule belongs to every command block on the site rather than to the homepage's
-  install class alone (the fifth round below). It is the
+  fifth moved both figures the other way, by moving the two declarations that make a command
+  wrap onto `base.css`'s `.command-block > pre`, which every page inlines: the copy control
+  shares the command's row now, so the rule belongs to every command block on the site rather
+  than to the homepage's install class alone (the fifth round below). It is the
   sixth re-derivation on this branch's side — the second fix round moved the homepage's order,
   the flow's treatment, the chat's launch line, the install command's wrapping and the chat's
-  turns out of the measure's cap; the third's four commits moved the site figure to 814,455,
-  815,116 and 815,212 bytes and the page figure with it; and the fourth's fix for the
-  two-by-two's wrap arrow moved it 626 bytes on the two pages that draw the flow — and each was
-  re-derived in the commit that shipped the bytes. **And this round is the screenshot landing**,
-  which is the sixth: the site figure alone moves, 1,056,379 to 1,224,123 tight and 3,169,137
-  to 3,672,369 stated, because PR #622's two `public/images/` assets (the 130,533-byte capture
-  and its 3,363-byte transcription) were already in every build of the site and unplaced, and
-  the `<img>` that puts the picture on the homepage adds 299 bytes of its markup. The page
-  weight does not move — the picture is on the homepage, and the ceiling is derived from the
-  docs hub, which renders neither the chat nor the screenshot — and nor does the JavaScript.
-  **And the last round is this branch's own two changes from the owner's brief of 2026-10-19**,
-  measured against that build file by file: the menu's drawer out (item 1) leaves each of the
-  eleven pages **278 bytes lighter**, the base stylesheet every one of them inlines being that
-  much shorter, and takes **181 bytes off the script**; the review round that followed put the
-  script's own comments back in step with the menu, which is **290 bytes back onto it**. So the
-  script is 39,779 → 39,888 and the site figure 979,298 → 976,349 — the eleven pages' 3,058
-  and the script's 109 — while the page weight moves with both, 267,095 → **266,926**: the docs
-  hub inlines the stylesheet (−278) and fetches the script (+109). The console's link of item 6
-  rendered nothing in that round, its flag being off. **And the round after it is the console's
-  release** (W3.1), which turned `features.console_downloads` on and moved the site figure
-  alone, 976,349 → **977,921**, by 1,572 bytes: the console page's downloads section — each
+  turns out of the measure's cap; the third's four commits moved the site figure and the page
+  figure with it; and the fourth's fix for the two-by-two's wrap arrow moved it again on the two
+  pages that draw the flow — and each was re-derived in the commit that shipped the bytes. **And
+  this round is the screenshot landing**, which is the sixth: the site figure alone moves,
+  because PR #622's two `public/images/` assets (the capture and its transcription) were already
+  in every build of the site and unplaced, and the `<img>` that puts the picture on the homepage
+  adds its markup. The page weight does not move — the picture is on the homepage, and the
+  ceiling is derived from the docs hub, which renders neither the chat nor the screenshot — and
+  nor does the JavaScript. **And the last round is this branch's own two changes from the
+  owner's brief of 2026-10-19**, measured against that build file by file: the menu's drawer out
+  (item 1) leaves each of the eleven pages lighter, the base stylesheet every one of them inlines
+  being that much shorter, and takes bytes off the script; the review round that followed put the
+  script's own comments back in step with the menu, which is bytes back onto it. The page weight
+  moves with both: the docs hub inlines the stylesheet and fetches the script. The console's link
+  of item 6 rendered nothing in that round, its flag being off. **And the round after it is the
+  console's release** (W3.1), which turned `features.console_downloads` on and moved the site
+  figure alone: the console page's downloads section — each
   artifact's published name as a link, the release's own SHA-256 beside it, and the command
   that checks a download against the release's sums file — Getting Started's console option
   and the hero's link to the console. The page weight and the script stay where they were: the
@@ -282,6 +277,11 @@ here goes stale the way the byte budgets did before D192.
   not the slider renders, so the bytes are in the build while the list is empty and while it is
   not. The page weight and the script stay where they were: the console page is not the
   heaviest page, and the slider ships no script at all.
+  **And the round after *that* is the run's own timeline** (the owner's feedback of
+  2026-10-19): the site figure alone moves once more, by the rail, the connector, the rule that
+  stops it at the last step and the markup that places them, on the one page that renders a
+  run — the page weight and the script stay where they were, the heaviest page being the docs
+  hub, which renders no step.
   **The figures themselves are the ones `website/README.md` writes, and they are written
   there and nowhere else**: `website/test/budget.mjs` reads them from there and holds each to
   the build it can measure, and a derivation that names another build fails, which is what
@@ -645,9 +645,9 @@ goes stale the way the byte budgets did before D192.
   review of this branch is right that comments are the specification here, so they were
   rewritten to describe the three `<details>` groups. Comments ship: the file the browser
   fetches is **290 bytes larger**, and all three figures moved with it, over the same gates'
-  build — the script 39,779 → 39,888 once the round before it had taken 181 off, the docs hub
-  267,095 → 266,926 and the site 979,298 → 976,349, the two rounds' movements together (the
-  figures the merge brought in were `main`'s, and these are this branch's build's). Nothing
+  build — the script, the docs hub and the site, each by the two rounds' movements together (the
+  figures the merge brought in were `main`'s, and these are this branch's build's; the numbers
+  are `website/README.md`'s and `website/test/budget.mjs`'s, not this document's). Nothing
   else in the artifact moved: the console's link is behind a flag this build has off, and no
   stylesheet changed.
 - **The gates, and their proofs.** `website/test/base-styles.mjs`'s two nav gates are
@@ -674,3 +674,65 @@ goes stale the way the byte budgets did before D192.
   83.5 and 59.3 px wide beside the 47 px mark. That is a measurement of the built artifact,
   not a look at it: **whether the page then looks right is the owner's check (70a–70c, D190)**,
   and no screenshot is committed here — this run cannot see one either.
+
+## The owner's 2026-10-19 feedback on How It Works: the run is one vertical timeline
+
+- **"It is a bit better, but not quite there. The run, step by step section does not look
+  good."** The section had the right content and the wrong shape. `RunDetail.astro`'s five
+  steps were a `repeat(auto-fit, minmax(18rem, 1fr))` grid: at 1280 px the five read three
+  blocks beside two with a hole where a sixth would go, at 768 px two-by-two, and no mark
+  joined one step to the next — five short paragraphs, which is a list of facts rather than a
+  run. Item 4 asked for the detail of the picture above it; a grid of boxes under a picture of
+  a sequence shows the reader the sequence nowhere.
+- **The run is now one column at every width, with the steps joined.** Each step is a list
+  item of two grid columns: a numbered marker in a fixed rail on the left, and the step's name
+  and its one quoted line in the column beside it. The line between two steps is the step's
+  own `::before` — `top` at the marker's height, `bottom` at the step's edge — so the segment a
+  reader sees between two markers is exactly the step's own bottom padding, and the last step
+  draws none, because `:not(:last-child)` is what turns the connector on. There is no
+  breakpoint: the timeline is the same shape at 360 px as at 1280, which is what a sequence
+  reads as. The marker is the accent's outline and the connector is `--border`, so the section
+  stays quieter than the picture it details.
+- **Every step is still README.md's own words, in the section's own order** (Global Constraint
+  6, D102): the build-time quotation check is untouched, and the only line reworded is step 3's,
+  which now runs to the end of its sentence so that the review and fix rounds the run repeats
+  are on the page — still a contiguous substring of the section, still searched forward from
+  the step before it. `test/home.mjs`'s built-page check reads the same five headings and lines
+  out of the page, and it no longer strips a leading number back off a heading: the number is
+  the heading's sibling now, and the fixture case for a heading that swallowed it proves the
+  refusal fires.
+- **The shape is a gate, and each claim has a fixture.** `test/base-styles.mjs` gains
+  `runTimelineFailures`, which reads the built stylesheet for three things: one column in force
+  at **360, 768 and 1280 px** — every `repeat(…)` is refused, counted or not, because a definite
+  `repeat(5, 1fr)` hides its tracks in parentheses a top-level split cannot see into and so read
+  as one column; a connector on `.run-step`'s `::before` that exists and lands on the rail —
+  `content`, `position: absolute` on the line, `position: relative` on the step it is measured
+  from, a `left` that resolves to half the marker's own width, a `background` that is declared
+  and is a token, a width no wider than `--border-width`, a condition on the step not being the
+  last, and both a `top` and a `bottom`; and no `width`, `min-width` or `white-space: nowrap` in
+  the section wider than a phone's content box — **328 px**, derived as 360 minus `main`'s own
+  inline padding at that width, read from `base.css` rather than assumed. Sixteen fixtures plant
+  each defect and read the refusal back — including the unreadable-width case, which is refused
+  by two readers of one declaration and is therefore asserted line by line rather than as a set —
+  and the check was proved red by hand against the old stylesheet, which it refuses four times
+  over.
+- **The heading sits in the run's own rhythm.** `.run-detail-title`'s margin under it moved with
+  the section, `--space-md` (24 px) → `--space-lg` (32 px) — the gap that separates two steps —
+  so the title, the five markers and the note read down one column at one spacing, where the
+  wider gap used to open a row of boxes. It is written down in the component rather than gated:
+  a gap between 24 and 32 px is a preference, and every claim `runTimelineFailures` reads is a
+  defect a reader would see.
+- **The widths were read, not looked at.** The built HTML and CSS were examined at 360, 768
+  and 1280 px for the causes of horizontal overflow — a fixed width, a `nowrap`, an absolutely
+  positioned element outside the rail — and there are none: the grid's track is
+  `minmax(0, 1fr)`, the rail is 32 px, and the name and the line both carry
+  `overflow-wrap: anywhere`. That is arithmetic over the artifact. **Whether it now looks good
+  is the owner's check (70a–70c, D190)**, and no screenshot is committed — this run cannot see
+  one either.
+- **The byte budget is re-derived in the commit that moves it (D192).** The site figure alone
+  moved: the rail, the connector, the rule that
+  stops it at the last step and the markup that places them, on the one page that renders a
+  run. The page weight and the script did not
+  move: the heaviest page is still the docs hub, which renders no step. The three numbers are
+  `website/README.md`'s, re-derived there in this round's commit, and `website/test/budget.mjs`
+  holds each to the gates' own build — this document states the rule and not the bytes.
