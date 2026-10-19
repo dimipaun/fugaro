@@ -251,7 +251,9 @@ a read fails and it is not `--once`. **The console's reader must skip any line
 that is not a JSON object** and surface it as a header warning rather than a
 parse error or a crash (design §2.1, §4.3 gap 1).
 
-## 3. `fugaro budget show --json` **Command:** `internal/cli/budget.go` `newBudgetShowCmd` / `runBudgetShow`.
+## 3. `fugaro budget show --json`
+
+**Command:** `internal/cli/budget.go` `newBudgetShowCmd` / `runBudgetShow`.
 **Document:** `budgetShowDoc`, indented two
 spaces (`enc.SetIndent("", "  ")`, `internal/cli/budget.go`).
 
@@ -300,7 +302,9 @@ bool°. `°` = `omitempty`.
 `--json`, plus `addCloudFlags`' `--config`, `--project`, `--gcp-project`,
 `--region`.
 
-## 4. `fugaro report --json` **Command:** `internal/cli/report.go` `newReportCmd` / `runReport`.
+## 4. `fugaro report --json`
+
+**Command:** `internal/cli/report.go` `newReportCmd` / `runReport`.
 **Document:** `internal/report/render.go` `JSONDoc`, written
 by **`report.JSON(w io.Writer, rep Report, m Meta) error`** —
 the exported writer, not a `cli`-side struct. Indented two spaces
@@ -327,7 +331,8 @@ the exported writer, not a `cli`-side struct. Indented two spaces
   and it is **notional**, never added to a real total (design §6.2, "one
   account of cost").
 - **`compute_micros`/`compute_usd` are null unless `ComputeState ==
-  ComputeKnown`**, and a present one is **estimated** (`compute_estimated` true). Null = *unavailable*, never `0`.
+  ComputeKnown`**, and a present one is **estimated** (`compute_estimated`
+  true). Null = *unavailable*, never `0`.
 - **`run_hours` follows `compute_micros`** — set only when `ComputeState ==
   ComputeKnown` (`jsonLine`), so it is null for the same rows.
   The key carries **no `omitempty`**, so it is always present and **null**
@@ -435,8 +440,11 @@ allow-list excludes `--watch` (it is `watch` under another name).
 
 ## 6. The other documents
 
-### 6.1 `fugaro diagnose RUN --json` **Command:** `internal/cli/diagnose.go` `newDiagnoseCmd` (`Use: "diagnose RUN"`),
-indented (`printDiagnosis`). **Document:** `Diagnosis` — a **flat** struct with no `MarshalJSON`, so its keys are
+### 6.1 `fugaro diagnose RUN --json`
+
+**Command:** `internal/cli/diagnose.go` `newDiagnoseCmd` (`Use: "diagnose RUN"`),
+indented (`printDiagnosis`). **Document:** `Diagnosis`
+(`internal/cli/diagnose.go`) — a **flat** struct with no `MarshalJSON`, so its keys are
 exactly its own tags and nothing is nested under a `process` or `checks` key:
 
 | Field | Type | omitempty | Note |
@@ -464,7 +472,9 @@ console reads `row` and the keys above.
 
 Flags: `--json` plus the cloud flags.
 
-### 6.2 `fugaro logs RUN --json` and `fugaro logs RUN --url` **Command:** `internal/cli/logs.go` `newLogsCmd` / `runLogs`. **Two argvs, and
+### 6.2 `fugaro logs RUN --json` and `fugaro logs RUN --url`
+
+**Command:** `internal/cli/logs.go` `newLogsCmd` / `runLogs`. **Two argvs, and
 they cannot be combined**: `runLogs` refuses `--url` with `--json` or
 `--follow`.
 
@@ -484,7 +494,9 @@ they cannot be combined**: `runLogs` refuses `--url` with `--json` or
   it still goes through the `https:`-and-allow-list check before
   `openExternal` sees it (design §5.1 rule 2).
 
-### 6.3 `fugaro cancel RUN --json` **Not on the console's allow-list** — `cancel` is a write (design §4.2) and v1
+### 6.3 `fugaro cancel RUN --json`
+
+**Not on the console's allow-list** — `cancel` is a write (design §4.2) and v1
 has no write path. It is recorded here because §7's gap list and the design's
 allow-list "never" table both name it, and because its document is the shape a
 future v1.1 button would consume. `cancelResult`:
@@ -501,8 +513,10 @@ document would read nothing; `cancel` is one of the three commands this file
 describes that are line-delimited, and the only one outside the console's set
 (§9.2).
 
-### 6.4 `fugaro doctor --json` **Command:** `internal/cli/doctor.go` `newDoctorCmd`, indented
-(`newDoctorCmd`). **Document:** `doctorOutput`: `ok` bool,
+### 6.4 `fugaro doctor --json`
+
+**Command:** `internal/cli/doctor.go` `newDoctorCmd`, indented. **Document:**
+`doctorOutput`: `ok` bool,
 `checks` `[]doctorCheck`, `project`° (`doctorProject`), `fugaro_yaml`°
 (`doctorFugaroYAML`), `secrets`° (**`[]secretEntry` — names and metadata only,
 never a value**), `plugin` (`pluginwire.Report`), `release`° (`releaseInfo`:
@@ -522,7 +536,9 @@ argument list, not by command name (design §5.1's second table). The console
 passes `--dir D` and **never `--strict`** (its failure mode is the checkout's
 plugin wiring, not the environment the console draws).
 
-### 6.5 `fugaro accounts ls --json` **Command:** `internal/cli/accounts.go` `newAccountsLsCmd`, indented
+### 6.5 `fugaro accounts ls --json`
+
+**Command:** `internal/cli/accounts.go` `newAccountsLsCmd`, indented
 (`printAccounts`). **Document:** `accountsListDoc`:
 `repo` string, `accounts` `[]string`, `complete` bool,
 `note`° (why selection failed). **`complete: false` means the project config
@@ -531,7 +547,9 @@ accounts"** (the type's own doc comment is the authority). Flags: `--repo`
 (always passed explicitly), `--json`, plus the cloud flags. Local and offline:
 "never calls Secret Manager".
 
-### 6.6 `fugaro secrets ls --json` **Command:** `internal/cli/secrets.go` `newSecretsLsCmd`, indented
+### 6.6 `fugaro secrets ls --json`
+
+**Command:** `internal/cli/secrets.go` `newSecretsLsCmd`, indented
 (`printSecrets`, `internal/cli/secrets.go`). **The document is a bare JSON array** — `enc.Encode(entries)`
 in `printSecrets`, not an object with a wrapper key. Each element is
 `secretEntry`: `name`° (the logical name, from the
@@ -546,7 +564,9 @@ value can appear**: the command "has no access call at all". Flags: `--repo`
 **or** `--project-wide` (always one of them, passed explicitly — with neither
 the command resolves the checkout's origin), `--json`, plus the cloud flags.
 
-### 6.7 `fugaro version` **Command:** `internal/cli/root.go` `newVersionCmd`, **`cobra.NoArgs` with no
+### 6.7 `fugaro version`
+
+**Command:** `internal/cli/root.go` `newVersionCmd`, **`cobra.NoArgs` with no
 `Flags()` at all**. It prints **one line of plain text** — the `Version`
 variable (`Version`, `var Version = "dev"`), i.e. the release tag of a
 built binary. There is **no `--json` and no flag of any kind**, which is why
@@ -555,7 +575,9 @@ root command sets no cobra `Version` field (`fugaro --version` fails). The
 console parses the human line, pinned by a test against the real output
 (design §4.3 gap 2).
 
-### 6.8 `fugaro config list --json` **Command:** `internal/cli/config_list.go` `newConfigListCmd`, a subcommand of
+### 6.8 `fugaro config list --json`
+
+**Command:** `internal/cli/config_list.go` `newConfigListCmd`, a subcommand of
 `fugaro config` (`internal/cli/configcmd.go`). **Flags:** `--json`. **It takes
 no cloud flags** — `--project`, `--config`, `--gcp-project` and `--region` are
 absent on purpose: this is a local read of the operator's own project configs,
@@ -602,7 +624,9 @@ the spawn fails and the console shows its "this CLI cannot list installations"
 state, which is the form D13 accepted for v1. The handshake (§6.7) is what tells
 the console which case it is in.
 
-### 6.9 `fugaro plan graph --json` **Command:** `internal/cli/plan.go` `newPlanGraphCmd`, the only subcommand of
+### 6.9 `fugaro plan graph --json`
+
+**Command:** `internal/cli/plan.go` `newPlanGraphCmd`, the only subcommand of
 `fugaro plan`. **Flags:** `--plan <path>` (the plan document the graph sits
 beside; with none, the one graph artifact under `docs/plans` is read, and more
 than one is refused and listed rather than picked), `--json`. **It takes no
@@ -948,16 +972,19 @@ signal.
 
 There are two refusals, and the ordinary one writes nothing:
 
-1. **Before the stream starts.** `runWatch` calls `checkDBProject(ctx, db, lc)` (`internal/cli/budget.go`) before it starts the supervisor, and that reads
+1. **Before the stream starts.** `runWatch` calls `checkDBProject(ctx, db, lc)`
+   (`internal/cli/budget.go`) before it starts the supervisor, and that reads
    `/fugaro/project` to prove the database is this project's. A permission
    error there, a database with no marker, and a marker naming another project
    all return `dbErr(...)`/`userErr(...)` — `ExitUserError` (1) — **with no
    document emitted and no stream ever opened**. Zero documents is the shape of
    the ordinary refusal.
-2. **During the stream.** A permission error arriving as a stream `error` event reaches `State.conn` (`internal/watch/state.go`), which maps it to
+2. **During the stream.** A permission error arriving as a stream `error`
+   event reaches `State.conn` (`internal/watch/state.go`), which maps it to
    `ConnRefused`; `watchStream`'s `refused` test emits that document **before**
    the `ready`/`dirty`/gap test — unconditionally — and then returns
-   `dbErr(d.LC, rtdb.ErrPermission, false)`. The supervisor reaches `phaseHalt` on the same event (`streamPhase`, `internal/watch/source.go`), but the CLI
+   `dbErr(d.LC, rtdb.ErrPermission, false)`. The supervisor reaches `phaseHalt`
+   on the same event (`streamPhase`, `internal/watch/source.go`), but the CLI
    returns as soon as it sees `ConnRefused`, so the process exits 1 rather than
    halting.
 
@@ -1110,7 +1137,8 @@ task to stop, which is what the function's comment says.)
 1. Split stdout on newlines and decode each line as one JSON object; **skip a
    line that is not** (§10.8).
 2. Render the newest document; never accumulate deltas (§10.1).
-3. Silence is not death: use `now`, `connection.state`, `connection.age_seconds` and the console's own clock (§10.1, §10.6).
+3. Silence is not death: use `now`, `connection.state`, `connection.age_seconds`
+   and the console's own clock (§10.1, §10.6).
 4. A changed `day` is a break in the series, never a zero (§10.7).
 5. A missing field is `unavailable`, never `0` (§1).
 6. `--repo` narrows the document: `WatchDeps.emit` calls `watch.FilterRepo`, so

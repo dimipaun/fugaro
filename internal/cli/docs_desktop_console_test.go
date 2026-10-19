@@ -4776,6 +4776,44 @@ func TestDocsDesktopConsoleContractCitesBySymbolNotLine(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleContractHeadingsStandAlone: each of the contract's
+// section headings is a heading and nothing else.
+//
+// The same citation pass joined eleven of them to the body paragraph below —
+// `## 3`, `## 4` and `### 6.1` through `### 6.9`, each of which had been a
+// heading, a blank line and then the body. Markdown then renders the whole
+// command description as heading text and the section anchors and any table of
+// contents move with it, and no test noticed: the contract is read as bytes,
+// and every other assertion here looks for a phrase that a merged heading still
+// contains.
+//
+// Two rules, because one alone leaves a hole. A heading is followed by a blank
+// line — that catches every one of those eleven, since each had body text on the
+// next line. And a heading carries none of the `**Command:**` / `**Document:**`
+// markers that begin the paragraph under it — that catches the same join made
+// with the blank line kept, where the body sits on the heading line itself.
+//
+// Mutation (verified, run and restored): re-join `## 3.` with the `**Command:**`
+// line that follows it — this fails on that line, twice, once per rule.
+func TestDocsDesktopConsoleContractHeadingsStandAlone(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	lines := strings.Split(readDoc(t, path), "\n")
+	for i, line := range lines {
+		body := strings.TrimLeft(line, "#")
+		if !strings.HasPrefix(line, "#") || !strings.HasPrefix(body, " ") {
+			continue // not an ATX heading
+		}
+		for _, marker := range []string{"**Command:**", "**Document:**"} {
+			if strings.Contains(body, marker) {
+				t.Errorf("%s:%d: heading carries body text (%s): %q — the body paragraph starts on its own line", path, i+1, marker, line)
+			}
+		}
+		if i+1 < len(lines) && strings.TrimSpace(lines[i+1]) != "" {
+			t.Errorf("%s:%d: heading is not followed by a blank line: %q — body text joined onto it?", path, i+1, line)
+		}
+	}
+}
+
 // TestDocsDesktopConsoleContractStatesTheAccountAxis: the `account` row of both
 // run shapes used to say the field could not appear on a project job at all —
 // "in phase 3 **never**, because a profile may not mount a Claude OAuth token"
