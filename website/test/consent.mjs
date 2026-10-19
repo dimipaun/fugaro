@@ -1193,8 +1193,31 @@ test('the shipped scripts never take the keyboard: no preventDefault, no stopPro
 
 // ---- the privacy statement, and the claims it makes -------------------------------------
 
+/**
+ * The part of the privacy page that is about the SITE: everything inside `main` before the
+ * second `h2`, which is where "The software" begins (the page carries two named parts — the
+ * owner's request of 2026-10-19 — and only the first is about what the site collects).
+ *
+ * The vendor rule below is scoped to this part and not to the whole page, and the scoping is
+ * the correction the software part forced: the phone app signs in to the reader's OWN Firebase
+ * project, so the page names Firebase in the software part by design, and a scan of the whole
+ * page would read that as the site's measurement naming a vendor it does not have. The rule is
+ * unchanged for the part it was written about.
+ */
+function sitePartOf(html) {
+  const main = find(parse(html), 'main')
+  if (main === null) return ''
+  const h2s = [...walk(main)].filter((el) => el.name === 'h2')
+  if (h2s.length < 2) return textOf(main)
+  const siblings = h2s[0].parent.children
+  return siblings
+    .slice(0, siblings.indexOf(h2s[1]))
+    .map(textOf)
+    .join(' ')
+}
+
 test('the privacy page states what is collected in the state the site is built in', () => {
-  const off = textOf(parse(pageOf(FLAG_OFF.pages, 'privacy/index.html')))
+  const off = sitePartOf(pageOf(FLAG_OFF.pages, 'privacy/index.html'))
   assert.match(off, /collects nothing/i, 'with analytics off the privacy page does not say that the site collects nothing')
   assert.ok(!/Google Analytics|Firebase|googletagmanager/i.test(off), 'the privacy page names the analytics vendor while analytics are switched off')
 
@@ -1204,6 +1227,18 @@ test('the privacy page states what is collected in the state the site is built i
   assert.match(on, /after you accept|after consent/i, 'the privacy page does not state that analytics load only after consent')
   assert.match(on, /Decline/, 'the privacy page does not say how consent is withdrawn')
   assert.match(on, new RegExp(CONSENT_KEY), 'the privacy page does not say where the choice is stored')
+})
+
+test('the vendor rule reads the site part, and a vendor named in it is still refused', () => {
+  // The scoping above is a correction and not a weakening: a vendor named in the site's own part
+  // is the thing the rule was written for, and a whole-page scan is what made the page's software
+  // part — where Firebase is the reader's own project, not the site's measurement — a finding.
+  const shell = (site, software) =>
+    `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>Privacy</h1><h2>The website</h2><p>${site}</p><h2>The software</h2><p>${software}</p></main></body></html>`
+
+  assert.match(sitePartOf(shell('Google Analytics counts visits.', 'Your own Firebase project.')), /Google Analytics/, 'a vendor named in the site part is not read, so the rule could not refuse one')
+  assert.ok(!/Google Analytics|Firebase|googletagmanager/i.test(sitePartOf(shell('This site collects nothing.', 'Your own Firebase project.'))), 'the vendor rule reads the software part, which is where the reader\'s own Firebase project is named')
+  assert.equal(sitePartOf('<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>no main</p></body></html>'), '', 'a page with no main is not a site part, and this reader must not invent one')
 })
 
 /**

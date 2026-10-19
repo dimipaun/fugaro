@@ -114,11 +114,11 @@
 //     script did not move with it: the heaviest page is the docs hub, which renders no install
 //     option, no download and no hero.
 //   - **The privacy statement gained its software part** (the owner's request of 2026-10-19),
-//     and moved the site figure alone, 977,921 → **980,144**, by **2,223 bytes** of that page's
+//     and moved the site figure alone, 977,921 → **980,195**, by **2,274 bytes** of that page's
 //     own markup: the page is the one the App Store and Play listings link as a privacy policy,
 //     so it carries "The website" and "The software" as two named parts. The page weight and the
 //     script did not move — the heaviest page is still the docs hub — and the word ceiling above
-//     moved with it, 250 → **607**, from that page's own count (485 words plus 25 %), which is
+//     moved with it, 250 → **622**, from that page's own count (497 words plus 25 %), which is
 //     the derivation `wordsCeilingFailures` below holds it to.
 //
 // What is counted, all of it raw (uncompressed) bytes, because that is what the artifact
