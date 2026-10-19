@@ -3,17 +3,23 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The two documents this work added, and the index that names them. There is
-// no test in this package that walks docs/ or pins the set of docs folders
-// (each docs package is pinned by its own file, like this one), so the folder
-// and its file set are pinned here.
+// no test in this package that walks docs/ or pins the set of docs folders, so
+// a folder that wants its documents pinned writes its own file — this one.
+// That is the convention and not a guarantee: docs/mobile/'s six documents are
+// pinned by nothing, and docs/releases/ only through the release-note
+// precondition scripts/release_test.go exercises, not by a pin of its
+// documents.
 const (
 	inJobReviewREADME  = "docs/in-job-review/README.md"
 	inJobReviewSpec    = "docs/in-job-review/spec.md"
@@ -715,6 +721,84 @@ func TestDocsInJobReviewOnlyInClaimsCarryTheirCarveOut(t *testing.T) {
 				inJobReviewRecon, absent)
 		}
 	}
+}
+
+// TestDocsInJobReviewNamesEveryTaskOverride: finding #7 rests on a closed list
+// — the per-task knobs — and a closed list written by hand drifts from the
+// struct it describes. The sentence named three of task.Overrides' four fields,
+// dropping TotalTimeout, while relying on that same field in the next breath
+// ("only --total-timeout populates an override"). The list is read off the
+// struct here, so a field added to Overrides fails until the document names it.
+func TestDocsInJobReviewNamesEveryTaskOverride(t *testing.T) {
+	recon := readDoc(t, inJobReviewRecon)
+	over := reflect.TypeOf(task.Overrides{})
+	fields := make([]string, 0, over.NumField())
+	for i := range over.NumField() {
+		fields = append(fields, over.Field(i).Name)
+	}
+	// #7's own block, so a name appearing in another finding cannot stand in for
+	// a missing one here.
+	block := findingBlock(t, recon, 7)
+	if block == "" {
+		t.Fatalf("%s carries no finding #7 to read the per-task knobs from", inJobReviewRecon)
+	}
+	for _, name := range fields {
+		if !strings.Contains(block, name) {
+			t.Errorf("finding #7 lists the per-task knobs but does not name task.Overrides.%s: the list is the struct's own fields (%s), and the sentence calls it the whole of them",
+				name, strings.Join(fields, ", "))
+		}
+	}
+}
+
+// TestDocsInJobReviewPinningClaimNamesItsExceptions: the index says how this
+// folder is pinned, and the first version of that sentence claimed "each docs
+// package is pinned by its own file" — false: docs/mobile/'s six documents are
+// pinned by nothing, and docs/releases/ only through the release-note
+// precondition scripts/release_test.go exercises. The true half — no test in
+// internal/cli walks docs/ or pins the set of folders — is what justifies this
+// pin and has to stay, and the folders the claim does not cover have to be
+// named rather than implied.
+func TestDocsInJobReviewPinningClaimNamesItsExceptions(t *testing.T) {
+	readme := readDoc(t, inJobReviewREADME)
+	for _, want := range []string{
+		"No test in `internal/cli` walks `docs/` or pins the set of docs folders",
+		"docs/mobile/",
+		"docs/releases/",
+		"scripts/release_test.go",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("%s lacks %q: the pinning claim has to keep the half that justifies this pin, and name the folders it does not cover",
+				inJobReviewREADME, want)
+		}
+	}
+	if strings.Contains(readme, "each docs package is pinned by its own file") {
+		t.Errorf("%s carries the retracted claim that each docs package is pinned by its own file: docs/mobile/'s six documents have no pin, and docs/releases/ has no pin of its documents, so the claim must not come back",
+			inJobReviewREADME)
+	}
+}
+
+// findingBlock returns the text of finding #N: from its own label to the next
+// finding's label. Anything a finding carries is found inside its own block, so
+// a name in the neighbouring finding is seen as such.
+func findingBlock(t *testing.T, recon string, want int) string {
+	t.Helper()
+	head := regexp.MustCompile(`(?m)^\*\*#([0-9]+) \(`)
+	locs := head.FindAllStringSubmatchIndex(recon, -1)
+	for i, m := range locs {
+		n, err := strconv.Atoi(recon[m[2]:m[3]])
+		if err != nil {
+			t.Fatalf("finding label %q does not carry a number", recon[m[0]:m[1]])
+		}
+		if n != want {
+			continue
+		}
+		end := len(recon)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		return recon[m[0]:end]
+	}
+	return ""
 }
 
 // TestDocsInJobReviewCitationsExist: every load-bearing citation in the two
