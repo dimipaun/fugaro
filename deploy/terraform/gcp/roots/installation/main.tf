@@ -47,6 +47,7 @@ module "installation" {
   enable_budget             = var.enable_budget
   history                   = var.history
   project_secrets           = var.project_secrets
+  credentials_service       = var.credentials_service
   managed_deployer_scoped   = var.managed_deployer_scoped
 }
 
@@ -73,6 +74,10 @@ module "project" {
   job_runner_role = module.installation.role_ids.job_runner
   launchers       = var.launchers
   operators       = var.operators
+  # A shared job's account is a job account too: with the credentials
+  # service on it loses its accessor grant on the model secrets the same way
+  # a repository's job account does (C1.18).
+  credentials_service = module.installation.credentials_service
 
   # The runs bucket arrives as a name, and every other grant in this tree
   # references the bucket resource itself — which is what orders them. On a

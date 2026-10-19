@@ -1755,3 +1755,226 @@ run "deployer_scoped_opt_in" {
     error_message = "with managed_deployer_scoped the scoped role is bound once, under the fugaro-managed-prefix condition"
   }
 }
+
+# The credentials service (C1.18; design docs/credentials-service, D146,
+# D147) is opt-in per installation and OFF by default: an installation that
+# names no credentials_service creates no account, no service and no grant of
+# either, and its output is null — so every repository's job keeps the mounts
+# and the accessor grants it has today. The golden plans are the other half of
+# this property: they are regenerated from the same tfvars and must not move.
+run "credentials_service_off_by_default" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  assert {
+    condition = (length(google_service_account.credentials) == 0 &&
+      length(google_cloud_run_v2_service.credentials) == 0 &&
+      length(google_secret_manager_secret_iam_member.credentials) == 0 &&
+    length(google_service_account_iam_member.credentials_operator) == 0)
+    error_message = "an installation that has not opted in must have no credentials account, service or grant"
+  }
+  assert {
+    condition     = output.credentials_service == null
+    error_message = "the credentials_service output is null unless the installation opted in"
+  }
+}
+
+# The opt-in, planned in full: its own account, the service whose ingress
+# requires IAM, secretAccessor on exactly the model secrets the opt-in names,
+# the operators' actAs on the account (applying the service needs it) — and
+# nothing else. No bucket grant and no project role: the service is a
+# secrets-only boundary (D143, Check 94).
+run "credentials_service_on" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.credentials[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  variables {
+    project_secrets = {
+      "claude-oauth-token" = "fugaro-aurora-claude-oauth-token-2c2c2c2c2c2c2c2c"
+      "sandbox-probe"      = "fugaro-aurora-sandbox-probe-3d3d3d3d3d3d3d3d"
+    }
+    credentials_service = {
+      account_id = "fugaro-credentials"
+      name       = "fugaro-credentials"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.9.5"
+      rtdb_url   = "https://aurora-default-rtdb.firebaseio.com"
+      secrets    = ["claude-oauth-token"]
+    }
+  }
+
+  assert {
+    condition     = google_service_account.credentials[0].account_id == "fugaro-credentials" && google_service_account.credentials[0].display_name == "Fugaro credentials service"
+    error_message = "the credentials account's ID is the input, and its display name is Fugaro's own"
+  }
+  assert {
+    condition = (length(google_cloud_run_v2_service.credentials) == 1 &&
+      google_cloud_run_v2_service.credentials[0].name == "fugaro-credentials" &&
+      google_cloud_run_v2_service.credentials[0].location == "us-east5" &&
+      google_cloud_run_v2_service.credentials[0].ingress == "INGRESS_TRAFFIC_ALL" &&
+    google_cloud_run_v2_service.credentials[0].invoker_iam_disabled == false)
+    error_message = "the service is the input's name, in the installation's region, with the invoker IAM check ON (invoker_iam_disabled false): a run.invoker grant is the only way in, which is what makes the job accounts the only callers (D135)"
+  }
+  assert {
+    condition     = one(google_cloud_run_v2_service.credentials[0].template).service_account == "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+    error_message = "the service runs as its own account, never the project's default compute account"
+  }
+  assert {
+    condition     = one(one(google_cloud_run_v2_service.credentials[0].template).containers).image == "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.9.5"
+    error_message = "the service's image is the input (C1.20's stage fills it with the released image)"
+  }
+  assert {
+    condition = (toset([for e in one(one(google_cloud_run_v2_service.credentials[0].template).containers).env : "${e.name}=${e.value}"]) == toset([
+      "FUGARO_PROJECT=aurora", "FUGARO_GCP_PROJECT=proj-1234", "FUGARO_RTDB_URL=https://aurora-default-rtdb.firebaseio.com",
+    ]))
+    error_message = "the service's environment is the project, its GCP project and the database its state lives in (D136): no credential, no bucket"
+  }
+  assert {
+    condition = (length(google_secret_manager_secret_iam_member.credentials) == 1 &&
+      google_secret_manager_secret_iam_member.credentials["claude-oauth-token"].role == "roles/secretmanager.secretAccessor" &&
+      google_secret_manager_secret_iam_member.credentials["claude-oauth-token"].secret_id == "fugaro-aurora-claude-oauth-token-2c2c2c2c2c2c2c2c" &&
+    google_secret_manager_secret_iam_member.credentials["claude-oauth-token"].member == "serviceAccount:fugaro-credentials@proj-1234.iam.gserviceaccount.com")
+    error_message = "the credentials account reads exactly the model secrets the opt-in names, per secret and as secretAccessor: the container sandbox-probe is not named, so it is not granted"
+  }
+  assert {
+    condition = (length(google_service_account_iam_member.credentials_operator) == 1 &&
+      google_service_account_iam_member.credentials_operator["user:operator@example.com"].role == "roles/iam.serviceAccountUser" &&
+      google_service_account_iam_member.credentials_operator["user:operator@example.com"].member == "user:operator@example.com" &&
+    google_service_account_iam_member.credentials_operator["user:operator@example.com"].service_account_id == "projects/proj-1234/serviceAccounts/fugaro-credentials@proj-1234.iam.gserviceaccount.com")
+    error_message = "the operators, and nobody else, may act as the credentials account: applying the service needs it"
+  }
+  assert {
+    condition = alltrue([
+      for m in concat(
+        [for g in google_storage_bucket_iam_member.runs : g.member],
+        [for g in google_storage_bucket_iam_member.runs_reader : g.member],
+        [for g in google_storage_bucket_iam_member.runs_launcher : g.member],
+        [for g in google_storage_bucket_iam_member.state : g.member],
+        [for g in google_storage_bucket_iam_member.history_runs_reader : g.member],
+      ) : !strcontains(m, "fugaro-credentials")
+    ])
+    error_message = "the credentials account holds nothing on the runs bucket or the state bucket: it reads secrets and nothing else (Check 94)"
+  }
+  assert {
+    condition = alltrue([
+      for m in concat(
+        [for g in google_project_iam_member.launcher : g.member],
+        [for g in google_project_iam_member.history_launcher : g.member],
+        [for g in google_project_iam_member.operator_build_submitter : g.member],
+        [for g in google_project_iam_member.operator_cloud_asset_reader : g.member],
+      ) : !strcontains(m, "fugaro-credentials")
+    ])
+    error_message = "the credentials account holds no project role: it runs no Cloud Run job and reads no registry"
+  }
+  assert {
+    condition = (output.credentials_service.name == "fugaro-credentials" &&
+      output.credentials_service.region == "us-east5" &&
+      output.credentials_service.secrets == tolist(["claude-oauth-token"]))
+    error_message = "the output carries the service's name and region (the job accounts' run.invoker grant) and the model secrets it holds (dropped from those accounts' accessor grants)"
+  }
+}
+
+# The root passes the opt-in to the module and re-exports the output fugaro
+# init --repo copies into every repository root.
+run "credentials_service_through_the_root" {
+  command = plan
+
+  variables {
+    project_secrets = {
+      "claude-oauth-token" = "fugaro-aurora-claude-oauth-token-2c2c2c2c2c2c2c2c"
+    }
+    credentials_service = {
+      account_id = "fugaro-credentials"
+      name       = "fugaro-credentials"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.9.5"
+      rtdb_url   = "https://aurora-default-rtdb.firebaseio.com"
+      secrets    = ["claude-oauth-token"]
+    }
+  }
+
+  assert {
+    condition     = output.credentials_service != null && output.credentials_service.name == "fugaro-credentials" && output.credentials_service.region == "us-east5"
+    error_message = "the root must pass credentials_service to the module and output it, which is how a repository root learns the service's name and region"
+  }
+}
+
+run "credentials_service_needs_a_deployable_shape" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id = "FugaroCredentials"
+      name       = "fugaro-credentials"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.9.5"
+      rtdb_url   = "https://aurora-default-rtdb.firebaseio.com"
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# The cascade's state lives in the database (D136), so a service without one
+# has nowhere to keep an exhausted mark: the URL is required, and it must be
+# a URL.
+run "credentials_service_needs_a_database" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id = "fugaro-credentials"
+      name       = "fugaro-credentials"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.9.5"
+      rtdb_url   = "aurora-default-rtdb.firebaseio.com"
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# The service's accessor grant is on the project's own containers, so a name
+# with no container is refused here rather than failing the apply.
+run "credentials_service_secret_must_be_a_project_container" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    project_secrets = {
+      "sandbox-probe" = "fugaro-aurora-sandbox-probe-3d3d3d3d3d3d3d3d"
+    }
+    credentials_service = {
+      account_id = "fugaro-credentials"
+      name       = "fugaro-credentials"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.9.5"
+      rtdb_url   = "https://aurora-default-rtdb.firebaseio.com"
+      secrets    = ["claude-oauth-token"]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}

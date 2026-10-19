@@ -47,6 +47,14 @@ variable "installation" {
     })
     launchers = list(string)
     operators = list(string)
+    # The installation's credentials service (D146, D147), absent (null) for
+    # an installation that has not opted in: its name, its region and the
+    # model secrets it holds, by logical name.
+    credentials_service = optional(object({
+      name    = string
+      region  = string
+      secrets = list(string)
+    }))
   })
 
   validation {
@@ -79,6 +87,14 @@ variable "installation" {
     condition = alltrue([for m in concat(var.installation.launchers, var.installation.operators) :
     can(regex("^(user|group|serviceAccount|domain):[^ ]+$", m))])
     error_message = "installation.launchers and operators must be IAM members: user:, group:, serviceAccount: or domain: followed by the address."
+  }
+
+  validation {
+    condition = var.installation.credentials_service == null ? true : (
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.installation.credentials_service.name)) &&
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.installation.credentials_service.region))
+    )
+    error_message = "installation.credentials_service.name must be a Cloud Run service name and its region a region name such as us-east5: they address the service every job account is granted run.invoker on."
   }
 }
 

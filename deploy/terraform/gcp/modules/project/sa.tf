@@ -84,8 +84,20 @@ resource "google_storage_bucket_iam_member" "job_tokens" {
 # design's §4.5 runtime fetch, which would grant a prefix of Secret Manager
 # names through an IAM condition, is not adopted (Check 52's U3 is unanswered,
 # so nothing here depends on it).
+#
+# The model secrets are dropped when the installation has the credentials
+# service on, exactly as modules/workflow/sa.tf drops them: a shared job's
+# account is a job account like any other, and with the service on the
+# service's own account is the only identity that reads a model credential
+# (D143, D146, Check 94). The task that added this (C1.18) named only the
+# workflow module, whose grant the plan believed was the only one; a project
+# job's account mounts a Claude account's token through
+# projectAccountMount, so the same drop is needed here.
 resource "google_secret_manager_secret_iam_member" "job" {
-  for_each = toset(values(var.job.secret_env))
+  for_each = toset([
+    for name in values(var.job.secret_env) :
+    name if var.credentials_service == null || !contains(var.credentials_service.secrets, name)
+  ])
 
   project   = var.project
   secret_id = var.secrets[each.value]

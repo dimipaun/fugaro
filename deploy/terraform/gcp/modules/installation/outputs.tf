@@ -85,3 +85,12 @@ output "project_secrets" {
   description = "The project-wide secret containers by logical name (their secret IDs), so a consumer waits for the container: the project job module grants each job the ones its profile mounts."
   value       = { for name, s in google_secret_manager_secret.project : name => s.secret_id }
 }
+
+output "credentials_service" {
+  description = "The credentials service, or null when the installation has not opted in: its name and region (a repository root grants its job accounts run.invoker there) and the model secrets it holds, by logical name (modules/workflow/sa.tf drops those from the job accounts' accessor grants)."
+  value = var.credentials_service == null ? null : {
+    name    = var.credentials_service.name
+    region  = var.region
+    secrets = var.credentials_service.secrets
+  }
+}

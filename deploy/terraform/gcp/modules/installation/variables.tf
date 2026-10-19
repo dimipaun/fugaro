@@ -283,6 +283,35 @@ variable "history" {
   }
 }
 
+variable "credentials_service" {
+  description = "The credentials service (design docs/credentials-service, D146, D147): a Cloud Run service that alone holds the project's model credentials, opt-in per installation and null (the default) for off. account_id and name are its service account's ID and the Cloud Run service's name, image the released image, rtdb_url the database the cascade's shared state lives in (D136), and secrets the logical names of the project_secrets containers that are model credentials: the service's account reads those, and modules/workflow/sa.tf stops granting every job account access to them. With it off nothing is created and every repository's job keeps the mounts it has today."
+  type = object({
+    account_id = string
+    name       = string
+    image      = string
+    rtdb_url   = string
+    secrets    = optional(list(string), [])
+  })
+  default = null
+
+  validation {
+    condition = var.credentials_service == null ? true : (
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.credentials_service.account_id)) &&
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.credentials_service.name)) &&
+      length(var.credentials_service.image) > 0 &&
+      can(regex("^https://[a-z0-9.-]+$", var.credentials_service.rtdb_url))
+    )
+    error_message = "credentials_service needs a service account ID, a Cloud Run service name, an image, and the Firebase database's URL (an https://<host> URL without a path, the Firebase root's rtdb_url): the cascade's state lives in that database and the service has nowhere else to keep it."
+  }
+
+  validation {
+    condition = var.credentials_service == null ? true : alltrue([
+      for s in var.credentials_service.secrets : contains(keys(var.project_secrets), s)
+    ])
+    error_message = "every name in credentials_service.secrets must be one of the project's own secret containers (a key of project_secrets): the service's account gets secretAccessor on exactly those, and a grant on a container that does not exist fails the apply."
+  }
+}
+
 variable "project_secrets" {
   description = "Project-wide secret containers: logical name -> secret ID (gcp.ProjectSecretID), fugaro init creates/adopts each; values are never set by Terraform."
   type        = map(string)

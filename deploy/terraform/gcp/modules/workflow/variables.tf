@@ -178,3 +178,21 @@ variable "allow_job_delete" {
   default     = false
   nullable    = false
 }
+
+variable "credentials_service" {
+  description = "The installation's credentials service (design docs/credentials-service, D146, D147), null when the installation has not opted in: its name and region and the model secrets it holds, by logical name. With it on, the job account gets run.invoker on the service and loses its accessor grant on those secrets — no job of this installation holds a model credential any more, and its reviews reach the cascade through the service as their own identity (D135)."
+  type = object({
+    name    = string
+    region  = string
+    secrets = list(string)
+  })
+  default = null
+
+  validation {
+    condition = var.credentials_service == null ? true : (
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.credentials_service.name)) &&
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.credentials_service.region))
+    )
+    error_message = "credentials_service.name must be a Cloud Run service name and credentials_service.region a region name such as us-east5: they address the service the job accounts are granted run.invoker on."
+  }
+}

@@ -27,6 +27,17 @@ variable "installation" {
     })
     launchers = list(string)
     operators = list(string)
+    # The installation's credentials service (D146, D147), absent (null) for
+    # an installation that has not opted in: its name, its region and the
+    # model secrets it holds by logical name. fugaro init --repo copies it
+    # from the installation root's outputs, and the workflow module grants
+    # the job accounts run.invoker on it and drops those secrets from their
+    # accessor grants.
+    credentials_service = optional(object({
+      name    = string
+      region  = string
+      secrets = list(string)
+    }))
   })
 }
 

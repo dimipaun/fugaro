@@ -155,6 +155,20 @@ variable "history" {
   default = null
 }
 
+variable "credentials_service" {
+  # The opt-in credentials service (D146, D147); the module's variable says
+  # what each member is. Null (the default) is off, and an installation that
+  # does not name it plans exactly as it did before this variable existed.
+  type = object({
+    account_id = string
+    name       = string
+    image      = string
+    rtdb_url   = string
+    secrets    = optional(list(string), [])
+  })
+  default = null
+}
+
 variable "project_secrets" {
   type = map(string)
   # The project-wide secret containers (logical name -> secret ID) the

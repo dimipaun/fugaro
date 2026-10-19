@@ -58,13 +58,40 @@ resource "google_storage_bucket_iam_member" "job_tokens" {
 }
 
 # Each secret the job mounts, at the secret level, never the project's.
+# The model secrets are dropped when the installation has the credentials
+# service on: the service's account is the identity that reads them
+# (D143, D146), and a job that kept an accessor grant could read a model
+# credential straight out of Secret Manager, past the cascade and past the
+# accounting. The drop is by logical name, so a repository's own copy of a
+# model secret loses its grant too. Everything else the workflow mounts —
+# the provider credential, a repository's own secrets — is granted as before.
 resource "google_secret_manager_secret_iam_member" "job" {
-  for_each = toset(values(var.workflow.secret_env))
+  for_each = toset([
+    for name in values(var.workflow.secret_env) :
+    name if var.credentials_service == null || !contains(var.credentials_service.secrets, name)
+  ])
 
   project   = var.project
   secret_id = var.secrets[each.value]
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.job.member
+}
+
+# The job account's way into the cascade: run.invoker on the credentials
+# service, and nothing more. The service's ingress requires IAM
+# (installation/credentials.tf), so this grant is the only door, and it is
+# one per job account of this installation's repositories: a run reaches the
+# cascade with its own identity (D135). Created only with the opt-in — a
+# grant naming a service that does not exist fails the apply — and never
+# granted to a person.
+resource "google_cloud_run_v2_service_iam_member" "credentials" {
+  count = var.credentials_service == null ? 0 : 1
+
+  project  = var.project
+  location = var.credentials_service.region
+  name     = var.credentials_service.name
+  role     = "roles/run.invoker"
+  member   = google_service_account.job.member
 }
 
 # Only a workflow whose agent authenticates through Vertex AI.
