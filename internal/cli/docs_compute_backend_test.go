@@ -4,14 +4,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
 
 // computeBackendPlan is the plan this file pins: docs/plans/2026-10-19-compute-backend.md,
 // the implementation plan for the Cloud Batch compute backend (design
-// docs/design/compute-backend.md), written against the tree at the head of
-// branch fugaro/20261019-140014-b55a (= origin/integration-0.9.5, af953e5e).
+// docs/design/compute-backend.md), written against the tree branch
+// fugaro/20261019-140014-b55a stands on (= origin/integration-0.9.5, af953e5e;
+// the branch's own commits are this plan and this test, and no code).
 const computeBackendPlan = "docs/plans/2026-10-19-compute-backend.md"
 
 // TestDocsComputeBackendCitationsExist: every path the plan cites is a path a
@@ -447,6 +450,67 @@ func TestDocsComputeBackendKeepsTheArtifactBoundary(t *testing.T) {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s no longer carries %q, which is the artifact boundary it must leave standing", computeBackendPlan, want)
 		}
+	}
+}
+
+// TestDocsComputeBackendNamesEveryChecklistTest: the plan's own text enumerates
+// what `grep -n 'func TestChecklist'` finds in this package, and it does so to
+// make a claim about the tree rather than about the plan — the design's §8.1
+// names `TestChecklistChecksAreGuarded` as the project-centric plan's backstop,
+// and the plan's Task 12 has to write `TestChecklistHasCheck57` in the shape of
+// the tests that do exist rather than of a backstop that is not there.
+//
+// An enumeration written into a document goes stale the moment a check gets a
+// test of its own, and this one says "and nothing else". So the sentence is held
+// to the tree in both directions: every `func TestChecklist…` in this package is
+// named in the plan, the count the plan states is the count in the tree, and the
+// backstop the plan says is absent is still absent.
+func TestDocsComputeBackendNamesEveryChecklistTest(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl := regexp.MustCompile(`(?m)^func (TestChecklist\w*)\(`)
+	var found []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range decl.FindAllStringSubmatch(string(data), -1) {
+			found = append(found, m[1])
+		}
+	}
+	sort.Strings(found)
+	if len(found) == 0 {
+		t.Fatalf("no `func TestChecklist…` in internal/cli: the plan's open item 9 enumerates them, so the enumeration has come loose from the tree")
+	}
+	for _, name := range found {
+		if !strings.Contains(doc, name) {
+			t.Errorf("internal/cli declares %s, which %s's open item 9 does not name: that item enumerates what `grep -n 'func TestChecklist'` finds and says \"and nothing else\", so a new checklist test has to be added there (or that claim dropped) in the same commit", name, computeBackendPlan)
+		}
+	}
+	// The count is part of the sentence, so it is pinned with the list.
+	if want := fmt.Sprintf("finds %d functions in `internal/cli`", len(found)); !strings.Contains(doc, want) {
+		t.Errorf("%s no longer says %q: internal/cli declares %d `func TestChecklist…` functions (%s)", computeBackendPlan, want, len(found), strings.Join(found, ", "))
+	}
+	// And the backstop the design names is still the one thing that is not here:
+	// the plan names it as absent, and a test function of that name would make
+	// Task 12's whole reason for writing its own test false.
+	if !strings.Contains(doc, "TestChecklistChecksAreGuarded") {
+		t.Errorf("%s no longer names TestChecklistChecksAreGuarded as the backstop the design assumes and this tree does not have", computeBackendPlan)
+	}
+	for _, name := range found {
+		if name == "TestChecklistChecksAreGuarded" {
+			t.Fatalf("internal/cli now declares TestChecklistChecksAreGuarded: %s's open item 9 says that test is not in this tree and Task 12 is written from its absence, so both have to change in the same commit", computeBackendPlan)
+		}
+	}
+	if !strings.Contains(doc, "none of them the backstop the design names") {
+		t.Errorf("%s no longer says none of the enumerated tests is the design's backstop", computeBackendPlan)
 	}
 }
 
