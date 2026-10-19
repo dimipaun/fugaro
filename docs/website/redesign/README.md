@@ -230,7 +230,7 @@ here goes stale the way the byte budgets did before D192.
   produces, which is the only account of them that is true of the site that ships:
   **JavaScript per page 149,580** (three times 49,860; `public/scripts/site.js` 39,888 bytes),
   **page weight per page 1,000,974** (three times 333,658; the docs hub 266,926 bytes) and
-  **whole site 3,667,206** (three times 1,222,402; the gates' own build of the site, 977,921
+  **whole site 3,670,902** (three times 1,223,634; the gates' own build of the site, 978,907
   bytes across 23 files, the `fugaro watch` assets below included). The fix
   round after the merge re-derived all three over the build that branch ships — the chat moved
   above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
@@ -271,7 +271,13 @@ here goes stale the way the byte budgets did before D192.
   artifact's published name as a link, the release's own SHA-256 beside it, and the command
   that checks a download against the release's sums file — Getting Started's console option
   and the hero's link to the console. The page weight and the script stay where they were: the
-  heaviest page is the docs hub, which renders none of the three. **The figures above are the
+  heaviest page is the docs hub, which renders none of the three. **And the round after it is
+  the caps-and-costs rework** (the owner's brief of 2026-10-19, the page's own item): the site
+  figure alone moves, 977,921 → **978,907**, by the 986 bytes that one page gained net — the
+  table of what a job costs and its provenance note, rendered from
+  `website/data/typical-costs.yaml`, against the per-command scope sentences the page no longer
+  carries and the disclosure the commands sit behind. The page weight and the script stay where
+  they were, the heaviest page being the docs hub. **The figures above are the
   build this branch ships.**
   The
   figures live in `website/README.md` and nowhere else, and
@@ -285,15 +291,15 @@ here goes stale the way the byte budgets did before D192.
   `website/dist`, which is the checkout's own build. The reason is that one page of the site
   reads the checkout's git state: the changelog renders each release file's "not yet released"
   state where `git tag --list` finds no tag (`src/lib/changelog.mjs`), so the same commit builds
-  to **977,921 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
-  and so the deployed site — and to **976,406 with the tags this repository's clone carries**,
+  to **978,907 bytes in a checkout with no tags** — `website-preview.yml`'s default checkout,
+  and so the deployed site — and to **977,392 with the tags this repository's clone carries**,
   the 1,515-byte changelog page being the whole of the difference. A figure derived from one is
   refused by the other, which is what happened: the gate could not measure the build `main`'s
   README named, and `website-preview` could not deploy. A derivation is likewise not held to
   whatever artifact a run was pointed at: `FUGARO_GATES_DIST` is how `console-option.mjs` runs
   the artifact gates over a copy with the console's flag flipped off — the state the checkout
   built until the console's release turned it on — and that copy is a different build — **1,572
-  bytes smaller at the site figure** than the gates' own, 976,349 against 977,921, measured (the
+  bytes smaller at the site figure** than the gates' own, 977,335 against 978,907, measured (the
   console page's downloads 1,100, Getting Started's option 386 and the homepage's call to
   action 86), and the page weight where it was — rather than another copy of this one.
   **The direction is the one the flag's own round gave it, read the other way:** turning the

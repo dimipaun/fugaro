@@ -490,6 +490,16 @@ Three things about those commands are worth stating rather than leaving to the t
   fact in the repository, then the value here, in one commit. `site.yaml`'s
   `features.console_downloads` is held to the hand-kept `content/downloads.json`'s
   `available` by the build itself, which refuses the two disagreeing (below).
+- **`website/data/typical-costs.yaml` is the owner's own measurement, and the page renders
+  it or nothing.** It carries what a job costs on this project's own development runs — one
+  entry per kind of run, each with the sample behind it, over a window whose last day is the
+  day the figures were taken — and the caps-and-costs page leads with it (the owner's brief
+  of 2026-10-19). `src/content.ts` reads it, validates it (a version, a window of at least
+  `site.yaml`'s `min_runs` runs, an ascending middle half, no duplicate id) and refuses it by
+  name, and `test/caps-and-costs.mjs` holds the built page to it **in both directions**: every
+  field the file carries is rendered in its own column, and no figure on the page is one the
+  file does not carry. So a refresh is an edit to this file and never to a page, and a field
+  added to it with no column to land in fails the build rather than going unrendered.
 - **`website/data/console-sha256sums.txt` is the release's, copied rather than written.** It is
   the `console-sha256sums.txt` asset of the console's `console-vX.Y.Z` release, byte for byte —
   one `<64 hex>  <published name>` line per artifact, the shape `sha256sum` writes and
@@ -627,6 +637,7 @@ them there.
 website/
   package.json, package-lock.json, astro.config.mjs, tsconfig.json
   data/install.yaml, site.yaml     # hand-written facts, pinned by Go tests
+  data/typical-costs.yaml          # the owner's own measurement of what a job costs, pinned by test/caps-and-costs.mjs
   data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
   content/                         # generated, do not edit (see the table above)
   src/lib/changelog.mjs            # reads docs/releases/ at build time

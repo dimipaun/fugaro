@@ -74,17 +74,31 @@
 // prints a figure the aggregation did not produce, which is finding 33 and the
 // reason the plan's §5 review row lists this page (F50, D97).
 //
-// **And the red step for the second source** (the owner's brief of 2026-10-19,
-// recorded here the way the plan asks for the first): the case that holds the
-// table to `website/data/typical-costs.yaml` was written, and then the defect it
-// exists for was planted in `src/components/CapsCosts.astro` — `money()` changed
-// to round to the whole dollar — and `node --test --test-name-pattern='exactly
-// website/data/typical-costs.yaml' test/caps-and-costs.mjs` failed on the
-// follow-up row, the file's `0.35` printed as `$0` where the case expects `$0.35`.
-// The rounding was removed and the case passed; deleting the note paragraph failed
-// the same case at "the page does not state where its figures come from, or over
-// what window". A figure the page writes of its own is the one thing neither half
-// of this file may carry.
+// **And the red steps for the second source** (the owner's brief of 2026-10-19,
+// recorded here the way the plan asks for the first). The case that holds the table
+// to `website/data/typical-costs.yaml` was written, and then each defect it exists
+// for was planted in `src/components/CapsCosts.astro` and the case run against it:
+//
+//   - `money()` rounded to the whole dollar (`$${Math.round(value)}`) — the case
+//     failed with "the page's note does not state $10.00, which
+//     website/data/typical-costs.yaml carries", the file's `10` printed as `$10`;
+//   - one cell given a figure of its own (`{'$1.00'}` for the nine-in-ten column) —
+//     "row task: … | $1.00 | … (the file carries … | $1.27 | …)", two rows named;
+//   - the middle-half column dropped (`{'—'}` in place of the range) — "row task:
+//     … | — | … (the file carries … | $0.15–$0.68 | …)";
+//   - the note paragraph deleted — "the page does not state where its figures come
+//     from, or over what window".
+//
+// Each was removed and the case passed again. The same rule the aggregation's half
+// is held to is the one these hold: a figure the page writes of its own is a figure
+// no file behind it carries, and this page has two files.
+//
+// The two cases the second source changed were proved the same way: a typed "A run
+// costs 2 USD." in the page's lead failed the aggregation case, whose first half now
+// reads the whole page outside the aggregation's section rather than the costs
+// section's own remainder; and a literal `$9.99` written into the note in place of
+// the file's cap failed the absent-file case, which is the one that says a page with
+// no `costs.json` behind it prints the data file's figures and nothing else.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
