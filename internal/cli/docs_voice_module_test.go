@@ -508,6 +508,76 @@ func TestDocsVoiceModuleReconciliationCitationsExist(t *testing.T) {
 	}
 }
 
+// TestDocsVoiceModuleReconciliationRecordsTheAppliedConsoleWorkflow: the console
+// release workflow is not a proposal waiting to be copied in. The owner copied
+// the staged file in as plan Task 4.5 (7fdfa61, 2026-10-17) and main carries the
+// revision merged as 9b61d881 (PR #626), whose first tag is v0.8.7; the copy
+// under docs/pending-workflows/ is kept so that
+// TestDocsConsoleReleaseWorkflowIsStagedAndPinned can hold the two files
+// byte-identical, not because it is still pending. A finding that called it
+// staged would tell the voice work that the pipeline its nested helper has to
+// fit into does not exist yet, and the nested-helper consequence is read off
+// that pipeline, so both halves are pinned: the verdict, and the facts about the
+// pipeline the consequence rests on.
+func TestDocsVoiceModuleReconciliationRecordsTheAppliedConsoleWorkflow(t *testing.T) {
+	const path = "docs/voice-module/reconciliation.md"
+	recon := readDoc(t, path)
+
+	// The staging verdict, gone from the whole document. Both spellings: the
+	// finding wrote it in capitals, and a document that says it in either is
+	// wrong in the same way. The workflow's own header still carries a staging
+	// note, so the document must not quote that note as the file's status.
+	for _, banned := range []string{"STAGED, NOT APPLIED", "staged, not applied"} {
+		if strings.Contains(recon, banned) {
+			t.Errorf("%s says %q about .github/workflows/console-release.yml: the owner copied it in as plan Task 4.5 (7fdfa61) and main carries the #626 revision (9b61d881), so the file is applied", path, banned)
+		}
+	}
+
+	finding := voiceModuleFinding(t, recon, 17)
+	for _, want := range []string{
+		// Applied, and the three commits that say so: the copy-in, the
+		// revision main carries now, and the first tag that runs it.
+		"applied, not staged",
+		"7fdfa61",
+		"9b61d881",
+		"v0.8.7",
+		// The staged copy is kept for a test, not because it is pending.
+		"TestDocsConsoleReleaseWorkflowIsStagedAndPinned",
+		"byte-identical",
+		// The pipeline the nested-helper consequence is read off: notarisation
+		// in a script outside the packer, the whole bundle submitted once, the
+		// retry that wraps only the stapler calls, and the deep verification of
+		// the bundle inside each shipped artifact.
+		"notarize-and-staple.sh",
+		"-c.mac.notarize=false",
+		"ditto -c -k --keepParent",
+		"retry_apple_network",
+		"codesign --verify --deep --strict",
+	} {
+		if !strings.Contains(finding, want) {
+			t.Errorf("%s: finding #17 does not state %q; the console release pipeline is applied and the nested-helper consequence is read off it", path, want)
+		}
+	}
+}
+
+// voiceModuleFinding returns finding #n's block: its heading up to the next
+// finding or section heading. Findings are addressed by number, so a retitled
+// finding does not move the pin.
+func voiceModuleFinding(t *testing.T, recon string, n int) string {
+	t.Helper()
+	i := strings.Index(recon, "**#"+strconv.Itoa(n)+" — ")
+	if i < 0 {
+		t.Fatalf("docs/voice-module/reconciliation.md has no finding #%d", n)
+	}
+	block := recon[i:]
+	for _, stop := range []string{"\n**#", "\n## "} {
+		if j := strings.Index(block, stop); j >= 0 {
+			block = block[:j]
+		}
+	}
+	return block
+}
+
 // boldCheckNumbers returns the check numbers a document states in bold, one
 // entry per whole number. The bold runs are the tokens, so "**64, 65 and 66**"
 // yields 64, 65 and 66, while a number written plainly -- a date, a "Phase 6",
@@ -534,7 +604,19 @@ func sortedCheckNumbers(set map[string]bool) []string {
 	return out
 }
 
-// Mutation (verified, run and restored): ten, all run and restored.
+// Mutation (verified, run and restored): thirteen, all run and restored.
+// (17) Writing the staging verdict back into finding #17 ("which is
+// **STAGED, NOT APPLIED**") fails
+// TestDocsVoiceModuleReconciliationRecordsTheAppliedConsoleWorkflow twice: the
+// document-level refusal (`says "STAGED, NOT APPLIED" about
+// .github/workflows/console-release.yml: ... so the file is applied`) and the
+// finding's own `applied, not staged`. (18) Dropping the copy-in commit
+// (`7fdfa61`, "Add console release workflow") from #17 fails it with `finding
+// #17 does not state "7fdfa61"`. (19) Replacing the deep verification clause
+// with a generic one ("`codesign --verify --deep --strict` -- `--deep` is what
+// reaches the nested binary -- plus" -> "a signature check plus") fails it with
+// `finding #17 does not state "codesign --verify --deep --strict"`: the
+// nested-binary half of the consequence is what the pipeline actually checks.
 // (7) Pointing §2's Haiku row at #33 (Apple's OS 26 floor) instead of #26 fails
 // TestDocsVoiceModuleReconciliationFindingsResolve with `the §2 row " A small
 // fast LLM (Haiku) turns a batch into one spoken line " cites [11 33]; the
