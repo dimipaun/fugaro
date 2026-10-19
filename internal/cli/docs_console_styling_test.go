@@ -309,7 +309,7 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	for _, want := range []struct{ has, because string }{
 		{"owned set computed at run time", "§5.2 describes the bundler's real shape: the owned set is computed at run time from the outputs, the `siblings` and the served documents"},
 		{"`SERVED_FILES`", "§5.2 names `SERVED_FILES` as where an ordered, frozen list actually lives, rather than implying the bundler has one"},
-		{"`OUTPUTS`", "§5.2 names the e2e suite's `OUTPUTS` as the second frozen list, beside `SERVED_FILES`"},
+		{"`OUTPUTS`", "§5.2 names the unit suite's build helper, `OUTPUTS`, as the second frozen list, beside `SERVED_FILES` — the module builds the tree the unit tests read (`bundle.test.ts`, `csp-document.test.ts`, `preload-surface.test.ts`), and no e2e spec imports it"},
 	} {
 		if !strings.Contains(wiring, want.has) {
 			t.Errorf("%s: §5.2 does not say %q — %s", path, want.has, want.because)
@@ -317,6 +317,72 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	}
 	if strings.Contains(wiring, "an ordered, frozen allow-list, and a refusal for anything else") {
 		t.Errorf("%s: §5.2 describes the bundler as an ordered, frozen allow-list; it has neither — `owned` is a `Set` built at run time from the outputs and the `siblings`, and the frozen lists in this area are `SERVED_FILES` and the suite's `OUTPUTS`", path)
+	}
+	if strings.Contains(wiring, "the e2e suite's `OUTPUTS`") {
+		t.Errorf("%s: §5.2 calls `OUTPUTS` the e2e suite's; `test/support/built.ts` is the unit suite's build helper — it is imported by `bundle.test.ts`, `csp-document.test.ts` and `preload-surface.test.ts`, and by no spec", path)
+	}
+
+	// §4.1, §2.8 and §2.1 against the entry: the version-skew banner is the body's
+	// first child, a sibling of the installation line, the nav and the panel — not
+	// a child of the panel and not "the first thing here" inside it. `startConsole`
+	// appends it to the mount it is handed (`app.ts` 333) and that mount is
+	// `document.body` (`entry.ts` 180-183); the panel is created afterwards by
+	// `mountDashboard` (783) and holds the screen alone. The diagram's row for it
+	// said the banner was inside the panel, and the elements it named were sections
+	// and a nav, not a div.
+	layout := mdFlat(mdBetween(t, path, doc, "### 4.1 ", "### 4.2 "))
+	for _, want := range []struct{ has, because string }{
+		{"`section.console-skew`", "§4.1's diagram names the banner's own element; `renderVersionSkew` creates a `section`, not a `div`, and the class is `console-skew`"},
+		{"the body's **first child**", "§4.1 says where the banner is appended: the mount is `document.body`, and the banner goes into it before the installation line, so it is the body's first child"},
+	} {
+		if !strings.Contains(layout, want.has) {
+			t.Errorf("%s: §4.1 does not say %q — %s", path, want.has, want.because)
+		}
+	}
+	if strings.Contains(layout, "the version-skew banner, when there is one, is the first thing here") {
+		t.Errorf("%s: §4.1's diagram still puts the version-skew banner inside `div.console-panel`; it is appended to `document.body` before the installation line, and the panel is a later sibling that holds the screen alone", path)
+	}
+	if flat := mdFlat(mdBetween(t, path, doc, "### 2.8 ", "## 3. ")); !strings.Contains(flat, "child of `div.console-panel`") {
+		t.Errorf("%s: §2.8 does not say the banner is a sibling of the panel rather than its child; it is drawn into the mount — `document.body` — before the installation line, the nav and the panel", path)
+	}
+
+	// §2.9's state table, row by row against the two screens it names: `unavailable`
+	// is what a Live **cap bar** carries (`bar()`, a percent reading) and never a
+	// sparkline bar, whose state is the bar's own height — `measured` or `gap`
+	// (`spark()`, 896-925); and Spend's `notional`/`estimated` is the **account's**
+	// state (`microsReading` switches on `SPEND_ACCOUNTS`, 512-536), not the
+	// breakdown on the axis, which is what `data-dimension` carries.
+	variants := mdBetween(t, path, doc, "### 2.9 ", "### 2.10 ")
+	for _, want := range []struct{ row, has, because string }{
+		{"| unavailable |", "**Not the sparkline's bars**", "§2.9's unavailable row sends `data-state=\"unavailable\"` to the sparkline's bars; `spark()` writes `measured` or `gap` there, so no burn-window bar carries it"},
+		{"| notional / estimated |", "the **account's** state, not the breakdown on the axis", "§2.9's notional row names the chart's dimension as what drives Spend's `data-state`; the state is the account's, and `data-dimension` is the axis's word"},
+	} {
+		if row := mdRow(t, path, variants, want.row); !strings.Contains(row, want.has) {
+			t.Errorf("%s: §2.9's %s row does not say %q — %s", path, strings.TrimSpace(want.row), want.has, want.because)
+		}
+	}
+	for _, stale := range []struct{ row, claim string }{
+		{"| unavailable |", "and the sparkline's bars)"},
+		{"| notional / estimated |", "when the chart's dimension is"},
+	} {
+		if row := mdRow(t, path, variants, stale.row); strings.Contains(row, stale.claim) {
+			t.Errorf("%s: §2.9's %s row still carries %q; the source contradicts it (§2.3's `spark()` and §2.4's `microsReading`)", path, strings.TrimSpace(stale.row), stale.claim)
+		}
+	}
+
+	// §2.3's own two rows: the repository region's own hook is in the vocabulary,
+	// and `data-state`'s five words are the attribute's whole vocabulary rather
+	// than what this screen writes.
+	live := mdBetween(t, path, doc, "### 2.3 Live", "### 2.4 Spend")
+	if row := mdRow(t, path, live, "| Repository |"); !strings.Contains(row, "`live-repos`") {
+		t.Errorf("%s: §2.3's Repository vocabulary row does not list `live-repos`; `renderLive` creates the `ol` with that class (1118) and its `li.live-repo` children are the row's own hooks, so a rule for the region has no hook to select", path)
+	}
+	stateRow := mdRow(t, path, live, "| `data-state` |")
+	if !strings.Contains(stateRow, "three of the contract's five words reach this screen") {
+		t.Errorf("%s: §2.3's `data-state` row does not say which of the five words this screen can write; `bar()` writes `measured` or `unavailable` and the sparkline's bars write `measured` or `gap`, so `notional` and `estimated` are vocabulary the screen never draws", path)
+	}
+	if strings.Contains(stateRow, "writes the five availability words") {
+		t.Errorf("%s: §2.3's `data-state` row says `bar()` (and the sparkline's bars) write the five availability words; no Live element writes more than one of three — `notional`/`estimated` reach the attribute on Spend alone", path)
 	}
 }
 

@@ -171,14 +171,17 @@ Three facts hold across every screen and are stated once:
 
 The entry draws the body's three children, in this order, all from `domSurface`'s mount:
 `section.console-installation`, `nav.console-views`, `div.console-panel` (asserted by
-`test/e2e/entry.spec.ts`: `expect(shape.bodyChildren).toEqual(['console-installation', 'console-views', 'console-panel'])`).
+`test/e2e/entry.spec.ts`: `expect(shape.bodyChildren).toEqual(['console-installation', 'console-views', 'console-panel'])`
+— the run that asserts it is an `ok` one, because **a fourth child precedes these three
+whenever the mode is not `ok`**: `startConsole` appends the version-skew banner to the same
+mount first (§2.8, §4.1)).
 
 | Region | Element and hooks | What it holds |
 |---|---|---|
 | Installation line | `section.console-installation`, `data-installation`, `data-mode` | `data-installation="chosen"` with `p.installation-project`, `p.installation-binary`, `p.installation-version` and `data-mode`; `data-installation="none"` with `p.installation-none`; `data-installation="unreadable"` with `p.installation-unreadable`; and `p.installation-store-refusal` |
 | Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, `data-view="live\|spend\|projects"`, `aria-current="true\|false"`, label as text |
 | Panel | `div.console-panel` | the mounted screen's root |
-| Reduced/refused banner | drawn by `renderVersionSkew` into the mount, before the nav | see §2.8 |
+| Reduced/refused banner | drawn by `renderVersionSkew` into the mount, **first of all** — before the installation line as well as the nav | see §2.8 |
 
 - **`VIEWS`** is `live` (label `Live`, never withheld), `spend` (label `Spend`, view
   `spend`) and `projects` (label `Projects`, view `caps`). A view the mode withholds is
@@ -235,7 +238,7 @@ never occupies.
 |---|---|
 | Header | `live-header`, `live-project`, `live-mode`, `live-day`, `live-connection`, `live-connection-age`, `live-connection-reason`, `live-note` |
 | Total | `live-total`, `live-counted`, `live-cap`, `live-percent`, `live-total-notional`, `live-total-percent` |
-| Repository | `live-repo`, `live-repo-name`, `live-repo-counted`, `live-repo-cap`, `live-repo-percent`, `live-repo-notional`, `live-burn-rate`, `live-burn`, `live-burn-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
+| Repository | `live-repos`, `live-repo`, `live-repo-name`, `live-repo-counted`, `live-repo-cap`, `live-repo-percent`, `live-repo-notional`, `live-burn-rate`, `live-burn`, `live-burn-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
 | Run row | `live-run`, `live-run-id`, `live-run-title`, `live-run-stage`, `live-run-round`, `live-run-verify`, `live-run-models`, `live-run-recipe`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-flag`, `live-run-contradiction`, `live-run-workflow`, `live-run-requester` |
 | Condition classes on a row | `live-run-queued`, `live-run-stuck` |
 | Kill banner | `live-kill`, `live-kill-word`, `live-kill-by`, `live-kill-at`, `live-kill-reason` |
@@ -250,7 +253,7 @@ never occupies.
 | `data-received-at` | an ISO stamp, or `''` | the newest frame |
 | `data-fill` | `12.5%` or `n/a` — one decimal, and **nothing else** | a bar's fill, as text. `bar()` writes it from the **same percent reading** it writes `data-state` from (`live.ts`), and both call sites pass a *percent* figure — `repo.percent`, `total.percent` — which `schema.ts` reads through `readNumber`, whose only two states are `measured` and `unavailable`. So this attribute is never `≥ 12.5%` (no `lowerBound` reaches a percent reading), never `NOTIONAL~12.5%` or `est. 12.5%` (no percent reading is marked), and never the em dash; **a rule keyed on a marked form here would match nothing** |
 | `data-height` | `12.5%` or `—` — and **never `n/a`** | each sparkline bar, **except the empty one**. The heights are the bar's own shapes, not the reading's: `spark()` builds every one as `measured(share)` or, for a sample that is not plottable, `gap(...)` — so a bar the console cannot fill draws the em dash and never the `n/a` a `data-fill` may carry. **The one-bar empty sparkline is drawn outside that loop** (`live.ts` 900-910): a line with no sample appends a single `li.live-burn-bar` carrying `data-state="gap"` and **no `data-height` at all** (909), so a rule keyed on `[data-height]` selects every bar of a drawn window and misses the bar of an empty one — the case the empty-sparkline rule of §2.3's state list is about |
-| `data-state` | **two vocabularies.** A bar's availability: `measured` \| `notional` \| `estimated` \| `unavailable` \| `gap`. Or, on the connection cell only, **the word that cell drew**: the CLI's connection state, or `n/a` when `putText` refused it | `bar()` (and the sparkline's bars) writes the five availability words; `header()` sets it on `span.live-connection` from the cell's own `textContent`, deliberately — an attribute echoing the raw value would put back on screen exactly what the refusal kept off it. **A `[data-state='…']` rule for a state colour must therefore name the five words and may not assume the connection cell carries one of them**; a rule that paints every `[data-state]` element would paint that cell for a value that is not a state |
+| `data-state` | **two vocabularies.** On a bar: the reading's availability, of which **three of the contract's five words reach this screen** — `measured`, `unavailable`, `gap`. Or, on the connection cell only, **the word that cell drew**: the CLI's connection state, or `n/a` when `putText` refused it | `bar()` writes it from a **percent** reading (`live.ts` 877-882), and both call sites pass one (`repo.percent`, `total.percent`), whose only two states are `measured` and `unavailable`; `spark()`'s bars write `measured` or `gap` — `gap` for a sample that is not plottable and for the one bar of an empty sparkline (896-925). **`notional` and `estimated` are in the attribute's vocabulary and never on this screen**: Live's notional figures go through `numberCell`, which writes the text and the `NOTIONAL~` mark and no state, so a rule for `[data-state='notional']` matches nothing here (the attribute is Spend's, §2.4). `header()` sets it on `span.live-connection` from the cell's own `textContent`, deliberately — an attribute echoing the raw value would put back on screen exactly what the refusal kept off it. **A `[data-state='…']` rule for a state colour must therefore name the words this screen draws — `measured`, `unavailable`, `gap` — and may not assume the connection cell carries one of them**; a rule that paints every `[data-state]` element would paint that cell for a value that is not a state |
 | `data-segments` | an integer as a string | how many pieces a sparkline broke into |
 | `data-tone` | `plain` \| `amber` \| `alarm` \| `queued` | row and flag severity |
 | `data-queued` | `true` \| `false` | |
@@ -460,8 +463,9 @@ affordance is absent (`KILL_ABSENT_BECAUSE`), and a figure that is a lower bound
 
 The **version-skew banner** (`renderVersionSkew` in `shared/version.ts`) is the third: the
 whole screen when the console refused, a banner a screen is mounted under when it is
-reduced. It is drawn into the mount **before** the nav, so it is the first thing in the
-panel's column.
+reduced. It is drawn into the mount — `document.body` — **before** the installation line,
+the nav and the panel, so it is the document's first child and their sibling rather than a
+child of `div.console-panel` (§4.1).
 
 `refusal.html` itself is a **document**, not a screed: `<main>` with an `<h1>` ("Fugaro
 console") and one `<p>` ("This console will not draw a dashboard for the fugaro it
@@ -478,8 +482,8 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | silent / lost / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |
 | queued / stuck | Live run rows | the `live-run-queued` / `live-run-stuck` class + `data-queued` + `data-flag` |
 | gap | Live, Spend | `data-state="gap"`, the mark `—`, a reason in `title` |
-| unavailable | `data-state="unavailable"`: Live (a bar, and the sparkline's bars), Spend (a point), Projects (**the panel state**, beside `read` and `not-built`), degraded (the cap line). `data-available="false"`: Spend's caps panel. The text `n/a` with a reason in `title`: **every** screen | **Run writes no `data-state` at all** — its numbers go through `putReading`, which sets the text and, for a value with no number, the `title` reason, and nothing else (§2.6), so a `[data-state]` colour rule selects nothing on that screen |
-| notional / estimated | the text marks: Live, Spend, Projects, Run, degraded. The attribute `data-state`: **Spend alone** | `NOTIONAL~` / `est.` are `formatReading`'s marks, so they appear wherever a notional or estimated reading is drawn, on all five screens (Live's repository and total notional figures, §2.3; the subscription model and the estimated compute on Projects and Run, §2.5, §2.6; the degraded compute, §2.7). The **attribute** `data-state="notional"` / `"estimated"` is written by Spend alone, on `.spend-point`, when the chart's dimension is `notional` or `compute` — Projects' `data-state` is its panel state, Live's comes from a `percent` reading, Run writes none, and the degraded cap is always `unavailable` |
+| unavailable | `data-state="unavailable"`: Live (**the cap bar**, `bar()`), Spend (a point), Projects (**the panel state**, beside `read` and `not-built`), degraded (the cap line). **Not the sparkline's bars**: their state is the bar's own height, `measured` or `gap` (`spark()`, `live.ts` 896-925), so `[data-state='unavailable']` selects no bar of a burn window. `data-available="false"`: Spend's caps panel. The text `n/a` with a reason in `title`: **every** screen | **Run writes no `data-state` at all** — its numbers go through `putReading`, which sets the text and, for a value with no number, the `title` reason, and nothing else (§2.6), so a `[data-state]` colour rule selects nothing on that screen |
+| notional / estimated | the text marks: Live, Spend, Projects, Run, degraded. The attribute `data-state`: **Spend alone** | `NOTIONAL~` / `est.` are `formatReading`'s marks, so they appear wherever a notional or estimated reading is drawn, on all five screens (Live's repository and total notional figures, §2.3; the subscription model and the estimated compute on Projects and Run, §2.5, §2.6; the degraded compute, §2.7). The **attribute** `data-state="notional"` / `"estimated"` is written by Spend alone, on `.spend-point` (and on the single point an account with nothing to draw appends), and it is the **account's** state, not the breakdown on the axis: `SPEND_ACCOUNTS` is three charts, and each of the three reads its own column into its own state — `model_micros` → `measured`, `notional_micros` → `notional`, `compute_micros` → `estimated` (`microsReading`, `spend.ts` 512-536) — with the point copying that reading's state into the attribute (`point()`, 1521). `data-dimension` is the switch's word for the x-axis (`day\|week\|month\|year\|repo\|model\|person`) and decides nothing here: the notional chart is notional whether the rows are days or repositories. Projects' `data-state` is its panel state, Live's comes from a `percent` reading, Run writes none, and the degraded cap is always `unavailable` |
 | partial / hollow | Spend | `data-partial="true"` / `data-hollow="true"` + the `(partial)` marker |
 | degraded | Spend | `span.spend-degraded` with `data-degraded="true"` |
 | polling (no Firebase) | degraded | `data-kind="no-firebase"` + `data-state="polling"` |
@@ -995,21 +999,32 @@ the dark literal against `--ground` in the dark set and the light literal agains
 in the light set — rather than the ambiguous "equal to `--ground`" the first revision
 wrote.
 
-The document is one column with three bands, matching the three children the entry already
-appends:
+The document is one column, and the entry appends up to **four** children to it —
+`document.body`, which is the mount `startConsole` is handed:
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
+│ section.console-skew   the version-skew banner — reduced mode only        │  when there is one
+├───────────────────────────────────────────────────────────────────────────┤
 │ section.console-installation   project · binary · version · mode          │  1 line
 ├───────────────────────────────────────────────────────────────────────────┤
 │ nav.console-views   [ Live ] [ Spend ] [ Projects ]                       │  1 line
 ├───────────────────────────────────────────────────────────────────────────┤
 │ div.console-panel                                                         │
-│   (the version-skew banner, when there is one, is the first thing here)   │  the rest
 │   section.live | .spend | .projects | .run | .degraded | .console-unavailable
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
+- **The version-skew banner is not in the panel, and it is not the panel's first child
+  either.** `startConsole` appends it to the mount it was handed (`app.ts` 333) and that
+  mount is `document.body` (`entry.ts` 180-183), so the banner is the body's **first
+  child**, appended before the installation line, the nav and the panel — which
+  `mountDashboard` builds afterwards, in that order (`entry.ts` 615, 760, 783). A rule that
+  places it inside `div.console-panel` selects it nowhere: the panel is created later and
+  holds the screen and nothing else. It is `section.console-skew` — a section, not a div —
+  and it carries `data-theme`, `data-mode` and `data-skew` (`shared/version.ts` 579-587). In
+  **refused** mode it is the whole document, because `bootDashboard` returns straight after
+  it and the other three children are never appended.
 - **The installation line and the nav are chrome and never scroll**; the panel scrolls.
   A sticky header is the difference between a dense screen and a screen that looks broken
   the moment it is longer than the window.
@@ -1115,8 +1130,9 @@ a `BundleRefusal` for any file in the output directory that is not in it (`bundl
 `index.ts` 291-310). `console.css` needs no new kind of mechanism for that reason: it joins
 the owned set, which is what the last bullet below says. The **ordered, frozen** lists in
 this area are two, and neither is in the bundler — `SERVED_FILES` (`src/main/protocol.ts`
-113), the served root's own list, and the e2e suite's `OUTPUTS` (`test/support/built.ts`
-62), which mirrors a build's files — and the list this step does need is a list of *theme
+113), the served root's own list, and the **unit** suite's build helper — `OUTPUTS`
+(`test/support/built.ts` 62), the file list the helper's own build produces and the unit
+tests read — and the list this step does need is a list of *theme
 files* rather than of outputs, so it is stated here rather than borrowed:
 
 ```ts
