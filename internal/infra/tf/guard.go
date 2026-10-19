@@ -15,6 +15,29 @@ var knownActions = map[string]bool{
 	"no-op": true, "create": true, "read": true, "update": true, "delete": true, "forget": true,
 }
 
+// ActionsText reports whether s is the text guardWith writes for a change's
+// actions: a comma-joined list of the plan actions terraform reports, the same
+// words knownActions holds joined the same way.
+//
+// It exists so a reader of a guard refusal can tell the two shapes that refusal
+// is written in apart by the actions rather than by the item's last character:
+// the guard writes "<address> (<actions>): <why>" and a cover writes
+// "<address> (<why>)", and a why may itself end in ")" — the entries rule's
+// does (tf.Approves) — so an item that ends in ")" is not always a cover's
+// wrapper (internal/managed's refusals). The one list of action names stays
+// here, so the two cannot drift about what an actions text is.
+func ActionsText(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, a := range strings.Split(s, ", ") {
+		if !knownActions[a] {
+			return false
+		}
+	}
+	return true
+}
+
 // AllowDeleteAdvice is the sentence Guard's refusal ends with when the caller
 // chose none: the advice for a command whose own --allow-delete is a flag it
 // accepts. It is today's text kept as a value rather than a line inside the
@@ -175,9 +198,10 @@ func Listable(p *Plan, allowDelete []string) []string {
 // something approving cannot clear.
 //
 // It exists so the advice a refusal ends with is still true under the entries
-// rule: "an address the owner approves is listed there" is an instruction that
-// leads somewhere only when the address is one the owner can approve, and the
-// address alone is no longer an approval.
+// rule: sending the owner to record an ENTRY at an address (managed.DeleteAdvice)
+// leads somewhere only when a new entry would clear that address's removal, and
+// an address alone is no longer an approval — so a removal no entry can be
+// matched against is not one to offer.
 func ListableEntries(p *Plan, entries []DeleteEntry) []string {
 	if p == nil {
 		return nil

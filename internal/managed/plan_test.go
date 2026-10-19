@@ -516,6 +516,76 @@ func TestPlanRefusalsCarryTheAddressAndTheRule(t *testing.T) {
 	}
 }
 
+// The entries rule's refusal is rendered whole, and this is the test that pins
+// it: a guard item is "<address> (<actions>): <why>", and the why this rule
+// writes — the list's own entry and the object the plan removes, each in
+// parentheses (tf.Approves) — ends in a ")" of its own. Reading the two shapes
+// apart by the item's LAST character instead took the actions as the why and
+// cut that closing parenthesis off with them: the verdict carried a Why
+// starting "delete): " and losing the sentence's end, while the address beside
+// it was right, so nothing else failed. Both gates' copies are pinned here,
+// and the why is read back from tf.Approves rather than spelled out, so this
+// test and the rule cannot drift.
+func TestGateRendersTheEntriesRefusalWhole(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.fmgd_data"
+	r := newRig(t)
+	// The plan removes an object the owner's entry is not about: the entry
+	// names the address for the object that is gone.
+	r.managedShow(t, deleted(addr, "google_storage_bucket", map[string]any{"name": "fmgd-other", "id": "fmgd-other"}))
+	stale := entry(addr, "type=google_storage_bucket project="+gcpProject+" name=fmgd-gone id=fmgd-gone")
+	v := gate(t, r, spec(t, r, managedCover(), stale))
+	if v.OK {
+		t.Fatal("a removal the owner's entry is not about was admitted")
+	}
+	plan := r.plan(t)
+	var rc tf.ResourceChange
+	for i := range plan.ResourceChanges {
+		if plan.ResourceChanges[i].Address == addr {
+			rc = plan.ResourceChanges[i]
+		}
+	}
+	if rc.Address == "" {
+		t.Fatalf("the rig's plan carries no change at %s", addr)
+	}
+	if ok, why := tf.Approves([]tf.DeleteEntry{stale}, rc); ok || why == "" {
+		t.Fatalf("tf.Approves(%v) = %v, %q, want a refusal with its own sentence", stale, ok, why)
+	}
+	_, why := tf.Approves([]tf.DeleteEntry{stale}, rc)
+	for gate, want := range map[string]string{
+		guardGate: "delete: " + why,
+		coverGate: "actions delete: " + why,
+	} {
+		ref, ok := findRefusal(v.Refusals, gate, addr)
+		if !ok {
+			t.Fatalf("the %s refused %s with no refusal at its address: %+v", gate, addr, v.Refusals)
+		}
+		if ref.Why != want {
+			t.Errorf("the %s refusal for %s carries\n%q\nwant\n%q", gate, addr, ref.Why, want)
+		}
+		if !strings.HasSuffix(ref.Why, ")") {
+			t.Errorf("the %s refusal for %s lost the sentence's closing parenthesis: %q", gate, addr, ref.Why)
+		}
+		if strings.Contains(ref.Why, "delete): ") {
+			t.Errorf("the %s refusal for %s carries the actions as its why: %q", gate, addr, ref.Why)
+		}
+	}
+	// The address is one a new entry would admit, so the advice stands.
+	if !slices.Contains(v.Listable, addr) {
+		t.Errorf("Listable %v does not name %s, whose refusal a new entry would clear", v.Listable, addr)
+	}
+}
+
+// findRefusal is the refusal one gate made about one address, and whether it
+// made one.
+func findRefusal(rs []Refusal, gate, address string) (Refusal, bool) {
+	for _, r := range rs {
+		if r.Gate == gate && r.Address == address {
+			return r, true
+		}
+	}
+	return Refusal{}, false
+}
+
 // A guard that errs fails closed even when its message says nothing: OK is not
 // read off the refusals the message turns into.
 func TestGateGuardErrorWithEmptyMessageIsNotOK(t *testing.T) {

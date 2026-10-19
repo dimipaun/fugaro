@@ -81,8 +81,10 @@ type RemovalIdentity struct {
 // fixed order, as "type=… project=… name=… id=…". It is both what the owner's
 // object holds and what the gate compares, and the comparison is exact string
 // equality — so a part is written as the plan wrote it, and a part the view
-// does not carry is left out rather than written empty (an absent attribute
-// and an empty one are different objects).
+// does not carry is left out rather than written empty. An absent attribute and
+// an empty one therefore encode identically, which is the one thing this
+// encoding does not tell apart; both identify nothing (Identifies), and no
+// before view of a type the managed allowlist admits carries an empty one.
 //
 // The string is for comparing and for one person to read; it is not a
 // canonical form of anything else, and nothing parses it back into parts. A

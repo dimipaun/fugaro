@@ -1153,6 +1153,20 @@ func TestDeleteAdviceNamesTheOwnersObjectAndNoFlag(t *testing.T) {
 	}
 	noFlagName(t, got)
 	noAgentMarker(t, got)
+	// What the owner approves is an ENTRY — the address AND the identity of
+	// the object the plan removes (Task 6.3) — so the sentence says so and
+	// never promises that listing an address on its own is enough: that would
+	// be an instruction to run fugaro allow-delete with an argument the
+	// command now refuses, and the person following it would end up with the
+	// same refusal and no idea why.
+	for _, want := range []string{"entry", "identity"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the managed advice does not say what is approved is an %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "an address the owner approves is listed there") {
+		t.Errorf("the managed advice still reads an address alone as an approval: %q", got)
+	}
 	if none := DeleteAdvice(""); strings.Contains(none, "gs://") {
 		t.Errorf("with no GCP project the advice still names a bucket: %q", none)
 	}

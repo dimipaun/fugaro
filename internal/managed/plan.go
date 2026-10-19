@@ -338,7 +338,10 @@ func guardLines(text string) []string {
 // An item of the shape both gates write a refused change in, "<address>
 // (<why>)" — the guard with the plan actions it would take, the cover with the
 // rule that refused it — is carried as its address and its why, and so is the
-// guard's moved-object line, "<address> (<actions>): <why>". Any other item (a
+// guard's own line with a reason beside the actions, "<address> (<actions>):
+// <why>" (the moved object's, and the entries rule's). The two are told apart
+// by the actions between the parentheses and the ": " (tf.ActionsText) and not
+// by the item's last character, since a why may end in ")". Any other item (a
 // gate that refused without listing an address, a plan it could not read at
 // all) is carried whole rather than dropped: a refusal nobody can read is still
 // a refusal.
@@ -358,12 +361,21 @@ func refusals(gate string, items []string) []Refusal {
 		// no parenthesis, while a rule's own words may.
 		if i := strings.Index(item, " ("); i >= 0 {
 			addr := safetext.Field(item[:i])
-			if strings.HasSuffix(item, ")") {
-				out = append(out, Refusal{Gate: gate, Address: addr, Why: safetext.Field(item[i+2 : len(item)-1])})
+			// The two shapes are told apart by WHAT sits between the address's
+			// parentheses and the ": " — the guard's actions, and only the
+			// guard's (tf.ActionsText) — rather than by the item's last
+			// character. An item that ends in ")" is not always a cover's
+			// wrapper: a guard's why may end in ")" itself, and the entries
+			// rule's does (tf.Approves), so reading the suffix first took that
+			// item's actions as its why and cut the sentence's last character
+			// off with them. The suffix is still what a cover's item is, and
+			// the fallback below keeps carrying it as its content.
+			if j := strings.Index(item[i:], "): "); j >= 0 && tf.ActionsText(item[i+2:i+j]) {
+				out = append(out, Refusal{Gate: gate, Address: addr, Why: safetext.Field(item[i+2:i+j] + ": " + item[i+j+3:])})
 				continue
 			}
-			if j := strings.Index(item[i:], "): "); j >= 0 {
-				out = append(out, Refusal{Gate: gate, Address: addr, Why: safetext.Field(item[i+2:i+j] + ": " + item[i+j+3:])})
+			if strings.HasSuffix(item, ")") {
+				out = append(out, Refusal{Gate: gate, Address: addr, Why: safetext.Field(item[i+2 : len(item)-1])})
 				continue
 			}
 		}

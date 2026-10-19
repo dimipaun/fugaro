@@ -303,13 +303,21 @@ func (e *RefusedError) Error() string {
 
 func (e *RefusedError) Unwrap() error { return ErrRefused }
 
-// DeleteAdvice is the one sentence a managed project's deletion refusal ends
-// with, and the sentence a managed `fugaro init`'s guard refusal ends with too
-// (internal/cli passes it through tf.GuardWith): what to do, and who can do it.
+// DeleteAdvice is the one sentence a managed apply's deletion refusal ends
+// with: what to do, and who can do it. It is not a managed `fugaro init`'s
+// sentence — init's guard is tf.Guard over its own `--allow-delete` addresses,
+// fugaro's own roots, and its refusal ends with internal/cli's
+// initManagedDeleteAdvice, which does not point at this list at all: the list
+// approves deletes in the project's agent-authored root, which is what a
+// managed apply applies, and nothing init plans.
 // The owner's own object is named by its whole address, the command that writes
 // it is named, and no address of an applying command's own is accepted — so the
-// loop a refusal starts is refusal → the owner copies the address → fugaro
-// allow-delete → the next plan passes (D74).
+// loop a refusal starts is refusal → the owner copies the entry the refusal's
+// own line printed, an address AND the identity of the object the plan removes
+// (tf.RemoveIdentityText) → fugaro allow-delete → the next plan passes (D74,
+// and the entries rule of Task 6.3: what is listed is an entry, so the sentence
+// does not promise that an address alone can be approved, which is a command
+// that would refuse it).
 //
 // It names no flag and no agent marker, and that is the rule rather than the
 // wording: a refusal is read by the session it refuses — in a managed project
@@ -328,7 +336,7 @@ func DeleteAdvice(gcpProject string) string {
 		where = "the owner's own list at gs://fugaro-runs-" + safetext.Field(gcpProject) + "/fugaro/allow-delete.json"
 	}
 	return "the addresses a managed project may delete or replace are " + where +
-		", which the owner writes with their own credentials and the owner-run command fugaro allow-delete, and no address named on the command line of an applying command approves one: an address the owner approves is listed there"
+		", which the owner writes with their own credentials and the owner-run command fugaro allow-delete, and no address named on the command line of an applying command approves one: what the owner approves is an entry — an address AND the identity of the object the plan removes, which the refusal above printed — so an address alone is not an approval"
 }
 
 // Apply is the managed apply: the gate's verdict is the whole of the decision,
