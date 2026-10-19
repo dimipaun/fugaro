@@ -2348,10 +2348,14 @@ sanitised and size-capped before it is printed, and it authorises and admits
 nothing. Two identities that differ only in what the sanitising drops -- an
 invisible character a paste left in one of them, say -- or only past the cap are
 one key and one row: the row is the key, not the person. A private view is not
-read off that key. It holds the runs whose launch recorded your identity itself,
-compared as runs ls --mine compares it, so someone whose identity merely
-sanitises to the same text is never counted in it and your own row can be
-smaller than that key's row in the full table.
+read off that key. It holds the runs whose launch recorded your identity itself
+(launch.json's launched_by), so someone whose identity merely sanitises to the
+same text is never counted in it and your own row can be smaller than that
+key's row in the full table. This is not quite what runs ls --mine lists: that
+filter reads the task's requested_by (the requester task.json names), while
+every figure here is the run's own record of its launch, so a run whose launch
+recorded no launcher and whose task names you is listed by runs ls --mine and
+is neither yours nor anyone's here -- it is the 'unknown' row.
 
 A window can hold every run of every repository in the bucket, so the read is
 bounded: at most --max-runs records are read per call, newest first, and a window
