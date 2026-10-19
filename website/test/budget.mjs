@@ -18,7 +18,13 @@
 // corrections of that day and the next to it, named in the first bullet below), with this
 // branch's redesigned pages on top of it (the homepage's order and run animation, P4, P7 and
 // P8) — plus 25 %, which is D192's rule and the rule the README's loose figures are three
-// times:
+// times. **The figures below are that build's as this branch ships it**, measured once more
+// over the artifact the fix round after the merge produces: the chat moved above the diagram,
+// its turns are drawn as alternating bubbles, three of the flow's four cyan card edges became
+// the site's separator, and the footer's link label is the repository's name rather than its
+// URL. Each of those moved bytes, and each was re-derived here in the commit that moved it —
+// the count below is read off `dist/`, which is the build the test measures, rather than
+// carried from the merge.
 //
 //   - JavaScript per page: 49,724 bytes. The one script the site ships,
 //     `public/scripts/site.js` (P6, P3, D183, W3.2's gate, the cookie deletion the owner's
@@ -47,13 +53,13 @@
 //     JavaScript — which is why the case below reads the artifact rather than trusting this
 //     line, and why D192 requires the README's figure to be re-derived in the same commit that
 //     changes the script.
-//   - Page weight per page: 333,838 bytes. The heaviest page on 2026-10-19, `docs/index.html`,
-//     weighed 267,070 bytes: its HTML (the whole generated CLI reference) plus the first-party
+//   - Page weight per page: 333,814 bytes. The heaviest page on 2026-10-19, `docs/index.html`,
+//     weighed 267,051 bytes: its HTML (the whole generated CLI reference) plus the first-party
 //     files it fetches — the script above and the logo and icons the layout links; × 1.25,
 //     rounded up. One ceiling for every page rather than one per page, so a page that grows
 //     with the product (the changelog, the reference) is held to the same line as the rest
 //     instead of to its own history.
-//   - Whole site: 1,053,808 bytes. Every file in `dist/` on that build summed to 843,046
+//   - Whole site: 1,053,953 bytes. Every file in `dist/` on that build summed to 843,162
 //     bytes (21 files: eleven pages, the script, the brand icons and the manifest);
 //     × 1.25, rounded up.
 //
@@ -252,15 +258,22 @@ function textBetween(main, from, to) {
  * page opens with before its first section, which is the text D188's 40-word ceiling is
  * about. That is the whole of the definition, and it is the plan's own: **the region between
  * the two headings in document order**, wherever either heading sits. It used to be read
- * from the `h1`'s container instead when the first `h2` was outside it — the shape the
- * homepage had, where the hero's section held the `h1` and the flow's step names were the
- * first `h2`s under it — and that reading measured the homepage's lead as 24 words where the
- * plan's measures 134: the promise, the install commands, the chat and everything up to
- * the flow. A gate whose number depends on which end it is read from is two gates (P4's
- * reviewer asked which one this is, and P5 answered it). The homepage now carries its
- * install section's own `h2` above those blocks, so both readings agree on every built page
- * — 24 words — and the strict one is the one enforced, on this page and on any page that
- * grows blocks between its `h1` and its first `h2` later.
+ * from the `h1`'s container instead when the first `h2` was outside it, and the two readings
+ * are the same number only while a page keeps every block between its `h1` and its first `h2`
+ * inside the heading's own container. A gate whose number depends on which end it is read
+ * from is two gates (P4's reviewer asked which one this is, and P5 answered it), so the
+ * region is the reading and the container is not.
+ *
+ * **Where the homepage stands today** (2026-10-19): its `h1` is the headline, its first `h2`
+ * is the chat's own "Through your agent" — the chat is the first block under the promise
+ * (review round 5) and its heading is inside it — and the region between the two headings is
+ * the promise and its two calls to action: **14 words**, the number the built page measures.
+ * Both readings agree here, because everything between the `h1` and that heading is inside
+ * the hero's own section; they did not agree on the homepage of two rounds ago, when the
+ * hero's section held the `h1`, the install blocks and the chat sat between it and the flow's
+ * first step heading, and the container reading said 24 words where the region said 134. The
+ * region is what is enforced, on this page and on any page that grows a block between its
+ * `h1` and its first `h2` later.
  *
  * A page with no `h2` at all has no such region, and its lead is the paragraph run under the
  * `h1` — the text D188's ceiling is about, read from the other end. A page whose first `h2`
@@ -656,8 +669,10 @@ test('the lead is the h1 -> first h2 region wherever the first h2 sits, and what
   // paragraphs under the `h1` is not the answer here: it is shorter than the region — 38 words
   // where the region is 40 on the `under/` fixture, 39 where it is 41 on `over/` — so a
   // reader that stopped at the hero's own container would pass this fixture and
-  // let the page's whole gist through unmeasured (the reading P5 replaced, which measured the
-  // built homepage's 134-word lead as 24).
+  // let the page's whole gist through unmeasured. The fixture is not hypothetical: it is the
+  // homepage's own shape of two rounds ago, where the hero held the `h1`, the install blocks
+  // and the chat sat between it and the flow's step headings, and the container reading
+  // measured a 134-word region as 24 words.
   const budgets = { ...readmeBudgets(), words: 100000 }
   const x = (n) => Array.from({ length: n }, () => 'x').join(' ')
   const page = (n) =>

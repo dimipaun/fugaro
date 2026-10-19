@@ -207,9 +207,13 @@ here goes stale the way the byte budgets did before D192.
   the same script again. So the figures below are derived once, over the build the merge
   produces, which is the only account of them that is true of the site that ships:
   **JavaScript per page 149,172** (three times 49,724; `public/scripts/site.js` 39,779 bytes),
-  **page weight per page 1,001,514** (three times 333,838; the docs hub 267,070 bytes) and
-  **whole site 3,161,424** (three times 1,053,808; 843,046 bytes across 21 files). It is the
-  fifth re-derivation on this branch's side — the second fix round moved the homepage's order,
+  **page weight per page 1,001,442** (three times 333,814; the docs hub 267,051 bytes) and
+  **whole site 3,161,859** (three times 1,053,953; 843,162 bytes across 21 files). The fix
+  round after the merge re-derived all three over the build that branch ships — the chat moved
+  above the diagram, its turns are drawn as alternating bubbles, three of the flow's four cyan
+  card edges became the site's separator and the footer's link label is the repository's name
+  rather than its URL — and the figures above are that build's. It is the
+  sixth re-derivation on this branch's side — the second fix round moved the homepage's order,
   the flow's treatment, the chat's launch line, the install command's wrapping and the chat's
   turns out of the measure's cap; the third's four commits moved the site figure to 814,455,
   815,116 and 815,212 bytes and the page figure with it; and the fourth's fix for the
@@ -344,3 +348,44 @@ here goes stale the way the byte budgets did before D192.
   written with a `span`. The whole-site budget moved 626 bytes with the fix, re-derived in the
   same commit (D192). This round was a reading of the stylesheet and of the gate, not a look at
   the page — the same limit as the round above.
+- **The fifth round is the second visual review's, and it is the one that reordered the page.**
+  The reviewer built the site and looked at it at three widths and found the homepage "not an
+  agent chat": a reader met the four-step diagram before the conversation item 3 asks the
+  homepage to show. So **the chat is the first block under the promise and the flow is the
+  second** — the reverse of the order the second round gave the page, and the second round's
+  own decision is why that is a change and not a bug: item 4's acceptance is that the diagram
+  is the most prominent thing **in its section**, and a section directly under the chat, drawn
+  at the page's full column, is that. Item 4 orders the diagram against the promise; it says
+  nothing about the chat. The turns are **alternating bubbles**: one body per turn, tinted
+  `--ground` against the card with a `--border` outline and a radius, the reader's at the right
+  edge and the agent's at the left, with the agent's name in `--accent-on-dark` — the accent's
+  left rail the third round put on the agent's row is gone, because a rail and a bubble on
+  opposite sides drew two marks for one thing. `chatConversationFailures` refuses a turn whose
+  body has no side of its own (a grid item's `normal` is `stretch`, which draws a band rather
+  than a message) and refuses both speakers on one side; the third round's refusal of a card on
+  `.chat-turn` itself stands, and a bubble is not that: those were three cards across the page,
+  each stretched to the row's tallest, and this is one content-sized box in a row of the one
+  card. **The flow's cards lost three of their four cyan edges** — the sides and the bottom are
+  `--border` at one pixel and the top rail is the accent at 4 px — which is the review's
+  "calmer borders": what makes the picture prominent is the section, the card's size, the
+  surface and the numbers, not an outline on every edge. **The footer's link label is the
+  repository's own name** (`owner/name`, derived from `site.yaml`'s URL) rather than that URL,
+  which ran the width of the footer's first column. **The chat's caption is one sentence**, two
+  lines at 1280 and 768 and three at 375 where it was three and five: it still says the figure
+  is an illustration, still says it is not a recording, still says where the agent's lines come
+  from, and still claims no more than that (`home.mjs` and `wording.mjs` hold it to all four).
+  The code review's four findings went with it: the two-by-two's header comment now describes
+  the `4 3` bottom row it draws, `budget.mjs`'s lead reading is written from the built page,
+  and `docs/gcp-live-checklist.md`'s copy-control failure example names the mechanism `site.js`
+  has (`sourceOf` over the `[data-copy]` block's own `pre`/`code`) rather than the
+  `[data-copy-source]` mark it no longer has. The measurements this round was decided on are
+  from a headless Chromium over the built site at 1280, 768 and 375: the four cards of the row
+  are one height (218 px) with every name on one line, every top-level block starts where the
+  one above it ends (no empty band, and the watch slot is `display: none` until PR #622's image
+  lands), nothing overflows horizontally, the reader's bubble is 288 px at the right of the card
+  and the agent's 463–557 px at the left. Below 35 rem the bubbles fill the column — the
+  reader's own line is nearly a phone's width — so the alternation is a thing a reader sees from
+  a tablet up. Page weight and the whole site moved with all of it — the chat's markup, the
+  flow's edges, the footer's label — and both are re-derived over this build in the same commit
+  (D192, above). Whether the page then *looks* right is the owner's check (70a–70c, D190), and
+  no screenshot is committed here: this run cannot see one either.

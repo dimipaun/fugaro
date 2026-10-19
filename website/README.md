@@ -164,8 +164,13 @@ added or removed without this sentence moving fails there:
   Each half moved these figures in its own commits and re-derived them there — the script's
   six corrections in `main`'s, the redesign's five fix rounds in this branch's — and they are
   re-derived once more here, because the merge is where the two halves first weigh together.
-  That is the same rule every time (D192), and it is also why **the page and the site move
-  with the script**: a script every page loads is a page's weight as well as its JavaScript.
+  **The figures below are the merged build's** (2026-10-19), and they are the ones this
+  branch ships: the fix round after the merge moved the chat above the diagram, drew its
+  turns as alternating bubbles, took three of the four cyan edges off the flow's cards and
+  shortened the footer's link label, and every one of those was measured over the build in
+  the same commit that moved it. That is the same rule every time (D192), and it is also why
+  **the page and the site move with the script**: a script every page loads is a page's
+  weight as well as its JavaScript.
 
   - **JavaScript per page:** 149,172 bytes. Three times 49,724: the one script the site ships,
     `public/scripts/site.js` (39,779 bytes), plus 25 %. What the file carries is the copy
@@ -190,10 +195,10 @@ added or removed without this sentence moving fails there:
     and the menu still has a second level Tab has to be able to enter. Every page loads the
     file once, so it is the whole of a page's JavaScript, and the test keeps a case that says
     so over the built artifact.
-  - **Page weight per page:** 1,001,514 bytes. Three times 333,838: the heaviest page, the
-    docs hub, at 267,070 bytes (its HTML — the whole generated CLI reference — plus the
+  - **Page weight per page:** 1,001,442 bytes. Three times 333,814: the heaviest page, the
+    docs hub, at 267,051 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,161,424 bytes. Three times 1,053,808 (every file in `dist/`, 843,046
+  - **Whole site:** 3,161,859 bytes. Three times 1,053,953 (every file in `dist/`, 843,162
     bytes across 21 files, plus 25 %).
 
   Two of the numbers are **not** bytes, and they are the redesign's: the brief's core
@@ -206,13 +211,16 @@ added or removed without this sentence moving fails there:
     section — and it is a lead and not an introduction: 40 words at most, on every page,
     the three reference pages included, because a lead is the page's own whichever page it
     is. **The region between the two headings is the whole of the definition, wherever each
-    heading sits** (P5; P4's reviewer read the homepage's lead two ways, 24 words from the
-    `h1`'s own container and 134 from the plan's region, and the stricter one is the one
-    enforced). A page that carries blocks between its `h1` and its first `h2` is a page
-    whose lead those blocks are part of — which is why the homepage opens its install
-    section with the `h2` above the commands rather than putting the commands under the
-    promise — so the fix for a long lead is a shorter lead or an earlier first `h2`, never
-    a reader that looks somewhere else. A page
+    heading sits** (P5; P4's reviewer read the homepage's lead two ways, and the two
+    readings are the same number only while the blocks between the `h1` and the first `h2`
+    are inside the `h1`'s own container — on the homepage as it was, with its install
+    commands and its chat between the hero and the flow's first step heading, they were 24
+    words from that container and 134 from the plan's region, and the stricter one is the
+    one enforced). On the homepage today the first `h2` is the chat's own *Through your
+    agent* — the chat is the first block under the promise — and the region is the promise
+    and its two calls to action: 14 words. A page that carries blocks between its `h1` and
+    its first `h2` is a page whose lead those blocks are part of, so the fix for a long lead
+    is a shorter lead or an earlier first `h2`, never a reader that looks somewhere else. A page
     with no `h2` at all has no such region, and its lead is the paragraphs that follow its
     `h1`. A page whose `h1` is followed straight by its first `h2` has no lead region
     either, and 0 words is inside the ceiling: `/security/` is shaped that way (its `h1` is

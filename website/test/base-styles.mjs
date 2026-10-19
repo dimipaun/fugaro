@@ -1318,7 +1318,13 @@ test('every run-detail refusal fires on the defect it names', () => {
 //   2. **the list is the card** — the border, the radius and the background are the list's,
 //      and a turn with a card of its own is the three-cards defect back again;
 //   3. **the speakers are one column** — the label column is a definite width every row
-//      shares, and the lines start at one edge down the whole conversation.
+//      shares, and the lines start at one edge down the whole conversation;
+//   4. **the two speakers are on opposite sides** — the figure is a chat, so each turn's
+//      body is drawn as a bubble, content-sized and tinted against the card, and the reader's
+//      sits at one side of the card while the agent's sits at the other (review round 5).
+//      A bubble is not the card-per-turn the third claim's era refused: those were three
+//      cards laid out across the page and stretched to the row's tallest, and this is one
+//      content-sized box inside a row of the one card.
 //
 // The third is why the column is a fixed length rather than `max-content`, and it is the one
 // claim that is easy to get wrong in a way that looks right: `max-content` on a grid container
@@ -1452,7 +1458,7 @@ export function chatConversationFailures(css, html) {
         `the speaker column is ${Math.round(labelPx)} px and the widest speaker label in the markup (${JSON.stringify(widest)}, at ${labelSize} px, estimated at ${Math.round(textWidth(widest, labelSize))} px) needs ${Math.round(need)} px with the margin this check asks for: the labels are one column, so the column has to hold the widest of them on one line (changes spec 2026-10-18, item 3a)`,
       )
     }
-    for (const klass of ['turn-line', 'turn-status', 'turn-results']) {
+    for (const klass of ['turn-body']) {
       const column = declared(klass, 'grid-column', DESKTOP)
       if (column === undefined || !/^2(\s*\/\s*-?1)?$/.test(column.trim())) {
         out.push(
@@ -1460,6 +1466,56 @@ export function chatConversationFailures(css, html) {
         )
       }
     }
+  }
+
+  // ---- 6. the two speakers are on opposite sides -------------------------------------------
+  //
+  // The figure is a chat (review round 5), so the reader's turn and the agent's are drawn on
+  // opposite sides of the card. The reading is the bubble's own `justify-self`, per speaker:
+  // the turn's body is where the alternation is written, and a rule set that leaves both
+  // speakers on one side — or stretches the body to the whole column, which is a band rather
+  // than a message — is the defect each refusal below names.
+  const bodySideAt = (speaker) => {
+    // The speaker's own rule: one that reaches a turn of that speaker — the turn's class and
+    // its `data-turn` attribute, whose bracket group may sit before or after the scope
+    // attribute the build adds — and then the turn's body inside it.
+    const token = new RegExp(`data-turn=(?:"|')?${speaker}(?:"|')?(?=[\\]\\s]|$)`)
+    const own = rules
+      .filter((r) => /\.chat-turn\b/.test(r.selector) && /\.turn-body(?![\w-])/.test(r.selector) && token.test(r.selector))
+      .filter((r) => appliesAt(DESKTOP)(r))
+      .map((r) => declarations(r)['justify-self'])
+      .filter((value) => value !== undefined)
+      .pop()
+    // The base is the rule that reaches **every** turn's body — the speaker's own rule is a
+    // different one, and it is read above rather than here: a fallback that took the last
+    // rule matching `.turn-body`, which is the reader's own, would report both speakers on
+    // the reader's side and refuse a correct stylesheet. What is left is the initial value:
+    // `normal`, which for a grid item means `stretch`.
+    const base = rules
+      .filter(
+        (r) =>
+          new RegExp(`\\.turn-body(?![\\w-])`).test(r.selector) &&
+          !/data-turn/.test(r.selector) &&
+          appliesAt(DESKTOP)(r),
+      )
+      .map((r) => declarations(r)['justify-self'])
+      .filter((value) => value !== undefined)
+      .pop()
+    return own ?? base ?? 'normal'
+  }
+  const sides = { you: bodySideAt('you'), agent: bodySideAt('agent') }
+  const atEnd = (value) => /^(?:end|right|self-end|flex-end)$/.test(String(value).trim())
+  for (const [speaker, side] of Object.entries(sides)) {
+    if (/^(?:normal|stretch|self-stretch)$/.test(String(side).trim())) {
+      out.push(
+        `the ${speaker === 'you' ? "reader's" : "agent's"} turn has no side of its own (\`justify-self: ${side}\` on its body, which for a grid item stretches it to the whole column): a turn's body is a bubble — the shape of what was said, on one side of the card or the other — and a box that fills the column is a band with a message in it (review round 5)`,
+      )
+    }
+  }
+  if (atEnd(sides.you) === atEnd(sides.agent)) {
+    out.push(
+      `the reader's turn and the agent's are drawn on the same side (their bodies' \`justify-self\` is ${JSON.stringify(sides.you)} and ${JSON.stringify(sides.agent)}): the figure is a chat, and a chat alternates — what the reader asked on one side, and what the agent did on the other (review round 5)`,
+    )
   }
 
   // ---- 5. on a phone the label goes above the line ------------------------------------------
@@ -1691,9 +1747,13 @@ test('every chat-conversation refusal fires on the defect it names', () => {
       /the widest speaker label in the markup/,
       home,
     ],
-    // A line that starts under its own label rather than at the shared edge. One rule carries
-    // the three parts of a turn, so all three are refused: that is the reading, part by part.
-    ['a line outside the second column', plant('{grid-column:2}', '{grid-column:1}'), /is not in the second column/, home, 3],
+    // A line that starts under its own label rather than at the shared edge. The body is one
+    // element, so one rule carries what a speaker said and one refusal names it.
+    ['a line outside the second column', plant('{grid-column:2}', '{grid-column:1}'), /is not in the second column/, home],
+    // And the two ends of the chat's alternation (review round 5): the reader's bubble moved
+    // onto the agent's side, and a body left with no side at all — stretched to the column.
+    ['both speakers on one side', plant('justify-self:end', 'justify-self:start'), /drawn on the same side/, home],
+    ['a turn with no side of its own', plant('justify-self:start', 'justify-self:stretch'), /stretches it to the whole column/, home],
     // The desktop column in force on a phone, where it would take a third of the screen.
     [
       'the two columns in force at 390 px',

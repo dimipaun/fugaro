@@ -22,8 +22,11 @@
  * **What is not here, and why.** The hero used to carry the install commands and the agent
  * chat under the promise, and item 4 asks for the picture of the run to be the page's
  * centrepiece rather than the fourth thing down: the homepage is now the promise and its
- * one call to action, then the diagram, then the chat, then the install paths
- * (`src/pages/index.astro`, which owns that order). The commands are
+ * one call to action, then the chat, then the diagram, then the install paths
+ * (`src/pages/index.astro`, which owns that order). The chat leads the three because what
+ * the page offers a reader is a conversation with the agent they already have (review round
+ * 4); the diagram is still the largest thing after the promise and is its own section
+ * directly under the chat. The commands are
  * `HomeInstall.astro` and the chat is `AgentChat.astro`; both are placed by the page, so a
  * page can put them where its own shape wants them.
  *

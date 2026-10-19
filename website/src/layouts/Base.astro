@@ -82,6 +82,14 @@ const facts = site.facts
 // word.
 const SITE_NAME = 'Fugaro'
 
+// The footer's link to the repository, labelled with the repository's own name rather than
+// with its address (review round 5: the raw URL as link text ran the width of the footer's
+// first column and read as a fact about the address, next to labels that are three words
+// long). The label is **derived from `site.yaml`'s URL**, not written here: `owner/name` is
+// the last two segments of it, so a repository that moved would move its own label with it,
+// and this file still holds no fact the data file does not.
+const REPOSITORY_LABEL = new URL(facts.repository).pathname.replace(/^\/+|\/+$/g, '') || facts.repository
+
 // The `<title>`, and the two card titles with it. The homepage is the one page whose title
 // is the promise rather than a section's name — there is no section to name, the page IS
 // the headline — so it carries the site's name and the headline, and the changes spec's
@@ -379,11 +387,12 @@ const analyticsEnabled = facts.analytics.enabled
       {/* The repository, from site.yaml, and two of the site's own sections from NAV above:
           the security policy and the changelog, the two pages a reader looks for at the foot
           of a project's site. No fact is written here that the layout did not already hold
-          (W1.7 links the same repository from the docs hub). */}
+          (W1.7 links the same repository from the docs hub) — including the link's label,
+          which is the repository's own name read off that URL. */}
       <nav aria-label="Footer">
         <ul>
           <li>
-            <a href={facts.repository} rel="noopener">{facts.repository}</a>
+            <a href={facts.repository} rel="noopener">{REPOSITORY_LABEL}</a>
           </li>
           {FOOTER_NAV.map((item) => (
             <li>

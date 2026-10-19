@@ -36,10 +36,20 @@
  *
  * **One picture, three widths.** A phone reads the run top to bottom, one card under the
  * other, with an arrow between each pair (below 35 rem); a tablet or a laptop reads it as a
- * two-by-two — `1 2` over `3 4`, the run going right, down and right again — which is the
+ * two-by-two — `1 2` over `4 3`, the run going right, then down, then right again along the
+ * bottom row — which is the
  * shape a 768 px screen wants, where four stacked cards are over 400 px of picture and four
  * across is not yet possible (35 rem to 72 rem); and at the page's own maximum width the
  * four cards stand in the one row the run travels along, left to right (72 rem up).
+ *
+ * **The two-by-two's bottom row is `4 3` and not `3 4`.** Reading the grid row-major would
+ * put step 3 in the cell under step 2, where the down arrow is drawn — and that arrow leaves
+ * step 2, so the cell it lands in has to be step 3's: with `3 4` it landed on step 4, and the
+ * picture read `1 -> 2 -> 4` with step 3 pointing at nothing. The two bottom steps are placed
+ * by hand for that reason, and step 3's arrow turns back along the row to step 4. The DOM
+ * order is untouched — `1 2 3 4` is the run's order and what a screen reader reads; only the
+ * drawing snakes. `website/test/base-styles.mjs` reads the cells the four steps occupy and
+ * holds each arrow to the side its successor's cell is on, so the two cannot disagree again.
  *
  * **Why 72 rem, and not the chrome's 48 rem or the 64 rem this used to be.** Four cards
  * share the row, so a card is a quarter of the column less the gaps between them, and the
@@ -219,11 +229,13 @@ const STEPS = [
 
 <style>
   /* Tokens only (W1.2): the flow's cards, its numbers and its arrows are named through the
-     palette rather than given colours of their own. The accent is what makes the picture
-     the loudest thing in its section — the filled step numbers, the rail along the top of
-     each card and the arrows are all `--accent`, on the ground or on a card (`--accent`
-     against `--ground` and against `--surface` are pairs `a11y.mjs` computes at 3:1, and
-     `--ground` on the filled number is the 4.5:1 pair for text on the accent). */
+     palette rather than given colours of their own. The accent is what marks the picture out
+     in its section — the filled step numbers, the rail along the top of each card and the
+     arrows are `--accent`, on the ground or on a card (`--accent` against `--ground` and
+     against `--surface` are pairs `a11y.mjs` computes at 3:1, and `--ground` on the filled
+     number is the 4.5:1 pair for text on the accent) — and what the picture is *made* of is
+     the card's size, the surface and the numbers rather than an outline around them (review
+     round 4, below). */
   .flow {
     margin: 0;
     max-width: var(--page-max);
@@ -262,10 +274,16 @@ const STEPS = [
   }
 
   /* The centrepiece's card (changes spec item 4's acceptance: the picture is the most
-     visually prominent element in its section). The accent is on every edge and not only
-     along the top — a rail reads as a detail of a card, a bordered card reads as a box the
-     eye lands on — and the top rail is thicker than the sides, so the run still reads left
-     to right. `--accent` on `--surface` is a pair `a11y.mjs` computes at 3:1 for a UI edge. */
+     visually prominent element in its section). **The accent is the top rail and nothing
+     else.** Every edge used to carry it — 2 px of cyan down both sides and along the bottom,
+     6 px along the top — and the review of round 4 found what four cyan boxes in a row do to
+     the thing they are meant to frame: the borders competed with the names inside them, and
+     the flow read as a grid of boxes rather than as four steps of one run. So the sides and
+     the bottom are the site's separator (`--border`, one pixel) and the top is the accent at
+     4 px, which is the mark the eye follows across the row, left to right. The prominence
+     item 4 asks for is the section's and the card's size, the surface and the number, not the
+     loudness of an outline. `--accent` on `--surface` is still a pair `a11y.mjs` computes at
+     3:1 for a UI edge, and it is still an edge of every card. */
   .step-card {
     display: grid;
     align-content: start;
@@ -273,8 +291,8 @@ const STEPS = [
     min-width: 0;
     gap: var(--space-xs);
     padding: var(--space-md);
-    border: calc(var(--border-width) * 2) solid var(--accent);
-    border-top: calc(var(--border-width) * 6) solid var(--accent);
+    border: var(--border-width) solid var(--border);
+    border-top: calc(var(--border-width) * 4) solid var(--accent);
     border-radius: var(--radius-lg);
     background: var(--surface);
   }

@@ -4356,8 +4356,10 @@ with JavaScript disabled every command is still on the page with **no button ren
 neighbouring line, or a whole `<pre>` where one line was meant; a control does nothing, or
 does nothing when reached by keyboard, or has no visible focus ring; the confirmation is not
 announced, interrupts, or never clears; or a button is shown with scripting off. What failing
-looks like: `sourceOf` in `website/public/scripts/site.js` falling back to the whole
-`<pre>` on the terminal because the `[data-copy-source]` mark moved; a block whose markup lost
+looks like: `sourceOf` in `website/public/scripts/site.js` handing the clipboard the wrong
+text — it is `block.querySelector('pre, code')` over the `[data-copy]` wrapper the script
+found, so a block that grew a second `<pre>` ahead of its command, or one whose command moved
+out of the `pre`/`code` the control reads, copies the wrong thing; a block whose markup lost
 its `hidden` attribute, so the button is on the page before the script that drives it. The
 **markup** half of each is already refused by `website/test/copy.mjs`, so a failure here that
 the build did not catch is a **runtime** fact — a clipboard, a live region, a focus ring — and
