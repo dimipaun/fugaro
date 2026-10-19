@@ -470,8 +470,6 @@ func TestCanonicalBytesRefusesValuesWithNoCanonicalForm(t *testing.T) {
 		{"a number past the safe line", Record{"at": number("9007199254740993")}, "safe integer"},
 		{"a stored direction", Record{"direction": "inbox"}, "the reader supplies it"},
 		{"a lone separator", Record{"text": "a\u2028b"}, "U+2028"},
-		{"a backspace", Record{"text": "a\bb"}, `\b`},
-		{"a form feed", Record{"text": "a\fb"}, `\f`},
 		{"invalid UTF-8", Record{"text": "a\xffb"}, "UTF-8"},
 		{"a value no message carries", Record{"at": func() {}}, "not a value a message carries"},
 	} {
@@ -494,6 +492,70 @@ func TestCanonicalBytesRefusesValuesWithNoCanonicalForm(t *testing.T) {
 	}
 	if _, err := CanonicalBytes(nil, "inbox"); err != ErrNotAnObject {
 		t.Errorf("a nil record is signed: %v", err)
+	}
+}
+
+// TestControlCharactersBothEncodersSpellAlike is the other half of that table,
+// and it is here because the first half was wrong once. canonicalString used to
+// refuse `\b` and `\f`, on the belief that Go's encoder writes `\u0008` and
+// `\u000c` where JSON.stringify writes `\b` and `\f`; Go 1.27's json.Encoder
+// with SetEscapeHTML(false) writes the short escape for exactly the five
+// characters JSON.stringify writes one for and `\u00xx` for the rest of the
+// control range, so a record carrying a backspace has ONE canonical form, and
+// refusing it broke the byte-parity contract from this side.
+//
+// The premise is a fact about a Go release, so it is pinned rather than left in
+// a comment: this test reads the escapes back out of the encoder the package
+// signs with, across the whole control range. If a Go release changes one of
+// them this fails here, where the answer is a one-line change, rather than in
+// the field, where the answer is a message the phone tags and the consumer will
+// not verify.
+func TestControlCharactersBothEncodersSpellAlike(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"a backspace", "a\bb", "\"a\\bb\""},
+		{"a form feed", "a\fb", "\"a\\fb\""},
+		{"a tab and a newline", "a\tb\nc", "\"a\\tb\\nc\""},
+		{"a carriage return", "a\rb", "\"a\\rb\""},
+		{"a NUL", "a\x00b", "\"a\\u0000b\""},
+		{"a vertical tab", "a\x0bb", "\"a\\u000bb\""},
+		{"a delete", "a\x7fb", "\"a\x7fb\""},
+		{"a quote and a backslash", `a"\b`, `"a\"\\b"`},
+		{"a solidus", "a/b", "\"a/b\""},
+		{"an astral character", "a\U0001F600b", "\"a\U0001F600b\""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := encodeJSONString(tc.value)
+			if err != nil {
+				t.Fatalf("encoding %q: %v", tc.value, err)
+			}
+			if got != tc.want {
+				t.Errorf("%q is encoded %s, wanted %s", tc.value, got, tc.want)
+			}
+			// And a record carrying it has canonical bytes: the same string
+			// through CanonicalBytes, with nothing refused on the way.
+			record := plainMessage(t)
+			record["text"] = tc.value
+			bytes, err := CanonicalBytes(record, "inbox")
+			if err != nil {
+				t.Fatalf("a message carrying %q has no canonical bytes: %v", tc.value, err)
+			}
+			if !strings.Contains(string(bytes), `"text":`+tc.want) {
+				t.Errorf("the body is written %s, wanted the text field to carry %s", bytes, tc.want)
+			}
+		})
+	}
+
+	// U+2028 and U+2029 are the class the two encoders DO spell differently, and
+	// they are still refused: the rows above are control characters, and these
+	// two are not control characters at all.
+	separator := plainMessage(t)
+	separator["text"] = "a\u2028b"
+	if _, err := CanonicalBytes(separator, "inbox"); err == nil {
+		t.Error("a record carrying U+2028 has canonical bytes, and Go escapes it where JSON.stringify does not")
 	}
 }
 
@@ -816,6 +878,57 @@ func TestALoneSurrogateEscapeReachesTheValidator(t *testing.T) {
 	}
 }
 
+// TestABoundCountsALoneSurrogateAsOneCodeUnit is the second finding of this
+// round. utf16Len walked the string with `range`, which yields one U+FFFD per
+// invalid byte, so the three WTF-8 bytes of a lone surrogate counted as three
+// UTF-16 code units where the module's `.length` counts one: 34 of them in
+// `id` (102 bytes) came back too-long where the module answers bad-key, and
+// 1366 in `text` came back too-long where the module answers bad-character.
+// Both ends refuse, so it was never a permissiveness hole — it is the code
+// parity ValidateMessage's own contract names ("the same code and the same
+// field at fault"), and a consumer told too-long goes looking for a length
+// problem that is not there.
+//
+// The bounds are still applied: a string of lone surrogates past the bound in
+// CODE UNITS is too-long in both languages, which is what makes this a
+// counting fix rather than a second exception to the bound.
+func TestABoundCountsALoneSurrogateAsOneCodeUnit(t *testing.T) {
+	const lone = "\xed\xa0\x80" // U+D800 in WTF-8: one code unit, three bytes
+	for _, tc := range []struct {
+		name  string
+		field string
+		value string
+		want  Code
+	}{
+		{"34 lone halves in an id are 34 code units", "id", strings.Repeat(lone, 34), CodeBadKey},
+		{"one lone half in an id", "id", "m-" + lone, CodeBadKey},
+		{"101 lone halves in an id are past the bound", "id", strings.Repeat(lone, IDMax+1), CodeTooLong},
+		{"1366 lone halves in a body are 1366 code units", "text", strings.Repeat(lone, 1366), CodeBadCharacter},
+		{"4097 lone halves in a body are past the bound", "text", strings.Repeat(lone, TextMax+1), CodeTooLong},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := plainMessage(t)
+			record[tc.field] = tc.value
+			_, refusal := ValidateMessage(record)
+			if refusal == nil || refusal.Code != tc.want {
+				t.Errorf("%d bytes is refused %v, wanted %s: the bound is a count of code units, not of bytes", len(tc.value), refusal, tc.want)
+			}
+		})
+	}
+
+	// And the same count for a string that is valid UTF-8: an astral character
+	// is two code units, which is the half of utf16Len that was already right.
+	record := plainMessage(t)
+	record["text"] = strings.Repeat("\U0001F600", 2048) // 4096 code units, exactly the bound
+	if _, refusal := ValidateMessage(record); refusal != nil {
+		t.Errorf("4096 code units of astral characters are refused %s, and the module counts them 4096", refusal)
+	}
+	record["text"] = strings.Repeat("\U0001F600", 2048) + "x"
+	if _, refusal := ValidateMessage(record); refusal == nil || refusal.Code != CodeTooLong {
+		t.Errorf("4097 code units are refused %v, wanted %s", refusal, CodeTooLong)
+	}
+}
+
 // TestTheUnquoterDecodesWhatItKeeps pins the one function that runs only for a
 // document that spells an unpaired surrogate. The rest of such a string is
 // still the module's string — a pair is one character, `\\"` is a quote, `\n` is
@@ -837,8 +950,45 @@ func TestTheUnquoterDecodesWhatItKeeps(t *testing.T) {
 		{"a raw character beside a lone half", `"é\uD800"`, "é\xed\xa0\x80"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := unquoteKeepingLoneSurrogates([]byte(tc.literal)); got != tc.want {
+			got, err := unquoteKeepingLoneSurrogates([]byte(tc.literal))
+			if err != nil {
+				t.Fatalf("unquoting %s: %v", tc.literal, err)
+			}
+			if got != tc.want {
 				t.Errorf("it decoded to %q, wanted %q", got, tc.want)
+			}
+		})
+	}
+
+	// A literal no JSON document can hold is an error — and, the reason for the
+	// error rather than the `break` that used to be here, it TERMINATES. Both
+	// shapes of that bug were wrong: a `break` in the loop body left the loop
+	// with the string half decoded, and a `break` inside the switch — the
+	// "half an escape" row below — never advanced i and spun on the same byte
+	// until the test binary timed out. Mutation-proving that one takes
+	// `-timeout`, which is exactly why the code returns an error instead.
+	for _, tc := range []struct {
+		literal string
+		wantErr string
+	}{
+		{`no quote at all`, "no opening quote"},
+		{`"a`, "no closing quote"},
+		{`"a` + "\\", "no closing quote"},
+		{`"a` + "\\" + `"`, "lone backslash"},  // a backslash with only the closing quote after it
+		{`"a` + "\\" + `u00"`, "half-written"}, // half an escape
+		{`"a` + "\\" + `q"`, "JSON grammar"},   // an escape JSON does not have
+	} {
+		t.Run("refused: "+tc.literal, func(t *testing.T) {
+			got, err := unquoteKeepingLoneSurrogates([]byte(tc.literal))
+			if err == nil {
+				t.Fatalf("%q unquoted to %q, and a document cannot hold it", tc.literal, got)
+			}
+			// Each of those is its own branch, so each is named: a test that
+			// only asked "did it fail" would pass with three of the four checks
+			// deleted, which is what a mutation proved before this table had a
+			// `wantErr` column.
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("%q failed with %q, wanted it to name %q", tc.literal, err, tc.wantErr)
 			}
 		})
 	}

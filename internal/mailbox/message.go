@@ -262,7 +262,7 @@ func decodeValue(dec *json.Decoder, data []byte, depth int) (any, error) {
 		switch tok.(type) {
 		case string:
 			if hasLoneSurrogateEscape(data[start:end]) {
-				return unquoteKeepingLoneSurrogates(data[start:end]), nil
+				return unquoteKeepingLoneSurrogates(data[start:end])
 			}
 			return tok, nil
 		case nil, bool, json.Number:
@@ -285,7 +285,10 @@ func decodeValue(dec *json.Decoder, data []byte, depth int) (any, error) {
 				return nil, fmt.Errorf("mailbox: a record's key is not a string: %v", keyTok)
 			}
 			if hasLoneSurrogateEscape(data[keyStart:keyEnd]) {
-				key = unquoteKeepingLoneSurrogates(data[keyStart:keyEnd])
+				key, err = unquoteKeepingLoneSurrogates(data[keyStart:keyEnd])
+				if err != nil {
+					return nil, fmt.Errorf("mailbox: reading a record's key: %w", err)
+				}
 			}
 			if _, duplicate := object[key]; duplicate {
 				return nil, fmt.Errorf("mailbox: the key %q appears twice in one record", key)
@@ -409,13 +412,25 @@ func hasLoneSurrogateEscape(span []byte) bool {
 // it decodes the whole literal, so every other escape is handled too — a pair,
 // a `\"`, a raw multi-byte character — and the result is the string the bytes
 // spell, with the lone halves kept.
-func unquoteKeepingLoneSurrogates(literal []byte) string {
+//
+// A literal that is not one a JSON document can hold — no opening quote, no
+// closing quote, a trailing backslash, half an escape, an escape JSON does not
+// have — is an error, never a partial string and never a loop that does not
+// advance. Through Decode it cannot happen: the decoder refuses such a document
+// first. It is written this way because the alternative the code used to have,
+// a `break` for each of those cases, was wrong in both of its two shapes: the
+// one in the loop body left the loop with the string only half decoded, and the
+// one inside the switch never advanced i at all and spun forever.
+func unquoteKeepingLoneSurrogates(literal []byte) (string, error) {
 	open := bytes.IndexByte(literal, '"')
 	if open < 0 {
-		return string(literal) // unreachable: the caller found an escape in it
+		return "", errors.New("mailbox: a string literal has no opening quote")
+	}
+	end := len(literal) - 1
+	if end <= open || literal[end] != '"' {
+		return "", errors.New("mailbox: a string literal has no closing quote")
 	}
 	var b strings.Builder
-	end := len(literal) - 1
 	for i := open + 1; i < end; {
 		c := literal[i]
 		if c != '\\' {
@@ -424,7 +439,12 @@ func unquoteKeepingLoneSurrogates(literal []byte) string {
 			continue
 		}
 		if i+1 >= end {
-			break // unreachable in a decoded document
+			// Unreachable through Decode, which only calls this for a literal
+			// the decoder accepted. It is an error rather than a `break`, which
+			// here would leave the loop and hand back a half-decoded string: a
+			// defensive path that cannot happen should be the loudest one, not
+			// the quietest.
+			return "", errors.New("mailbox: a string literal ends in a lone backslash")
 		}
 		switch literal[i+1] {
 		case '"', '\\', '/':
@@ -447,7 +467,10 @@ func unquoteKeepingLoneSurrogates(literal []byte) string {
 			i += 2
 		case 'u':
 			if i+6 > end {
-				break // unreachable: the decoder validated the escape
+				// An error, and never a `break`: a `break` here leaves the
+				// SWITCH without advancing i, so the for loop re-reads the same
+				// byte forever. This is the one of the two that used to hang.
+				return "", errors.New("mailbox: a string literal ends in a half-written escape")
 			}
 			first, _ := hexQuad(literal[i+2 : i+6])
 			if isHighSurrogate(first) && i+12 <= end && literal[i+6] == '\\' && literal[i+7] == 'u' {
@@ -465,12 +488,10 @@ func unquoteKeepingLoneSurrogates(literal []byte) string {
 			b.WriteRune(rune(first))
 			i += 6
 		default:
-			// unreachable: the decoder refused the document
-			b.WriteByte(c)
-			i++
+			return "", fmt.Errorf("mailbox: a string literal carries an escape the JSON grammar does not have: \\%c", literal[i+1])
 		}
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 func isHighSurrogate(code uint32) bool { return code >= 0xd800 && code <= 0xdbff }
@@ -795,11 +816,12 @@ var (
 //   - a number that is not a safe integer. Go prints `1e-07` where JavaScript
 //     prints `1e-7` for the same double.
 //   - a string Go escapes and JavaScript does not: U+2028 and U+2029 (Go's
-//     encoder escapes both even with SetEscapeHTML off), invalid UTF-8, and the
-//     two control characters Go spells `\u0008` and `\u000c` where
-//     JSON.stringify writes `\b` and `\f`. The schema refuses all of these in
-//     every string it validates, so a caller that validated first cannot arrive
-//     here; this is the fence for the caller that did not.
+//     encoder escapes both even with SetEscapeHTML off) and invalid UTF-8.
+//     Those are the two the module's own canonicalString refuses, and this
+//     package refuses the same two and no more — a third refusal is a record
+//     the phone tags and the consumer will not verify. The schema refuses both
+//     in every string it validates, so a caller that validated first cannot
+//     arrive here; this is the fence for the caller that did not.
 //
 // The direction is an argument, not a field of the record: the reader passes
 // the node it read from, so a tag made for the outbox does not verify as inbox.
@@ -976,18 +998,26 @@ func encodeJSONString(value string) (string, error) {
 // form: invalid UTF-8 (which is what a lone surrogate is on this side of the
 // wire — the three WTF-8 bytes of the code unit the document escaped, see
 // unquoteKeepingLoneSurrogates — and a string Go cannot encode is not one the
-// phone wrote), U+2028 and U+2029, and the control characters Go spells
-// `\u0008` and `\u000c` where JSON.stringify writes `\b` and `\f`.
+// phone wrote) and U+2028 and U+2029.
+//
+// It refuses those and nothing else, and the "and nothing else" is the half
+// that has already been wrong once: this function used to refuse `\b` and
+// `\f` as well, on the belief that Go's encoder writes `\u0008` and
+// `\u000c` where JSON.stringify writes `\b` and `\f`. It does not —
+// `encoding/json` with SetEscapeHTML(false) writes the short escape for exactly
+// the five characters JSON.stringify writes one for (\b, \t, \n, \f, \r) and
+// `\u00xx` for the rest of the control range — so refusing them refused a
+// record the module returns bytes for, which is the byte-parity contract
+// backwards. The premise is no longer a comment: it is pinned by
+// TestControlCharactersBothEncodersSpellAlike, because it is a fact about a Go
+// release, and a Go release is what changes it.
 func canonicalString(value string) error {
 	if !utf8.ValidString(value) {
 		return errors.New("mailbox: a string is not valid UTF-8, so the two encoders spell it differently")
 	}
 	for _, r := range value {
-		switch r {
-		case ' ', ' ':
+		if r == '\u2028' || r == '\u2029' {
 			return errors.New("mailbox: a string carries U+2028 or U+2029, which Go's encoder escapes and JavaScript's does not")
-		case '\b', '\f':
-			return errors.New(`mailbox: a string carries a control character Go spells \u0008 or \u000c and JSON.stringify spells \b or \f`)
 		}
 	}
 	return nil
@@ -1009,19 +1039,41 @@ var (
 var forbiddenKeyChars = map[rune]bool{'%': true, '.': true, '$': true, '#': true, '[': true, ']': true, '/': true}
 
 // utf16Len is a string's length as JavaScript counts it: UTF-16 code units,
-// where a character above U+FFFF counts two. Every bound in this module is a
-// JavaScript `.length`, so counting runes or bytes here would let a message of
-// astral characters past a bound the module refuses.
+// where a character above U+FFFF counts two and a lone surrogate counts one.
+// Every bound in this module is a JavaScript `.length`, so counting runes or
+// bytes here would let a message of astral characters past a bound the module
+// refuses — and counting the three WTF-8 bytes of a lone surrogate as three
+// code units would refuse one the module answers bad-key for.
 func utf16Len(s string) int {
 	n := 0
-	for _, r := range s {
-		if r > 0xffff {
-			n += 2
+	for i := 0; i < len(s); {
+		if isWTF8Surrogate(s[i:]) {
+			// A lone surrogate that arrived as JSON is three WTF-8 bytes here
+			// and one UTF-16 code unit to the module. `range` would read those
+			// three bytes as three U+FFFD and count three, which is how 34 lone
+			// surrogates in `id` came back too-long where the module answers
+			// bad-key. It is one, in both languages, and it is counted once.
+			n++
+			i += 3
 			continue
 		}
-		n++
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r > 0xffff {
+			n += 2
+		} else {
+			n++
+		}
+		i += size
 	}
 	return n
+}
+
+// isWTF8Surrogate reports whether s begins with the three-byte WTF-8 encoding of
+// a UTF-16 surrogate — what writeWTF8 writes for a lone half, which no decoder
+// of UTF-8 accepts and which therefore arrives as three invalid bytes rather
+// than as one character.
+func isWTF8Surrogate(s string) bool {
+	return len(s) >= 3 && s[0] == 0xed && s[1] >= 0xa0 && s[1] <= 0xbf && s[2] >= 0x80 && s[2] <= 0xbf
 }
 
 // checked is one field's verdict: a value, or the refusal to return.
