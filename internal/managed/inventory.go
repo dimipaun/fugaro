@@ -323,13 +323,22 @@ func (in Inventory) foreign(listed []Asset) []Asset {
 // installationCreated is the third thing that is not foreign: a resource
 // Fugaro's own owner-run commands created and NO Terraform state accounts for.
 //
-// Why it is needed, and why it is not Accounted: the two kinds of resource the
+// Why it is needed, and why it is not Accounted: the resources the
 // installation makes without Terraform. Its own state buckets are created by
 // infra.CreateStateBucket (the installation's fugaro-tfstate-<gcp-project> and
 // D77's fugaro-managed-tfstate-<gcp-project>) and the managed creation's own
-// step, and the Firebase the project was created with is added by
-// infra.AddFirebase, which is an API call and no root's plan — the Firestore
-// default database Firebase provisions with it is in no state either. The
+// step, and the Firebase project is added by infra.AddFirebase, which is an
+// API call and no root's plan — the Firestore default database Firebase
+// provisions with it is in no state either.
+//
+// The Firebase project is the one a creating run always adds and a root only
+// sometimes declares: `fugaro init --create-project` adds Firebase to every
+// project it makes (init_project.go's addFirebase), while the Firebase ROOT —
+// which holds google_firebase_project, the resource a state would account for
+// — runs only under --firebase (init_stages.go). So a managed project created
+// without --firebase holds a Firebase project no state has ever seen, and an
+// inventory that did not name it here would read every such project as
+// foreign and keep the confirmations of every apply forever. The
 // whole-project read lists all of them, so without this the accounted side
 // could never cover them, every real managed project would fall back, and the
 // agent apply the budget gate opens would ask for a confirmation on every run
@@ -348,6 +357,12 @@ func (in Inventory) foreign(listed []Asset) []Asset {
 //     there is exactly one of each and an agent cannot make a second under
 //     that name; a bucket called fugaro-tfstate-<another id> is another
 //     project's and stays foreign.
+//   - the Firebase project AddFirebase added to this one,
+//     firebase.googleapis.com/FirebaseProject at "projects/<this id>". A
+//     Firebase project is named by the GCP project it belongs to, so there is
+//     exactly one of this project's; another project's is another project's
+//     and stays foreign. The path is compared whole, like the database's: a
+//     resource filed deeper under this project is not the project itself.
 //   - the DEFAULT Firestore database of this project,
 //     firestore.googleapis.com/Database at "projects/<this id>/databases/(default)".
 //     Any other database in the project is one somebody created and stays
@@ -365,6 +380,8 @@ func (in Inventory) installationCreated(a Asset) bool {
 	case "storage.googleapis.com/Bucket":
 		name := lastSegment(a.Name)
 		return name == in.installationsStateBucket() || name == ManagedStateBucketName(in.GCPProject)
+	case "firebase.googleapis.com/FirebaseProject":
+		return assetPath(a.Name) == "projects/"+in.GCPProject
 	case "firestore.googleapis.com/Database":
 		return assetPath(a.Name) == "projects/"+in.GCPProject+"/databases/(default)"
 	}
