@@ -226,6 +226,13 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 		"fugaro run --token acme-team",
 		"fugaro accounts ls",
 		"`ACCOUNT` column",
+		// Which document the selection comes from: the same one the run
+		// resolves agent.auth from, so the account axis of the launch and the
+		// credential the run resolves cannot be two documents' answers
+		// (claudeAccountFor reads it with agentAtRef).
+		"**at the ref the run checks out**",
+		"never the working tree's\ncopy",
+		"cannot choose the account the launch runs as",
 		// The refusals, both doors.
 		"no budget token was minted and Cloud Run was not called",
 		"The run stops before the agent starts, independently of the launcher",

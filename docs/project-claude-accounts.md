@@ -294,6 +294,14 @@ fugaro run --token acme-team
 A follow-up (`--pr N`) keeps its previous run's account unless `--token` is given explicitly, and an
 explicit one overrides it. The selection is checked the same way as a first run's.
 
+The `fugaro.yaml` that name is read from is the one **at the ref the run checks out** — the launcher
+reads it out of its own checkout's git objects and fetches nothing — and never the working tree's
+copy: the run resolves `agent.auth` from that same document, and a checkout left on another branch,
+or carrying an uncommitted `agent.oauth_token` edit, cannot choose the account the launch runs as.
+A ref the launcher's checkout does not hold leaves the working tree's value standing, which is what
+a launch had before the ref was read for this; the run then resolves the ref's own file after
+cloning it.
+
 To see what a repository may choose, **per repository checkout** (offline, names only, no Secret
 Manager call and no value):
 

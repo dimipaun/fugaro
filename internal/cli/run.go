@@ -295,7 +295,11 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			// recipe is confirmed below (it is pure and local, so doing it
 			// twice costs nothing); this call is what stops the read
 			// itself from ever running for a refused account.
-			if _, err := claudeAccountFor(env, repo, o.token, checkoutOf(ctx, repo)()); err != nil {
+			// The ref is not known yet here (--pr's follow-up path takes it
+			// from the previous run): the account is resolved from the flag
+			// and the checkout's own value, and reviewSpec resolves it again
+			// from the ref it names once one is.
+			if _, err := claudeAccountFor(ctx, env, repo, o.token, o.ref, checkoutOf(ctx, repo)()); err != nil {
 				return err
 			}
 			rr, rerr := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, time.Now(), false)
@@ -739,7 +743,7 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	// network call a disallowed --token should never trigger — the account
 	// is checked against config.AllowedClaudeAccounts first, using only the
 	// local config and the checkout already in hand, no network of its own.
-	account, err := claudeAccountFor(env, repo, o.token, checkout())
+	account, err := claudeAccountFor(ctx, env, repo, o.token, ref, checkout())
 	if err != nil {
 		return nil, err
 	}
@@ -998,7 +1002,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 			return "", nil, err
 		}
 	}
-	account, err := claudeAccountFor(env, repo, o.token, checkout())
+	account, err := claudeAccountFor(ctx, env, repo, o.token, ref, checkout())
 	if err != nil {
 		return "", nil, err
 	}
@@ -1018,22 +1022,99 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 }
 
 // claudeAccountFor is the named Claude account a first run uses: flag
-// (fugaro run --token), else the checkout's fugaro.yaml agent.oauth_token,
-// else the repository's default (config.DefaultClaudeAccount). A non-default
-// name is refused (claudeAccountAllowed) unless config.AllowedClaudeAccounts
-// (the local config's claude_accounts) lists it for repo, before any launch
-// (design docs/design/named-oauth-tokens.md §3 T7) — checked whether or not
-// a checkout is available here, so --repo X --token N outside any checkout
-// is held to the same rule a checkout's own resolution would be.
-func claudeAccountFor(env *cloudEnv, repo, flag string, co *config.Config) (string, error) {
+// (fugaro run --token), else agent.oauth_token of the fugaro.yaml at the ref
+// the run checks out, else the repository's default
+// (config.DefaultClaudeAccount). A non-default name is refused
+// (claudeAccountAllowed) unless config.AllowedClaudeAccounts (the local
+// config's claude_accounts) lists it for repo, before any launch (design
+// docs/design/named-oauth-tokens.md §3 T7) — checked whether or not a checkout
+// is available here, so --repo X --token N outside any checkout is held to the
+// same rule a checkout's own resolution would be.
+//
+// The document the selection comes from is the run's own, read at the ref the
+// run checks out and out of this checkout's git objects
+// (agentAtRef/checkoutFugaroYAMLAtRef), never the working tree: the run
+// resolves agent.auth from that same file (projectJobAgentAuth), and the
+// account is not a lesser fact about the run. A working tree left on another
+// branch, or carrying an uncommitted edit, would otherwise select the account
+// the launch runs as — the job it lands on holds that account's token, and that
+// account's allow_repos is what decides whether this repository may use it
+// (docs/design/named-oauth-tokens.md T2: the committed fugaro.yaml is the only
+// place that may name an account) — while the run reads a document that names
+// another. The ref is what the *auth* is judged on for the same reason; the
+// two are read from one document here so that a launch cannot judge one of
+// them the run's way and resolve the other the launcher's way.
+//
+// ref is "" when the launch has no ref yet — the pre-check runRun makes with
+// --pr and an explicit --recipe, before the previous run's ref is known (which
+// reviewSpec repeats with the ref in hand) — and reading it may also fail for a
+// ref this checkout does not hold. Both leave the working tree's own value
+// standing, which is what every launch had before this read existed: the run
+// itself resolves the ref's fugaro.yaml after cloning it, and a launch onto a
+// shared project job whose own credential cannot be resolved is refused
+// outright (projectJobAgentAuth) rather than judged on a guess.
+func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, ref string, co *config.Config) (string, error) {
+	a, refAgent := agentAtRef(ctx, repo, ref)
 	name := flag
-	if name == "" && co != nil {
-		name = co.Agent.OAuthToken
+	if name == "" {
+		switch {
+		case refAgent:
+			name = a.OAuthToken
+		case co != nil:
+			name = co.Agent.OAuthToken
+		}
 	}
 	if name == "" {
 		name = config.DefaultClaudeAccount
 	}
-	return name, claudeAccountAllowed(env, repo, name, co)
+	// The auth a name is judged against is the run's own too: naming an account
+	// for a workflow whose agent.auth is oauth (claudeAccountAllowed) is a
+	// statement about the document the run resolves, so a checkout that has
+	// moved ahead of the ref cannot make the launch refuse a name the run's own
+	// file allows. With no ref to read, the checkout's own resolution stands.
+	auth := ""
+	if co != nil {
+		auth = co.Agent.Auth
+	}
+	if refAgent {
+		auth = a.Auth
+	}
+	return name, claudeAccountAllowed(env, repo, name, auth)
+}
+
+// agentAtRef is ref's `agent:` block, read out of the checkout of repo this
+// working directory holds (checkoutFugaroYAMLAtRef: git cat-file at
+// refs/remotes/origin/<ref>, else <ref>, never the network and never the
+// working tree), and whether it could be read at all. It is the one read the
+// launcher's half of the named-account rule makes, so the selection a launch
+// resolves and the auth it is judged against are the same document's.
+//
+// Nothing is fetched to make it, so a ref this checkout does not hold, a
+// repository with no checkout here and a file that does not decode all answer
+// "no" rather than an error: the caller falls back to the working tree, which
+// is the resolution every launch had before this read existed.
+func agentAtRef(ctx context.Context, repo, ref string) (config.Agent, bool) {
+	if ref == "" {
+		return config.Agent{}, false
+	}
+	root := checkoutRoot(ctx, repo)
+	if root == "" {
+		return config.Agent{}, false
+	}
+	data, err := readFugaroYAMLAtRef(ctx, root, ref)
+	if err != nil {
+		return config.Agent{}, false
+	}
+	return config.AgentOf(data)
+}
+
+// checkoutAgentAuth is a checkout's own agent.auth as claudeAccountAllowed
+// judges a name with it, "" when there is no checkout to read one from.
+func checkoutAgentAuth(co *config.Config) string {
+	if co == nil {
+		return ""
+	}
+	return co.Agent.Auth
 }
 
 // claudeAccountAllowed refuses name (already resolved: flag, agent.oauth_token
@@ -1045,17 +1126,24 @@ func claudeAccountFor(env *cloudEnv, repo, flag string, co *config.Config) (stri
 // must both be checked exactly as a fresh resolution from a checkout would
 // be — review finding: skipping the check just because there is no checkout
 // here let either one through with its shape checked but never its
-// membership in config.AllowedClaudeAccounts. When a checkout IS known and
-// its workflow's agent.auth is not oauth, naming an account makes no sense
-// at all (no secret is ever mounted for it, so the name would be silently
-// unused) and is refused outright, not merely left unchecked.
-func claudeAccountAllowed(env *cloudEnv, repo, name string, co *config.Config) error {
+// membership in config.AllowedClaudeAccounts. When the auth a run resolves
+// is known and is not oauth, naming an account makes no sense at all (no
+// secret is ever mounted for it, so the name would be silently unused) and is
+// refused outright, not merely left unchecked.
+//
+// auth is the agent.auth of the document the name came from (claudeAccountFor
+// passes the ref's when it could read it, the checkout's own otherwise), and
+// "" when the caller has no document at all: a name resolved with no checkout
+// known is then only checked for membership, which is the rule the two
+// pre-check callers (a follow-up's inherited account, --retry's stored task)
+// depend on.
+func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 	if name == config.DefaultClaudeAccount {
 		return nil
 	}
-	if co != nil && co.Agent.Auth != "oauth" {
+	if auth != "" && auth != "oauth" {
 		return userErr("named Claude account %s only applies to a workflow whose agent.auth is oauth; %s's agent.auth is %s",
-			pluginwire.Printable(name), repo, co.Agent.Auth)
+			pluginwire.Printable(name), repo, auth)
 	}
 	allowed := config.AllowedClaudeAccounts(env.lc.ClaudeAccounts, repo)
 	if !slices.Contains(allowed, name) {
@@ -1362,7 +1450,7 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	// but whether this repository may still use that account was never
 	// re-checked here, the one place --retry resolves what it is about to
 	// launch, before any build-record read or the launch itself.
-	if err := claudeAccountAllowed(env, spec.Repo, cmp.Or(spec.OAuthToken, config.DefaultClaudeAccount), checkout()); err != nil {
+	if err := claudeAccountAllowed(env, spec.Repo, cmp.Or(spec.OAuthToken, config.DefaultClaudeAccount), checkoutAgentAuth(checkout())); err != nil {
 		return "", nil, err
 	}
 	return slug, spec, nil

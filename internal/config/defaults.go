@@ -32,6 +32,10 @@ const legacyBaseMessage = "was removed in 0.7.0: every workflow builds on the on
 const (
 	DefaultFirstLineRounds = 1
 	DefaultReviewRounds    = 2
+	// DefaultAgentAuth is agent.auth's default: a fugaro.yaml that names none
+	// authenticates with a Vertex key. applyDefaults applies it, and
+	// AgentOf is the other reader of the rule.
+	DefaultAgentAuth = "vertex"
 )
 
 // applyDefaults fills in every field fugaro.yaml may omit. The per-base cache
@@ -46,7 +50,7 @@ func applyDefaults(c *Config) {
 		c.Git.PR.EarlyDraft = &t
 	}
 	if c.Agent.Auth == "" {
-		c.Agent.Auth = "vertex"
+		c.Agent.Auth = DefaultAgentAuth
 	}
 	if c.Agent.ReviewRounds == 0 {
 		c.Agent.ReviewRounds = DefaultReviewRounds
