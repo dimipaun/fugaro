@@ -2,7 +2,6 @@ package cli
 
 import (
 	"os"
-	"os/exec"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -546,53 +545,70 @@ func jsonKeysOf(t *testing.T, typ reflect.Type) map[string]bool {
 // docs/releases/README.md states, and which the website's changelog page reads.
 const releaseFilesDir = "../../docs/releases"
 
-// TestReleaseFilesCarryNoMarkdownLinks holds every release file that is not yet
-// published to the renderer's contract: `website/src/components/Changelog.astro`'s
-// inline() renders “ `code` “ and `**bold**` and nothing else — "The files carry
-// no link, no image and no other construct — the generator hands the lines over
-// as written" — so a markdown link in a release file is printed as its own
-// literal text on the changelog page, and the repository-relative path it
-// carries resolves nowhere in the GitHub release body either. No gate catches
-// it: the site's link checker scans built HTML for hrefs (raw markdown produces
-// none) and its changelog check asserts only that a rendered line is the file's
-// own text verbatim.
+// publishedReleaseLinks are the markdown links that are already out, by release
+// file. A file's release is tagged, the changelog page has rendered the file and
+// the GitHub release body has been written from it, so editing the file now
+// changes neither: its links are history, not a page that can still be fixed.
+// v0.8.6.md's managed-projects limit is the one, and it names the design
+// document the pre-0.9.0 way.
 //
-// The rule is over the files whose release has no tag yet, rather than over
-// v0.9.0.md alone, because the property is the format's: a file is published
-// once, from the tag, and v0.8.6.md carries one such link in its managed
-// projects limit — a page already rendered and a release body already out, so
-// rewriting it now would edit history rather than fix a page. `README.md` is
-// skipped by name, the way the site's own check skips it: the format document is
-// where the documents a release may name are linked.
+// The exemption is written out here rather than decided from the checkout's
+// tags, which is how it was first and why it was wrong twice over: CI checks the
+// repository out with no tags (.github/workflows/ci.yml), so a tag lookup calls
+// every file unpublished and the rule fails on v0.8.6.md's link; and once a
+// file's release is tagged the same lookup skips every file, so the rule holds
+// nothing at all. A release that publishes a file carrying a link adds that link
+// here, by hand, at the tag. The entries are checked in both directions below —
+// the file has to exist and the link has to still be in it — so an exemption
+// that outlives its link fails instead of quietly widening.
+var publishedReleaseLinks = map[string][]string{
+	"v0.8.6.md": {"[design](../design/managed-projects.md)"},
+}
+
+// TestReleaseFilesCarryNoMarkdownLinks holds every release file to the
+// renderer's contract: `website/src/components/Changelog.astro`'s inline()
+// renders “ `code` “ and `**bold**` and nothing else — "The files carry no link,
+// no image and no other construct — the generator hands the lines over as
+// written" — so a markdown link in a release file is printed as its own literal
+// text on the changelog page, and the repository-relative path it carries
+// resolves nowhere in the GitHub release body either. No gate catches it: the
+// site's link checker scans built HTML for hrefs (raw markdown produces none)
+// and its changelog check asserts only that a rendered line is the file's own
+// text verbatim.
 //
-// Mutation (verified, planted and reverted): put
+// The rule is over every release file, not over v0.9.0.md alone, because the
+// property is the format's and the file a release is being cut from is exactly
+// the one it is for; the files already published are covered too, except for the
+// links named in publishedReleaseLinks. `README.md` is skipped by name, the way
+// the site's own check skips it: the format document is where the documents a
+// release may name are linked.
+//
+// Mutations (each verified, planted and reverted): put
 // `[docs/project-layer.md](../project-layer.md)` back into the 0.9.0 notes'
-// known limits — the link this test was written for.
+// known limits — the link this test was written for — and it fails on v0.9.0.md;
+// delete the excused link from v0.8.6.md and it fails on the stale exemption.
 func TestReleaseFilesCarryNoMarkdownLinks(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("no git on PATH: whether a release file is published yet is read from its tag")
-	}
 	entries, err := os.ReadDir(releaseFilesDir)
 	if err != nil {
 		t.Fatalf("reading %s: %v", releaseFilesDir, err)
 	}
-	files, checked := 0, 0
+	files := 0
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".md") || name == "README.md" {
 			continue
 		}
 		files++
-		if gitTagExists(t, strings.TrimSuffix(name, ".md")) {
-			continue
-		}
-		checked++
 		data, err := os.ReadFile(releaseFilesDir + "/" + name)
 		if err != nil {
 			t.Fatalf("reading %s/%s: %v", releaseFilesDir, name, err)
 		}
+		excused := publishedReleaseLinks[name]
 		for i, line := range strings.Split(string(data), "\n") {
 			if !strings.Contains(line, "](") && !strings.Contains(line, "![") {
+				continue
+			}
+			if releaseLinkIsExcused(excused, line) {
 				continue
 			}
 			t.Errorf("%s/%s:%d carries a markdown link or image (%q): the changelog page renders a release file's lines as they are written — `code` and **bold** only, per website/src/components/Changelog.astro's inline() — so a link is printed as its literal text there and resolves nowhere in the release body; name the document in prose or in a `code` span instead",
@@ -602,18 +618,29 @@ func TestReleaseFilesCarryNoMarkdownLinks(t *testing.T) {
 	if files == 0 {
 		t.Errorf("%s holds no release file: the enumeration is broken, and a rule over no files is not a rule", releaseFilesDir)
 	}
-	if checked == 0 {
-		t.Errorf("%s holds no unpublished release file: every file in it is tagged, so this rule has nothing left to hold, and the next release's file is the one it is for", releaseFilesDir)
+	// The other direction: an exemption for a file that is gone, or for a link
+	// that has been fixed, is an exemption nobody decided to keep.
+	for name, links := range publishedReleaseLinks {
+		data, err := os.ReadFile(releaseFilesDir + "/" + name)
+		if err != nil {
+			t.Errorf("publishedReleaseLinks excuses links in %s, which %s does not hold: %v", name, releaseFilesDir, err)
+			continue
+		}
+		for _, link := range links {
+			if !strings.Contains(string(data), link) {
+				t.Errorf("publishedReleaseLinks excuses %q in %s, which no longer carries it: drop the exemption — an unlinked release file needs none", link, name)
+			}
+		}
 	}
 }
 
-// gitTagExists reports whether the repository carries the tag name — the
-// question a published release file is answered by.
-func gitTagExists(t *testing.T, name string) bool {
-	t.Helper()
-	out, err := exec.Command("git", "-C", "../../", "tag", "--list", name).Output()
-	if err != nil {
-		t.Fatalf("git tag --list %s: %v", name, err)
+// releaseLinkIsExcused reports whether a line carrying a link is one of the
+// links a published release file is allowed to keep.
+func releaseLinkIsExcused(excused []string, line string) bool {
+	for _, link := range excused {
+		if strings.Contains(line, link) {
+			return true
+		}
 	}
-	return strings.TrimSpace(string(out)) == name
+	return false
 }
