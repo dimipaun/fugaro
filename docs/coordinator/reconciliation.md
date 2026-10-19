@@ -156,7 +156,7 @@ and re-running `init` with `--allow-delete`, or a hand-run
 `gcloud iam service-accounts remove-iam-policy-binding`
 (`docs/gcp-setup.md:86,115`). There is no expiry and no per-person audit trail. (The phone's
 identity is the one exception: deleting the Firebase Auth user revokes it,
-`internal/budget/token/token.go:57-58 ErrRevoked`.)
+`internal/budget/token/token.go:57-59 ErrRevoked`.)
 *Consequence:* every new reachable surface inherits an offboarding story that is a
 documented manual procedure. → **Q2**.
 
@@ -247,7 +247,7 @@ token**. A project-wide reader therefore needs either N tokens (one per reposito
 project-wide installation token with `repositories` omitted, which `tokenSource` cannot
 express.
 The credential is already project-scoped, and this is decided, not incidental:
-`internal/infra/secretmounts_test.go:92-99 TestGitSecretScopeIsDecidedPerProvider` — *"a
+`internal/infra/secretmounts_test.go:93-101 TestGitSecretScopeIsDecidedPerProvider` — *"a
 provider's credential is either per repository … (`config.PerRepositorySecret`, the owner's
 ruling of 2026-10-15, which is `bitbucket-token`) — or the project's (`github-app-key`, one
 App serving a team's repositories)."* The logical secret name is `github-app-key`
@@ -329,7 +329,7 @@ implementation, and the App's own grant has to be checked by the owner. → **Q3
 **#15 — The existing App can be reused for a read-only coordinator, but "reused" has a caveat the owner must accept. — Open.**
 Reuse is plausible for three reasons: `github-app-key` is already the project-scoped git
 credential (finding **#9**), the App is already one App per team's repositories
-(`internal/infra/secretmounts_test.go:98`), and the token call takes its permissions as an
+(`internal/infra/secretmounts_test.go:97`), and the token call takes its permissions as an
 argument. The caveat: **the App is also the credential a run uses to write pull requests**
 (`tokenPermissions`, `:83`), so the same private key would sit in two places with two
 different permission ceilings, and the coordinator would hold a key that *can* mint a
@@ -569,7 +569,7 @@ in the cloud … and it holds `fugaro run` authority."*
 2 implicitly**, which is exactly what the deferral was written to prevent. → **Q10**.
 
 **#30 — Multi-tenancy: GitHub has a project-scoped credential and Bitbucket does not, by the owner's own ruling. — Rule.**
-`internal/infra/secretmounts_test.go:92-99` is the record: a provider's git credential is
+`internal/infra/secretmounts_test.go:93-101` is the record: a provider's git credential is
 either per repository — *"(`config.PerRepositorySecret`, the owner's ruling of 2026-10-15,
 which is `bitbucket-token`)"* — or the project's — *"(`github-app-key`, one App serving a
 team's repositories)"*. The Bitbucket adapter exists (`internal/gitprov/bitbucket`, opened
@@ -626,7 +626,7 @@ described elsewhere as decided should treat that as an error in the other docume
 ### Q5 — Does the coordinator's state live in the Realtime Database or in Firestore?
 **Changes spec §5.**
 - **(A) Recommended — the Realtime Database, beside the budget, policy, kill and mailbox nodes.** It is the store the whole system already reads; it has a rules language the console and the phone can be granted into (as D112 already plans for the phone); it has ETag CAS for the coordinator's own writes (finding **#16**); and the CLI already has a client for it (`internal/rtdb`). Cost: RTDB is a tree, so a PR dependency graph is a tree of edges rather than a queryable table, and there is no multi-document transaction — only CAS.
-- **(B) Firestore, as the spec says.** Cost: the existing client has **no transactions and no listeners** (findings **#7**, **#16**); the deployed rules deny every client (`internal/infra/firestore.go:33 FirestoreRules` — `allow read, write: if false`), so neither the console nor the phone could ever read it directly; and it is not Terraform (`TestNoFirestoreDatabaseResource`).
+- **(B) Firestore, as the spec says.** Cost: the existing client has **no transactions and no listeners** (findings **#7**, **#16**); the deployed rules deny every client (`internal/infra/firestore.go:36-40 FirestoreRules` — `allow read, write: if false`), so neither the console nor the phone could ever read it directly; and it is not Terraform (`TestNoFirestoreDatabaseResource`).
 - **(C) Both — Firestore for the graph, RTDB for the live pointers the console and the phone read.** Cost: two stores to keep consistent, and the consistency mechanism is the one thing neither store gives you.
 *Consequence:* (A) keeps the console's project view reachable through the CLI, which is the only path the renderer has (finding **#7**).
 

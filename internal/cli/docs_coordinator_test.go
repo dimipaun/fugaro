@@ -52,11 +52,21 @@ package cli
 //	  missed (`internal/task/taskNOPE.go:328 NewRunID`) -> fails, naming it,
 //	  where before this file's fix it passed;
 //	  restore the old shape-blind regexp -> the census assertion fails,
-//	  reporting "196 path-looking tokens and the citation check matched 163".
+//	  reporting "214 path-looking tokens and the citation check matched 180".
 //	TestDocsCoordinatorQuestionsAreNumberedAndOptioned
 //	  delete Q9 -> fails on every question after it;
 //	  leave Q12 with one option -> fails;
 //	  rename Q14's "Recommended" -> fails.
+//
+// The numbers above are a reading of the document at the commit that last
+// edited this comment, not a constant, and they went stale once already: the
+// census figures were recorded as 196/163 when the document was smaller, and
+// three commits of edits later the same mutation reports 214/180. Anyone
+// re-running a mutation here should
+// read the count from the assertion's own message and from the check's log line
+// ("N citations checked, against a census of M path-looking tokens") rather
+// than from this comment, and update the comment to whatever it says. A number
+// quoted here is a witness that the mutation fires, not a fact about the test.
 //
 // The exception list is the one thing here a mutation cannot prove by itself,
 // so it is checked the other way: the test fails when an entry goes unused.
