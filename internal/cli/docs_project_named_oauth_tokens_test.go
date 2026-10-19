@@ -2,22 +2,28 @@ package cli
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
-// The two tests below pin the wording this feature's security cost is stated
-// in: SECURITY.md's residual for a project job's Claude account token (plan
-// task 3, design docs/design/project-named-oauth-tokens.md §6.1, owner ruling
-// D8). The wording is the feature's deliverable here — the carrier is a static
-// mount, so what a reader is told about it is the thing a later change must
-// keep true — and the tests hold it the way docs_security_test.go and
-// docs_named_oauth_tokens_test.go hold the rest of the file: the sentences in
-// SECURITY.md, tied to the code that makes them facts rather than to the text
-// alone.
+// The tests below pin the wording this feature's security cost is stated in —
+// SECURITY.md's residual for a project job's Claude account token (plan task 3,
+// design docs/design/project-named-oauth-tokens.md §6.1, owner ruling D8), and
+// the operator guide this feature ships with (plan task 4,
+// docs/project-claude-accounts.md). The wording is the feature's deliverable
+// here — the carrier is a static mount, so what a reader is told about it is
+// the thing a later change must keep true — and the tests hold it the way
+// docs_security_test.go and docs_named_oauth_tokens_test.go hold the rest of
+// the file: the sentences, tied to the code that makes them facts rather than
+// to the text alone.
+//
+// Task 4's own red step is TestDocsProjectClaudeAccountsGcpSetupRollout below:
+// delete the rollout sentence from docs/gcp-setup.md and it fails naming it.
 
 // TestDocsProjectNamedOAuthTokensSecurityMdResidual: SECURITY.md carries all
 // five things D8 names — no launcher read, every run of an account's job holds
@@ -138,5 +144,302 @@ func TestDocsProjectNamedOAuthTokensAccountJobFacts(t *testing.T) {
 	}
 	if !strings.Contains(noAccount, "fugaro-p-standard-github") || !strings.Contains(named, "acme") {
 		t.Fatalf("gcp.ProjectJobName(standard, github, ...) = %q / %q, want the profile and the account in the readable part of the name", noAccount, named)
+	}
+}
+
+// The operator guide's own path: the page plan task 4 writes, kept out of the
+// site's hand-kept guide list until 0.9.0 ships.
+const projectClaudeAccountsDoc = "docs/project-claude-accounts.md"
+
+// TestDocsProjectClaudeAccountsOperatorGuide: the operator guide says what an
+// operator has to be told, in the one place the rest of this repository can
+// point at. Every item below is a fact of tasks 1 to 3 rather than a
+// preference, and each is named where the operator meets it:
+//
+//   - what a named account *is* (name, project-wide secret, job, one token per
+//     job, the policy list);
+//   - how a token is minted (claude setup-token, in the operator's own
+//     terminal) and stored project-wide, and that a repository copy does not
+//     reach a shared job;
+//   - the two declarations (claude_accounts, and the profile's
+//     claude_accounts field) and the rules publish enforces (D3's subset rule,
+//     exact allow_repos, D4's no API key beside them);
+//   - what `fugaro init` deploys, and the version-3 rollout;
+//   - how a run selects an account, and how both refusals read;
+//   - rotation, revocation, and per-account lists;
+//   - the stopgap carrier and the security service that replaces it;
+//   - the doctor lines, and where this release stops.
+//
+// Mutation (verified, run and restored): delete the "A repository copy does not
+// reach a project job" sentence — this fails naming it; the same holds for the
+// runner's "independently of the launcher that started it" clause and for the
+// GitHub limit in §11, each of which is a fact an operator acts on.
+func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
+	doc := readDoc(t, projectClaudeAccountsDoc)
+	for _, want := range []string{
+		// Which release this is, and where the reader is (the two scopes the
+		// owner requires on every setup command).
+		"**0.9.0, unreleased.**",
+		"The released Fugaro is 0.8.6",
+		"**per installation**",
+		"**per repository checkout**",
+		// What a named account is.
+		"`claude_accounts.<name>` in the project's local config",
+		"one Cloud Run job and one job service account per\n  `(profile, provider, account)`",
+		"`accounts.<name>.allow_repos`",
+		"no launcher ever reads a token",
+		// Minting and storing.
+		"claude setup-token",
+		"fugaro secrets set claude-oauth-token-<name>",
+		"fugaro secrets set claude-oauth-token --project-wide",
+		"**A repository copy does not reach a project job.**",
+		"stored **project-wide**",
+		"fugaro secrets ls --project-wide",
+		// The declarations and the rules.
+		"profiles.<p>.claude_accounts",
+		"allow_data_to",
+		"**The subset rule (D3).**",
+		"**its own exact\n  `allow_repos`**",
+		"**No Anthropic API key beside the accounts (D4).**",
+		// What init deploys, and the rollout.
+		"`fugaro init --repo .`",
+		"fugaro project policy publish --delete",
+		// Selection.
+		"oauth_token: acme-team",
+		"fugaro run --token acme-team",
+		"fugaro accounts ls",
+		"`ACCOUNT` column",
+		// The refusals, both doors.
+		"no budget token was minted and Cloud Run was not called",
+		"The run stops before the agent starts, independently of the launcher",
+		// Rotation and revocation.
+		`version = "latest"`,
+		"gcloud secrets versions disable",
+		"Fugaro never deletes a secret or a\nversion",
+		// The stopgap and its replacement.
+		"projectAccountMount",
+		"credentials-service/README.md",
+		"replaces this carrier",
+		// The doctor lines.
+		"`project-account-stored`",
+		"`claude-accounts-stored`",
+		"`oauth-token-allowed`",
+		// Where this release stops: the released CLI, and the shared-job stop
+		// the account gates do not lift.
+		"**0.8.6 does not read any of it.**",
+		"**A GitHub OAuth run on a shared job is admitted by these gates and still stops later.**",
+		"#which-runs-work-on-a-shared-job-today",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer says %q: the operator guide is plan task 4's deliverable, and this is a fact of tasks 1 to 3 rather than a preference", projectClaudeAccountsDoc, want)
+		}
+	}
+	// The page states the versions the code states, so a version bump cannot
+	// leave it describing another release's node.
+	if projectpolicy.Version != 3 {
+		t.Fatalf("projectpolicy.Version = %d, and the guide describes version 3", projectpolicy.Version)
+	}
+	if rel, ok := projectpolicy.VersionRelease(3); !ok || rel != "0.9.0" {
+		t.Fatalf("projectpolicy.VersionRelease(3) = (%q, %v), and the guide labels the page 0.9.0", rel, ok)
+	}
+	if !strings.Contains(doc, "policy version 3") {
+		t.Errorf("%s does not name policy version 3, which is the node the release it documents writes", projectClaudeAccountsDoc)
+	}
+	// The secret names the guide tells an operator to store are the ones
+	// config derives, and the one account it says is reserved is.
+	// The secret every storing command names is ClaudeAccountSecret's own
+	// shape, with the account name left as the page's placeholder: the guide
+	// never writes a real name into a command, and the prefix it does write is
+	// the one config derives.
+	named := config.ClaudeAccountSecret("acme-team")
+	if !strings.HasPrefix(named, config.ClaudeOAuthTokenPrefix) || !strings.Contains(doc, config.ClaudeOAuthTokenPrefix+"<name>") {
+		t.Errorf("%s does not show %q, the shape ClaudeAccountSecret derives (%q for acme-team)",
+			projectClaudeAccountsDoc, config.ClaudeOAuthTokenPrefix+"<name>", named)
+	}
+	if got := config.ClaudeAccountSecret(config.DefaultClaudeAccount); got != config.ClaudeOAuthToken {
+		t.Errorf("ClaudeAccountSecret(default) = %q, and the guide calls the default account's token the unsuffixed %q", got, config.ClaudeOAuthToken)
+	}
+	if config.DefaultClaudeAccount != "default" || !strings.Contains(doc, "`default`") {
+		t.Errorf("the guide's `default` account is not config.DefaultClaudeAccount (%q)", config.DefaultClaudeAccount)
+	}
+	// One job per (profile, provider, account) is ProjectJobAccounts' own
+	// answer, the no-account job included: the guide's count is not a second
+	// copy of the rule.
+	if got := len(config.ProjectJobAccounts(config.JobProfile{ClaudeAccounts: []string{"default", "acme-team"}})); got != 2 {
+		t.Errorf("ProjectJobAccounts(default, acme-team) has %d entries, and the guide describes one job per entry (the default account riding the no-account job)", got)
+	}
+	// And the three doctor check ids the guide names are the ones the checks
+	// carry, read from the source that writes them rather than from the guide.
+	doctor := readDoc(t, "internal/cli/doctor.go")
+	for _, id := range []string{"project-account-stored", "claude-accounts-stored", "oauth-token-allowed"} {
+		if !strings.Contains(doctor, id) {
+			t.Errorf("the guide names the doctor check %q, and internal/cli/doctor.go no longer carries it", id)
+		}
+	}
+}
+
+// TestDocsProjectClaudeAccountsCommandsExist keeps every command line and flag
+// the guide shows real, the way TestDocsProjectLayerCommandsExist does for
+// docs/project-layer.md: a command must resolve in the cobra tree and a flag
+// must belong to it. The guide is what an operator copies into a terminal, so
+// a renamed subcommand or flag fails here rather than at their prompt.
+//
+// It reads the fenced shell blocks too, not only the inline spans: this page is
+// mostly commands, and a command in a block is the copy-pasteable one.
+//
+// Mutation (verified, run and restored): change the guide's `fugaro run --token
+// acme-team` to `--account acme-team` — this fails naming the flag. The same
+// holds for a renamed subcommand (`fugaro accounts ls` → `fugaro account ls`).
+func TestDocsProjectClaudeAccountsCommandsExist(t *testing.T) {
+	doc := readDoc(t, projectClaudeAccountsDoc)
+	root := NewRootCmd()
+	wordRE := regexp.MustCompile(`^[a-z][a-z-]*$`)
+	flagRE := regexp.MustCompile(`--([a-z][a-z-]*)`)
+
+	// The command lines: an inline code span that opens with `fugaro `, and a
+	// line of a shell block that is one — a block line may hold several
+	// (`brew … && fugaro upgrade`), and a trailing comment is not a command.
+	var cmds []string
+	for _, m := range regexp.MustCompile("`(fugaro [^`]*)`").FindAllStringSubmatch(doc, -1) {
+		cmds = append(cmds, m[1])
+	}
+	for _, line := range strings.Split(doc, "\n") {
+		for _, part := range strings.Split(line, "&&") {
+			part = strings.TrimSpace(part)
+			if !strings.HasPrefix(part, "fugaro ") {
+				continue
+			}
+			if i := strings.Index(part, " #"); i >= 0 {
+				part = part[:i]
+			}
+			cmds = append(cmds, strings.TrimSpace(part))
+		}
+	}
+	if len(cmds) == 0 {
+		t.Fatalf("%s shows no fugaro command line at all, and this test's whole job is to keep the ones it shows real", projectClaudeAccountsDoc)
+	}
+	for _, text := range cmds {
+		// The longest leading run of command-shaped words that actually
+		// resolves: a secret NAME is spelled like a subcommand
+		// (claude-oauth-token is all lower case and hyphens), so
+		// `fugaro secrets set claude-oauth-token` would otherwise be read as a
+		// three-word path that resolves to nothing.
+		words := strings.Fields(strings.TrimPrefix(text, "fugaro "))
+		var path []string
+		cmd := root
+		for _, f := range words {
+			if !wordRE.MatchString(f) {
+				break
+			}
+			next, _, err := root.Find(append(append([]string{}, path...), f))
+			if err != nil || next.Name() != f {
+				break
+			}
+			path, cmd = append(path, f), next
+		}
+		if len(path) == 0 {
+			t.Errorf("%s shows `%s`, whose first word is not a command", projectClaudeAccountsDoc, text)
+			continue
+		}
+		for _, fm := range flagRE.FindAllStringSubmatch(text, -1) {
+			if !cmdHasFlag(cmd, fm[1]) {
+				t.Errorf("%s's `fugaro %s` names --%s, which that command has no such flag", projectClaudeAccountsDoc, strings.Join(path, " "), fm[1])
+			}
+		}
+	}
+}
+
+// TestDocsProjectClaudeAccountsNoSecretShapes: the guide tells an operator how
+// to store a token, so it is the one document where a pasted value would be
+// most at home — and it must carry none. Every command on the page is a
+// placeholder (`claude-oauth-token-<name>`), and no string shaped like a
+// credential appears anywhere in it. Mutation (verified, run and restored):
+// paste a token-shaped literal into the storing step, and this fails naming the
+// prefix it matched.
+func TestDocsProjectClaudeAccountsNoSecretShapes(t *testing.T) {
+	doc := readDoc(t, projectClaudeAccountsDoc)
+	for _, key := range []string{"sk-or-", "sk-ant-", "sk-"} {
+		if strings.Contains(doc, key) {
+			t.Errorf("%s looks like it carries a real value (%q): the page's commands are placeholders, and the value goes in at a prompt", projectClaudeAccountsDoc, key)
+		}
+	}
+	// The placeholder shape itself is what makes the commands copy-pasteable
+	// without a value, so it is required rather than merely allowed.
+	for _, want := range []string{"claude-oauth-token-<name>", "<token>"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s does not use the placeholder %s, and its storing step is a command an operator runs as written", projectClaudeAccountsDoc, want)
+		}
+	}
+}
+
+// TestDocsProjectClaudeAccountsGcpSetupRollout is plan task 4's own red step:
+// docs/gcp-setup.md is the cloud runbook an operator follows, and the rollout
+// of the account axis is a step of it — a 0.9.0 CLI publishes a node an older
+// runner refuses, so the upgrade order is what an operator who skipped this
+// would otherwise find out at a failed run. The section also carries the two
+// other things task 4 lists for this file: the profile field, and the
+// project-wide storage step.
+//
+// Mutation (verified, run and restored): delete the "Republish the policy, per
+// installation" step from the section — this fails naming it. The same holds
+// for the profile field's sentence and the project-wide storage step.
+func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
+	doc := readDoc(t, "docs/gcp-setup.md")
+	for _, want := range []string{
+		"## Claude accounts a project job serves (0.9.0)",
+		"**It is not in the released CLI — 0.8.6 does not read any of it**",
+		"(project-claude-accounts.md)",
+		// The profile field.
+		"`profiles.<profile>.claude_accounts` in the project's local config",
+		"One job per (profile, provider, account) is what `fugaro init` deploys.",
+		// The project-wide storage step.
+		"**The project-wide storage step.**",
+		"the job mounts the **project-wide** copy",
+		"fugaro secrets set claude-oauth-token-<name>",
+		"only when `project_secrets.claude-oauth-token` allow-lists at least one repository",
+		// The Version 3 rollout, in order.
+		"**The Version 3 rollout.**",
+		"brew upgrade dimipaun/tap/fugaro && fugaro upgrade",
+		"fugaro project policy publish --delete",
+		"fugaro image refresh",
+		"a project job runs the installation's base image, which can lag the CLI that published the policy",
+		// And the one-line pointer in the optional pieces.
+		"**Named Claude accounts on a shared job (0.9.0):**",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/gcp-setup.md no longer says %q: the version-3 rollout, the profile field and the project-wide storage step are plan task 4's own additions to the operator runbook", want)
+		}
+	}
+	// The runbook must not still send an operator to the repository copy for a
+	// token a shared job mounts: the default account's scope is stated with the
+	// condition the CLI actually applies (projectWideAccepted).
+	if strings.Contains(doc, "the only scope that name has by default") {
+		t.Errorf("docs/gcp-setup.md still says claude-oauth-token's repository copy is \"the only scope that name has by default\", and the CLI stores that name project-wide whenever project_secrets lists it (internal/cli/secrets.go's projectWideAccepted)")
+	}
+}
+
+// TestDocsProjectClaudeAccountsStayOutOfSiteNav: the page documents a release
+// that is not cut, and the site's hub is the public list of guides. A new
+// docs/*.md file is not published by itself — website/content/*.md are the
+// generated documents and GUIDES in website/src/pages/docs.astro is the only
+// hand-kept list — so keeping the guide off the site is a fact of that list,
+// and it is what this test holds. When 0.9.0 ships, the entry and the page's
+// own "unreleased" label move together, in the change that cuts the release.
+//
+// Mutation (verified, run and restored): add a `project-claude-accounts.md`
+// entry to GUIDES — this fails naming it.
+func TestDocsProjectClaudeAccountsStayOutOfSiteNav(t *testing.T) {
+	page := readDoc(t, "website/src/pages/docs.astro")
+	if strings.Contains(page, "project-claude-accounts") {
+		t.Errorf("website/src/pages/docs.astro lists %s: the page documents 0.9.0, which is not released, and the hub is the public list of guides", projectClaudeAccountsDoc)
+	}
+	doc := readDoc(t, projectClaudeAccountsDoc)
+	for _, want := range []string{
+		"kept out\nof the docs hub on the site until the release is cut",
+		"**0.9.0, unreleased.**",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s does not say %q: a page that is not in the hub has to say so itself, or a reader takes it for the released CLI's", projectClaudeAccountsDoc, want)
+		}
 	}
 }
