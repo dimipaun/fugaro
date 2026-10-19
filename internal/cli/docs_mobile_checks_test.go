@@ -187,11 +187,14 @@ var mobileChecks100To104 = []mobileCheck{
 			"operator's own `gh` login",
 			"head SHA",
 			"resolved run id",
-			// The three refusals the plan names, and D162's contrast.
+			// The three refusals the plan names, and D162's contrast — which is the
+			// confirmation machine's pass-through and not a §3.4 command: "kick off …"
+			// is not a row in the router's grammar, so the step has to say so.
 			"a misheard confirm",
 			"replayed confirm",
 			"different target",
 			"kick off",
+			"not a row in the router's grammar",
 			"no** read-back",
 		},
 		sectionRefuses: []string{
@@ -482,6 +485,12 @@ func TestDocsMobileCheck103MergesOnlyItsOwnPullRequest(t *testing.T) {
 // the register has to say so and leave them unwritten. A reserved number is
 // never reused and never renumbered, which is the register's own ruling.
 //
+// The paragraph's claim about what was already written is pinned by its own test
+// below (TestDocsMobileChecksNumberingParagraphAgreesWhatIsWritten), because this
+// one held the false version of it for a round: "the highest written `## Check N`
+// section in this file was 70c" is not the register's state — 81, 82 and 89 are
+// written, so the highest before this block is 89.
+//
 // Mutation (verified, run and restored): adding a `## Check 105` section (or a
 // `| 105 |` row) fails here.
 func TestDocsMobileChecks105To109StayReserved(t *testing.T) {
@@ -504,13 +513,193 @@ func TestDocsMobileChecks105To109StayReserved(t *testing.T) {
 		"Checks 100–104 are the mobile functional spec v0.1's",
 		"105–109 stay reserved and unused",
 		"Check 110 is not this block's",
-		"the highest written `## Check N` section in this file was 70c",
 		"a check is never run before its text is in the register",
 	} {
 		if !strings.Contains(mobileFlat(doc), mobileFlat(want)) {
 			t.Errorf("the register's numbering paragraph does not carry %q: the paragraph is how a later work reads what is taken, and a claim that is gone is a number taken twice", want)
 		}
 	}
+}
+
+// mobileSpecCommandPhrases is the phrase the register's script has to use for each
+// of the router's five §3.4 commands, keyed by the router's own command id. The keys
+// are `shared/command`'s, so a command the module stops carrying — or renames — fails
+// the test below rather than passing quietly with a register that names a set the app
+// does not have.
+var mobileSpecCommandPhrases = map[string][]string{
+	// "Fugaro, switch to ⟨project⟩" — §3.4's first command.
+	"switch-project": {"switch to"},
+	// "Fugaro, talk to ⟨agent⟩". There is no "switch agent": addressing an agent is
+	// what this command is for, and the register named a command that does not exist.
+	"talk-to-agent": {"talk to"},
+	// "Fugaro, what project am I on?" — the one the register's memory dropped.
+	"where-am-i": {"what project am I on"},
+	// "Fugaro, list projects" / "list agents" — one command id, two rows.
+	"list": {"list projects", "list agents"},
+	// "Fugaro, what's pending?"
+	"whats-pending": {"what's pending"},
+}
+
+// TestDocsMobileCheck102ListsTheRoutersOwnCommands: Check 102 fixes a script before the
+// first utterance and speaks `<alias>, <command>` in it, and its own Method says a list
+// typed from memory measures a set the app may not have. Step 2 typed it from memory
+// anyway: it named "switch agent", which appears nowhere in the tree, and "kick off",
+// which is D162's launch — not a row in the router's grammar at all — while leaving out
+// "what project am I on", one of the five. A script written that way would exercise a
+// command the app does not have, skip one it does, and record a fail-closed pass for a
+// `<alias>, kick off …` utterance it had mislabelled as a command.
+//
+// The five are read out of the tree here as they are in the guard block, so the register
+// and `shared/command/index.js` cannot drift apart silently.
+//
+// Mutation (verified, run and restored): putting "switch agent" back into step 2 fails
+// here; dropping "what project am I on" fails here; removing the guard block's `CMDS`
+// read fails here.
+func TestDocsMobileCheck102ListsTheRoutersOwnCommands(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	src := readDoc(t, "shared/command/index.js")
+
+	// `shared/command`'s own two lists, read from the module rather than restated: the
+	// command ids, and which five of them the spec's §3.4 names.
+	const commandBlock = "export const COMMAND = Object.freeze({"
+	const specBlock = "export const SPEC_COMMANDS = Object.freeze(["
+	ids := map[string]string{}
+	for _, m := range regexp.MustCompile(`(?m)^  ([A-Z_]+): '([a-z-]+)',$`).FindAllStringSubmatch(mobileBlock(src, commandBlock), -1) {
+		ids[m[1]] = m[2]
+	}
+	var spec []string
+	for _, m := range regexp.MustCompile(`COMMAND\.([A-Z_]+)`).FindAllStringSubmatch(mobileBlock(src, specBlock), -1) {
+		id, ok := ids[m[1]]
+		if !ok {
+			t.Fatalf("shared/command's SPEC_COMMANDS names COMMAND.%s, which the module's COMMAND object does not declare: this pin reads the five from there, and a name it cannot resolve is a list it cannot check", m[1])
+		}
+		spec = append(spec, id)
+	}
+	if len(spec) != 5 {
+		t.Fatalf("shared/command's SPEC_COMMANDS carries %d commands, want the spec's five: the register's script speaks exactly these, and a module that changes how many there are has to be read against the check again", len(spec))
+	}
+
+	section := docSection(t, path, doc, "## Check 102:")
+	m := regexp.MustCompile(`(?ms)^2\. \*\*(.*?)^3\. \*\*`).FindStringSubmatch(section)
+	if m == nil {
+		t.Fatal("Check 102 carries no numbered step 2 this pin can read: the script is what the check speaks, and it is fixed there")
+	}
+	step2 := mobileFlat(m[1])
+
+	for _, id := range spec {
+		phrases, ok := mobileSpecCommandPhrases[id]
+		if !ok {
+			t.Fatalf("shared/command carries the §3.4 command %q, and this pin has no phrase for it: the register's step 2 and this table are updated together, or the check goes on measuring a set the app has stopped having", id)
+		}
+		for _, want := range phrases {
+			if !strings.Contains(step2, want) {
+				t.Errorf("Check 102's step 2 does not name %q, so the script does not speak `%s`, one of the spec's §3.4 commands: the five are the router's own, read out of shared/command, not typed from memory", want, id)
+			}
+		}
+	}
+	// The two things the memory put in that the grammar does not have.
+	if strings.Contains(step2, "switch agent") {
+		t.Error("Check 102's step 2 names \"switch agent\", and no such command exists: addressing an agent is \"talk to ⟨agent⟩\", and a script that speaks a command the app does not have measures the router's refusal, not its recognition rate")
+	}
+	if !strings.Contains(step2, "is not a row in the router's grammar") {
+		t.Error("Check 102's step 2 does not say where a launch stands: \"kick off …\" is D162's launch and not a §3.4 command, so a script that counted it as one would record a fail-closed pass for an utterance it had mislabelled")
+	}
+
+	// And the guard block reads that list, which is what makes the pin above a check on
+	// the register rather than a second memory.
+	blocks := bashBlocks(section)
+	if len(blocks) == 0 {
+		t.Fatal("Check 102 carries no bash block: its guard block is where the alias set and the command set are read out of the tree")
+	}
+	guard := strings.Join(blocks[0], "\n")
+	for _, want := range []string{"[ -n \"$CMDS\" ]", "Check 102: the command kinds as the tree writes them"} {
+		if !strings.Contains(guard, want) {
+			t.Errorf("Check 102's guard block does not carry %q: the command set is data, and the block reads it out of shared/command/index.js for the same reason it reads the alias set there", want)
+		}
+	}
+}
+
+// mobileBlock returns the source from the line that opens a frozen constant to the line
+// that closes it — `});` for an object, `]);` for an array — or the empty string when the
+// opening line is not there. The module declares several objects and arrays at the same
+// indent, so a pin that reads one of them has to be scoped to it: an unscoped read takes
+// `LIST_TARGET`'s and `ROUTE`'s lines for the command set, and an array closed with the
+// object's delimiter runs on into the constant declared below it.
+func mobileBlock(src, open string) string {
+	start := strings.Index(src, open)
+	if start < 0 {
+		return ""
+	}
+	rest := src[start:]
+	end := len(rest)
+	for _, close := range []string{"\n});", "\n]);"} {
+		if i := strings.Index(rest, close); i >= 0 && i < end {
+			end = i
+		}
+	}
+	return rest[:end]
+}
+
+// TestDocsMobileChecksNumberingParagraphAgreesWhatIsWritten: the register's paragraph for
+// the 100–104 block tells a later work which numbers are taken, and it claimed two things
+// about this register that are false — that "the highest written `## Check N` section in
+// this file was 70c", and that the mobile work's own first block, 80–89, "has written" no
+// row and no section here. Checks 81, 82 and 89 are written (Task P4.2a), with a row and a
+// section each, and both `docs/mobile/implementation-plan.md` and the register's own table
+// carry them; the older claim was written while this branch was behind the commit that
+// added them. The plan is what this pin reads the written set from, because it is the
+// document that records which of 80–89 are written and which are still P4.2's.
+//
+// Mutation (verified, run and restored): restoring "was 70c" fails here; so does restoring
+// the claim that the mobile block has written no row or section.
+func TestDocsMobileChecksNumberingParagraphAgreesWhatIsWritten(t *testing.T) {
+	plan := mobileFlat(readDoc(t, "docs/mobile/implementation-plan.md"))
+	for _, want := range []string{
+		"Checks 81, 82 and 89 are written into the register by P4.2a",
+		"checks 80 and 83–88 by P4.2",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Fatalf("docs/mobile/implementation-plan.md no longer says %q: this pin reads the written set from there, and without it the register's paragraph would be checked against nothing", want)
+		}
+	}
+
+	para := mobileCheck100To104Paragraph(t, readDoc(t, "docs/gcp-live-checklist.md"))
+	for _, want := range []string{
+		"the highest written `## Check N` section in this file was 89",
+		"wrote **81**, **82** and **89** into this register",
+		"**80** and **83–88**",
+	} {
+		if !strings.Contains(para, want) {
+			t.Errorf("the register's 100–104 paragraph does not say %q: the mobile work's first block is not unwritten, and a paragraph that says it is contradicts the plan, the table below it and the sections in this file", want)
+		}
+	}
+	for _, bad := range []string{
+		"was 70c",
+		"has written a row or a section into this file",
+	} {
+		if strings.Contains(para, bad) {
+			t.Errorf("the register's 100–104 paragraph carries %q: that is the claim this pin exists for — 81, 82 and 89 are written into this register, and a paragraph saying otherwise is a reader's reason to think the numbering is free where it is not", bad)
+		}
+	}
+}
+
+// mobileCheck100To104Paragraph returns the register's 100–104 numbering paragraph,
+// flattened: from the phrase that opens it to the first blank line after it. The
+// paragraph is one block of prose in a file of them, so a claim about the whole file
+// (`was 70c` is nowhere else, either) is not the same claim as one about this paragraph.
+func mobileCheck100To104Paragraph(t *testing.T, doc string) string {
+	t.Helper()
+	const open = "**Checks 100–104 are the mobile functional spec v0.1's"
+	start := strings.Index(doc, open)
+	if start < 0 {
+		t.Fatalf("the register carries no %q paragraph: the block's allocation is how a later work reads which numbers are taken", open)
+	}
+	rest := doc[start:]
+	if end := strings.Index(rest, "\n\n"); end >= 0 {
+		rest = rest[:end]
+	}
+	return mobileFlat(rest)
 }
 
 // TestDocsMobileChecks100To104AreTheLastSections: the five are appended, so the
