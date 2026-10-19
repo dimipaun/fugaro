@@ -11,12 +11,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -598,5 +600,207 @@ func TestProjectReposSeenSlugSaysWhatItIs(t *testing.T) {
 	}
 	if strings.Contains(line, "not admitted") {
 		t.Errorf("an admitted repository is marked as refused: %s", line)
+	}
+}
+
+// hostileSeenName is a repository name a run can write into the two durable
+// sources `repos ls` reads, carrying every class of character that lets a
+// value rewrite the line it is printed in: an ANSI escape sequence, a newline,
+// a carriage return, a right-to-left override and a zero-width joiner.
+var hostileSeenName = "evil\x1b[31mred\nline\rcarriage‮override​zero"
+
+// longSeenName is the other half of the class: length. A bucket's runs/<slug>/
+// prefix is an object key, which no 255-byte name limit applies to, and
+// spendDaily's slug is a document field; four times the bounded printable form
+// is what a name that long does to the line it is printed in.
+var longSeenName = strings.Repeat("z", 4*safetext.FieldMax)
+
+// seenLineMaxRunes bounds a line of a listing that names a run-written
+// repository: the bounded printable form (safetext.FieldMax) plus this
+// program's own longest note wrapped around one (the sources, the refusal and
+// the remedy). A test that said only "the name is not printed raw" would pass
+// on a value that was cut but left one line wide; a line as long as the name
+// whoever wrote it made it is what pushes this program's own words off the
+// screen.
+const seenLineMaxRunes = safetext.FieldMax + 400
+
+// assertBoundedAndInert fails when a command's output carries any of what a
+// run-written repository name could put there — an escape sequence, a carriage
+// return, another C0 or C1 control, a bidi override, a zero-width character —
+// or a line longer than the bounded form allows. It scans the whole output,
+// not the one line the value is expected on: the point is that no line of it
+// reads as something other than what this program printed.
+func assertBoundedAndInert(t *testing.T, what, out string) {
+	t.Helper()
+	for _, bad := range []struct{ name, s string }{
+		{"an ANSI escape sequence", "\x1b"},
+		{"a carriage return", "\r"},
+		{"a right-to-left override", "‮"},
+		{"a zero-width joiner", "​"},
+	} {
+		if strings.Contains(out, bad.s) {
+			t.Errorf("%s printed %s a run-written name carried — the name rewrote the output:\n%q", what, bad.name, out)
+		}
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if n := utf8.RuneCountInString(line); n > seenLineMaxRunes {
+			t.Errorf("%s printed a %d-rune line, past the %d the bounded form allows: the name was printed unbounded:\n%s", what, n, seenLineMaxRunes, line)
+		}
+		for _, r := range line {
+			if (r < 0x20 && r != '\t') || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+				t.Errorf("%s printed the control character %U: a run-written name rewrote the output:\n%q", what, r, out)
+				break
+			}
+		}
+	}
+}
+
+// TestProjectReposLsPrintsSeenNamesBoundedAndInert: the seen half of the
+// listing is written by runs, not by this program. A runs/<slug>/ prefix is a
+// directory name in the runs bucket (phase 3's broadened grant lets a run of a
+// profile write those prefixes), and spendDaily's slug is a field of a
+// document the rollup writes; nothing on either path checks the shape of the
+// name (runstore.ListSlugs does not apply its own slugRE, and budget.FromFields
+// checks only that the slug is valid UTF-8 and not empty), and this command
+// prints the name in two places — the entry's own cell and, for one the
+// allow-list does not admit, inside the "repos add" remedy the note words.
+// Printed raw, a name carrying an escape sequence rewrites the operator's
+// screen, a newline or carriage return adds a line that reads as one of this
+// program's own, and a long name pushes the note off the column. The bounded
+// printable form is safetext.Field, the one the rest of the CLI prints
+// run-written text through (runview's rows, watch).
+//
+// Mutation (verified, run and restored): print r.Name raw at the seen entry's
+// own cell — this test fails on the escape sequence, on the carriage return,
+// on the override, on the zero-width joiner, on the extra line the newline
+// adds and on the line length the over-long name makes. notAdmittedSentence's
+// own copy of a name is put through the same bounded form, but the branch of
+// it that carries a name is reached only by entries projectpolicy.ValidPattern
+// takes (its alphabet, at most maxPatternLen characters), so no name a run
+// writes reaches it and no mutation there turns this test red: that one is the
+// invariant held, not a reachable hole closed.
+func TestProjectReposLsPrintsSeenNamesBoundedAndInert(t *testing.T) {
+	f := newSeenFixture(t)
+	// An allow-list that admits nothing here: the hostile name is then both
+	// printed and carried into the remedy sentence.
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	// Both durable sources — the bucket holds the one carrying the controls (a
+	// path component of the file-backed bucket this test reads is at most 255
+	// bytes, where a real bucket's object key is not), spendDaily the long one.
+	putRun(t, f.dir, hostileSeenName)
+	f.spent(t, budget.DayDate(budget.Day(f.now)), longSeenName, longSeenName)
+
+	out, _, err := execute(t, "project", "repos", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	_, seen, ok := strings.Cut(out, "repositories seen here")
+	if !ok {
+		t.Fatalf("the listing does not print the seen half:\n%s", out)
+	}
+	// One line per entry (the header is the first line): a name carrying a
+	// newline must not add a line that reads as another entry of this
+	// program's own.
+	entries := 0
+	for _, line := range strings.Split(seen, "\n")[1:] {
+		if strings.TrimSpace(line) != "" {
+			entries++
+		}
+	}
+	if entries != 2 {
+		t.Errorf("the seen half holds %d lines after the header, want one per repository (2): a run-written name added one:\n%s", entries, seen)
+	}
+	bounded := safetext.Field(hostileSeenName)
+	if !strings.Contains(seen, bounded) {
+		t.Errorf("the seen name is not printed in its bounded form;\nwant a line holding:\n%s\ngot:\n%s", bounded, seen)
+	}
+	if !strings.Contains(seen, safetext.Field(longSeenName)) {
+		t.Errorf("the over-long seen name is not printed in its bounded form: four times the cap came back unbounded")
+	}
+	// The note is printed with the name, and the name in it is the bounded one:
+	// the sentence a name is not a pattern for names the entries the allow-list
+	// would take, never the name itself (notAdmittedSentence), so what this
+	// asserts is that the marked line is there and intact at all.
+	if !strings.Contains(seen, "not admitted") || !strings.Contains(seen, "repos add") {
+		t.Errorf("the seen entry no longer says the allow-list refuses it:\n%s", seen)
+	}
+	assertBoundedAndInert(t, "`project repos ls`", out)
+}
+
+// TestProjectShowRunningNamesBoundedAndInert: `project show`'s running list is
+// the run registry's keys, which runs write (a slug, and for a key the
+// database does not take as it stands, budget.Key's percent-escapes of it —
+// which leave a bidi override, a zero-width character and the length of the
+// name alone) and which both forms of the command print: the table line and
+// the --json document's running_now and running_not_enrolled. The raw values
+// stay the ones admission is asked of; what is printed is the bounded
+// printable form, the same value in both forms of the command so a table and a
+// document that mirror each other cannot disagree.
+//
+// Mutations (both verified, run and restored): print r raw in the running
+// loop — this test fails on the override and the line length; leave
+// doc.Running/ doc.RunningNotEnrolled raw — it fails on the JSON half.
+func TestProjectShowRunningNamesBoundedAndInert(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	f.db.Set(budget.PathAgent(hostileSeenName, "20261015-120000-aaaa"), map[string]any{"run_id": "20261015-120000-aaaa"})
+
+	out, _, err := execute(t, "project", "show")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "repositories running now") {
+		t.Fatalf("project show no longer prints the running list:\n%s", out)
+	}
+	assertBoundedAndInert(t, "`project show`", out)
+
+	js, _, err := execute(t, "project", "show", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, js)
+	}
+	var doc struct {
+		Running            []string `json:"running_now"`
+		RunningNotEnrolled []string `json:"running_not_enrolled"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
+	}
+	for _, got := range [][]string{doc.Running, doc.RunningNotEnrolled} {
+		if len(got) != 1 {
+			t.Fatalf("--json = %s, want one run-written repository in each list", js)
+		}
+		assertBoundedJSONName(t, "--json", got[0])
+	}
+	if doc.Running[0] != doc.RunningNotEnrolled[0] {
+		t.Errorf("--json names the same repository differently in its two lists: %q and %q", doc.Running[0], doc.RunningNotEnrolled[0])
+	}
+	// The table prints the value the document carries, so the two forms of one
+	// command agree.
+	if !strings.Contains(out, doc.Running[0]) {
+		t.Errorf("`project show` does not print the repository --json names (%q):\n%s", doc.Running[0], out)
+	}
+}
+
+// assertBoundedJSONName is assertBoundedAndInert for one value a --json
+// document carries: it must be the bounded printable form and nothing a
+// run-written name could have put in it.
+func assertBoundedJSONName(t *testing.T, what, got string) {
+	t.Helper()
+	if got == "" {
+		t.Errorf("%s carries an empty repository name", what)
+	}
+	if len([]rune(got)) > safetext.FieldMax || got != strings.Join(strings.Fields(got), " ") {
+		t.Errorf("%s carries %q, which is not the bounded printable form", what, got)
+	}
+	for _, r := range got {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || (r >= 0x202a && r <= 0x202e) || r == 0x200b {
+			t.Errorf("%s carries %q, in which the run-written name survives: %U", what, got, r)
+		}
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -1640,8 +1641,19 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 	if err != nil {
 		return err
 	}
+	// Every name on these two lists is a key of the run registry, which a run
+	// wrote: a repository's slug, and — for a key the database does not take as
+	// it stands — budget.Key's percent-escapes of it, which leave a bidi
+	// override, a C1 control, a zero-width character and the length of the name
+	// alone. Both forms of this command print them (the table and the --json
+	// document), so both carry the bounded printable form (safetext.Field), and
+	// both carry the same value: a table and a document that mirror each other
+	// must not disagree. The raw names stay in `running`, which is what
+	// admission is asked of and what the pair of lists is computed on.
+	runningShown := boundedNames(running)
+	notAdmitted := map[string]bool{}
 	doc := projectShowDoc{Project: lc.Name, GCPProject: lc.GCPProject, Mode: cfg.Mode, Caps: caps,
-		Enrolled: map[string]string{}, Running: running, RunningNotEnrolled: []string{}, EnrolledNotRunning: []string{}}
+		Enrolled: map[string]string{}, Running: runningShown, RunningNotEnrolled: []string{}, EnrolledNotRunning: []string{}}
 	if found {
 		doc.Policy = showPolicyOf(p)
 		doc.AllowRepos = nonNil(p.AllowRepos)
@@ -1662,7 +1674,8 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 			continue
 		}
 		if !projectpolicy.AdmitRepo(p.AllowRepos, r) {
-			doc.RunningNotEnrolled = append(doc.RunningNotEnrolled, r)
+			notAdmitted[r] = true
+			doc.RunningNotEnrolled = append(doc.RunningNotEnrolled, safetext.Field(r))
 		}
 	}
 	for _, r := range doc.AllowRepos {
@@ -1696,13 +1709,17 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 	if len(running) == 0 {
 		fmt.Fprintln(out, "  (none)")
 	}
-	for _, r := range running {
+	for i, r := range running {
 		mark := ""
-		if slices.Contains(doc.RunningNotEnrolled, r) {
+		if notAdmitted[r] {
 			mark = notAdmittedNote(r)
 		}
-		fmt.Fprintf(out, "  %s%s\n", r, mark)
+		fmt.Fprintf(out, "  %s%s\n", runningShown[i], mark)
 	}
+	// EnrolledNotRunning is the allow-list's own entries, each one checked to
+	// be a pattern the allow-list takes (projectpolicy.ValidPattern, on decode
+	// and again on publish): a value there is this program's alphabet, never a
+	// run's.
 	for _, r := range doc.EnrolledNotRunning {
 		fmt.Fprintf(out, "  %s is on the allow-list and has no run in flight here\n", r)
 	}
@@ -1883,6 +1900,20 @@ func runningRepos(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) ([]
 	return slices.Sorted(maps.Keys(running)), nil
 }
 
+// boundedNames is a list of run-written names as this program prints them:
+// each one through safetext.Field, in the same order, so a table line and the
+// --json document that mirror each other carry the same value. The raw list
+// stays the one matching and admission are asked of (AdmitRepo, MatchRepo,
+// entryHasARun): a name is compared as the run wrote it, and only what is
+// printed is bounded.
+func boundedNames(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, safetext.Field(n))
+	}
+	return out
+}
+
 // allowSources says where each entry of the published allow-list came from,
 // for `project show`. It is the same seed the publisher would compute, so an
 // entry that is not in it was added on purpose (`project repos add`) or is a
@@ -1947,7 +1978,13 @@ func notAdmittedSentence(r string) string {
 	if projectpolicy.ValidPattern(r) != nil {
 		return "not admitted: its next run is refused until the allow-list admits it — " + slugIsAHash + ", so " + slugNameIt
 	}
-	return "not admitted: its next run is refused until 'fugaro project repos add " + r + "'"
+	// The remedy carries the name, and the name is one a run wrote (the run
+	// registry's key, the runs bucket's runs/<slug>/ prefix, spendDaily's
+	// slug): safetext.Field is the bounded printable form every one of these
+	// listings prints such a value through, so the remedy cannot be the one
+	// place a name rewrites the line. The question above — is this a pattern
+	// the allow-list would take — is asked of the name itself.
+	return "not admitted: its next run is refused until 'fugaro project repos add " + safetext.Field(r) + "'"
 }
 
 // slugIsAHash and slugNameIt are the two halves of what a name that is a slug

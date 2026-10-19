@@ -166,7 +166,17 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 		fmt.Fprintln(out, "  (none: no run of any repository has been recorded here)")
 	}
 	for _, r := range seen {
-		fmt.Fprintf(out, "  %s%s\n", r.Name, seenNote(r, projectpolicy.AdmitRepo(p.AllowRepos, r.Name)))
+		// The name is printed through the bounded printable form, and so is
+		// the copy the note's remedy carries (notAdmittedSentence applies it
+		// itself): every value on this list was written by a run, not by this
+		// program — a runs/<slug>/ prefix is a directory name in the runs
+		// bucket and spendDaily's slug is a field of a document the rollup
+		// writes, and neither path checks the shape of the name. Raw, an
+		// escape sequence in one rewrites the operator's screen, a newline
+		// adds a line that reads as another entry, and a long one pushes the
+		// note off the column. The admission question above is asked of the
+		// name itself; only what is printed is bounded.
+		fmt.Fprintf(out, "  %s%s\n", safetext.Field(r.Name), seenNote(r, projectpolicy.AdmitRepo(p.AllowRepos, r.Name)))
 	}
 	return nil
 }
