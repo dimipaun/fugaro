@@ -18,8 +18,9 @@ import (
 )
 
 // Run is a stateful fake of the Cloud Run Admin v2 calls Fugaro makes:
-// jobs.run, jobs get, list, patch and delete, operations get (of a patch or
-// a delete), and executions get, list (including across jobs/-) and cancel.
+// jobs.run, jobs get, list, patch, delete and getIamPolicy, operations get
+// (of a patch or a delete), and executions get, list (including across
+// jobs/-) and cancel.
 //
 // It stores executions by (job, short name), so it accepts a name in any
 // form: full with the project ID, full with ProjectNumber, or short when the
@@ -47,6 +48,25 @@ type Run struct {
 	// pins the degradation of a refused label read (infra.Orphans) and the
 	// delete's own 403.
 	FailListWith, FailDeleteWith int
+	// FailPolicyOf, when set, makes jobs:getIamPolicy of the jobs it names
+	// answer that HTTP status: one job's policy unreadable while the others
+	// read, which is what doctor's launcher-jobs check degrades on. Set it
+	// before the fake serves.
+	FailPolicyOf map[string]int
+	// LoopListToken, when set, makes jobs.list answer with a nextPageToken it
+	// repeats on every page: the server bug a walk with no repeated-token
+	// guard follows forever, which is what the launcher-jobs check's own bound
+	// is written against.
+	LoopListToken bool
+	// EndlessListToken, when set, makes jobs.list answer with a
+	// nextPageToken that is never empty and never the one it was given: a
+	// listing that never ends without ever repeating a token, which only a
+	// page cap ends.
+	EndlessListToken bool
+	// HeldOn is what jobs:testIamPermissions reports the caller holds, by
+	// job name (by default nothing): the view of a launcher, who may not
+	// read a job's policy but may ask what it can do on the job.
+	HeldOn map[string][]string
 	// ProjectNumber, when set, replaces the project ID in every name the
 	// fake returns, as the real API may.
 	ProjectNumber string
@@ -71,6 +91,10 @@ type Run struct {
 	// (AddProjectJob): one job per (profile, provider, account), shared by
 	// every repository admitted to the profile (design §4.1).
 	projectJobs map[string]projectJobTriple
+	// policies are the jobs' own IAM policies, by job name (SetJobPolicy):
+	// who may start each job, which is the grant surface doctor reads
+	// (plan task 3.5 step 1). A job with no entry serves an empty policy.
+	policies map[string][]Binding
 }
 
 // projectJobTriple is the (profile, provider, account) a shared project
@@ -175,9 +199,18 @@ type runExec struct {
 // NewRun starts a Cloud Run fake that lives until the test ends.
 func NewRun(t *testing.T) *Run {
 	t.Helper()
-	f := &Run{jobs: map[string]*runJob{}, execs: map[execKey]*runExec{}, pending: map[string]*runOp{}}
+	f := &Run{jobs: map[string]*runJob{}, execs: map[execKey]*runExec{}, pending: map[string]*runOp{}, policies: map[string][]Binding{}}
 	f.Server = newServer(t, f.handle)
 	return f
+}
+
+// SetJobPolicy sets job name's IAM policy: who may start it, as
+// jobs:getIamPolicy serves it. The role strings are the caller's, because a
+// custom role's full name is projects/<p>/roles/<id>.
+func (f *Run) SetJobPolicy(name string, bindings ...Binding) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.policies[name] = cloneBindings(bindings)
 }
 
 // AddJob creates a job with the given CPU and memory limits.
@@ -601,6 +634,8 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	switch {
+	case r.Method == http.MethodPost && strings.HasSuffix(p, ":testIamPermissions"):
+		f.testJobPermissions(w, r, strings.TrimSuffix(p, ":testIamPermissions"), body)
 	case r.Method == http.MethodPost && strings.HasSuffix(p, ":run"):
 		f.run(w, r, strings.TrimSuffix(p, ":run"), body)
 	case r.Method == http.MethodPost && strings.HasSuffix(p, ":cancel"):
@@ -634,6 +669,8 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		f.patchJob(w, r, p, body)
 	case r.Method == http.MethodDelete && isJobPath(p):
 		f.deleteJob(w, p)
+	case r.Method == http.MethodGet && strings.HasSuffix(p, ":getIamPolicy"):
+		f.getJobIamPolicy(w, r, strings.TrimSuffix(p, ":getIamPolicy"))
 	case r.Method == http.MethodGet && isJobPath(p):
 		f.getJob(w, p)
 	case r.Method == http.MethodGet && strings.Contains(p, "/operations/"):
@@ -658,6 +695,46 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 func isJobPath(p string) bool {
 	_, _, job, ok := jobPath(p)
 	return ok && job != "-"
+}
+
+// getJobIamPolicy answers jobs:getIamPolicy for the job the path names: the
+// policy SetJobPolicy stored, empty when none is stored. A job the fake does
+// not have is 404, as the path's own job get is.
+func (f *Run) getJobIamPolicy(w http.ResponseWriter, r *http.Request, p string) {
+	_, _, name, ok := jobPath(p)
+	if !ok || f.jobs[name] == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "job not found")
+		return
+	}
+	if code := f.FailPolicyOf[name]; code != 0 {
+		writeError(w, code, http.StatusText(code), "injected failure")
+		return
+	}
+	servePolicy(w, r.URL.Query(), f.policies[name])
+}
+
+// testJobPermissions answers jobs:testIamPermissions: the asked permissions
+// HeldOn grants on the job. A job the fake does not have is 404.
+func (f *Run) testJobPermissions(w http.ResponseWriter, r *http.Request, p string, body []byte) {
+	_, _, name, ok := jobPath(p)
+	if !ok || f.jobs[name] == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "job not found")
+		return
+	}
+	var req struct {
+		Permissions []string `json:"permissions"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
+	got := []string{}
+	for _, perm := range req.Permissions {
+		if slices.Contains(f.HeldOn[name], perm) {
+			got = append(got, perm)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"permissions": got})
 }
 
 // getJob answers jobs get: the stored body when there is one, else the
@@ -956,7 +1033,16 @@ func (f *Run) listJobs(w http.ResponseWriter, r *http.Request, parent string) {
 		out = append(out, job)
 	}
 	resp := map[string]any{"jobs": out}
-	if end < len(names) {
+	switch {
+	case f.LoopListToken:
+		// The same token on every page, whatever was asked for.
+		resp["nextPageToken"] = "loop"
+	case f.EndlessListToken:
+		// A token that is neither empty nor a repeat: one character longer
+		// than the one it was given, so no walk ends and no guard that only
+		// remembers tokens ends it either.
+		resp["nextPageToken"] = q.Get("pageToken") + "x"
+	case end < len(names):
 		resp["nextPageToken"] = strconv.Itoa(end)
 	}
 	writeJSON(w, http.StatusOK, resp)

@@ -18,7 +18,7 @@ import (
 // package writes is a node RTDB accepts.
 func TestDecodeReadsCloneURLs(t *testing.T) {
 	const url = "https://github.com/acme/app.git"
-	p, found, err := Decode([]byte(`{"version":2,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"}}`))
+	p, found, err := Decode([]byte(`{"version":3,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"}}`))
 	if err != nil || !found {
 		t.Fatalf("Decode = (%v, %v, %v), want it found and read", p, found, err)
 	}
@@ -40,7 +40,7 @@ func TestDecodeReadsCloneURLs(t *testing.T) {
 // unchanged, so the escape is only what this package writes.
 func TestDecodeReadsAHandWrittenCloneURLsKey(t *testing.T) {
 	const url = "https://github.com/acme/app.git"
-	p, found, err := Decode([]byte(`{"version":2,"clone_urls":{"github/acme/app":"` + url + `"}}`))
+	p, found, err := Decode([]byte(`{"version":3,"clone_urls":{"github/acme/app":"` + url + `"}}`))
 	if err != nil || !found {
 		t.Fatalf("Decode = (%v, %v, %v), want it found and read", p, found, err)
 	}
@@ -105,7 +105,7 @@ func TestDecodeRefusesBadCloneURLs(t *testing.T) {
 		{"a key with a truncated escape", `{"github%2":"https://github.com/acme/app.git"}`, "truncated escape"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p, found, err := Decode([]byte(`{"version":2,"clone_urls":` + tc.block + `}`))
+			p, found, err := Decode([]byte(`{"version":3,"clone_urls":` + tc.block + `}`))
 			if err == nil {
 				t.Fatalf("Decode(%s) = (%v, %v, nil), want a refusal", tc.block, p, found)
 			}
@@ -144,7 +144,7 @@ func TestDecodeRefusesOneRepositoryNamedTwice(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for i := 0; i < 20; i++ { // the answer must not move with the map's order
-				p, found, err := Decode([]byte(`{"version":2,"clone_urls":` + tc.block + `}`))
+				p, found, err := Decode([]byte(`{"version":3,"clone_urls":` + tc.block + `}`))
 				if err == nil {
 					t.Fatalf("Decode(%s) = (%v, %v, nil), want a refusal: a repository named twice is one whose clone URL depends on the order the keys were read in", tc.block, p, found)
 				}
@@ -162,7 +162,7 @@ func TestDecodeRefusesOneRepositoryNamedTwice(t *testing.T) {
 		`{"github/acme/app":"https://github.com/acme/app.git"}`,
 		`{"github%2Facme%2Fapp":"https://github.com/acme/app.git","github%2Facme%2Fother":"https://github.com/acme/other.git"}`,
 	} {
-		if _, _, err := Decode([]byte(`{"version":2,"clone_urls":` + block + `}`)); err != nil {
+		if _, _, err := Decode([]byte(`{"version":3,"clone_urls":` + block + `}`)); err != nil {
 			t.Errorf("Decode(%s) = %v, want it read", block, err)
 		}
 	}

@@ -28,11 +28,12 @@ Procedure for one Fugaro release. Detail lives in `docs/release.md` (read it fir
 
 - Collect the changes: `git log vPREV..main --oneline` and `gh pr list --state merged --search "merged:>=<date of vPREV>" --limit 100`. Read the PRs, not just titles.
 - Write `docs/releases/vX.Y.Z.md` per `docs/releases/README.md`: 3 to 6 user-facing bullets, one sentence each, no commit-title echo, nothing internal-only (CI, tests, refactors). Add `### For operators` with ordered steps when a rollout order matters (shared config: upgrade CLIs and CI pins, rebuild images, then merge `gcp_project:`; `fugaro init --publish-config` is run by the user in their own terminal). Add `### Known limits` with what this release does not do, does not stop or leaves to a later one: a release ships with its known limits in its notes, so the section is written unless the release genuinely has none. Both sections are `###` and either may stand without the other; the website's changelog page renders them.
+- Write the release's end-user summary, the `  vX.Y.Z: one sentence` line in `website/data/release-summaries.yaml`, **in this same PR** (`docs/releases/README.md`, "The end-user summary"). The website's changelog page prints it above the entry's Highlights, and the site's build stops, naming the file, when a release file has no entry — so `scripts/release.sh` refuses to start without it. It is what the release gives a user, not what changed inside.
 - Branch, commit, push, open a PR; after the user's go-ahead, merge it (squash) once its checks pass; then `git switch main && git pull --ff-only`.
 
 ## 3. Dry run
 
-`scripts/release.sh X.Y.Z --dry-run`: it must pass every precondition (including "docs/releases/vX.Y.Z.md exists"). Fix what it reports.
+`scripts/release.sh X.Y.Z --dry-run`: it must pass every precondition (including "docs/releases/vX.Y.Z.md exists and is not empty on main" and "website/data/release-summaries.yaml has a non-empty entry for vX.Y.Z"; both are its own messages, naming the file). Fix what it reports.
 
 ## 4. Release (needs the user's go-ahead)
 

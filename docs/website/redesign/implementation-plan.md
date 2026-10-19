@@ -194,8 +194,11 @@ openable and closable by keyboard, and the menu usable with JavaScript disabled.
   `/security/` renders a short "In short" section that the owner adds at the top of
   `SECURITY.md` (the page stays byte-identical to the file, so
   `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` does not change; **this needs the
-  owner's text for `SECURITY.md` first**); `/changelog/` renders the first Highlights line
-  of the newest releases above the full list, selected from the release files.
+  owner's text for `SECURITY.md` first**); `/changelog/` renders the product summary of every
+  release above its own entry, read from `website/data/release-summaries.yaml` — the owner's
+  changelog feedback of 2026-10-19 replaced D189's "first Highlights line of the newest
+  releases" reading for this page, and the release files' own Highlights are one click away in
+  a `<details>` block (`docs/website/redesign/README.md`, "The 2026-10-19 changelog brief").
 - Every other page's copy is rewritten short and scannable to D188's numbers: headings
   keep their meaning, the paragraphs under them shrink. FAQ answers stay traceable to the
   document each one names (each answer's `source`, which the page already enforces).
@@ -267,6 +270,30 @@ owner.
 
 **Independently mergeable because** it moves blocks within pages, and neither P4's nor
 P5's tests assert the other's layout. It reads best after P4.
+
+**Amended 2026-10-19 (owner's feedback on the page this part is about) — GETTING STARTED IS
+THREE BANDS, AND WHAT THE COMMAND DOES NOT DO IS ITS OWN SECTION.** The owner's reading of
+the page, after P4 and P5 shipped: "above the fold: just `brew install dimipaun/tap/fugaro`
+and Console links, then we need a section with what you need to do for the actual
+installation (Firebase etc), rest are details, later." So `getting-started.astro` is now
+`#install` (the quick path `install.yaml` carries first, with its copy control, beside the
+console option, and one closing sentence), `#setup` ("Set up your installation": seven
+one-line steps in `docs/gcp-setup.md`'s own order — its preconditions and its short path —
+each naming the document that carries the detail), and `#details` ("Details": the other
+install paths as P4 left them, and the platform list D94 settles). **Nothing P5 claims is
+undone**: `#install` still opens with a command, the two options are still in that section
+in that order, and the page's first command block is what Check 70b measures. The page
+stays inside D188's 250-word ceiling, so the words the new list costs are paid for out of
+the page's own copy rather than out of the ceiling — `install.yaml`'s archive, cosign and
+plugin notes and names are shorter for it, and the notes the Go test pins (the Homebrew
+"tested on macOS", the go install's three phrases) are untouched. `install.yaml`'s header
+now says the first path is the quick path, because that is what puts it above the fold.
+The bands are held by a gate rather than by this paragraph: `website/test/fold.mjs` gains a
+fourth rule — Getting Started's sections are exactly `#install`, `#setup`, `#details` in
+that order, `#setup` is an `ol` and every step in it names the document behind it — so the
+two things the reader came for cannot drift back down a page that grows. The site's own
+build is 1,654 bytes heavier (12 of them the Firebase step's own wording), re-derived in
+`website/README.md` in the same commits (D192).
 
 ### P6 — a copy button on every command block (RF13, RF14, RF15; D183, D192)
 
@@ -428,7 +455,7 @@ they enforce:
 | the accent versus the logo's hue | `website/test/accent.mjs` (new) | new gate; decodes the PNG with `node:zlib` | P2 |
 | `.site-nav ul{display:flex}` and the one-`aria-current` rule | `website/test/base-styles.mjs` | rewritten for the two-level menu, with the page's current marker still exactly one | P3 |
 | provenance phrases | `website/test/meta.mjs` (new) | new gate | P4 |
-| "the page adds no sentence of its own" | `website/test/changelog-page.mjs` | **unchanged rule**; the summary block is release-file text it accepts (D189); an exception only under D189's alternative (a) | P4 |
+| "the page adds no sentence of its own" | `website/test/changelog-page.mjs` | **unchanged rule**; under D189 the summary block was release-file text it accepted, and since the owner's changelog feedback of 2026-10-19 the two sources are the release files and `website/data/release-summaries.yaml`, both of them files the page renders rather than prose it writes | P4 |
 | the security page = `SECURITY.md` byte for byte | `TestWebsiteSecurityPageIsByteIdenticalToSecurityMd` | **unchanged** under D189's recommendation (the summary is in `SECURITY.md`) | P4 |
 | copy controls | `website/test/copy.mjs` (new) | new gate | P6 |
 | reduced-motion path per animation | `website/test/a11y.mjs` | **unchanged**, and every new animation must satisfy it | P7, P8 |

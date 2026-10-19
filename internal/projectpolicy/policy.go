@@ -149,6 +149,19 @@ type Policy struct {
 	// safe — a block that is present must define the default.
 	Profiles map[string]Profile `json:"profiles,omitempty"`
 
+	// Accounts are the project's Claude accounts, keyed by account name (D3,
+	// design project-named-oauth-tokens §4.1): which repositories each
+	// account's token may be used by. A profile lists the accounts it serves
+	// (config.JobProfile.ClaudeAccounts) and one job is deployed per (profile,
+	// provider, account), so this block is what bounds the token a run of an
+	// account's job holds — the profile is shared by every repository admitted
+	// to it, and the account's list is the per-repository decision.
+	//
+	// It is derived, never hand-written: publish computes it from the
+	// project's local config (DeriveAccounts), and `fugaro init` validates the
+	// profiles it deploys against the same block.
+	Accounts map[string]Account `json:"accounts,omitempty"`
+
 	// CloneURLs are the project's clone URLs, keyed by canonical repository
 	// (Canonical: "github/owner/name", the spelling allow_repos patterns and
 	// the runner's slug already use). A repository that is not listed here
@@ -184,7 +197,7 @@ type Policy struct {
 var knownTopLevelKeys = map[string]bool{
 	"version": true, "budget": true, "allow_repos": true,
 	"providers": true, "model_prices": true, "routing": true,
-	"profiles": true, "clone_urls": true,
+	"profiles": true, "clone_urls": true, "accounts": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -412,6 +425,23 @@ func Decode(raw []byte) (*Policy, bool, error) {
 			return nil, true, err
 		}
 	}
+	// The accounts block is judged *before* the profiles block, and the
+	// profiles block against it: the subset rule is a property of the two
+	// together, and the profiles are the side that may not widen what an
+	// account covers. Decoding them in the other order would let a profile
+	// name an account whose entry has not been read yet.
+	if craw, ok := doc["accounts"]; ok && !IsNull(craw) {
+		// decodeAccountBlock's errors name their place themselves
+		// ("projectpolicy: accounts.<name>..."), so they are returned as they are.
+		as, err := decodeAccountBlock(craw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.Accounts = as
+		if err := validAccounts(p.Accounts); err != nil {
+			return nil, true, err
+		}
+	}
 	if fraw, ok := doc["profiles"]; ok && !IsNull(fraw) {
 		// decodeProfileBlock's errors name their place themselves
 		// ("projectpolicy: profiles.<name>..."), so they are returned as they are.
@@ -420,7 +450,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 			return nil, true, err
 		}
 		p.Profiles = ps
-		if err := validProfiles(p.Profiles); err != nil {
+		if err := validProfiles(p.Profiles, p.Accounts); err != nil {
 			return nil, true, err
 		}
 	}
@@ -508,7 +538,21 @@ func sortedStringKeys[V any](m map[string]V) []string {
 // newer Fugaro's field does not brick an older runner (P8); inside this block
 // the same tolerance fails open, and a newer profile field bumps Version,
 // which is what refuses a node this binary cannot read.
+//
+// A name written twice is refused (checkNoDuplicateNames, the same rule
+// validProviders applies to the providers block): profiles are looked up by
+// their exact spelling — Policy.ProfileFor, and every reader of a selection
+// through it — so encoding/json keeping the last of the two silently drops the
+// first profile whole, and which profile a run lands on would depend on the
+// order the keys were written in.
 func decodeProfileBlock(raw json.RawMessage) (map[string]Profile, error) {
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return nil, fmt.Errorf("projectpolicy: profiles: %w", err)
+	}
+	if err := checkNoDuplicateNames("profiles", names); err != nil {
+		return nil, fmt.Errorf("projectpolicy: %w", err)
+	}
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return nil, fmt.Errorf("projectpolicy: profiles: %w", err)
@@ -570,8 +614,8 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 }
 
 // checkWrittenProfileFields applies the profile rules that read the written
-// document rather than the decoded value: the spelling of a profile's members,
-// and an explicitly empty allow_repos.
+// document rather than the decoded value: a member written twice, the spelling
+// of a profile's members, and an explicitly empty allow_repos.
 //
 // A profile that names no list falls back to the project's allow_repos
 // (§4.1), and the carrier's `omitempty` means the node cannot carry an empty
@@ -590,6 +634,19 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 // same guard, and the same reason, as validProviders' member check: a name
 // that differs only in case is read by the decoder and by nothing else here.
 func checkWrittenProfileFields(name string, raw json.RawMessage) error {
+	// A member written twice is read off the document as written, before the map
+	// below folds the repeat away: encoding/json keeps the last one it reads, so
+	// `"cpu": 2, "cpu": 4` is 4 and `"allow_repos": ["github/acme/*"]` followed by
+	// `["github/*/*"]` admits every repository, either way with nothing left in
+	// the decoded value to refuse. Every other carrier of this document refuses a
+	// repeat the same way (checkNoDuplicateNames).
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: profiles.%s: %w", name, err)
+	}
+	if err := checkNoDuplicateNames("profiles."+name, names); err != nil {
+		return fmt.Errorf("projectpolicy: %w", err)
+	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return fmt.Errorf("projectpolicy: profiles.%s: %w", name, err)
@@ -944,9 +1001,9 @@ func checkMemberNames(prefix string, names, known []string) error {
 
 // checkNoDuplicateNames refuses a block that names one of its keys twice, for
 // the blocks this package reads by looking a key up rather than by decoding
-// into a struct: the top level of the node, the providers block and the
-// model_prices block, whose keys are looked up (or unescaped and stored) by
-// their exact spelling. encoding/json keeps the last of a repeated key when it
+// into a struct: the top level of the node, the providers block, the profiles
+// block and the model_prices block, whose keys are looked up (or unescaped and
+// stored) by their exact spelling. encoding/json keeps the last of a repeated key when it
 // builds the map, so the first one is a value the document wrote and this
 // reader drops — and where the key holds a whole block, what is dropped is the
 // block.

@@ -7,6 +7,7 @@ TOTAL  ▓▓▓▓▓▓▓▓░░ counted $41.00 of $50.00 (82%) · burn $0.
   r-aaaa11 Fix the flaky logi… coding   r2  12m03s  $1.25     SILENT
 ▸ r-bbbb22 Add pagination to … review   r1  12m03s  $1.25     NOTIONAL, ⚠ near
     stage     review r1
+    by        -
     verify    unit
     PR        -
     spent     $1.25 NOTIONAL

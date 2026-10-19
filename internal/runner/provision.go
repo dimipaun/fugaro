@@ -64,11 +64,36 @@ const provisionStage = "provision"
 const provisionTimeout = 10 * time.Minute
 
 // cloneJob reports whether this run's job has no checkout baked into its
-// image (FUGARO_CHECKOUT=clone, internal/infra). The job's own environment
-// decides, never the checkout's fugaro.yaml: before the clone there is no
-// checkout to read one from, and the job is what the run actually executes
-// in.
-func (r *run) cloneJob() bool { return r.jobEnv(CheckoutEnv) == config.CheckoutClone }
+// image. The job's own environment decides, never the checkout's fugaro.yaml:
+// before the clone there is no checkout to read one from, and the job is what
+// the run actually executes in.
+//
+// A project job is always such a job, and says so by being one: its image is
+// the installation's base image (internal/infra's ProjectJob.Image is
+// lc.BaseImage(config.BaseKind)), which bakes no checkout, and projectJobEnv
+// carries none of the per-repository variables — FUGARO_CHECKOUT, the only
+// marker, is written by internal/infra's spec.go for a per-repository clone
+// workflow alone. Its environment is also a launcher's to override
+// (run.jobs.runWithOverrides), so reading the marker there would let a launch
+// decide whether the run clones at all; the design keeps that class of fact
+// computed from the job rather than read from the environment, as the provider
+// and the clone URL already are (project-centric.md §12a items 1 and 2).
+//
+// Its four call sites depend on it, and each does the baked job's thing without
+// it: openCheckout clones whole through gitops.OpenOrClone instead of blobless
+// (gitops.CloneBlobless); provision installs nothing (images/base's
+// mise-system.toml sets auto_install = false, so a tool its mise.toml names
+// then fails loudly rather than installing); bootstrap's review branch leaves
+// the work tree on the remote's default branch instead of checking out
+// origin/<spec.Ref>; and prefetchObjects skips its fill, leaving a review-mode
+// project job's agent to fetch the branch's revisions and the base tip its
+// reads want with git credentials it does not have.
+func (r *run) cloneJob() bool {
+	if _, project := r.projectJob(); project {
+		return true
+	}
+	return r.jobEnv(CheckoutEnv) == config.CheckoutClone
+}
 
 // jobEnv reads key from the runner's environment; a nil Deps.Env means "the
 // process's own", the same meaning procgroup.Cmd.Env gives nil.
