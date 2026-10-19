@@ -171,10 +171,10 @@ const DIGEST_WITH_A_DIGIT_RUN = 'abcdef' + '123456789012' + 'ab'.repeat(23)
  * out of the arithmetic by coincidence". Inside a drawn token only the second
  * is possible -- nothing of the recording is in there, the token is a function
  * of the shift and of the invented document -- so the rule is not run over
- * them. It is still run over `removed.includes(raw)`: a drawn token equal,
- * whole, to a removed value is still a failure. For a timestamp that is the
- * offset zero, one of the 2R + 1 = 69,120,000,001 offsets the draw can produce,
- * so it is a case the rule can keep.
+ * them. The exact-match rule is not exempt: a drawn token that equals a removed
+ * value whole is still a failure, and that is a real case rather than a
+ * hypothetical one -- a timestamp does exactly that at the offset zero, one of
+ * the 2R + 1 = 69,120,000,001 offsets the draw can produce.
  *
  * The coincidence is rare and it is what this file flaked on (CI run
  * 39231293918, `iteration 252`): the recording's `day` is a removed value as
