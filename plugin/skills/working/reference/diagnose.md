@@ -72,6 +72,8 @@ For these: raising a cap, clearing a kill switch and the budget commands belong 
 ```bash user-runs
 fugaro budget set --repo <owner/name> --per-run <usd>
 fugaro budget set --repo <owner/name> --daily <usd>
+fugaro budget set --repo --per-run <usd>          # run in the checkout: this repository
+fugaro budget set --repo --daily <usd>            # run in the checkout: this repository
 fugaro budget set --defaults --per-run <usd>
 fugaro budget set --global --per-run <usd>
 fugaro budget set --global --daily <usd>
