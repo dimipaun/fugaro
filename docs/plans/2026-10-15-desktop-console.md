@@ -1474,7 +1474,9 @@ dependency and touches no CSP; the main process still cannot read the CSS, so th
 test holds **both** literals equal to their set's `--ground`. And the nav gains the
 WAI-ARIA tablist behaviour it lacks — `role`,
 `aria-selected`, a roving `tabindex` and Arrow/Home/End handling that calls the existing
-`show(id)`, since `entry.ts` has no keydown handling at all today.
+`show(id)`, since `entry.ts` has no keydown handling at all today. **The owner's Q1 ruling
+of 2026-10-19 removed this scope**: it is kept as the record of what the task was written
+to do, and the ruled scope is the paragraph above.
 
 **Files.** `console/src/renderer/entry.ts`, `console/src/renderer/installations.ts`,
 `console/src/main/window.ts`, `console/test/unit/{entry-wiring,window,theme-tokens}.test.ts`.
@@ -1482,7 +1484,9 @@ WAI-ARIA tablist behaviour it lacks — `role`,
 **The CSP and `ElementLike` are untouched**, and this is checked rather than asserted: a
 `matchMedia` read is not a DOM write and not a network call, `data-theme` is a `data-*`
 attribute, and `role`, `aria-*` and `tabindex` are attributes — so `ElementLike` needs no
-widening and no style is written.
+widening and no style is written. *The `matchMedia` half of that sentence is the two-set
+design's, which the owner's Q1 ruling of 2026-10-19 removed; the ruled task writes
+attributes only, and none of them is `data-theme`.*
 
 **Tests.** `CONSOLE_THEME` is the literal `'dark'` and reads no media query; **the
 background literal drifting from `--ground`** — one literal, one direction, the ruled
@@ -1492,7 +1496,9 @@ theme's `--ground` (both directions, since there are two literals, with
 task's and cannot be Task 6.1's**, which the plan said before this round: the two literals
 are added to `console/src/main/window.ts` here, so before this task there is no
 `backgroundColor` to compare with anything (design §6.3, §7.5). And a roving-tabindex
-regression.
+regression. **The two-set wording in this paragraph is the record of what the case was
+written as, and the owner's Q1 ruling of 2026-10-19 removed it**: one literal, one
+direction, as the paragraph's first sentence says.
 
 **Command:** `cd console && npm run test:unit && FUGARO_CONSOLE_GOLDENS=skip npm run test:e2e`
 
@@ -1504,7 +1510,11 @@ phase: this task's own run skips the goldens, and the re-recording is the phase'
 task — which is a sequence, not a dependency: the last task's assertion waits on the
 stylesheets, not on this task's theme choice (design §6.2).
 
-**Commit:** `console: the OS chooses the theme, and the window paints its ground first`
+**Commit:** `console: the window paints its ground first, and the nav takes the keyboard` —
+what this task commits under the ruling: one background literal and the nav's tablist
+behaviour. *The message as written for the two-set design was `console: the OS chooses the
+theme, and the window paints its ground first`*, and the switch that half of it names is
+the one the owner's Q1 ruling of 2026-10-19 removed.
 
 **Reviewer tier:** ordinary, against the design's §5.5 rule explicitly (no style write, no
 loosening).

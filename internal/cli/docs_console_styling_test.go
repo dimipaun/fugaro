@@ -816,8 +816,13 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 	// next round implements, so each one has to say either the ruling itself or
 	// that it is the record of the mechanism the ruling removed. The paragraphs
 	// are the unit because that is the unit a reader takes a fact from, and a
-	// paragraph is marked if the section it sits in carries the ruling above it —
-	// a section that states it once, at its head, is a section that stated it.
+	// paragraph is marked on its **own** text: an exemption that ran from a
+	// marked paragraph to the end of its section was an exemption a planted
+	// sentence could hide behind — every paragraph of §3.6, §4.1 and §8 of the
+	// design sits under a ruling sentence somewhere above it, so a two-set
+	// sentence added there passed. Whitespace is collapsed before the match,
+	// since a phrase that a rewrap splits across two lines is the same phrase to
+	// a reader and has to be the same phrase here.
 	twoSetPhrases := []string{
 		"light and dark",
 		"light dark",
@@ -880,12 +885,8 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 		{"docs/design/console-styling.md", design},
 	} {
 		paras := paragraphs(doc.text)
-		sectionMarked := false
 		for _, para := range paras {
-			lower := strings.ToLower(para)
-			if strings.HasPrefix(strings.TrimSpace(para), "#") {
-				sectionMarked = false
-			}
+			lower := strings.ToLower(mdFlat(para))
 			marked := false
 			for _, marker := range twoSetMarkers {
 				if strings.Contains(lower, marker) {
@@ -894,7 +895,6 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 				}
 			}
 			if marked {
-				sectionMarked = true
 				continue
 			}
 			var found []string
@@ -903,12 +903,10 @@ func TestDocsConsoleStylingPlanTasksAreApproved(t *testing.T) {
 					found = append(found, phrase)
 				}
 			}
-			if len(found) == 0 || sectionMarked {
+			if len(found) == 0 {
 				continue
 			}
-			{
-				t.Errorf("%s: the paragraph %q assumes two value sets (%s) and says nothing about the owner's Q1 ruling of 2026-10-19; one value set ships, so the place has to carry the ruling or say that it is the record of the mechanism the ruling removed, and the phase paragraph claims every such place does", doc.path, truncate(strings.ReplaceAll(para, "\n", " "), 120), strings.Join(found, ", "))
-			}
+			t.Errorf("%s: the paragraph %q assumes two value sets (%s) and says nothing about the owner's Q1 ruling of 2026-10-19; one value set ships, so the paragraph itself has to carry the ruling or say that it is the record of the mechanism the ruling removed, and the phase paragraph claims every such place does", doc.path, truncate(strings.Join(strings.Fields(para), " "), 120), strings.Join(found, ", "))
 		}
 	}
 }
@@ -1192,6 +1190,38 @@ func TestDocsConsoleStylingPhaseOrdering(t *testing.T) {
 	}
 	if !strings.Contains(flatDesign, "already says `data-theme='light'` today") {
 		t.Errorf("%s: §6.2 does not say the light run's root already carries `data-theme='light'`; each spec draws its screen with the theme it names (`mount(theLastFrame(), 'light')`) and `renderLive` stamps that argument, so the two runs already disagree about the attribute", designPath)
+	}
+
+	// And the two documents' Task 6.5 **Files** lists agree on the files the
+	// *ruled* scope keeps. The ruling removed the switch, not the keyboard: the
+	// nav's tablist behaviour and its roving `tabindex` are §4.3's, they live in
+	// `entry.ts`, and the case that fails on a regression is `entry-wiring`'s —
+	// which the plan's Task 6.5 names and the design's §7.5 stopped naming when
+	// its clause was rewritten to the one-set form, leaving §7.5's own Scope and
+	// Reviewer tier saying the entry is this task's while its Files said it was
+	// untouched. A reader who takes the file list as the task's writes the
+	// switch and skips the keyboard.
+	if designFiles, ok := mdClause(t, designPath, designTasks[4], "Files"); !ok {
+		t.Errorf("%s: §7.5 has no **Files** clause; every task in this phase states what it touches", designPath)
+	} else {
+		// The needles are the file and the test module, spelled without the
+		// directory prefix: a Go file of this module may not name a path inside
+		// that directory at all (Task 0.3 a3, docs_console_boundary_test.go),
+		// and a pin is not the place to argue for widening that allow-list.
+		for _, want := range []string{"src/renderer/entry.ts", "entry-wiring"} {
+			if !strings.Contains(designFiles, want) {
+				t.Errorf("%s: §7.5's **Files** does not name %s, and the plan's Task 6.5 does; the ruled scope keeps the nav's tablist behaviour (§4.3, in `entry.ts`) and the roving-tabindex case, so the two lists have to agree on them", designPath, want)
+			}
+		}
+	}
+	if planFiles, ok := mdClause(t, planPath, planTasks[4], "Files"); !ok {
+		t.Errorf("%s: Task 6.5 has no **Files** clause; every task in this phase states what it touches", planPath)
+	} else {
+		for _, want := range []string{"entry.ts", "entry-wiring"} {
+			if !strings.Contains(planFiles, want) {
+				t.Errorf("%s: Task 6.5's **Files** does not name %s, and this pin compares the two documents' lists: the ruled scope still owns the nav's keyboard behaviour, and a plan that drops the file drops the case with it", planPath, want)
+			}
+		}
 	}
 	for _, stale := range []struct{ doc, path, claim string }{
 		// The design's own record of the retracted claim quotes it, so the only
