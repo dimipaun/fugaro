@@ -144,9 +144,9 @@ added or removed without this sentence moving fails there:
   *not* `website/dist`, which is what the derivation named until then: the site's own build
   depends on the git state of the checkout the gates run in. The changelog renders each release
   file's **"not yet released"** state wherever `git tag --list` finds no tag
-  (`src/lib/changelog.mjs`), so the same commit builds to **977,921 bytes in a checkout with no
+  (`src/lib/changelog.mjs`), so the same commit builds to **930,074 bytes in a checkout with no
   tags** — which is what `website-preview.yml`'s default checkout is, and therefore what the
-  deployed site is — and to **976,406 bytes with the tags this repository's own clone carries**,
+  deployed site is — and to **928,559 bytes with the tags this repository's own clone carries**,
   the changelog page's 1,515 bytes being the whole of the difference. A figure derived from one
   of those two builds is refused by the other, which is what happened: the gate could not
   measure the build the README named and `website-preview` could not deploy. So the derivation
@@ -205,8 +205,8 @@ added or removed without this sentence moving fails there:
     console option and the hero's link to the console into this build.
 
   Each half moved these figures in its own commits and re-derived them there — the script's
-  six corrections in `main`'s, the redesign's fix rounds in this branch's. The last three rounds
-  are where this build's three numbers come from, and both are measured over **two builds**
+  six corrections in `main`'s, the redesign's fix rounds in this branch's. The rounds below
+  are where this build's three numbers come from, and each is measured over **two builds**
   rather than argued:
 
   - **This branch's own fix rounds**, each re-derived in the commit that moved it: the round
@@ -250,6 +250,15 @@ added or removed without this sentence moving fails there:
     The page weight and the script did not move: the heaviest page is the docs hub, which
     renders none of the three.
 
+  - **The security page was cut to three things** (the owner's brief of 2026-10-19), and it is
+    the round this build's site figure comes from. The page rendered `SECURITY.md` byte for
+    byte; it now carries a seven-bullet summary of the model, the document's own *Reporting a
+    vulnerability* section and a link to the policy, which `website/test/security.mjs` holds
+    it to. `dist/security/index.html` is **17,643 bytes** where it was 65,490, so the site
+    figure falls **47,847 bytes**, 977,921 → **930,074** — the two builds' figures differ by
+    that number and the page's own bytes are the whole of it. The page weight and the script
+    did not move: the page renders neither the script's behaviour nor the docs hub, which is
+    still the heaviest page.
   - **JavaScript per page:** 149,580 bytes. Three times 49,860: the one script the site ships,
     `public/scripts/site.js` (39,888 bytes), plus 25 %. What the file carries is the copy
     control, the menu and the consent gate above, in the detail `test/nav-hover.mjs` holds it
@@ -276,7 +285,7 @@ added or removed without this sentence moving fails there:
   - **Page weight per page:** 1,000,974 bytes. Three times 333,658: the heaviest page, the
     docs hub, at 266,926 bytes (its HTML — the whole generated CLI reference — plus the
     files it fetches: the script above, the logo and the icons), plus 25 %.
-  - **Whole site:** 3,667,206 bytes. Three times 1,222,402 (every file in `dist/`, 977,921
+  - **Whole site:** 3,487,779 bytes. Three times 1,162,593 (every file in `dist/`, 930,074
     bytes across 23 files, plus 25 %) — the gates' own build of the site, which is the build
     with no tags, 1,515 bytes above the one a full clone makes (above).
 
@@ -303,7 +312,8 @@ added or removed without this sentence moving fails there:
     with no `h2` at all has no such region, and its lead is the paragraphs that follow its
     `h1`. A page whose `h1` is followed straight by its first `h2` has no lead region
     either, and 0 words is inside the ceiling: `/security/` is shaped that way (its `h1` is
-    the rendered document's own title, and the page's lead line comes before it) and so is
+    the page's own title and its first `h2` is the model summary's, with nothing between them)
+    and so is
     `/changelog/` (whose summary is its first section, under the heading that names it).
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
@@ -317,8 +327,13 @@ added or removed without this sentence moving fails there:
     `hidden` elements, the skip link and the consent banner, sit outside it — so that rule
     is what stops a page that starts hiding a control from being counted for words nobody
     sees. `/docs/`, `/security/`
-    and `/changelog/` are exempt, which is D188's own list: each renders a document of this
-    repository rather than a page of the site, and the brief allows those to stay long.
+    and `/changelog/` are exempt, which is D188's own list: `/docs/` and `/changelog/` render a
+    document of this repository, and `/security/` renders the policy document's own reporting
+    section and links to the rest of it, so the three carry text the repository wrote rather
+    than a page of the site, and the brief allows those to stay long. The exemption is the
+    owner's and this change did not touch it: the page is much shorter than the document it
+    used to render whole and still carries 301 words, over this ceiling, so it stays on the
+    list — and `test/security.mjs` holds it to a ceiling of its own.
     The ceiling is set against the site as it was measured before the redesign
     (`docs/website/redesign/reconciliation.md` §6: faq 493 words, caps-and-costs 487,
     getting-started 431, privacy 277, community 268 — every one of them over it).
