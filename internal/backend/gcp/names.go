@@ -561,10 +561,20 @@ func TokenBucketCondition(bucket, slug string) string {
 	return BucketCondition(bucket, []string{TokenBucketPrefix}, slug)
 }
 
+// TokenBucketConditionTitlePrefix is the fixed part of
+// TokenBucketConditionTitle, for a caller that must recognise the title rather
+// than build it (internal/infra/tf, as for the project job's): the expression
+// a grant carries does not say whose grant it is, the title does.
+//
+// It is not a prefix of ProjectTokenBucketConditionTitlePrefix ("fugaro-project-tokens-"),
+// and the two must stay apart: a project job's whole-tokens/ binding must
+// never read as the per-repository job's own.
+const TokenBucketConditionTitlePrefix = "fugaro-tokens-"
+
 // TokenBucketConditionTitle is the title of that grant's condition for the
 // account saID: distinct from BucketConditionTitle, so the two bindings are
 // told apart by title as well as by role.
-func TokenBucketConditionTitle(saID string) string { return "fugaro-tokens-" + saID }
+func TokenBucketConditionTitle(saID string) string { return TokenBucketConditionTitlePrefix + saID }
 
 // ProjectTokenBucketCondition is the condition of a *project job's* read-only
 // (objectViewer) grant on the runs bucket: the whole of tokens/, with no slug,

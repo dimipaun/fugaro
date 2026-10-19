@@ -333,15 +333,27 @@ func TestDisplayNamesAndConditions(t *testing.T) {
 		{ProjectTokenBucketCondition("fugaro-runs-proj-1234"),
 			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/")`},
 		{ProjectTokenBucketConditionTitle("fugaro-x-12345678"), "fugaro-project-tokens-fugaro-x-12345678"},
-		// The two title prefixes the plan reader matches on
+		// The three title prefixes the plan reader matches on
 		// (internal/infra/tf) are these, and a project job's title must not
 		// read as a per-repository job's: the prefix of one is not a prefix of
 		// the other's titles.
 		{BucketConditionTitlePrefix, "fugaro-"},
+		{TokenBucketConditionTitlePrefix, "fugaro-tokens-"},
 		{ProjectTokenBucketConditionTitlePrefix, "fugaro-project-tokens-"},
 	} {
 		if c.got != c.want {
 			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+	// The plan reader takes a tokens/ expression for a repository's job grant
+	// only under the title built from the member
+	// (internal/infra/tf's jobAccountGrant), so the per-repository title and
+	// the project job's must not be readable as each other: a title built with
+	// one prefix never is a title built with the other.
+	for _, id := range []string{"fugaro-x-12345678", "fugaro-p-standard-git-0ca96e64"} {
+		if got, other := TokenBucketConditionTitle(id), ProjectTokenBucketConditionTitle(id); got == other ||
+			strings.HasPrefix(got, ProjectTokenBucketConditionTitlePrefix) || strings.HasPrefix(other, TokenBucketConditionTitlePrefix) {
+			t.Errorf("the per-repository and project tokens/ titles are not told apart: %q vs %q", got, other)
 		}
 	}
 }
