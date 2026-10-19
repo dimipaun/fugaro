@@ -604,7 +604,17 @@ func TestSetupSkillHandlesSeveralProjects(t *testing.T) {
 			t.Errorf("SKILL.md does not recognise the error %q", phrase)
 		}
 	}
-	for _, want := range []string{"Ask the user which Fugaro project this repository belongs to", "don't open the config directory", "exactly as the user confirmed it", "refuse any that holds a space, a quote or a shell character", "`FUGARO_PROJECT=<name> fugaro validate --json`", "`FUGARO_PROJECT=<name> fugaro config example`"} {
+	for _, want := range []string{
+		"Ask the user which Fugaro project this repository belongs to", "don't open the config directory",
+		"exactly as the user confirmed it", "refuse any that holds a space, a quote or a shell character",
+		"`FUGARO_PROJECT=<name> fugaro validate --json`", "`FUGARO_PROJECT=<name> fugaro config example`",
+		// The init blocks below the paragraph carry `--project <name>` in
+		// their `user-runs` fences, and passing it is only theirs to do when a
+		// project had to be chosen here. The sentence that says so keeps an
+		// agent from making the user select a project twice; a trim dropped it
+		// once, so it is pinned rather than left to the next trim.
+		"drop `--project <name>` below when no project had to be chosen",
+	} {
 		if !strings.Contains(skill, want) {
 			t.Errorf("SKILL.md never says %q", want)
 		}

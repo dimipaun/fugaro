@@ -1347,3 +1347,44 @@ func TestDocsComputeBackendReleaseProseDocumentsAreNamed(t *testing.T) {
 		t.Fatalf("the walk found %d documents naming a 0.9.x release in this work's context while the table lists %d: the search is matching less than the plan does, so it is a bound that cannot fail", len(found), len(computeBackendReleaseProse))
 	}
 }
+
+// TestDocsComputeBackendTask10CarriesTheAccountRequirement: the security review
+// of Task 8's first half left two things to the enable rather than settling them
+// in that task's code, and both are requirements on Task 10's text. The first is
+// an escalation the code alone does not close — a published `batch.service_account`
+// is held to the anchor's project and to nothing more, so the gate must refuse
+// one outside the installation's own run accounts, or the account must come from
+// the local config only — and the second is the inventory of code outside the
+// seam that still assumes Cloud Run, which the enable has to reach. Neither is
+// pinned anywhere else, so a trim can drop one without a test noticing.
+func TestDocsComputeBackendTask10CarriesTheAccountRequirement(t *testing.T) {
+	doc := readDoc(t, computeBackendPlan)
+	task := section(t, doc, "### Task 10: The enable", "## Phase C")
+	for _, want := range []string{
+		// The requirement, in both shapes the plan allows, and the third one
+		// (the anchor-project check alone) named as the escalation it is.
+		"not one of the installation's own run accounts",
+		"read from the local config only and never from the shared one",
+		"Keeping the anchor-project check alone is the escalation this step exists to forbid",
+		// The inventory of what the enable must reach, and the one entry that is
+		// the account requirement's neighbour rather than a Cloud Run path.
+		"`gcp.JobName`",
+		"`gcp.WorkflowVariant`",
+		"names Secret Manager secrets of the installation's project without asking whether the installation created them",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("%s's Task 10 no longer says %q: the security review of Task 8's first half left that to the enable, and the enable's own text is where it has to be", computeBackendPlan, want)
+		}
+	}
+	// The other half of the dependency: the step that writes the artifact
+	// refusal points at the task that must leave it standing, and Task 10's own
+	// Depends line names that step.
+	for _, want := range []string{
+		"Task 10's enable depends on this refusal and on nothing else in this step",
+		"Task 8's step 4 in particular",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer carries %q: the artifact refusal and the enable's dependency on it are one fact and are stated on both sides", computeBackendPlan, want)
+		}
+	}
+}

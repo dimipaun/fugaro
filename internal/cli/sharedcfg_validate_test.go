@@ -167,6 +167,27 @@ func TestParseSharedRefusals(t *testing.T) {
 		{"batch image from another registry", func(s string) string {
 			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "evil.example/fugaro/edgeweb:1", 1)
 		}, "batch.image"},
+		// The project in this path is the anchor's own, so the check above
+		// passes it: what makes it foreign is the repository. fugaro-ghcr is
+		// a pull-through repository to ghcr.io, so its contents are whatever
+		// the upstream package's owner published -- anyone with a GitHub
+		// account -- and the image would run as the installation's run
+		// account. (The probe is the shape the review named.)
+		{"batch image through the ghcr remote repository", func(s string) string {
+			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-east5-docker.pkg.dev/fugaro-belong/fugaro-ghcr/attacker/evil:1", 1)
+		}, "batch.image"},
+		{"batch image through the ghcr remote repository, one path component", func(s string) string {
+			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-central1-docker.pkg.dev/fugaro-belong/fugaro-ghcr/evil:1", 1)
+		}, "batch.image"},
+		// Pinning a digest does not make it this installation's either: the
+		// digest is of whatever the upstream owner published, and a
+		// base_images pin -- the one thing of the installation's the remote
+		// repository holds -- carries a release tag and a digest together,
+		// which localcfg's batch.image grammar refuses, so nothing legitimate
+		// is refused with this.
+		{"batch image through the ghcr remote repository, digest-pinned", func(s string) string {
+			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-east5-docker.pkg.dev/fugaro-belong/fugaro-ghcr/dimipaun/fugaro-base@sha256:"+strings.Repeat("a", 64), 1)
+		}, "batch.image"},
 		{"batch boot image of another project", func(s string) string {
 			return strings.Replace(s, "projects/fugaro-belong/global/images/family/fugaro-base-1", "projects/evil-proj/global/images/family/fugaro-base-1", 1)
 		}, "batch.boot_image"},
@@ -480,8 +501,8 @@ func TestParseSharedAcceptsTheValidFileAndTheSizeCap(t *testing.T) {
 	}
 }
 
-// TestParseSharedAcceptsTheProjectsOtherRegionAndEmptyBatchFields pins the
-// two positives the batch refusals above leave open, so a later tightening of
+// TestParseSharedAcceptsThePositivesTheBatchRefusalsLeaveOpen pins the
+// positives the batch refusals above leave open, so a later tightening of
 // them is a decision rather than an accident:
 //
 //   - an image in another region of the anchor's own Artifact Registry is
@@ -494,14 +515,26 @@ func TestParseSharedAcceptsTheValidFileAndTheSizeCap(t *testing.T) {
 //     named for a writer to move, and refusing the block here would lock a
 //     teammate out of a shared config over a field their own launch refuses
 //     anyway.
-func TestParseSharedAcceptsTheProjectsOtherRegionAndEmptyBatchFields(t *testing.T) {
+//   - an image in this project's fugaro-base repository is accepted, which is
+//     the other half of refusing fugaro-ghcr above: fugaro-base is a
+//     repository only operators push (deploy/terraform/gcp/modules/installation/
+//     registry.tf), holding this installation's own copy of the base image a
+//     run's image derives FROM, so a writer with objectAdmin on the runs bucket
+//     cannot put code of their own in it. A later decision to refuse it is a
+//     decision, not a hole this test happened to leave open.
+func TestParseSharedAcceptsThePositivesTheBatchRefusalsLeaveOpen(t *testing.T) {
 	otherRegion := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-central1-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", 1)
+	baseRepo := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1", 1)
 	noNetwork := strings.Replace(validShared(),
 		"    network: projects/fugaro-belong/global/networks/fugaro-runs\n    subnetwork: projects/fugaro-belong/regions/us-east5/subnetworks/fugaro-runs\n    service_account: fugaro-batch@fugaro-belong.iam.gserviceaccount.com\n", "", 1)
 	if noNetwork == validShared() {
 		t.Fatal("fixture: the batch block's network lines are gone from validShared")
 	}
-	for name, data := range map[string]string{"image in another region of this project": otherRegion, "no network, subnetwork or account": noNetwork} {
+	for name, data := range map[string]string{
+		"image in another region of this project": otherRegion,
+		"image in this project's base repository": baseRepo,
+		"no network, subnetwork or account":       noNetwork,
+	} {
 		c, err := ParseShared([]byte(data), sharedAnchor)
 		if err != nil {
 			t.Errorf("%s: refused: %v", name, err)

@@ -301,8 +301,12 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	// installation's project (design compute-backend.md §4.4, plan
 	// 2026-10-19-compute-backend.md Task 8 step 2).
 	//
-	// What this refuses beyond a foreign image, account and secret:
-	// batch.boot_image, which is not the review's list and is the one with the
+	// What this refuses beyond a foreign image, account and secret: an image
+	// served through the project's own fugaro-ghcr repository, which the
+	// project check cannot see (it is the anchor's project) and which is a
+	// pull-through to ghcr.io, so its contents are a stranger's — see the
+	// check itself; batch.boot_image, which is not the review's list and is the
+	// one with the
 	// most behind it — a VM's boot disk is the machine itself, so a boot image
 	// family the writer owns is their kernel and their daemon data root
 	// running as the run's account — and a network or a subnetwork in another
@@ -317,6 +321,35 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	if b := c.Batch; b != nil {
 		if m := batchImageProjectRE.FindStringSubmatch(b.Image); m == nil || m[1] != a.GCPProject {
 			return bad("batch.image", "%q is not an image of this project's Artifact Registry, <region>-docker.pkg.dev/%s/<repository>/<image>[:tag][@sha256:<digest>]: a Batch run's job image is this installation's own build, and an image from anywhere else would run as the run's service account", b.Image, a.GCPProject)
+		}
+		// The project is not the whole of it: the repository the image sits in
+		// is inside that project, so no project check can tell one repository
+		// from another. fugaro-ghcr is a pull-through repository to ghcr.io
+		// (deploy/terraform/gcp/modules/installation/registry.tf: "nothing
+		// writes it, the packages are public so it is unauthenticated"), so
+		// what it serves is whatever the upstream package's owner published --
+		// anyone with a GitHub account, and no grant in this installation
+		// stands between it and the pull. Held to the project alone, this
+		// check accepted
+		// <host>/<project>/fugaro-ghcr/<their owner>/<their image>:<tag>,
+		// which is their code and their entrypoint running as the run's
+		// service account: exactly what the comment above says this check is
+		// for.
+		//
+		// The refusal is a flat one, and it costs nothing legitimate: a
+		// base_images pin -- the only thing of this installation's that may
+		// come out of the remote repository -- always carries a release tag
+		// and a digest together (baseImageRE, above), and localcfg's own
+		// batch.image grammar refuses that shape (batchImageRE takes a tag or
+		// a digest, never both), so no value of base_images can be a job
+		// image to begin with: batch.image is the installation's own build,
+		// one image for its runs. fugaro-base and this installation's
+		// per-repository registries are not refused with it: they are
+		// repositories only this installation's operators and builds push to,
+		// so a writer who can write this file cannot put code of their own in
+		// them.
+		if r := batchImageRepoRE.FindStringSubmatch(b.Image); r != nil && r[1] == infra.GhcrRegistry {
+			return bad("batch.image", "%q is served through the %q remote repository, which is a pull-through to ghcr.io: what it holds is the upstream package's owner's image, not this installation's build, so a run would execute their code as the run's service account. A job image is the repository's own, <region>-docker.pkg.dev/%s/<this repository's registry>/<image>[:tag]", b.Image, infra.GhcrRegistry, a.GCPProject)
 		}
 		for _, f := range []struct{ field, value, want string }{
 			// The boot image above the rest for what it is: a VM boots from
@@ -413,14 +446,21 @@ func dropLegacyBaseImages(data []byte) ([]byte, []string, error) {
 
 // batchResourceProjectRE pulls the project out of a full resource name,
 // projects/<project>/..., and batchImageProjectRE pulls it out of an Artifact
-// Registry image reference, <region>-docker.pkg.dev/<project>/...: the two
-// shapes ParseShared holds the published batch block's network, subnetwork and
-// image to. Both are applied after localcfg.Parse, which has already refused a
-// value that is not one of these spellings — so the only question left here is
-// whose project it names.
+// Registry image reference, <region>-docker.pkg.dev/<project>/...:
+// batchImageRepoRE pulls the repository out of the same reference, one segment
+// further along. These are the shapes ParseShared holds the published batch
+// block's network, subnetwork and image to. All are applied after
+// localcfg.Parse, which has already refused a value that is not one of these
+// spellings — so the questions left here are whose project it names, and, for
+// the image, which of that project's repositories it comes out of.
 var (
 	batchResourceProjectRE = regexp.MustCompile(`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/`)
 	batchImageProjectRE    = regexp.MustCompile(`^[a-z][a-z0-9-]*-docker\.pkg\.dev/([a-z][a-z0-9-]{4,28}[a-z0-9])/`)
+	// batchImageRepoRE is the segment after the project, which an Artifact
+	// Registry reference always has (nothing in the registry is served under
+	// the project itself); it is matched separately so the project check above
+	// keeps answering exactly what it answered before this one existed.
+	batchImageRepoRE = regexp.MustCompile(`^[a-z][a-z0-9-]*-docker\.pkg\.dev/[a-z][a-z0-9-]{4,28}[a-z0-9]/([^/:@]+)/`)
 	// batchSecretProjectRE is the same for a Secret Manager secret's resource
 	// name, projects/<project>/secrets/<name>.
 	batchSecretProjectRE = regexp.MustCompile(`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/secrets/`)

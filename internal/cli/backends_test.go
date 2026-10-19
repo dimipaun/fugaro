@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"reflect"
 	"sort"
@@ -13,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // fugaro backends ls (plan 2026-10-19-compute-backend.md Task 8 step 3, design
@@ -98,6 +101,34 @@ func TestBackendsLsNoProjectConfigNeedsNoCloud(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "note: ") {
 		t.Errorf("stderr = %q, want the note that nothing was selected", errOut)
+	}
+}
+
+// TestBackendsLsEscapesWhatItPrints: both strings this command prints that are
+// not this build's own — the project name and the selection note — reach a
+// terminal and a --json caller, and neither is necessarily the operator's: a
+// project name comes from the runs bucket's marker or from a shared config a
+// stranger can write, and the note carries a selection failure's own text.
+// pluginwire.Printable is what stops a control character from moving the cursor
+// or rewriting a line, and this is the test that fails when one of its two uses
+// is dropped (the project name's had none).
+func TestBackendsLsEscapesWhatItPrints(t *testing.T) {
+	hostile := "aurora\x1b[31m" + strings.Repeat("x", pluginwire.MaxPrintable+10)
+	var buf bytes.Buffer
+	if err := printBackends(&buf, hostile, backend.CloudRun, "", false); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("printBackends wrote the project name raw: %q", out)
+	}
+	if !strings.Contains(out, `\u001b`) {
+		t.Errorf("printBackends = %q, want the project name's control character as \\u001b, the way pluginwire.Printable writes it", out)
+	}
+
+	note := backendSelectionNote(errors.New("no project covers " + hostile))
+	if strings.Contains(note, "\x1b") || !strings.Contains(note, `\u001b`) {
+		t.Errorf("the selection note = %q, want it Printable'd like the project name", note)
 	}
 }
 

@@ -143,11 +143,22 @@ func backendsConfig(cmd *cobra.Command, o cloudOptions) (lc *localcfg.Config, no
 		if explicit {
 			return nil, "", err
 		}
-		note = fmt.Sprintf("no project config could be selected, so which backend this project uses is unknown (the list below is every backend a project may name) (%v)", err)
+		note = backendSelectionNote(err)
 		fmt.Fprintf(cmd.ErrOrStderr(), "note: %s\n", note)
 		return nil, note, nil
 	}
 	return lc, "", announce(o, sel, lc)
+}
+
+// backendSelectionNote is the note the operator (stderr) and a --json caller
+// (backendsListDoc.Note) both read when no project could be selected. Its text
+// goes through pluginwire.Printable for the same reason the project name does:
+// it carries a selection failure's own message, and that message can quote a
+// name out of a file this process did not write — a local config or a shared
+// config a stranger can write — so a control character in one must not reach
+// the terminal (or, through the --json document, a caller's own printer) raw.
+func backendSelectionNote(err error) string {
+	return pluginwire.Printable(fmt.Sprintf("no project config could be selected, so which backend this project uses is unknown (the list below is every backend a project may name) (%v)", err))
 }
 
 func backendsLs(cmd *cobra.Command, o backendsOptions) error {
