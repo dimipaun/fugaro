@@ -247,6 +247,39 @@ func TestDocsInJobReviewAllocatesNoDecisionsOrChecks(t *testing.T) {
 	}
 }
 
+// TestDocsInJobReviewStatesTheAuthenticityEvidence: finding #40's evidence is
+// what makes it a Gap rather than a mistake — the record carries no signature,
+// so a verdict cannot be a gate on its own. The first version of that sentence
+// read "grep for hmac in internal/ returns nothing, and attest appears only in
+// comments that deny it exists", which is false at the revision the
+// reconciliation was read at: the GCP test fakes MAC their own JWTs, and
+// "attest" is used of the record binding artifact bytes and of a buildx index's
+// attestation entry. A reader cannot check a claim the tree contradicts, so
+// this pins the corrected substance — where the tree's MACs actually are, and
+// that the record's schema has no signature field — and fails if the retracted
+// sentence comes back in either document.
+func TestDocsInJobReviewStatesTheAuthenticityEvidence(t *testing.T) {
+	recon := readDoc(t, inJobReviewRecon)
+	for _, want := range []string{
+		// The corrected evidence: the tree's MACs are the fakes', and the
+		// record's schema carries no signature field.
+		"internal/gcpfake/iamcredentials.go",
+		"internal/gcpfake/identitytoolkit.go",
+		"schemas/result.schema.json` has no field that is a signature",
+	} {
+		if !strings.Contains(recon, want) {
+			t.Errorf("%s lacks %q: finding #40 rests on the record carrying no signature, and the evidence has to say where the tree's MACs are instead",
+				inJobReviewRecon, want)
+		}
+	}
+	for _, path := range []string{inJobReviewRecon, inJobReviewREADME} {
+		if strings.Contains(readDoc(t, path), "returns nothing") {
+			t.Errorf("%s carries the retracted claim that a grep for hmac in internal/ returns nothing: it is false at the revision the reconciliation was read at (internal/gcpfake MACs its own JWTs), and this document's contract is that every claim was located with git grep against that revision",
+				path)
+		}
+	}
+}
+
 // TestDocsInJobReviewCitationsExist: every load-bearing citation in the two
 // documents is a path a later implementer has to find — the symbols the
 // findings rest on, the file that carries each rule the spec runs into, and
@@ -324,6 +357,18 @@ func TestDocsInJobReviewCitationsExist(t *testing.T) {
 		"internal/agent/settings.go",
 		"internal/agent/redact.go",
 		"internal/runner/reviewmode.go",
+		// What a verdict is not (finding #40): the record carries no signature,
+		// and the tree's only MACs are the GCP test fakes' own JWTs, so the
+		// evidence for "a verdict is advice, not a gate" is where the MACs are
+		// not.
+		"internal/gcpfake/iamcredentials.go",
+		"internal/gcpfake/identitytoolkit.go",
+		"internal/mirror/fake_test.go",
+		"internal/runner/artifact.go",
+		"internal/runstore/artifact.go",
+		"internal/cli/artifacts.go",
+		"internal/budget/rules",
+		"internal/runview",
 		"internal/backend/gcp/limits.go",
 		"internal/backend/gcp/run.go",
 		"internal/blobx",
