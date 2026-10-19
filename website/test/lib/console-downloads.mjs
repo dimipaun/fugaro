@@ -172,9 +172,9 @@ export function publishedAssets(data = downloadsData()) {
 /**
  * The name the release SERVES an asset under, which is the name a reader's link carries and the
  * name the browser saves the file as: GitHub rewrites a space in an uploaded asset's name to a
- * dot, so the build's `Fugaro Console-0.8.7-universal.dmg` — the name `console/README.md`
+ * dot, so the build's `Fugaro Console-0.9.0-universal.dmg` — the name `console/README.md`
  * documents and the name the release's own `console-sha256sums.txt` lists — is served as
- * `Fugaro.Console-0.8.7-universal.dmg`.
+ * `Fugaro.Console-0.9.0-universal.dmg`.
  *
  * It is written out again here rather than imported from `src/lib/console-downloads.mjs` on
  * purpose, and this is the one place in this file where a second spelling is the point: a test

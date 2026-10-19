@@ -40,15 +40,25 @@
 //
 // **And the name a reader's link carries is not the name the release's own files print.** GitHub
 // rewrites a space in an uploaded asset's name to a dot: the build writes
-// `Fugaro Console-0.8.7-universal.dmg` on the runner, the release's sums file and its
+// `Fugaro Console-0.9.0-universal.dmg` on the runner, the release's sums file and its
 // verification record both print that name, and the release page serves the file as
-// `Fugaro.Console-0.8.7-universal.dmg`. So the data file carries the *release's* name — the one
+// `Fugaro.Console-0.9.0-universal.dmg`. So the data file carries the *release's* name — the one
 // its own sums file lists, which is what the checksum above is keyed by — and the URL's last
 // segment is derived from it by `publishedName` below. This is the one fact about the console's
 // release that nothing in this tree can record, because the rename happens after the artifacts
 // leave the runner; it is stated once, there, and confirmed against the published release by the
 // owner's live check (`docs/gcp-live-checklist.md`, check 69a). Getting it wrong is not a
 // cosmetic bug: a link spelled with the build's own name is a 404 for every reader.
+//
+// **And the tag's prefix is the workflow's, not a literal this module or the data file chose.**
+// The URL's release segment is `<prefix><version>`, and the prefix is what the release workflow
+// itself writes when it composes the tag it publishes under (`CONSOLE_TAG="<prefix>$VERSION"` in
+// `.github/workflows/console-release.yml`). A prefix in `downloads.json` that the workflow does
+// not compose names a tag no run ever creates, and every button 404s — so the build reads that
+// line and refuses the disagreement, the same way the Go boundary test does over the tree
+// (`internal/cli/docs_website_boundary_test.go`, `TestWebsiteConsoleReleaseFactsAreComplete`).
+// Holding it here, in the build, is what makes the data file's own reader the refusal a page
+// build meets rather than a gate a later test run meets.
 //
 // Standard library only, and no network: this module is imported by the build, and it
 // fetches nothing (Global Constraints 4 and 8).
@@ -66,20 +76,27 @@ export const DOWNLOADS_FILE = 'website/content/downloads.json'
  */
 export const SUMS_FILE = 'website/data/console-sha256sums.txt'
 
+/**
+ * The workflow that cuts the console's release tag, as every message about the tag's prefix
+ * names it: it is where `<prefix>$VERSION` is composed, and the data file's `release.tag_prefix`
+ * is held to that line rather than to a remembered spelling of it.
+ */
+export const RELEASE_WORKFLOW = '.github/workflows/console-release.yml'
+
 /** The placeholder an asset's `file` carries where the release's version goes. */
 const VERSION_PLACEHOLDER = '{version}'
 
 /**
  * The name the release serves an asset under, which is the name the URL's last segment has to
  * carry: GitHub rewrites a space in an uploaded asset's name to a dot, so the file the build
- * writes as `Fugaro Console-0.8.7-universal.dmg` — the name the release's own
+ * writes as `Fugaro Console-0.9.0-universal.dmg` — the name the release's own
  * `console-sha256sums.txt` and `console-verification.txt` print — is served, and linked to, as
- * `Fugaro.Console-0.8.7-universal.dmg`.
+ * `Fugaro.Console-0.9.0-universal.dmg`.
  *
  * This is the whole of the rule, and it is stated here rather than read from anywhere because
  * nothing in this tree can carry it: the rename happens on GitHub, after the artifacts leave the
  * runner, so no document, workflow or checksum list in the repository records it. It was
- * confirmed against the published `console-v0.8.7` release (2026-10-19: the release's own asset
+ * confirmed against the published `console-v0.9.0` release (2026-10-19: the release's own asset
  * list carries the dotted names, the dotted URL answers 200 and the `%20` one 404), and the
  * owner's live check re-confirms it — `docs/gcp-live-checklist.md` check 69a follows every URL
  * the pages carry. A link that skipped this step is a 404 for every reader, which is what
@@ -87,6 +104,37 @@ const VERSION_PLACEHOLDER = '{version}'
  */
 function publishedName(file) {
   return file.split(' ').join('.')
+}
+
+/**
+ * The prefix the release workflow composes the console's tag with: the `<prefix>` of
+ * `CONSOLE_TAG="<prefix>$VERSION"`, which is the line `publish` builds the release's tag from
+ * and therefore the only spelling of the prefix a run ever creates a tag under.
+ *
+ * Read from the workflow rather than taken from the data file, so this is a check and not a
+ * second copy: the file lives beside the site in this repository, and the build of a copy of
+ * the repository reads the copy's own workflow (`website/test/lib/build.mjs` carries it).
+ *
+ * A workflow that no longer composes its tag that way, or that is not there at all, is a
+ * refusal rather than a skipped check: a prefix this cannot read is a prefix nothing holds the
+ * data file's URLs to, and the URLs are the whole of what the check protects.
+ */
+function workflowTagPrefix(siteRoot) {
+  const file = path.join(path.dirname(siteRoot), ...RELEASE_WORKFLOW.split('/'))
+  if (!existsSync(file)) {
+    refuse(
+      `cannot be read: ${RELEASE_WORKFLOW} is the workflow that composes the console's release tag, and it is where the release.tag_prefix below is checked rather than assumed. Every download URL is \`<repository>/releases/download/<prefix><version>/<name>\`, so a prefix nothing composes names a tag no run creates (D11)`,
+      'W3.1',
+    )
+  }
+  const match = /CONSOLE_TAG="([^"$]+)\$VERSION"/.exec(readFileSync(file, 'utf8'))
+  if (!match) {
+    refuse(
+      `${RELEASE_WORKFLOW} no longer composes the console's tag as \`CONSOLE_TAG="<prefix>$VERSION"\`, and release.tag_prefix below is the prefix of the tag every download URL names: a prefix this cannot read is a prefix nothing holds the URLs to (D11)`,
+      'W3.1',
+    )
+  }
+  return match[1]
 }
 
 /**
@@ -295,6 +343,18 @@ export function loadConsoleDownloads(siteRoot, flagFromSiteYAML, repository) {
     }
     if (!/^[a-z][a-z0-9-]*-v$/.test(tagPrefix)) {
       refuse(`release.tag_prefix is ${JSON.stringify(tagPrefix)}, and the console's tag is that prefix and the version — console-v and vX.Y.Z, as docs/release.md writes it`)
+    }
+    // And the prefix is the workflow's own, not merely one of the right shape: a prefix that
+    // passes the shape above and that no run composes is a tag no release carries, and the URLs
+    // below name it. The check reads `.github/workflows/console-release.yml`'s own
+    // `CONSOLE_TAG="<prefix>$VERSION"` line — the same line the Go boundary test reads — so the
+    // data file cannot drift from the release's tag without the page build refusing it.
+    const composedPrefix = workflowTagPrefix(siteRoot)
+    if (tagPrefix !== composedPrefix) {
+      refuse(
+        `release.tag_prefix is ${JSON.stringify(tagPrefix)} and ${RELEASE_WORKFLOW} composes the console's release tag with ${JSON.stringify(composedPrefix)} (\`CONSOLE_TAG="${composedPrefix}$VERSION"\`): every console download URL is \`<repository>/releases/download/<prefix><version>/<name>\`, so a prefix the workflow does not compose names a tag no run creates — and every button on the page is then a 404 (D11)`,
+        'W3.1',
+      )
     }
     return { tagPrefix, version, tag: `${tagPrefix}${version}`, source: asText(map.source, 'release.source') }
   })()

@@ -3,7 +3,7 @@
 // The spec asks for "Console downloads: per-OS download links (placeholder until the
 // console ships)", and the console has shipped: `console/` holds the application, its
 // packaging and the workflow that signed, notarised and stapled its macOS artifacts, the
-// release `console-v0.8.7` carries them, `site.yaml`'s `features.console_downloads` is true
+// release `console-v0.9.0` carries them, `site.yaml`'s `features.console_downloads` is true
 // and the data file's `available` is true with it. The page's Downloads section renders that
 // release, and the placeholder state it renders instead is a state a copy of the repository
 // is built into rather than the state this checkout ships (W3.1). Seven things are checked
@@ -16,8 +16,8 @@
 //      console rather than a copy of it written into the markup.
 //   2. **The link carries the served name, not the name the build wrote.** GitHub rewrites a
 //      space in an uploaded asset's name to a dot, so the release's own files spell
-//      `Fugaro Console-0.8.7-universal.dmg` and the release serves, and the site must link to,
-//      `Fugaro.Console-0.8.7-universal.dmg`: the case below refuses any href carrying `%20`,
+//      `Fugaro Console-0.9.0-universal.dmg` and the release serves, and the site must link to,
+//      `Fugaro.Console-0.9.0-universal.dmg`: the case below refuses any href carrying `%20`,
 //      which is the 404 every reader would have followed (`servedName` has the rule).
 //   3. **The unreleased state carries no link, and it is a fixture.** With
 //      `features.console_downloads` flipped back to false and the data file's `available`
@@ -643,6 +643,37 @@ test("the build refuses a checksum that is not the release's own", async (t) => 
   )
 })
 
+test('the build refuses a tag prefix the release workflow does not compose', async (t) => {
+  // The one thing between the data file's names and the artifact a reader downloads is the
+  // release's tag: every URL is
+  // `<repository>/releases/download/<release.tag_prefix><release.version>/<name>`, and the
+  // prefix is composed by the release workflow (`CONSOLE_TAG="<prefix>$VERSION"`). The reader
+  // checks the prefix's SHAPE, and a shape is not the workflow's answer — so a prefix of the
+  // right shape that no run composes passes every other check here (the checksums match, the
+  // names are the release's, `console/README.md` documents them) and puts a 404 behind every
+  // button. The mutation below is that prefix, planted in the workflow itself, which is what
+  // makes the case a check of the build's reading rather than of a literal in this file.
+  const planted = 'console-desktop-v'
+  const built = buildWith(t, (copy) => {
+    const file = path.join(copy.root, ...RELEASE_WORKFLOW.split('/'))
+    const workflow = readFileSync(file, 'utf8')
+    assert.ok(
+      workflow.includes('CONSOLE_TAG="console-v$VERSION"'),
+      `${RELEASE_WORKFLOW} no longer composes the console's tag as \`CONSOLE_TAG="console-v$VERSION"\`, so this case cannot plant the disagreement it is about`,
+    )
+    writeFileSync(file, workflow.replace('CONSOLE_TAG="console-v$VERSION"', `CONSOLE_TAG="${planted}$VERSION"`))
+  })
+
+  assert.notEqual(
+    built.status,
+    0,
+    `the build accepted release.tag_prefix ${JSON.stringify('console-v')} while ${RELEASE_WORKFLOW} composed the tag with ${JSON.stringify(planted)}: the URL it renders names a tag no run creates, and every download link on the page is a 404 for the reader who follows it:\n${built.output}`,
+  )
+  assert.match(built.output, /downloads\.json/, 'the failure does not name the data file the prefix came from')
+  assert.match(built.output, /console-release\.yml/, 'the failure does not name the workflow whose own line the prefix is checked against')
+  assert.equal(built.page, null, 'the build wrote a page whose download links name a tag no run creates')
+})
+
 test('with the console released, the section renders the downloads the release publishes', async (t) => {
   // W3.1's state, which is the state this checkout ships: the flag in `site.yaml` and the
   // data file's own `available` are both true, and that pair was the WHOLE change. Nothing in
@@ -688,7 +719,7 @@ test('the links carry the name the release serves, not the name the build wrote'
   // them was anchored to a document in this repository: the release's own `console-sha256sums.txt`
   // and `console/README.md` both spell the artifacts with a space, GitHub serves them with a dot,
   // and a build that pasted the release's spelling into the URL wrote
-  // `.../Fugaro%20Console-0.8.7-universal.dmg` — a 404 for every reader, with the checksum
+  // `.../Fugaro%20Console-0.9.0-universal.dmg` — a 404 for every reader, with the checksum
   // verification command failing beside it. So this case is about the SERVED name, and the two
   // halves of it are the same fact: the href's last segment is the served name, and no href
   // carries an encoded space at all.
